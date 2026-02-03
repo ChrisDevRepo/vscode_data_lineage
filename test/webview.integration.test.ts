@@ -10,7 +10,7 @@ suite('Webview Integration Test', () => {
     this.timeout(TIMEOUT);
     
     // Ensure extension is activated
-    const ext = vscode.extensions.getExtension('data-lineage.data-lineage-viz');
+    const ext = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz');
     assert.ok(ext, 'Extension should be installed');
     
     if (!ext.isActive) {
@@ -33,7 +33,7 @@ suite('Webview Integration Test', () => {
   });
   
   test('Verify build artifacts exist', () => {
-    const ext = vscode.extensions.getExtension('data-lineage.data-lineage-viz');
+    const ext = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz');
     assert.ok(ext, 'Extension should be installed');
     
     const distPath = path.join(ext.extensionPath, 'dist', 'assets');
