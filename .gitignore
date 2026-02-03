@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+out/
+build/
+.vite/
+.cache/
+*.vsix
+
+# Testing
+customer-data/
+.vscode-test/
+coverage/
+*.lcov
+test/out/
+
+# Only AdventureWorks dacpacs allowed in test/ (no customer dacpacs)
+test/*.dacpac
+!test/AdventureWorks*.dacpac
+
+# IDE / local
+.vscode/settings.json
+.idea/
+CLAUDE.md
+.claude/
+
+# Environment
+.env
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+nul

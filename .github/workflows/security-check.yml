@@ -1,0 +1,99 @@
+name: Security Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-sensitive-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for sensitive files
+        run: |
+          echo "Checking for sensitive files..."
+
+          FORBIDDEN_PATTERNS=(
+            ".env"
+            ".env.*"
+            "*.pem"
+            "*.key"
+            "*.p12"
+            "*.pfx"
+            "credentials*.json"
+            "secrets*.json"
+            "**/test-data/**"
+            "**/.claude/**"
+            "customer-data/**"
+          )
+
+          # Allowed dacpac files (demo + AdventureWorks test data only)
+          ALLOWED_DACPACS=(
+            "assets/demo.dacpac"
+            "test/AdventureWorks.dacpac"
+            "test/AdventureWorks_sdk-style.dacpac"
+          )
+
+          FOUND_FILES=""
+
+          for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
+            matches=$(git ls-files "$pattern" 2>/dev/null || true)
+            if [ -n "$matches" ]; then
+              FOUND_FILES="$FOUND_FILES$matches"$'\n'
+            fi
+          done
+
+          # Check for unauthorized dacpac files
+          ALL_DACPACS=$(git ls-files "*.dacpac" 2>/dev/null || true)
+          for dacpac in $ALL_DACPACS; do
+            ALLOWED=false
+            for allowed in "${ALLOWED_DACPACS[@]}"; do
+              if [ "$dacpac" = "$allowed" ]; then
+                ALLOWED=true
+                break
+              fi
+            done
+            if [ "$ALLOWED" = false ]; then
+              FOUND_FILES="$FOUND_FILES$dacpac (unauthorized dacpac)"$'\n'
+            fi
+          done
+
+          if [ -n "$FOUND_FILES" ]; then
+            echo "::error::Sensitive files detected in repository:"
+            echo "$FOUND_FILES"
+            echo ""
+            echo "These files should not be committed. Add them to .gitignore."
+            exit 1
+          fi
+
+          echo "No sensitive files found."
+
+      - name: Check for secrets in code
+        run: |
+          echo "Scanning for potential secrets..."
+
+          # Check for common secret patterns in tracked files
+          PATTERNS=(
+            "password\s*=\s*['\"][^'\"]+['\"]"
+            "api[_-]?key\s*=\s*['\"][^'\"]+['\"]"
+            "secret\s*=\s*['\"][^'\"]+['\"]"
+            "connectionstring\s*=\s*['\"][^'\"]+['\"]"
+          )
+
+          FOUND=0
+          for pattern in "${PATTERNS[@]}"; do
+            if git grep -iE "$pattern" -- '*.ts' '*.js' '*.json' '*.yaml' '*.yml' 2>/dev/null | grep -v "package-lock.json" | grep -v "node_modules"; then
+              FOUND=1
+            fi
+          done
+
+          if [ $FOUND -eq 1 ]; then
+            echo "::warning::Potential hardcoded secrets detected. Please review the above matches."
+          fi
+
+          echo "Secret scan complete."
