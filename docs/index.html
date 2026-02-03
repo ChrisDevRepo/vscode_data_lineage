@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Lineage Viz - VS Code Extension</title>
+  <meta name="description" content="VS Code extension for object-level dependency visualization of SQL Database Projects (.dacpac). Trace lineage, explore dependencies, and navigate your SQL codebase.">
+  <meta name="keywords" content="dacpac, sql server, lineage, dependencies, visualization, vscode extension, database, data lineage">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1f2937; line-height: 1.6; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .hero {
+      min-height: 50vh; display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 4rem 1.5rem 3rem;
+      background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%);
+    }
+    .hero h1 { font-size: 2.5rem; font-weight: 800; color: #0f172a; margin-bottom: .5rem; }
+    .hero .subtitle { font-size: 1.1rem; color: #475569; max-width: 520px; margin: 0 auto 2rem; }
+    .hero .icons { display: flex; gap: .5rem; justify-content: center; margin-bottom: 1.5rem; }
+    .hero .icons span {
+      width: 2.25rem; height: 2.25rem; display: flex; align-items: center; justify-content: center;
+      border-radius: .5rem; font-size: 1.1rem;
+    }
+    .btn-row { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+      padding: .65rem 1.4rem; border-radius: .5rem; font-weight: 600; font-size: .9rem;
+      transition: opacity .15s; min-width: 180px;
+    }
+    .btn:hover { text-decoration: none; opacity: .85; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-dark { background: #0f172a; color: #fff; }
+
+    .screenshot { max-width: 900px; margin: 2.5rem auto 0; border-radius: .75rem; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,.12); border: 1px solid #e2e8f0; }
+    .screenshot img { width: 100%; display: block; }
+
+    .showcase {
+      max-width: 960px; margin: 0 auto; padding: 4rem 1.5rem 2rem;
+    }
+    .showcase h2 { font-size: 1.5rem; font-weight: 800; color: #0f172a; text-align: center; margin-bottom: .5rem; }
+    .showcase .section-subtitle { font-size: .95rem; color: #64748b; text-align: center; margin-bottom: 2rem; }
+    .showcase-grid { display: grid; grid-template-columns: 1fr; gap: 2.5rem; }
+    .showcase-item { display: flex; flex-direction: column; gap: .75rem; }
+    .showcase-item .caption { font-size: .95rem; font-weight: 600; color: #334155; }
+    .showcase-item .caption-detail { font-size: .85rem; color: #64748b; }
+    .showcase-item img {
+      width: 100%; border-radius: .75rem; border: 1px solid #e2e8f0;
+      box-shadow: 0 8px 24px rgba(0,0,0,.08);
+    }
+
+    .features {
+      max-width: 800px; margin: 0 auto; padding: 3rem 1.5rem 4rem;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 2rem;
+    }
+    .feature h3 { font-size: 1rem; font-weight: 700; margin-bottom: .25rem; }
+    .feature p { font-size: .875rem; color: #64748b; }
+    .feature .icon { font-size: 1.5rem; margin-bottom: .5rem; }
+
+    .divider { border: none; border-top: 1px solid #e5e7eb; max-width: 800px; margin: 0 auto; }
+
+    footer {
+      text-align: center; padding: 2rem 1.5rem; border-top: 1px solid #e5e7eb;
+      font-size: .8rem; color: #94a3b8;
+    }
+    footer a { color: #64748b; }
+  </style>
+</head>
+<body>
+
+  <section class="hero">
+    <div>
+      <div class="icons">
+        <img src="../images/logo.png" alt="Data Lineage Viz Logo" style="height: 3rem; width: auto;">
+      </div>
+      <h1>Data Lineage Viz</h1>
+      <p class="subtitle">
+        Object-level dependency visualization for SQL Database Projects — right inside VS Code.
+      </p>
+      <div class="btn-row">
+        <a href="https://youtu.be/5yr0yRZAa98" class="btn btn-dark">
+          &#9654; Watch Demo
+        </a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=data-lineage.data-lineage-viz" class="btn btn-primary">
+          Install from Marketplace
+        </a>
+        <a href="https://github.com/ChrisDevRepo/vscode_data_lineage" class="btn btn-dark">
+          GitHub
+        </a>
+      </div>
+      <div class="screenshot">
+        <img src="../images/viz-screenshot.png" alt="Data Lineage Viz — interactive dependency graph with schema-colored nodes">
+      </div>
+    </div>
+  </section>
+
+  <section class="showcase">
+    <h2>See It in Action</h2>
+    <p class="section-subtitle">Search SQL bodies, trace dependencies, and preview DDL — all without leaving VS Code.</p>
+    <div class="showcase-grid">
+      <div class="showcase-item">
+        <span class="caption">Detail Search &amp; DDL Preview</span>
+        <span class="caption-detail">Full-text search across stored procedures, views, and functions. Click a result to zoom to the node and view its DDL side-by-side.</span>
+        <img src="../images/viz-search-screenshot.png" alt="Detail Search panel with DDL viewer and schema filter">
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <section class="features">
+    <div class="feature">
+      <div class="icon">&#9638;</div>
+      <h3>DACPAC Parsing</h3>
+      <p>Extract tables, views, stored procedures, and functions from SSDT and Fabric SDK .dacpac files.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128270;</div>
+      <h3>Detail Search</h3>
+      <p>Full-text search across SQL bodies with grouped results, code snippets, and match highlighting.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128269;</div>
+      <h3>Trace Dependencies</h3>
+      <p>Click any node to trace upstream and downstream dependencies with configurable depth.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128196;</div>
+      <h3>DDL Viewer</h3>
+      <p>Click a node to view its DDL with full syntax highlighting — no red squiggles, no diagnostics noise.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#9881;</div>
+      <h3>Configurable</h3>
+      <p>YAML parse rules, exclude patterns, layout direction, and trace depth — all via VS Code settings.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#127912;</div>
+      <h3>Theme-Aware</h3>
+      <p>Adapts to your VS Code light, dark, or high-contrast theme automatically.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>MIT License &middot; &copy; 2025–2026 <a href="https://www.linkedin.com/in/christian-wagner-11aa8614b">Christian Wagner</a></p>
+  </footer>
+
+</body>
+</html>

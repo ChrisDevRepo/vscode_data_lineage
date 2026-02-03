@@ -1,0 +1,38 @@
+# Source files (bundled into out/ and dist/)
+src/**
+test/**
+customer-data/**
+temp-old-design/**
+
+# Config files
+.gitignore
+tsconfig.json
+tsconfig.extension.json
+vite.config.ts
+tailwind.config.js
+postcss.config.js
+esbuild.config.mjs
+
+# Dev artifacts
+node_modules/**
+.vscode/**
+**/*.map
+
+# Documentation (not needed in extension package)
+docs/**
+CONTRIBUTING.md
+
+# Misc
+PLAN.md
+CLAUDE.md
+SECURITY.md
+CODE_OF_CONDUCT.md
+INSTALL_LOCAL.md
+*.vsix
+debug.log
+.claude/**
+.github/**
+**/.DS_Store
+.editorconfig
+.eslintrc*
+.prettierrc*
