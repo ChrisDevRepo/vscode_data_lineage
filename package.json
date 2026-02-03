@@ -4,7 +4,7 @@
   "preview": true,
   "description": "Visualize object dependencies and data lineage in SQL Server Database Projects (.dacpac)",
   "version": "0.7.2",
-  "publisher": "data-lineage",
+  "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
