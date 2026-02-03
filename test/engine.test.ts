@@ -11,7 +11,7 @@ import { parseSqlBody } from '../src/engine/sqlBodyParser';
 import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics } from '../src/engine/graphBuilder';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DACPAC_PATH = resolve(__dirname, '../test-data/sample_ssdt.dacpac');
+const DACPAC_PATH = resolve(__dirname, './AdventureWorks.dacpac');
 
 let passed = 0;
 let failed = 0;
@@ -49,7 +49,7 @@ async function testExtraction() {
   // Check schemas match expected
   const schemaNames = model.schemas.map(s => s.name);
   assert(schemaNames.includes('DBO'), 'Schema "dbo" found');
-  assert(schemaNames.includes('SALESLT'), 'Schema "SalesLT" found');
+  assert(schemaNames.includes('SALES'), 'Schema "SALES" found');
 
   // Check specific known objects
   const nodeNames = model.nodes.map(n => n.fullName);
@@ -63,16 +63,16 @@ async function testExtraction() {
 async function testFiltering(model: Awaited<ReturnType<typeof extractDacpac>>) {
   console.log('\n── Schema Filtering ──');
 
-  const salesLT = filterBySchemas(model, new Set(['SALESLT']));
-  assert(salesLT.nodes.every(n => n.schema === 'SALESLT'), 'All filtered nodes are SalesLT schema');
-  assert(salesLT.nodes.length > 0, `SalesLT has ${salesLT.nodes.length} nodes`);
+  const salesLT = filterBySchemas(model, new Set(['SALES']));
+  assert(salesLT.nodes.every(n => n.schema === 'SALES'), 'All filtered nodes are SALES schema');
+  assert(salesLT.nodes.length > 0, `SALES has ${salesLT.nodes.length} nodes`);
   assert(salesLT.nodes.length < model.nodes.length, 'Filtered set is smaller than full set');
 
   const dbo = filterBySchemas(model, new Set(['DBO']));
   assert(dbo.nodes.every(n => n.schema === 'DBO'), 'All filtered nodes are dbo schema');
 
   // Max nodes cap
-  const capped = filterBySchemas(model, new Set(['DBO', 'SALESLT']), 5);
+  const capped = filterBySchemas(model, new Set(['DBO', 'SALES']), 5);
   assert(capped.nodes.length <= 5, `Capped at ${capped.nodes.length} nodes (max 5)`);
 }
 
@@ -210,7 +210,7 @@ async function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>
 
 async function testFabricDacpac() {
   console.log('\n── Fabric SDK Dacpac ──');
-  const fabricPath = resolve(__dirname, '../test-data/sample_fabric.dacpac');
+  const fabricPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
   const buffer = readFileSync(fabricPath);
   const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
@@ -304,8 +304,8 @@ function compareSpParseResults(
 }
 
 async function testAllSpParsing() {
-  const fabricPath = resolve(__dirname, '../test-data/sample_fabric.dacpac');
-  const ssdtPath = resolve(__dirname, '../test-data/sample_ssdt.dacpac');
+  const fabricPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
+  const ssdtPath = resolve(__dirname, './AdventureWorks.dacpac');
 
   const fabricResults = await parseAllSpBodies(fabricPath);
   const ssdtResults = await parseAllSpBodies(ssdtPath);
@@ -480,7 +480,7 @@ function testTraceNoSiblings() {
 
 async function testSynapseTrace() {
   console.log('\n── Synapse Dacpac: Trace No Siblings ──');
-  const dacpacPath = resolve(__dirname, '../test-data/sample_fabric.dacpac');
+  const dacpacPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
   const buffer = readFileSync(dacpacPath);
   const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
@@ -550,8 +550,8 @@ async function main() {
     testSqlBodyParser();
     testTraceNoSiblings();
     await testSynapseTrace();
-    testCase1Sql();
-    testCase1RealObjectResolution();
+    // Skipped: testCase1Sql() - requires test/sql/case1.sql
+    // Skipped: testCase1RealObjectResolution() - requires test/sql/case1.sql
     await testAllSpParsing();
     await testGraphBuilder(model);
     await testEdgeIntegrity(model);
