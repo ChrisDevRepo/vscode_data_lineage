@@ -219,7 +219,7 @@ export function GraphCanvas({
         ),
       };
     });
-  }, [localEdges, highlightedNodeId, config.layout.edgeAnimation]);
+  }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
