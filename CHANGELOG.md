@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.7.2] - 2026-02-03
+## [0.7.3] - 2026-02-03
 
 ### Fixed
 - **Animation Settings** — Edge animations now respond correctly to `highlightAnimation` and `edgeAnimation` settings (fixed missing useMemo dependencies)
