@@ -19,7 +19,6 @@ jobs:
           echo "Checking for sensitive files..."
 
           FORBIDDEN_PATTERNS=(
-            "*.dacpac"
             ".env"
             ".env.*"
             "*.pem"
@@ -30,6 +29,14 @@ jobs:
             "secrets*.json"
             "**/test-data/**"
             "**/.claude/**"
+            "customer-data/**"
+          )
+
+          # Allowed dacpac files (demo + AdventureWorks test data only)
+          ALLOWED_DACPACS=(
+            "assets/demo.dacpac"
+            "test/AdventureWorks.dacpac"
+            "test/AdventureWorks_sdk-style.dacpac"
           )
 
           FOUND_FILES=""
@@ -38,6 +45,21 @@ jobs:
             matches=$(git ls-files "$pattern" 2>/dev/null || true)
             if [ -n "$matches" ]; then
               FOUND_FILES="$FOUND_FILES$matches"$'\n'
+            fi
+          done
+
+          # Check for unauthorized dacpac files
+          ALL_DACPACS=$(git ls-files "*.dacpac" 2>/dev/null || true)
+          for dacpac in $ALL_DACPACS; do
+            ALLOWED=false
+            for allowed in "${ALLOWED_DACPACS[@]}"; do
+              if [ "$dacpac" = "$allowed" ]; then
+                ALLOWED=true
+                break
+              fi
+            done
+            if [ "$ALLOWED" = false ]; then
+              FOUND_FILES="$FOUND_FILES$dacpac (unauthorized dacpac)"$'\n'
             fi
           done
 
