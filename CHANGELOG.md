@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.2] - 2026-02-03
+
+### Fixed
+- **Animation Settings** — Edge animations now respond correctly to `highlightAnimation` and `edgeAnimation` settings (fixed missing useMemo dependencies)
+- **Default Values** — Fallback defaults now match package.json: maxNodes=250, rankSeparation=120, direction=LR
+
 ## [0.7.1] - 2026-02-03
 
 - **Demo Data** — Load Demo now uses real AdventureWorks dacpac with DDL viewing

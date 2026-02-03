@@ -277,10 +277,10 @@ function readExtensionConfig(): ExtensionConfigMessage {
 
   const config: ExtensionConfigMessage = {
     excludePatterns: cfg.get<string[]>('excludePatterns', []),
-    maxNodes: cfg.get<number>('maxNodes', 150),
+    maxNodes: cfg.get<number>('maxNodes', 250),
     layout: {
       direction: cfg.get<string>('layout.direction', 'LR'),
-      rankSeparation: cfg.get<number>('layout.rankSeparation', 80),
+      rankSeparation: cfg.get<number>('layout.rankSeparation', 120),
       nodeSeparation: cfg.get<number>('layout.nodeSeparation', 30),
       edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', true),
       highlightAnimation: cfg.get<boolean>('layout.highlightAnimation', false),

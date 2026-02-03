@@ -58,10 +58,10 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         const cfg: ExtensionConfig = {
           parseRules: (msgConfig.parseRules as ExtensionConfig['parseRules']) || undefined,
           excludePatterns: (msgConfig.excludePatterns as string[]) || [],
-          maxNodes: (msgConfig.maxNodes as number) || 150,
+          maxNodes: (msgConfig.maxNodes as number) || 250,
           layout: {
-            direction: ((msgConfig.layout as Record<string, unknown>)?.direction as 'TB' | 'LR') || 'TB',
-            rankSeparation: ((msgConfig.layout as Record<string, unknown>)?.rankSeparation as number) || 80,
+            direction: ((msgConfig.layout as Record<string, unknown>)?.direction as 'TB' | 'LR') || 'LR',
+            rankSeparation: ((msgConfig.layout as Record<string, unknown>)?.rankSeparation as number) || 120,
             nodeSeparation: ((msgConfig.layout as Record<string, unknown>)?.nodeSeparation as number) || 30,
             edgeAnimation: ((msgConfig.layout as Record<string, unknown>)?.edgeAnimation as boolean) ?? true,
             highlightAnimation: ((msgConfig.layout as Record<string, unknown>)?.highlightAnimation as boolean) ?? false,
