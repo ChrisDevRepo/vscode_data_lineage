@@ -249,7 +249,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "@vscode/test-electron": "^2.5.2",
     "autoprefixer": "^10.4.20",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.25.0",
     "glob": "^13.0.0",
     "mocha": "^11.7.5",
     "postcss": "^8.4.49",
