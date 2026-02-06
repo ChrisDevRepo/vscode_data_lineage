@@ -24,14 +24,13 @@ No `.dacpac` file? Click **Load Demo** in the wizard to explore the AdventureWor
 - Search and navigate objects with autocomplete
 - Trace upstream and downstream dependencies
 - Filter by schema, object type, or regex patterns
-- Schema-based color coding with Tableau 10 palette
+- Schema-based color coding
 - Switchable left-right / top-bottom layout
 
 **SQL Preview**
 - Click any node to view its DDL in a read-only SQL viewer
 - Full syntax highlighting, Ctrl+F search, bracket matching
 - Drag the SQL tab to a second monitor for side-by-side workflow
-- Jump to source files from the graph
 
 **Customization**
 - [YAML-based custom parsing rules](docs/PARSE_RULES.md)

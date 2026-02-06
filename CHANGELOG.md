@@ -28,15 +28,6 @@
 - **Case-Insensitive Schemas** — Schema names normalized to uppercase, eliminating duplicates
 - **Layout Controls** — Horizontal/vertical toggle, rebuild button, configurable trace defaults
 
-## [0.5.0] - 2026-01-31
+## [0.5.0]
 
-- **Native SQL Viewer** — View DDL with syntax highlighting, Ctrl+F, and multi-monitor support
-- **SQL Viewer Toolbar** — Dedicated button + smart updates when clicking nodes
-- **Complete DDL Generation** — Full CREATE statements for views, procedures, and functions
-- **Interactive Trace** — Click any object to highlight upstream/downstream dependencies with depth control
-- **Smart Search** — Autocomplete with schema/type info and keyboard navigation
-- **Schema & Type Filtering** — Multi-select schema filter and type toggles
-- **Layout Options** — Toggle horizontal/vertical layout, resizable panels
-- **Source Navigation** — Right-click to jump to SQL definition files
-- **Custom Parse Rules** — YAML-based extraction rules for custom SQL patterns
-- **Theme Support** — Automatic VS Code light/dark theme adaptation
+- Initial preview release
