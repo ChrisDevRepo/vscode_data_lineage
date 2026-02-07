@@ -539,6 +539,85 @@ async function testSynapseTrace() {
   }
 }
 
+async function testNumericEntitySecurity() {
+  console.log('\n── Security: Numeric Entity DoS (CVE-2026-25128) ──');
+
+  // Craft a minimal dacpac-like XML with out-of-range numeric entities
+  const { XMLParser } = await import('fast-xml-parser');
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    parseTagValue: true,
+    trimValues: true,
+  });
+
+  // Test 1: Out-of-range decimal entity — must NOT throw RangeError
+  const xmlDecimal = `<root><item>test &#9999999; value</item></root>`;
+  let decimalOk = false;
+  try {
+    parser.parse(xmlDecimal);
+    decimalOk = true;
+  } catch (e: unknown) {
+    if (e instanceof RangeError) {
+      decimalOk = false;
+    } else {
+      // Other errors are acceptable (not DoS)
+      decimalOk = true;
+    }
+  }
+  assert(decimalOk, 'Out-of-range decimal entity (&#9999999;) does not crash with RangeError');
+
+  // Test 2: Out-of-range hex entity — must NOT throw RangeError
+  const xmlHex = `<root><item>test &#xFFFFFF; value</item></root>`;
+  let hexOk = false;
+  try {
+    parser.parse(xmlHex);
+    hexOk = true;
+  } catch (e: unknown) {
+    if (e instanceof RangeError) {
+      hexOk = false;
+    } else {
+      hexOk = true;
+    }
+  }
+  assert(hexOk, 'Out-of-range hex entity (&#xFFFFFF;) does not crash with RangeError');
+
+  // Test 3: Valid entity parses without error
+  const xmlValid = `<root><item>test &#65; value</item></root>`;
+  let validOk = false;
+  try {
+    parser.parse(xmlValid);
+    validOk = true;
+  } catch {
+    validOk = false;
+  }
+  assert(validOk, 'Valid entity &#65; parses without error');
+
+  // Test 4: processEntities mode (this is where v4.x was vulnerable)
+  const parserWithEntities = new XMLParser({
+    processEntities: true,
+    htmlEntities: true,
+  });
+
+  let entDecOk = false;
+  try {
+    parserWithEntities.parse(`<root>&#9999999;</root>`);
+    entDecOk = true;
+  } catch (e: unknown) {
+    entDecOk = !(e instanceof RangeError);
+  }
+  assert(entDecOk, 'processEntities + out-of-range decimal does not RangeError');
+
+  let entHexOk = false;
+  try {
+    parserWithEntities.parse(`<root>&#xFFFFFF;</root>`);
+    entHexOk = true;
+  } catch (e: unknown) {
+    entHexOk = !(e instanceof RangeError);
+  }
+  assert(entHexOk, 'processEntities + out-of-range hex does not RangeError');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -556,6 +635,7 @@ async function main() {
     await testGraphBuilder(model);
     await testEdgeIntegrity(model);
     await testFabricDacpac();
+    await testNumericEntitySecurity();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
     failed++;

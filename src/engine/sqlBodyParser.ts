@@ -73,9 +73,9 @@ const DEFAULT_RULES: ParseRule[] = [
   {
     name: 'extract_targets_dml', enabled: true, priority: 6,
     category: 'target',
-    pattern: '\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?|DELETE\\s+(?:FROM\\s+)?)((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)',
+    pattern: '\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)',
     flags: 'gi',
-    description: 'INSERT/UPDATE/MERGE/DELETE targets',
+    description: 'INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — they destroy data, not lineage)',
   },
   {
     name: 'extract_ctas', enabled: true, priority: 13,
@@ -293,6 +293,7 @@ function shouldSkip(name: string): boolean {
   const lower = name.toLowerCase();
   if (activeSkipKeywords.has(lower)) return true;
   if (activeSkipPrefixes.some((p) => lower.startsWith(p))) return true;
-  if (!name.includes('.') && name.length <= 3) return true;
+  // Single-character unqualified names are always table aliases (a, b, t, etc.)
+  if (!name.includes('.') && name.length === 1) return true;
   return false;
 }

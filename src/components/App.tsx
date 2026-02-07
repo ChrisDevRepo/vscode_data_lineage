@@ -43,9 +43,6 @@ export function App() {
   const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
-  // Debounce timer for search
-  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
-
   // Dacpac loader lives here so state persists when navigating back
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
     setConfig(cfg);
@@ -90,36 +87,30 @@ export function App() {
     [filter, rebuild, config]
   );
 
+  const getResetFilter = (m: DacpacModel): FilterState => ({
+    schemas: new Set(m.schemas.map(s => s.name)),
+    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
+    searchTerm: '',
+    hideIsolated: true,
+    focusSchemas: new Set(),
+  });
+
   const handleRefresh = useCallback(() => {
-    if (model) { 
+    if (model) {
       clearTrace(() => {
-        // Reset all filters to initial state
-        const resetFilter: FilterState = {
-          schemas: new Set(model.schemas.map(s => s.name)),
-          types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
-          searchTerm: '',
-          hideIsolated: true,
-          focusSchemas: new Set(),
-        };
-        setFilter(resetFilter);
-        rebuild(model, resetFilter, config);
+        const f = getResetFilter(model);
+        setFilter(f);
+        rebuild(model, f, config);
       });
     }
   }, [model, config, rebuild, clearTrace]);
 
   const handleResetAll = useCallback(() => {
     if (model) {
-      // Reset all filters to initial state
-      const resetFilter: FilterState = {
-        schemas: new Set(model.schemas.map(s => s.name)),
-        types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
-        searchTerm: '',
-        hideIsolated: true,
-        focusSchemas: new Set(),
-      };
-      setFilter(resetFilter);
+      const f = getResetFilter(model);
+      setFilter(f);
       clearTrace(() => {
-        rebuild(model, resetFilter, config);
+        rebuild(model, f, config);
       });
     }
   }, [model, config, rebuild, clearTrace]);
@@ -226,7 +217,7 @@ export function App() {
     (term: string) => {
       setFilter((prev) => ({ ...prev, searchTerm: term }));
     },
-    [model, config, rebuild]
+    []
   );
 
   const handleToggleIsolated = useCallback(() => {
@@ -298,9 +289,6 @@ export function App() {
       return next;
     });
   }, [model, config, rebuild]);
-
-  // Cleanup debounce timer
-  useEffect(() => () => clearTimeout(searchTimer.current), []);
 
   // Escape key: end trace
   useEffect(() => {

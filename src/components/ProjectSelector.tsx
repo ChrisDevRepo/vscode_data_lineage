@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { DacpacModel, ExtensionConfig } from '../engine/types';
 import type { StatusMessage, DacpacLoaderState } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
@@ -23,6 +24,7 @@ const STATUS_ICONS: Record<StatusMessage['type'], string> = {
 
 export function ProjectSelector({ onVisualize, config, loader }: ProjectSelectorProps) {
   const vscodeApi = useVsCode();
+  const [logoFailed, setLogoFailed] = useState(false);
   const {
     model, selectedSchemas, isLoading, fileName, status,
     fileRef, handleFileChange, loadDemo, toggleSchema, selectAllSchemas, clearAllSchemas,
@@ -42,19 +44,16 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
       <div className="w-full max-w-md ln-panel" style={{ borderRadius: 6 }}>
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 ln-border-bottom">
-          <img
-            src={(window as any).LOGO_URI || '../images/logo.png'}
-            alt="Data Lineage Viz"
-            className="h-10 w-auto"
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.style.display = 'none';
-              const fallback = document.createElement('span');
-              fallback.className = 'text-sm font-semibold ln-text';
-              fallback.textContent = 'Data Lineage Viz';
-              target.parentElement?.appendChild(fallback);
-            }}
-          />
+          {logoFailed ? (
+            <span className="text-sm font-semibold ln-text">Data Lineage Viz</span>
+          ) : (
+            <img
+              src={(window as any).LOGO_URI || '../images/logo.png'}
+              alt="Data Lineage Viz"
+              className="h-10 w-auto"
+              onError={() => setLogoFailed(true)}
+            />
+          )}
         </div>
 
         <div className="px-4 py-4 space-y-4">

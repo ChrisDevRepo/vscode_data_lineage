@@ -36,7 +36,7 @@ skip_keywords:                      # Ignore matches equal to these
 |----------|---------|----------------|
 | `preprocessing` | Clean SQL before extraction (strip comments, strings) | N/A |
 | `source` | Tables the SP reads from (FROM, JOIN, APPLY) | table -> SP |
-| `target` | Tables the SP writes to (INSERT, UPDATE, DELETE) | SP -> table |
+| `target` | Tables the SP writes to (INSERT, UPDATE, MERGE) | SP -> table |
 | `exec` | Procedures called via EXEC/EXECUTE | SP -> called_SP |
 
 Preprocessing rules require a `replacement` field. All other rules use capture group 1 as the object reference.
@@ -50,7 +50,7 @@ Preprocessing rules require a `replacement` field. All other rules use capture g
 | `extract_sources_ansi` | source | FROM / JOIN (all variants) |
 | `extract_sources_tsql_apply` | source | CROSS APPLY / OUTER APPLY |
 | `extract_merge_using` | source | MERGE ... USING source |
-| `extract_targets_dml` | target | INSERT INTO / UPDATE / MERGE INTO / DELETE FROM |
+| `extract_targets_dml` | target | INSERT INTO / UPDATE / MERGE INTO |
 | `extract_select_into` | target | SELECT INTO |
 | `extract_ctas` | target | CREATE TABLE ... AS SELECT |
 | `extract_sp_calls` | exec | EXEC / EXECUTE |

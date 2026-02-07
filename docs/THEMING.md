@@ -33,7 +33,7 @@ VS Code theme tokens (--vscode-*)
 
 ## Fixed Type Colors
 
-Node type colors are intentionally fixed across all themes for quick recognition:
+Node type colors are intentionally fixed (not theme-dependent) for quick recognition:
 
 | Type | Color | Hex |
 |------|-------|-----|
@@ -43,11 +43,11 @@ Node type colors are intentionally fixed across all themes for quick recognition
 | Function | Orange | `#f97316` |
 | External | Purple | `#9333ea` |
 
-Schema colors use deterministic hashing (Tableau 10 palette) — never hardcode.
+Schema colors use deterministic hashing — never hardcode.
 
 ## Rules
 
-1. Use `var(--ln-*)` or `var(--vscode-*)` — never hardcode colors
+1. Use `var(--ln-*)` or `var(--vscode-*)` for **theme colors** — never hardcode
 2. Always provide fallback values: `var(--vscode-editor-background, #ffffff)`
 3. Test with Light+, Dark+, High Contrast Dark, and High Contrast Light
 4. High contrast themes must have explicit `--vscode-contrastBorder` borders

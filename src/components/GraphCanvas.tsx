@@ -12,7 +12,6 @@ import {
   type NodeMouseHandler,
   type OnNodesChange,
   type OnEdgesChange,
-  BackgroundVariant,
   Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -134,9 +133,10 @@ export function GraphCanvas({
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
   useEffect(() => {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       fitView({ padding: 0.15, duration: 800 });
     }, 100);
+    return () => clearTimeout(timer);
   }, [flowNodes, fitView]);
 
   // ── Local state: source of truth for positions (survives highlight changes) ──
@@ -208,7 +208,7 @@ export function GraphCanvas({
         ...edge,
         style: {
           ...edge.style,
-          stroke: isConnected ? '#3b82f6' : edge.style?.stroke,
+          stroke: isConnected ? 'var(--ln-focus-border)' : edge.style?.stroke,
           strokeWidth: isConnected ? 1.8 : edge.style?.strokeWidth || 0.8,
           opacity: isConnected ? 1 : 0.6,
         },
@@ -319,10 +319,7 @@ export function GraphCanvas({
               nodeOrigin={[0, 0] as [number, number]}
               proOptions={{ hideAttribution: true }}
             >
-              <Background 
-                gap={16} 
-                color="#a1a1aa"
-              />
+              <Background gap={16} />
               <Controls showInteractive={true} position="bottom-left" />
               {isDetailSearchOpen && onToggleDetailSearch && (
                 <Panel position="top-left">

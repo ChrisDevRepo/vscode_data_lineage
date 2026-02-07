@@ -94,9 +94,9 @@ export function traceNode(
   nodeId: string,
   mode: 'upstream' | 'downstream' | 'both'
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  const nodeIds = new Set<string>([nodeId]);
+  if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
-  if (!graph.hasNode(nodeId)) return { nodeIds, edgeIds: new Set() };
+  const nodeIds = new Set<string>([nodeId]);
 
   const upstreamDepths = new Map<string, number>();
   const downstreamDepths = new Map<string, number>();
@@ -129,9 +129,9 @@ export function traceNodeWithLevels(
   upstreamLevels: number,
   downstreamLevels: number
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  const nodeIds = new Set<string>([nodeId]);
+  if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
-  if (!graph.hasNode(nodeId)) return { nodeIds, edgeIds: new Set() };
+  const nodeIds = new Set<string>([nodeId]);
 
   const upstreamDepths = new Map<string, number>();
   const downstreamDepths = new Map<string, number>();
@@ -262,6 +262,21 @@ export function getGraphMetrics(graph: Graph) {
   };
 }
 
+// ─── Bidirectional Canonical Direction ────────────────────────────────────────
+
+/** For bidirectional edges, pick canonical direction based on write semantics:
+ *  procedure/function → table/view (output direction), else alphabetical. */
+function canonicalDirection(graph: Graph, a: string, b: string): [string, string] {
+  const aType = graph.getNodeAttributes(a).type;
+  const bType = graph.getNodeAttributes(b).type;
+  const aIsTransformer = aType === 'procedure' || aType === 'function';
+  const bIsTransformer = bType === 'procedure' || bType === 'function';
+
+  if (aIsTransformer && !bIsTransformer) return [a, b]; // a (proc) → b (table)
+  if (bIsTransformer && !aIsTransformer) return [b, a]; // b (proc) → a (table)
+  return a < b ? [a, b] : [b, a];                       // fallback: alphabetical
+}
+
 // ─── Edge Building (bidirectional detection) ────────────────────────────────
 
 function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
@@ -281,10 +296,8 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
 
     if (graph.hasEdge(edge.target, edge.source) && !consumed.has(rev)) {
       // Bidirectional — single edge with markers on both ends
-      // Use canonical order (alphabetical) so dagre layout direction is consistent
-      const [canonSource, canonTarget] = edge.source < edge.target
-        ? [edge.source, edge.target]
-        : [edge.target, edge.source];
+      // Use write direction (proc→table) so layout places target on output side
+      const [canonSource, canonTarget] = canonicalDirection(graph, edge.source, edge.target);
       consumed.add(fwd);
       consumed.add(rev);
       result.push({
@@ -293,15 +306,15 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         target: canonTarget,
         type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
         label: '⇄',
-        labelStyle: { fontSize: 16, fill: '#94a3b8', fontWeight: 700 },
+        labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
         labelBgStyle: { fill: 'transparent' },
         labelBgPadding: [4, 4] as [number, number],
         style: {
-          stroke: '#94a3b8',
+          stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,
         },
-        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: '#94a3b8' },
-        markerStart: { type: 'arrow' as const, width: 16, height: 16, color: '#94a3b8' },
+        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
+        markerStart: { type: 'arrow' as const, width: 16, height: 16, color: 'var(--ln-edge-color)' },
       });
     } else {
       // Unidirectional
@@ -312,10 +325,10 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         target: edge.target,
         type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
         style: {
-          stroke: '#94a3b8',
+          stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,
         },
-        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: '#94a3b8' },
+        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
       });
     }
   }
@@ -332,8 +345,8 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
 
   graph.forEachEdge((_edge, _attrs, source, target) => {
     if (graph.hasEdge(target, source)) {
-      // Bidirectional — canonical alphabetical order consistent with buildFlowEdges
-      const [s, t] = source < target ? [source, target] : [target, source];
+      // Bidirectional — write direction (proc→table) consistent with buildFlowEdges
+      const [s, t] = canonicalDirection(graph, source, target);
       const key = `${s}→${t}`;
       if (!seen.has(key)) { seen.add(key); edges.push({ source: s, target: t }); }
     } else {

@@ -65,8 +65,16 @@
   --ln-validation-info-bg: var(--vscode-inputValidation-infoBackground, rgba(0, 120, 255, 0.08));
   --ln-validation-info-border: var(--vscode-inputValidation-infoBorder, #007acc);
 
+  /* Node colors */
+  --ln-node-bg: rgba(255, 255, 255, 0.95);
+  --ln-node-border: rgba(0, 0, 0, 0.15);
+
+  /* Edge colors */
+  --ln-edge-color: #94a3b8;
+
   /* Shadows */
   --ln-node-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.05);
   --ln-dropdown-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
 
   /* Wizard (start screen) colors */
@@ -82,17 +90,30 @@
 
 /* Dark Theme Overrides */
 body[data-vscode-theme-kind="vscode-dark"] {
+  --ln-node-bg: rgba(30, 30, 30, 0.95);
+  --ln-node-border: rgba(255, 255, 255, 0.2);
   --ln-node-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.15);
   --ln-dropdown-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
   --ln-hover-bg: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
 }
 
 /* High Contrast Theme Overrides */
-body[data-vscode-theme-kind="vscode-high-contrast"],
-body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+body[data-vscode-theme-kind="vscode-high-contrast"] {
+  --ln-node-bg: var(--vscode-editor-background, #000000);
+  --ln-node-border: var(--vscode-contrastBorder, #6fc3df);
   --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
+  --ln-node-shadow-dimmed: none;
   --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
   --ln-border: var(--vscode-contrastBorder, #6fc3df);
+}
+body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+  --ln-node-bg: var(--vscode-editor-background, #ffffff);
+  --ln-node-border: var(--vscode-contrastBorder, #0f4a85);
+  --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
+  --ln-node-shadow-dimmed: none;
+  --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
+  --ln-border: var(--vscode-contrastBorder, #0f4a85);
 }
 
 * {
@@ -201,6 +222,45 @@ body {
 .react-flow__background {
   background: var(--ln-bg) !important;
 }
+.react-flow__background pattern circle {
+  fill: var(--ln-fg-dim) !important;
+}
+
+/* Node handle dots */
+.ln-handle {
+  background: var(--ln-fg-dim) !important;
+}
+
+/* Error boundary */
+.ln-error-boundary {
+  padding: 20px;
+  margin: 20px;
+  border: 2px solid var(--ln-validation-error-border);
+  border-radius: 8px;
+  background: var(--ln-bg);
+  color: var(--ln-fg);
+  font-family: monospace;
+}
+.ln-error-boundary h2 {
+  color: var(--ln-validation-error-border);
+  margin-top: 0;
+}
+.ln-error-boundary p {
+  color: var(--ln-fg-muted);
+}
+.ln-error-boundary summary {
+  cursor: pointer;
+  color: var(--ln-text-link);
+}
+.ln-error-boundary pre {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--ln-bg-secondary);
+  border-radius: 4px;
+  overflow: auto;
+  font-size: 12px;
+  color: var(--ln-fg);
+}
 
 /* ─── Component Classes ─────────────────────────────────────────────────── */
 
@@ -293,8 +353,7 @@ body {
   background: var(--ln-hover-bg);
 }
 .ln-list-item-selected {
-  background: var(--ln-selection-bg);
-  color: var(--ln-button-fg);
+  background: var(--ln-hover-bg);
 }
 
 /* Dividers */

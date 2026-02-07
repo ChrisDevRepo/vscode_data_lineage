@@ -79,9 +79,9 @@ rules:
     enabled: true
     priority: 6
     category: target
-    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?|DELETE\\s+(?:FROM\\s+)?)((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)"
+    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)"
     flags: gi
-    description: Extract target tables from INSERT/UPDATE/MERGE/DELETE
+    description: Extract target tables from INSERT/UPDATE/MERGE (DELETE/TRUNCATE excluded — not lineage)
 
   - name: extract_select_into                       # also in DEFAULT_RULES
     enabled: true

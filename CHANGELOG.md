@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.4] - 2026-02-07
+
+### Fixed
+- **Security** — Upgraded XML parser dependency to address CVE-2026-25128
+- **DDL Viewer** — Multiple panels now show correct DDL content independently
+- **Parser** — Short table/schema names (e.g. `hr`, `dim`, `api`) no longer silently dropped
+- **Theming** — Full support for Light+, Dark+, High Contrast Dark, High Contrast Light
+- **Config** — Invalid exclude patterns now logged to Output window instead of silently ignored
+- **Trace** — Fixed edge case when tracing a missing node
+- Bidirectional edge layout now uses write direction
+- Async file loading in extension host
+- Various React rendering and cleanup fixes
+
+### Removed
+- Dead code cleanup
+
 ## [0.7.3] - 2026-02-03
 
 ### Fixed

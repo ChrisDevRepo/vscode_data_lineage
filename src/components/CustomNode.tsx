@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { TYPE_COLORS, TYPE_LABELS, isDarkTheme, getSchemaColor } from '../utils/schemaColors';
+import { TYPE_COLORS, TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
 import type { ObjectType } from '../engine/types';
 
 interface CustomNodeData {
@@ -16,11 +16,13 @@ interface CustomNodeData {
 
 function CustomNodeComponent({ data }: { data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.external;
-  const dark = isDarkTheme();
   const schemaColor = getSchemaColor(data.schema);
   const dimmed = data.dimmed === true;
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
   const isYellowHighlight = data.highlighted === 'yellow';
+
+  // Fixed highlight colors (intentionally same across all themes per THEMING.md)
+  const highlightColor = isYellowHighlight ? '#eab308' : '#2563eb';
 
   const tooltipText = [
     `${data.schema}.${data.label}`,
@@ -33,40 +35,36 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
       className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-tooltip"
       data-tooltip={tooltipText}
       style={{
-        borderColor: highlighted
-          ? (isYellowHighlight ? '#eab308' : '#2563eb')
-          : (dark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'),
-        borderLeftColor: highlighted
-          ? (isYellowHighlight ? '#eab308' : '#2563eb')
-          : schemaColor,
+        borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
+        borderLeftColor: highlighted ? highlightColor : schemaColor,
         borderLeftWidth: 6,
-        backgroundColor: dark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)',
+        backgroundColor: 'var(--ln-node-bg)',
         opacity: dimmed ? 0.25 : 1,
         width: 180,
         height: 70,
         boxShadow: highlighted
-          ? (isYellowHighlight 
+          ? (isYellowHighlight
               ? '0 0 0 4px rgba(234,179,8,0.4), 0 8px 20px rgba(234,179,8,0.3)'
               : '0 0 0 4px rgba(37,99,235,0.4), 0 8px 20px rgba(37,99,235,0.3)')
           : dimmed
-          ? '0 1px 2px rgba(0,0,0,0.05)'
+          ? 'var(--ln-node-shadow-dimmed)'
           : 'var(--ln-node-shadow)',
         transform: highlighted ? 'scale(1.05)' : 'scale(1)',
         zIndex: highlighted ? 1000 : 1,
       }}
     >
-      <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-slate-400" />
+      <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
 
       <div className="px-3 pt-1 pb-1 flex flex-col h-full">
         {/* Type symbol and stats on same line */}
         <div className="flex items-center justify-between gap-1.5 whitespace-nowrap" style={{ lineHeight: 1 }}>
           <span
             className="text-base font-medium whitespace-nowrap leading-none"
-            style={{ color: dark ? '#9ca3af' : '#6b7280' }}
+            style={{ color: 'var(--ln-fg-muted)' }}
           >
             {style.icon}
           </span>
-          <span className="text-[9px] flex-shrink-0 whitespace-nowrap" style={{ color: dark ? '#9ca3af' : '#4b5563' }}>
+          <span className="text-[9px] flex-shrink-0 whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)' }}>
             {data.inDegree}↓ {data.outDegree}↑
           </span>
         </div>
@@ -74,9 +72,7 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
         {/* Object name */}
         <div
           className="text-[11px] overflow-hidden text-ellipsis whitespace-nowrap mt-0.5"
-          style={{
-            color: dark ? '#ffffff' : '#1f2937',
-          }}
+          style={{ color: 'var(--ln-fg)' }}
         >
           {data.label}
         </div>
@@ -84,13 +80,13 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
         {/* Schema name */}
         <div
           className="text-[9px] overflow-hidden text-ellipsis whitespace-nowrap"
-          style={{ color: dark ? '#9ca3af' : '#6b7280', lineHeight: 1.1 }}
+          style={{ color: 'var(--ln-fg-muted)', lineHeight: 1.1 }}
         >
           {data.schema}
         </div>
       </div>
 
-      <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-slate-400" />
+      <Handle type="source" position={Position.Right} className="!w-2 !h-2 ln-handle" />
     </div>
   );
 }

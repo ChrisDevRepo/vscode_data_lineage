@@ -408,8 +408,15 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
   }
   if (val) {
     // Decode XML numeric character references that may not be resolved by the parser
-    val = val.replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-    val = val.replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)));
+    // Validate code point range (0–0x10FFFF) to prevent RangeError DoS
+    val = val.replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => {
+      const cp = parseInt(hex, 16);
+      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
+    });
+    val = val.replace(/&#(\d+);/g, (_, dec) => {
+      const cp = parseInt(dec, 10);
+      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
+    });
   }
   return val;
 }

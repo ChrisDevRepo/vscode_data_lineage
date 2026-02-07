@@ -20,8 +20,8 @@ Bug reports are welcome. Feature requests are not being accepted — this projec
 ## Development Setup
 
 ```bash
-git clone https://github.com/ChrisDevRepo/data_lineage.git
-cd data_lineage
+git clone https://github.com/ChrisDevRepo/vscode_data_lineage.git
+cd vscode_data_lineage
 npm install
 npm run build
 ```

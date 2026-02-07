@@ -52,7 +52,7 @@ Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `custome
 
 ## Message Passing (Extension <-> Webview)
 
-Key messages: `ready`, `config-only`, `show-ddl`, `update-ddl`, `go-to-source`, `log`, `error`, `themeChanged`
+Key messages: `ready`, `config-only`, `show-ddl`, `update-ddl`, `log`, `error`, `themeChanged`
 
 ## SQL Parse Rules
 
