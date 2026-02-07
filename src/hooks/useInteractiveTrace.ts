@@ -1,12 +1,13 @@
 import { useState, useCallback, useMemo } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
+import type { CustomNodeData } from '../components/CustomNode';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow } from '../engine/graphBuilder';
 
 interface UseInteractiveTraceReturn {
   trace: TraceState;
-  tracedNodes: FlowNode[];
+  tracedNodes: FlowNode<CustomNodeData>[];
   tracedEdges: FlowEdge[];
   startTraceConfig: (nodeId: string) => void;
   startTraceImmediate: (nodeId: string) => void;
@@ -27,7 +28,7 @@ const createInitialTrace = (config: ExtensionConfig): TraceState => ({
 
 export function useInteractiveTrace(
   graph: Graph | null,
-  flowNodes: FlowNode[],
+  flowNodes: FlowNode<CustomNodeData>[],
   flowEdges: FlowEdge[],
   config: ExtensionConfig = DEFAULT_CONFIG
 ): UseInteractiveTraceReturn {
@@ -108,13 +109,13 @@ export function useInteractiveTrace(
 
   // Memoize trace application to avoid re-rendering all nodes
   const { tracedNodes, tracedEdges } = useMemo(
-    () => {
+    (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[] } => {
       if (trace.mode === 'none' || trace.mode === 'configuring') {
         return { tracedNodes: flowNodes, tracedEdges: flowEdges };
       }
-      
+
       const { nodes, edges } = applyTraceToFlow(flowNodes, flowEdges, trace, config);
-      return { tracedNodes: nodes, tracedEdges: edges };
+      return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges };
     },
     [flowNodes, flowEdges, trace, config]
   );

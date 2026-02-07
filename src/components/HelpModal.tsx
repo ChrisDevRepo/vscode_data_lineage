@@ -118,11 +118,11 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span>Configure upstream/downstream levels or use "All" for unlimited</span>
+                <span><strong>Depth control:</strong> configure upstream/downstream levels or use "All" for unlimited</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span>Graph filters to show only traced connections</span>
+                <span><strong>Graph filter:</strong> show only traced connections</span>
               </div>
             </div>
           </section>
@@ -153,7 +153,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span>Click another node to update the bar; click ✕ to close</span>
+                <span><strong>Tip:</strong> click another node to update the bar; click ✕ to close</span>
               </div>
             </div>
           </section>
@@ -180,7 +180,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
 
         <div className="mt-8 pt-6 flex items-center justify-between ln-border-top">
           <div className="text-xs ln-text-muted">
-            <p className="mb-1">Data Lineage Viz v0.7.3</p>
+            <p className="mb-1">Data Lineage Viz v0.7.4</p>
             <p>SQL Server Database Project Dependency Viewer</p>
           </div>
           <div className="flex items-center gap-2">

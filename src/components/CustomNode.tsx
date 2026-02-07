@@ -3,7 +3,7 @@ import { Handle, Position } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
 import type { ObjectType } from '../engine/types';
 
-interface CustomNodeData {
+export type CustomNodeData = {
   label: string;
   schema: string;
   fullName: string;
@@ -12,10 +12,10 @@ interface CustomNodeData {
   outDegree: number;
   dimmed?: boolean;
   highlighted?: boolean | 'yellow';
-}
+};
 
 function CustomNodeComponent({ data }: { data: CustomNodeData }) {
-  const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.external;
+  const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
   const schemaColor = getSchemaColor(data.schema);
   const dimmed = data.dimmed === true;
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';

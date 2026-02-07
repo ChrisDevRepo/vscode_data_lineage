@@ -609,13 +609,13 @@ class QuickActionsProvider implements vscode.TreeDataProvider<QuickAction> {
 
 class QuickAction extends vscode.TreeItem {
   constructor(
-    public readonly label: string,
-    public readonly command: string,
-    public readonly iconPath?: vscode.ThemeIcon
+    label: string,
+    commandId: string,
+    iconPath?: vscode.ThemeIcon
   ) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.command = {
-      command: command,
+      command: commandId,
       title: label,
     };
     this.iconPath = iconPath;

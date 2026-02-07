@@ -23,12 +23,9 @@ interface SearchResult {
 const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   procedure: 'Procedures',
   view: 'Views',
-  'inline-function': 'Functions',
-  'scalar-function': 'Functions',
-  'table-function': 'Functions',
 };
 
-const SEARCHABLE_TYPES = new Set(['procedure', 'view', 'inline-function', 'scalar-function', 'table-function']);
+const SEARCHABLE_TYPES = new Set<ObjectType>(['procedure', 'view']);
 
 function buildSnippet(body: string, term: string): string {
   const lower = body.toLowerCase();

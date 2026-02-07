@@ -17,7 +17,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
 
-import { CustomNode } from './CustomNode';
+import { CustomNode, type CustomNodeData } from './CustomNode';
 import { Legend } from './Legend';
 import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner } from './TracedFilterBanner';
@@ -26,12 +26,10 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel } from '../engine/types';
 
-const nodeTypes: NodeTypes = {
-  lineageNode: CustomNode as React.ComponentType,
-};
+const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
 
 interface GraphCanvasProps {
-  flowNodes: FlowNode[];
+  flowNodes: FlowNode<CustomNodeData>[];
   flowEdges: FlowEdge[];
   trace: TraceState;
   filter: FilterState;
@@ -140,7 +138,7 @@ export function GraphCanvas({
   }, [flowNodes, fitView]);
 
   // ── Local state: source of truth for positions (survives highlight changes) ──
-  const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
+  const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
 
   // Sync from upstream ONLY when the graph data itself changes (rebuild/filter/trace)
@@ -153,7 +151,7 @@ export function GraphCanvas({
     setLocalEdges(flowEdges);
   }, [flowEdges]);
 
-  const onNodesChange: OnNodesChange = useCallback(
+  const onNodesChange: OnNodesChange<FlowNode<CustomNodeData>> = useCallback(
     (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds)),
     []
   );
@@ -192,7 +190,7 @@ export function GraphCanvas({
         data: {
           ...node.data,
           highlighted: isHighlighted ? 'yellow' : node.data.highlighted,
-          dimmed: shouldBeDimmed,
+          dimmed: !!shouldBeDimmed,
         }
       };
     });

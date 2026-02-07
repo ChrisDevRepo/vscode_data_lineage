@@ -457,7 +457,7 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
       info = {
         name: node.schema,
         nodeCount: 0,
-        types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 },
+        types: { table: 0, view: 0, procedure: 0, function: 0 },
       };
       map.set(node.schema, info);
     }
