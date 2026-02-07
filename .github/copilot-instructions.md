@@ -48,6 +48,9 @@ Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `custome
 - Never hardcode CSS colors — use `var(--ln-*)` or `var(--vscode-*)` custom properties
 - Graph traversal uses graphology `bfsFromNode` — no manual BFS
 - Layout uses shared `dagreLayout()` helper
+- BFS must be pure — callbacks use only edges, nodes, and direction. No business logic or semantic filtering inside BFS callbacks. Depth limits control trace scope.
+- Bidirectional connections = two antiparallel directed edges (Table→SP for read, SP→Table for write). React Flow merges them into ⇄ display via `buildFlowEdges()`.
+- **Co-writer post-filter**: When a SP both reads and writes the same table, BFS upstream finds all other writers to that table (siblings). These are co-writers, not true upstream producers. `filterCoWriters()` runs as post-processing on the BFS result subset — if the origin writes to a table, nodes that only write (no read) to that same table are excluded. Bidirectional nodes (read+write) are kept. This follows the input/output separation pattern used by Apache Atlas and OpenMetadata.
 - Settings prefix: `dataLineageViz`
 
 ## Message Passing (Extension <-> Webview)

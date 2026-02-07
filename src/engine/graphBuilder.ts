@@ -87,6 +87,52 @@ export function buildGraph(model: DacpacModel, config: ExtensionConfig = DEFAULT
   return { flowNodes, flowEdges, graph };
 }
 
+/** Remove co-writers from BFS results.
+ *  A co-writer is a node that writes to a table the origin also writes to,
+ *  but does NOT read from that table.  These are siblings, not upstream. */
+function filterCoWriters(
+  graph: Graph,
+  originId: string,
+  nodeIds: Set<string>,
+  edgeIds: Set<string>
+): { nodeIds: Set<string>; edgeIds: Set<string> } {
+  // 1. Find tables the origin writes to (outbound body edges to table/view nodes)
+  const writeTargets = new Set<string>();
+  graph.forEachOutboundEdge(originId, (edge, attrs, _src, target) => {
+    const targetType = graph.getNodeAttribute(target, 'type');
+    if (attrs.type === 'body' && (targetType === 'table' || targetType === 'view')) {
+      writeTargets.add(target);
+    }
+  });
+  if (writeTargets.size === 0) return { nodeIds, edgeIds };
+
+  // 2. Identify co-writers: write to same table but don't read from it
+  const excluded = new Set<string>();
+  for (const nid of nodeIds) {
+    if (nid === originId) continue;
+    for (const table of writeTargets) {
+      if (graph.hasEdge(nid, table) && !graph.hasEdge(table, nid)) {
+        excluded.add(nid);
+        break;
+      }
+    }
+  }
+  if (excluded.size === 0) return { nodeIds, edgeIds };
+
+  // 3. Remove excluded nodes and their edges
+  const filteredNodes = new Set<string>();
+  for (const nid of nodeIds) {
+    if (!excluded.has(nid)) filteredNodes.add(nid);
+  }
+  const filteredEdges = new Set<string>();
+  for (const eid of edgeIds) {
+    const src = graph.source(eid);
+    const tgt = graph.target(eid);
+    if (filteredNodes.has(src) && filteredNodes.has(tgt)) filteredEdges.add(eid);
+  }
+  return { nodeIds: filteredNodes, edgeIds: filteredEdges };
+}
+
 // ─── Trace Logic ────────────────────────────────────────────────────────────
 
 export function traceNode(
@@ -116,7 +162,8 @@ export function traceNode(
     }, { mode: 'outbound' });
   }
 
-  return { nodeIds, edgeIds: collectTraceEdges(graph, upstreamDepths, downstreamDepths) };
+  const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
+  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
 }
 
 /**
@@ -154,7 +201,8 @@ export function traceNodeWithLevels(
     }, { mode: 'outbound' });
   }
 
-  return { nodeIds, edgeIds: collectTraceEdges(graph, upstreamDepths, downstreamDepths) };
+  const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
+  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
 }
 
 export function applyTraceToFlow(

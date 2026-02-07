@@ -478,6 +478,77 @@ function testTraceNoSiblings() {
   assert(!upOnly.edgeIds.has('X→C1'), 'UpOnly: X→C1 excluded (no downstream)');
 }
 
+function testCoWriterFilter() {
+  console.log('\n── Trace: Co-Writer Filter ──');
+
+  const Graph = require('graphology');
+  const graph = new Graph({ type: 'directed', multi: false });
+
+  // Graph models: Case3 reads+writes Final, Case1/Case4 only write Final,
+  //               Case2 reads+writes Final (bidirectional), Case0 reads Final,
+  //               Case3 reads Country, spLoad writes Country
+  for (const id of ['Case3', 'Final', 'Country', 'Case1', 'Case2', 'Case4', 'Case0', 'spLoad']) {
+    graph.addNode(id, { type: id.startsWith('Case') || id === 'spLoad' ? 'procedure' : 'table' });
+  }
+  // Case3 bidirectional with Final
+  graph.addEdgeWithKey('Final→Case3', 'Final', 'Case3', { type: 'body' });   // read
+  graph.addEdgeWithKey('Case3→Final', 'Case3', 'Final', { type: 'body' });   // write
+  // Case3 reads Country
+  graph.addEdgeWithKey('Country→Case3', 'Country', 'Case3', { type: 'body' });
+  // Case1 only writes Final (pure co-writer)
+  graph.addEdgeWithKey('Case1→Final', 'Case1', 'Final', { type: 'body' });
+  // Case4 only writes Final (pure co-writer)
+  graph.addEdgeWithKey('Case4→Final', 'Case4', 'Final', { type: 'body' });
+  // Case2 bidirectional with Final (reads + writes)
+  graph.addEdgeWithKey('Final→Case2', 'Final', 'Case2', { type: 'body' });
+  graph.addEdgeWithKey('Case2→Final', 'Case2', 'Final', { type: 'body' });
+  // Case0 reads Final (downstream)
+  graph.addEdgeWithKey('Final→Case0', 'Final', 'Case0', { type: 'body' });
+  // spLoad writes Country (upstream)
+  graph.addEdgeWithKey('spLoad→Country', 'spLoad', 'Country', { type: 'body' });
+
+  // Trace from Case3, 2 levels up and down
+  const result = traceNodeWithLevels(graph, 'Case3', 2, 2);
+
+  // Co-writers (only write, no read) should be EXCLUDED
+  assert(!result.nodeIds.has('Case1'), 'Co-writer Case1 excluded');
+  assert(!result.nodeIds.has('Case4'), 'Co-writer Case4 excluded');
+
+  // Bidirectional (read+write) should be KEPT
+  assert(result.nodeIds.has('Case2'), 'Bidirectional Case2 kept');
+
+  // Downstream reader should be KEPT
+  assert(result.nodeIds.has('Case0'), 'Downstream Case0 kept');
+
+  // Upstream writer to different table should be KEPT
+  assert(result.nodeIds.has('spLoad'), 'Upstream spLoad kept (writes Country, not a writeTarget)');
+
+  // Tables should be KEPT
+  assert(result.nodeIds.has('Final'), 'Table Final kept');
+  assert(result.nodeIds.has('Country'), 'Table Country kept');
+
+  // Edges to co-writers should be EXCLUDED
+  assert(!result.edgeIds.has('Case1→Final'), 'Co-writer edge Case1→Final excluded');
+  assert(!result.edgeIds.has('Case4→Final'), 'Co-writer edge Case4→Final excluded');
+
+  // Test unlimited trace too
+  const unlimited = traceNode(graph, 'Case3', 'both');
+  assert(!unlimited.nodeIds.has('Case1'), 'Unlimited: Co-writer Case1 excluded');
+  assert(!unlimited.nodeIds.has('Case4'), 'Unlimited: Co-writer Case4 excluded');
+  assert(unlimited.nodeIds.has('Case2'), 'Unlimited: Bidirectional Case2 kept');
+  assert(unlimited.nodeIds.has('spLoad'), 'Unlimited: Upstream spLoad kept');
+
+  // Test TABLE as origin — filter must be a no-op (tables don't write)
+  const tableTrace = traceNodeWithLevels(graph, 'Final', 2, 2);
+  assert(tableTrace.nodeIds.has('Case1'), 'TableOrigin: Case1 kept (writer)');
+  assert(tableTrace.nodeIds.has('Case2'), 'TableOrigin: Case2 kept (bidirectional)');
+  assert(tableTrace.nodeIds.has('Case3'), 'TableOrigin: Case3 kept (bidirectional)');
+  assert(tableTrace.nodeIds.has('Case4'), 'TableOrigin: Case4 kept (writer)');
+  assert(tableTrace.nodeIds.has('Case0'), 'TableOrigin: Case0 kept (reader)');
+  assert(!tableTrace.nodeIds.has('spLoad'), 'TableOrigin: spLoad excluded (depth 3, beyond level 2)');
+  assert(tableTrace.nodeIds.has('Country'), 'TableOrigin: Country kept');
+}
+
 async function testSynapseTrace() {
   console.log('\n── Synapse Dacpac: Trace No Siblings ──');
   const dacpacPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
@@ -628,6 +699,7 @@ async function main() {
     await testFiltering(model);
     testSqlBodyParser();
     testTraceNoSiblings();
+    testCoWriterFilter();
     await testSynapseTrace();
     // Skipped: testCase1Sql() - requires test/sql/case1.sql
     // Skipped: testCase1RealObjectResolution() - requires test/sql/case1.sql
