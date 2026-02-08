@@ -13,6 +13,8 @@ import {
   type OnNodesChange,
   type OnEdgesChange,
   Panel,
+  getNodesBounds,
+  getViewportForBounds,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
@@ -143,6 +145,59 @@ export function GraphCanvas({
     });
   }, [flowNodes, flowEdges, availableSchemas, filter.schemas]);
 
+  // Export current view as PNG (always light theme)
+  const handleExportPng = useCallback(async () => {
+    const { toPng } = await import('html-to-image');
+
+    const viewport = document.querySelector('.react-flow__viewport') as HTMLElement;
+    if (!viewport) return;
+
+    const bounds = getNodesBounds(flowNodes);
+    const padding = 60;
+    const imageW = bounds.width + padding * 2;
+    const imageH = bounds.height + padding * 2;
+    const vp = getViewportForBounds(bounds, imageW, imageH, 0.5, 2, padding);
+
+    // Force light theme for bright export
+    const body = document.body;
+    const prevTheme = body.dataset.vscodeThemeKind;
+    body.dataset.vscodeThemeKind = 'vscode-light';
+
+    // Wait a tick for CSS variables to recalculate
+    await new Promise(r => setTimeout(r, 50));
+
+    try {
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: '#ffffff',
+        width: imageW,
+        height: imageH,
+        style: {
+          width: `${imageW}px`,
+          height: `${imageH}px`,
+          transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`,
+        },
+        filter: (node: Element) => {
+          const el = node as HTMLElement;
+          if (el?.classList?.contains('react-flow__controls')) return false;
+          if (el?.classList?.contains('react-flow__attribution')) return false;
+          return true;
+        },
+      });
+
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = 'lineage.png';
+      a.click();
+    } finally {
+      // Restore original theme
+      if (prevTheme) {
+        body.dataset.vscodeThemeKind = prevTheme;
+      } else {
+        delete body.dataset.vscodeThemeKind;
+      }
+    }
+  }, [flowNodes]);
+
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
   useEffect(() => {
@@ -253,6 +308,7 @@ export function GraphCanvas({
         onBack={onBack}
         onOpenDdlViewer={onOpenDdlViewer}
         onExportDrawio={handleExportDrawio}
+        onExportPng={handleExportPng}
         hasHighlightedNode={!!highlightedNodeId}
         onToggleDetailSearch={onToggleDetailSearch}
         isDetailSearchOpen={isDetailSearchOpen}

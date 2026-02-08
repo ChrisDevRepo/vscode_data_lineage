@@ -50,8 +50,21 @@
   "homepage": "https://chrisdevrepo.github.io/vscode_data_lineage/",
   "main": "./out/extension.js",
   "contributes": {
-    "languages": [{ "id": "dacpac-sql", "aliases": ["DACPAC SQL"] }],
-    "grammars": [{ "language": "dacpac-sql", "scopeName": "source.dacpac-sql", "path": "./syntaxes/dacpac-sql.json" }],
+    "languages": [
+      {
+        "id": "dacpac-sql",
+        "aliases": [
+          "DACPAC SQL"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dacpac-sql",
+        "scopeName": "source.dacpac-sql",
+        "path": "./syntaxes/dacpac-sql.json"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -236,6 +249,7 @@
     "graphology": "^0.25.4",
     "graphology-traversal": "^0.3.1",
     "graphology-types": "^0.24.7",
+    "html-to-image": "^1.11.13",
     "js-yaml": "^4.1.0",
     "jszip": "^3.10.1",
     "react": "^19.0.0",

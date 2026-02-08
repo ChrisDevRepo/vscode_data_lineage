@@ -24,6 +24,7 @@ interface ToolbarProps {
   onBack: () => void;
   onOpenDdlViewer?: () => void;
   onExportDrawio?: () => void;
+  onExportPng?: () => void;
   hasHighlightedNode?: boolean;
   onExecuteSearch?: (name: string, schema?: string) => void;
   onStartTrace?: (nodeId: string) => void;
@@ -55,6 +56,7 @@ export const Toolbar = memo(function Toolbar({
   onBack,
   onOpenDdlViewer,
   onExportDrawio,
+  onExportPng,
   hasHighlightedNode = false,
   onExecuteSearch,
   onStartTrace,
@@ -64,6 +66,7 @@ export const Toolbar = memo(function Toolbar({
   metrics,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
   
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
@@ -227,22 +230,55 @@ export const Toolbar = memo(function Toolbar({
 
           <div className="w-px h-6 ln-divider" />
 
-          <Button onClick={onExportDrawio} variant="ghost" title="Export to Draw.io (.drawio)">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-5 h-5"
+          <div className="relative">
+            <Button
+              onClick={() => setIsExportOpen(!isExportOpen)}
+              variant="ghost"
+              title="Export"
+              style={isExportOpen ? { background: 'var(--vscode-toolbar-activeBackground)' } : undefined}
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
-              />
-            </svg>
-          </Button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-5 h-5"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                />
+              </svg>
+            </Button>
+
+            {isExportOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onMouseDown={() => setIsExportOpen(false)} />
+                <div className="absolute top-full right-0 mt-2 w-48 rounded-md shadow-lg z-30 py-1 ln-dropdown">
+                  <button
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors ln-list-item"
+                    onClick={() => { setIsExportOpen(false); onExportPng?.(); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a1.5 1.5 0 0 0 1.5-1.5V4.5a1.5 1.5 0 0 0-1.5-1.5H3.75a1.5 1.5 0 0 0-1.5 1.5v15a1.5 1.5 0 0 0 1.5 1.5Z" />
+                    </svg>
+                    Export as PNG
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors ln-list-item"
+                    onClick={() => { setIsExportOpen(false); onExportDrawio?.(); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                    </svg>
+                    Export as Draw.io
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
 
           <Button onClick={() => setIsHelpOpen(true)} variant="ghost" title="Help">
             <svg
