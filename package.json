@@ -249,7 +249,6 @@
     "graphology": "^0.25.4",
     "graphology-traversal": "^0.3.1",
     "graphology-types": "^0.24.7",
-    "html-to-image": "^1.11.13",
     "js-yaml": "^4.1.0",
     "jszip": "^3.10.1",
     "react": "^19.0.0",

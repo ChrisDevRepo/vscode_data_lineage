@@ -168,10 +168,6 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <div className="ml-7 space-y-2 text-sm ln-text-muted">
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span><strong>PNG:</strong> snapshot of the current graph in light theme with schema legend</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
                 <span><strong>Draw.io:</strong> editable <code>.drawio</code> file with colored nodes, edges, and schema legend</span>
               </div>
               <div className="flex items-start gap-2">

@@ -4,7 +4,6 @@
 
 ### Added
 - **Export to Draw.io** — Export the lineage graph as a `.drawio` file with schema-colored left bands, orthogonal curved edges, bidirectional markers, and a schema legend
-- **Export to PNG** — One-click PNG snapshot of the current view using React Flow viewport capture, always in light theme
 - **Copy Qualified Name** — Right-click any node to copy `[schema].[name]` to clipboard for quick use in SQL editors
 
 ### Fixed

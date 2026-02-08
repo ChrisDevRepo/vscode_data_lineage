@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -13,8 +13,6 @@ import {
   type OnNodesChange,
   type OnEdgesChange,
   Panel,
-  getNodesBounds,
-  getViewportForBounds,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
@@ -94,7 +92,6 @@ export function GraphCanvas({
   onCloseInfoBar,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
-  const graphContainerRef = useRef<HTMLDivElement>(null);
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -145,53 +142,6 @@ export function GraphCanvas({
       URL.revokeObjectURL(url);
     });
   }, [flowNodes, flowEdges, availableSchemas, filter.schemas]);
-
-  const handleExportPng = useCallback(async () => {
-    const { toPng } = await import('html-to-image');
-    const container = graphContainerRef.current;
-    if (!container) return;
-
-    const bounds = getNodesBounds(flowNodes);
-    const padding = 60;
-    const imageW = bounds.width + padding * 2;
-    const imageH = bounds.height + padding * 2;
-    const vp = getViewportForBounds(bounds, imageW, imageH, 0.5, 2, padding);
-
-    const body = document.body;
-    const prevTheme = body.dataset.vscodeThemeKind;
-    body.dataset.vscodeThemeKind = 'vscode-light';
-    await new Promise(r => setTimeout(r, 50));
-
-    const viewport = container.querySelector('.react-flow__viewport') as HTMLElement;
-    const prevTransform = viewport?.style.transform || '';
-    if (viewport) {
-      viewport.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
-    }
-
-    try {
-      const dataUrl = await toPng(container, {
-        backgroundColor: '#ffffff',
-        width: imageW,
-        height: imageH,
-        style: { width: `${imageW}px`, height: `${imageH}px` },
-        filter: (node: Element) => {
-          const el = node as HTMLElement;
-          if (el?.classList?.contains('react-flow__controls')) return false;
-          if (el?.classList?.contains('react-flow__attribution')) return false;
-          return true;
-        },
-      });
-
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = 'lineage.png';
-      a.click();
-    } finally {
-      if (viewport) viewport.style.transform = prevTransform;
-      if (prevTheme) body.dataset.vscodeThemeKind = prevTheme;
-      else delete body.dataset.vscodeThemeKind;
-    }
-  }, [flowNodes]);
 
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
@@ -303,7 +253,6 @@ export function GraphCanvas({
         onBack={onBack}
         onOpenDdlViewer={onOpenDdlViewer}
         onExportDrawio={handleExportDrawio}
-        onExportPng={handleExportPng}
         hasHighlightedNode={!!highlightedNodeId}
         onToggleDetailSearch={onToggleDetailSearch}
         isDetailSearchOpen={isDetailSearchOpen}
@@ -346,7 +295,7 @@ export function GraphCanvas({
         />
       )}
 
-      <div ref={graphContainerRef} className="flex-1 relative overflow-hidden">
+      <div className="flex-1 relative overflow-hidden">
         {flowNodes.length === 0 ? (
           <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--ln-fg-muted)' }}>
             No objects match current filters. Adjust type toggles or search term.
