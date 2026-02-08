@@ -21,7 +21,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # Engine tests
+npm test         # All tests (230 total)
 ```
 
 Press F5 to launch Extension Development Host.

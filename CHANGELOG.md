@@ -3,26 +3,18 @@
 ## [0.8.0] - 2026-02-08
 
 ### Added
-- **Parser** — Inline scalar UDF calls detected as data sources
-- **Parser** — EXEC with return variable (`@result = proc`) now captured
-- **Parser** — Type-aware edge direction for XML-only dependencies
-- **Tests** — 230 tests (123 syntactic parser + 107 integration)
-
-### Changed
-- **Parser** — Single-pass preprocessing (industry-standard "Best Regex Trick")
-- **Parser** — Bracket-aware identifier patterns across all extraction rules
+- **UDF Detection** — Inline scalar function calls now appear as dependencies in the graph
+- **EXEC Return Values** — Procedures called with `@result = proc` are now captured
+- **Smarter Edge Directions** — Dependencies that previously showed as undirected now have correct read/write arrows
 
 ### Fixed
-- **Security** — Upgraded XML parser dependency to address CVE-2026-25128
-- **Parser** — Comments inside string literals no longer break dependency extraction
-- **Parser** — Bracket-quoted names with special characters now parsed correctly
-- **Parser** — Short table/schema names (e.g. `hr`, `dim`, `api`) no longer silently dropped
+- **Security** — Upgraded XML parser dependency (CVE-2026-25128)
+- **Quoted Identifiers** — Bracket-quoted names with special characters now parsed correctly
+- **Short Names** — Short schema or table names (e.g. `hr`, `dim`, `api`) no longer silently dropped
 - **DDL Viewer** — Multiple panels now show correct DDL content independently
-- **Theming** — Full support for Light+, Dark+, High Contrast Dark, High Contrast Light
-- **Config** — Invalid exclude patterns now logged to Output window instead of silently ignored
-- **Trace** — Fixed edge case when tracing a missing node
-- Bidirectional edge layout now uses write direction
-- Various rendering and cleanup fixes
+- **Theming** — Full support for Light+, Dark+, High Contrast Dark, and High Contrast Light
+- **Exclude Patterns** — Invalid patterns now logged to the Output window instead of silently ignored
+- **Trace** — Fixed edge case when tracing a node not present in the graph
 
 ## [0.7.3] - 2026-02-03
 

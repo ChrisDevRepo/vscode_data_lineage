@@ -226,7 +226,7 @@
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
     "lint": "eslint src --ext ts,tsx",
-    "test": "tsx test/engine.test.ts",
+    "test": "tsx test/engine.test.ts && tsx test/parser-edge-cases.test.ts",
     "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
   },
   "dependencies": {
