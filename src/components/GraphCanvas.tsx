@@ -12,13 +12,12 @@ import {
   type NodeMouseHandler,
   type OnNodesChange,
   type OnEdgesChange,
-  BackgroundVariant,
   Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
 
-import { CustomNode } from './CustomNode';
+import { CustomNode, type CustomNodeData } from './CustomNode';
 import { Legend } from './Legend';
 import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner } from './TracedFilterBanner';
@@ -27,12 +26,10 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel } from '../engine/types';
 
-const nodeTypes: NodeTypes = {
-  lineageNode: CustomNode as React.ComponentType,
-};
+const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
 
 interface GraphCanvasProps {
-  flowNodes: FlowNode[];
+  flowNodes: FlowNode<CustomNodeData>[];
   flowEdges: FlowEdge[];
   trace: TraceState;
   filter: FilterState;
@@ -134,13 +131,14 @@ export function GraphCanvas({
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
   useEffect(() => {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       fitView({ padding: 0.15, duration: 800 });
     }, 100);
+    return () => clearTimeout(timer);
   }, [flowNodes, fitView]);
 
   // ── Local state: source of truth for positions (survives highlight changes) ──
-  const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
+  const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
 
   // Sync from upstream ONLY when the graph data itself changes (rebuild/filter/trace)
@@ -153,7 +151,7 @@ export function GraphCanvas({
     setLocalEdges(flowEdges);
   }, [flowEdges]);
 
-  const onNodesChange: OnNodesChange = useCallback(
+  const onNodesChange: OnNodesChange<FlowNode<CustomNodeData>> = useCallback(
     (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds)),
     []
   );
@@ -192,7 +190,7 @@ export function GraphCanvas({
         data: {
           ...node.data,
           highlighted: isHighlighted ? 'yellow' : node.data.highlighted,
-          dimmed: shouldBeDimmed,
+          dimmed: !!shouldBeDimmed,
         }
       };
     });
@@ -208,7 +206,7 @@ export function GraphCanvas({
         ...edge,
         style: {
           ...edge.style,
-          stroke: isConnected ? '#3b82f6' : edge.style?.stroke,
+          stroke: isConnected ? 'var(--ln-focus-border)' : edge.style?.stroke,
           strokeWidth: isConnected ? 1.8 : edge.style?.strokeWidth || 0.8,
           opacity: isConnected ? 1 : 0.6,
         },
@@ -319,10 +317,7 @@ export function GraphCanvas({
               nodeOrigin={[0, 0] as [number, number]}
               proOptions={{ hideAttribution: true }}
             >
-              <Background 
-                gap={16} 
-                color="#a1a1aa"
-              />
+              <Background gap={16} />
               <Controls showInteractive={true} position="bottom-left" />
               {isDetailSearchOpen && onToggleDetailSearch && (
                 <Panel position="top-left">

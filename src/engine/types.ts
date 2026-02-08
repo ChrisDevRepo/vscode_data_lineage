@@ -1,6 +1,6 @@
 // ─── Core Types ──────────────────────────────────────────────────────────────
 
-export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
+export type ObjectType = 'table' | 'view' | 'procedure' | 'function';
 
 export interface LineageNode {
   id: string;            // "[schema].[name]"

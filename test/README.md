@@ -3,27 +3,81 @@
 ## Running Tests
 
 ```bash
-npm test              # Run engine/parser tests
-npm run test:integration  # Run VS Code integration tests
+npm test                           # Run engine + parser edge-case tests
+npx tsx test/engine.test.ts        # Engine/integration tests only (107 tests)
+npx tsx test/parser-edge-cases.test.ts  # Syntactic parser tests only (123 tests)
+npm run test:integration           # VS Code webview integration tests
 ```
 
 ## Test Files
 
-| File | Purpose |
-|------|---------|
-| `engine.test.ts` | Parser baseline tests - validates SQL body parsing rules |
-| `webview.integration.test.ts` | VS Code webview integration tests |
-| `runTest.ts` | Test runner for VS Code extension tests |
-| `suite/index.ts` | Mocha test suite configuration |
+| File | Tests | Purpose |
+|------|-------|---------|
+| `engine.test.ts` | 107 | Engine integration: extraction, parsing, graph, trace, security, direction |
+| `parser-edge-cases.test.ts` | 123 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
+| `webview.integration.test.ts` | — | VS Code webview integration tests |
+| `runTest.ts` | — | Test runner for VS Code extension tests |
+| `suite/index.ts` | — | Mocha test suite configuration |
+| `compare-deps.ts` | — | Debug tool: compare XML BodyDependencies vs regex results per SP |
+
+## Syntactic Parser Tests (`parser-edge-cases.test.ts`)
+
+These tests verify every regex rule in `sqlBodyParser.ts` using synthetic SQL — no real dacpac data. They are the **primary regression guard** for parser changes. Each test calls `parseSqlBody()` directly and asserts exact sources/targets/execCalls.
+
+| Section | What it validates | Rule(s) tested |
+|---------|-------------------|----------------|
+| 1. Preprocessing | String/comment/bracket neutralization | `clean_sql` |
+| 2. Source extraction | FROM, JOIN variants, APPLY, MERGE USING | `extract_sources_ansi`, `extract_sources_tsql_apply`, `extract_merge_using` |
+| 3. Target extraction | INSERT, UPDATE, MERGE, CTAS, SELECT INTO | `extract_targets_dml`, `extract_ctas`, `extract_select_into` |
+| 4. EXEC calls | EXEC, EXECUTE, @var = proc, bare names | `extract_sp_calls` |
+| 5. UDF extraction | Inline scalar UDFs, false-positive guard | `extract_udf_calls` |
+| 6. CTE exclusion | CTE names excluded from sources | CTE helper |
+| 7. Skip patterns | Temp tables, variables, system objects, aliases, keywords | `shouldSkip()` |
+| 8. Combined SQL | Multi-rule interaction in realistic SP body | All rules |
+| 9. Critical review | DELETE exclusion, OPENQUERY string protection | Design decisions |
+
+### Key design principle
+
+**False positives are harmless** — catalog resolution in `dacpacExtractor.ts` filters regex results against known dacpac objects. Only references matching real objects become graph edges. The tests therefore focus on:
+- **No false negatives** (missed real dependencies)
+- **Correct direction** (source vs target vs exec)
+- **Preprocessing correctness** (strings/comments don't leak through)
+
+## Test Sections in `engine.test.ts`
+
+| Section | What it validates |
+|---------|-------------------|
+| DACPAC Extraction | Node/edge counts, schemas, object types from classic dacpac |
+| Schema Filtering | Schema filter + max node cap |
+| SQL Body Parser | All regex rules: FROM/JOIN, INSERT/UPDATE, EXEC, APPLY, CTE, MERGE, CTAS, SELECT INTO, string neutralization |
+| Trace: No Siblings | BFS trace excludes cross-connection edges (leveled + unlimited + upstream-only) |
+| Trace: Co-Writer Filter | Co-writers excluded, bidirectional kept, table-origin passthrough |
+| Synapse Dacpac: Trace | Real SDK-style dacpac trace with cross-connection validation |
+| Fabric SP Parsing | Full SP body parsing output for all 21 SDK-style procedures |
+| SSDT SP Parsing | Full SP body parsing output for all 10 classic procedures |
+| Graph Builder | Layout, positions, metrics, trace reachability |
+| Edge Integrity | No dangling edges, no self-loops, no duplicates |
+| Fabric SDK Dacpac | Views/tables/procs/functions counts, QueryDependencies, BodyDependencies |
+| Type-Aware Direction | Validates XML object type matches regex direction for all overlap deps |
+| Security: CVE-2026-25128 | Out-of-range numeric entity handling in fast-xml-parser v5 |
+
+## Type-Aware Direction Test
+
+Proves that the fallback direction logic (used for XML-only deps) is correct:
+- For every dep where **both** XML and regex agree, looks up the object type
+- Infers direction: `procedure` -> EXEC (outbound), everything else -> READ (inbound)
+- Compares with regex-determined direction (source=READ, target=WRITE, exec=EXEC)
+- Table WRITEs are expected mismatches (handled by regex directly, excluded from fallback path)
+- **100% match** on both classic and SDK-style dacpacs validates the fallback
 
 ## Test Dacpacs
 
 | File | Type | Description |
 |------|------|-------------|
-| `AdventureWorks.dacpac` | Classic | Full DDL style with CREATE statements |
-| `AdventureWorks_sdk-style.dacpac` | SDK-style | Minimal model (Fabric/modern) |
+| `AdventureWorks.dacpac` | Classic | Azure SQL Database (112 nodes, 116 edges, 6 schemas) |
+| `AdventureWorks_sdk-style.dacpac` | SDK-style | Fabric Data Warehouse (69 objects, 21 SPs, 3 functions) |
 
-Both classic and SDK-style dacpacs are supported.
+Both produce the same artifact format (ZIP with `model.xml`). See `.claude/rules/test-data.md`.
 
 ## Adding Tests
 

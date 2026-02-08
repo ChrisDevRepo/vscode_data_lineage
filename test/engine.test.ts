@@ -478,6 +478,77 @@ function testTraceNoSiblings() {
   assert(!upOnly.edgeIds.has('X→C1'), 'UpOnly: X→C1 excluded (no downstream)');
 }
 
+function testCoWriterFilter() {
+  console.log('\n── Trace: Co-Writer Filter ──');
+
+  const Graph = require('graphology');
+  const graph = new Graph({ type: 'directed', multi: false });
+
+  // Graph models: Case3 reads+writes Final, Case1/Case4 only write Final,
+  //               Case2 reads+writes Final (bidirectional), Case0 reads Final,
+  //               Case3 reads Country, spLoad writes Country
+  for (const id of ['Case3', 'Final', 'Country', 'Case1', 'Case2', 'Case4', 'Case0', 'spLoad']) {
+    graph.addNode(id, { type: id.startsWith('Case') || id === 'spLoad' ? 'procedure' : 'table' });
+  }
+  // Case3 bidirectional with Final
+  graph.addEdgeWithKey('Final→Case3', 'Final', 'Case3', { type: 'body' });   // read
+  graph.addEdgeWithKey('Case3→Final', 'Case3', 'Final', { type: 'body' });   // write
+  // Case3 reads Country
+  graph.addEdgeWithKey('Country→Case3', 'Country', 'Case3', { type: 'body' });
+  // Case1 only writes Final (pure co-writer)
+  graph.addEdgeWithKey('Case1→Final', 'Case1', 'Final', { type: 'body' });
+  // Case4 only writes Final (pure co-writer)
+  graph.addEdgeWithKey('Case4→Final', 'Case4', 'Final', { type: 'body' });
+  // Case2 bidirectional with Final (reads + writes)
+  graph.addEdgeWithKey('Final→Case2', 'Final', 'Case2', { type: 'body' });
+  graph.addEdgeWithKey('Case2→Final', 'Case2', 'Final', { type: 'body' });
+  // Case0 reads Final (downstream)
+  graph.addEdgeWithKey('Final→Case0', 'Final', 'Case0', { type: 'body' });
+  // spLoad writes Country (upstream)
+  graph.addEdgeWithKey('spLoad→Country', 'spLoad', 'Country', { type: 'body' });
+
+  // Trace from Case3, 2 levels up and down
+  const result = traceNodeWithLevels(graph, 'Case3', 2, 2);
+
+  // Co-writers (only write, no read) should be EXCLUDED
+  assert(!result.nodeIds.has('Case1'), 'Co-writer Case1 excluded');
+  assert(!result.nodeIds.has('Case4'), 'Co-writer Case4 excluded');
+
+  // Bidirectional (read+write) should be KEPT
+  assert(result.nodeIds.has('Case2'), 'Bidirectional Case2 kept');
+
+  // Downstream reader should be KEPT
+  assert(result.nodeIds.has('Case0'), 'Downstream Case0 kept');
+
+  // Upstream writer to different table should be KEPT
+  assert(result.nodeIds.has('spLoad'), 'Upstream spLoad kept (writes Country, not a writeTarget)');
+
+  // Tables should be KEPT
+  assert(result.nodeIds.has('Final'), 'Table Final kept');
+  assert(result.nodeIds.has('Country'), 'Table Country kept');
+
+  // Edges to co-writers should be EXCLUDED
+  assert(!result.edgeIds.has('Case1→Final'), 'Co-writer edge Case1→Final excluded');
+  assert(!result.edgeIds.has('Case4→Final'), 'Co-writer edge Case4→Final excluded');
+
+  // Test unlimited trace too
+  const unlimited = traceNode(graph, 'Case3', 'both');
+  assert(!unlimited.nodeIds.has('Case1'), 'Unlimited: Co-writer Case1 excluded');
+  assert(!unlimited.nodeIds.has('Case4'), 'Unlimited: Co-writer Case4 excluded');
+  assert(unlimited.nodeIds.has('Case2'), 'Unlimited: Bidirectional Case2 kept');
+  assert(unlimited.nodeIds.has('spLoad'), 'Unlimited: Upstream spLoad kept');
+
+  // Test TABLE as origin — filter must be a no-op (tables don't write)
+  const tableTrace = traceNodeWithLevels(graph, 'Final', 2, 2);
+  assert(tableTrace.nodeIds.has('Case1'), 'TableOrigin: Case1 kept (writer)');
+  assert(tableTrace.nodeIds.has('Case2'), 'TableOrigin: Case2 kept (bidirectional)');
+  assert(tableTrace.nodeIds.has('Case3'), 'TableOrigin: Case3 kept (bidirectional)');
+  assert(tableTrace.nodeIds.has('Case4'), 'TableOrigin: Case4 kept (writer)');
+  assert(tableTrace.nodeIds.has('Case0'), 'TableOrigin: Case0 kept (reader)');
+  assert(!tableTrace.nodeIds.has('spLoad'), 'TableOrigin: spLoad excluded (depth 3, beyond level 2)');
+  assert(tableTrace.nodeIds.has('Country'), 'TableOrigin: Country kept');
+}
+
 async function testSynapseTrace() {
   console.log('\n── Synapse Dacpac: Trace No Siblings ──');
   const dacpacPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
@@ -539,6 +610,245 @@ async function testSynapseTrace() {
   }
 }
 
+async function testTypeAwareDirection() {
+  console.log('\n── Type-Aware Direction: XML type matches regex direction ──');
+
+  // Proves: for every dep where both XML and regex agree, the object-type-based
+  // direction inference matches what regex determined. If this holds for the
+  // overlap set, the fallback is correct for XML-only deps too.
+
+  const { XMLParser } = await import('fast-xml-parser');
+  const JSZip = (await import('jszip')).default;
+
+  const ELEMENT_TYPE_MAP: Record<string, string> = {
+    SqlTable: 'table', SqlView: 'view', SqlProcedure: 'procedure',
+    SqlScalarFunction: 'function', SqlInlineTableValuedFunction: 'function',
+    SqlMultiStatementTableValuedFunction: 'function', SqlTableValuedFunction: 'function',
+  };
+
+  function normName(name: string): string {
+    const parts = name.replace(/\[|\]/g, '').split('.');
+    if (parts.length >= 2) return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
+    return `[dbo].[${parts[0]}]`.toLowerCase();
+  }
+
+  function isObjectLevelRef(name: string): boolean {
+    const parts = name.replace(/\[|\]/g, '').split('.');
+    return parts.length === 2 && !parts[1].startsWith('@');
+  }
+
+  function extractPropVal(prop: any): string | undefined {
+    if (prop['@_Value'] !== undefined) return String(prop['@_Value']);
+    if (prop.Value !== undefined) {
+      if (typeof prop.Value === 'string') return prop.Value;
+      if (typeof prop.Value === 'object' && prop.Value['#text']) return String(prop.Value['#text']);
+    }
+    return undefined;
+  }
+
+  function asArr<T>(val: T | T[] | undefined): T[] {
+    if (!val) return [];
+    return Array.isArray(val) ? val : [val];
+  }
+
+  const dacpacs = [
+    { label: 'Classic', path: resolve(__dirname, './AdventureWorks.dacpac') },
+    { label: 'SDK-style', path: resolve(__dirname, './AdventureWorks_sdk-style.dacpac') },
+  ];
+
+  for (const { label, path } of dacpacs) {
+    const buf = readFileSync(path);
+    const zip = await JSZip.loadAsync(buf);
+    const xml = await zip.file('model.xml')!.async('string');
+    const parser = new XMLParser({
+      ignoreAttributes: false, attributeNamePrefix: '@_',
+      isArray: (n: string) => ['Element', 'Entry', 'Property', 'Relationship', 'Annotation'].includes(n),
+      parseTagValue: true, trimValues: true,
+    });
+    const doc = parser.parse(xml);
+    const elements: any[] = asArr(doc?.DataSchemaModel?.Model?.Element);
+
+    // Build catalog with types
+    const catalog = new Set<string>();
+    const catalogType = new Map<string, string>();
+    for (const el of elements) {
+      const t = el['@_Type'];
+      const n = el['@_Name'];
+      if (!n) continue;
+      const objType = ELEMENT_TYPE_MAP[t];
+      if (objType) { const id = normName(n); catalog.add(id); catalogType.set(id, objType); }
+    }
+
+    let totalChecked = 0;
+    let matches = 0;
+    let expectedMismatches = 0;  // table WRITEs — handled by regex, never reach type-aware path
+    const mismatches: string[] = [];
+
+    for (const el of elements) {
+      if (el['@_Type'] !== 'SqlProcedure') continue;
+      const spName = el['@_Name'];
+      if (!spName) continue;
+      const spId = normName(spName);
+
+      // XML BodyDependencies
+      const xmlDeps = new Set<string>();
+      for (const rel of asArr(el.Relationship)) {
+        if (rel['@_Name'] !== 'BodyDependencies' && rel['@_Name'] !== 'QueryDependencies') continue;
+        for (const entry of asArr(rel.Entry)) {
+          for (const ref of asArr(entry.References)) {
+            if (ref['@_ExternalSource']) continue;
+            const rn = ref['@_Name'];
+            if (!rn || !isObjectLevelRef(rn)) continue;
+            const norm = normName(rn);
+            if (norm !== spId && catalog.has(norm)) xmlDeps.add(norm);
+          }
+        }
+      }
+
+      // Body script
+      let bodyScript: string | undefined;
+      for (const ann of asArr(el.Annotation)) {
+        if (ann['@_Type'] === 'SysCommentsObjectAnnotation') {
+          for (const prop of asArr(ann.Property)) {
+            if (prop['@_Name'] === 'HeaderContents') {
+              const header = extractPropVal(prop);
+              for (const p of asArr(el.Property)) {
+                if (p['@_Name'] === 'BodyScript') {
+                  const val = extractPropVal(p);
+                  if (header && val) bodyScript = `${header}\n${val}`;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (!bodyScript) {
+        for (const p of asArr(el.Property)) {
+          if (p['@_Name'] === 'BodyScript') bodyScript = extractPropVal(p);
+        }
+      }
+      if (!bodyScript) continue;
+
+      // Regex parse
+      const parsed = parseSqlBody(bodyScript);
+      const regexSources = new Set<string>();
+      const regexTargets = new Set<string>();
+      const regexExec = new Set<string>();
+      const regexAll = new Set<string>();
+
+      for (const s of parsed.sources) { const n = normName(s); if (n !== spId && catalog.has(n)) { regexAll.add(n); regexSources.add(n); } }
+      for (const t of parsed.targets) { const n = normName(t); if (n !== spId && catalog.has(n)) { regexAll.add(n); regexTargets.add(n); } }
+      for (const e of parsed.execCalls) { const n = normName(e); if (n !== spId && catalog.has(n)) { regexAll.add(n); regexExec.add(n); } }
+
+      // For each dep in both XML and regex: compare type-inferred direction vs regex direction
+      for (const dep of xmlDeps) {
+        if (!regexAll.has(dep)) continue;  // XML-only, skip (that's the fallback case)
+        totalChecked++;
+
+        const depType = catalogType.get(dep) || 'unknown';
+        const typeInferred = depType === 'procedure' ? 'EXEC' : 'READ';
+        const regexDir = regexExec.has(dep) ? 'EXEC' : regexTargets.has(dep) ? 'WRITE' : 'READ';
+
+        if (typeInferred === regexDir) {
+          matches++;
+        } else if (regexDir === 'WRITE' && depType === 'table') {
+          // Expected: table WRITEs are in regex outboundIds, so excluded from type-aware path
+          expectedMismatches++;
+        } else {
+          mismatches.push(`${spName} → ${dep}: type=${depType} inferred=${typeInferred} regex=${regexDir}`);
+        }
+      }
+    }
+
+    const pct = totalChecked > 0 ? ((matches + expectedMismatches) / totalChecked * 100).toFixed(1) : '0';
+    assert(mismatches.length === 0,
+      `${label}: type-aware direction matches regex for ${matches}/${totalChecked} deps (${pct}%, ${expectedMismatches} table-WRITEs handled by regex)`);
+
+    if (mismatches.length > 0) {
+      for (const m of mismatches) console.log(`    MISMATCH: ${m}`);
+    }
+  }
+}
+
+async function testNumericEntitySecurity() {
+  console.log('\n── Security: Numeric Entity DoS (CVE-2026-25128) ──');
+
+  // Craft a minimal dacpac-like XML with out-of-range numeric entities
+  const { XMLParser } = await import('fast-xml-parser');
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    parseTagValue: true,
+    trimValues: true,
+  });
+
+  // Test 1: Out-of-range decimal entity — must NOT throw RangeError
+  const xmlDecimal = `<root><item>test &#9999999; value</item></root>`;
+  let decimalOk = false;
+  try {
+    parser.parse(xmlDecimal);
+    decimalOk = true;
+  } catch (e: unknown) {
+    if (e instanceof RangeError) {
+      decimalOk = false;
+    } else {
+      // Other errors are acceptable (not DoS)
+      decimalOk = true;
+    }
+  }
+  assert(decimalOk, 'Out-of-range decimal entity (&#9999999;) does not crash with RangeError');
+
+  // Test 2: Out-of-range hex entity — must NOT throw RangeError
+  const xmlHex = `<root><item>test &#xFFFFFF; value</item></root>`;
+  let hexOk = false;
+  try {
+    parser.parse(xmlHex);
+    hexOk = true;
+  } catch (e: unknown) {
+    if (e instanceof RangeError) {
+      hexOk = false;
+    } else {
+      hexOk = true;
+    }
+  }
+  assert(hexOk, 'Out-of-range hex entity (&#xFFFFFF;) does not crash with RangeError');
+
+  // Test 3: Valid entity parses without error
+  const xmlValid = `<root><item>test &#65; value</item></root>`;
+  let validOk = false;
+  try {
+    parser.parse(xmlValid);
+    validOk = true;
+  } catch {
+    validOk = false;
+  }
+  assert(validOk, 'Valid entity &#65; parses without error');
+
+  // Test 4: processEntities mode (this is where v4.x was vulnerable)
+  const parserWithEntities = new XMLParser({
+    processEntities: true,
+    htmlEntities: true,
+  });
+
+  let entDecOk = false;
+  try {
+    parserWithEntities.parse(`<root>&#9999999;</root>`);
+    entDecOk = true;
+  } catch (e: unknown) {
+    entDecOk = !(e instanceof RangeError);
+  }
+  assert(entDecOk, 'processEntities + out-of-range decimal does not RangeError');
+
+  let entHexOk = false;
+  try {
+    parserWithEntities.parse(`<root>&#xFFFFFF;</root>`);
+    entHexOk = true;
+  } catch (e: unknown) {
+    entHexOk = !(e instanceof RangeError);
+  }
+  assert(entHexOk, 'processEntities + out-of-range hex does not RangeError');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -549,6 +859,7 @@ async function main() {
     await testFiltering(model);
     testSqlBodyParser();
     testTraceNoSiblings();
+    testCoWriterFilter();
     await testSynapseTrace();
     // Skipped: testCase1Sql() - requires test/sql/case1.sql
     // Skipped: testCase1RealObjectResolution() - requires test/sql/case1.sql
@@ -556,6 +867,8 @@ async function main() {
     await testGraphBuilder(model);
     await testEdgeIntegrity(model);
     await testFabricDacpac();
+    await testTypeAwareDirection();
+    await testNumericEntitySecurity();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
     failed++;

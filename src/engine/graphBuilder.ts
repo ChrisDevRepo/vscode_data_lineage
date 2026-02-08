@@ -87,6 +87,52 @@ export function buildGraph(model: DacpacModel, config: ExtensionConfig = DEFAULT
   return { flowNodes, flowEdges, graph };
 }
 
+/** Remove co-writers from BFS results.
+ *  A co-writer is a node that writes to a table the origin also writes to,
+ *  but does NOT read from that table.  These are siblings, not upstream. */
+function filterCoWriters(
+  graph: Graph,
+  originId: string,
+  nodeIds: Set<string>,
+  edgeIds: Set<string>
+): { nodeIds: Set<string>; edgeIds: Set<string> } {
+  // 1. Find tables the origin writes to (outbound body edges to table/view nodes)
+  const writeTargets = new Set<string>();
+  graph.forEachOutboundEdge(originId, (edge, attrs, _src, target) => {
+    const targetType = graph.getNodeAttribute(target, 'type');
+    if (attrs.type === 'body' && (targetType === 'table' || targetType === 'view')) {
+      writeTargets.add(target);
+    }
+  });
+  if (writeTargets.size === 0) return { nodeIds, edgeIds };
+
+  // 2. Identify co-writers: write to same table but don't read from it
+  const excluded = new Set<string>();
+  for (const nid of nodeIds) {
+    if (nid === originId) continue;
+    for (const table of writeTargets) {
+      if (graph.hasEdge(nid, table) && !graph.hasEdge(table, nid)) {
+        excluded.add(nid);
+        break;
+      }
+    }
+  }
+  if (excluded.size === 0) return { nodeIds, edgeIds };
+
+  // 3. Remove excluded nodes and their edges
+  const filteredNodes = new Set<string>();
+  for (const nid of nodeIds) {
+    if (!excluded.has(nid)) filteredNodes.add(nid);
+  }
+  const filteredEdges = new Set<string>();
+  for (const eid of edgeIds) {
+    const src = graph.source(eid);
+    const tgt = graph.target(eid);
+    if (filteredNodes.has(src) && filteredNodes.has(tgt)) filteredEdges.add(eid);
+  }
+  return { nodeIds: filteredNodes, edgeIds: filteredEdges };
+}
+
 // ─── Trace Logic ────────────────────────────────────────────────────────────
 
 export function traceNode(
@@ -94,9 +140,9 @@ export function traceNode(
   nodeId: string,
   mode: 'upstream' | 'downstream' | 'both'
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  const nodeIds = new Set<string>([nodeId]);
+  if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
-  if (!graph.hasNode(nodeId)) return { nodeIds, edgeIds: new Set() };
+  const nodeIds = new Set<string>([nodeId]);
 
   const upstreamDepths = new Map<string, number>();
   const downstreamDepths = new Map<string, number>();
@@ -116,7 +162,8 @@ export function traceNode(
     }, { mode: 'outbound' });
   }
 
-  return { nodeIds, edgeIds: collectTraceEdges(graph, upstreamDepths, downstreamDepths) };
+  const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
+  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
 }
 
 /**
@@ -129,9 +176,9 @@ export function traceNodeWithLevels(
   upstreamLevels: number,
   downstreamLevels: number
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  const nodeIds = new Set<string>([nodeId]);
+  if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
-  if (!graph.hasNode(nodeId)) return { nodeIds, edgeIds: new Set() };
+  const nodeIds = new Set<string>([nodeId]);
 
   const upstreamDepths = new Map<string, number>();
   const downstreamDepths = new Map<string, number>();
@@ -154,7 +201,8 @@ export function traceNodeWithLevels(
     }, { mode: 'outbound' });
   }
 
-  return { nodeIds, edgeIds: collectTraceEdges(graph, upstreamDepths, downstreamDepths) };
+  const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
+  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
 }
 
 export function applyTraceToFlow(
@@ -262,6 +310,21 @@ export function getGraphMetrics(graph: Graph) {
   };
 }
 
+// ─── Bidirectional Canonical Direction ────────────────────────────────────────
+
+/** For bidirectional edges, pick canonical direction based on write semantics:
+ *  procedure/function → table/view (output direction), else alphabetical. */
+function canonicalDirection(graph: Graph, a: string, b: string): [string, string] {
+  const aType = graph.getNodeAttributes(a).type;
+  const bType = graph.getNodeAttributes(b).type;
+  const aIsTransformer = aType === 'procedure' || aType === 'function';
+  const bIsTransformer = bType === 'procedure' || bType === 'function';
+
+  if (aIsTransformer && !bIsTransformer) return [a, b]; // a (proc) → b (table)
+  if (bIsTransformer && !aIsTransformer) return [b, a]; // b (proc) → a (table)
+  return a < b ? [a, b] : [b, a];                       // fallback: alphabetical
+}
+
 // ─── Edge Building (bidirectional detection) ────────────────────────────────
 
 function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
@@ -281,10 +344,8 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
 
     if (graph.hasEdge(edge.target, edge.source) && !consumed.has(rev)) {
       // Bidirectional — single edge with markers on both ends
-      // Use canonical order (alphabetical) so dagre layout direction is consistent
-      const [canonSource, canonTarget] = edge.source < edge.target
-        ? [edge.source, edge.target]
-        : [edge.target, edge.source];
+      // Use write direction (proc→table) so layout places target on output side
+      const [canonSource, canonTarget] = canonicalDirection(graph, edge.source, edge.target);
       consumed.add(fwd);
       consumed.add(rev);
       result.push({
@@ -293,15 +354,15 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         target: canonTarget,
         type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
         label: '⇄',
-        labelStyle: { fontSize: 16, fill: '#94a3b8', fontWeight: 700 },
+        labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
         labelBgStyle: { fill: 'transparent' },
         labelBgPadding: [4, 4] as [number, number],
         style: {
-          stroke: '#94a3b8',
+          stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,
         },
-        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: '#94a3b8' },
-        markerStart: { type: 'arrow' as const, width: 16, height: 16, color: '#94a3b8' },
+        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
+        markerStart: { type: 'arrow' as const, width: 16, height: 16, color: 'var(--ln-edge-color)' },
       });
     } else {
       // Unidirectional
@@ -312,10 +373,10 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         target: edge.target,
         type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
         style: {
-          stroke: '#94a3b8',
+          stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,
         },
-        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: '#94a3b8' },
+        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
       });
     }
   }
@@ -332,8 +393,8 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
 
   graph.forEachEdge((_edge, _attrs, source, target) => {
     if (graph.hasEdge(target, source)) {
-      // Bidirectional — canonical alphabetical order consistent with buildFlowEdges
-      const [s, t] = source < target ? [source, target] : [target, source];
+      // Bidirectional — write direction (proc→table) consistent with buildFlowEdges
+      const [s, t] = canonicalDirection(graph, source, target);
       const key = `${s}→${t}`;
       if (!seen.has(key)) { seen.add(key); edges.push({ source: s, target: t }); }
     } else {

@@ -27,16 +27,16 @@ function refreshLogLevel() {
 // ─── DDL Virtual Document Provider ──────────────────────────────────────────
 
 const DDL_SCHEME = 'dacpac-ddl';
-const DDL_URI = vscode.Uri.parse(`${DDL_SCHEME}:DDL`);
-let currentDdlContent = '';
-let ddlOpened = false;
-
+let panelCounter = 0;
+const ddlContentMap = new Map<string, string>();
 
 const ddlProvider = new class implements vscode.TextDocumentContentProvider {
   private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   onDidChange = this._onDidChange.event;
-  provideTextDocumentContent(): string { return currentDdlContent; }
-  update() { this._onDidChange.fire(DDL_URI); }
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return ddlContentMap.get(uri.toString()) || '';
+  }
+  fire(uri: vscode.Uri) { this._onDidChange.fire(uri); }
 };
 
 function formatDdlContent(message: { objectName: string; schema: string; sqlBody?: string }): string {
@@ -44,36 +44,30 @@ function formatDdlContent(message: { objectName: string; schema: string; sqlBody
   return sqlBody || `-- No DDL available for [${schema}].[${objectName}]`;
 }
 
-async function showDdl(message: { objectName: string; schema: string; sqlBody?: string }) {
-  currentDdlContent = formatDdlContent(message);
+async function showDdl(ddlUri: vscode.Uri, message: { objectName: string; schema: string; sqlBody?: string }) {
+  const key = ddlUri.toString();
+  const content = formatDdlContent(message);
+  ddlContentMap.set(key, content);
+  ddlProvider.fire(ddlUri);
 
-  // If DDL editor is already visible, just refresh content in-place
-  const existingDdlEditor = vscode.window.visibleTextEditors.find(
-    e => e.document.uri.scheme === DDL_SCHEME
-  );
-  if (existingDdlEditor) {
-    ddlProvider.update();
-    return;
-  }
-
-  const doc = await vscode.workspace.openTextDocument(DDL_URI);
+  const doc = await vscode.workspace.openTextDocument(ddlUri);
   if (doc.languageId !== 'dacpac-sql') {
     await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
   }
+  // Re-set: setTextDocumentLanguage fires onDidCloseTextDocument which deletes the key
+  ddlContentMap.set(key, content);
   await vscode.window.showTextDocument(doc, {
     viewColumn: vscode.ViewColumn.Beside,
     preserveFocus: true,
     preview: true,
   });
-  ddlOpened = true;
 }
 
-function updateDdlIfOpen(message: { objectName: string; schema: string; sqlBody?: string }) {
-  // Always update content — the TextDocumentContentProvider works regardless of
-  // which window the editor is in (visibleTextEditors misses secondary windows)
-  if (!ddlOpened) return;
-  currentDdlContent = formatDdlContent(message);
-  ddlProvider.update();
+function updateDdlIfOpen(ddlUri: vscode.Uri, message: { objectName: string; schema: string; sqlBody?: string }) {
+  const key = ddlUri.toString();
+  if (!ddlContentMap.has(key)) return;
+  ddlContentMap.set(key, formatDdlContent(message));
+  ddlProvider.fire(ddlUri);
 }
 
 // ─── Activate ────────────────────────────────────────────────────────────────
@@ -85,13 +79,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.registerTextDocumentContentProvider(DDL_SCHEME, ddlProvider)
   );
 
-  // Reset ddlOpened when the DDL document is closed
-  // Note: onDidCloseTextDocument is somewhat unreliable for virtual docs, but
-  // we can't use onDidChangeVisibleTextEditors because it misses secondary windows
+  // Clean up DDL content when virtual document is closed
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((doc) => {
       if (doc.uri.scheme === DDL_SCHEME) {
-        ddlOpened = false;
+        ddlContentMap.delete(doc.uri.toString());
       }
     })
   );
@@ -106,7 +98,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register Quick Actions TreeView
   const quickActionsProvider = new QuickActionsProvider();
-  vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', quickActionsProvider);
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', quickActionsProvider)
+  );
   
   // Command: Open (shows wizard with file picker + demo option)
   context.subscriptions.push(
@@ -155,6 +149,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 function openPanel(context: vscode.ExtensionContext, title: string) {
   try {
+    const panelId = ++panelCounter;
+    const ddlUri = vscode.Uri.parse(`${DDL_SCHEME}:panel-${panelId}/DDL`);
+
     const panel = vscode.window.createWebviewPanel(
       'dataLineageViz',
       title,
@@ -182,16 +179,17 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
 
     panel.onDidDispose(() => {
       themeChangeListener.dispose();
+      ddlContentMap.delete(ddlUri.toString());
     });
 
     panel.webview.onDidReceiveMessage(
       async (message) => {
         if (message.type === 'ready') {
-          const config = readExtensionConfig();
+          const config = await readExtensionConfig();
           panel.webview.postMessage({ type: 'config-only', config });
         }
         if (message.type === 'load-demo') {
-          const config = readExtensionConfig();
+          const config = await readExtensionConfig();
           try {
             const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
             const data = await vscode.workspace.fs.readFile(demoUri);
@@ -222,20 +220,6 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
           if (message.stack) log(`[Webview Error Stack] ${message.stack}`, 'debug');
           vscode.window.showErrorMessage(`Data Lineage Error: ${message.error}`);
         }
-        if (message.type === 'go-to-source') {
-          try {
-            const objectName = String(message.objectName).replace(/[^\w]/g, '');
-            const schema = String(message.schema).replace(/[^\w]/g, '');
-            if (objectName && schema) {
-              log(`[Extension] Opening source file: ${schema}.${objectName}`);
-              await openSourceFile(objectName, schema);
-            }
-          } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            log(`[Extension Error] Failed to open source file: ${errorMsg}`);
-            vscode.window.showErrorMessage(`Failed to open source file: ${errorMsg}`);
-          }
-        }
         if (message.type === 'open-external') {
           if (message.url) {
             await vscode.env.openExternal(vscode.Uri.parse(message.url));
@@ -245,10 +229,10 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
           vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz');
         }
         if (message.type === 'show-ddl') {
-          await showDdl(message);
+          await showDdl(ddlUri, message);
         }
         if (message.type === 'update-ddl') {
-          updateDdlIfOpen(message);
+          updateDdlIfOpen(ddlUri, message);
         }
       },
       undefined,
@@ -272,11 +256,16 @@ interface ExtensionConfigMessage {
   trace: { defaultUpstreamLevels: number; defaultDownstreamLevels: number };
 }
 
-function readExtensionConfig(): ExtensionConfigMessage {
+async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
 
   const config: ExtensionConfigMessage = {
-    excludePatterns: cfg.get<string[]>('excludePatterns', []),
+    excludePatterns: cfg.get<string[]>('excludePatterns', []).filter(p => {
+      try { new RegExp(p); return true; } catch {
+        log(`[Config] Invalid excludePattern "${p}" — not a valid regex. Pattern removed.`);
+        return false;
+      }
+    }),
     maxNodes: cfg.get<number>('maxNodes', 250),
     layout: {
       direction: cfg.get<string>('layout.direction', 'LR'),
@@ -298,28 +287,29 @@ function readExtensionConfig(): ExtensionConfigMessage {
     const resolved = resolveWorkspacePath(rulesPath);
     if (resolved) {
       try {
-        const fs = require('fs');
-        if (fs.existsSync(resolved)) {
-          const content = fs.readFileSync(resolved, 'utf8');
-          const parsed = yaml.load(content) as Record<string, unknown>;
-          if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) {
-            log(`[ParseRules] Invalid YAML structure in ${rulesPath} — missing "rules" array`);
-            vscode.window.showWarningMessage(
-              `Parse rules YAML invalid: missing "rules" array. Using built-in defaults.`
-            );
-          } else {
-            config.parseRules = parsed;
-            log(`[ParseRules] Loaded ${parsed.rules.length} rules from ${rulesPath}`, 'debug');
-          }
+        const fileUri = vscode.Uri.file(resolved);
+        const data = await vscode.workspace.fs.readFile(fileUri);
+        const content = new TextDecoder().decode(data);
+        const parsed = yaml.load(content) as Record<string, unknown>;
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) {
+          log(`[ParseRules] Invalid YAML structure in ${rulesPath} — missing "rules" array`);
+          vscode.window.showWarningMessage(
+            `Parse rules YAML invalid: missing "rules" array. Using built-in defaults.`
+          );
         } else {
+          config.parseRules = parsed;
+          log(`[ParseRules] Loaded ${parsed.rules.length} rules from ${rulesPath}`, 'debug');
+        }
+      } catch (err) {
+        if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
           vscode.window.showWarningMessage(
             `Parse rules file not found: ${rulesPath}. Using built-in defaults.`
           );
+        } else {
+          vscode.window.showWarningMessage(
+            `Failed to load parse rules: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
-      } catch (err) {
-        vscode.window.showWarningMessage(
-          `Failed to load parse rules: ${err instanceof Error ? err.message : String(err)}`
-        );
       }
     }
   }
@@ -391,46 +381,6 @@ function resolveWorkspacePath(relativePath: string): string | undefined {
   return path.join(folder.uri.fsPath, relativePath);
 }
 
-// ─── Go to Source ───────────────────────────────────────────────────────────
-
-async function openSourceFile(objectName: string, schema: string) {
-  const patterns = [
-    `**/${schema}/**/${objectName}.sql`,
-    `**/${objectName}.sql`,
-    `**/${schema}.${objectName}.sql`,
-  ];
-
-  for (const pattern of patterns) {
-    const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 5);
-    if (files.length > 0) {
-      const uri = files.length === 1
-        ? files[0]
-        : (await pickFile(files)) || files[0];
-
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-      return;
-    }
-  }
-
-  vscode.window.showWarningMessage(
-    `Could not find source file for ${schema}.${objectName}. Ensure the SQL project is open in the workspace.`
-  );
-}
-
-async function pickFile(files: vscode.Uri[]): Promise<vscode.Uri | undefined> {
-  const items = files.map((uri) => ({
-    label: path.basename(uri.fsPath),
-    description: vscode.workspace.asRelativePath(uri),
-    uri,
-  }));
-  const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Multiple matches — select the correct file',
-  });
-  return picked?.uri;
-}
-
-
 // ─── Webview HTML ───────────────────────────────────────────────────────────
 
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
@@ -501,30 +451,22 @@ function getDefaultParseRulesYaml(): string {
 
 rules:
   # ── Preprocessing ──────────────────────────────────────────────────────────
-  - name: remove_comments
+  # Single-pass: brackets, strings, and comments matched together, leftmost wins.
+  # Built-in function replacement (brackets → keep, strings → neutralize, comments → remove).
+  - name: clean_sql
     enabled: true
     priority: 1
     category: preprocessing
-    pattern: "--[^\\\\r\\\\n]*|\\\\/\\\\*[\\\\s\\\\S]*?\\\\*\\\\/"
-    flags: gi
-    replacement: " "
-    description: Remove SQL line and block comments
-
-  - name: remove_string_literals
-    enabled: true
-    priority: 2
-    category: preprocessing
-    pattern: "'(?:''|[^'])*'"
+    pattern: "\\\\[[^\\\\]]+\\\\]|'(?:''|[^'])*'|--[^\\\\r\\\\n]*|\\\\/\\\\*[\\\\s\\\\S]*?\\\\*\\\\/"
     flags: g
-    replacement: "''"
-    description: Neutralize string literals to prevent false-positive refs
+    description: "Single-pass bracket/string/comment handling (built-in)"
 
   # ── Source extraction ──────────────────────────────────────────────────────
   - name: extract_sources_ansi
     enabled: true
     priority: 5
     category: source
-    pattern: "\\\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\\\s+(?:OUTER\\\\s+)?)?JOIN)\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\\\s+(?:OUTER\\\\s+)?)?JOIN)\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
     description: FROM/JOIN sources (handles 2- and 3-part names)
 
@@ -532,7 +474,7 @@ rules:
     enabled: true
     priority: 7
     category: source
-    pattern: "\\\\b(?:CROSS|OUTER)\\\\s+APPLY\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\b(?:CROSS|OUTER)\\\\s+APPLY\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
     description: CROSS/OUTER APPLY sources
 
@@ -540,24 +482,32 @@ rules:
     enabled: true
     priority: 9
     category: source
-    pattern: "\\\\bMERGE\\\\b[\\\\s\\\\S]*?\\\\bUSING\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\bMERGE\\\\b[\\\\s\\\\S]*?\\\\bUSING\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
     description: MERGE ... USING source table
+
+  - name: extract_udf_calls
+    enabled: true
+    priority: 10
+    category: source
+    pattern: "((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)+(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s*\\\\("
+    flags: gi
+    description: "Inline scalar UDF calls (schema.func() — requires 2+ part name)"
 
   # ── Target extraction ──────────────────────────────────────────────────────
   - name: extract_targets_dml
     enabled: true
     priority: 6
     category: target
-    pattern: "\\\\b(?:INSERT\\\\s+(?:INTO\\\\s+)?|UPDATE\\\\s+|MERGE\\\\s+(?:INTO\\\\s+)?|DELETE\\\\s+(?:FROM\\\\s+)?)((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\b(?:INSERT\\\\s+(?:INTO\\\\s+)?|UPDATE\\\\s+|MERGE\\\\s+(?:INTO\\\\s+)?)((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
-    description: INSERT/UPDATE/MERGE/DELETE targets
+    description: INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — not lineage)
 
   - name: extract_ctas
     enabled: true
     priority: 13
     category: target
-    pattern: "\\\\bCREATE\\\\s+TABLE\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)\\\\s+AS\\\\s+SELECT"
+    pattern: "\\\\bCREATE\\\\s+TABLE\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s+AS\\\\s+SELECT"
     flags: gi
     description: CREATE TABLE AS SELECT target (Synapse/Fabric)
 
@@ -565,7 +515,7 @@ rules:
     enabled: true
     priority: 14
     category: target
-    pattern: "\\\\bINTO\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)\\\\s+FROM"
+    pattern: "\\\\bINTO\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s+FROM"
     flags: gi
     description: SELECT INTO target
 
@@ -574,9 +524,9 @@ rules:
     enabled: true
     priority: 8
     category: exec
-    pattern: "\\\\bEXEC(?:UTE)?\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\bEXEC(?:UTE)?\\\\s+(?:@\\\\w+\\\\s*=\\\\s*)?((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
-    description: EXEC/EXECUTE procedure calls
+    description: "EXEC/EXECUTE procedure calls (including @var = proc pattern)"
 
 # ─── Skip Patterns ──────────────────────────────────────────────────────────
 # Object names matching these prefixes are ignored (system objects, temp tables)
@@ -659,13 +609,13 @@ class QuickActionsProvider implements vscode.TreeDataProvider<QuickAction> {
 
 class QuickAction extends vscode.TreeItem {
   constructor(
-    public readonly label: string,
-    public readonly command: string,
-    public readonly iconPath?: vscode.ThemeIcon
+    label: string,
+    commandId: string,
+    iconPath?: vscode.ThemeIcon
   ) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.command = {
-      command: command,
+      command: commandId,
       title: label,
     };
     this.iconPath = iconPath;

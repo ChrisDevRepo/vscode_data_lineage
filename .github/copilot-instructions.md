@@ -21,22 +21,23 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # Engine tests
+npm test         # All tests (230 total)
 ```
 
 Press F5 to launch Extension Development Host.
 
 ## Test Suite
 
-| File | Purpose |
-|------|---------|
-| `test/engine.test.ts` | Parser baseline tests |
-| `test/webview.integration.test.ts` | VS Code integration tests |
-| `test/AdventureWorks.dacpac` | Classic style test dacpac |
-| `test/AdventureWorks_sdk-style.dacpac` | SDK-style test dacpac |
+| File | Tests | Purpose |
+|------|-------|---------|
+| `test/engine.test.ts` | 107 | Engine integration: extraction, graph, trace, direction validation |
+| `test/parser-edge-cases.test.ts` | 123 | Syntactic parser tests: all 9 rules + edge cases + regression guards |
+| `test/webview.integration.test.ts` | — | VS Code integration tests |
+| `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
+| `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run parser tests
+npm test              # Run all parser + integration tests (230 total)
 npm run test:integration  # Run VS Code tests
 ```
 
@@ -48,11 +49,14 @@ Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `custome
 - Never hardcode CSS colors — use `var(--ln-*)` or `var(--vscode-*)` custom properties
 - Graph traversal uses graphology `bfsFromNode` — no manual BFS
 - Layout uses shared `dagreLayout()` helper
+- BFS must be pure — callbacks use only edges, nodes, and direction. No business logic or semantic filtering inside BFS callbacks. Depth limits control trace scope.
+- Bidirectional connections = two antiparallel directed edges (Table→SP for read, SP→Table for write). React Flow merges them into ⇄ display via `buildFlowEdges()`.
+- **Co-writer post-filter**: When a SP both reads and writes the same table, BFS upstream finds all other writers to that table (siblings). These are co-writers, not true upstream producers. `filterCoWriters()` runs as post-processing on the BFS result subset — if the origin writes to a table, nodes that only write (no read) to that same table are excluded. Bidirectional nodes (read+write) are kept. This follows the input/output separation pattern used by Apache Atlas and OpenMetadata.
 - Settings prefix: `dataLineageViz`
 
 ## Message Passing (Extension <-> Webview)
 
-Key messages: `ready`, `config-only`, `show-ddl`, `update-ddl`, `go-to-source`, `log`, `error`, `themeChanged`
+Key messages: `ready`, `config-only`, `show-ddl`, `update-ddl`, `log`, `error`, `themeChanged`
 
 ## SQL Parse Rules
 

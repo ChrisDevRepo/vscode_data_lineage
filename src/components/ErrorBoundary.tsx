@@ -45,31 +45,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
 
       return (
-        <div style={{
-          padding: '20px',
-          margin: '20px',
-          border: '2px solid #ff4444',
-          borderRadius: '8px',
-          backgroundColor: '#2d2d2d',
-          color: '#ffffff',
-          fontFamily: 'monospace'
-        }}>
-          <h2 style={{ color: '#ff4444', marginTop: 0 }}>⚠️ React Error</h2>
-          <p style={{ color: '#cccccc' }}>Something went wrong in the application.</p>
+        <div className="ln-error-boundary">
+          <h2>React Error</h2>
+          <p>Something went wrong in the application.</p>
           {this.state.error && (
             <details style={{ marginTop: '10px' }}>
-              <summary style={{ cursor: 'pointer', color: '#569cd6' }}>
-                Error Details
-              </summary>
-              <pre style={{
-                marginTop: '10px',
-                padding: '10px',
-                backgroundColor: '#1e1e1e',
-                borderRadius: '4px',
-                overflow: 'auto',
-                fontSize: '12px',
-                color: '#d4d4d4'
-              }}>
+              <summary>Error Details</summary>
+              <pre>
                 {this.state.error.message}
                 {'\n\n'}
                 {this.state.error.stack}
@@ -78,12 +60,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           )}
           <button
             onClick={() => window.location.reload()}
+            className="ln-btn-primary"
             style={{
               marginTop: '15px',
               padding: '8px 16px',
-              backgroundColor: '#007acc',
-              color: '#ffffff',
-              border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
               fontSize: '14px'

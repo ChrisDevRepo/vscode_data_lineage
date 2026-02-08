@@ -148,11 +148,17 @@ function buildNodesAndEdges(elements: XmlElement[]): {
       for (const dep of parsed.targets) outboundIds.add(normalizeName(dep));
       for (const dep of parsed.execCalls) outboundIds.add(normalizeName(dep));
 
-      // Add XML deps only for sources (exclude targets/exec to prevent reverse edges)
+      // Add XML deps not already handled by regex (exclude targets/exec to prevent reverse edges)
+      // Direction is type-aware: procedures are EXEC calls (outbound), everything else is inbound
       for (const dep of xmlDeps) {
         const depId = normalizeName(dep);
         if (depId !== sourceId && nodeIds.has(depId) && !outboundIds.has(depId)) {
-          addEdge(edges, edgeKeys, depId, sourceId, 'body');
+          const depType = nodeMap.get(depId)?.type;
+          if (depType === 'procedure') {
+            addEdge(edges, edgeKeys, sourceId, depId, 'exec');   // SP → called proc (outbound)
+          } else {
+            addEdge(edges, edgeKeys, depId, sourceId, 'body');   // func/view/table → SP (inbound)
+          }
         }
       }
 
@@ -408,8 +414,15 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
   }
   if (val) {
     // Decode XML numeric character references that may not be resolved by the parser
-    val = val.replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-    val = val.replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)));
+    // Validate code point range (0–0x10FFFF) to prevent RangeError DoS
+    val = val.replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => {
+      const cp = parseInt(hex, 16);
+      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
+    });
+    val = val.replace(/&#(\d+);/g, (_, dec) => {
+      const cp = parseInt(dec, 10);
+      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
+    });
   }
   return val;
 }
@@ -450,7 +463,7 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
       info = {
         name: node.schema,
         nodeCount: 0,
-        types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 },
+        types: { table: 0, view: 0, procedure: 0, function: 0 },
       };
       map.set(node.schema, info);
     }

@@ -1,12 +1,13 @@
 import { useState, useCallback, useRef } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
+import type { CustomNodeData } from '../components/CustomNode';
 import { DacpacModel, FilterState, ObjectType, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
 import { buildGraph, getGraphMetrics, GraphResult } from '../engine/graphBuilder';
-import { filterBySchemas } from '../engine/dacpacExtractor';
+import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 
 interface UseGraphologyReturn {
-  flowNodes: FlowNode[];
+  flowNodes: FlowNode<CustomNodeData>[];
   flowEdges: FlowEdge[];
   graph: Graph | null;
   metrics: ReturnType<typeof getGraphMetrics> | null;
@@ -16,7 +17,7 @@ interface UseGraphologyReturn {
 }
 
 export function useGraphology(): UseGraphologyReturn {
-  const [flowNodes, setFlowNodes] = useState<FlowNode[]>([]);
+  const [flowNodes, setFlowNodes] = useState<FlowNode<CustomNodeData>[]>([]);
   const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([]);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
@@ -53,7 +54,7 @@ export function useGraphology(): UseGraphologyReturn {
       const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
 
       const result = buildGraph(isolationFiltered, config);
-      setFlowNodes(result.flowNodes);
+      setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
@@ -65,32 +66,6 @@ export function useGraphology(): UseGraphologyReturn {
   }, []);
 
   return { flowNodes, flowEdges, graph, metrics, isLoading, error, buildFromModel };
-}
-
-// ─── Exclusion Patterns ────────────────────────────────────────────────────
-
-function applyExclusionPatterns(model: DacpacModel, patterns: string[]): DacpacModel {
-  if (!patterns || patterns.length === 0) return model;
-
-  const regexes = patterns.map((p) => {
-    try {
-      return new RegExp(p, 'i');
-    } catch {
-      return null;
-    }
-  }).filter(Boolean) as RegExp[];
-
-  if (regexes.length === 0) return model;
-
-  const nodes = model.nodes.filter((n) => {
-    const name = `${n.schema}.${n.name}`;
-    return !regexes.some((r) => r.test(name) || r.test(n.fullName));
-  });
-
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-
-  return { ...model, nodes, edges };
 }
 
 // ─── Isolation Filter (hide orphan / degree-0 nodes) ─────────────────────────

@@ -3,6 +3,7 @@ src/**
 test/**
 customer-data/**
 temp-old-design/**
+tmp/**
 
 # Config files
 .gitignore

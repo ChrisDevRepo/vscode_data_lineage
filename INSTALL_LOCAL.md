@@ -50,8 +50,8 @@ code --install-extension data-lineage-viz-{version}.vsix
 4. Click "Visualize"
 
 ### Try the Demo
-1. Run command: `Data Lineage: Open` (select "Open Demo" from the start screen)
-2. Explore the sample data warehouse lineage
+1. Run command: `Data Lineage: Open` and click **Load Demo Data** on the start screen
+2. Explore the sample database lineage
 
 ## Configure Settings
 
@@ -133,4 +133,4 @@ The packaged VSIX file is located at:
 ./data-lineage-viz-{version}.vsix
 ```
 
-You can copy this file and share it with others for local installation.
+You can share this file with others for local installation. See LICENSE for terms.
