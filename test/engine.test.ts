@@ -610,6 +610,166 @@ async function testSynapseTrace() {
   }
 }
 
+async function testTypeAwareDirection() {
+  console.log('\n── Type-Aware Direction: XML type matches regex direction ──');
+
+  // Proves: for every dep where both XML and regex agree, the object-type-based
+  // direction inference matches what regex determined. If this holds for the
+  // overlap set, the fallback is correct for XML-only deps too.
+
+  const { XMLParser } = await import('fast-xml-parser');
+  const JSZip = (await import('jszip')).default;
+
+  const ELEMENT_TYPE_MAP: Record<string, string> = {
+    SqlTable: 'table', SqlView: 'view', SqlProcedure: 'procedure',
+    SqlScalarFunction: 'function', SqlInlineTableValuedFunction: 'function',
+    SqlMultiStatementTableValuedFunction: 'function', SqlTableValuedFunction: 'function',
+  };
+
+  function normName(name: string): string {
+    const parts = name.replace(/\[|\]/g, '').split('.');
+    if (parts.length >= 2) return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
+    return `[dbo].[${parts[0]}]`.toLowerCase();
+  }
+
+  function isObjectLevelRef(name: string): boolean {
+    const parts = name.replace(/\[|\]/g, '').split('.');
+    return parts.length === 2 && !parts[1].startsWith('@');
+  }
+
+  function extractPropVal(prop: any): string | undefined {
+    if (prop['@_Value'] !== undefined) return String(prop['@_Value']);
+    if (prop.Value !== undefined) {
+      if (typeof prop.Value === 'string') return prop.Value;
+      if (typeof prop.Value === 'object' && prop.Value['#text']) return String(prop.Value['#text']);
+    }
+    return undefined;
+  }
+
+  function asArr<T>(val: T | T[] | undefined): T[] {
+    if (!val) return [];
+    return Array.isArray(val) ? val : [val];
+  }
+
+  const dacpacs = [
+    { label: 'Classic', path: resolve(__dirname, './AdventureWorks.dacpac') },
+    { label: 'SDK-style', path: resolve(__dirname, './AdventureWorks_sdk-style.dacpac') },
+  ];
+
+  for (const { label, path } of dacpacs) {
+    const buf = readFileSync(path);
+    const zip = await JSZip.loadAsync(buf);
+    const xml = await zip.file('model.xml')!.async('string');
+    const parser = new XMLParser({
+      ignoreAttributes: false, attributeNamePrefix: '@_',
+      isArray: (n: string) => ['Element', 'Entry', 'Property', 'Relationship', 'Annotation'].includes(n),
+      parseTagValue: true, trimValues: true,
+    });
+    const doc = parser.parse(xml);
+    const elements: any[] = asArr(doc?.DataSchemaModel?.Model?.Element);
+
+    // Build catalog with types
+    const catalog = new Set<string>();
+    const catalogType = new Map<string, string>();
+    for (const el of elements) {
+      const t = el['@_Type'];
+      const n = el['@_Name'];
+      if (!n) continue;
+      const objType = ELEMENT_TYPE_MAP[t];
+      if (objType) { const id = normName(n); catalog.add(id); catalogType.set(id, objType); }
+    }
+
+    let totalChecked = 0;
+    let matches = 0;
+    let expectedMismatches = 0;  // table WRITEs — handled by regex, never reach type-aware path
+    const mismatches: string[] = [];
+
+    for (const el of elements) {
+      if (el['@_Type'] !== 'SqlProcedure') continue;
+      const spName = el['@_Name'];
+      if (!spName) continue;
+      const spId = normName(spName);
+
+      // XML BodyDependencies
+      const xmlDeps = new Set<string>();
+      for (const rel of asArr(el.Relationship)) {
+        if (rel['@_Name'] !== 'BodyDependencies' && rel['@_Name'] !== 'QueryDependencies') continue;
+        for (const entry of asArr(rel.Entry)) {
+          for (const ref of asArr(entry.References)) {
+            if (ref['@_ExternalSource']) continue;
+            const rn = ref['@_Name'];
+            if (!rn || !isObjectLevelRef(rn)) continue;
+            const norm = normName(rn);
+            if (norm !== spId && catalog.has(norm)) xmlDeps.add(norm);
+          }
+        }
+      }
+
+      // Body script
+      let bodyScript: string | undefined;
+      for (const ann of asArr(el.Annotation)) {
+        if (ann['@_Type'] === 'SysCommentsObjectAnnotation') {
+          for (const prop of asArr(ann.Property)) {
+            if (prop['@_Name'] === 'HeaderContents') {
+              const header = extractPropVal(prop);
+              for (const p of asArr(el.Property)) {
+                if (p['@_Name'] === 'BodyScript') {
+                  const val = extractPropVal(p);
+                  if (header && val) bodyScript = `${header}\n${val}`;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (!bodyScript) {
+        for (const p of asArr(el.Property)) {
+          if (p['@_Name'] === 'BodyScript') bodyScript = extractPropVal(p);
+        }
+      }
+      if (!bodyScript) continue;
+
+      // Regex parse
+      const parsed = parseSqlBody(bodyScript);
+      const regexSources = new Set<string>();
+      const regexTargets = new Set<string>();
+      const regexExec = new Set<string>();
+      const regexAll = new Set<string>();
+
+      for (const s of parsed.sources) { const n = normName(s); if (n !== spId && catalog.has(n)) { regexAll.add(n); regexSources.add(n); } }
+      for (const t of parsed.targets) { const n = normName(t); if (n !== spId && catalog.has(n)) { regexAll.add(n); regexTargets.add(n); } }
+      for (const e of parsed.execCalls) { const n = normName(e); if (n !== spId && catalog.has(n)) { regexAll.add(n); regexExec.add(n); } }
+
+      // For each dep in both XML and regex: compare type-inferred direction vs regex direction
+      for (const dep of xmlDeps) {
+        if (!regexAll.has(dep)) continue;  // XML-only, skip (that's the fallback case)
+        totalChecked++;
+
+        const depType = catalogType.get(dep) || 'unknown';
+        const typeInferred = depType === 'procedure' ? 'EXEC' : 'READ';
+        const regexDir = regexExec.has(dep) ? 'EXEC' : regexTargets.has(dep) ? 'WRITE' : 'READ';
+
+        if (typeInferred === regexDir) {
+          matches++;
+        } else if (regexDir === 'WRITE' && depType === 'table') {
+          // Expected: table WRITEs are in regex outboundIds, so excluded from type-aware path
+          expectedMismatches++;
+        } else {
+          mismatches.push(`${spName} → ${dep}: type=${depType} inferred=${typeInferred} regex=${regexDir}`);
+        }
+      }
+    }
+
+    const pct = totalChecked > 0 ? ((matches + expectedMismatches) / totalChecked * 100).toFixed(1) : '0';
+    assert(mismatches.length === 0,
+      `${label}: type-aware direction matches regex for ${matches}/${totalChecked} deps (${pct}%, ${expectedMismatches} table-WRITEs handled by regex)`);
+
+    if (mismatches.length > 0) {
+      for (const m of mismatches) console.log(`    MISMATCH: ${m}`);
+    }
+  }
+}
+
 async function testNumericEntitySecurity() {
   console.log('\n── Security: Numeric Entity DoS (CVE-2026-25128) ──');
 
@@ -707,6 +867,7 @@ async function main() {
     await testGraphBuilder(model);
     await testEdgeIntegrity(model);
     await testFabricDacpac();
+    await testTypeAwareDirection();
     await testNumericEntitySecurity();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);

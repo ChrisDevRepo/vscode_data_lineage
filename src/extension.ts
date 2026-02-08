@@ -451,30 +451,22 @@ function getDefaultParseRulesYaml(): string {
 
 rules:
   # ── Preprocessing ──────────────────────────────────────────────────────────
-  - name: remove_comments
+  # Single-pass: brackets, strings, and comments matched together, leftmost wins.
+  # Built-in function replacement (brackets → keep, strings → neutralize, comments → remove).
+  - name: clean_sql
     enabled: true
     priority: 1
     category: preprocessing
-    pattern: "--[^\\\\r\\\\n]*|\\\\/\\\\*[\\\\s\\\\S]*?\\\\*\\\\/"
-    flags: gi
-    replacement: " "
-    description: Remove SQL line and block comments
-
-  - name: remove_string_literals
-    enabled: true
-    priority: 2
-    category: preprocessing
-    pattern: "'(?:''|[^'])*'"
+    pattern: "\\\\[[^\\\\]]+\\\\]|'(?:''|[^'])*'|--[^\\\\r\\\\n]*|\\\\/\\\\*[\\\\s\\\\S]*?\\\\*\\\\/"
     flags: g
-    replacement: "''"
-    description: Neutralize string literals to prevent false-positive refs
+    description: "Single-pass bracket/string/comment handling (built-in)"
 
   # ── Source extraction ──────────────────────────────────────────────────────
   - name: extract_sources_ansi
     enabled: true
     priority: 5
     category: source
-    pattern: "\\\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\\\s+(?:OUTER\\\\s+)?)?JOIN)\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\\\s+(?:OUTER\\\\s+)?)?JOIN)\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
     description: FROM/JOIN sources (handles 2- and 3-part names)
 
@@ -482,7 +474,7 @@ rules:
     enabled: true
     priority: 7
     category: source
-    pattern: "\\\\b(?:CROSS|OUTER)\\\\s+APPLY\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\b(?:CROSS|OUTER)\\\\s+APPLY\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
     description: CROSS/OUTER APPLY sources
 
@@ -490,16 +482,24 @@ rules:
     enabled: true
     priority: 9
     category: source
-    pattern: "\\\\bMERGE\\\\b[\\\\s\\\\S]*?\\\\bUSING\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\bMERGE\\\\b[\\\\s\\\\S]*?\\\\bUSING\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
     description: MERGE ... USING source table
+
+  - name: extract_udf_calls
+    enabled: true
+    priority: 10
+    category: source
+    pattern: "((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)+(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s*\\\\("
+    flags: gi
+    description: "Inline scalar UDF calls (schema.func() — requires 2+ part name)"
 
   # ── Target extraction ──────────────────────────────────────────────────────
   - name: extract_targets_dml
     enabled: true
     priority: 6
     category: target
-    pattern: "\\\\b(?:INSERT\\\\s+(?:INTO\\\\s+)?|UPDATE\\\\s+|MERGE\\\\s+(?:INTO\\\\s+)?)((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\b(?:INSERT\\\\s+(?:INTO\\\\s+)?|UPDATE\\\\s+|MERGE\\\\s+(?:INTO\\\\s+)?)((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
     description: INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — not lineage)
 
@@ -507,7 +507,7 @@ rules:
     enabled: true
     priority: 13
     category: target
-    pattern: "\\\\bCREATE\\\\s+TABLE\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)\\\\s+AS\\\\s+SELECT"
+    pattern: "\\\\bCREATE\\\\s+TABLE\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s+AS\\\\s+SELECT"
     flags: gi
     description: CREATE TABLE AS SELECT target (Synapse/Fabric)
 
@@ -515,7 +515,7 @@ rules:
     enabled: true
     priority: 14
     category: target
-    pattern: "\\\\bINTO\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)\\\\s+FROM"
+    pattern: "\\\\bINTO\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s+FROM"
     flags: gi
     description: SELECT INTO target
 
@@ -524,9 +524,9 @@ rules:
     enabled: true
     priority: 8
     category: exec
-    pattern: "\\\\bEXEC(?:UTE)?\\\\s+((?:\\\\[?\\\\w+\\\\]?\\\\.)*\\\\[?\\\\w+\\\\]?)"
+    pattern: "\\\\bEXEC(?:UTE)?\\\\s+(?:@\\\\w+\\\\s*=\\\\s*)?((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
     flags: gi
-    description: EXEC/EXECUTE procedure calls
+    description: "EXEC/EXECUTE procedure calls (including @var = proc pattern)"
 
 # ─── Skip Patterns ──────────────────────────────────────────────────────────
 # Object names matching these prefixes are ignored (system objects, temp tables)

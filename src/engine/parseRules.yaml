@@ -24,26 +24,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 rules:
-  # ── Preprocessing (priority 1-2) ──────────────────────────────────────────
-  # Clean SQL text before extraction rules run.
+  # ── Preprocessing (priority 1) ───────────────────────────────────────────
+  # Single-pass combined regex: brackets, strings, and comments matched
+  # together, leftmost match wins. This prevents -- inside strings or
+  # bracket-quoted names being treated as comments. Built-in function
+  # replacement in parseSqlBody() handles the logic (brackets → keep,
+  # strings → neutralize, comments → remove). No static replacement.
 
-  - name: remove_comments                          # also in DEFAULT_RULES
+  - name: clean_sql                                 # also in DEFAULT_RULES
     enabled: true
     priority: 1
     category: preprocessing
-    pattern: "--[^\\r\\n]*|\\/\\*[\\s\\S]*?\\*\\/"
-    flags: gi
-    replacement: " "
-    description: Remove SQL line and block comments before extraction
-
-  - name: remove_string_literals                    # also in DEFAULT_RULES
-    enabled: true
-    priority: 2
-    category: preprocessing
-    pattern: "'(?:''|[^'])*'"
+    pattern: "\\[[^\\]]+\\]|'(?:''|[^'])*'|--[^\\r\\n]*|\\/\\*[\\s\\S]*?\\*\\/"
     flags: g
-    replacement: "''"
-    description: Neutralize string literals to prevent false-positive refs
+    description: "Single-pass bracket/string/comment handling (built-in)"
 
   # ── Source extraction (priority 5-9) ──────────────────────────────────────
   # Tables the SP reads from. Edge direction: table → SP
@@ -52,7 +46,7 @@ rules:
     enabled: true
     priority: 5
     category: source
-    pattern: "\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)"
+    pattern: "\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: Extract source table references from FROM/JOIN clauses
 
@@ -60,7 +54,7 @@ rules:
     enabled: true
     priority: 7
     category: source
-    pattern: "\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)"
+    pattern: "\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: Extract source references from T-SQL APPLY operators
 
@@ -68,9 +62,17 @@ rules:
     enabled: true
     priority: 9
     category: source
-    pattern: "\\bMERGE\\b[\\s\\S]*?\\bUSING\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)"
+    pattern: "\\bMERGE\\b[\\s\\S]*?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: Extract source table from MERGE ... USING
+
+  - name: extract_udf_calls                         # also in DEFAULT_RULES
+    enabled: true
+    priority: 10
+    category: source
+    pattern: "((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\("
+    flags: gi
+    description: "Inline scalar UDF calls (schema.func() — requires 2+ part name)"
 
   # ── Target extraction (priority 6-14) ─────────────────────────────────────
   # Tables the SP writes to. Edge direction: SP → table
@@ -79,7 +81,7 @@ rules:
     enabled: true
     priority: 6
     category: target
-    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)"
+    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: Extract target tables from INSERT/UPDATE/MERGE (DELETE/TRUNCATE excluded — not lineage)
 
@@ -87,7 +89,7 @@ rules:
     enabled: true
     priority: 14
     category: target
-    pattern: "\\bINTO\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)\\s+FROM"
+    pattern: "\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+FROM"
     flags: gi
     description: Extract T-SQL SELECT INTO target tables
 
@@ -95,7 +97,7 @@ rules:
     enabled: true
     priority: 13
     category: target
-    pattern: "\\bCREATE\\s+TABLE\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)\\s+AS\\s+SELECT"
+    pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+AS\\s+SELECT"
     flags: gi
     description: Extract CREATE TABLE AS SELECT target
 
@@ -106,9 +108,9 @@ rules:
     enabled: true
     priority: 8
     category: exec
-    pattern: "\\bEXEC(?:UTE)?\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)"
+    pattern: "\\bEXEC(?:UTE)?\\s+(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
-    description: Extract stored procedure calls from EXEC statements
+    description: "EXEC/EXECUTE procedure calls (including @var = proc pattern)"
 
 # ─── Skip Patterns ──────────────────────────────────────────────────────────
 # Object names matching these prefixes are ignored (system objects, temp tables)

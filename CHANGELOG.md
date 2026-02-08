@@ -1,20 +1,28 @@
 # Changelog
 
-## [0.7.4] - 2026-02-07
+## [0.8.0] - 2026-02-08
+
+### Added
+- **Parser** — Inline scalar UDF calls detected as data sources
+- **Parser** — EXEC with return variable (`@result = proc`) now captured
+- **Parser** — Type-aware edge direction for XML-only dependencies
+- **Tests** — 230 tests (123 syntactic parser + 107 integration)
+
+### Changed
+- **Parser** — Single-pass preprocessing (industry-standard "Best Regex Trick")
+- **Parser** — Bracket-aware identifier patterns across all extraction rules
 
 ### Fixed
 - **Security** — Upgraded XML parser dependency to address CVE-2026-25128
-- **DDL Viewer** — Multiple panels now show correct DDL content independently
+- **Parser** — Comments inside string literals no longer break dependency extraction
+- **Parser** — Bracket-quoted names with special characters now parsed correctly
 - **Parser** — Short table/schema names (e.g. `hr`, `dim`, `api`) no longer silently dropped
+- **DDL Viewer** — Multiple panels now show correct DDL content independently
 - **Theming** — Full support for Light+, Dark+, High Contrast Dark, High Contrast Light
 - **Config** — Invalid exclude patterns now logged to Output window instead of silently ignored
 - **Trace** — Fixed edge case when tracing a missing node
 - Bidirectional edge layout now uses write direction
-- Async file loading in extension host
-- Various React rendering and cleanup fixes
-
-### Removed
-- Dead code cleanup
+- Various rendering and cleanup fixes
 
 ## [0.7.3] - 2026-02-03
 

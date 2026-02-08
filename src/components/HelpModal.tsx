@@ -180,7 +180,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
 
         <div className="mt-8 pt-6 flex items-center justify-between ln-border-top">
           <div className="text-xs ln-text-muted">
-            <p className="mb-1">Data Lineage Viz v0.7.4</p>
+            <p className="mb-1">Data Lineage Viz v0.8.0</p>
             <p>SQL Server Database Project Dependency Viewer</p>
           </div>
           <div className="flex items-center gap-2">

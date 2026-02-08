@@ -33,61 +33,64 @@ export interface ParseRulesConfig {
 
 const DEFAULT_RULES: ParseRule[] = [
   // ── Preprocessing ──
+  // Single-pass combined regex: strings and comments matched together, leftmost wins.
+  // This prevents -- inside strings being treated as comments (and vice versa).
+  // Uses function replacement in parseSqlBody() — the replacement field is not used.
   {
-    name: 'remove_comments', enabled: true, priority: 1,
+    name: 'clean_sql', enabled: true, priority: 1,
     category: 'preprocessing',
-    pattern: '--[^\\r\\n]*|\\/\\*[\\s\\S]*?\\*\\/',
-    flags: 'gi', replacement: ' ',
-    description: 'Remove SQL comments',
-  },
-  {
-    name: 'remove_string_literals', enabled: true, priority: 2,
-    category: 'preprocessing',
-    pattern: "'(?:''|[^'])*'",
-    flags: 'g', replacement: "''",
-    description: 'Neutralize string literals to prevent false-positive refs',
+    pattern: "\\[[^\\]]+\\]|'(?:''|[^'])*'|--[^\\r\\n]*|\\/\\*[\\s\\S]*?\\*\\/",
+    flags: 'g',
+    description: 'Single-pass bracket/string/comment handling (built-in)',
   },
   // ── Source extraction ──
   {
     name: 'extract_sources_ansi', enabled: true, priority: 5,
     category: 'source',
-    pattern: '\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)',
+    pattern: '\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
     flags: 'gi',
     description: 'FROM/JOIN sources (handles 2- and 3-part names)',
   },
   {
     name: 'extract_sources_tsql_apply', enabled: true, priority: 7,
     category: 'source',
-    pattern: '\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)',
+    pattern: '\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
     flags: 'gi',
     description: 'CROSS/OUTER APPLY sources',
   },
   {
     name: 'extract_merge_using', enabled: true, priority: 9,
     category: 'source',
-    pattern: '\\bMERGE\\b[\\s\\S]*?\\bUSING\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)',
+    pattern: '\\bMERGE\\b[\\s\\S]*?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
     flags: 'gi',
     description: 'MERGE ... USING source table',
+  },
+  {
+    name: 'extract_udf_calls', enabled: true, priority: 10,
+    category: 'source',
+    pattern: '((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\(',
+    flags: 'gi',
+    description: 'Inline scalar UDF calls (schema.func() — requires 2+ part name)',
   },
   // ── Target extraction ──
   {
     name: 'extract_targets_dml', enabled: true, priority: 6,
     category: 'target',
-    pattern: '\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)',
+    pattern: '\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
     flags: 'gi',
     description: 'INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — they destroy data, not lineage)',
   },
   {
     name: 'extract_ctas', enabled: true, priority: 13,
     category: 'target',
-    pattern: '\\bCREATE\\s+TABLE\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)\\s+AS\\s+SELECT',
+    pattern: '\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+AS\\s+SELECT',
     flags: 'gi',
     description: 'CREATE TABLE AS SELECT target',
   },
   {
     name: 'extract_select_into', enabled: true, priority: 14,
     category: 'target',
-    pattern: '\\bINTO\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)\\s+FROM',
+    pattern: '\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+FROM',
     flags: 'gi',
     description: 'SELECT INTO target',
   },
@@ -95,9 +98,9 @@ const DEFAULT_RULES: ParseRule[] = [
   {
     name: 'extract_sp_calls', enabled: true, priority: 8,
     category: 'exec',
-    pattern: '\\bEXEC(?:UTE)?\\s+((?:\\[?\\w+\\]?\\.)*\\[?\\w+\\]?)',
+    pattern: '\\bEXEC(?:UTE)?\\s+(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
     flags: 'gi',
-    description: 'EXEC/EXECUTE procedure calls',
+    description: 'EXEC/EXECUTE procedure calls (including @var = proc pattern)',
   },
 ];
 
@@ -212,9 +215,15 @@ export function getActiveRules(): ParseRule[] {
 export function parseSqlBody(sql: string): ParsedDependencies {
   let clean = sql;
 
-  // Step 1: Preprocessing rules (comment removal etc.)
+  // Step 1: Built-in SQL cleaning — single-pass string/comment handling.
+  // "The Best Regex Trick": leftmost match wins, so strings protect -- inside them.
+  clean = clean.replace(/\[[^\]]+\]|'(?:''|[^'])*'|--[^\r\n]*|\/\*[\s\S]*?\*\//g, (match) => {
+    return match.startsWith('[') ? match : match.startsWith("'") ? "''" : ' ';
+  });
+
+  // Step 1b: Additional user-defined preprocessing rules (skip built-in clean_sql)
   for (const rule of activeRules) {
-    if (rule.category === 'preprocessing' && rule.replacement !== undefined) {
+    if (rule.category === 'preprocessing' && rule.name !== 'clean_sql' && rule.replacement !== undefined) {
       clean = clean.replace(new RegExp(rule.pattern, rule.flags), rule.replacement);
     }
   }
@@ -227,15 +236,25 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   const execCalls = new Set<string>();
 
   // Step 3: Extraction rules
+  // UDF matches collected separately to filter false positives from INSERT INTO table(cols).
+  const udfSources = new Set<string>();
+
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing') continue;
 
     const dest =
+      rule.name === 'extract_udf_calls' ? udfSources :
       rule.category === 'source' ? sources :
       rule.category === 'target' ? targets :
       execCalls;
 
     collectMatches(clean, new RegExp(rule.pattern, rule.flags), dest, cteNames);
+  }
+
+  // Add UDF sources that aren't already targets (a function can't be an INSERT/UPDATE target).
+  // This avoids false positives from INSERT INTO schema.table(col1, col2) where ( starts column list.
+  for (const u of udfSources) {
+    if (!targets.has(u)) sources.add(u);
   }
 
   return {

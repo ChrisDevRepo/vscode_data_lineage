@@ -28,15 +28,16 @@ Press F5 to launch Extension Development Host.
 
 ## Test Suite
 
-| File | Purpose |
-|------|---------|
-| `test/engine.test.ts` | Parser baseline tests |
-| `test/webview.integration.test.ts` | VS Code integration tests |
-| `test/AdventureWorks.dacpac` | Classic style test dacpac |
-| `test/AdventureWorks_sdk-style.dacpac` | SDK-style test dacpac |
+| File | Tests | Purpose |
+|------|-------|---------|
+| `test/engine.test.ts` | 107 | Engine integration: extraction, graph, trace, direction validation |
+| `test/parser-edge-cases.test.ts` | 123 | Syntactic parser tests: all 9 rules + edge cases + regression guards |
+| `test/webview.integration.test.ts` | — | VS Code integration tests |
+| `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
+| `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run parser tests
+npm test              # Run all parser + integration tests (230 total)
 npm run test:integration  # Run VS Code tests
 ```
 

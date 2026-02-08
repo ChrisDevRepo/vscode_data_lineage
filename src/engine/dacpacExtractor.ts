@@ -148,11 +148,17 @@ function buildNodesAndEdges(elements: XmlElement[]): {
       for (const dep of parsed.targets) outboundIds.add(normalizeName(dep));
       for (const dep of parsed.execCalls) outboundIds.add(normalizeName(dep));
 
-      // Add XML deps only for sources (exclude targets/exec to prevent reverse edges)
+      // Add XML deps not already handled by regex (exclude targets/exec to prevent reverse edges)
+      // Direction is type-aware: procedures are EXEC calls (outbound), everything else is inbound
       for (const dep of xmlDeps) {
         const depId = normalizeName(dep);
         if (depId !== sourceId && nodeIds.has(depId) && !outboundIds.has(depId)) {
-          addEdge(edges, edgeKeys, depId, sourceId, 'body');
+          const depType = nodeMap.get(depId)?.type;
+          if (depType === 'procedure') {
+            addEdge(edges, edgeKeys, sourceId, depId, 'exec');   // SP → called proc (outbound)
+          } else {
+            addEdge(edges, edgeKeys, depId, sourceId, 'body');   // func/view/table → SP (inbound)
+          }
         }
       }
 
