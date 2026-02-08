@@ -265,8 +265,8 @@ export function GraphCanvas({
         />
       )}
 
-      {/* Traced Filter Banner - shown only during applied mode */}
-      {trace.mode === 'applied' && trace.selectedNodeId && (
+      {/* Traced Filter Banner - shown during applied or filtered (immediate) mode */}
+      {(trace.mode === 'applied' || trace.mode === 'filtered') && trace.selectedNodeId && (
         <TracedFilterBanner
           startNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
           upstreamLevels={trace.upstreamLevels}

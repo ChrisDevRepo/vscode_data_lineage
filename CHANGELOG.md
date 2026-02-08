@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.1] - 2026-02-08
+
+### Fixed
+- **Trace Banner** — Immediate trace from search autocomplete now shows the banner so users can exit the trace
+
 ## [0.8.0] - 2026-02-08
 
 ### Added
