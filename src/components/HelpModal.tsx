@@ -161,6 +161,29 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <section>
             <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+              <h3 className="text-lg font-semibold">Export</h3>
+            </div>
+            <div className="ml-7 space-y-2 text-sm ln-text-muted">
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>PNG:</strong> snapshot of the current graph in light theme with schema legend</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Draw.io:</strong> editable <code>.drawio</code> file with colored nodes, edges, and schema legend</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Copy Qualified Name:</strong> right-click any node to copy <code>[schema].[name]</code></span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
               </svg>
               <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>
