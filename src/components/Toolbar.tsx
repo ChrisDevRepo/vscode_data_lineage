@@ -1,7 +1,6 @@
 import { memo, useState } from 'react';
 import { ObjectType } from '../engine/types';
 import { Button } from './ui/Button';
-import { Checkbox } from './ui/Checkbox';
 import { HelpModal } from './HelpModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
 import { TypeFilterDropdown } from './TypeFilterDropdown';
@@ -23,6 +22,7 @@ interface ToolbarProps {
   onRebuild?: () => void;
   onBack: () => void;
   onOpenDdlViewer?: () => void;
+  onExportDrawio?: () => void;
   hasHighlightedNode?: boolean;
   onExecuteSearch?: (name: string, schema?: string) => void;
   onStartTrace?: (nodeId: string) => void;
@@ -53,6 +53,7 @@ export const Toolbar = memo(function Toolbar({
   onRebuild,
   onBack,
   onOpenDdlViewer,
+  onExportDrawio,
   hasHighlightedNode = false,
   onExecuteSearch,
   onStartTrace,
@@ -222,6 +223,25 @@ export const Toolbar = memo(function Toolbar({
               </svg>
             </Button>
           )}
+
+          <div className="w-px h-6 ln-divider" />
+
+          <Button onClick={onExportDrawio} variant="ghost" title="Export as Draw.io">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-5 h-5"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+              />
+            </svg>
+          </Button>
 
           <Button onClick={() => setIsHelpOpen(true)} variant="ghost" title="Help">
             <svg
