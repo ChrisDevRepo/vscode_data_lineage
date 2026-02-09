@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1] - 2026-02-08
+
+### Added
+- **Export to Draw.io** — Export the lineage graph as a `.drawio` file with schema-colored left bands, orthogonal curved edges, bidirectional markers, and a schema legend
+- **Copy Qualified Name** — Right-click any node to copy `[schema].[name]` to clipboard for quick use in SQL editors
+
+### Fixed
+- **Trace Banner** — Immediate trace from search autocomplete now shows the banner so users can exit the trace
+
 ## [0.8.0] - 2026-02-08
 
 ### Added

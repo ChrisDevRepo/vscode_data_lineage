@@ -128,6 +128,21 @@ export function GraphCanvas({
     }
   }, [flowNodes, getNode, setCenter, onNodeClick]);
 
+  // Export current graph to Draw.io format
+  const handleExportDrawio = useCallback(() => {
+    import('../export/drawioExporter').then(({ exportToDrawio }) => {
+      const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
+      const xml = exportToDrawio(flowNodes, flowEdges, schemas);
+      const blob = new Blob([xml], { type: 'application/xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'lineage.drawio';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }, [flowNodes, flowEdges, availableSchemas, filter.schemas]);
+
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
   useEffect(() => {
@@ -237,6 +252,7 @@ export function GraphCanvas({
         onRebuild={onRebuild}
         onBack={onBack}
         onOpenDdlViewer={onOpenDdlViewer}
+        onExportDrawio={handleExportDrawio}
         hasHighlightedNode={!!highlightedNodeId}
         onToggleDetailSearch={onToggleDetailSearch}
         isDetailSearchOpen={isDetailSearchOpen}
@@ -265,8 +281,8 @@ export function GraphCanvas({
         />
       )}
 
-      {/* Traced Filter Banner - shown only during applied mode */}
-      {trace.mode === 'applied' && trace.selectedNodeId && (
+      {/* Traced Filter Banner - shown during applied or filtered (immediate) mode */}
+      {(trace.mode === 'applied' || trace.mode === 'filtered') && trace.selectedNodeId && (
         <TracedFilterBanner
           startNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
           upstreamLevels={trace.upstreamLevels}
