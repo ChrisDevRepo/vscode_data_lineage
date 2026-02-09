@@ -41,10 +41,10 @@ function esc(s: string): string {
 function buildLabel(d: CustomNodeData, schemaColor: string): string {
   const icon = TYPE_COLORS[d.objectType]?.icon || '■';
   return (
-    '<table border="0" cellpadding="0" cellspacing="0" style="width:100%;height:100%;">' +
+    '<table border="0" cellpadding="0" cellspacing="0" width="100%" height="100%">' +
     '<tr>' +
-    `<td style="width:6px;background:${schemaColor};border-radius:6px 0 0 6px;"></td>` +
-    '<td style="padding:6px 8px;vertical-align:top;text-align:left;">' +
+    `<td width="6" height="100%" style="background:${schemaColor};"></td>` +
+    '<td valign="top" align="left" style="padding:6px 8px;">' +
     `<span style="color:#888888;font-size:14px;">${icon}</span>` +
     ` <span style="font-size:9px;color:#888888;">${d.inDegree}↓ ${d.outDegree}↑</span><br>` +
     `<b style="font-size:11px;color:#333333;">${esc(d.label)}</b><br>` +
@@ -124,7 +124,7 @@ function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: s
 
   let style =
     'edgeStyle=orthogonalEdgeStyle;curved=1;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;' +
-    'strokeColor=#999999;strokeWidth=1.2;endArrow=classic;endFill=1;';
+    'strokeColor=#999999;strokeWidth=0.8;endArrow=classic;endFill=1;';
 
   if (isBidi) {
     style += 'startArrow=classic;startFill=1;';
@@ -178,12 +178,15 @@ export function exportToDrawio(
     nodeObjects.push({
       '@_id': nodeId,
       '@_label': buildLabel(d, schemaColor),
+      '@_tooltip': `${d.fullName}\nType: ${d.objectType}\nIn: ${d.inDegree}\nOut: ${d.outDegree}`,
+      '@_fullName': d.fullName,
       '@_inputCount': String(d.inDegree),
       '@_outputCount': String(d.outDegree),
       mxCell: {
         '@_style':
           'rounded=1;whiteSpace=wrap;html=1;overflow=hidden;' +
           'fillColor=#FFFFFF;strokeColor=#E0E0E0;strokeWidth=1;' +
+          'align=left;verticalAlign=top;' +
           'spacing=0;spacingLeft=0;spacingRight=0;spacingTop=0;spacingBottom=0;',
         '@_vertex': '1',
         '@_parent': '1',
