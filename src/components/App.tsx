@@ -466,7 +466,7 @@ export function App() {
           nodeName={contextMenu.nodeName}
           schema={contextMenu.schema}
           objectType={contextMenu.objectType}
-          isTracing={trace.mode !== 'none'}
+          isTracing={trace.mode !== 'none' || !!analysisMode}
           onClose={() => setContextMenu(null)}
           onTrace={(nodeId) => startTraceConfig(nodeId)}
           onViewDdl={handleViewDdl}
