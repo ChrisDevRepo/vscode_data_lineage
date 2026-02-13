@@ -24,7 +24,15 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
   const elements = parseElements(xml);
   const { nodes, edges, stats } = buildNodesAndEdges(elements);
   const schemas = computeSchemas(nodes);
-  return { nodes, edges, schemas, parseStats: stats };
+
+  const warnings: string[] = [];
+  if (elements.length === 0) {
+    warnings.push('This dacpac appears to be empty.');
+  } else if (nodes.length === 0) {
+    warnings.push('No tables, views, or stored procedures found in this file.');
+  }
+
+  return { nodes, edges, schemas, parseStats: stats, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 export function filterBySchemas(
@@ -46,13 +54,24 @@ export function filterBySchemas(
     edges,
     schemas: model.schemas.filter((s) => selectedSchemas.has(s.name)),
     parseStats: model.parseStats,
+    warnings: model.warnings,
   };
 }
 
 // ─── ZIP + XML ──────────────────────────────────────────────────────────────
 
 async function extractModelXml(buffer: ArrayBuffer): Promise<string> {
-  const zip = await JSZip.loadAsync(buffer);
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(buffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('end of central directory') || msg.includes('is this a zip file'))
+      throw new Error('Not a valid .dacpac file (invalid ZIP archive)');
+    if (msg.includes('End of data reached') || msg.includes('Corrupted zip'))
+      throw new Error('File appears to be corrupted or truncated');
+    throw new Error(`Invalid .dacpac file: ${msg || 'unknown error'}`);
+  }
   const modelFile = zip.file('model.xml');
   if (!modelFile) throw new Error('model.xml not found in .dacpac');
   return modelFile.async('string');
@@ -67,7 +86,12 @@ function parseElements(xml: string): XmlElement[] {
     trimValues: true,
   });
 
-  const doc = parser.parse(xml);
+  let doc;
+  try {
+    doc = parser.parse(xml);
+  } catch {
+    throw new Error('Failed to parse model.xml — the file may be corrupted');
+  }
   const model = doc?.DataSchemaModel?.Model;
   if (!model) throw new Error('Invalid model.xml: missing DataSchemaModel/Model');
 
