@@ -80,6 +80,10 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
             defaultUpstreamLevels: ((msgConfig.trace as Record<string, unknown>)?.defaultUpstreamLevels as number) || 3,
             defaultDownstreamLevels: ((msgConfig.trace as Record<string, unknown>)?.defaultDownstreamLevels as number) || 3,
           },
+          analysis: {
+            hubMinDegree: ((msgConfig.analysis as Record<string, unknown>)?.hubMinDegree as number) || 3,
+            islandMaxSize: ((msgConfig.analysis as Record<string, unknown>)?.islandMaxSize as number) || 0,
+          },
         };
         onConfigReceived(cfg);
         if (msgConfig.parseRules) {

@@ -115,6 +115,11 @@ export interface TraceConfig {
   defaultDownstreamLevels: number;
 }
 
+export interface AnalysisConfig {
+  hubMinDegree: number;
+  islandMaxSize: number;
+}
+
 export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   excludePatterns: string[];
@@ -122,6 +127,7 @@ export interface ExtensionConfig {
   layout: LayoutConfig;
   edgeStyle: EdgeStyle;
   trace: TraceConfig;
+  analysis: AnalysisConfig;
 }
 
 export const DEFAULT_CONFIG: ExtensionConfig = {
@@ -130,6 +136,7 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
   layout: { direction: 'LR', rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false },
   edgeStyle: 'default',
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
+  analysis: { hubMinDegree: 3, islandMaxSize: 0 },
 };
 
 // ─── UI Types ───────────────────────────────────────────────────────────────

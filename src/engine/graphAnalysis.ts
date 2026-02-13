@@ -1,21 +1,25 @@
 import Graph from 'graphology';
 import { connectedComponents } from 'graphology-components';
-import type { AnalysisResult, AnalysisGroup } from './types';
+import type { AnalysisResult, AnalysisGroup, AnalysisConfig } from './types';
 
 // ─── Islands (Connected Components) ─────────────────────────────────────────
 
-export function analyzeIslands(graph: Graph): AnalysisResult {
+export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'islands', groups: [], summary: 'No nodes in graph' };
   }
 
-  const components = connectedComponents(graph);
+  let components = connectedComponents(graph);
 
-  // Sort by size descending
-  components.sort((a, b) => b.length - a.length);
+  // Sort by size ascending (smallest islands first)
+  components.sort((a, b) => a.length - b.length);
+
+  // Filter by max size if configured (0 = show all)
+  if (maxSize > 0) {
+    components = components.filter(c => c.length <= maxSize);
+  }
 
   const groups: AnalysisGroup[] = components.map((nodeIds, i) => {
-    // Find schemas in this component
     const schemas = new Set<string>();
     for (const id of nodeIds) {
       schemas.add(graph.getNodeAttribute(id, 'schema'));
@@ -31,25 +35,26 @@ export function analyzeIslands(graph: Graph): AnalysisResult {
     };
   });
 
+  const suffix = maxSize > 0 ? ` (max ${maxSize} nodes)` : '';
   return {
     type: 'islands',
     groups,
-    summary: `${groups.length} disconnected island${groups.length !== 1 ? 's' : ''}`,
+    summary: `${groups.length} island${groups.length !== 1 ? 's' : ''}${suffix}`,
   };
 }
 
 // ─── Hubs (High-Degree Nodes) ───────────────────────────────────────────────
 
-export function analyzeHubs(graph: Graph): AnalysisResult {
+export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'hubs', groups: [], summary: 'No nodes in graph' };
   }
 
-  // Collect all nodes with their total degree
+  // Collect nodes that meet the minimum degree threshold
   const nodesByDegree: Array<{ id: string; degree: number; inDegree: number; outDegree: number }> = [];
   graph.forEachNode((id) => {
     const degree = graph.degree(id);
-    if (degree > 0) {
+    if (degree >= minDegree) {
       nodesByDegree.push({
         id,
         degree,
@@ -62,10 +67,7 @@ export function analyzeHubs(graph: Graph): AnalysisResult {
   // Sort by degree descending
   nodesByDegree.sort((a, b) => b.degree - a.degree);
 
-  // Take top 20 hubs (or all if fewer)
-  const topHubs = nodesByDegree.slice(0, 20);
-
-  const groups: AnalysisGroup[] = topHubs.map((hub) => {
+  const groups: AnalysisGroup[] = nodesByDegree.map((hub) => {
     const schema = graph.getNodeAttribute(hub.id, 'schema');
     const name = graph.getNodeAttribute(hub.id, 'name');
     const type = graph.getNodeAttribute(hub.id, 'type');
@@ -85,7 +87,7 @@ export function analyzeHubs(graph: Graph): AnalysisResult {
   return {
     type: 'hubs',
     groups,
-    summary: `Top ${groups.length} hub${groups.length !== 1 ? 's' : ''} by connection count`,
+    summary: `${groups.length} hub${groups.length !== 1 ? 's' : ''} with ${minDegree}+ connections`,
   };
 }
 
@@ -143,10 +145,10 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
-export function runAnalysis(graph: Graph, type: 'islands' | 'hubs' | 'orphans'): AnalysisResult {
+export function runAnalysis(graph: Graph, type: 'islands' | 'hubs' | 'orphans', analysisConfig: AnalysisConfig): AnalysisResult {
   switch (type) {
-    case 'islands': return analyzeIslands(graph);
-    case 'hubs': return analyzeHubs(graph);
+    case 'islands': return analyzeIslands(graph, analysisConfig.islandMaxSize);
+    case 'hubs': return analyzeHubs(graph, analysisConfig.hubMinDegree);
     case 'orphans': return analyzeOrphans(graph);
   }
 }

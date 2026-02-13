@@ -209,6 +209,22 @@
           "description": "Log verbosity in the 'Data Lineage Viz' output channel.",
           "scope": "resource"
         },
+        "dataLineageViz.analysis.hubMinDegree": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Minimum connection count for a node to appear in Hub analysis.",
+          "scope": "resource"
+        },
+        "dataLineageViz.analysis.islandMaxSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Show only islands with at most this many nodes (0 = show all islands).",
+          "scope": "resource"
+        },
         "dataLineageViz.edgeStyle": {
           "type": "string",
           "enum": [

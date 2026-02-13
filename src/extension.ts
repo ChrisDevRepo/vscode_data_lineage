@@ -254,6 +254,7 @@ interface ExtensionConfigMessage {
   layout: { direction: string; rankSeparation: number; nodeSeparation: number; edgeAnimation: boolean; highlightAnimation: boolean };
   edgeStyle: string;
   trace: { defaultUpstreamLevels: number; defaultDownstreamLevels: number };
+  analysis: { hubMinDegree: number; islandMaxSize: number };
 }
 
 async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
@@ -278,6 +279,10 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     trace: {
       defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels', 3),
       defaultDownstreamLevels: cfg.get<number>('trace.defaultDownstreamLevels', 3),
+    },
+    analysis: {
+      hubMinDegree: cfg.get<number>('analysis.hubMinDegree', 3),
+      islandMaxSize: cfg.get<number>('analysis.islandMaxSize', 0),
     },
   };
 

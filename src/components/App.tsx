@@ -314,7 +314,7 @@ export function App() {
     } else {
       // For islands/hubs, run analysis on current graph
       if (graph) {
-        const result = runAnalysis(graph, type);
+        const result = runAnalysis(graph, type, config.analysis);
         setAnalysisMode({ type, result, activeGroupId: null });
       }
     }
@@ -323,7 +323,7 @@ export function App() {
   // When graph changes after orphan hideIsolated toggle, run the analysis
   useEffect(() => {
     if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
-      const result = runAnalysis(graph, 'orphans');
+      const result = runAnalysis(graph, 'orphans', config.analysis);
       setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
       // Don't reset the ref here — it's used to restore on close
     }
@@ -341,12 +341,21 @@ export function App() {
   }, [filter, model, config, rebuild]);
 
   const selectAnalysisGroup = useCallback((groupId: string) => {
-    if (!analysisMode || !model) return;
+    if (!analysisMode || !model || !graph) return;
     const group = analysisMode.result.groups.find(g => g.id === groupId);
     if (!group) return;
 
-    // Build a subset model containing only the group's nodes
-    const nodeIdSet = new Set(group.nodeIds);
+    // For hubs: expand to include the hub's direct neighbors
+    let nodeIdSet = new Set(group.nodeIds);
+    if (analysisMode.type === 'hubs') {
+      for (const hubId of group.nodeIds) {
+        if (graph.hasNode(hubId)) {
+          graph.forEachNeighbor(hubId, (neighbor) => nodeIdSet.add(neighbor));
+        }
+      }
+    }
+
+    // Build a subset model
     const subsetNodes = model.nodes.filter(n => nodeIdSet.has(n.id));
     const subsetEdges = model.edges.filter(e => nodeIdSet.has(e.source) && nodeIdSet.has(e.target));
     const subsetModel: DacpacModel = { ...model, nodes: subsetNodes, edges: subsetEdges };
@@ -363,7 +372,7 @@ export function App() {
       focusSchemas: new Set(),
     };
     buildFromModel(subsetModel, subsetFilter, config);
-  }, [analysisMode, model, config, buildFromModel]);
+  }, [analysisMode, model, graph, config, buildFromModel]);
 
   const clearAnalysisGroup = useCallback(() => {
     if (!analysisMode || !model) return;
