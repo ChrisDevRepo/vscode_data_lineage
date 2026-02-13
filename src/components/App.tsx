@@ -325,9 +325,8 @@ export function App() {
     if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
       const result = runAnalysis(graph, 'orphans', config.analysis);
       setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
-      // Don't reset the ref here — it's used to restore on close
     }
-  }, [graph, analysisMode]);
+  }, [graph, analysisMode, config.analysis]);
 
   const closeAnalysis = useCallback(() => {
     // Restore hideIsolated if we changed it for orphans
@@ -346,7 +345,7 @@ export function App() {
     if (!group) return;
 
     // For hubs: expand to include the hub's direct neighbors
-    let nodeIdSet = new Set(group.nodeIds);
+    const nodeIdSet = new Set(group.nodeIds);
     if (analysisMode.type === 'hubs') {
       for (const hubId of group.nodeIds) {
         if (graph.hasNode(hubId)) {

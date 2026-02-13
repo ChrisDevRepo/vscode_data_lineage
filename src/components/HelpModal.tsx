@@ -161,6 +161,33 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <section>
             <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605" />
+              </svg>
+              <h3 className="text-lg font-semibold">Graph Analysis</h3>
+            </div>
+            <div className="ml-7 space-y-2 text-sm ln-text-muted">
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Islands:</strong> find disconnected subgraphs</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Hubs:</strong> identify most-connected nodes</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Orphan Nodes:</strong> reveal objects with no dependencies</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Click a group in the sidebar to zoom into that subset</span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
               <h3 className="text-lg font-semibold">Export</h3>
@@ -169,10 +196,6 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
                 <span><strong>Draw.io:</strong> editable <code>.drawio</code> file with colored nodes, edges, and schema legend</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span><strong>Copy Qualified Name:</strong> right-click any node to copy <code>[schema].[name]</code></span>
               </div>
             </div>
           </section>
@@ -187,7 +210,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <div className="ml-7 space-y-2 text-sm ln-text-muted">
               <div className="flex items-start gap-2">
                 <kbd className="px-2 py-1 rounded text-xs font-mono ln-kbd">Esc</kbd>
-                <span>Clear trace or close context menu</span>
+                <span>Close analysis, clear trace, or close context menu</span>
               </div>
               <div className="flex items-start gap-2">
                 <kbd className="px-2 py-1 rounded text-xs font-mono ln-kbd">Enter</kbd>
