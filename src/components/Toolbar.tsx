@@ -29,6 +29,7 @@ interface ToolbarProps {
   onToggleDetailSearch?: () => void;
   isDetailSearchOpen?: boolean;
   isAnalysisActive?: boolean;
+  analysisType?: AnalysisType | null;
   onOpenAnalysis?: (type: AnalysisType) => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
@@ -62,6 +63,7 @@ export const Toolbar = memo(function Toolbar({
   onToggleDetailSearch,
   isDetailSearchOpen = false,
   isAnalysisActive = false,
+  analysisType = null,
   onOpenAnalysis,
   allNodes = [],
   metrics,
@@ -112,7 +114,7 @@ export const Toolbar = memo(function Toolbar({
             searchTerm={searchTerm}
             onSearchChange={onSearchChange}
             onExecuteSearch={onExecuteSearch}
-            onStartTrace={onStartTrace}
+            onStartTrace={isAnalysisActive ? undefined : onStartTrace}
             allNodes={allNodes}
             selectedSchemas={selectedSchemas}
             types={types}
@@ -183,7 +185,8 @@ export const Toolbar = memo(function Toolbar({
           <Button
             onClick={onToggleIsolated}
             variant={hideIsolated ? 'default' : 'ghost'}
-            title="Hide Isolated Nodes"
+            title={analysisType === 'orphans' ? 'Disabled during Orphan analysis' : 'Hide Isolated Nodes'}
+            disabled={analysisType === 'orphans'}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"

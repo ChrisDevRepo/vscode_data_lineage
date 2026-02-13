@@ -269,6 +269,7 @@ export function GraphCanvas({
         onToggleDetailSearch={onToggleDetailSearch}
         isDetailSearchOpen={isDetailSearchOpen}
         isAnalysisActive={!!analysisMode}
+        analysisType={analysisMode?.type ?? null}
         onOpenAnalysis={onOpenAnalysis}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
