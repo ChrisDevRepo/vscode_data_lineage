@@ -7,8 +7,9 @@ import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, ObjectType, FilterState, TraceState, ExtensionConfig } from '../engine/types';
+import type { DacpacModel, ObjectType, FilterState, TraceState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
+import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, computeSchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 
@@ -138,6 +139,8 @@ export function App() {
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
+  const prevHideIsolatedRef = useRef<boolean | null>(null);
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
@@ -290,14 +293,107 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  // Escape key: end trace
+  // ─── Analysis Mode ──────────────────────────────────────────────────────
+
+  const openAnalysis = useCallback((type: AnalysisType) => {
+    // End any active trace / close detail search
+    endTrace();
+    setIsDetailSearchOpen(false);
+    setHighlightedNodeId(null);
+    setInfoBarNodeId(null);
+
+    if (type === 'orphans' && filter.hideIsolated) {
+      // Save current hideIsolated state and disable it so orphans become visible
+      prevHideIsolatedRef.current = true;
+      const nextFilter = { ...filter, hideIsolated: false };
+      setFilter(nextFilter);
+      if (model) {
+        // Rebuild with orphans visible, then run analysis on the new graph
+        buildFromModel(model, nextFilter, config);
+      }
+    } else {
+      // For islands/hubs, run analysis on current graph
+      if (graph) {
+        const result = runAnalysis(graph, type);
+        setAnalysisMode({ type, result, activeGroupId: null });
+      }
+    }
+  }, [endTrace, filter, model, graph, config, buildFromModel]);
+
+  // When graph changes after orphan hideIsolated toggle, run the analysis
+  useEffect(() => {
+    if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
+      const result = runAnalysis(graph, 'orphans');
+      setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
+      // Don't reset the ref here — it's used to restore on close
+    }
+  }, [graph, analysisMode]);
+
+  const closeAnalysis = useCallback(() => {
+    // Restore hideIsolated if we changed it for orphans
+    if (prevHideIsolatedRef.current !== null) {
+      const nextFilter = { ...filter, hideIsolated: true };
+      setFilter(nextFilter);
+      if (model) rebuild(model, nextFilter, config);
+      prevHideIsolatedRef.current = null;
+    }
+    setAnalysisMode(null);
+  }, [filter, model, config, rebuild]);
+
+  const selectAnalysisGroup = useCallback((groupId: string) => {
+    if (!analysisMode || !model) return;
+    const group = analysisMode.result.groups.find(g => g.id === groupId);
+    if (!group) return;
+
+    // Build a subset model containing only the group's nodes
+    const nodeIdSet = new Set(group.nodeIds);
+    const subsetNodes = model.nodes.filter(n => nodeIdSet.has(n.id));
+    const subsetEdges = model.edges.filter(e => nodeIdSet.has(e.source) && nodeIdSet.has(e.target));
+    const subsetModel: DacpacModel = { ...model, nodes: subsetNodes, edges: subsetEdges };
+
+    // Update analysis mode with active group
+    setAnalysisMode(prev => prev ? { ...prev, activeGroupId: groupId } : null);
+
+    // Build subset view using buildFromModel with a permissive filter
+    const subsetFilter: FilterState = {
+      schemas: new Set(subsetNodes.map(n => n.schema)),
+      types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
+      searchTerm: '',
+      hideIsolated: false,
+      focusSchemas: new Set(),
+    };
+    buildFromModel(subsetModel, subsetFilter, config);
+  }, [analysisMode, model, config, buildFromModel]);
+
+  const clearAnalysisGroup = useCallback(() => {
+    if (!analysisMode || !model) return;
+    setAnalysisMode(prev => prev ? { ...prev, activeGroupId: null } : null);
+
+    // Restore full graph view
+    const currentFilter = analysisMode.type === 'orphans'
+      ? { ...filter, hideIsolated: false }
+      : filter;
+    rebuild(model, currentFilter, config);
+  }, [analysisMode, model, filter, config, rebuild]);
+
+  // Escape key: end trace or close analysis
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && trace.mode !== 'none') endTrace();
+      if (e.key === 'Escape') {
+        if (analysisMode) {
+          if (analysisMode.activeGroupId) {
+            clearAnalysisGroup();
+          } else {
+            closeAnalysis();
+          }
+        } else if (trace.mode !== 'none') {
+          endTrace();
+        }
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [trace.mode, endTrace]);
+  }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
 
   if (view === 'selector') {
     return <ProjectSelector onVisualize={handleVisualize} config={config} loader={dacpacLoader} />;
@@ -331,6 +427,11 @@ export function App() {
         onToggleFocusSchema={handleToggleFocusSchema}
         onToggleSchema={handleToggleSchema}
         availableSchemas={model?.schemas.map(s => s.name) || []}
+        analysisMode={analysisMode}
+        onOpenAnalysis={openAnalysis}
+        onCloseAnalysis={closeAnalysis}
+        onSelectAnalysisGroup={selectAnalysisGroup}
+        onClearAnalysisGroup={clearAnalysisGroup}
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}

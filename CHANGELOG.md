@@ -2,6 +2,9 @@
 
 ## [0.8.2] - 2026-02-13
 
+### Added
+- **Graph Analysis** — New analysis toolbar button with three modes: Islands (find disconnected subgraphs), Hubs (identify most-connected nodes), and Orphan Nodes (reveal objects with no dependencies)
+
 ### Fixed
 - **Import feedback** — Wizard now shows status messages when loading a .dacpac, including errors for corrupt files and warnings for empty databases
 

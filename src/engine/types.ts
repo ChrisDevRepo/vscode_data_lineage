@@ -150,3 +150,26 @@ export interface TraceState {
   tracedNodeIds: Set<string>;
   tracedEdgeIds: Set<string>;
 }
+
+// ─── Graph Analysis Types ────────────────────────────────────────────────────
+
+export type AnalysisType = 'islands' | 'hubs' | 'orphans';
+
+export interface AnalysisGroup {
+  id: string;
+  label: string;
+  nodeIds: string[];
+  meta?: Record<string, string | number>;
+}
+
+export interface AnalysisResult {
+  type: AnalysisType;
+  groups: AnalysisGroup[];
+  summary: string;
+}
+
+export interface AnalysisMode {
+  type: AnalysisType;
+  result: AnalysisResult;
+  activeGroupId: string | null;
+}

@@ -21,10 +21,12 @@ import { CustomNode, type CustomNodeData } from './CustomNode';
 import { Legend } from './Legend';
 import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner } from './TracedFilterBanner';
+import { AnalysisBanner } from './AnalysisBanner';
+import { AnalysisSidebar } from './AnalysisSidebar';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
-import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel } from '../engine/types';
+import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
 
 const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
 
@@ -58,6 +60,11 @@ interface GraphCanvasProps {
   model?: DacpacModel | null;
   infoBarNodeId?: string | null;
   onCloseInfoBar?: () => void;
+  analysisMode?: AnalysisMode | null;
+  onOpenAnalysis?: (type: AnalysisType) => void;
+  onCloseAnalysis?: () => void;
+  onSelectAnalysisGroup?: (groupId: string) => void;
+  onClearAnalysisGroup?: () => void;
 }
 
 export function GraphCanvas({
@@ -90,6 +97,11 @@ export function GraphCanvas({
   model,
   infoBarNodeId,
   onCloseInfoBar,
+  analysisMode,
+  onOpenAnalysis,
+  onCloseAnalysis,
+  onSelectAnalysisGroup,
+  onClearAnalysisGroup,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
 
@@ -256,6 +268,8 @@ export function GraphCanvas({
         hasHighlightedNode={!!highlightedNodeId}
         onToggleDetailSearch={onToggleDetailSearch}
         isDetailSearchOpen={isDetailSearchOpen}
+        isAnalysisActive={!!analysisMode}
+        onOpenAnalysis={onOpenAnalysis}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={displayNodes.map(n => ({
@@ -292,6 +306,14 @@ export function GraphCanvas({
           mode={trace.mode}
           onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
           onReset={() => onResetAll()}
+        />
+      )}
+
+      {/* Analysis Banner - shown when analysis mode is active */}
+      {analysisMode && onCloseAnalysis && (
+        <AnalysisBanner
+          analysis={analysisMode}
+          onClose={onCloseAnalysis}
         />
       )}
 
@@ -335,7 +357,7 @@ export function GraphCanvas({
             >
               <Background gap={16} />
               <Controls showInteractive={true} position="bottom-left" />
-              {isDetailSearchOpen && onToggleDetailSearch && (
+              {isDetailSearchOpen && onToggleDetailSearch && !analysisMode && (
                 <Panel position="top-left">
                   <DetailSearchSidebar
                     onClose={onToggleDetailSearch}
@@ -362,6 +384,16 @@ export function GraphCanvas({
                         }
                       }, 100);
                     }}
+                  />
+                </Panel>
+              )}
+              {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup && (
+                <Panel position="top-left">
+                  <AnalysisSidebar
+                    analysis={analysisMode}
+                    onSelectGroup={onSelectAnalysisGroup}
+                    onClearGroup={onClearAnalysisGroup}
+                    onClose={onCloseAnalysis}
                   />
                 </Panel>
               )}

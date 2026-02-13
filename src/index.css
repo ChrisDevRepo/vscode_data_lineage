@@ -57,6 +57,11 @@
   --ln-warning-border: var(--vscode-editorWarning-border, #cca700);
   --ln-warning-fg: var(--vscode-editorWarning-foreground, #cca700);
 
+  /* Analysis colors */
+  --ln-analysis-bg: var(--vscode-editorInfo-background, rgba(0, 120, 215, 0.08));
+  --ln-analysis-border: var(--vscode-editorInfo-border, #3794ff);
+  --ln-analysis-icon: var(--vscode-editorInfo-foreground, #3794ff);
+
   /* Validation colors */
   --ln-validation-error-bg: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
   --ln-validation-error-border: var(--vscode-inputValidation-errorBorder, #be1100);
@@ -595,4 +600,48 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
+}
+
+/* ─── Analysis Banner ──────────────────────────────────────────────────── */
+.ln-analysis-banner {
+  background: var(--ln-analysis-bg);
+  border-bottom: 1px solid var(--ln-analysis-border);
+}
+
+/* ─── Analysis Sidebar ─────────────────────────────────────────────────── */
+.ln-analysis-sidebar {
+  width: 360px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  background: var(--ln-widget-bg);
+  border: 1px solid var(--ln-widget-border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--ln-fg);
+}
+
+.ln-analysis-groups {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.ln-analysis-group-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--ln-border-light);
+  transition: background 0.1s;
+}
+
+.ln-analysis-group-item:hover {
+  background: var(--ln-bg-secondary);
+}
+
+.ln-analysis-group-active {
+  background: var(--ln-analysis-bg);
+  border-left: 3px solid var(--ln-analysis-border);
+  padding-left: 7px;
+}
+
+.ln-analysis-group-active:hover {
+  background: var(--ln-analysis-bg);
 }

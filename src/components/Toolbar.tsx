@@ -1,5 +1,5 @@
-import { memo, useState } from 'react';
-import { ObjectType } from '../engine/types';
+import { memo, useState, useRef, useEffect } from 'react';
+import { ObjectType, AnalysisType } from '../engine/types';
 import { Button } from './ui/Button';
 import { HelpModal } from './HelpModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
@@ -28,6 +28,8 @@ interface ToolbarProps {
   onStartTrace?: (nodeId: string) => void;
   onToggleDetailSearch?: () => void;
   isDetailSearchOpen?: boolean;
+  isAnalysisActive?: boolean;
+  onOpenAnalysis?: (type: AnalysisType) => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -59,10 +61,26 @@ export const Toolbar = memo(function Toolbar({
   onStartTrace,
   onToggleDetailSearch,
   isDetailSearchOpen = false,
+  isAnalysisActive = false,
+  onOpenAnalysis,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isAnalysisDropdownOpen, setIsAnalysisDropdownOpen] = useState(false);
+  const analysisDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!isAnalysisDropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (analysisDropdownRef.current && !analysisDropdownRef.current.contains(e.target as Node)) {
+        setIsAnalysisDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [isAnalysisDropdownOpen]);
   
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
@@ -182,6 +200,62 @@ export const Toolbar = memo(function Toolbar({
               />
             </svg>
           </Button>
+
+          <div className="relative" ref={analysisDropdownRef}>
+            <Button
+              onClick={() => setIsAnalysisDropdownOpen(prev => !prev)}
+              variant={isAnalysisActive ? 'primary' : 'ghost'}
+              title="Graph Analysis"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-5 h-5"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"
+                />
+              </svg>
+            </Button>
+            {isAnalysisDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 w-48 rounded-md shadow-lg z-50 ln-dropdown" style={{ boxShadow: 'var(--ln-dropdown-shadow)' }}>
+                <div className="py-1">
+                  <button
+                    className="w-full text-left px-3 py-1.5 text-xs ln-list-item flex items-center gap-2"
+                    onClick={() => { setIsAnalysisDropdownOpen(false); onOpenAnalysis?.('islands'); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                    </svg>
+                    Islands
+                  </button>
+                  <button
+                    className="w-full text-left px-3 py-1.5 text-xs ln-list-item flex items-center gap-2"
+                    onClick={() => { setIsAnalysisDropdownOpen(false); onOpenAnalysis?.('hubs'); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
+                    </svg>
+                    Hubs
+                  </button>
+                  <button
+                    className="w-full text-left px-3 py-1.5 text-xs ln-list-item flex items-center gap-2"
+                    onClick={() => { setIsAnalysisDropdownOpen(false); onOpenAnalysis?.('orphans'); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                    Orphan Nodes
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <Button onClick={onRefresh} variant="ghost" title="Clear All Filters">
             <svg
