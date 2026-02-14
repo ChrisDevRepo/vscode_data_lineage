@@ -3,6 +3,7 @@
 ## [0.9.0] - 2026-02-14
 
 ### Added
+- **Remember Last Dacpac** — Wizard remembers your last opened file and offers a one-click "Reopen" button; file picker now uses VS Code's native dialog
 - **Find Path** — Right-click any node → "Find Path" to discover the shortest connection to another node
 - **Graph Analysis** — Analyze dropdown with structural insights
   - Islands: disconnected subgraphs
@@ -14,6 +15,8 @@
 
 ### Changed
 - Consolidated utility directories, extracted shared hooks and helpers, improved type safety, and replaced hardcoded colors with theme-aware CSS variables
+
+## [0.8.2] - 2026-02-14
 
 ### Fixed
 - **Import feedback** — Status messages for loading, errors, and empty databases

@@ -32,7 +32,7 @@ export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendPro
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-opacity-80 transition-colors text-left ln-legend-header"
       >
         <span className="text-[10px] font-normal uppercase tracking-wider">SCHEMAS</span>
-        <span className="text-[8px] opacity-50 ml-1.5">{collapsed ? '▼' : '▲'}</span>
+        <span className="text-[10px] opacity-70 ml-1.5">{collapsed ? '▼' : '▲'}</span>
       </button>
 
       {!collapsed && (

@@ -1,5 +1,5 @@
 import Graph from 'graphology';
-import { connectedComponents } from 'graphology-components';
+import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
 import type { AnalysisType, AnalysisResult, AnalysisGroup, AnalysisConfig } from './types';
 
 // ─── Islands (Connected Components) ─────────────────────────────────────────
@@ -14,10 +14,8 @@ export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   // Sort by size ascending (smallest islands first)
   components.sort((a, b) => a.length - b.length);
 
-  // Filter by max size if configured (0 = show all)
-  if (maxSize > 0) {
-    components = components.filter(c => c.length <= maxSize);
-  }
+  // Islands need 2+ nodes (single isolated nodes → Orphan analysis); filter by maxSize
+  components = components.filter(c => c.length >= 2 && c.length <= maxSize);
 
   const groups: AnalysisGroup[] = components.map((nodeIds, i) => {
     const schemas = new Set<string>();
@@ -35,11 +33,10 @@ export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
     };
   });
 
-  const suffix = maxSize > 0 ? ` (max ${maxSize} nodes)` : '';
   return {
     type: 'islands',
     groups,
-    summary: `${groups.length} island${groups.length !== 1 ? 's' : ''}${suffix}`,
+    summary: `${groups.length} island${groups.length !== 1 ? 's' : ''} (max ${maxSize} nodes)`,
   };
 }
 
@@ -252,66 +249,41 @@ export function analyzeCycles(graph: Graph): AnalysisResult {
     return { type: 'cycles', groups: [], summary: 'No nodes in graph' };
   }
 
-  // DFS 3-color: undefined=WHITE, 0=GREY (in stack), 1=BLACK (done)
-  const color = new Map<string, number>();
-  const cycleNodes = new Set<string>();
+  // Each SCC of size ≥ 2 is a distinct cycle group
+  const sccs = stronglyConnectedComponents(graph);
+  const cycleComponents = sccs.filter(scc => scc.length >= 2);
 
-  function dfsCycle(node: string, ancestors: Set<string>): void {
-    color.set(node, 0); // GREY
-    ancestors.add(node);
+  // Sort by size descending (largest cycles first)
+  cycleComponents.sort((a, b) => b.length - a.length);
 
-    graph.forEachOutNeighbor(node, (neighbor) => {
-      if (ancestors.has(neighbor)) {
-        // Back edge → cycle found
-        cycleNodes.add(neighbor);
-        cycleNodes.add(node);
-      } else if (!color.has(neighbor)) {
-        dfsCycle(neighbor, ancestors);
-      }
-    });
-
-    ancestors.delete(node);
-    color.set(node, 1); // BLACK
-  }
-
-  graph.forEachNode((node) => {
-    if (!color.has(node)) {
-      dfsCycle(node, new Set());
+  const groups: AnalysisGroup[] = cycleComponents.map((nodeIds, i) => {
+    const schemas = new Set<string>();
+    for (const id of nodeIds) {
+      schemas.add(graph.getNodeAttribute(id, 'schema'));
     }
+    return {
+      id: `cycle-${i}`,
+      label: nodeIds.length === 2
+        ? `Bidirectional: ${graph.getNodeAttribute(nodeIds[0], 'name')} ↔ ${graph.getNodeAttribute(nodeIds[1], 'name')}`
+        : `Cycle (${nodeIds.length} nodes)`,
+      nodeIds,
+      meta: { count: nodeIds.length, schemas: [...schemas].join(', ') },
+    };
   });
 
-  if (cycleNodes.size === 0) {
-    return { type: 'cycles', groups: [], summary: 'No cycles detected — graph is a DAG' };
-  }
-
-  // Group cycle nodes by schema
-  const buckets = new Map<string, string[]>();
-  for (const id of cycleNodes) {
-    const schema = graph.getNodeAttribute(id, 'schema');
-    const arr = buckets.get(schema) || [];
-    arr.push(id);
-    buckets.set(schema, arr);
-  }
-
-  const groups: AnalysisGroup[] = [...buckets.entries()]
-    .sort((a, b) => b[1].length - a[1].length)
-    .map(([schema, nodeIds]) => ({
-      id: `cycle-${schema}`,
-      label: `[${schema}] cycle nodes`,
-      nodeIds,
-      meta: { schema, count: nodeIds.length },
-    }));
-
+  const totalNodes = cycleComponents.reduce((sum, scc) => sum + scc.length, 0);
   return {
     type: 'cycles',
     groups,
-    summary: `${cycleNodes.size} node${cycleNodes.size !== 1 ? 's' : ''} in circular dependencies`,
+    summary: totalNodes === 0
+      ? 'No cycles detected — graph is a DAG'
+      : `${groups.length} cycle${groups.length !== 1 ? 's' : ''} (${totalNodes} nodes)`,
   };
 }
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
-export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = 250): AnalysisResult {
+export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = 500): AnalysisResult {
   switch (type) {
     case 'islands': return analyzeIslands(graph, analysisConfig.islandMaxSize);
     case 'hubs': return analyzeHubs(graph, analysisConfig.hubMinDegree);

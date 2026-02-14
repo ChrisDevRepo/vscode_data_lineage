@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DacpacModel, SchemaInfo, ExtensionConfig } from '../engine/types';
 import { extractDacpac } from '../engine/dacpacExtractor';
@@ -14,8 +14,9 @@ export interface DacpacLoaderState {
   isLoading: boolean;
   fileName: string | null;
   status: StatusMessage | null;
-  fileRef: React.RefObject<HTMLInputElement | null>;
-  handleFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  lastDacpacName: string | null;
+  openFile: () => void;
+  loadLast: () => void;
   loadDemo: () => void;
   toggleSchema: (name: string) => void;
   selectAllSchemas: () => void;
@@ -29,7 +30,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [isLoading, setIsLoading] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusMessage | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [lastDacpacName, setLastDacpacName] = useState<string | null>(null);
 
   // Auto-clear success/info status after 6s — keep warning/error visible
   useEffect(() => {
@@ -67,7 +68,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         const cfg: ExtensionConfig = {
           parseRules: (msgConfig.parseRules as ExtensionConfig['parseRules']) || undefined,
           excludePatterns: (msgConfig.excludePatterns as string[]) || [],
-          maxNodes: (msgConfig.maxNodes as number) || 250,
+          maxNodes: (msgConfig.maxNodes as number) || 500,
           layout: {
             direction: ((msgConfig.layout as Record<string, unknown>)?.direction as 'TB' | 'LR') || 'LR',
             rankSeparation: ((msgConfig.layout as Record<string, unknown>)?.rankSeparation as number) || 120,
@@ -83,7 +84,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
           },
           analysis: {
             hubMinDegree: ((msgConfig.analysis as Record<string, unknown>)?.hubMinDegree as number) || 8,
-            islandMaxSize: ((msgConfig.analysis as Record<string, unknown>)?.islandMaxSize as number) || 0,
+            islandMaxSize: ((msgConfig.analysis as Record<string, unknown>)?.islandMaxSize as number) || 2,
             longestPathMinNodes: ((msgConfig.analysis as Record<string, unknown>)?.longestPathMinNodes as number) || 5,
           },
         };
@@ -95,6 +96,13 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
       if (msg?.type === 'config-only') {
         if (msg.config) applyConfig(msg.config);
+        if (msg.lastDacpacName) setLastDacpacName(msg.lastDacpacName);
+        return;
+      }
+
+      if (msg?.type === 'last-dacpac-gone') {
+        setLastDacpacName(null);
+        setStatus({ text: 'Previously opened file is no longer available.', type: 'warning' });
         return;
       }
 
@@ -121,27 +129,15 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     return () => window.removeEventListener('message', handler);
   }, [onConfigReceived, applyModel, vscodeApi]);
 
-  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const openFile = useCallback(() => {
+    vscodeApi.postMessage({ type: 'open-dacpac' });
+  }, [vscodeApi]);
 
+  const loadLast = useCallback(() => {
     setIsLoading(true);
     setStatus(null);
-    setModel(null);
-    setSelectedSchemas(new Set());
-    setFileName(file.name);
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const result = await extractDacpac(buffer);
-      applyModel(result, file.name, `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`);
-    } catch (err) {
-      setStatus({ text: err instanceof Error ? err.message : 'Failed to parse .dacpac', type: 'error' });
-    } finally {
-      setIsLoading(false);
-      if (fileRef.current) fileRef.current.value = '';
-    }
-  }, [applyModel]);
+    vscodeApi.postMessage({ type: 'load-last-dacpac' });
+  }, [vscodeApi]);
 
   const loadDemo = useCallback(() => {
     setIsLoading(true);
@@ -167,7 +163,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, []);
 
   return {
-    model, selectedSchemas, isLoading, fileName, status,
-    fileRef, handleFileChange, loadDemo, toggleSchema, selectAllSchemas, clearAllSchemas,
+    model, selectedSchemas, isLoading, fileName, status, lastDacpacName,
+    openFile, loadLast, loadDemo, toggleSchema, selectAllSchemas, clearAllSchemas,
   };
 }

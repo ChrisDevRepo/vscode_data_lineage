@@ -23,19 +23,18 @@ No `.dacpac` file? Click **Load Demo** in the wizard to explore the AdventureWor
 **Visualization**
 - Search and navigate objects with autocomplete
 - Trace upstream and downstream dependencies
+- Find the shortest path between any two nodes
+- Schema-based color coding with interactive minimap
+
+**Graph Analysis**
+- Detect islands, hubs, orphans, and circular dependencies
+- Find the longest dependency chains in your project
 - Filter by schema, object type, or regex patterns
-- Schema-based color coding
-- Switchable left-right / top-bottom layout
 
-**SQL Preview**
-- Click any node to view its DDL in a read-only SQL viewer
-- Full syntax highlighting, Ctrl+F search, bracket matching
-- Drag the SQL tab to a second monitor for side-by-side workflow
-
-**Customization**
-- [YAML-based custom parsing rules](docs/PARSE_RULES.md)
-- Configurable node limits for large projects
-- Exclude objects by regex patterns
+**SQL Preview & Export**
+- Click any node to view its DDL with full syntax highlighting
+- Full-text search across all SQL bodies with match highlighting
+- Export the lineage graph to Draw.io for documentation
 
 ## Limitations
 
@@ -57,7 +56,7 @@ Search `dataLineageViz` in Settings:
 |---------|---------|-------------|
 | `parseRulesFile` | `""` | Path to custom YAML parsing rules |
 | `excludePatterns` | `[]` | Regex patterns to exclude objects |
-| `maxNodes` | `250` | Maximum nodes to display (10-1000) |
+| `maxNodes` | `500` | Maximum nodes to display (10-1000) |
 | `layout.direction` | `"LR"` | Layout direction: `LR` or `TB` |
 | `layout.rankSeparation` | `120` | Spacing between ranks/layers (20-300) |
 | `layout.nodeSeparation` | `30` | Spacing between nodes in same rank (10-200) |

@@ -1,10 +1,12 @@
 import { memo, useCallback } from 'react';
+import type Graph from 'graphology';
 import type { AnalysisMode, AnalysisType, AnalysisGroup } from '../engine/types';
 import { SidePanel } from './SidePanel';
 import { ANALYSIS_TYPE_INFO } from '../utils/analysisInfo';
 
 interface AnalysisSidebarProps {
   analysis: AnalysisMode;
+  graph?: Graph | null;
   onSelectGroup: (groupId: string) => void;
   onClearGroup: () => void;
   onClose: () => void;
@@ -12,6 +14,7 @@ interface AnalysisSidebarProps {
 
 export const AnalysisSidebar = memo(function AnalysisSidebar({
   analysis,
+  graph,
   onSelectGroup,
   onClearGroup,
   onClose,
@@ -62,6 +65,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
               analysisType={analysis.type}
               isActive={activeGroupId === group.id}
               onClick={() => handleGroupClick(group.id)}
+              graph={graph}
             />
           ))
         )}
@@ -91,6 +95,7 @@ interface AnalysisGroupItemProps {
   analysisType: AnalysisType;
   isActive: boolean;
   onClick: () => void;
+  graph?: Graph | null;
 }
 
 const AnalysisGroupItem = memo(function AnalysisGroupItem({
@@ -98,6 +103,7 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
   analysisType,
   isActive,
   onClick,
+  graph,
 }: AnalysisGroupItemProps) {
   return (
     <div
@@ -114,19 +120,30 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
       </div>
       {group.meta && (
         <div className="text-[11px] mt-0.5" style={{ color: 'var(--ln-fg-muted)' }}>
-          {renderMeta(group.meta, analysisType)}
+          {renderMeta(group.meta, analysisType, group.nodeIds, graph)}
         </div>
       )}
     </div>
   );
 });
 
-function renderMeta(meta: Record<string, string | number>, type: AnalysisType): string {
+function renderMeta(
+  meta: Record<string, string | number>,
+  type: AnalysisType,
+  nodeIds: string[],
+  graph?: Graph | null
+): string {
   switch (type) {
     case 'islands':
       return `Schemas: ${meta.schemas}`;
-    case 'hubs':
+    case 'hubs': {
+      // Use live graph data when available (consistent with NodeInfoBar)
+      if (graph && nodeIds.length === 1 && graph.hasNode(nodeIds[0])) {
+        const id = nodeIds[0];
+        return `${meta.type} — in: ${graph.inDegree(id)}, out: ${graph.outDegree(id)}`;
+      }
       return `${meta.type} — in: ${meta.inDegree}, out: ${meta.outDegree}`;
+    }
     case 'orphans':
       return `${meta.count} ${meta.type}${Number(meta.count) !== 1 ? 's' : ''}`;
     case 'longest-path':

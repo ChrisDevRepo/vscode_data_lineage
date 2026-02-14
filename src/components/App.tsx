@@ -7,7 +7,7 @@ import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, ObjectType, FilterState, TraceState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
+import type { DacpacModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
@@ -41,7 +41,7 @@ export function App() {
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
-  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, endTrace, clearTrace } =
+  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
   // Dacpac loader lives here so state persists when navigating back
@@ -329,22 +329,28 @@ export function App() {
   }, [graph, analysisMode, config.analysis]);
 
   const closeAnalysis = useCallback(() => {
-    // Restore hideIsolated if we changed it for orphans
+    // Clear analysis overlay — same restore as leaving trace mode
+    endTrace();
+
+    // Undo orphans' hideIsolated change if needed
     if (prevHideIsolatedRef.current !== null) {
       const nextFilter = { ...filter, hideIsolated: true };
       setFilter(nextFilter);
       if (model) rebuild(model, nextFilter, config);
       prevHideIsolatedRef.current = null;
     }
+
     setAnalysisMode(null);
-  }, [filter, model, config, rebuild]);
+  }, [endTrace, filter, model, config, rebuild]);
 
   const selectAnalysisGroup = useCallback((groupId: string) => {
-    if (!analysisMode || !model || !graph) return;
+    if (!analysisMode || !graph) return;
     const group = analysisMode.result.groups.find(g => g.id === groupId);
     if (!group) return;
 
-    // For hubs: expand to include the hub's direct neighbors
+    setAnalysisMode(prev => prev ? { ...prev, activeGroupId: groupId } : null);
+
+    // Compute subset node IDs
     const nodeIdSet = new Set(group.nodeIds);
     if (analysisMode.type === 'hubs') {
       for (const hubId of group.nodeIds) {
@@ -354,35 +360,37 @@ export function App() {
       }
     }
 
-    // Build a subset model
-    const subsetNodes = model.nodes.filter(n => nodeIdSet.has(n.id));
-    const subsetEdges = model.edges.filter(e => nodeIdSet.has(e.source) && nodeIdSet.has(e.target));
-    const subsetModel: DacpacModel = { ...model, nodes: subsetNodes, edges: subsetEdges };
+    // Compute subset edge IDs from the live graph
+    const edgeIds = new Set<string>();
+    if (analysisMode.type === 'longest-path') {
+      // Consecutive-pair edges only — same concept as computeShortestPath
+      for (let i = 0; i < group.nodeIds.length - 1; i++) {
+        const edge = graph.edge(group.nodeIds[i], group.nodeIds[i + 1]);
+        if (edge) edgeIds.add(edge);
+      }
+    } else {
+      // All edges between subset nodes that exist in current graph
+      graph.forEachEdge((edge, _attrs, source, target) => {
+        if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
+          edgeIds.add(edge);
+        }
+      });
+    }
 
-    // Update analysis mode with active group
-    setAnalysisMode(prev => prev ? { ...prev, activeGroupId: groupId } : null);
+    // Determine origin node for highlighting
+    const originId = analysisMode.type === 'hubs' ? group.nodeIds[0]
+      : analysisMode.type === 'longest-path' ? group.nodeIds[0]
+      : undefined;
 
-    // Build subset view using buildFromModel with a permissive filter
-    const subsetFilter: FilterState = {
-      schemas: new Set(subsetNodes.map(n => n.schema)),
-      types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
-      searchTerm: '',
-      hideIsolated: false,
-      focusSchemas: new Set(),
-    };
-    buildFromModel(subsetModel, subsetFilter, config);
-  }, [analysisMode, model, graph, config, buildFromModel]);
+    // Reuse trace pipeline for rendering (same as Find Path / Trace Levels)
+    applyAnalysisSubset(nodeIdSet, edgeIds, originId, analysisMode.type);
+  }, [analysisMode, graph, applyAnalysisSubset]);
 
   const clearAnalysisGroup = useCallback(() => {
-    if (!analysisMode || !model) return;
+    if (!analysisMode) return;
     setAnalysisMode(prev => prev ? { ...prev, activeGroupId: null } : null);
-
-    // Restore full graph view
-    const currentFilter = analysisMode.type === 'orphans'
-      ? { ...filter, hideIsolated: false }
-      : filter;
-    rebuild(model, currentFilter, config);
-  }, [analysisMode, model, filter, config, rebuild]);
+    endTrace();  // Clear subset overlay — full graph visible again
+  }, [analysisMode, endTrace]);
 
   // Escape key: end trace or close analysis
   useEffect(() => {

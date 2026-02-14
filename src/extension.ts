@@ -188,7 +188,57 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
       async (message) => {
         if (message.type === 'ready') {
           const config = await readExtensionConfig();
-          panel.webview.postMessage({ type: 'config-only', config });
+          const lastDacpacName = context.workspaceState.get<string>('lastDacpacName');
+          panel.webview.postMessage({ type: 'config-only', config, lastDacpacName });
+        }
+        if (message.type === 'open-dacpac') {
+          const uris = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            filters: { 'DACPAC': ['dacpac'] },
+            title: 'Select a .dacpac file',
+          });
+          if (uris && uris.length > 0) {
+            const fileUri = uris[0];
+            const fileName = path.basename(fileUri.fsPath);
+            try {
+              const data = await vscode.workspace.fs.readFile(fileUri);
+              await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
+              await context.workspaceState.update('lastDacpacName', fileName);
+              const config = await readExtensionConfig();
+              panel.webview.postMessage({
+                type: 'dacpac-data',
+                data: Array.from(data),
+                fileName,
+                config,
+              });
+              log(`[Extension] Opened dacpac: ${fileName}`);
+            } catch (err) {
+              const errorMsg = err instanceof Error ? err.message : String(err);
+              log(`[Extension Error] Failed to read dacpac: ${errorMsg}`);
+              vscode.window.showErrorMessage(`Failed to read dacpac: ${errorMsg}`);
+            }
+          }
+        }
+        if (message.type === 'load-last-dacpac') {
+          const lastPath = context.workspaceState.get<string>('lastDacpacPath');
+          if (!lastPath) return;
+          try {
+            const fileUri = vscode.Uri.file(lastPath);
+            const data = await vscode.workspace.fs.readFile(fileUri);
+            const config = await readExtensionConfig();
+            panel.webview.postMessage({
+              type: 'dacpac-data',
+              data: Array.from(data),
+              fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
+              config,
+            });
+            log(`[Extension] Reopened last dacpac: ${path.basename(lastPath)}`);
+          } catch {
+            await context.workspaceState.update('lastDacpacPath', undefined);
+            await context.workspaceState.update('lastDacpacName', undefined);
+            panel.webview.postMessage({ type: 'last-dacpac-gone' });
+            log(`[Extension] Last dacpac no longer available: ${lastPath}`);
+          }
         }
         if (message.type === 'load-demo') {
           const config = await readExtensionConfig();
@@ -269,7 +319,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
         return false;
       }
     }),
-    maxNodes: cfg.get<number>('maxNodes', 250),
+    maxNodes: cfg.get<number>('maxNodes', 500),
     layout: {
       direction: cfg.get<string>('layout.direction', 'LR'),
       rankSeparation: cfg.get<number>('layout.rankSeparation', 120),
@@ -285,7 +335,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     },
     analysis: {
       hubMinDegree: cfg.get<number>('analysis.hubMinDegree', 8),
-      islandMaxSize: cfg.get<number>('analysis.islandMaxSize', 0),
+      islandMaxSize: cfg.get<number>('analysis.islandMaxSize', 2),
       longestPathMinNodes: cfg.get<number>('analysis.longestPathMinNodes', 5),
     },
   };

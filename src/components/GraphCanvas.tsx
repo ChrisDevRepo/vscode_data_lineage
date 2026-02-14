@@ -404,6 +404,7 @@ export function GraphCanvas({
                   {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
                     <AnalysisSidebar
                       analysis={analysisMode}
+                      graph={graph}
                       onSelectGroup={onSelectAnalysisGroup}
                       onClearGroup={onClearAnalysisGroup}
                       onClose={onCloseAnalysis}

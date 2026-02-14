@@ -245,7 +245,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
                 <p className="font-semibold ln-text mb-1">General</p>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>
-                  <span><code>maxNodes</code> — Maximum objects for import (default: 250)</span>
+                  <span><code>maxNodes</code> — Maximum objects for import (default: 500)</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>
@@ -313,7 +313,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>
-                  <span><code>analysis.islandMaxSize</code> — Max island size filter, 0 = all (default: 0)</span>
+                  <span><code>analysis.islandMaxSize</code> — Max island size to show (default: 2, min: 2)</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>

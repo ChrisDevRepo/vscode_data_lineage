@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TraceState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
+import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath } from '../engine/graphBuilder';
 
 interface UseInteractiveTraceReturn {
@@ -14,6 +14,7 @@ interface UseInteractiveTraceReturn {
   applyTrace: (upstreamLevels: number, downstreamLevels: number) => void;
   startPathFinding: (nodeId: string) => void;
   applyPath: (targetNodeId: string) => boolean;
+  applyAnalysisSubset: (nodeIds: Set<string>, edgeIds: Set<string>, originId?: string, analysisType?: AnalysisType) => void;
   endTrace: (onComplete?: () => void) => void;
   clearTrace: (onComplete?: () => void) => void;
 }
@@ -129,6 +130,25 @@ export function useInteractiveTrace(
     return true;
   }, [graph, trace.selectedNodeId]);
 
+  // Apply analysis subset — reuses same rendering as trace/path
+  const applyAnalysisSubset = useCallback((
+    nodeIds: Set<string>,
+    edgeIds: Set<string>,
+    originId?: string,
+    analysisType?: AnalysisType
+  ) => {
+    setTrace({
+      mode: 'analysis',
+      analysisType,
+      selectedNodeId: originId || null,
+      targetNodeId: null,
+      upstreamLevels: 0,
+      downstreamLevels: 0,
+      tracedNodeIds: nodeIds,
+      tracedEdgeIds: edgeIds,
+    });
+  }, []);
+
   // Phase 3: End trace (clear immediately)
   const endTrace = useCallback((onComplete?: () => void) => {
     setTrace(createInitialTrace(config));
@@ -158,5 +178,5 @@ export function useInteractiveTrace(
     [flowNodes, flowEdges, trace, config]
   );
 
-  return { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, endTrace, clearTrace };
+  return { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace };
 }

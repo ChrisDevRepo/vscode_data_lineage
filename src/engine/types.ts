@@ -134,11 +134,11 @@ export interface ExtensionConfig {
 
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
-  maxNodes: 250,
+  maxNodes: 500,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true },
   edgeStyle: 'default' as const,
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
-  analysis: { hubMinDegree: 8, islandMaxSize: 0, longestPathMinNodes: 5 },
+  analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
 } satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────
@@ -152,7 +152,8 @@ export interface FilterState {
 }
 
 export interface TraceState {
-  mode: 'none' | 'configuring' | 'applied' | 'filtered' | 'pathfinding' | 'path-applied';
+  mode: 'none' | 'configuring' | 'applied' | 'filtered' | 'pathfinding' | 'path-applied' | 'analysis';
+  analysisType?: AnalysisType;
   selectedNodeId: string | null;
   targetNodeId: string | null;
   upstreamLevels: number;

@@ -117,7 +117,7 @@
         "properties": {
           "dataLineageViz.maxNodes": {
             "type": "number",
-            "default": 250,
+            "default": 500,
             "minimum": 10,
             "maximum": 1000,
             "description": "Maximum number of objects allowed for import. The Visualize button is disabled when the selection exceeds this limit. Higher values may impact performance.",
@@ -264,10 +264,10 @@
           },
           "dataLineageViz.analysis.islandMaxSize": {
             "type": "number",
-            "default": 0,
-            "minimum": 0,
+            "default": 2,
+            "minimum": 2,
             "maximum": 500,
-            "description": "Show only islands with at most this many nodes (0 = show all islands).",
+            "description": "Maximum island size to display. Islands are groups of 2+ connected nodes isolated from the main graph. Single isolated nodes are shown in Orphan analysis.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {
@@ -290,7 +290,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/engine.test.ts && tsx test/parser-edge-cases.test.ts",
+    "test": "tsx test/engine.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts",
     "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
   },
   "dependencies": {
