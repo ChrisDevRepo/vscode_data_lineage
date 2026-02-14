@@ -25,6 +25,11 @@ const TYPE_INFO: Record<AnalysisType, { title: string; icon: string; description
     icon: 'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636', // circle with slash
     description: 'Nodes with no connections — zero edges in or out.',
   },
+  'longest-path': {
+    title: 'Longest Path',
+    icon: 'M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3', // arrow-long-right
+    description: 'Deepest dependency chains — the longest paths from source to sink.',
+  },
 };
 
 export const AnalysisSidebar = memo(function AnalysisSidebar({
@@ -146,5 +151,7 @@ function renderMeta(meta: Record<string, string | number>, type: AnalysisType): 
       return `${meta.type} — in: ${meta.inDegree}, out: ${meta.outDegree}`;
     case 'orphans':
       return `${meta.count} ${meta.type}${Number(meta.count) !== 1 ? 's' : ''}`;
+    case 'longest-path':
+      return `${meta.from} → ${meta.to}`;
   }
 }

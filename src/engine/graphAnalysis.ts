@@ -1,6 +1,6 @@
 import Graph from 'graphology';
 import { connectedComponents } from 'graphology-components';
-import type { AnalysisResult, AnalysisGroup, AnalysisConfig } from './types';
+import type { AnalysisResult, AnalysisGroup, AnalysisConfig, AnalysisType } from './types';
 
 // ─── Islands (Connected Components) ─────────────────────────────────────────
 
@@ -143,12 +143,111 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
   };
 }
 
+// ─── Longest Path (Deepest Dependency Chain) ────────────────────────────────
+
+export function analyzeLongestPath(graph: Graph): AnalysisResult {
+  if (graph.order === 0) {
+    return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
+  }
+
+  // DFS + memoization: compute longest downstream depth for each node
+  const depth = new Map<string, number>();
+  const successor = new Map<string, string>();
+  const visiting = new Set<string>();
+
+  function dfs(node: string): number {
+    if (depth.has(node)) return depth.get(node)!;
+    if (visiting.has(node)) return 0; // cycle guard
+    visiting.add(node);
+
+    let maxDown = 0;
+    let bestNext: string | null = null;
+
+    graph.forEachOutNeighbor(node, (neighbor) => {
+      const d = dfs(neighbor) + 1;
+      if (d > maxDown) {
+        maxDown = d;
+        bestNext = neighbor;
+      }
+    });
+
+    visiting.delete(node);
+    depth.set(node, maxDown);
+    if (bestNext) successor.set(node, bestNext);
+    return maxDown;
+  }
+
+  graph.forEachNode((id) => dfs(id));
+
+  // Collect root nodes and reconstruct chains from those with deepest paths
+  const roots: Array<{ id: string; depth: number }> = [];
+  graph.forEachNode((id) => {
+    const d = depth.get(id) || 0;
+    if (d > 0 && graph.inDegree(id) === 0) {
+      roots.push({ id, depth: d });
+    }
+  });
+
+  // If no true roots (cycles everywhere), fall back to nodes with highest depth
+  if (roots.length === 0) {
+    graph.forEachNode((id) => {
+      const d = depth.get(id) || 0;
+      if (d > 0) roots.push({ id, depth: d });
+    });
+  }
+
+  roots.sort((a, b) => b.depth - a.depth);
+
+  // Reconstruct chains, deduplicate by end-node
+  const chains: Array<{ nodeIds: string[]; length: number }> = [];
+  const seenEndpoints = new Set<string>();
+
+  for (const root of roots) {
+    const chain: string[] = [root.id];
+    let cur = root.id;
+    while (successor.has(cur)) {
+      cur = successor.get(cur)!;
+      chain.push(cur);
+    }
+
+    const endNode = chain[chain.length - 1];
+    if (seenEndpoints.has(endNode)) continue;
+    seenEndpoints.add(endNode);
+
+    chains.push({ nodeIds: chain, length: chain.length - 1 });
+    if (chains.length >= 10) break;
+  }
+
+  const groups: AnalysisGroup[] = chains.map((chain, i) => {
+    const startId = chain.nodeIds[0];
+    const endId = chain.nodeIds[chain.nodeIds.length - 1];
+    const startName = graph.getNodeAttribute(startId, 'name');
+    const endName = graph.getNodeAttribute(endId, 'name');
+    return {
+      id: `chain-${i}`,
+      label: `Chain ${i + 1} (${chain.length} steps)`,
+      nodeIds: chain.nodeIds,
+      meta: { depth: chain.length, from: startName, to: endName },
+    };
+  });
+
+  const maxDepth = chains.length > 0 ? chains[0].length : 0;
+  return {
+    type: 'longest-path',
+    groups,
+    summary: maxDepth > 0
+      ? `Deepest chain: ${maxDepth} step${maxDepth !== 1 ? 's' : ''} (${chains.length} chain${chains.length !== 1 ? 's' : ''})`
+      : 'No dependency chains found',
+  };
+}
+
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
-export function runAnalysis(graph: Graph, type: 'islands' | 'hubs' | 'orphans', analysisConfig: AnalysisConfig): AnalysisResult {
+export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig): AnalysisResult {
   switch (type) {
     case 'islands': return analyzeIslands(graph, analysisConfig.islandMaxSize);
     case 'hubs': return analyzeHubs(graph, analysisConfig.hubMinDegree);
     case 'orphans': return analyzeOrphans(graph);
+    case 'longest-path': return analyzeLongestPath(graph);
   }
 }

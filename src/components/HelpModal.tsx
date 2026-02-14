@@ -180,6 +180,10 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
+                <span><strong>Longest Path:</strong> find the deepest dependency chains from source to sink</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
                 <span>Click a group in the sidebar to zoom into that subset</span>
               </div>
             </div>
