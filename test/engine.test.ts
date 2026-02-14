@@ -849,6 +849,61 @@ async function testNumericEntitySecurity() {
   assert(entHexOk, 'processEntities + out-of-range hex does not RangeError');
 }
 
+async function testImportErrorHandling() {
+  console.log('\n── Import Error Handling ──');
+  const JSZip = (await import('jszip')).default;
+
+  // Non-ZIP file → friendly error
+  try {
+    await extractDacpac(new TextEncoder().encode('this is not a zip file').buffer as ArrayBuffer);
+    assert(false, 'Non-ZIP should throw');
+  } catch (err: unknown) {
+    const msg = (err as Error).message;
+    assert(msg.includes('Not a valid .dacpac file'), `Non-ZIP error is user-friendly: "${msg}"`);
+    assert(!msg.includes('https://'), 'No raw URL in error message');
+  }
+
+  // Empty file → friendly error
+  try {
+    await extractDacpac(new ArrayBuffer(0));
+    assert(false, 'Empty file should throw');
+  } catch (err: unknown) {
+    const msg = (err as Error).message;
+    assert(msg.includes('corrupted or truncated') || msg.includes('Not a valid'), `Empty file error is user-friendly: "${msg}"`);
+  }
+
+  // ZIP without model.xml → existing clear error
+  const zip = new JSZip();
+  zip.file('other.xml', '<root/>');
+  const noModelBuf = await zip.generateAsync({ type: 'arraybuffer' });
+  try {
+    await extractDacpac(noModelBuf);
+    assert(false, 'ZIP without model.xml should throw');
+  } catch (err: unknown) {
+    const msg = (err as Error).message;
+    assert(msg.includes('model.xml not found'), `Missing model.xml error: "${msg}"`);
+  }
+
+  // Valid dacpac with no tracked elements → warnings populated
+  const emptyZip = new JSZip();
+  emptyZip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel>
+      <Model>
+        <Element Type="SqlDatabaseOptions" Name="Options"/>
+      </Model>
+    </DataSchemaModel>`);
+  const emptyBuf = await emptyZip.generateAsync({ type: 'arraybuffer' });
+  const emptyModel = await extractDacpac(emptyBuf);
+  assert(emptyModel.nodes.length === 0, 'Empty dacpac has 0 nodes');
+  assert(emptyModel.warnings !== undefined && emptyModel.warnings.length > 0, 'Empty dacpac has warnings');
+  assert(emptyModel.warnings![0].includes('No tables, views, or stored procedures'), `Warning explains why: "${emptyModel.warnings![0]}"`);
+
+  // Successful extraction → no warnings
+  const buffer = readFileSync(DACPAC_PATH);
+  const model = await extractDacpac(buffer.buffer as ArrayBuffer);
+  assert(model.warnings === undefined, 'Successful extraction has no warnings');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -869,6 +924,7 @@ async function main() {
     await testFabricDacpac();
     await testTypeAwareDirection();
     await testNumericEntitySecurity();
+    await testImportErrorHandling();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
     failed++;

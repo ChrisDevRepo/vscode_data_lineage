@@ -43,6 +43,7 @@ export interface DacpacModel {
   edges: LineageEdge[];
   schemas: SchemaInfo[];
   parseStats?: ParseStats;
+  warnings?: string[];
 }
 
 // ─── XML Parsing Types (fast-xml-parser output) ─────────────────────────────

@@ -31,9 +31,9 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Auto-clear non-error status after 6s
+  // Auto-clear success/info status after 6s — keep warning/error visible
   useEffect(() => {
-    if (status && status.type !== 'error') {
+    if (status && (status.type === 'success' || status.type === 'info')) {
       const timer = setTimeout(() => setStatus(null), 6000);
       return () => clearTimeout(timer);
     }
@@ -43,7 +43,16 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setModel(result);
     setSelectedSchemas(new Set(result.schemas.map((s: SchemaInfo) => s.name)));
     setFileName(name);
-    setStatus(null);
+
+    if (result.warnings && result.warnings.length > 0) {
+      setStatus({ text: result.warnings[0], type: 'warning' });
+    } else if (result.nodes.length === 0) {
+      setStatus({ text: 'No tables, views, or stored procedures found.', type: 'warning' });
+    } else {
+      const s = result.schemas.length !== 1 ? 's' : '';
+      setStatus({ text: `Loaded ${result.nodes.length} objects across ${result.schemas.length} schema${s}`, type: 'success' });
+    }
+
     vscodeApi.postMessage({ type: 'log', text: statusText });
     if (result.parseStats) {
       vscodeApi.postMessage({ type: 'parse-stats', stats: result.parseStats });

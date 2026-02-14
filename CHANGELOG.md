@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.2] - 2026-02-13
+
+### Fixed
+- **Import feedback** — Wizard now shows status messages when loading a .dacpac, including errors for corrupt files and warnings for empty databases
+
 ## [0.8.1] - 2026-02-08
 
 ### Added

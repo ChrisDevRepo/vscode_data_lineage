@@ -18,9 +18,41 @@ const STATUS_CLASSES: Record<StatusMessage['type'], string> = {
   info: 'ln-status-info',
 };
 
-const STATUS_ICONS: Record<StatusMessage['type'], string> = {
-  error: '!', warning: '!', success: '>', info: 'i',
+const ICON_COLORS: Record<StatusMessage['type'], string> = {
+  error: 'var(--vscode-editorError-foreground, #f14c4c)',
+  warning: 'var(--vscode-editorWarning-foreground, #cca700)',
+  success: 'var(--vscode-testing-iconPassed, #73c991)',
+  info: 'currentColor',
 };
+
+function StatusIcon({ type }: { type: StatusMessage['type'] }) {
+  const cls = 'w-4 h-4 flex-shrink-0';
+  const color = ICON_COLORS[type];
+  const style = { fill: color };
+  if (type === 'error')
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" className={cls} style={style}>
+        <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+      </svg>
+    );
+  if (type === 'warning')
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" className={cls} style={style}>
+        <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 6a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 6Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+      </svg>
+    );
+  if (type === 'success')
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" className={cls} style={style}>
+        <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clipRule="evenodd" />
+      </svg>
+    );
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" className={cls} style={style}>
+      <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+    </svg>
+  );
+}
 
 export function ProjectSelector({ onVisualize, config, loader }: ProjectSelectorProps) {
   const vscodeApi = useVsCode();
@@ -102,9 +134,14 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
 
           {/* Status */}
           {status && (
-            <div className={`flex items-center gap-2 px-3 py-2 rounded text-xs ln-text ${STATUS_CLASSES[status.type]}`}>
-              <span className="flex-shrink-0">{STATUS_ICONS[status.type]}</span>
-              <span className="truncate">{status.text}</span>
+            <div className={`flex items-start gap-2.5 px-3 py-2.5 rounded text-xs ${STATUS_CLASSES[status.type]}`}>
+              <StatusIcon type={status.type} />
+              <div className="pt-px">
+                <span style={{ color: ICON_COLORS[status.type] }}>{status.text}</span>
+                {status.type === 'warning' && model && model.schemas.length === 0 && (
+                  <p className="mt-1 ln-text-muted">Try a different file, or check the Output panel for details.</p>
+                )}
+              </div>
             </div>
           )}
 
