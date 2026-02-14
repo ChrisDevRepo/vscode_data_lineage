@@ -41,7 +41,7 @@ export function App() {
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
-  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, endTrace, clearTrace } =
+  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
   // Dacpac loader lives here so state persists when navigating back
@@ -314,7 +314,7 @@ export function App() {
     } else {
       // For islands/hubs, run analysis on current graph
       if (graph) {
-        const result = runAnalysis(graph, type, config.analysis);
+        const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
         setAnalysisMode({ type, result, activeGroupId: null });
       }
     }
@@ -323,7 +323,7 @@ export function App() {
   // When graph changes after orphan hideIsolated toggle, run the analysis
   useEffect(() => {
     if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
-      const result = runAnalysis(graph, 'orphans', config.analysis);
+      const result = runAnalysis(graph, 'orphans', config.analysis, config.maxNodes);
       setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
     }
   }, [graph, analysisMode, config.analysis]);
@@ -440,6 +440,7 @@ export function App() {
         onCloseAnalysis={closeAnalysis}
         onSelectAnalysisGroup={selectAnalysisGroup}
         onClearAnalysisGroup={clearAnalysisGroup}
+        onApplyPath={applyPath}
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}
@@ -468,6 +469,7 @@ export function App() {
           isTracing={trace.mode !== 'none' || !!analysisMode}
           onClose={() => setContextMenu(null)}
           onTrace={(nodeId) => startTraceConfig(nodeId)}
+          onFindPath={(nodeId) => startPathFinding(nodeId)}
           onViewDdl={handleViewDdl}
           onShowDetails={(nodeId) => setInfoBarNodeId(nodeId)}
         />

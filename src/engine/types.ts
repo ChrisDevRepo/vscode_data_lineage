@@ -119,6 +119,7 @@ export interface TraceConfig {
 export interface AnalysisConfig {
   hubMinDegree: number;
   islandMaxSize: number;
+  longestPathMinNodes: number;
 }
 
 export interface ExtensionConfig {
@@ -137,7 +138,7 @@ export const DEFAULT_CONFIG = {
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true },
   edgeStyle: 'default' as const,
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
-  analysis: { hubMinDegree: 8, islandMaxSize: 0 },
+  analysis: { hubMinDegree: 8, islandMaxSize: 0, longestPathMinNodes: 5 },
 } satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────
@@ -151,8 +152,9 @@ export interface FilterState {
 }
 
 export interface TraceState {
-  mode: 'none' | 'configuring' | 'applied' | 'filtered';
+  mode: 'none' | 'configuring' | 'applied' | 'filtered' | 'pathfinding' | 'path-applied';
   selectedNodeId: string | null;
+  targetNodeId: string | null;
   upstreamLevels: number;
   downstreamLevels: number;
   tracedNodeIds: Set<string>;
@@ -161,7 +163,7 @@ export interface TraceState {
 
 // ─── Graph Analysis Types ────────────────────────────────────────────────────
 
-export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path';
+export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles';
 
 export interface AnalysisGroup {
   id: string;

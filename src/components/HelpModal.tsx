@@ -114,15 +114,15 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <div className="ml-7 space-y-2 text-sm ln-text-muted">
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span><strong>Right-click</strong> any node and select "Start Trace" to analyze dependencies</span>
+                <span><strong>Trace Levels:</strong> right-click → "Trace Levels" to explore upstream/downstream dependencies with configurable depth</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span><strong>Depth control:</strong> configure upstream/downstream levels or use "All" for unlimited</span>
+                <span><strong>Find Path:</strong> right-click → "Find Path" to discover the shortest connection between two nodes</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span><strong>Graph filter:</strong> show only traced connections</span>
+                <span><strong>Graph filter:</strong> both modes filter the graph to show only relevant connections</span>
               </div>
             </div>
           </section>
@@ -184,6 +184,10 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
+                <span><strong>Cycles:</strong> detect circular dependencies in your data flow</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
                 <span>Click a group in the sidebar to zoom into that subset</span>
               </div>
             </div>
@@ -223,6 +227,98 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
                 <span>Toggle via <strong>Settings</strong> &gt; <code>dataLineageViz.layout.minimapEnabled</code></span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
+              </svg>
+              <h3 className="text-lg font-semibold">Settings Reference</h3>
+            </div>
+            <div className="ml-7 space-y-3 text-sm ln-text-muted">
+              <p>All settings use the <code>dataLineageViz.*</code> prefix. Open via <strong>Settings</strong> button below or <kbd className="px-1.5 py-0.5 rounded text-xs ln-kbd">Ctrl+,</kbd> and search "dataLineageViz".</p>
+              <div>
+                <p className="font-semibold ln-text mb-1">General</p>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>maxNodes</code> — Maximum objects for import (default: 250)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>logLevel</code> — Log verbosity: info or debug (default: info)</span>
+                </div>
+              </div>
+              <div>
+                <p className="font-semibold ln-text mb-1">Parser</p>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>parseRulesFile</code> — Path to custom parseRules.yaml (default: empty = built-in)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>excludePatterns</code> — Regex patterns to exclude objects at import</span>
+                </div>
+              </div>
+              <div>
+                <p className="font-semibold ln-text mb-1">Graph Layout</p>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>layout.direction</code> — LR (horizontal) or TB (vertical) (default: LR)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>layout.rankSeparation</code> — Spacing between layers (default: 120)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>layout.nodeSeparation</code> — Spacing within a layer (default: 30)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>edgeStyle</code> — Edge style: default, smoothstep, step, straight</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>layout.edgeAnimation</code> — Animate traced edges (default: on)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>layout.highlightAnimation</code> — Animate on node click (default: off)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>layout.minimapEnabled</code> — Show minimap (default: on)</span>
+                </div>
+              </div>
+              <div>
+                <p className="font-semibold ln-text mb-1">Trace</p>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>trace.defaultUpstreamLevels</code> — Default upstream depth (default: 3)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>trace.defaultDownstreamLevels</code> — Default downstream depth (default: 3)</span>
+                </div>
+              </div>
+              <div>
+                <p className="font-semibold ln-text mb-1">Analysis</p>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>analysis.hubMinDegree</code> — Min connections for Hub analysis (default: 8)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>analysis.islandMaxSize</code> — Max island size filter, 0 = all (default: 0)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>analysis.longestPathMinNodes</code> — Min chain length for Longest Path (default: 5)</span>
+                </div>
               </div>
             </div>
           </section>

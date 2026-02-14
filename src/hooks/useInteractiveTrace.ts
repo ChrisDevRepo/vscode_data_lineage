@@ -3,7 +3,7 @@ import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
-import { traceNodeWithLevels, applyTraceToFlow } from '../engine/graphBuilder';
+import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath } from '../engine/graphBuilder';
 
 interface UseInteractiveTraceReturn {
   trace: TraceState;
@@ -12,6 +12,8 @@ interface UseInteractiveTraceReturn {
   startTraceConfig: (nodeId: string) => void;
   startTraceImmediate: (nodeId: string) => void;
   applyTrace: (upstreamLevels: number, downstreamLevels: number) => void;
+  startPathFinding: (nodeId: string) => void;
+  applyPath: (targetNodeId: string) => boolean;
   endTrace: (onComplete?: () => void) => void;
   clearTrace: (onComplete?: () => void) => void;
 }
@@ -20,6 +22,7 @@ interface UseInteractiveTraceReturn {
 const createInitialTrace = (config: ExtensionConfig): TraceState => ({
   mode: 'none',
   selectedNodeId: null,
+  targetNodeId: null,
   upstreamLevels: config.trace.defaultUpstreamLevels,
   downstreamLevels: config.trace.defaultDownstreamLevels,
   tracedNodeIds: new Set(),
@@ -39,6 +42,7 @@ export function useInteractiveTrace(
     setTrace({
       mode: 'configuring',
       selectedNodeId: nodeId,
+      targetNodeId: null,
       upstreamLevels: config.trace.defaultUpstreamLevels,
       downstreamLevels: config.trace.defaultDownstreamLevels,
       tracedNodeIds: new Set(),
@@ -60,6 +64,7 @@ export function useInteractiveTrace(
     setTrace({
       mode: 'filtered',
       selectedNodeId: nodeId,
+      targetNodeId: null,
       upstreamLevels: config.trace.defaultUpstreamLevels,
       downstreamLevels: config.trace.defaultDownstreamLevels,
       tracedNodeIds: nodeIds,
@@ -82,6 +87,7 @@ export function useInteractiveTrace(
       setTrace({
         mode: 'applied',
         selectedNodeId: trace.selectedNodeId,
+        targetNodeId: null,
         upstreamLevels,
         downstreamLevels,
         tracedNodeIds: nodeIds,
@@ -90,6 +96,38 @@ export function useInteractiveTrace(
     },
     [graph, trace.selectedNodeId]
   );
+
+  // Start path finding mode (from right-click "Find Path")
+  const startPathFinding = useCallback((nodeId: string) => {
+    setTrace({
+      mode: 'pathfinding',
+      selectedNodeId: nodeId,
+      targetNodeId: null,
+      upstreamLevels: 0,
+      downstreamLevels: 0,
+      tracedNodeIds: new Set(),
+      tracedEdgeIds: new Set(),
+    });
+  }, []);
+
+  // Compute and apply shortest path — returns true if path found
+  const applyPath = useCallback((targetNodeId: string): boolean => {
+    if (!graph || !trace.selectedNodeId) return false;
+
+    const result = computeShortestPath(graph, trace.selectedNodeId, targetNodeId);
+    if (!result) return false;
+
+    setTrace({
+      mode: 'path-applied',
+      selectedNodeId: trace.selectedNodeId,
+      targetNodeId,
+      upstreamLevels: 0,
+      downstreamLevels: 0,
+      tracedNodeIds: result.nodeIds,
+      tracedEdgeIds: result.edgeIds,
+    });
+    return true;
+  }, [graph, trace.selectedNodeId]);
 
   // Phase 3: End trace (clear immediately)
   const endTrace = useCallback((onComplete?: () => void) => {
@@ -110,7 +148,7 @@ export function useInteractiveTrace(
   // Memoize trace application to avoid re-rendering all nodes
   const { tracedNodes, tracedEdges } = useMemo(
     (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[] } => {
-      if (trace.mode === 'none' || trace.mode === 'configuring') {
+      if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
         return { tracedNodes: flowNodes, tracedEdges: flowEdges };
       }
 
@@ -120,5 +158,5 @@ export function useInteractiveTrace(
     [flowNodes, flowEdges, trace, config]
   );
 
-  return { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, endTrace, clearTrace };
+  return { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, endTrace, clearTrace };
 }

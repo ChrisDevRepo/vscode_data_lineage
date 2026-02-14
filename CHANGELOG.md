@@ -3,7 +3,13 @@
 ## [0.9.0] - 2026-02-14
 
 ### Added
-- **Graph Analysis** — Analyze dropdown with Islands, Hubs, and Orphan Node detection
+- **Find Path** — Right-click any node → "Find Path" to discover the shortest connection to another node
+- **Graph Analysis** — Analyze dropdown with structural insights
+  - Islands: disconnected subgraphs
+  - Hubs: most-connected nodes
+  - Orphan Nodes: objects with no dependencies
+  - Longest Path: deepest dependency chains
+  - Cycles: circular dependencies
 - **MiniMap** — Interactive minimap with draggable viewport and schema-colored nodes
 
 ### Changed

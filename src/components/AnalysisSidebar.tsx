@@ -1,6 +1,7 @@
 import { memo, useCallback } from 'react';
 import type { AnalysisMode, AnalysisType, AnalysisGroup } from '../engine/types';
 import { SidePanel } from './SidePanel';
+import { ANALYSIS_TYPE_INFO } from '../utils/analysisInfo';
 
 interface AnalysisSidebarProps {
   analysis: AnalysisMode;
@@ -9,36 +10,13 @@ interface AnalysisSidebarProps {
   onClose: () => void;
 }
 
-const TYPE_INFO: Record<AnalysisType, { title: string; icon: string; description: string }> = {
-  islands: {
-    title: 'Islands',
-    icon: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5', // bars icon
-    description: 'Disconnected subgraphs that share no edges with each other.',
-  },
-  hubs: {
-    title: 'Hubs',
-    icon: 'M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z', // sun/hub icon
-    description: 'Nodes with the highest number of connections (degree).',
-  },
-  orphans: {
-    title: 'Orphan Nodes',
-    icon: 'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636', // circle with slash
-    description: 'Nodes with no connections — zero edges in or out.',
-  },
-  'longest-path': {
-    title: 'Longest Path',
-    icon: 'M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3', // arrow-long-right
-    description: 'Deepest dependency chains — the longest paths from source to sink.',
-  },
-};
-
 export const AnalysisSidebar = memo(function AnalysisSidebar({
   analysis,
   onSelectGroup,
   onClearGroup,
   onClose,
 }: AnalysisSidebarProps) {
-  const info = TYPE_INFO[analysis.type];
+  const info = ANALYSIS_TYPE_INFO[analysis.type];
   const { result, activeGroupId } = analysis;
 
   const handleGroupClick = useCallback(
@@ -153,5 +131,7 @@ function renderMeta(meta: Record<string, string | number>, type: AnalysisType): 
       return `${meta.count} ${meta.type}${Number(meta.count) !== 1 ? 's' : ''}`;
     case 'longest-path':
       return `${meta.from} → ${meta.to}`;
+    case 'cycles':
+      return `${meta.count} node${Number(meta.count) !== 1 ? 's' : ''}`;
   }
 }

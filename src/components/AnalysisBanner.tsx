@@ -1,22 +1,11 @@
 import { memo } from 'react';
-import type { AnalysisMode, AnalysisType } from '../engine/types';
+import type { AnalysisMode } from '../engine/types';
+import { ANALYSIS_TYPE_INFO, ANALYSIS_TYPE_LABELS } from '../utils/analysisInfo';
 
 interface AnalysisBannerProps {
   analysis: AnalysisMode;
   onClose: () => void;
 }
-
-const TYPE_LABELS: Record<AnalysisType, string> = {
-  islands: 'Islands Analysis',
-  hubs: 'Hubs Analysis',
-  orphans: 'Orphan Nodes Analysis',
-};
-
-const TYPE_ICONS: Record<AnalysisType, string> = {
-  islands: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5',
-  hubs: 'M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z',
-  orphans: 'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636',
-};
 
 export const AnalysisBanner = memo(function AnalysisBanner({
   analysis,
@@ -41,13 +30,13 @@ export const AnalysisBanner = memo(function AnalysisBanner({
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
-            d={TYPE_ICONS[type]}
+            d={ANALYSIS_TYPE_INFO[type].icon}
           />
         </svg>
 
         <div className="flex flex-col">
           <div className="text-sm font-semibold ln-text">
-            {TYPE_LABELS[type]}
+            {ANALYSIS_TYPE_LABELS[type]}
           </div>
           <div className="text-xs ln-text-muted">
             {activeGroup ? (

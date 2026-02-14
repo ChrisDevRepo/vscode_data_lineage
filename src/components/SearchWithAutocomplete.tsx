@@ -1,7 +1,8 @@
-import { memo, useState, useRef, useEffect, useCallback } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { ObjectType } from '../engine/types';
 import { TYPE_LABELS } from '../utils/schemaColors';
 import { useClickOutside } from '../hooks/useClickOutside';
+import { filterSuggestions } from '../utils/autocomplete';
 
 interface SearchWithAutocompleteProps {
   searchTerm: string;
@@ -27,20 +28,11 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<HTMLDivElement>(null);
 
-  const autocompleteSuggestions = searchTerm.length >= 2 ? allNodes
-    .filter(node =>
-      selectedSchemas.has(node.schema) &&
-      types.has(node.type) &&
-      node.name.toLowerCase().includes(searchTerm.toLowerCase())
-    )
-    .sort((a, b) => {
-      const aStarts = a.name.toLowerCase().startsWith(searchTerm.toLowerCase());
-      const bStarts = b.name.toLowerCase().startsWith(searchTerm.toLowerCase());
-      if (aStarts && !bStarts) return -1;
-      if (!aStarts && bStarts) return 1;
-      return a.name.localeCompare(b.name);
-    })
-    .slice(0, 10) : [];
+  const filteredNodes = useMemo(
+    () => allNodes.filter(n => selectedSchemas.has(n.schema) && types.has(n.type)),
+    [allNodes, selectedSchemas, types],
+  );
+  const autocompleteSuggestions = filterSuggestions(filteredNodes, searchTerm);
 
   useEffect(() => {
     setIsAutocompleteOpen(searchTerm.length >= 2 && autocompleteSuggestions.length > 0);

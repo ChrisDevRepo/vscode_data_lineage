@@ -84,6 +84,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
           analysis: {
             hubMinDegree: ((msgConfig.analysis as Record<string, unknown>)?.hubMinDegree as number) || 8,
             islandMaxSize: ((msgConfig.analysis as Record<string, unknown>)?.islandMaxSize as number) || 0,
+            longestPathMinNodes: ((msgConfig.analysis as Record<string, unknown>)?.longestPathMinNodes as number) || 5,
           },
         };
         onConfigReceived(cfg);

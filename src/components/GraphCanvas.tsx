@@ -22,6 +22,7 @@ import { CustomNode, type CustomNodeData } from './CustomNode';
 import { Legend } from './Legend';
 import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner } from './TracedFilterBanner';
+import { PathFinderBar } from './PathFinderBar';
 import { AnalysisBanner } from './AnalysisBanner';
 import { AnalysisSidebar } from './AnalysisSidebar';
 import { Toolbar } from './Toolbar';
@@ -68,6 +69,7 @@ interface GraphCanvasProps {
   onCloseAnalysis?: () => void;
   onSelectAnalysisGroup?: (groupId: string) => void;
   onClearAnalysisGroup?: () => void;
+  onApplyPath?: (targetNodeId: string) => boolean;
 }
 
 export function GraphCanvas({
@@ -105,6 +107,7 @@ export function GraphCanvas({
   onCloseAnalysis,
   onSelectAnalysisGroup,
   onClearAnalysisGroup,
+  onApplyPath,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
 
@@ -246,7 +249,7 @@ export function GraphCanvas({
           opacity: isConnected ? 1 : 0.6,
         },
         animated: isConnected && (
-          (trace.mode === 'applied' || trace.mode === 'filtered')
+          (trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied')
             ? config.layout.edgeAnimation
             : config.layout.highlightAnimation
         ),
@@ -315,6 +318,26 @@ export function GraphCanvas({
           mode={trace.mode}
           onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
           onReset={() => onResetAll()}
+        />
+      )}
+
+      {/* Path Finder Bar — shown during pathfinding modes */}
+      {(trace.mode === 'pathfinding' || trace.mode === 'path-applied') && trace.selectedNodeId && onApplyPath && (
+        <PathFinderBar
+          sourceNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
+          allNodes={displayNodes.map(n => ({
+            id: n.id,
+            name: n.data.label,
+            schema: n.data.schema,
+            type: n.data.objectType,
+          }))}
+          pathResult={trace.mode === 'path-applied' ? {
+            found: true,
+            nodeCount: trace.tracedNodeIds.size,
+            edgeCount: trace.tracedEdgeIds.size,
+          } : null}
+          onFindPath={onApplyPath}
+          onClose={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
         />
       )}
 

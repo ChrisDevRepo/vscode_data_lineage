@@ -24,6 +24,13 @@ function refreshLogLevel() {
   currentLogLevel = vscode.workspace.getConfiguration('dataLineageViz').get<LogLevel>('logLevel', 'info');
 }
 
+function getThemeClass(kind: vscode.ColorThemeKind): string {
+  return kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
+    kind === vscode.ColorThemeKind.HighContrast ? 'vscode-high-contrast' :
+    kind === vscode.ColorThemeKind.HighContrastLight ? 'vscode-high-contrast-light' :
+    'vscode-light';
+}
+
 // ─── DDL Virtual Document Provider ──────────────────────────────────────────
 
 const DDL_SCHEME = 'dacpac-ddl';
@@ -169,12 +176,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
     panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
     const themeChangeListener = vscode.window.onDidChangeActiveColorTheme((theme) => {
-      const themeClass =
-        theme.kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
-        theme.kind === vscode.ColorThemeKind.HighContrast ? 'vscode-high-contrast' :
-        theme.kind === vscode.ColorThemeKind.HighContrastLight ? 'vscode-high-contrast-light' :
-        'vscode-light';
-      panel.webview.postMessage({ type: 'themeChanged', kind: themeClass });
+      panel.webview.postMessage({ type: 'themeChanged', kind: getThemeClass(theme.kind) });
     });
 
     panel.onDidDispose(() => {
@@ -254,7 +256,7 @@ interface ExtensionConfigMessage {
   layout: { direction: string; rankSeparation: number; nodeSeparation: number; edgeAnimation: boolean; highlightAnimation: boolean; minimapEnabled: boolean };
   edgeStyle: string;
   trace: { defaultUpstreamLevels: number; defaultDownstreamLevels: number };
-  analysis: { hubMinDegree: number; islandMaxSize: number };
+  analysis: { hubMinDegree: number; islandMaxSize: number; longestPathMinNodes: number };
 }
 
 async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
@@ -284,6 +286,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     analysis: {
       hubMinDegree: cfg.get<number>('analysis.hubMinDegree', 8),
       islandMaxSize: cfg.get<number>('analysis.islandMaxSize', 0),
+      longestPathMinNodes: cfg.get<number>('analysis.longestPathMinNodes', 5),
     },
   };
 
@@ -397,13 +400,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
 
   const nonce = getNonce();
 
-  // Get current theme kind for proper styling
-  const themeKind = vscode.window.activeColorTheme.kind;
-  const themeClass = 
-    themeKind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
-    themeKind === vscode.ColorThemeKind.HighContrast ? 'vscode-high-contrast' :
-    themeKind === vscode.ColorThemeKind.HighContrastLight ? 'vscode-high-contrast-light' :
-    'vscode-light';
+  const themeClass = getThemeClass(vscode.window.activeColorTheme.kind);
 
   return /*html*/ `
     <!DOCTYPE html>

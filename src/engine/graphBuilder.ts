@@ -1,5 +1,6 @@
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
+import { bidirectional } from 'graphology-shortest-path';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DacpacModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './types';
@@ -205,13 +206,39 @@ export function traceNodeWithLevels(
   return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
 }
 
+/**
+ * Find the shortest directed path between two nodes.
+ * Tries source→target first (downstream), then target→source (upstream).
+ */
+export function computeShortestPath(
+  graph: Graph,
+  sourceId: string,
+  targetId: string
+): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
+  if (!graph.hasNode(sourceId) || !graph.hasNode(targetId)) return null;
+
+  let path = bidirectional(graph, sourceId, targetId);
+  if (!path) {
+    path = bidirectional(graph, targetId, sourceId);
+  }
+  if (!path) return null;
+
+  const nodeIds = new Set(path);
+  const edgeIds = new Set<string>();
+  for (let i = 0; i < path.length - 1; i++) {
+    const edge = graph.edge(path[i], path[i + 1]);
+    if (edge) edgeIds.add(edge);
+  }
+  return { nodeIds, edgeIds };
+}
+
 export function applyTraceToFlow(
   flowNodes: FlowNode[],
   flowEdges: FlowEdge[],
   trace: TraceState,
   config: ExtensionConfig = DEFAULT_CONFIG
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
-  if (trace.mode === 'none' || trace.mode === 'configuring' || !trace.selectedNodeId) {
+  if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding' || !trace.selectedNodeId) {
     return { nodes: flowNodes, edges: flowEdges };
   }
 
@@ -242,7 +269,11 @@ export function applyTraceToFlow(
     position: positions.get(n.id) || n.position,
     data: {
       ...n.data,
-      highlighted: n.id === trace.selectedNodeId,
+      highlighted: n.id === trace.selectedNodeId
+        ? true
+        : n.id === trace.targetNodeId
+          ? 'yellow' as const
+          : false,
     },
   }));
 

@@ -1,6 +1,6 @@
 import Graph from 'graphology';
 import { connectedComponents } from 'graphology-components';
-import type { AnalysisResult, AnalysisGroup, AnalysisConfig, AnalysisType } from './types';
+import type { AnalysisType, AnalysisResult, AnalysisGroup, AnalysisConfig } from './types';
 
 // ─── Islands (Connected Components) ─────────────────────────────────────────
 
@@ -145,7 +145,7 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
 
 // ─── Longest Path (Deepest Dependency Chain) ────────────────────────────────
 
-export function analyzeLongestPath(graph: Graph): AnalysisResult {
+export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains: number = 250): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }
@@ -155,7 +155,7 @@ export function analyzeLongestPath(graph: Graph): AnalysisResult {
   const successor = new Map<string, string>();
   const visiting = new Set<string>();
 
-  function dfs(node: string): number {
+  function dfsLP(node: string): number {
     if (depth.has(node)) return depth.get(node)!;
     if (visiting.has(node)) return 0; // cycle guard
     visiting.add(node);
@@ -164,7 +164,7 @@ export function analyzeLongestPath(graph: Graph): AnalysisResult {
     let bestNext: string | null = null;
 
     graph.forEachOutNeighbor(node, (neighbor) => {
-      const d = dfs(neighbor) + 1;
+      const d = dfsLP(neighbor) + 1;
       if (d > maxDown) {
         maxDown = d;
         bestNext = neighbor;
@@ -177,7 +177,7 @@ export function analyzeLongestPath(graph: Graph): AnalysisResult {
     return maxDown;
   }
 
-  graph.forEachNode((id) => dfs(id));
+  graph.forEachNode((id) => dfsLP(id));
 
   // Collect root nodes and reconstruct chains from those with deepest paths
   const roots: Array<{ id: string; depth: number }> = [];
@@ -205,8 +205,11 @@ export function analyzeLongestPath(graph: Graph): AnalysisResult {
   for (const root of roots) {
     const chain: string[] = [root.id];
     let cur = root.id;
+    const visited = new Set<string>([cur]);
     while (successor.has(cur)) {
       cur = successor.get(cur)!;
+      if (visited.has(cur)) break; // cycle in successor chain
+      visited.add(cur);
       chain.push(cur);
     }
 
@@ -214,8 +217,9 @@ export function analyzeLongestPath(graph: Graph): AnalysisResult {
     if (seenEndpoints.has(endNode)) continue;
     seenEndpoints.add(endNode);
 
+    if (chain.length < minNodes) continue; // skip short chains
     chains.push({ nodeIds: chain, length: chain.length - 1 });
-    if (chains.length >= 10) break;
+    if (chains.length >= maxChains) break;
   }
 
   const groups: AnalysisGroup[] = chains.map((chain, i) => {
@@ -241,13 +245,78 @@ export function analyzeLongestPath(graph: Graph): AnalysisResult {
   };
 }
 
+// ─── Cycles (Circular Dependencies via DFS 3-color) ─────────────────────────
+
+export function analyzeCycles(graph: Graph): AnalysisResult {
+  if (graph.order === 0) {
+    return { type: 'cycles', groups: [], summary: 'No nodes in graph' };
+  }
+
+  // DFS 3-color: undefined=WHITE, 0=GREY (in stack), 1=BLACK (done)
+  const color = new Map<string, number>();
+  const cycleNodes = new Set<string>();
+
+  function dfsCycle(node: string, ancestors: Set<string>): void {
+    color.set(node, 0); // GREY
+    ancestors.add(node);
+
+    graph.forEachOutNeighbor(node, (neighbor) => {
+      if (ancestors.has(neighbor)) {
+        // Back edge → cycle found
+        cycleNodes.add(neighbor);
+        cycleNodes.add(node);
+      } else if (!color.has(neighbor)) {
+        dfsCycle(neighbor, ancestors);
+      }
+    });
+
+    ancestors.delete(node);
+    color.set(node, 1); // BLACK
+  }
+
+  graph.forEachNode((node) => {
+    if (!color.has(node)) {
+      dfsCycle(node, new Set());
+    }
+  });
+
+  if (cycleNodes.size === 0) {
+    return { type: 'cycles', groups: [], summary: 'No cycles detected — graph is a DAG' };
+  }
+
+  // Group cycle nodes by schema
+  const buckets = new Map<string, string[]>();
+  for (const id of cycleNodes) {
+    const schema = graph.getNodeAttribute(id, 'schema');
+    const arr = buckets.get(schema) || [];
+    arr.push(id);
+    buckets.set(schema, arr);
+  }
+
+  const groups: AnalysisGroup[] = [...buckets.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([schema, nodeIds]) => ({
+      id: `cycle-${schema}`,
+      label: `[${schema}] cycle nodes`,
+      nodeIds,
+      meta: { schema, count: nodeIds.length },
+    }));
+
+  return {
+    type: 'cycles',
+    groups,
+    summary: `${cycleNodes.size} node${cycleNodes.size !== 1 ? 's' : ''} in circular dependencies`,
+  };
+}
+
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
-export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig): AnalysisResult {
+export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = 250): AnalysisResult {
   switch (type) {
     case 'islands': return analyzeIslands(graph, analysisConfig.islandMaxSize);
     case 'hubs': return analyzeHubs(graph, analysisConfig.hubMinDegree);
     case 'orphans': return analyzeOrphans(graph);
-    case 'longest-path': return analyzeLongestPath(graph);
+    case 'longest-path': return analyzeLongestPath(graph, analysisConfig.longestPathMinNodes, maxNodes);
+    case 'cycles': return analyzeCycles(graph);
   }
 }
