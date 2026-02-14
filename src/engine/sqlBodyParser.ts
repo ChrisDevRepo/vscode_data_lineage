@@ -149,9 +149,12 @@ function validateRule(rule: unknown, index: number): { valid: boolean; name: str
   if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
   if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
 
-  // Test-compile the regex
+  // Test-compile the regex and check for empty-match patterns
   try {
-    new RegExp(r.pattern as string, r.flags as string);
+    const testRegex = new RegExp(r.pattern as string, r.flags as string);
+    if (testRegex.test('')) {
+      return { valid: false, name, error: `${name}: regex matches empty string — this would cause infinite loops` };
+    }
   } catch (e) {
     return { valid: false, name, error: `${name}: invalid regex — ${e instanceof Error ? e.message : String(e)}` };
   }
@@ -205,11 +208,6 @@ export function resetRules() {
   activeRules = [...DEFAULT_RULES];
   activeSkipPrefixes = [...DEFAULT_SKIP_PREFIXES];
   activeSkipKeywords = new Set(DEFAULT_SKIP_KEYWORDS);
-}
-
-/** Get current active rules (for UI display) */
-export function getActiveRules(): ParseRule[] {
-  return activeRules;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -293,11 +291,22 @@ function extractCteNames(sql: string): Set<string> {
   return ctes;
 }
 
+const MAX_MATCHES_PER_RULE = 10_000;
+
 function collectMatches(sql: string, regex: RegExp, out: Set<string>, cteNames?: Set<string>) {
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
+  let iterations = 0;
 
   while ((match = regex.exec(sql)) !== null) {
+    // Guard against zero-length matches causing infinite loops (user-provided regex)
+    if (match[0].length === 0) {
+      regex.lastIndex++;
+      continue;
+    }
+    // Safety limit: abort runaway regex (ReDoS or overly broad user patterns)
+    if (++iterations > MAX_MATCHES_PER_RULE) break;
+
     const raw = match[1];
     if (!raw) continue;
 

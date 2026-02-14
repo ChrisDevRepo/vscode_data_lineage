@@ -4,11 +4,9 @@ import { VsCodeProvider } from './contexts/VsCodeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
-// Acquire VS Code API ONCE - this is the only place it should be called
-declare function acquireVsCodeApi(): any;
-
+// Acquire VS Code API ONCE — this is the only place it should be called
 const vscodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
-(window as any).vscode = vscodeApi; // Used by ErrorBoundary (class component, can't use context)
+window.vscode = vscodeApi ?? undefined; // Used by ErrorBoundary (class component, can't use context)
 
 const root = document.getElementById('root');
 if (!root) {

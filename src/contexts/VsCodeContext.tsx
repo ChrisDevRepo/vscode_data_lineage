@@ -1,10 +1,6 @@
 import { createContext, useContext, ReactNode } from 'react';
 
-interface VsCodeAPI {
-  postMessage: (message: Record<string, unknown>) => void;
-  getState: () => Record<string, unknown> | undefined;
-  setState: (state: Record<string, unknown>) => void;
-}
+// VsCodeAPI type is declared globally in src/types/global.d.ts
 
 const VsCodeContext = createContext<VsCodeAPI | null>(null);
 

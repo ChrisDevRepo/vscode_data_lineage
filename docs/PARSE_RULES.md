@@ -18,6 +18,7 @@ rules:
     category: source                # preprocessing | source | target | exec
     pattern: "\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi                       # Regex flags
+    replacement: "..."                 # (preprocessing only) replacement string
     description: "FROM/JOIN sources"
 
 skip_prefixes:                      # Ignore matches starting with these
@@ -45,9 +46,9 @@ Extraction rules use capture group 1 as the object reference.
 
 | Rule | Priority | Category | Captures |
 |------|----------|----------|----------|
-| `clean_sql` | 1 | preprocessing | Strings `'...'` + comments `--` / `/* */` in one pass |
+| `clean_sql` | 1 | preprocessing | Brackets `[...]` + strings `'...'` + comments `--` / `/* */` in one pass |
 | `extract_sources_ansi` | 5 | source | FROM / JOIN (all variants) |
-| `extract_targets_dml` | 6 | target | INSERT INTO / UPDATE / MERGE INTO |
+| `extract_targets_dml` | 6 | target | INSERT [INTO] / UPDATE / MERGE [INTO] |
 | `extract_sources_tsql_apply` | 7 | source | CROSS APPLY / OUTER APPLY |
 | `extract_sp_calls` | 8 | exec | EXEC / EXECUTE (including `@var = proc` pattern) |
 | `extract_merge_using` | 9 | source | MERGE ... USING source |
@@ -55,7 +56,7 @@ Extraction rules use capture group 1 as the object reference.
 | `extract_ctas` | 13 | target | CREATE TABLE ... AS SELECT |
 | `extract_select_into` | 14 | target | SELECT INTO |
 
-**Preprocessing**: The `clean_sql` rule uses a single-pass combined regex where strings and comments are matched together. The regex engine processes left-to-right — the **leftmost match wins**. A string like `' <--- ETL --->'` is matched as a string first, so `--` inside it is never treated as a comment. Strings are neutralized to `''`, comments are replaced with a space. This is the industry-standard "Best Regex Trick" for handling delimiter interactions.
+**Preprocessing**: The `clean_sql` rule uses a single-pass combined regex where brackets, strings, and comments are matched together. The regex engine processes left-to-right — the **leftmost match wins**. A string like `' <--- ETL --->'` is matched as a string first, so `--` inside it is never treated as a comment. Brackets `[...]` are preserved (protecting quoted identifiers like `[column--name]`), strings are neutralized to `''`, comments are replaced with a space. This is the industry-standard "Best Regex Trick" for handling delimiter interactions.
 
 ## Fallback Behavior
 

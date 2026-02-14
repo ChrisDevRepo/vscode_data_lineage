@@ -74,6 +74,9 @@ export function App() {
 
   const handleVisualize = useCallback(
     (dacpacModel: DacpacModel, selectedSchemas: Set<string>) => {
+      // Persist selected schemas for "Reopen" flow
+      vscodeApi.postMessage({ type: 'save-schemas', schemas: Array.from(selectedSchemas) });
+
       // Create trimmed model: only selected schemas with exclusions applied
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
       trimmed = applyExclusionPatterns(trimmed, config.excludePatterns);

@@ -50,22 +50,48 @@ No `.dacpac` file? Click **Load Demo** in the wizard to explore the AdventureWor
 
 ## Configuration
 
-Search `dataLineageViz` in Settings:
+Search `dataLineageViz` in Settings (`Ctrl+,`):
+
+**General**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxNodes` | `500` | Maximum nodes to display (10-1000) |
+| `logLevel` | `"info"` | Log verbosity: `info` or `debug` |
+
+**Parser**
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `parseRulesFile` | `""` | Path to custom YAML parsing rules |
 | `excludePatterns` | `[]` | Regex patterns to exclude objects |
-| `maxNodes` | `500` | Maximum nodes to display (10-1000) |
+
+**Graph Layout**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `layout.direction` | `"LR"` | Layout direction: `LR` or `TB` |
 | `layout.rankSeparation` | `120` | Spacing between ranks/layers (20-300) |
 | `layout.nodeSeparation` | `30` | Spacing between nodes in same rank (10-200) |
+| `edgeStyle` | `"default"` | Edge style: `default`, `smoothstep`, `step`, `straight` |
 | `layout.edgeAnimation` | `true` | Animate edges during trace mode |
 | `layout.highlightAnimation` | `false` | Animate edges on node click (non-trace) |
+| `layout.minimapEnabled` | `true` | Show interactive minimap for large graphs |
+
+**Trace**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `trace.defaultUpstreamLevels` | `3` | Default upstream trace depth (0-99) |
 | `trace.defaultDownstreamLevels` | `3` | Default downstream trace depth (0-99) |
-| `edgeStyle` | `"default"` | Edge style: `default`, `smoothstep`, `step`, `straight` |
-| `logLevel` | `"info"` | Log verbosity: `info` or `debug` |
+
+**Analysis**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `analysis.hubMinDegree` | `8` | Min connections for Hub analysis (1-50) |
+| `analysis.islandMaxSize` | `2` | Max island size to display (2-500) |
+| `analysis.longestPathMinNodes` | `5` | Min nodes for Longest Path analysis (2-50) |
 
 ## Commands
 

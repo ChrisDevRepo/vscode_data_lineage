@@ -234,21 +234,6 @@ export function computeShortestPath(
 
 // ─── Analysis-Specific Layouts ──────────────────────────────────────────────
 
-function radialLayout(centerNodeId: string, nodeIds: string[]): Map<string, { x: number; y: number }> {
-  const positions = new Map<string, { x: number; y: number }>();
-  const others = nodeIds.filter(id => id !== centerNodeId);
-  const radius = Math.max(250, others.length * 50);
-  positions.set(centerNodeId, { x: 0, y: 0 });
-  others.forEach((id, i) => {
-    const angle = (i / others.length) * 2 * Math.PI - Math.PI / 2;
-    positions.set(id, {
-      x: Math.round(radius * Math.cos(angle)),
-      y: Math.round(radius * Math.sin(angle)),
-    });
-  });
-  return positions;
-}
-
 function gridLayout(nodeIds: string[], cols: number = 4): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
   const cellW = NODE_WIDTH + 40;
@@ -289,9 +274,7 @@ export function applyTraceToFlow(
 
   // RELAYOUT the traced subset — dispatch layout by analysis type
   let positions: Map<string, { x: number; y: number }>;
-  if (trace.mode === 'analysis' && trace.analysisType === 'hubs' && trace.selectedNodeId) {
-    positions = radialLayout(trace.selectedNodeId, filteredNodes.map(n => n.id));
-  } else if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {
+  if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {
     positions = gridLayout(filteredNodes.map(n => n.id));
   } else {
     positions = dagreLayout({

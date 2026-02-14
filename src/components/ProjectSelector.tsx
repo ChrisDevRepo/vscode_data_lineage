@@ -80,7 +80,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
             <span className="text-sm font-semibold ln-text">Data Lineage Viz</span>
           ) : (
             <img
-              src={(window as any).LOGO_URI || '../images/logo.png'}
+              src={window.LOGO_URI || '../images/logo.png'}
               alt="Data Lineage Viz"
               className="h-10 w-auto"
               onError={() => setLogoFailed(true)}

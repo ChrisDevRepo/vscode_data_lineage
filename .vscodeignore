@@ -24,11 +24,10 @@ docs/**
 CONTRIBUTING.md
 
 # Misc
-PLAN.md
+PLAN*.md
 CLAUDE.md
 SECURITY.md
 CODE_OF_CONDUCT.md
-INSTALL_LOCAL.md
 *.vsix
 debug.log
 .claude/**

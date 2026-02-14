@@ -308,7 +308,6 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@types/dagre": "^0.7.52",
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",

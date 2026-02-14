@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DacpacModel, SchemaInfo, ExtensionConfig } from '../engine/types';
+import { DEFAULT_CONFIG } from '../engine/types';
 import { extractDacpac } from '../engine/dacpacExtractor';
 
 export type StatusMessage = {
@@ -31,6 +32,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [fileName, setFileName] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [lastDacpacName, setLastDacpacName] = useState<string | null>(null);
+  const loadGenRef = useRef(0);
 
   // Auto-clear success/info status after 6s — keep warning/error visible
   useEffect(() => {
@@ -40,9 +42,15 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     }
   }, [status]);
 
-  const applyModel = useCallback((result: DacpacModel, name: string, statusText: string) => {
+  const applyModel = useCallback((result: DacpacModel, name: string, statusText: string, savedSchemas?: string[]) => {
     setModel(result);
-    setSelectedSchemas(new Set(result.schemas.map((s: SchemaInfo) => s.name)));
+    const available = result.schemas.map((s: SchemaInfo) => s.name);
+    if (savedSchemas && savedSchemas.length > 0) {
+      const availableSet = new Set(available);
+      setSelectedSchemas(new Set(savedSchemas.filter(s => availableSet.has(s))));
+    } else {
+      setSelectedSchemas(new Set(available));
+    }
     setFileName(name);
 
     if (result.warnings && result.warnings.length > 0) {
@@ -64,62 +72,57 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   useEffect(() => {
     const handler = async (event: MessageEvent) => {
       const msg = event.data;
-      const applyConfig = (msgConfig: Record<string, unknown>) => {
-        const cfg: ExtensionConfig = {
-          parseRules: (msgConfig.parseRules as ExtensionConfig['parseRules']) || undefined,
-          excludePatterns: (msgConfig.excludePatterns as string[]) || [],
-          maxNodes: (msgConfig.maxNodes as number) || 500,
-          layout: {
-            direction: ((msgConfig.layout as Record<string, unknown>)?.direction as 'TB' | 'LR') || 'LR',
-            rankSeparation: ((msgConfig.layout as Record<string, unknown>)?.rankSeparation as number) || 120,
-            nodeSeparation: ((msgConfig.layout as Record<string, unknown>)?.nodeSeparation as number) || 30,
-            edgeAnimation: ((msgConfig.layout as Record<string, unknown>)?.edgeAnimation as boolean) ?? true,
-            highlightAnimation: ((msgConfig.layout as Record<string, unknown>)?.highlightAnimation as boolean) ?? false,
-            minimapEnabled: ((msgConfig.layout as Record<string, unknown>)?.minimapEnabled as boolean) ?? true,
-          },
-          edgeStyle: (msgConfig.edgeStyle as ExtensionConfig['edgeStyle']) || 'default',
-          trace: {
-            defaultUpstreamLevels: ((msgConfig.trace as Record<string, unknown>)?.defaultUpstreamLevels as number) || 3,
-            defaultDownstreamLevels: ((msgConfig.trace as Record<string, unknown>)?.defaultDownstreamLevels as number) || 3,
-          },
-          analysis: {
-            hubMinDegree: ((msgConfig.analysis as Record<string, unknown>)?.hubMinDegree as number) || 8,
-            islandMaxSize: ((msgConfig.analysis as Record<string, unknown>)?.islandMaxSize as number) || 2,
-            longestPathMinNodes: ((msgConfig.analysis as Record<string, unknown>)?.longestPathMinNodes as number) || 5,
-          },
-        };
-        onConfigReceived(cfg);
-        if (msgConfig.parseRules) {
+      if (!msg?.type) return;
+
+      // Theme changes from extension host — update body attribute before React re-renders
+      if (msg.type === 'themeChanged') {
+        document.body.setAttribute('data-vscode-theme-kind', msg.kind);
+        return;
+      }
+
+      const applyConfig = (raw: ExtensionConfig) => {
+        // Extension host sends a well-typed ExtensionConfigMessage; apply defaults for safety
+        onConfigReceived({
+          ...DEFAULT_CONFIG,
+          ...raw,
+          layout: { ...DEFAULT_CONFIG.layout, ...raw.layout },
+          trace: { ...DEFAULT_CONFIG.trace, ...raw.trace },
+          analysis: { ...DEFAULT_CONFIG.analysis, ...raw.analysis },
+        });
+        if (raw.parseRules) {
           vscodeApi.postMessage({ type: 'log', text: 'Custom parse rules loaded' });
         }
       };
 
-      if (msg?.type === 'config-only') {
+      if (msg.type === 'config-only') {
         if (msg.config) applyConfig(msg.config);
         if (msg.lastDacpacName) setLastDacpacName(msg.lastDacpacName);
         return;
       }
 
-      if (msg?.type === 'last-dacpac-gone') {
+      if (msg.type === 'last-dacpac-gone') {
         setLastDacpacName(null);
         setStatus({ text: 'Previously opened file is no longer available.', type: 'warning' });
         return;
       }
 
-      if (msg?.type === 'dacpac-data') {
+      if (msg.type === 'dacpac-data') {
         if (msg.config) applyConfig(msg.config);
+        const gen = ++loadGenRef.current;
         setIsLoading(true);
         setStatus(null);
         setFileName(msg.fileName || 'dacpac');
         try {
           const buffer = new Uint8Array(msg.data).buffer;
           const result = await extractDacpac(buffer);
-          applyModel(result, msg.fileName || 'dacpac', `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`);
+          if (gen !== loadGenRef.current) return; // stale load — discard
+          applyModel(result, msg.fileName || 'dacpac', `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`, msg.lastSelectedSchemas);
         } catch (err) {
+          if (gen !== loadGenRef.current) return; // stale load — discard
           vscodeApi.postMessage({ type: 'error', error: err instanceof Error ? err.message : 'Failed to parse .dacpac' });
           setStatus({ text: err instanceof Error ? err.message : 'Failed to parse .dacpac', type: 'error' });
         } finally {
-          setIsLoading(false);
+          if (gen === loadGenRef.current) setIsLoading(false);
         }
       }
     };

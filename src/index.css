@@ -380,6 +380,14 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 .ln-btn-icon:hover:not(:disabled) {
   background: var(--ln-hover-bg);
 }
+.ln-btn-icon-active {
+  background: var(--ln-button-bg);
+  color: var(--ln-button-fg);
+  border-color: transparent;
+}
+.ln-btn-icon-active:hover:not(:disabled) {
+  background: var(--ln-button-hover-bg);
+}
 
 /* Dropdown panels */
 .ln-dropdown {
@@ -409,15 +417,61 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   border-top: 1px solid var(--ln-border);
 }
 
-/* Modal */
+/* Modal — always dark, matching the wizard aesthetic */
 .ln-modal-overlay {
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(4px);
 }
 .ln-modal {
-  background: var(--ln-bg);
-  border: 1px solid var(--ln-border);
+  background: var(--ln-wizard-bg);
+  border: 1px solid var(--ln-wizard-border);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-text,
+.ln-modal .ln-text-muted,
+.ln-modal h3,
+.ln-modal span,
+.ln-modal p,
+.ln-modal code {
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-text-muted {
+  opacity: 0.7;
+}
+.ln-modal .ln-text-link {
+  color: #60a5fa;
+}
+.ln-modal .ln-border-bottom {
+  border-color: var(--ln-wizard-border);
+}
+.ln-modal .ln-border-top {
+  border-color: var(--ln-wizard-border);
+}
+.ln-modal .ln-kbd {
+  background: var(--ln-wizard-input-bg);
+  border-color: var(--ln-wizard-border);
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-list-item {
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-list-item:hover {
+  background: var(--ln-wizard-hover-bg);
+}
+.ln-modal .ln-btn-secondary {
+  background: var(--ln-wizard-btn-bg);
+  color: var(--ln-wizard-fg);
+  border-color: var(--ln-wizard-btn-border);
+}
+.ln-modal .ln-btn-secondary:hover:not(:disabled) {
+  background: var(--ln-wizard-btn-hover-bg);
+}
+.ln-modal code {
+  background: var(--ln-wizard-input-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
 }
 
 /* Panel (card-like container) */
@@ -440,7 +494,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 }
 .ln-legend-header {
   background: transparent;
-  color: var(--ln-sidebar-header-fg);
+  color: var(--ln-fg);
 }
 
 /* Trace banner */
@@ -479,7 +533,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   border: 1px solid var(--ln-border);
 }
 
-/* Start screen — outer background follows VS Code theme */
+/* Start screen — outer area follows the active theme */
 .ln-start-screen {
   background: var(--ln-bg);
 }

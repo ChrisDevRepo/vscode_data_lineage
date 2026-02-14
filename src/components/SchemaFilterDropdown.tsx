@@ -50,7 +50,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
       {isOpen && (
         <>
           <div className="fixed inset-0 z-20" onMouseDown={() => setIsOpen(false)} />
-          <div className="absolute top-full mt-2 w-80 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown">
+          <div className="absolute top-full mt-2 w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown">
             <div className="mb-2">
               <input
                 type="text"

@@ -34,6 +34,7 @@ function getThemeClass(kind: vscode.ColorThemeKind): string {
 // ─── DDL Virtual Document Provider ──────────────────────────────────────────
 
 const DDL_SCHEME = 'dacpac-ddl';
+const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 let panelCounter = 0;
 const ddlContentMap = new Map<string, string>();
 
@@ -57,17 +58,23 @@ async function showDdl(ddlUri: vscode.Uri, message: { objectName: string; schema
   ddlContentMap.set(key, content);
   ddlProvider.fire(ddlUri);
 
-  const doc = await vscode.workspace.openTextDocument(ddlUri);
-  if (doc.languageId !== 'dacpac-sql') {
-    await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
+  try {
+    const doc = await vscode.workspace.openTextDocument(ddlUri);
+    if (doc.languageId !== 'dacpac-sql') {
+      await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
+    }
+    // Re-set: setTextDocumentLanguage fires onDidCloseTextDocument which deletes the key
+    ddlContentMap.set(key, content);
+    await vscode.window.showTextDocument(doc, {
+      viewColumn: vscode.ViewColumn.Beside,
+      preserveFocus: true,
+      preview: true,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(`[Extension Error] Failed to show DDL: ${errorMsg}`);
+    vscode.window.showErrorMessage(`Failed to open SQL Viewer: ${errorMsg}`);
   }
-  // Re-set: setTextDocumentLanguage fires onDidCloseTextDocument which deletes the key
-  ddlContentMap.set(key, content);
-  await vscode.window.showTextDocument(doc, {
-    viewColumn: vscode.ViewColumn.Beside,
-    preserveFocus: true,
-    preview: true,
-  });
 }
 
 function updateDdlIfOpen(ddlUri: vscode.Uri, message: { objectName: string; schema: string; sqlBody?: string }) {
@@ -175,116 +182,151 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
 
     panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
+    let panelDisposed = false;
     const themeChangeListener = vscode.window.onDidChangeActiveColorTheme((theme) => {
+      if (panelDisposed) return;
       panel.webview.postMessage({ type: 'themeChanged', kind: getThemeClass(theme.kind) });
     });
 
     panel.onDidDispose(() => {
+      panelDisposed = true;
       themeChangeListener.dispose();
       ddlContentMap.delete(ddlUri.toString());
     });
 
     panel.webview.onDidReceiveMessage(
-      async (message) => {
-        if (message.type === 'ready') {
-          const config = await readExtensionConfig();
-          const lastDacpacName = context.workspaceState.get<string>('lastDacpacName');
-          panel.webview.postMessage({ type: 'config-only', config, lastDacpacName });
-        }
-        if (message.type === 'open-dacpac') {
-          const uris = await vscode.window.showOpenDialog({
-            canSelectMany: false,
-            filters: { 'DACPAC': ['dacpac'] },
-            title: 'Select a .dacpac file',
-          });
-          if (uris && uris.length > 0) {
-            const fileUri = uris[0];
-            const fileName = path.basename(fileUri.fsPath);
+      async (message: WebviewMessage) => {
+        try {
+        switch (message.type) {
+          case 'ready': {
+            const config = await readExtensionConfig();
+            const lastDacpacName = context.workspaceState.get<string>('lastDacpacName');
+            panel.webview.postMessage({ type: 'config-only', config, lastDacpacName });
+            break;
+          }
+          case 'open-dacpac': {
+            const uris = await vscode.window.showOpenDialog({
+              canSelectMany: false,
+              filters: { 'DACPAC': ['dacpac'] },
+              title: 'Select a .dacpac file',
+            });
+            if (uris && uris.length > 0) {
+              const fileUri = uris[0];
+              const fileName = path.basename(fileUri.fsPath);
+              try {
+                const data = await vscode.workspace.fs.readFile(fileUri);
+                if (data.byteLength > MAX_DACPAC_BYTES) {
+                  vscode.window.showErrorMessage(`Dacpac file too large (${(data.byteLength / 1024 / 1024).toFixed(1)} MB). Maximum supported size is 50 MB.`);
+                  break;
+                }
+                await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
+                await context.workspaceState.update('lastDacpacName', fileName);
+                const config = await readExtensionConfig();
+                panel.webview.postMessage({
+                  type: 'dacpac-data',
+                  data: Array.from(data),
+                  fileName,
+                  config,
+                });
+                log(`[Extension] Opened dacpac: ${fileName}`);
+              } catch (err) {
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                log(`[Extension Error] Failed to read dacpac: ${errorMsg}`);
+                vscode.window.showErrorMessage(`Failed to read dacpac: ${errorMsg}`);
+              }
+            }
+            break;
+          }
+          case 'save-schemas': {
+            await context.workspaceState.update('lastSelectedSchemas', message.schemas);
+            break;
+          }
+          case 'load-last-dacpac': {
+            const lastPath = context.workspaceState.get<string>('lastDacpacPath');
+            if (!lastPath) return;
             try {
+              const fileUri = vscode.Uri.file(lastPath);
               const data = await vscode.workspace.fs.readFile(fileUri);
-              await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
-              await context.workspaceState.update('lastDacpacName', fileName);
+              if (data.byteLength > MAX_DACPAC_BYTES) {
+                vscode.window.showErrorMessage(`Dacpac file too large (${(data.byteLength / 1024 / 1024).toFixed(1)} MB). Maximum supported size is 50 MB.`);
+                break;
+              }
               const config = await readExtensionConfig();
+              const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
               panel.webview.postMessage({
                 type: 'dacpac-data',
                 data: Array.from(data),
-                fileName,
+                fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
+                config,
+                lastSelectedSchemas,
+              });
+              log(`[Extension] Reopened last dacpac: ${path.basename(lastPath)}`);
+            } catch {
+              await context.workspaceState.update('lastDacpacPath', undefined);
+              await context.workspaceState.update('lastDacpacName', undefined);
+              panel.webview.postMessage({ type: 'last-dacpac-gone' });
+              log(`[Extension] Last dacpac no longer available: ${lastPath}`);
+            }
+            break;
+          }
+          case 'load-demo': {
+            const config = await readExtensionConfig();
+            try {
+              const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
+              const data = await vscode.workspace.fs.readFile(demoUri);
+              if (data.byteLength > MAX_DACPAC_BYTES) {
+                vscode.window.showErrorMessage(`Dacpac file too large (${(data.byteLength / 1024 / 1024).toFixed(1)} MB). Maximum supported size is 50 MB.`);
+                break;
+              }
+              panel.webview.postMessage({
+                type: 'dacpac-data',
+                data: Array.from(data),
+                fileName: 'AdventureWorks (Demo)',
                 config,
               });
-              log(`[Extension] Opened dacpac: ${fileName}`);
+              log('[Extension] Demo dacpac loaded');
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
-              log(`[Extension Error] Failed to read dacpac: ${errorMsg}`);
-              vscode.window.showErrorMessage(`Failed to read dacpac: ${errorMsg}`);
+              log(`[Extension Error] Failed to load demo: ${errorMsg}`);
+              vscode.window.showErrorMessage(`Failed to load demo: ${errorMsg}`);
             }
+            break;
           }
+          case 'parse-rules-warning':
+            handleParseRulesWarning(message);
+            break;
+          case 'parse-stats':
+            handleParseStats(message.stats);
+            break;
+          case 'log':
+            log(`[Webview] ${message.text}`);
+            break;
+          case 'error':
+            log(`[Webview Error] ${message.error}`);
+            if (message.stack) log(`[Webview Error Stack] ${message.stack}`, 'debug');
+            vscode.window.showErrorMessage(`Data Lineage Error: ${message.error}`);
+            break;
+          case 'open-external':
+            if (message.url) {
+              await vscode.env.openExternal(vscode.Uri.parse(message.url));
+            }
+            break;
+          case 'open-settings':
+            vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz');
+            break;
+          case 'show-ddl':
+            await showDdl(ddlUri, message);
+            break;
+          case 'update-ddl':
+            updateDdlIfOpen(ddlUri, message);
+            break;
+          default:
+            log(`[Extension] Unknown webview message type: ${(message as { type: string }).type}`, 'debug');
         }
-        if (message.type === 'load-last-dacpac') {
-          const lastPath = context.workspaceState.get<string>('lastDacpacPath');
-          if (!lastPath) return;
-          try {
-            const fileUri = vscode.Uri.file(lastPath);
-            const data = await vscode.workspace.fs.readFile(fileUri);
-            const config = await readExtensionConfig();
-            panel.webview.postMessage({
-              type: 'dacpac-data',
-              data: Array.from(data),
-              fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
-              config,
-            });
-            log(`[Extension] Reopened last dacpac: ${path.basename(lastPath)}`);
-          } catch {
-            await context.workspaceState.update('lastDacpacPath', undefined);
-            await context.workspaceState.update('lastDacpacName', undefined);
-            panel.webview.postMessage({ type: 'last-dacpac-gone' });
-            log(`[Extension] Last dacpac no longer available: ${lastPath}`);
-          }
-        }
-        if (message.type === 'load-demo') {
-          const config = await readExtensionConfig();
-          try {
-            const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
-            const data = await vscode.workspace.fs.readFile(demoUri);
-            panel.webview.postMessage({
-              type: 'dacpac-data',
-              data: Array.from(data),
-              fileName: 'AdventureWorks (Demo)',
-              config,
-            });
-            log('[Extension] Demo dacpac loaded');
-          } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            log(`[Extension Error] Failed to load demo: ${errorMsg}`);
-            vscode.window.showErrorMessage(`Failed to load demo: ${errorMsg}`);
-          }
-        }
-        if (message.type === 'parse-rules-warning') {
-          handleParseRulesWarning(message);
-        }
-        if (message.type === 'parse-stats') {
-          handleParseStats(message.stats);
-        }
-        if (message.type === 'log') {
-          log(`[Webview] ${message.text}`);
-        }
-        if (message.type === 'error') {
-          log(`[Webview Error] ${message.error}`);
-          if (message.stack) log(`[Webview Error Stack] ${message.stack}`, 'debug');
-          vscode.window.showErrorMessage(`Data Lineage Error: ${message.error}`);
-        }
-        if (message.type === 'open-external') {
-          if (message.url) {
-            await vscode.env.openExternal(vscode.Uri.parse(message.url));
-          }
-        }
-        if (message.type === 'open-settings') {
-          vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz');
-        }
-        if (message.type === 'show-ddl') {
-          await showDdl(ddlUri, message);
-        }
-        if (message.type === 'update-ddl') {
-          updateDdlIfOpen(ddlUri, message);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          log(`[Extension Error] Message handler failed for "${message.type}": ${errorMsg}`);
+          vscode.window.showErrorMessage(`Data Lineage Error: ${errorMsg}`);
         }
       },
       undefined,
@@ -296,6 +338,23 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
     vscode.window.showErrorMessage(`Failed to open Data Lineage: ${errorMsg}`);
   }
 }
+
+// ─── Webview Message Types ──────────────────────────────────────────────────
+
+type WebviewMessage =
+  | { type: 'ready' }
+  | { type: 'open-dacpac' }
+  | { type: 'save-schemas'; schemas: string[] }
+  | { type: 'load-last-dacpac' }
+  | { type: 'load-demo' }
+  | { type: 'parse-rules-warning'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean }
+  | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[] } }
+  | { type: 'log'; text: string }
+  | { type: 'error'; error: string; stack?: string }
+  | { type: 'open-external'; url?: string }
+  | { type: 'open-settings' }
+  | { type: 'show-ddl'; objectName: string; schema: string; sqlBody?: string }
+  | { type: 'update-ddl'; objectName: string; schema: string; sqlBody?: string };
 
 // ─── Read Extension Config ──────────────────────────────────────────────────
 
@@ -309,6 +368,11 @@ interface ExtensionConfigMessage {
   analysis: { hubMinDegree: number; islandMaxSize: number; longestPathMinNodes: number };
 }
 
+function clamp(val: number, min: number, max: number, fallback: number): number {
+  if (typeof val !== 'number' || isNaN(val)) return fallback;
+  return Math.max(min, Math.min(max, val));
+}
+
 async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
 
@@ -319,24 +383,24 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
         return false;
       }
     }),
-    maxNodes: cfg.get<number>('maxNodes', 500),
+    maxNodes: clamp(cfg.get<number>('maxNodes', 500), 10, 1000, 500),
     layout: {
       direction: cfg.get<string>('layout.direction', 'LR'),
-      rankSeparation: cfg.get<number>('layout.rankSeparation', 120),
-      nodeSeparation: cfg.get<number>('layout.nodeSeparation', 30),
+      rankSeparation: clamp(cfg.get<number>('layout.rankSeparation', 120), 20, 300, 120),
+      nodeSeparation: clamp(cfg.get<number>('layout.nodeSeparation', 30), 10, 200, 30),
       edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', true),
       highlightAnimation: cfg.get<boolean>('layout.highlightAnimation', false),
       minimapEnabled: cfg.get<boolean>('layout.minimapEnabled', true),
     },
     edgeStyle: cfg.get<string>('edgeStyle', 'default'),
     trace: {
-      defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels', 3),
-      defaultDownstreamLevels: cfg.get<number>('trace.defaultDownstreamLevels', 3),
+      defaultUpstreamLevels: clamp(cfg.get<number>('trace.defaultUpstreamLevels', 3), 0, 99, 3),
+      defaultDownstreamLevels: clamp(cfg.get<number>('trace.defaultDownstreamLevels', 3), 0, 99, 3),
     },
     analysis: {
-      hubMinDegree: cfg.get<number>('analysis.hubMinDegree', 8),
-      islandMaxSize: cfg.get<number>('analysis.islandMaxSize', 2),
-      longestPathMinNodes: cfg.get<number>('analysis.longestPathMinNodes', 5),
+      hubMinDegree: clamp(cfg.get<number>('analysis.hubMinDegree', 8), 1, 50, 8),
+      islandMaxSize: clamp(cfg.get<number>('analysis.islandMaxSize', 2), 2, 500, 2),
+      longestPathMinNodes: clamp(cfg.get<number>('analysis.longestPathMinNodes', 5), 2, 50, 5),
     },
   };
 
@@ -344,7 +408,12 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const rulesPath = cfg.get<string>('parseRulesFile', '');
   if (rulesPath) {
     const resolved = resolveWorkspacePath(rulesPath);
-    if (resolved) {
+    if (!resolved) {
+      log(`[ParseRules] Cannot resolve "${rulesPath}" — no workspace folder open`);
+      vscode.window.showWarningMessage(
+        `Parse rules: cannot resolve "${rulesPath}" — open a workspace folder or use an absolute path.`
+      );
+    } else {
       try {
         const fileUri = vscode.Uri.file(resolved);
         const data = await vscode.workspace.fs.readFile(fileUri);
@@ -468,14 +537,6 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           window.LOGO_URI = "${logoUri}";
         </script>
         <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
-        <script nonce="${nonce}">
-          window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.type === 'themeChanged') {
-              document.body.setAttribute('data-vscode-theme-kind', message.kind);
-            }
-          });
-        </script>
       </body>
     </html>
   `;
@@ -674,4 +735,6 @@ class QuickAction extends vscode.TreeItem {
   }
 }
 
-export function deactivate() {}
+export function deactivate() {
+  ddlContentMap.clear();
+}

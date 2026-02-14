@@ -33,7 +33,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           </div>
           <div className="flex flex-col items-center text-center gap-4">
             <img
-              src={(window as any).LOGO_URI || '../images/logo.png'}
+              src={window.LOGO_URI || '../images/logo.png'}
               alt="Data Lineage Viz"
               className="h-16 w-auto"
               onError={(e) => {

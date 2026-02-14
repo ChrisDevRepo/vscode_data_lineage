@@ -163,6 +163,8 @@ export function GraphCanvas({
       a.download = 'lineage.drawio';
       a.click();
       URL.revokeObjectURL(url);
+    }).catch((err) => {
+      console.error('[Data Lineage] Draw.io export failed:', err);
     });
   }, [flowNodes, flowEdges, availableSchemas, filter.schemas]);
 
