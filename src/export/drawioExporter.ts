@@ -20,20 +20,17 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ─── Node HTML label (with left colored band via HTML table) ─────────────────
+// ─── Node HTML label ────────────────────────────────────────────────────────
 
-function buildLabel(d: CustomNodeData, schemaColor: string): string {
+const COLOR_BAND_W = 6;
+
+function buildLabel(d: CustomNodeData): string {
   const icon = TYPE_COLORS[d.objectType]?.icon || '■';
   return (
-    '<table border="0" cellpadding="0" cellspacing="0" width="100%" height="100%">' +
-    '<tr>' +
-    `<td width="6" height="100%" style="background:${schemaColor};"></td>` +
-    '<td valign="top" align="left" style="padding:6px 8px;">' +
     `<span style="color:#888888;font-size:14px;">${icon}</span>` +
     ` <span style="font-size:9px;color:#888888;">${d.inDegree}↓ ${d.outDegree}↑</span><br>` +
     `<b style="font-size:11px;color:#333333;">${esc(d.label)}</b><br>` +
-    `<span style="font-size:9px;color:#999999;">${esc(d.schema.toUpperCase())}</span>` +
-    '</td></tr></table>'
+    `<span style="font-size:9px;color:#999999;">${esc(d.schema.toUpperCase())}</span>`
   );
 }
 
@@ -49,7 +46,9 @@ function buildLegend(schemas: string[], startId: number): { cells: any[]; nextId
   const padX = 12;
   const padY = 10;
   const headerH = 28;
-  const boxW = 180;
+  // Auto-size: ~6.5px per char at fontSize 11, plus padding for icon + margins
+  const maxSchemaLen = Math.max(...schemas.map(s => s.length));
+  const boxW = Math.max(180, Math.round(maxSchemaLen * 6.5) + padX + 50);
   const boxH = headerH + schemas.length * rowH + padY;
 
   // Background rectangle
@@ -150,8 +149,9 @@ export function exportToDrawio(
   const legend = buildLegend(schemas, nextId);
   nextId = legend.nextId;
 
-  // 2. Nodes (as <object> elements for metadata)
+  // 2. Nodes (as <object> elements for metadata) + color band child cells
   const nodeObjects: any[] = [];
+  const colorBandCells: any[] = [];
   for (const node of nodes) {
     const d = node.data as CustomNodeData;
     const nodeId = String(nextId++);
@@ -161,17 +161,17 @@ export function exportToDrawio(
 
     nodeObjects.push({
       '@_id': nodeId,
-      '@_label': buildLabel(d, schemaColor),
+      '@_label': buildLabel(d),
       '@_tooltip': `${d.fullName}\nType: ${d.objectType}\nIn: ${d.inDegree}\nOut: ${d.outDegree}`,
       '@_fullName': d.fullName,
       '@_inputCount': String(d.inDegree),
       '@_outputCount': String(d.outDegree),
       mxCell: {
         '@_style':
-          'rounded=1;whiteSpace=wrap;html=1;overflow=hidden;' +
+          'rounded=1;whiteSpace=wrap;html=1;overflow=hidden;container=1;' +
           'fillColor=#FFFFFF;strokeColor=#E0E0E0;strokeWidth=1;' +
           'align=left;verticalAlign=top;' +
-          'spacing=0;spacingLeft=0;spacingRight=0;spacingTop=0;spacingBottom=0;',
+          `spacing=0;spacingLeft=${COLOR_BAND_W + 6};spacingRight=4;spacingTop=4;spacingBottom=0;`,
         '@_vertex': '1',
         '@_parent': '1',
         mxGeometry: {
@@ -181,6 +181,24 @@ export function exportToDrawio(
           '@_height': String(NODE_H),
           '@_as': 'geometry',
         },
+      },
+    });
+
+    // Native Draw.io child cell for the left color band (reliable rendering)
+    colorBandCells.push({
+      '@_id': String(nextId++),
+      '@_value': '',
+      '@_style':
+        `fillColor=${schemaColor};strokeColor=none;` +
+        'rounded=0;resizable=0;movable=0;deletable=0;editable=0;connectable=0;',
+      '@_vertex': '1',
+      '@_parent': nodeId,
+      mxGeometry: {
+        '@_x': '0',
+        '@_y': '0',
+        '@_width': String(COLOR_BAND_W),
+        '@_height': String(NODE_H),
+        '@_as': 'geometry',
       },
     });
   }
@@ -224,7 +242,7 @@ export function exportToDrawio(
           '@_pageHeight': '827',
           '@_background': '#ffffff',
           root: {
-            mxCell: [...baseCells, ...legend.cells, ...edgeCells],
+            mxCell: [...baseCells, ...legend.cells, ...colorBandCells, ...edgeCells],
             object: nodeObjects,
           },
         },
