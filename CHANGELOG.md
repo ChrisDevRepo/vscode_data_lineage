@@ -1,12 +1,16 @@
 # Changelog
 
-## [0.8.2] - 2026-02-13
+## [0.9.0] - 2026-02-14
 
 ### Added
-- **Graph Analysis** — New analysis toolbar button with three modes: Islands (find disconnected subgraphs), Hubs (identify most-connected nodes), and Orphan Nodes (reveal objects with no dependencies)
+- **Graph Analysis** — Analyze dropdown with Islands, Hubs, and Orphan Node detection
+- **MiniMap** — Interactive minimap with draggable viewport and schema-colored nodes
+
+### Changed
+- Consolidated utility directories, extracted shared hooks and helpers, improved type safety, and replaced hardcoded colors with theme-aware CSS variables
 
 ### Fixed
-- **Import feedback** — Wizard now shows status messages when loading a .dacpac, including errors for corrupt files and warnings for empty databases
+- **Import feedback** — Status messages for loading, errors, and empty databases
 
 ## [0.8.1] - 2026-02-08
 

@@ -16,6 +16,7 @@ import {
   XmlReference,
 } from './types';
 import { parseSqlBody } from './sqlBodyParser';
+import { stripBrackets } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -308,13 +309,12 @@ function buildTableDesign(el: XmlElement, schema: string, objectName: string): s
     if (rel['@_Name'] !== 'Columns') continue;
     for (const entry of asArray(rel.Entry)) {
       for (const colEl of asArray(entry.Element)) {
-        const colName = (colEl['@_Name'] ?? '').split('.').pop()?.replace(/\[|\]/g, '') ?? '';
+        const colName = stripBrackets((colEl['@_Name'] ?? '').split('.').pop() ?? '');
         const props = asArray(colEl.Property);
         const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
         const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
         const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
 
-        // Computed columns have no stored type
         if (isComputed) {
           cols.push({
             name: colName,
@@ -331,17 +331,15 @@ function buildTableDesign(el: XmlElement, schema: string, objectName: string): s
           if (colRel['@_Name'] !== 'TypeSpecifier') continue;
           for (const tsEntry of asArray(colRel.Entry)) {
             for (const tsEl of asArray(tsEntry.Element)) {
-              // Get length/precision/scale
               const tsProps = asArray(tsEl.Property);
               const length = tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
               const precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
               const scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
-              // Get base type name from nested Type relationship
               for (const typeRel of asArray(tsEl.Relationship)) {
                 if (typeRel['@_Name'] !== 'Type') continue;
                 for (const typeEntry of asArray(typeRel.Entry)) {
                   for (const ref of asArray(typeEntry.References as XmlReference | XmlReference[] | undefined)) {
-                    const raw = ref['@_Name']?.replace(/\[|\]/g, '') ?? '?';
+                    const raw = ref['@_Name'] ? stripBrackets(ref['@_Name']) : '?';
                     typeName = raw;
                     if (length) typeName += `(${length === '-1' ? 'max' : length})`;
                     else if (precision && scale) typeName += `(${precision},${scale})`;
@@ -455,7 +453,7 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
 
 /** Parse "[schema].[object]" — schema is uppercased for case-insensitive consistency */
 function parseName(fullName: string): { schema: string; objectName: string } {
-  const parts = fullName.replace(/\[|\]/g, '').split('.');
+  const parts = stripBrackets(fullName).split('.');
   if (parts.length >= 2) {
     return { schema: parts[0].toUpperCase(), objectName: parts[1] };
   }
@@ -464,7 +462,7 @@ function parseName(fullName: string): { schema: string; objectName: string } {
 
 /** Normalize to lowercase "[schema].[object]" for consistent matching */
 function normalizeName(name: string): string {
-  const parts = name.replace(/\[|\]/g, '').split('.');
+  const parts = stripBrackets(name).split('.');
   if (parts.length >= 2) {
     return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
   }
@@ -473,7 +471,7 @@ function normalizeName(name: string): string {
 
 /** Check if ref is object-level (2 parts) not column-level (3+ parts) */
 function isObjectLevelRef(name: string): boolean {
-  const parts = name.replace(/\[|\]/g, '').split('.');
+  const parts = stripBrackets(name).split('.');
   return parts.length === 2 && !parts[1].startsWith('@');
 }
 

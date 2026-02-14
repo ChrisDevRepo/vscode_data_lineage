@@ -1,9 +1,9 @@
 import { createContext, useContext, ReactNode } from 'react';
 
 interface VsCodeAPI {
-  postMessage: (message: any) => void;
-  getState: () => any;
-  setState: (state: any) => void;
+  postMessage: (message: Record<string, unknown>) => void;
+  getState: () => Record<string, unknown> | undefined;
+  setState: (state: Record<string, unknown>) => void;
 }
 
 const VsCodeContext = createContext<VsCodeAPI | null>(null);

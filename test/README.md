@@ -4,7 +4,7 @@
 
 ```bash
 npm test                           # Run engine + parser edge-case tests
-npx tsx test/engine.test.ts        # Engine/integration tests only (107 tests)
+npx tsx test/engine.test.ts        # Engine/integration tests only (115 tests)
 npx tsx test/parser-edge-cases.test.ts  # Syntactic parser tests only (123 tests)
 npm run test:integration           # VS Code webview integration tests
 ```
@@ -13,7 +13,7 @@ npm run test:integration           # VS Code webview integration tests
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `engine.test.ts` | 107 | Engine integration: extraction, parsing, graph, trace, security, direction |
+| `engine.test.ts` | 115 | Engine integration: extraction, parsing, graph, trace, security, direction |
 | `parser-edge-cases.test.ts` | 123 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `webview.integration.test.ts` | — | VS Code webview integration tests |
 | `runTest.ts` | — | Test runner for VS Code extension tests |

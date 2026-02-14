@@ -25,7 +25,7 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
 // Light theme: Use original Tableau 10 colors (vibrant, high contrast)
 // Dark theme: Use lightened variants for better visibility on dark backgrounds
 
-const SCHEMA_COLORS_LIGHT = [
+export const SCHEMA_COLORS_LIGHT = [
   '#4E79A7', // Tableau Blue
   '#F28E2B', // Tableau Orange  
   '#E15759', // Tableau Red
@@ -53,7 +53,7 @@ const SCHEMA_COLORS_DARK = [
 ];
 
 /** Deterministic hash so the same schema always gets the same color */
-function hashString(str: string): number {
+export function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);

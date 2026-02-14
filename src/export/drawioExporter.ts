@@ -1,7 +1,7 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TYPE_COLORS } from '../utils/schemaColors';
+import { TYPE_COLORS, hashString, SCHEMA_COLORS_LIGHT } from '../utils/schemaColors';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -9,26 +9,10 @@ const GRAPH_OFFSET_X = 300;
 const NODE_W = 180;
 const NODE_H = 70;
 
-// Tableau 10 light palette (matches SCHEMA_COLORS_LIGHT in schemaColors.ts)
-const SCHEMA_COLORS = [
-  '#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F',
-  '#EDC948', '#B07AA1', '#FF9DA7', '#9C755F', '#BAB0AC',
-];
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Deterministic hash — identical to schemaColors.ts */
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return hash;
-}
-
 function getSchemaColor(schema: string): string {
-  return SCHEMA_COLORS[Math.abs(hashString(schema)) % SCHEMA_COLORS.length];
+  return SCHEMA_COLORS_LIGHT[Math.abs(hashString(schema)) % SCHEMA_COLORS_LIGHT.length];
 }
 
 /** Escape user-provided text for safe HTML embedding inside Draw.io labels. */

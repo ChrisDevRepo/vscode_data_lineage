@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { TraceState } from '../engine/types';
+import { stripBrackets } from '../utils/sql';
 
 interface TraceControlsProps {
   trace: TraceState;
@@ -19,7 +20,7 @@ export const TraceControls = memo(function TraceControls({
       style={{ background: 'color-mix(in srgb, var(--ln-bg) 95%, transparent)', border: '1px solid var(--ln-focus-border)' }}
     >
       <span className="text-sm" style={{ color: 'var(--ln-fg-muted)' }}>
-        Tracing <span className="font-semibold" style={{ color: 'var(--ln-focus-border)' }}>{trace.selectedNodeId?.replace(/\[|\]/g, '')}</span>
+        Tracing <span className="font-semibold" style={{ color: 'var(--ln-focus-border)' }}>{trace.selectedNodeId ? stripBrackets(trace.selectedNodeId) : ''}</span>
       </span>
 
       <span className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>

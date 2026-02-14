@@ -3,10 +3,10 @@ import { getSchemaColor } from '../utils/schemaColors';
 
 interface LegendProps {
   schemas: string[];
-  isDetailSearchOpen?: boolean;
+  isSidebarOpen?: boolean;
 }
 
-export const Legend = memo(function Legend({ schemas, isDetailSearchOpen }: LegendProps) {
+export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [, setThemeTick] = useState(0);
 
@@ -25,7 +25,7 @@ export const Legend = memo(function Legend({ schemas, isDetailSearchOpen }: Lege
   return (
     <div
       className="absolute top-4 ln-legend rounded-md overflow-hidden z-10 transition-all duration-200"
-      style={{ left: isDetailSearchOpen ? 380 : 16 }}
+      style={{ left: isSidebarOpen ? 380 : 16 }}
     >
       <button
         onClick={() => setCollapsed(!collapsed)}

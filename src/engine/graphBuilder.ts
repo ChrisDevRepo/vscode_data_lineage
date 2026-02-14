@@ -6,8 +6,8 @@ import { DacpacModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './type
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 60;
+export const NODE_WIDTH = 220;
+export const NODE_HEIGHT = 60;
 
 /** Collect edges that flow between depth levels in the BFS direction.
  *  Upstream edges: A→B where A.depth > B.depth (further → closer to origin).

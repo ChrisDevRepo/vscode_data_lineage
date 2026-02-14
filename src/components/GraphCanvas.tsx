@@ -3,6 +3,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   useReactFlow,
   applyNodeChanges,
   applyEdgeChanges,
@@ -27,6 +28,8 @@ import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
+import { getSchemaColor } from '../utils/schemaColors';
+import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
 
@@ -116,6 +119,11 @@ export function GraphCanvas({
     fitView({ padding: 0.15, duration: 800 });
   }, [fitView]);
 
+  const minimapNodeColor = useCallback(
+    (node: FlowNode<CustomNodeData>) => getSchemaColor(String(node.data.schema)),
+    []
+  );
+
   // Execute search: find node and zoom to it
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const foundNode = schema
@@ -131,8 +139,8 @@ export function GraphCanvas({
         const targetNode = getNode(foundNode.id);
         if (targetNode?.position) {
           setCenter(
-            targetNode.position.x + 110, // Center of node
-            targetNode.position.y + 30,
+            targetNode.position.x + NODE_WIDTH / 2,
+            targetNode.position.y + NODE_HEIGHT / 2,
             { zoom: 0.8, duration: 800 }
           );
         }
@@ -358,51 +366,60 @@ export function GraphCanvas({
             >
               <Background gap={16} />
               <Controls showInteractive={true} position="bottom-left" />
-              {isDetailSearchOpen && onToggleDetailSearch && !analysisMode && (
-                <Panel position="top-left">
-                  <DetailSearchSidebar
-                    onClose={onToggleDetailSearch}
-                    allNodes={displayNodes.map(n => {
-                      const modelNode = model?.nodes.find(mn => mn.id === n.id);
-                      return {
-                        id: n.id,
-                        name: String(n.data.label),
-                        schema: String(n.data.schema),
-                        type: n.data.objectType as ObjectType,
-                        bodyScript: modelNode?.bodyScript,
-                      };
-                    })}
-                    onResultClick={(nodeId) => {
-                      onNodeClick(nodeId);
-                      setTimeout(() => {
-                        const targetNode = getNode(nodeId);
-                        if (targetNode?.position) {
-                          setCenter(
-                            targetNode.position.x + 110,
-                            targetNode.position.y + 30,
-                            { zoom: 0.8, duration: 800 }
-                          );
-                        }
-                      }, 100);
-                    }}
-                  />
-                </Panel>
+              {config.layout.minimapEnabled && (
+                <MiniMap
+                  pannable
+                  zoomable
+                  position="bottom-right"
+                  nodeColor={minimapNodeColor}
+                  nodeBorderRadius={4}
+                  ariaLabel="Graph minimap"
+                />
               )}
-              {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup && (
+              {(isDetailSearchOpen || analysisMode) && (
                 <Panel position="top-left">
-                  <AnalysisSidebar
-                    analysis={analysisMode}
-                    onSelectGroup={onSelectAnalysisGroup}
-                    onClearGroup={onClearAnalysisGroup}
-                    onClose={onCloseAnalysis}
-                  />
+                  {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
+                    <AnalysisSidebar
+                      analysis={analysisMode}
+                      onSelectGroup={onSelectAnalysisGroup}
+                      onClearGroup={onClearAnalysisGroup}
+                      onClose={onCloseAnalysis}
+                    />
+                  ) : onToggleDetailSearch ? (
+                    <DetailSearchSidebar
+                      onClose={onToggleDetailSearch}
+                      allNodes={displayNodes.map(n => {
+                        const modelNode = model?.nodes.find(mn => mn.id === n.id);
+                        return {
+                          id: n.id,
+                          name: String(n.data.label),
+                          schema: String(n.data.schema),
+                          type: n.data.objectType as ObjectType,
+                          bodyScript: modelNode?.bodyScript,
+                        };
+                      })}
+                      onResultClick={(nodeId) => {
+                        onNodeClick(nodeId);
+                        setTimeout(() => {
+                          const targetNode = getNode(nodeId);
+                          if (targetNode?.position) {
+                            setCenter(
+                              targetNode.position.x + NODE_WIDTH / 2,
+                              targetNode.position.y + NODE_HEIGHT / 2,
+                              { zoom: 0.8, duration: 800 }
+                            );
+                          }
+                        }, 100);
+                      }}
+                    />
+                  ) : null}
                 </Panel>
               )}
             </ReactFlow>
           </div>
         )}
 
-        <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isDetailSearchOpen={isDetailSearchOpen} />
+        <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
       </div>
 
       {infoBarNodeId && model && graph && (

@@ -74,6 +74,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
             nodeSeparation: ((msgConfig.layout as Record<string, unknown>)?.nodeSeparation as number) || 30,
             edgeAnimation: ((msgConfig.layout as Record<string, unknown>)?.edgeAnimation as boolean) ?? true,
             highlightAnimation: ((msgConfig.layout as Record<string, unknown>)?.highlightAnimation as boolean) ?? false,
+            minimapEnabled: ((msgConfig.layout as Record<string, unknown>)?.minimapEnabled as boolean) ?? true,
           },
           edgeStyle: (msgConfig.edgeStyle as ExtensionConfig['edgeStyle']) || 'default',
           trace: {
@@ -81,7 +82,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
             defaultDownstreamLevels: ((msgConfig.trace as Record<string, unknown>)?.defaultDownstreamLevels as number) || 3,
           },
           analysis: {
-            hubMinDegree: ((msgConfig.analysis as Record<string, unknown>)?.hubMinDegree as number) || 3,
+            hubMinDegree: ((msgConfig.analysis as Record<string, unknown>)?.hubMinDegree as number) || 8,
             islandMaxSize: ((msgConfig.analysis as Record<string, unknown>)?.islandMaxSize as number) || 0,
           },
         };

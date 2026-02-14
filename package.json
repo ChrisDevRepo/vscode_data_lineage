@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage in SQL Server Database Projects (.dacpac)",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -179,6 +179,12 @@
           "description": "Enable edge animation when clicking a node outside of trace mode.",
           "scope": "resource"
         },
+        "dataLineageViz.layout.minimapEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the interactive minimap for quick navigation in large graphs.",
+          "scope": "resource"
+        },
         "dataLineageViz.trace.defaultUpstreamLevels": {
           "type": "number",
           "default": 3,
@@ -211,7 +217,7 @@
         },
         "dataLineageViz.analysis.hubMinDegree": {
           "type": "number",
-          "default": 3,
+          "default": 8,
           "minimum": 1,
           "maximum": 50,
           "description": "Minimum connection count for a node to appear in Hub analysis.",
@@ -254,7 +260,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "lint": "eslint src --ext ts,tsx",
+
     "test": "tsx test/engine.test.ts && tsx test/parser-edge-cases.test.ts",
     "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
   },
@@ -286,8 +292,7 @@
     "glob": "^13.0.0",
     "mocha": "^11.7.5",
     "postcss": "^8.4.49",
-    "sharp": "^0.34.5",
-    "svgo": "^4.0.0",
+
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",

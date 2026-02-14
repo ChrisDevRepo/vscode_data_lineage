@@ -6,6 +6,8 @@
  * procedures where the dacpac may not fully capture all references.
  */
 
+import { stripBrackets } from '../utils/sql';
+
 export interface ParsedDependencies {
   sources: string[];
   targets: string[];
@@ -282,8 +284,7 @@ function extractCteNames(sql: string): Set<string> {
     nameRegex.lastIndex = 0;
     let nameMatch: RegExpExecArray | null;
     while ((nameMatch = nameRegex.exec(afterWith)) !== null) {
-      const name = nameMatch[1].replace(/\[|\]/g, '').toLowerCase();
-      // Skip SQL keywords that can precede AS (e.g., "SELECT ... AS")
+      const name = stripBrackets(nameMatch[1]).toLowerCase();
       if (!activeSkipKeywords.has(name)) {
         ctes.add(name);
       }
@@ -300,7 +301,7 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>, cteNames?:
     const raw = match[1];
     if (!raw) continue;
 
-    const normalized = raw.replace(/\[|\]/g, '').trim();
+    const normalized = stripBrackets(raw).trim();
     if (shouldSkip(normalized)) continue;
     if (cteNames?.has(normalized.toLowerCase())) continue;
 

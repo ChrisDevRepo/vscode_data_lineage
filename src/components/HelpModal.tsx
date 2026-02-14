@@ -203,6 +203,29 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <section>
             <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0Z" />
+              </svg>
+              <h3 className="text-lg font-semibold">MiniMap</h3>
+            </div>
+            <div className="ml-7 space-y-2 text-sm ln-text-muted">
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Drag the viewport rectangle to pan around the graph</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Scroll on the minimap to zoom in and out</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Toggle via <strong>Settings</strong> &gt; <code>dataLineageViz.layout.minimapEnabled</code></span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
               </svg>
               <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>
@@ -222,7 +245,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
 
         <div className="mt-8 pt-6 flex items-center justify-between ln-border-top">
           <div className="text-xs ln-text-muted">
-            <p className="mb-1">Data Lineage Viz v0.8.2</p>
+            <p className="mb-1">Data Lineage Viz v0.9.0</p>
             <p>SQL Server Database Project Dependency Viewer</p>
           </div>
           <div className="flex items-center gap-2">

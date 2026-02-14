@@ -21,7 +21,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All tests (230 total)
+npm test         # All tests (238 total)
 ```
 
 Press F5 to launch Extension Development Host.
@@ -30,14 +30,14 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/engine.test.ts` | 107 | Engine integration: extraction, graph, trace, direction validation |
+| `test/engine.test.ts` | 115 | Engine integration: extraction, graph, trace, direction validation |
 | `test/parser-edge-cases.test.ts` | 123 | Syntactic parser tests: all 9 rules + edge cases + regression guards |
 | `test/webview.integration.test.ts` | — | VS Code integration tests |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run all parser + integration tests (230 total)
+npm test              # Run all parser + integration tests (238 total)
 npm run test:integration  # Run VS Code tests
 ```
 

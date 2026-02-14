@@ -74,6 +74,14 @@
   --ln-node-bg: rgba(255, 255, 255, 0.95);
   --ln-node-border: rgba(0, 0, 0, 0.15);
 
+  /* Highlight colors (node selection glow) */
+  --ln-highlight-yellow: #eab308;
+  --ln-highlight-yellow-glow: rgba(234, 179, 8, 0.4);
+  --ln-highlight-yellow-shadow: rgba(234, 179, 8, 0.3);
+  --ln-highlight-blue: #2563eb;
+  --ln-highlight-blue-glow: rgba(37, 99, 235, 0.4);
+  --ln-highlight-blue-shadow: rgba(37, 99, 235, 0.3);
+
   /* Edge colors */
   --ln-edge-color: #94a3b8;
 
@@ -101,6 +109,12 @@ body[data-vscode-theme-kind="vscode-dark"] {
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.15);
   --ln-dropdown-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
   --ln-hover-bg: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
+  --ln-highlight-yellow: #eab308;
+  --ln-highlight-yellow-glow: rgba(234, 179, 8, 0.5);
+  --ln-highlight-yellow-shadow: rgba(234, 179, 8, 0.35);
+  --ln-highlight-blue: #60a5fa;
+  --ln-highlight-blue-glow: rgba(96, 165, 250, 0.5);
+  --ln-highlight-blue-shadow: rgba(96, 165, 250, 0.35);
 }
 
 /* High Contrast Theme Overrides */
@@ -111,6 +125,12 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-node-shadow-dimmed: none;
   --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
   --ln-border: var(--vscode-contrastBorder, #6fc3df);
+  --ln-highlight-yellow: #fbbf24;
+  --ln-highlight-yellow-glow: rgba(251, 191, 36, 0.6);
+  --ln-highlight-yellow-shadow: rgba(251, 191, 36, 0.4);
+  --ln-highlight-blue: #93c5fd;
+  --ln-highlight-blue-glow: rgba(147, 197, 253, 0.6);
+  --ln-highlight-blue-shadow: rgba(147, 197, 253, 0.4);
 }
 body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
@@ -119,6 +139,12 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-node-shadow-dimmed: none;
   --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
   --ln-border: var(--vscode-contrastBorder, #0f4a85);
+  --ln-highlight-yellow: #ca8a04;
+  --ln-highlight-yellow-glow: rgba(202, 138, 4, 0.5);
+  --ln-highlight-yellow-shadow: rgba(202, 138, 4, 0.35);
+  --ln-highlight-blue: #1d4ed8;
+  --ln-highlight-blue-glow: rgba(29, 78, 216, 0.5);
+  --ln-highlight-blue-shadow: rgba(29, 78, 216, 0.35);
 }
 
 * {
@@ -205,7 +231,18 @@ body {
 
 .react-flow__minimap {
   border-radius: 8px;
-  border: 1px solid var(--ln-border);
+  border: 1px solid color-mix(in srgb, var(--ln-border) 60%, transparent);
+  background: color-mix(in srgb, var(--ln-bg-secondary) 75%, transparent);
+}
+
+body[data-vscode-theme-kind="vscode-dark"] .react-flow__minimap-mask,
+body[data-vscode-theme-kind="vscode-high-contrast"] .react-flow__minimap-mask {
+  fill: rgba(0, 0, 0, 0.5) !important;
+}
+
+body[data-vscode-theme-kind="vscode-high-contrast"] .react-flow__minimap,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
+  border: 2px solid var(--vscode-contrastBorder);
 }
 
 .react-flow__controls {
@@ -469,11 +506,11 @@ body {
 .ln-start-screen .ln-panel .ln-text-warning {
   color: var(--ln-warning-fg);
 }
-.ln-start-screen .ln-panel .ln-border-top,
-.ln-start-screen .ln-panel .ln-border-bottom {
+.ln-start-screen .ln-panel .ln-border-top {
   border-color: var(--ln-wizard-border);
 }
 .ln-start-screen .ln-panel .ln-border-bottom {
+  border-color: var(--ln-wizard-border);
   background: var(--ln-wizard-bg);
 }
 .ln-start-screen .ln-panel .ln-file-picker {
@@ -551,8 +588,8 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   color-scheme: dark;
 }
 
-/* ─── Detail Search Sidebar ─────────────────────────────────────────────── */
-.ln-detail-search {
+/* ─── Sidebar (shared by Detail Search + Analysis) ────────────────────── */
+.ln-sidebar {
   width: 360px;
   max-height: calc(100vh - 120px);
   overflow-y: auto;
@@ -563,7 +600,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   color: var(--ln-fg);
 }
 
-.ln-detail-search summary {
+.ln-sidebar summary {
   cursor: pointer;
   padding: 6px 10px;
   font-weight: 600;
@@ -606,18 +643,6 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 .ln-analysis-banner {
   background: var(--ln-analysis-bg);
   border-bottom: 1px solid var(--ln-analysis-border);
-}
-
-/* ─── Analysis Sidebar ─────────────────────────────────────────────────── */
-.ln-analysis-sidebar {
-  width: 360px;
-  max-height: calc(100vh - 120px);
-  overflow-y: auto;
-  background: var(--ln-widget-bg);
-  border: 1px solid var(--ln-widget-border);
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--ln-fg);
 }
 
 .ln-analysis-groups {

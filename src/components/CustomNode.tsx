@@ -21,8 +21,7 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
   const isYellowHighlight = data.highlighted === 'yellow';
 
-  // Fixed highlight colors (intentionally same across all themes per THEMING.md)
-  const highlightColor = isYellowHighlight ? '#eab308' : '#2563eb';
+  const highlightColor = isYellowHighlight ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
 
   const tooltipText = [
     `${data.schema}.${data.label}`,
@@ -44,8 +43,8 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
         height: 70,
         boxShadow: highlighted
           ? (isYellowHighlight
-              ? '0 0 0 4px rgba(234,179,8,0.4), 0 8px 20px rgba(234,179,8,0.3)'
-              : '0 0 0 4px rgba(37,99,235,0.4), 0 8px 20px rgba(37,99,235,0.3)')
+              ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
+              : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
           : dimmed
           ? 'var(--ln-node-shadow-dimmed)'
           : 'var(--ln-node-shadow)',

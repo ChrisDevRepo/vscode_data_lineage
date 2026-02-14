@@ -1,5 +1,6 @@
 import { useState, useMemo, useDeferredValue, memo } from 'react';
 import type { ObjectType } from '../engine/types';
+import { SidePanel } from './SidePanel';
 
 export interface DetailSearchNode {
   id: string;
@@ -100,11 +101,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   }
 
   return (
-    <div className="ln-detail-search">
-      <div className="flex items-center justify-between px-3 py-2" style={{ background: 'var(--ln-sidebar-header-bg)' }}>
-        <span className="text-xs font-semibold" style={{ color: 'var(--ln-sidebar-header-fg)' }}>Detail Search</span>
-        <button onClick={onClose} className="text-xs opacity-60 hover:opacity-100" style={{ color: 'var(--ln-fg)' }}>✕</button>
-      </div>
+    <SidePanel title="Detail Search" onClose={onClose}>
       <div className="px-3 py-2">
         <input
           type="text"
@@ -144,6 +141,6 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
           </div>
         </>
       )}
-    </div>
+    </SidePanel>
   );
 });

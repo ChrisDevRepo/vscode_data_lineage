@@ -1,5 +1,6 @@
 import { memo, useCallback } from 'react';
 import type { AnalysisMode, AnalysisType, AnalysisGroup } from '../engine/types';
+import { SidePanel } from './SidePanel';
 
 interface AnalysisSidebarProps {
   analysis: AnalysisMode;
@@ -46,19 +47,14 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
     [activeGroupId, onSelectGroup, onClearGroup]
   );
 
-  return (
-    <div className="ln-analysis-sidebar">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2" style={{ background: 'var(--ln-sidebar-header-bg)' }}>
-        <div className="flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4" style={{ color: 'var(--ln-sidebar-header-fg)' }}>
-            <path strokeLinecap="round" strokeLinejoin="round" d={info.icon} />
-          </svg>
-          <span className="text-xs font-semibold" style={{ color: 'var(--ln-sidebar-header-fg)' }}>{info.title}</span>
-        </div>
-        <button onClick={onClose} className="text-xs opacity-60 hover:opacity-100" style={{ color: 'var(--ln-fg)' }}>✕</button>
-      </div>
+  const icon = (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4" style={{ color: 'var(--ln-sidebar-header-fg)' }}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={info.icon} />
+    </svg>
+  );
 
+  return (
+    <SidePanel title={info.title} icon={icon} onClose={onClose}>
       {/* Description */}
       <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}>
         {info.description}
@@ -101,7 +97,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
           </button>
         </div>
       )}
-    </div>
+    </SidePanel>
   );
 });
 

@@ -1,4 +1,5 @@
-import { memo, useState, useRef, useEffect } from 'react';
+import { memo, useState, useRef, useCallback } from 'react';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { ObjectType, AnalysisType } from '../engine/types';
 import { Button } from './ui/Button';
 import { HelpModal } from './HelpModal';
@@ -72,17 +73,8 @@ export const Toolbar = memo(function Toolbar({
   const [isAnalysisDropdownOpen, setIsAnalysisDropdownOpen] = useState(false);
   const analysisDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on click outside
-  useEffect(() => {
-    if (!isAnalysisDropdownOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (analysisDropdownRef.current && !analysisDropdownRef.current.contains(e.target as Node)) {
-        setIsAnalysisDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [isAnalysisDropdownOpen]);
+  const closeAnalysisDropdown = useCallback(() => setIsAnalysisDropdownOpen(false), []);
+  useClickOutside([analysisDropdownRef], isAnalysisDropdownOpen, closeAnalysisDropdown);
   
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);

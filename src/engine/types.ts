@@ -106,6 +106,7 @@ export interface LayoutConfig {
   nodeSeparation: number;
   edgeAnimation: boolean;
   highlightAnimation: boolean;
+  minimapEnabled: boolean;
 }
 
 export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
@@ -130,14 +131,14 @@ export interface ExtensionConfig {
   analysis: AnalysisConfig;
 }
 
-export const DEFAULT_CONFIG: ExtensionConfig = {
+export const DEFAULT_CONFIG = {
   excludePatterns: [],
   maxNodes: 250,
-  layout: { direction: 'LR', rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false },
-  edgeStyle: 'default',
+  layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true },
+  edgeStyle: 'default' as const,
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
-  analysis: { hubMinDegree: 3, islandMaxSize: 0 },
-};
+  analysis: { hubMinDegree: 8, islandMaxSize: 0 },
+} satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────
 

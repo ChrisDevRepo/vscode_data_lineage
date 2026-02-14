@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import { getUri } from './utilities/getUri';
-import { getNonce } from './utilities/getNonce';
+import { getUri } from './utils/getUri';
+import { getNonce } from './utils/getNonce';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ interface ExtensionConfigMessage {
   parseRules?: unknown;
   excludePatterns: string[];
   maxNodes: number;
-  layout: { direction: string; rankSeparation: number; nodeSeparation: number; edgeAnimation: boolean; highlightAnimation: boolean };
+  layout: { direction: string; rankSeparation: number; nodeSeparation: number; edgeAnimation: boolean; highlightAnimation: boolean; minimapEnabled: boolean };
   edgeStyle: string;
   trace: { defaultUpstreamLevels: number; defaultDownstreamLevels: number };
   analysis: { hubMinDegree: number; islandMaxSize: number };
@@ -274,6 +274,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
       nodeSeparation: cfg.get<number>('layout.nodeSeparation', 30),
       edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', true),
       highlightAnimation: cfg.get<boolean>('layout.highlightAnimation', false),
+      minimapEnabled: cfg.get<boolean>('layout.minimapEnabled', true),
     },
     edgeStyle: cfg.get<string>('edgeStyle', 'default'),
     trace: {
@@ -281,7 +282,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
       defaultDownstreamLevels: cfg.get<number>('trace.defaultDownstreamLevels', 3),
     },
     analysis: {
-      hubMinDegree: cfg.get<number>('analysis.hubMinDegree', 3),
+      hubMinDegree: cfg.get<number>('analysis.hubMinDegree', 8),
       islandMaxSize: cfg.get<number>('analysis.islandMaxSize', 0),
     },
   };
@@ -421,7 +422,6 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         </script>
         <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
         <script nonce="${nonce}">
-          // Listen for theme changes from VS Code
           window.addEventListener('message', event => {
             const message = event.data;
             if (message.type === 'themeChanged') {

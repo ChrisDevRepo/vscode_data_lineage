@@ -1,6 +1,7 @@
-import { memo, useState, useRef, useEffect } from 'react';
+import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import { ObjectType } from '../engine/types';
 import { TYPE_LABELS } from '../utils/schemaColors';
+import { useClickOutside } from '../hooks/useClickOutside';
 
 interface SearchWithAutocompleteProps {
   searchTerm: string;
@@ -46,19 +47,8 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     setSelectedIndex(0);
   }, [searchTerm, autocompleteSuggestions.length]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (autocompleteRef.current && !autocompleteRef.current.contains(event.target as Node) &&
-          searchInputRef.current && !searchInputRef.current.contains(event.target as Node)) {
-        setIsAutocompleteOpen(false);
-      }
-    };
-
-    if (isAutocompleteOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [isAutocompleteOpen]);
+  const closeAutocomplete = useCallback(() => setIsAutocompleteOpen(false), []);
+  useClickOutside([autocompleteRef, searchInputRef], isAutocompleteOpen, closeAutocomplete);
 
   return (
     <div className="relative">
