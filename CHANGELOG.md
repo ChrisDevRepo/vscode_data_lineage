@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.0] - 2026-02-14
+## [0.9.0] - 2026-02-15
 
 ### Added
 - **Remember Last Dacpac** — Wizard remembers your last opened file and offers a one-click "Reopen" button; file picker now uses VS Code's native dialog

@@ -130,15 +130,23 @@ export function App() {
   }, [config, model, view, filter, rebuild]);
 
   const handleRebuild = useCallback(() => {
-    // Request fresh config from extension host — triggers config-only → applyConfig → rebuild via useEffect
+    // Re-read settings from extension host (picks up any changed VS Code settings)
     vscodeApi.postMessage({ type: 'ready' });
-  }, [vscodeApi]);
+    if (model) {
+      setIsRebuilding(true);
+      setTimeout(() => {
+        rebuild(model, filter, config);
+        setIsRebuilding(false);
+      }, 400);
+    }
+  }, [vscodeApi, model, filter, config, rebuild]);
 
   const handleBack = useCallback(() => {
     setView('selector');
     clearTrace();
   }, [clearTrace]);
 
+  const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
@@ -452,6 +460,7 @@ export function App() {
         onSelectAnalysisGroup={selectAnalysisGroup}
         onClearAnalysisGroup={clearAnalysisGroup}
         onApplyPath={applyPath}
+        isRebuilding={isRebuilding}
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}
