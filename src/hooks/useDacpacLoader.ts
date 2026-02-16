@@ -89,9 +89,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
           trace: { ...DEFAULT_CONFIG.trace, ...raw.trace },
           analysis: { ...DEFAULT_CONFIG.analysis, ...raw.analysis },
         });
-        if (raw.parseRules) {
-          vscodeApi.postMessage({ type: 'log', text: 'Custom parse rules loaded' });
-        }
       };
 
       if (msg.type === 'config-only') {

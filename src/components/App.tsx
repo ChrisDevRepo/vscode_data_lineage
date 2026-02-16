@@ -49,16 +49,15 @@ export function App() {
     setConfig(cfg);
     if (cfg.parseRules) {
       const result = loadRules(cfg.parseRules);
-      if (result.errors.length > 0) {
-        // Send warnings back to extension host for OutputChannel + notification
-        vscodeApi.postMessage({
-          type: 'parse-rules-warning',
-          loaded: result.loaded,
-          skipped: result.skipped,
-          errors: result.errors,
-          usedDefaults: result.usedDefaults,
-        });
-      }
+      // Always notify extension host — success path was previously dead code
+      vscodeApi.postMessage({
+        type: 'parse-rules-result',
+        loaded: result.loaded,
+        skipped: result.skipped,
+        errors: result.errors,
+        usedDefaults: result.usedDefaults,
+        categoryCounts: result.categoryCounts,
+      });
     }
   }, []);
 

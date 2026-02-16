@@ -15,6 +15,8 @@
 
 ### Changed
 - Consolidated utility directories, extracted shared hooks and helpers, improved type safety, and replaced hardcoded colors with theme-aware CSS variables
+- Settings now show when changes take effect (⟳ Refresh vs re-import)
+- Better parse rule logging with category breakdown
 
 ## [0.8.2] - 2026-02-14
 

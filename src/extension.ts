@@ -292,8 +292,8 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
             }
             break;
           }
-          case 'parse-rules-warning':
-            handleParseRulesWarning(message);
+          case 'parse-rules-result':
+            handleParseRulesResult(message);
             break;
           case 'parse-stats':
             handleParseStats(message.stats);
@@ -347,7 +347,7 @@ type WebviewMessage =
   | { type: 'save-schemas'; schemas: string[] }
   | { type: 'load-last-dacpac' }
   | { type: 'load-demo' }
-  | { type: 'parse-rules-warning'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean }
+  | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
   | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[] } }
   | { type: 'log'; text: string }
   | { type: 'error'; error: string; stack?: string }
@@ -406,7 +406,9 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
 
   // Load YAML parse rules if configured
   const rulesPath = cfg.get<string>('parseRulesFile', '');
-  if (rulesPath) {
+  if (!rulesPath) {
+    log('[ParseRules] Using built-in defaults (9 rules)');
+  } else {
     const resolved = resolveWorkspacePath(rulesPath);
     if (!resolved) {
       log(`[ParseRules] Cannot resolve "${rulesPath}" — no workspace folder open`);
@@ -426,10 +428,11 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
           );
         } else {
           config.parseRules = parsed;
-          log(`[ParseRules] Loaded ${parsed.rules.length} rules from ${rulesPath}`, 'debug');
+          log(`[ParseRules] Loaded ${parsed.rules.length} rules from ${rulesPath}`);
         }
       } catch (err) {
         if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
+          log(`[ParseRules] File not found: ${rulesPath} — using built-in defaults`);
           vscode.window.showWarningMessage(
             `Parse rules file not found: ${rulesPath}. Using built-in defaults.`
           );
@@ -447,16 +450,26 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
 
 // ─── Parse Rules Validation Feedback ─────────────────────────────────────────
 
-function handleParseRulesWarning(message: {
+function formatCategoryCounts(counts?: Record<string, number>): string {
+  if (!counts || Object.keys(counts).length === 0) return '';
+  const order = ['preprocessing', 'source', 'target', 'exec'];
+  const parts = order.filter(c => counts[c]).map(c => `${counts[c]} ${c}`);
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
+
+function handleParseRulesResult(message: {
   loaded: number;
   skipped: string[];
   errors: string[];
   usedDefaults: boolean;
+  categoryCounts?: Record<string, number>;
 }) {
   // Detail per-rule errors at debug level
   for (const err of message.errors) {
     log(`[ParseRules] ${err}`, 'debug');
   }
+
+  const breakdown = formatCategoryCounts(message.categoryCounts);
 
   // Summary at info level + VS Code notification
   if (message.usedDefaults) {
@@ -465,12 +478,12 @@ function handleParseRulesWarning(message: {
       `Parse rules YAML invalid — using built-in defaults. Set logLevel to "debug" for details.`
     );
   } else if (message.skipped.length > 0) {
-    log(`[ParseRules] ${message.loaded} loaded, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
+    log(`[ParseRules] ${message.loaded} loaded${breakdown}, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
     vscode.window.showWarningMessage(
       `Parse rules: ${message.loaded} loaded, ${message.skipped.length} skipped (${message.skipped.join(', ')}). Set logLevel to "debug" for details.`
     );
   } else {
-    log(`[ParseRules] Custom rules loaded: ${message.loaded} rules`);
+    log(`[ParseRules] Custom rules loaded: ${message.loaded} rules${breakdown}`);
   }
 }
 

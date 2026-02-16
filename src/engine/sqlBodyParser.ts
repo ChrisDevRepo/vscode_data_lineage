@@ -132,6 +132,7 @@ export interface LoadRulesResult {
   skipped: string[];       // rule names that failed validation
   errors: string[];        // human-readable error messages
   usedDefaults: boolean;   // true if fell back to defaults entirely
+  categoryCounts: Record<string, number>;  // e.g. { preprocessing: 1, source: 4, target: 3, exec: 1 }
 }
 
 const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec']);
@@ -164,7 +165,7 @@ function validateRule(rule: unknown, index: number): { valid: boolean; name: str
 
 /** Load custom rules from parsed YAML config with validation */
 export function loadRules(config: ParseRulesConfig): LoadRulesResult {
-  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false };
+  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false, categoryCounts: {} };
 
   if (!config?.rules || !Array.isArray(config.rules)) {
     result.errors.push('YAML missing "rules" array — using built-in defaults');
@@ -200,7 +201,19 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
   activeSkipPrefixes = config.skip_prefixes || DEFAULT_SKIP_PREFIXES;
   activeSkipKeywords = new Set(config.skip_keywords || DEFAULT_SKIP_KEYWORDS);
   result.loaded = validRules.length;
+  for (const r of validRules) {
+    result.categoryCounts[r.category] = (result.categoryCounts[r.category] || 0) + 1;
+  }
   return result;
+}
+
+/** Category counts for the built-in DEFAULT_RULES */
+export function getDefaultRuleCounts(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const r of DEFAULT_RULES) {
+    counts[r.category] = (counts[r.category] || 0) + 1;
+  }
+  return counts;
 }
 
 /** Reset to built-in defaults */
