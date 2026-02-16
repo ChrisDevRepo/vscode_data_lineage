@@ -4,7 +4,7 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
 import { DacpacModel, FilterState, ObjectType, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
 import { buildGraph, getGraphMetrics, GraphResult } from '../engine/graphBuilder';
-import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { filterBySchemas } from '../engine/dacpacExtractor';
 
 interface UseGraphologyReturn {
   flowNodes: FlowNode<CustomNodeData>[];
@@ -44,11 +44,8 @@ export function useGraphology(): UseGraphologyReturn {
         edges: filtered.edges.filter((e) => typeNodeIds.has(e.source) && typeNodeIds.has(e.target)),
       };
 
-      // Apply exclusion patterns
-      const excluded = applyExclusionPatterns(typeFiltered, config.excludePatterns);
-
-      // Apply focus schema filter
-      const focusFiltered = applyFocusSchemaFilter(excluded, filter.focusSchemas);
+      // Apply focus schema filter (exclusion patterns applied earlier in handleVisualize)
+      const focusFiltered = applyFocusSchemaFilter(typeFiltered, filter.focusSchemas);
 
       // Apply isolation filter (hide orphan nodes with no edges)
       const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);

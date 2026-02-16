@@ -109,9 +109,10 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('dataLineageViz.logLevel')) refreshLogLevel();
       if (!activePanel) return;
 
-      if (e.affectsConfiguration('dataLineageViz.parseRulesFile')) {
+      if (e.affectsConfiguration('dataLineageViz.parseRulesFile') || e.affectsConfiguration('dataLineageViz.excludePatterns')) {
+        const label = e.affectsConfiguration('dataLineageViz.parseRulesFile') ? 'Parse rules' : 'Exclude patterns';
         const action = await vscode.window.showInformationMessage(
-          'Parse rules file changed. Re-import your dacpac to apply the new rules.',
+          `${label} changed. Re-import your dacpac to apply.`,
           'Open Dacpac'
         );
         if (action === 'Open Dacpac') {

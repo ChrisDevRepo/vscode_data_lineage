@@ -243,7 +243,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               <p>All settings use the <code>dataLineageViz.*</code> prefix. Open via <strong>Settings</strong> button below or <kbd className="px-1.5 py-0.5 rounded text-xs ln-kbd">Ctrl+,</kbd> and search "dataLineageViz".</p>
               <div className="p-2 rounded ln-bg-secondary">
                 <p><strong className="ln-text">Most settings apply automatically</strong> when changed in VS Code Settings.</p>
-                <p className="mt-1"><strong className="ln-text">Parse Rules</strong> (<code>parseRulesFile</code>) require re-importing the dacpac — you'll see a notification when this setting changes.</p>
+                <p className="mt-1"><strong className="ln-text">Import settings</strong> (<code>parseRulesFile</code>, <code>excludePatterns</code>) require re-importing the dacpac — you'll see a notification when these change.</p>
               </div>
               <div>
                 <p className="font-semibold ln-text mb-1">General</p>

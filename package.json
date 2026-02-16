@@ -154,7 +154,7 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Regex patterns to exclude objects from the graph (matched case-insensitively against the full name like `dbo.MyTable`). Adding patterns applies on Refresh, but removing patterns requires re-import to restore excluded objects.\n\nExamples: `_TEST$` excludes objects ending in _TEST, `^staging\\\\.` excludes the staging schema.",
+            "markdownDescription": "Regex patterns to exclude objects from the graph (matched case-insensitively against the full name like `dbo.MyTable`). Changes require re-importing the dacpac.\n\nExamples: `_TEST$` excludes objects ending in _TEST, `^staging\\\\.` excludes the staging schema.",
             "scope": "resource"
           }
         }
