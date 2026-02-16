@@ -253,7 +253,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>
-                  <span><code>logLevel</code> — Log verbosity: info or debug (default: info)</span>
+                  <span>Use <strong>Developer: Set Log Level</strong> command for debug logging</span>
                 </div>
               </div>
               <div>

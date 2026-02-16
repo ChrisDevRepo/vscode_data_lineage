@@ -17,8 +17,9 @@
 - Consolidated utility directories, extracted shared hooks and helpers, improved type safety, and replaced hardcoded colors with theme-aware CSS variables
 - **Live Settings** — Layout, filtering, trace, and analysis settings now apply automatically when changed (no manual refresh needed)
 - **Parse Rules notification** — Changing `parseRulesFile` shows an actionable notification to re-import
+- **LogOutputChannel** — Switched to VS Code's native `LogOutputChannel` with proper severity levels; removed custom `logLevel` setting (use "Developer: Set Log Level" instead)
 - Better parse rule logging with category breakdown and consolidated import summary
-- Settings reorganized into Import, Filtering, Layout, Trace, Analysis sections with `markdownDescription`
+- Settings reorganized into Import, Layout, Trace, Analysis sections with `markdownDescription`
 
 ## [0.8.2] - 2026-02-14
 

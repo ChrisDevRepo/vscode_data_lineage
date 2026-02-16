@@ -122,25 +122,11 @@
             "maximum": 1000,
             "description": "Maximum number of objects allowed for import. The Visualize button is disabled when the selection exceeds this limit. Higher values may impact performance.",
             "scope": "resource"
-          },
-          "dataLineageViz.logLevel": {
-            "type": "string",
-            "enum": [
-              "info",
-              "debug"
-            ],
-            "default": "info",
-            "enumDescriptions": [
-              "Log key events only",
-              "Verbose logging for troubleshooting"
-            ],
-            "description": "Log verbosity in the 'Data Lineage Viz' output channel.",
-            "scope": "resource"
           }
         }
       },
       {
-        "title": "Import (requires re-opening dacpac)",
+        "title": "Import",
         "properties": {
           "dataLineageViz.parseRulesFile": {
             "type": "string",

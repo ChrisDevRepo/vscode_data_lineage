@@ -6,23 +6,7 @@ import { getNonce } from './utils/getNonce';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
-let outputChannel: vscode.OutputChannel;
-type LogLevel = 'info' | 'debug';
-let currentLogLevel: LogLevel = 'info';
-
-function log(message: string, level: LogLevel = 'info') {
-  if (level === 'debug' && currentLogLevel !== 'debug') return;
-  const timestamp = new Date().toISOString();
-  outputChannel?.appendLine(`[${timestamp}] ${message}`);
-  // Auto-show the output channel for errors
-  if (level === 'info' && message.includes('Error]')) {
-    outputChannel?.show(true); // true = preserveFocus
-  }
-}
-
-function refreshLogLevel() {
-  currentLogLevel = vscode.workspace.getConfiguration('dataLineageViz').get<LogLevel>('logLevel', 'info');
-}
+let outputChannel: vscode.LogOutputChannel;
 
 function getThemeClass(kind: vscode.ColorThemeKind): string {
   return kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
@@ -73,7 +57,7 @@ async function showDdl(ddlUri: vscode.Uri, message: { objectName: string; schema
     });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    log(`[Extension Error] Failed to show DDL: ${errorMsg}`);
+    outputChannel.error(`Failed to show DDL: ${errorMsg}`);
     vscode.window.showErrorMessage(`Failed to open SQL Viewer: ${errorMsg}`);
   }
 }
@@ -88,7 +72,7 @@ function updateDdlIfOpen(ddlUri: vscode.Uri, message: { objectName: string; sche
 // ─── Activate ────────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
-  outputChannel = vscode.window.createOutputChannel('Data Lineage Viz');
+  outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(DDL_SCHEME, ddlProvider)
@@ -103,10 +87,8 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  refreshLogLevel();
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
-      if (e.affectsConfiguration('dataLineageViz.logLevel')) refreshLogLevel();
       if (!activePanel) return;
 
       if (e.affectsConfiguration('dataLineageViz.parseRulesFile') || e.affectsConfiguration('dataLineageViz.excludePatterns')) {
@@ -125,11 +107,11 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('dataLineageViz')) {
         const config = await readExtensionConfig();
         activePanel.webview.postMessage({ type: 'config-only', config });
-        log('[Config] Settings changed — pushed to webview', 'debug');
+        outputChannel.debug('[Config] Settings changed — pushed to webview');
       }
     })
   );
-  log('[Extension] Activated');
+  outputChannel.info('Activated');
 
   // Register Quick Actions TreeView
   const quickActionsProvider = new QuickActionsProvider();
@@ -251,10 +233,10 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
                   fileName,
                   config,
                 });
-                log(`[Extension] Opened dacpac: ${fileName}`);
+                outputChannel.info(`Opened dacpac: ${fileName}`);
               } catch (err) {
                 const errorMsg = err instanceof Error ? err.message : String(err);
-                log(`[Extension Error] Failed to read dacpac: ${errorMsg}`);
+                outputChannel.error(`Failed to read dacpac: ${errorMsg}`);
                 vscode.window.showErrorMessage(`Failed to read dacpac: ${errorMsg}`);
               }
             }
@@ -283,12 +265,12 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
                 config,
                 lastSelectedSchemas,
               });
-              log(`[Extension] Reopened last dacpac: ${path.basename(lastPath)}`);
+              outputChannel.info(`Reopened last dacpac: ${path.basename(lastPath)}`);
             } catch {
               await context.workspaceState.update('lastDacpacPath', undefined);
               await context.workspaceState.update('lastDacpacName', undefined);
               panel.webview.postMessage({ type: 'last-dacpac-gone' });
-              log(`[Extension] Last dacpac no longer available: ${lastPath}`);
+              outputChannel.warn(`Last dacpac no longer available: ${lastPath}`);
             }
             break;
           }
@@ -307,10 +289,10 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
                 fileName: 'AdventureWorks (Demo)',
                 config,
               });
-              log('[Extension] Demo dacpac loaded');
+              outputChannel.info('Demo dacpac loaded');
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
-              log(`[Extension Error] Failed to load demo: ${errorMsg}`);
+              outputChannel.error(`Failed to load demo: ${errorMsg}`);
               vscode.window.showErrorMessage(`Failed to load demo: ${errorMsg}`);
             }
             break;
@@ -322,11 +304,11 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
             handleParseStats(message.stats, message.objectCount, message.edgeCount, message.schemaCount);
             break;
           case 'log':
-            log(`[Webview] ${message.text}`);
+            outputChannel.info(message.text);
             break;
           case 'error':
-            log(`[Webview Error] ${message.error}`);
-            if (message.stack) log(`[Webview Error Stack] ${message.stack}`, 'debug');
+            outputChannel.error(message.error);
+            if (message.stack) outputChannel.debug(message.stack);
             vscode.window.showErrorMessage(`Data Lineage Error: ${message.error}`);
             break;
           case 'open-external':
@@ -344,11 +326,11 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
             updateDdlIfOpen(ddlUri, message);
             break;
           default:
-            log(`[Extension] Unknown webview message type: ${(message as { type: string }).type}`, 'debug');
+            outputChannel.debug(`Unknown webview message type: ${(message as { type: string }).type}`);
         }
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          log(`[Extension Error] Message handler failed for "${message.type}": ${errorMsg}`);
+          outputChannel.error(`Message handler failed for "${message.type}": ${errorMsg}`);
           vscode.window.showErrorMessage(`Data Lineage Error: ${errorMsg}`);
         }
       },
@@ -357,7 +339,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
     );
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    log(`[Extension Error] ${errorMsg}`);
+    outputChannel.error(errorMsg);
     vscode.window.showErrorMessage(`Failed to open Data Lineage: ${errorMsg}`);
   }
 }
@@ -402,7 +384,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const config: ExtensionConfigMessage = {
     excludePatterns: cfg.get<string[]>('excludePatterns', []).filter(p => {
       try { new RegExp(p); return true; } catch {
-        log(`[Config] Invalid excludePattern "${p}" — not a valid regex. Pattern removed.`);
+        outputChannel.warn(`[Config] Invalid excludePattern "${p}" — not a valid regex. Pattern removed.`);
         return false;
       }
     }),
@@ -430,11 +412,11 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   // Load YAML parse rules if configured
   const rulesPath = cfg.get<string>('parseRulesFile', '');
   if (!rulesPath) {
-    log('[ParseRules] Using built-in defaults (9 rules)');
+    outputChannel.info('[ParseRules] Using built-in defaults (9 rules)');
   } else {
     const resolved = resolveWorkspacePath(rulesPath);
     if (!resolved) {
-      log(`[ParseRules] Cannot resolve "${rulesPath}" — no workspace folder open`);
+      outputChannel.warn(`[ParseRules] Cannot resolve "${rulesPath}" — no workspace folder open`);
       vscode.window.showWarningMessage(
         `Parse rules: cannot resolve "${rulesPath}" — open a workspace folder or use an absolute path.`
       );
@@ -445,17 +427,17 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
         const content = new TextDecoder().decode(data);
         const parsed = yaml.load(content) as Record<string, unknown>;
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) {
-          log(`[ParseRules] Invalid YAML structure in ${rulesPath} — missing "rules" array`);
+          outputChannel.warn(`[ParseRules] Invalid YAML in ${rulesPath} — missing "rules" array`);
           vscode.window.showWarningMessage(
             `Parse rules YAML invalid: missing "rules" array. Using built-in defaults.`
           );
         } else {
           config.parseRules = parsed;
-          log(`[ParseRules] Read ${parsed.rules.length} rules from ${rulesPath}`, 'debug');
+          outputChannel.debug(`[ParseRules] Read ${parsed.rules.length} rules from ${rulesPath}`);
         }
       } catch (err) {
         if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
-          log(`[ParseRules] File not found: ${rulesPath} — using built-in defaults`);
+          outputChannel.warn(`[ParseRules] File not found: ${rulesPath} — using built-in defaults`);
           vscode.window.showWarningMessage(
             `Parse rules file not found: ${rulesPath}. Using built-in defaults.`
           );
@@ -489,24 +471,24 @@ function handleParseRulesResult(message: {
 }) {
   // Detail per-rule errors at debug level
   for (const err of message.errors) {
-    log(`[ParseRules] ${err}`, 'debug');
+    outputChannel.debug(`[ParseRules] ${err}`);
   }
 
   const breakdown = formatCategoryCounts(message.categoryCounts);
 
-  // Summary at info level + VS Code notification
+  // Summary at info level + VS Code notification for problems
   if (message.usedDefaults) {
-    log(`[ParseRules] YAML invalid — using built-in defaults`);
+    outputChannel.warn('[ParseRules] YAML invalid — using built-in defaults');
     vscode.window.showWarningMessage(
-      `Parse rules YAML invalid — using built-in defaults. Set logLevel to "debug" for details.`
+      'Parse rules YAML invalid — using built-in defaults. Check Output channel for details.'
     );
   } else if (message.skipped.length > 0) {
-    log(`[ParseRules] ${message.loaded} loaded${breakdown}, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
+    outputChannel.warn(`[ParseRules] ${message.loaded} loaded${breakdown}, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
     vscode.window.showWarningMessage(
-      `Parse rules: ${message.loaded} loaded, ${message.skipped.length} skipped (${message.skipped.join(', ')}). Set logLevel to "debug" for details.`
+      `Parse rules: ${message.loaded} loaded, ${message.skipped.length} skipped (${message.skipped.join(', ')}). Check Output channel for details.`
     );
   } else {
-    log(`[ParseRules] Custom rules loaded: ${message.loaded} rules${breakdown}`);
+    outputChannel.info(`[ParseRules] Custom rules loaded: ${message.loaded} rules${breakdown}`);
   }
 }
 
@@ -519,26 +501,26 @@ function handleParseStats(stats: {
   const spDetails = stats.spDetails || [];
   const spCount = spDetails.length;
 
-  // Info level: consolidated summary
-  if (objectCount !== undefined) {
-    log(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs dropped`);
-  } else {
-    log(`[Parse] ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
-  }
-
   // Debug level: one line per SP with details
   for (const sp of spDetails) {
     const parts = [`In: ${sp.inCount}`, `Out: ${sp.outCount}`];
     if (sp.unrelated.length > 0) {
       parts.push(`Unrelated: ${sp.unrelated.join(', ')}`);
     }
-    log(`[Parse] ${sp.name} — ${parts.join(', ')}`, 'debug');
+    outputChannel.debug(`[Parse] ${sp.name} — ${parts.join(', ')}`);
   }
 
   // Warn: SPs with no inputs and no outputs
   const empty = spDetails.filter(sp => sp.inCount === 0 && sp.outCount === 0);
   if (empty.length > 0) {
-    log(`[Parse] Warning: ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
+    outputChannel.warn(`[Parse] ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
+  }
+
+  // Info level: consolidated summary
+  if (objectCount !== undefined) {
+    outputChannel.info(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs dropped`);
+  } else {
+    outputChannel.info(`[Import] ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
   }
 }
 
