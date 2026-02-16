@@ -7,6 +7,7 @@ import { getNonce } from './utils/getNonce';
 // ─── Logging ────────────────────────────────────────────────────────────────
 
 let outputChannel: vscode.LogOutputChannel;
+let lastRulesLabel = 'built-in rules';
 
 function getThemeClass(kind: vscode.ColorThemeKind): string {
   return kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
@@ -233,7 +234,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
                   fileName,
                   config,
                 });
-                outputChannel.info(`Opened dacpac: ${fileName}`);
+                outputChannel.info(`── Opening ${fileName} ──`);
               } catch (err) {
                 const errorMsg = err instanceof Error ? err.message : String(err);
                 outputChannel.error(`Failed to read dacpac: ${errorMsg}`);
@@ -265,7 +266,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
                 config,
                 lastSelectedSchemas,
               });
-              outputChannel.info(`Reopened last dacpac: ${path.basename(lastPath)}`);
+              outputChannel.info(`── Reopening ${path.basename(lastPath)} ──`);
             } catch {
               await context.workspaceState.update('lastDacpacPath', undefined);
               await context.workspaceState.update('lastDacpacName', undefined);
@@ -289,7 +290,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
                 fileName: 'AdventureWorks (Demo)',
                 config,
               });
-              outputChannel.info('Demo dacpac loaded');
+              outputChannel.info('── Opening AdventureWorks (Demo) ──');
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
               outputChannel.error(`Failed to load demo: ${errorMsg}`);
@@ -412,6 +413,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   // Load YAML parse rules if configured
   const rulesPath = cfg.get<string>('parseRulesFile', '');
   if (!rulesPath) {
+    lastRulesLabel = 'built-in rules';
     outputChannel.info('[ParseRules] Using built-in defaults (9 rules)');
   } else {
     const resolved = resolveWorkspacePath(rulesPath);
@@ -433,6 +435,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
           );
         } else {
           config.parseRules = parsed;
+          lastRulesLabel = `${parsed.rules.length} rules from ${path.basename(rulesPath)}`;
           outputChannel.debug(`[ParseRules] Read ${parsed.rules.length} rules from ${rulesPath}`);
         }
       } catch (err) {
@@ -516,11 +519,11 @@ function handleParseStats(stats: {
     outputChannel.warn(`[Parse] ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
   }
 
-  // Info level: consolidated summary
+  // Info level: canonical summary (last line — contains everything the user needs)
   if (objectCount !== undefined) {
-    outputChannel.info(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs dropped`);
+    outputChannel.info(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs dropped`);
   } else {
-    outputChannel.info(`[Import] ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
+    outputChannel.info(`[Import] ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
   }
 }
 

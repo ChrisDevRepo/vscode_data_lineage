@@ -120,7 +120,7 @@
             "default": 500,
             "minimum": 10,
             "maximum": 1000,
-            "description": "Maximum number of objects allowed for import. The Visualize button is disabled when the selection exceeds this limit. Higher values may impact performance.",
+            "description": "Maximum objects to import (10–1000).",
             "scope": "resource"
           }
         }
@@ -131,7 +131,7 @@
           "dataLineageViz.parseRulesFile": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Path to a custom `parseRules.yaml` for SQL body parsing. Relative paths resolve from the workspace root. Leave empty to use built-in defaults.\n\nUse the **Data Lineage: Create Parse Rules** command to generate a starter file.",
+            "markdownDescription": "Path to custom `parseRules.yaml`. Leave empty for built-in defaults.",
             "scope": "resource"
           },
           "dataLineageViz.excludePatterns": {
@@ -140,7 +140,7 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Regex patterns to exclude objects from the graph (matched case-insensitively against the full name like `dbo.MyTable`). Changes require re-importing the dacpac.\n\nExamples: `_TEST$` excludes objects ending in _TEST, `^staging\\\\.` excludes the staging schema.",
+            "markdownDescription": "Regex patterns to exclude objects (e.g. `_TEST$`, `^staging\\\\.`).",
             "scope": "resource"
           }
         }
@@ -159,7 +159,7 @@
               "Top to Bottom (hierarchical)",
               "Left to Right (horizontal flow, default)"
             ],
-            "markdownDescription": "Graph layout direction.",
+            "markdownDescription": "Graph direction.",
             "scope": "resource"
           },
           "dataLineageViz.layout.rankSeparation": {
@@ -167,7 +167,7 @@
             "default": 120,
             "minimum": 20,
             "maximum": 300,
-            "markdownDescription": "Vertical (TB) or horizontal (LR) spacing between ranks/layers.",
+            "markdownDescription": "Space between layers.",
             "scope": "resource"
           },
           "dataLineageViz.layout.nodeSeparation": {
@@ -175,7 +175,7 @@
             "default": 30,
             "minimum": 10,
             "maximum": 200,
-            "markdownDescription": "Spacing between nodes within the same rank.",
+            "markdownDescription": "Space between nodes in the same layer.",
             "scope": "resource"
           },
           "dataLineageViz.edgeStyle": {
@@ -193,25 +193,25 @@
               "Step edges with sharp corners",
               "Straight lines"
             ],
-            "markdownDescription": "Style of edges/connections between nodes.",
+            "markdownDescription": "Edge/connection style.",
             "scope": "resource"
           },
           "dataLineageViz.layout.edgeAnimation": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Enable edge animation during trace mode (animated flow lines on traced paths).",
+            "markdownDescription": "Animate edges during trace.",
             "scope": "resource"
           },
           "dataLineageViz.layout.highlightAnimation": {
             "type": "boolean",
             "default": false,
-            "markdownDescription": "Enable edge animation when clicking a node outside of trace mode.",
+            "markdownDescription": "Animate edges on node click.",
             "scope": "resource"
           },
           "dataLineageViz.layout.minimapEnabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Show the interactive minimap for quick navigation in large graphs.",
+            "markdownDescription": "Show minimap.",
             "scope": "resource"
           }
         }
@@ -224,7 +224,7 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "markdownDescription": "Default number of upstream levels when starting a trace.",
+            "markdownDescription": "Default upstream trace depth.",
             "scope": "resource"
           },
           "dataLineageViz.trace.defaultDownstreamLevels": {
@@ -232,7 +232,7 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "markdownDescription": "Default number of downstream levels when starting a trace.",
+            "markdownDescription": "Default downstream trace depth.",
             "scope": "resource"
           }
         }
@@ -245,7 +245,7 @@
             "default": 8,
             "minimum": 1,
             "maximum": 50,
-            "markdownDescription": "Minimum connection count for a node to appear in Hub analysis.",
+            "markdownDescription": "Min connections to qualify as a hub.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.islandMaxSize": {
@@ -253,7 +253,7 @@
             "default": 2,
             "minimum": 2,
             "maximum": 500,
-            "markdownDescription": "Maximum island size to display. Islands are groups of 2+ connected nodes isolated from the main graph. Single isolated nodes are shown in Orphan analysis.",
+            "markdownDescription": "Max size of disconnected subgraphs to show.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {
@@ -261,7 +261,7 @@
             "default": 5,
             "minimum": 2,
             "maximum": 50,
-            "markdownDescription": "Minimum number of nodes for a dependency chain to appear in Longest Path analysis.",
+            "markdownDescription": "Min chain length for Longest Path analysis.",
             "scope": "resource"
           }
         }
