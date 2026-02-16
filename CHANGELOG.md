@@ -15,8 +15,10 @@
 
 ### Changed
 - Consolidated utility directories, extracted shared hooks and helpers, improved type safety, and replaced hardcoded colors with theme-aware CSS variables
-- Settings now show when changes take effect (⟳ Refresh vs re-import)
-- Better parse rule logging with category breakdown
+- **Live Settings** — Layout, filtering, trace, and analysis settings now apply automatically when changed (no manual refresh needed)
+- **Parse Rules notification** — Changing `parseRulesFile` shows an actionable notification to re-import
+- Better parse rule logging with category breakdown and consolidated import summary
+- Settings reorganized into Import, Filtering, Layout, Trace, Analysis sections with `markdownDescription`
 
 ## [0.8.2] - 2026-02-14
 

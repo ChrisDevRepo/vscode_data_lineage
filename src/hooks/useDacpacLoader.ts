@@ -62,9 +62,16 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       setStatus({ text: `Loaded ${result.nodes.length} objects across ${result.schemas.length} schema${s}`, type: 'success' });
     }
 
-    vscodeApi.postMessage({ type: 'log', text: statusText });
     if (result.parseStats) {
-      vscodeApi.postMessage({ type: 'parse-stats', stats: result.parseStats });
+      vscodeApi.postMessage({
+        type: 'parse-stats',
+        stats: result.parseStats,
+        objectCount: result.nodes.length,
+        edgeCount: result.edges.length,
+        schemaCount: result.schemas.length,
+      });
+    } else {
+      vscodeApi.postMessage({ type: 'log', text: statusText });
     }
   }, [vscodeApi]);
 

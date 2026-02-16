@@ -36,6 +36,7 @@ function getThemeClass(kind: vscode.ColorThemeKind): string {
 const DDL_SCHEME = 'dacpac-ddl';
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 let panelCounter = 0;
+let activePanel: vscode.WebviewPanel | undefined;
 const ddlContentMap = new Map<string, string>();
 
 const ddlProvider = new class implements vscode.TextDocumentContentProvider {
@@ -104,8 +105,27 @@ export function activate(context: vscode.ExtensionContext) {
 
   refreshLogLevel();
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
+    vscode.workspace.onDidChangeConfiguration(async (e) => {
       if (e.affectsConfiguration('dataLineageViz.logLevel')) refreshLogLevel();
+      if (!activePanel) return;
+
+      if (e.affectsConfiguration('dataLineageViz.parseRulesFile')) {
+        const action = await vscode.window.showInformationMessage(
+          'Parse rules file changed. Re-import your dacpac to apply the new rules.',
+          'Open Dacpac'
+        );
+        if (action === 'Open Dacpac') {
+          vscode.commands.executeCommand('dataLineageViz.open');
+        }
+        return;
+      }
+
+      // All other settings: auto-push to webview → triggers rebuild
+      if (e.affectsConfiguration('dataLineageViz')) {
+        const config = await readExtensionConfig();
+        activePanel.webview.postMessage({ type: 'config-only', config });
+        log('[Config] Settings changed — pushed to webview', 'debug');
+      }
     })
   );
   log('[Extension] Activated');
@@ -180,6 +200,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
       }
     );
 
+    activePanel = panel;
     panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
     let panelDisposed = false;
@@ -190,6 +211,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
 
     panel.onDidDispose(() => {
       panelDisposed = true;
+      activePanel = undefined;
       themeChangeListener.dispose();
       ddlContentMap.delete(ddlUri.toString());
     });
@@ -296,7 +318,7 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
             handleParseRulesResult(message);
             break;
           case 'parse-stats':
-            handleParseStats(message.stats);
+            handleParseStats(message.stats, message.objectCount, message.edgeCount, message.schemaCount);
             break;
           case 'log':
             log(`[Webview] ${message.text}`);
@@ -348,7 +370,7 @@ type WebviewMessage =
   | { type: 'load-last-dacpac' }
   | { type: 'load-demo' }
   | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
-  | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[] } }
+  | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
   | { type: 'log'; text: string }
   | { type: 'error'; error: string; stack?: string }
   | { type: 'open-external'; url?: string }
@@ -428,7 +450,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
           );
         } else {
           config.parseRules = parsed;
-          log(`[ParseRules] Loaded ${parsed.rules.length} rules from ${rulesPath}`);
+          log(`[ParseRules] Read ${parsed.rules.length} rules from ${rulesPath}`, 'debug');
         }
       } catch (err) {
         if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
@@ -492,12 +514,16 @@ function handleParseStats(stats: {
   resolvedEdges: number;
   droppedRefs: string[];
   spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[];
-}) {
+}, objectCount?: number, edgeCount?: number, schemaCount?: number) {
   const spDetails = stats.spDetails || [];
   const spCount = spDetails.length;
 
-  // Info level: summary only
-  log(`[Parse] ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
+  // Info level: consolidated summary
+  if (objectCount !== undefined) {
+    log(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs dropped`);
+  } else {
+    log(`[Parse] ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
+  }
 
   // Debug level: one line per SP with details
   for (const sp of spDetails) {

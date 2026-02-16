@@ -241,6 +241,10 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             </div>
             <div className="ml-7 space-y-3 text-sm ln-text-muted">
               <p>All settings use the <code>dataLineageViz.*</code> prefix. Open via <strong>Settings</strong> button below or <kbd className="px-1.5 py-0.5 rounded text-xs ln-kbd">Ctrl+,</kbd> and search "dataLineageViz".</p>
+              <div className="p-2 rounded ln-bg-secondary">
+                <p><strong className="ln-text">Most settings apply automatically</strong> when changed in VS Code Settings.</p>
+                <p className="mt-1"><strong className="ln-text">Parse Rules</strong> (<code>parseRulesFile</code>) require re-importing the dacpac — you'll see a notification when this setting changes.</p>
+              </div>
               <div>
                 <p className="font-semibold ln-text mb-1">General</p>
                 <div className="flex items-start gap-2">
@@ -253,18 +257,18 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
                 </div>
               </div>
               <div>
-                <p className="font-semibold ln-text mb-1">Parser</p>
+                <p className="font-semibold ln-text mb-1">Import</p>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>
                   <span><code>parseRulesFile</code> — Path to custom parseRules.yaml (default: empty = built-in)</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>
-                  <span><code>excludePatterns</code> — Regex patterns to exclude objects at import</span>
+                  <span><code>excludePatterns</code> — Regex patterns to exclude objects from the graph</span>
                 </div>
               </div>
               <div>
-                <p className="font-semibold ln-text mb-1">Graph Layout</p>
+                <p className="font-semibold ln-text mb-1">Layout</p>
                 <div className="flex items-start gap-2">
                   <span className="text-xs mt-0.5">•</span>
                   <span><code>layout.direction</code> — LR (horizontal) or TB (vertical) (default: LR)</span>

@@ -140,12 +140,12 @@
         }
       },
       {
-        "title": "Parser",
+        "title": "Import (requires re-opening dacpac)",
         "properties": {
           "dataLineageViz.parseRulesFile": {
             "type": "string",
             "default": "",
-            "description": "Path to a custom parseRules.yaml file for SQL body parsing. Relative paths resolve from the workspace root. Leave empty to use built-in defaults. \u27f3 Requires re-import (open or reopen a dacpac).",
+            "markdownDescription": "Path to a custom `parseRules.yaml` for SQL body parsing. Relative paths resolve from the workspace root. Leave empty to use built-in defaults.\n\nUse the **Data Lineage: Create Parse Rules** command to generate a starter file.",
             "scope": "resource"
           },
           "dataLineageViz.excludePatterns": {
@@ -154,13 +154,13 @@
               "type": "string"
             },
             "default": [],
-            "description": "Regex patterns to exclude objects (matched against full name, e.g. 'dbo\\.tmp_.*', 'staging\\..*'). Excluded objects and their edges are removed from the graph. \u27f3 Takes effect on Refresh (toolbar \u27f3 button).",
+            "markdownDescription": "Regex patterns to exclude objects from the graph (matched case-insensitively against the full name like `dbo.MyTable`). Adding patterns applies on Refresh, but removing patterns requires re-import to restore excluded objects.\n\nExamples: `_TEST$` excludes objects ending in _TEST, `^staging\\\\.` excludes the staging schema.",
             "scope": "resource"
           }
         }
       },
       {
-        "title": "Graph Layout",
+        "title": "Layout",
         "properties": {
           "dataLineageViz.layout.direction": {
             "type": "string",
@@ -173,7 +173,7 @@
               "Top to Bottom (hierarchical)",
               "Left to Right (horizontal flow, default)"
             ],
-            "description": "Graph layout direction. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Graph layout direction.",
             "scope": "resource"
           },
           "dataLineageViz.layout.rankSeparation": {
@@ -181,7 +181,7 @@
             "default": 120,
             "minimum": 20,
             "maximum": 300,
-            "description": "Vertical (TB) or horizontal (LR) spacing between ranks/layers. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Vertical (TB) or horizontal (LR) spacing between ranks/layers.",
             "scope": "resource"
           },
           "dataLineageViz.layout.nodeSeparation": {
@@ -189,7 +189,7 @@
             "default": 30,
             "minimum": 10,
             "maximum": 200,
-            "description": "Spacing between nodes within the same rank. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Spacing between nodes within the same rank.",
             "scope": "resource"
           },
           "dataLineageViz.edgeStyle": {
@@ -207,25 +207,25 @@
               "Step edges with sharp corners",
               "Straight lines"
             ],
-            "description": "Style of edges/connections between nodes. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Style of edges/connections between nodes.",
             "scope": "resource"
           },
           "dataLineageViz.layout.edgeAnimation": {
             "type": "boolean",
             "default": true,
-            "description": "Enable edge animation during trace mode (animated flow lines on traced paths). \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Enable edge animation during trace mode (animated flow lines on traced paths).",
             "scope": "resource"
           },
           "dataLineageViz.layout.highlightAnimation": {
             "type": "boolean",
             "default": false,
-            "description": "Enable edge animation when clicking a node outside of trace mode. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Enable edge animation when clicking a node outside of trace mode.",
             "scope": "resource"
           },
           "dataLineageViz.layout.minimapEnabled": {
             "type": "boolean",
             "default": true,
-            "description": "Show the interactive minimap for quick navigation in large graphs. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Show the interactive minimap for quick navigation in large graphs.",
             "scope": "resource"
           }
         }
@@ -238,7 +238,7 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "description": "Default number of upstream levels when starting a trace. \u27f3 Takes effect on next trace.",
+            "markdownDescription": "Default number of upstream levels when starting a trace.",
             "scope": "resource"
           },
           "dataLineageViz.trace.defaultDownstreamLevels": {
@@ -246,7 +246,7 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "description": "Default number of downstream levels when starting a trace. \u27f3 Takes effect on next trace.",
+            "markdownDescription": "Default number of downstream levels when starting a trace.",
             "scope": "resource"
           }
         }
@@ -259,7 +259,7 @@
             "default": 8,
             "minimum": 1,
             "maximum": 50,
-            "description": "Minimum connection count for a node to appear in Hub analysis. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Minimum connection count for a node to appear in Hub analysis.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.islandMaxSize": {
@@ -267,7 +267,7 @@
             "default": 2,
             "minimum": 2,
             "maximum": 500,
-            "description": "Maximum island size to display. Islands are groups of 2+ connected nodes isolated from the main graph. Single isolated nodes are shown in Orphan analysis. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Maximum island size to display. Islands are groups of 2+ connected nodes isolated from the main graph. Single isolated nodes are shown in Orphan analysis.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {
@@ -275,7 +275,7 @@
             "default": 5,
             "minimum": 2,
             "maximum": 50,
-            "description": "Minimum number of nodes for a dependency chain to appear in Longest Path analysis. \u27f3 Takes effect on Refresh.",
+            "markdownDescription": "Minimum number of nodes for a dependency chain to appear in Longest Path analysis.",
             "scope": "resource"
           }
         }
