@@ -143,6 +143,7 @@
           "dataLineageViz.parseRulesFile": {
             "type": "string",
             "default": "",
+            "editPresentation": "multilineText",
             "markdownDescription": "Path to custom `parseRules.yaml`. Leave empty for built-in defaults.",
             "scope": "resource"
           },
@@ -163,6 +164,7 @@
           "dataLineageViz.dmvQueriesFile": {
             "type": "string",
             "default": "",
+            "editPresentation": "multilineText",
             "markdownDescription": "Path to custom DMV queries YAML file. Leave empty to use built-in queries. See [dmvQueries.yaml](assets/dmvQueries.yaml) for format.",
             "scope": "resource"
           }

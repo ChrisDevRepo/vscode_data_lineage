@@ -162,9 +162,10 @@ export function App() {
   }, [vscodeApi, model, filter, config, rebuild]);
 
   const handleBack = useCallback(() => {
+    dacpacLoader.resetToStart();
     setView('selector');
     clearTrace();
-  }, [clearTrace]);
+  }, [dacpacLoader.resetToStart, clearTrace]);
 
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);

@@ -69,7 +69,9 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     const available = preview.schemas.map((s: SchemaInfo) => s.name);
     if (savedSchemas && savedSchemas.length > 0) {
       const availableSet = new Set(available);
-      setSelectedSchemas(new Set(savedSchemas.filter(s => availableSet.has(s))));
+      const matched = savedSchemas.filter(s => availableSet.has(s));
+      // Fall back to all schemas if none of the saved schemas match (cross-source switch)
+      setSelectedSchemas(matched.length > 0 ? new Set(matched) : new Set(available));
     } else {
       setSelectedSchemas(new Set(available));
     }
@@ -88,7 +90,9 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     const available = result.schemas.map((s: SchemaInfo) => s.name);
     if (savedSchemas && savedSchemas.length > 0) {
       const availableSet = new Set(available);
-      setSelectedSchemas(new Set(savedSchemas.filter(s => availableSet.has(s))));
+      const matched = savedSchemas.filter(s => availableSet.has(s));
+      // Fall back to all schemas if none of the saved schemas match (cross-source switch)
+      setSelectedSchemas(matched.length > 0 ? new Set(matched) : new Set(available));
     } else {
       setSelectedSchemas(new Set(available));
     }

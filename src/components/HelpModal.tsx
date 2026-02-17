@@ -56,29 +56,6 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <section>
             <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
-                <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-              </svg>
-              <h3 className="text-lg font-semibold">Search & Navigation</h3>
-            </div>
-            <div className="ml-7 space-y-2 text-sm ln-text-muted">
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span>Type <strong>2+ characters</strong> to see autocomplete suggestions</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span>Press <kbd className="px-1.5 py-0.5 rounded text-xs ln-kbd">Enter</kbd> to navigate and zoom to selected object</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span>Results are filtered by currently active schemas and types</span>
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
               </svg>
               <h3 className="text-lg font-semibold">Filters & Visibility</h3>
@@ -86,15 +63,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <div className="ml-7 space-y-2 text-sm ln-text-muted">
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span><strong>Schema Filter:</strong> Multi-select dropdown to show/hide specific schemas</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span><strong>Type Filter:</strong> Toggle visibility for tables, views, procedures, and functions</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span><strong>Hide Isolated:</strong> Hide nodes with no connections</span>
+                <span><strong>Hide Isolated:</strong> Hide nodes without any dependencies</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
@@ -236,29 +205,6 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
 
           <section>
             <div className="flex items-center gap-2 mb-3">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0Z" />
-              </svg>
-              <h3 className="text-lg font-semibold">MiniMap</h3>
-            </div>
-            <div className="ml-7 space-y-2 text-sm ln-text-muted">
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span>Drag the viewport rectangle to pan around the graph</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span>Scroll on the minimap to zoom in and out</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-xs mt-0.5">•</span>
-                <span>Toggle via <strong>Settings</strong> &gt; <code>dataLineageViz.layout.minimapEnabled</code></span>
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
@@ -270,104 +216,6 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               <div className="p-2 rounded ln-bg-secondary">
                 <p><strong className="ln-text">Most settings apply automatically</strong> when changed in VS Code Settings.</p>
                 <p className="mt-1"><strong className="ln-text">Import settings</strong> (<code>parseRulesFile</code>, <code>excludePatterns</code>) require reloading the data source — you'll see a notification when these change.</p>
-              </div>
-              <div>
-                <p className="font-semibold ln-text mb-1">General</p>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>maxNodes</code> — Maximum objects for import (default: 500)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span>Use <strong>Developer: Set Log Level</strong> command for debug logging</span>
-                </div>
-              </div>
-              <div>
-                <p className="font-semibold ln-text mb-1">Import</p>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>parseRulesFile</code> — Path to custom parseRules.yaml (default: empty = built-in)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>excludePatterns</code> — Regex patterns to exclude objects from the graph</span>
-                </div>
-              </div>
-              <div>
-                <p className="font-semibold ln-text mb-1">Layout</p>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>layout.direction</code> — LR (horizontal) or TB (vertical) (default: LR)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>layout.rankSeparation</code> — Spacing between layers (default: 120)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>layout.nodeSeparation</code> — Spacing within a layer (default: 30)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>edgeStyle</code> — Edge style: default, smoothstep, step, straight</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>layout.edgeAnimation</code> — Animate traced edges (default: on)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>layout.highlightAnimation</code> — Animate on node click (default: off)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>layout.minimapEnabled</code> — Show minimap (default: on)</span>
-                </div>
-              </div>
-              <div>
-                <p className="font-semibold ln-text mb-1">Trace</p>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>trace.defaultUpstreamLevels</code> — Default upstream depth (default: 3)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>trace.defaultDownstreamLevels</code> — Default downstream depth (default: 3)</span>
-                </div>
-              </div>
-              <div>
-                <p className="font-semibold ln-text mb-1">Analysis</p>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>analysis.hubMinDegree</code> — Min connections for Hub analysis (default: 8)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>analysis.islandMaxSize</code> — Max island size to show (default: 2, min: 2)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs mt-0.5">•</span>
-                  <span><code>analysis.longestPathMinNodes</code> — Min chain length for Longest Path (default: 5)</span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-              </svg>
-              <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>
-            </div>
-            <div className="ml-7 space-y-2 text-sm ln-text-muted">
-              <div className="flex items-start gap-2">
-                <kbd className="px-2 py-1 rounded text-xs font-mono ln-kbd">Esc</kbd>
-                <span>Close analysis, clear trace, or close context menu</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <kbd className="px-2 py-1 rounded text-xs font-mono ln-kbd">Enter</kbd>
-                <span>Navigate to selected autocomplete result</span>
               </div>
             </div>
           </section>
