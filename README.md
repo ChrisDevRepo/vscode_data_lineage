@@ -26,7 +26,7 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 ## Features
 
 **Data Sources**
-- Import from SSDT and Fabric SDK `.dacpac` files
+- Import from SSDT and SDK-style `.dacpac` files
 - Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
 - Quick reconnect to your last data source
 

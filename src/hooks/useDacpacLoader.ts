@@ -63,17 +63,20 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     }
   }, [status, isLoading]);
 
-  const applySchemaPreview = useCallback((preview: SchemaPreview, name: string, savedSchemas?: string[]) => {
-    setSchemaPreview(preview);
-    const available = preview.schemas.map((s: SchemaInfo) => s.name);
-    if (savedSchemas && savedSchemas.length > 0) {
-      const availableSet = new Set(available);
-      const matched = savedSchemas.filter(s => availableSet.has(s));
-      // Fall back to all schemas if none of the saved schemas match (cross-source switch)
-      setSelectedSchemas(matched.length > 0 ? new Set(matched) : new Set(available));
+  /** Restore schema selection: all available selected, minus previously-deselected ones that still exist */
+  const restoreSchemaSelection = useCallback((available: string[], deselected?: string[]) => {
+    if (deselected && deselected.length > 0) {
+      const deselectedSet = new Set(deselected);
+      setSelectedSchemas(new Set(available.filter(s => !deselectedSet.has(s))));
     } else {
       setSelectedSchemas(new Set(available));
     }
+  }, []);
+
+  const applySchemaPreview = useCallback((preview: SchemaPreview, name: string, deselected?: string[]) => {
+    setSchemaPreview(preview);
+    const available = preview.schemas.map((s: SchemaInfo) => s.name);
+    restoreSchemaSelection(available, deselected);
     setFileName(name);
 
     if (preview.warnings && preview.warnings.length > 0) {
@@ -82,19 +85,12 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       const s = preview.schemas.length !== 1 ? 's' : '';
       setStatus({ text: `Found ${preview.totalObjects} objects across ${preview.schemas.length} schema${s}`, type: 'success' });
     }
-  }, []);
+  }, [restoreSchemaSelection]);
 
-  const applyModel = useCallback((result: DacpacModel, name: string, statusText: string, savedSchemas?: string[]) => {
+  const applyModel = useCallback((result: DacpacModel, name: string, statusText: string, deselected?: string[]) => {
     setModel(result);
     const available = result.schemas.map((s: SchemaInfo) => s.name);
-    if (savedSchemas && savedSchemas.length > 0) {
-      const availableSet = new Set(available);
-      const matched = savedSchemas.filter(s => availableSet.has(s));
-      // Fall back to all schemas if none of the saved schemas match (cross-source switch)
-      setSelectedSchemas(matched.length > 0 ? new Set(matched) : new Set(available));
-    } else {
-      setSelectedSchemas(new Set(available));
-    }
+    restoreSchemaSelection(available, deselected);
     setFileName(name);
 
     if (result.warnings && result.warnings.length > 0) {
@@ -182,7 +178,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         const name = msg.sourceName || 'Database';
         setLastSource({ type: 'database', name });
         cachedElementsRef.current = null; // DB path doesn't use element cache
-        applySchemaPreview(msg.preview, name, msg.lastSelectedSchemas);
+        applySchemaPreview(msg.preview, name, msg.lastDeselectedSchemas);
         setIsLoading(false);
         setLoadingContext(null);
         return;
@@ -193,7 +189,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
         setLastSource({ type: 'database', name });
-        applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`, msg.lastSelectedSchemas);
+        applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`, msg.lastDeselectedSchemas);
         setIsLoading(false);
         setLoadingContext(null);
         // If this was triggered by Phase 2 visualize, signal completion
@@ -226,14 +222,14 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
             const result = await extractDacpac(buffer);
             if (gen !== loadGenRef.current) return;
             cachedElementsRef.current = null;
-            applyModel(result, msg.fileName || 'dacpac', `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`, msg.lastSelectedSchemas);
+            applyModel(result, msg.fileName || 'dacpac', `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`, msg.lastDeselectedSchemas);
             setPendingAutoVisualize(true);
           } else {
             // Phase 1: lightweight schema preview
             const { preview, elements } = await extractSchemaPreview(buffer);
             if (gen !== loadGenRef.current) return;
             cachedElementsRef.current = elements;
-            applySchemaPreview(preview, msg.fileName || 'dacpac', msg.lastSelectedSchemas);
+            applySchemaPreview(preview, msg.fileName || 'dacpac', msg.lastDeselectedSchemas);
           }
         } catch (err) {
           if (gen !== loadGenRef.current) return; // stale load — discard
@@ -301,11 +297,16 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const resetToStart = useCallback(() => {
+    ++loadGenRef.current; // Invalidate any in-flight extractions
     setModel(null);
     setSchemaPreview(null);
     setSelectedSchemas(new Set());
+    setIsLoading(false);
+    setLoadingContext(null);
     setFileName(null);
     setStatus(null);
+    setPendingAutoVisualize(false);
+    setPendingVisualize(false);
     cachedElementsRef.current = null;
   }, []);
 
@@ -338,6 +339,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const cancelLoading = useCallback(() => {
+    ++loadGenRef.current; // Invalidate any in-flight extractions
     setIsLoading(false);
     setLoadingContext(null);
     setStatus(null);

@@ -50,7 +50,7 @@
 
 ### Fixed
 - **Animation Settings** — Edge animations now respond correctly to `highlightAnimation` and `edgeAnimation` settings (fixed missing useMemo dependencies)
-- **Default Values** — Fallback defaults now match package.json: maxNodes=250, rankSeparation=120, direction=LR
+- **Default Values** — Fallback defaults now match package.json: maxNodes=500, rankSeparation=120, direction=LR
 
 ## [0.7.1] - 2026-02-03
 
@@ -65,7 +65,7 @@
 
 ## [0.6.x] - 2026-01
 
-- **Fabric + SSDT Support** — Both traditional SSDT and Microsoft.Build.Sql (Fabric SDK) dacpacs fully supported
+- **Fabric + SSDT Support** — Both traditional SSDT and Microsoft.Build.Sql (SDK-style) dacpacs fully supported
 - **Interactive Trace** — Click any object to trace upstream/downstream dependencies with configurable depth
 - **Schema Focus** — Star a schema to focus on it and its neighbors; filter by schema and object type
 - **Smart Search** — Autocomplete with schema/type info and keyboard navigation

@@ -215,12 +215,8 @@ export function GraphCanvas({
   const level1Neighbors = useMemo(() => {
     const neighbors = new Set<string>();
     if (highlightedNodeId && graph && graph.hasNode(highlightedNodeId)) {
-      try {
-        const nodeNeighbors = graph.neighbors(highlightedNodeId);
-        nodeNeighbors.forEach(n => neighbors.add(n));
-      } catch (e) {
-        // Node may not exist in graph
-      }
+      const nodeNeighbors = graph.neighbors(highlightedNodeId);
+      nodeNeighbors.forEach(n => neighbors.add(n));
     }
     return neighbors;
   }, [highlightedNodeId, graph]);

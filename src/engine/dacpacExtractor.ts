@@ -16,11 +16,8 @@ import {
   ExtractedDependency,
   ColumnDef,
 } from './types';
-import { buildModel, parseName, normalizeName, addEdge, computeSchemas } from './modelBuilder';
+import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { stripBrackets } from '../utils/sql';
-
-// Re-export shared utilities so existing consumers don't break
-export { parseName, normalizeName, addEdge, computeSchemas };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 

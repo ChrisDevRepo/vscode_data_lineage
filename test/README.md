@@ -73,7 +73,7 @@ Tests the live database model builder using synthetic DMV data:
 | SSDT SP Parsing | Full SP body parsing output for all 10 classic procedures |
 | Graph Builder | Layout, positions, metrics, trace reachability |
 | Edge Integrity | No dangling edges, no self-loops, no duplicates |
-| Fabric SDK Dacpac | Views/tables/procs/functions counts, QueryDependencies, BodyDependencies |
+| SDK-style Dacpac | Views/tables/procs/functions counts, QueryDependencies, BodyDependencies |
 | Type-Aware Direction | Validates XML object type matches regex direction for all overlap deps |
 | Security: CVE-2026-25128 | Out-of-range numeric entity handling in fast-xml-parser v5 |
 

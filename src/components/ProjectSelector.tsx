@@ -78,7 +78,10 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
   const overLimit = selectedCount > maxNodes;
 
   const handleVisualize = () => {
-    vscodeApi.postMessage({ type: 'save-schemas', schemas: Array.from(selectedSchemas) });
+    // Store deselected schemas so new schemas are visible on reopen
+    const allNames = schemas.map(s => s.name);
+    const deselected = allNames.filter(s => !selectedSchemas.has(s));
+    vscodeApi.postMessage({ type: 'save-schemas', deselected });
     visualize(selectedSchemas);
   };
 

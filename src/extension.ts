@@ -221,11 +221,6 @@ function getLastSource(context: vscode.ExtensionContext): { type: 'dacpac' | 'da
     const name = context.workspaceState.get<string>('lastDacpacName');
     return name ? { type: 'dacpac', name } : undefined;
   }
-  // Migration: if lastSourceType not set, prefer dacpac if available
-  const dacpacName = context.workspaceState.get<string>('lastDacpacName');
-  if (dacpacName) return { type: 'dacpac', name: dacpacName };
-  const dbName = context.workspaceState.get<string>('lastDbSourceName');
-  if (dbName) return { type: 'database', name: dbName };
   return undefined;
 }
 
@@ -312,7 +307,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             break;
           }
           case 'save-schemas': {
-            await context.workspaceState.update('lastSelectedSchemas', message.schemas);
+            await context.workspaceState.update('lastDeselectedSchemas', message.deselected);
             break;
           }
           case 'load-last-dacpac': {
@@ -323,19 +318,20 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               const data = await vscode.workspace.fs.readFile(fileUri);
               if (isDacpacTooLarge(data.byteLength)) break;
               const config = await readExtensionConfig();
-              const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
+              const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
               panel.webview.postMessage({
                 type: 'dacpac-data',
                 data: Array.from(data),
                 fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
                 config,
-                lastSelectedSchemas,
+                lastDeselectedSchemas,
               });
               outputChannel.info(`── Reopening ${path.basename(lastPath)} ──`);
             } catch {
               await context.workspaceState.update('lastDacpacPath', undefined);
               await context.workspaceState.update('lastDacpacName', undefined);
               await context.workspaceState.update('lastSourceType', undefined);
+              await context.workspaceState.update('lastDeselectedSchemas', undefined);
               panel.webview.postMessage({ type: 'last-dacpac-gone' });
               outputChannel.warn(`Last dacpac no longer available: ${lastPath}`);
             }
@@ -521,7 +517,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
 type WebviewMessage =
   | { type: 'ready' }
   | { type: 'open-dacpac' }
-  | { type: 'save-schemas'; schemas: string[] }
+  | { type: 'save-schemas'; deselected: string[] }
   | { type: 'load-last-dacpac' }
   | { type: 'load-demo' }
   | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
@@ -691,13 +687,13 @@ async function runDbPhase1(
   await context.workspaceState.update('lastSourceType', 'database');
 
   const config = await readExtensionConfig();
-  const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
+  const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
   panel.webview.postMessage({
     type: 'db-schema-preview',
     preview,
     config,
     sourceName,
-    lastSelectedSchemas,
+    lastDeselectedSchemas,
   });
 }
 
@@ -818,13 +814,13 @@ async function runDbFullExtraction(
   await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
   await context.workspaceState.update('lastSourceType', 'database');
   const config = await readExtensionConfig();
-  const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
+  const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
   panel.webview.postMessage({
     type: 'db-model',
     model,
     config,
     sourceName,
-    lastSelectedSchemas,
+    lastDeselectedSchemas,
   });
 }
 

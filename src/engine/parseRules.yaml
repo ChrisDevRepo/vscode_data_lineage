@@ -15,7 +15,7 @@
 #   description: What this rule extracts
 #
 # FALLBACK: If this file is missing, empty, or invalid YAML, the extension
-# falls back to built-in DEFAULT_RULES in sqlBodyParser.ts (same 9 rules)
+# falls back to built-in DEFAULT_RULES in sqlBodyParser.ts (same 11 rules)
 # and shows a warning message to the user.
 #
 # IMPORTANT: This file and DEFAULT_RULES must stay in sync.
@@ -100,6 +100,22 @@ rules:
     pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+AS\\s+SELECT"
     flags: gi
     description: Extract CREATE TABLE AS SELECT target
+
+  - name: extract_copy_into                         # also in DEFAULT_RULES
+    enabled: true
+    priority: 15
+    category: target
+    pattern: "\\bCOPY\\s+INTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "COPY INTO target (Fabric/Synapse)"
+
+  - name: extract_bulk_insert                       # also in DEFAULT_RULES
+    enabled: true
+    priority: 16
+    category: target
+    pattern: "\\bBULK\\s+INSERT\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "BULK INSERT target (SQL Server)"
 
   # ── Exec calls (priority 8) ───────────────────────────────────────────────
   # Procedure calls. Edge direction: SP → called_SP

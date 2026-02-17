@@ -11,7 +11,8 @@ import type { DacpacModel, ObjectType, FilterState, ExtensionConfig, AnalysisMod
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
-import { filterBySchemas, computeSchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { computeSchemas } from '../engine/modelBuilder';
 
 type AppView = 'selector' | 'graph' | 'loading';
 
@@ -75,8 +76,10 @@ export function App() {
 
   const handleVisualize = useCallback(
     (dacpacModel: DacpacModel, selectedSchemas: Set<string>) => {
-      // Persist selected schemas for "Reopen" flow
-      vscodeApi.postMessage({ type: 'save-schemas', schemas: Array.from(selectedSchemas) });
+      // Store deselected schemas so new schemas are visible on reopen
+      const allNames = dacpacModel.schemas.map(s => s.name);
+      const deselected = allNames.filter(s => !selectedSchemas.has(s));
+      vscodeApi.postMessage({ type: 'save-schemas', deselected });
 
       // Create trimmed model: only selected schemas with exclusions applied
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
