@@ -1,5 +1,7 @@
 import {
   DacpacModel,
+  SchemaInfo,
+  SchemaPreview,
   DMV_TYPE_MAP,
   ExtractedObject,
   ExtractedDependency,
@@ -14,6 +16,40 @@ export interface DmvResults {
   nodes: SimpleExecuteResult;
   columns: SimpleExecuteResult;
   dependencies: SimpleExecuteResult;
+}
+
+/**
+ * Phase 1: Build SchemaPreview from the schema-preview query result.
+ * Maps (schema_name, type_code, object_count) rows → SchemaInfo[].
+ */
+export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
+  const colIdx = buildColumnIndex(result);
+  const schemaMap = new Map<string, SchemaInfo>();
+  let totalObjects = 0;
+
+  for (const row of result.rows) {
+    const schemaName = cellValue(row, colIdx, 'schema_name').toUpperCase();
+    const typeCode = cellValue(row, colIdx, 'type_code').trim();
+    const count = parseInt(cellValue(row, colIdx, 'object_count'), 10) || 0;
+    const objType = DMV_TYPE_MAP[typeCode];
+    if (!objType) continue;
+
+    let info = schemaMap.get(schemaName);
+    if (!info) {
+      info = { name: schemaName, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
+      schemaMap.set(schemaName, info);
+    }
+    info.nodeCount += count;
+    info.types[objType] += count;
+    totalObjects += count;
+  }
+
+  const schemas = Array.from(schemaMap.values()).sort((a, b) => b.nodeCount - a.nodeCount);
+  const warnings: string[] = [];
+  if (totalObjects === 0) {
+    warnings.push('No user objects found in database.');
+  }
+  return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 export function buildModelFromDmv(results: DmvResults): DacpacModel {
@@ -32,6 +68,7 @@ export function buildModelFromDmv(results: DmvResults): DacpacModel {
 // ─── Column Contract Validation ─────────────────────────────────────────────
 
 const REQUIRED_COLUMNS: Record<string, string[]> = {
+  'schema-preview': ['schema_name', 'type_code', 'object_count'],
   nodes: ['schema_name', 'object_name', 'type_code', 'body_script'],
   columns: ['schema_name', 'table_name', 'ordinal', 'column_name',
     'type_name', 'max_length', 'precision', 'scale',

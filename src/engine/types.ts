@@ -46,6 +46,12 @@ export interface DacpacModel {
   warnings?: string[];
 }
 
+export interface SchemaPreview {
+  schemas: SchemaInfo[];
+  totalObjects: number;
+  warnings?: string[];
+}
+
 // ─── XML Parsing Types (fast-xml-parser output) ─────────────────────────────
 
 export interface XmlElement {
@@ -227,6 +233,7 @@ export type ExtensionMessage =
   | { type: 'themeChanged'; kind: string }
   | { type: 'mssql-status'; available: boolean }
   | { type: 'db-progress'; step: number; total: number; label: string }
+  | { type: 'db-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string; lastSelectedSchemas?: string[] }
   | { type: 'db-model'; model: DacpacModel; config: ExtensionConfig; sourceName: string; lastSelectedSchemas?: string[] }
   | { type: 'db-error'; message: string; phase: string }
   | { type: 'db-cancelled' };

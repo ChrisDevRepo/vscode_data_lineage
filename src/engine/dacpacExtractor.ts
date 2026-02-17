@@ -3,6 +3,8 @@ import { XMLParser } from 'fast-xml-parser';
 import {
   DacpacModel,
   ObjectType,
+  SchemaInfo,
+  SchemaPreview,
   ELEMENT_TYPE_MAP,
   TRACKED_ELEMENT_TYPES,
   XmlElement,
@@ -39,6 +41,88 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
   }
 
   return { ...model, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+/**
+ * Phase 1: Lightweight schema preview — counts schemas + types without extracting
+ * body scripts, columns, or dependencies. Returns parsed elements for Phase 2 reuse.
+ */
+export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
+  preview: SchemaPreview;
+  elements: XmlElement[];
+}> {
+  const xml = await extractModelXml(buffer);
+  const elements = parseElements(xml);
+  const preview = computeSchemaPreviewFromElements(elements);
+  return { preview, elements };
+}
+
+/**
+ * Phase 2: Full extraction filtered to selected schemas only.
+ * Uses pre-parsed elements from Phase 1 to avoid re-unzipping and re-parsing XML.
+ * Skips body script extraction and regex parsing for unselected schemas.
+ */
+export function extractDacpacFiltered(
+  elements: XmlElement[],
+  selectedSchemas: Set<string>,
+): DacpacModel {
+  // Pre-filter elements by schema (uppercased for consistent matching)
+  const upperSchemas = new Set(Array.from(selectedSchemas).map(s => s.toUpperCase()));
+  const filtered = elements.filter(el => {
+    const name = el['@_Name'];
+    if (!name || !TRACKED_ELEMENT_TYPES.has(el['@_Type'])) return false;
+    const { schema } = parseName(name);
+    return upperSchemas.has(schema);
+  });
+
+  const objects = extractObjects(filtered);
+  const deps = extractDependencies(filtered);
+  const model = buildModel(objects, deps);
+
+  const warnings: string[] = [];
+  if (model.nodes.length === 0) {
+    warnings.push('No tables, views, or stored procedures found for selected schemas.');
+  }
+  return { ...model, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview {
+  const schemaMap = new Map<string, SchemaInfo>();
+  const seen = new Set<string>();
+  let totalObjects = 0;
+
+  for (const el of elements) {
+    const type = el['@_Type'];
+    const name = el['@_Name'];
+    if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
+
+    // Deduplicate by normalized ID (same as extractObjects)
+    const id = normalizeName(name);
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const { schema } = parseName(name);
+    const objType = ELEMENT_TYPE_MAP[type];
+
+    let info = schemaMap.get(schema);
+    if (!info) {
+      info = { name: schema, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
+      schemaMap.set(schema, info);
+    }
+    info.nodeCount++;
+    info.types[objType]++;
+    totalObjects++;
+  }
+
+  const schemas = Array.from(schemaMap.values()).sort((a, b) => b.nodeCount - a.nodeCount);
+  const warnings: string[] = [];
+  if (elements.length === 0) {
+    warnings.push('This dacpac appears to be empty.');
+  } else if (totalObjects === 0) {
+    warnings.push('No tables, views, or stored procedures found in this file.');
+  }
+
+  return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 export function filterBySchemas(

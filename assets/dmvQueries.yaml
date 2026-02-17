@@ -3,7 +3,30 @@ description: "Read-only catalog queries for Data Lineage Viz"
 required_permission: "VIEW DEFINITION"
 platforms: [SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool]
 
+# Two-phase loading:
+#   Phase 1 — schema-preview runs first to show available schemas with counts.
+#   Phase 2 — nodes/columns/dependencies run after the user selects schemas.
+#             Each Phase 2 query is wrapped as a subquery with a WHERE filter
+#             on the selected schemas, so only matching rows are returned.
+
 queries:
+  # ── Phase 1: Schema Preview ────────────────────────────────────────────────
+  - name: schema-preview
+    description: "Phase 1: schema names with per-type object counts (runs first for schema selection)"
+    sql: |
+      SELECT
+        s.name AS schema_name,
+        o.type AS type_code,
+        COUNT(*) AS object_count
+      FROM sys.objects o
+      INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      WHERE o.type IN ('U','V','P','FN','IF','TF')
+        AND o.is_ms_shipped = 0
+        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+      GROUP BY s.name, o.type
+      ORDER BY s.name, o.type
+
+  # ── Phase 2: Full Extraction (filtered by selected schemas) ─────────────────
   - name: nodes
     description: "All user objects + DDL definitions (combined via LEFT JOIN)"
     sql: |

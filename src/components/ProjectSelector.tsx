@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import type { DacpacModel, ExtensionConfig } from '../engine/types';
+import type { ExtensionConfig } from '../engine/types';
 import type { StatusMessage, DacpacLoaderState } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { SchemaSelector } from './SchemaSelector';
 import { Button } from './ui/Button';
 
 interface ProjectSelectorProps {
-  onVisualize: (model: DacpacModel, selectedSchemas: Set<string>) => void;
   config: ExtensionConfig;
   loader: DacpacLoaderState;
 }
@@ -54,24 +53,34 @@ function StatusIcon({ type }: { type: StatusMessage['type'] }) {
   );
 }
 
-export function ProjectSelector({ onVisualize, config, loader }: ProjectSelectorProps) {
+export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
   const vscodeApi = useVsCode();
   const [logoFailed, setLogoFailed] = useState(false);
   const {
-    model, selectedSchemas, isLoading, loadingContext, fileName, status, lastDacpacName, lastDbSourceName,
+    model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastDacpacName, lastDbSourceName,
     mssqlAvailable,
     openFile, resetToStart, loadLast, loadDemo, connectToDatabase, reconnectToDatabase, cancelLoading,
-    toggleSchema, selectAllSchemas, clearAllSchemas,
+    visualize, toggleSchema, selectAllSchemas, clearAllSchemas,
   } = loader;
 
-  const selectedCount = model
-    ? model.schemas
+  // Derive schemas from preview (Phase 1) or model (Phase 2 / back from graph / fallback)
+  const schemas = schemaPreview?.schemas ?? model?.schemas ?? [];
+  const hasSchemas = schemas.length > 0;
+  const hasSource = hasSchemas || !!model;
+
+  const selectedCount = hasSchemas
+    ? schemas
         .filter((s) => selectedSchemas.has(s.name))
         .reduce((sum, s) => sum + s.nodeCount, 0)
     : 0;
 
   const maxNodes = config.maxNodes;
   const overLimit = selectedCount > maxNodes;
+
+  const handleVisualize = () => {
+    vscodeApi.postMessage({ type: 'save-schemas', schemas: Array.from(selectedSchemas) });
+    visualize(selectedSchemas);
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">
@@ -96,7 +105,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
             <label className="block text-xs font-medium mb-1.5 ln-text">Database Project</label>
             <div
               className={`flex items-center gap-3 px-3 py-2.5 rounded transition-colors ln-file-picker ${isLoading ? 'cursor-default' : 'cursor-pointer'}`}
-              onClick={isLoading ? undefined : model ? resetToStart : openFile}
+              onClick={isLoading ? undefined : hasSource ? resetToStart : openFile}
             >
               {isLoading && loadingContext === 'database' ? (
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted animate-pulse">
@@ -134,7 +143,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           )}
 
           {/* Quick actions */}
-          {!model && !isLoading && (
+          {!hasSource && !isLoading && (
             <div className="flex items-center gap-2">
               <div className="flex-1 ln-border-top" />
               <span className="text-xs ln-text-muted">or</span>
@@ -142,7 +151,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
             </div>
           )}
 
-          {!model && !isLoading && lastDacpacName && (
+          {!hasSource && !isLoading && lastDacpacName && (
             <Button
               variant="primary"
               onClick={loadLast}
@@ -152,7 +161,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
             </Button>
           )}
 
-          {!model && !isLoading && (
+          {!hasSource && !isLoading && (
             <Button
               variant="secondary"
               onClick={loadDemo}
@@ -162,7 +171,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
             </Button>
           )}
 
-          {!model && !isLoading && lastDbSourceName && (
+          {!hasSource && !isLoading && lastDbSourceName && (
             <Button
               variant="primary"
               onClick={reconnectToDatabase}
@@ -176,7 +185,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
             </Button>
           )}
 
-          {!model && !isLoading && (
+          {!hasSource && !isLoading && (
             <Button
               variant="secondary"
               onClick={connectToDatabase}
@@ -197,7 +206,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
               <StatusIcon type={status.type} />
               <div className="pt-px">
                 <span style={{ color: ICON_COLORS[status.type] }}>{status.text}</span>
-                {status.type === 'warning' && model && model.schemas.length === 0 && (
+                {status.type === 'warning' && hasSchemas && schemas.length === 0 && (
                   <p className="mt-1 ln-text-muted">Try a different file, or check the Output panel for details.</p>
                 )}
               </div>
@@ -205,9 +214,9 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           )}
 
           {/* Schema selector */}
-          {model && model.schemas.length > 0 && (
+          {hasSchemas && (
             <SchemaSelector
-              schemas={model.schemas}
+              schemas={schemas}
               selectedSchemas={selectedSchemas}
               onToggle={toggleSchema}
               onSelectAll={selectAllSchemas}
@@ -217,7 +226,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
 
           {/* Node count + limit warning — fixed height to prevent layout jump */}
           <div className="text-xs text-center py-1" style={{ minHeight: 24 }}>
-            {model && selectedCount > 0 && (
+            {hasSchemas && selectedCount > 0 && (
               overLimit ? (
                 <span>
                   <span className="ln-text-warning">{selectedCount}/{maxNodes} objects</span>
@@ -245,8 +254,8 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           {/* Visualize */}
           <Button
             variant="primary"
-            onClick={() => model && onVisualize(model, selectedSchemas)}
-            disabled={!model || selectedSchemas.size === 0 || overLimit}
+            onClick={handleVisualize}
+            disabled={!hasSchemas || selectedSchemas.size === 0 || overLimit || isLoading}
             className="w-full"
           >
             Visualize

@@ -103,6 +103,14 @@ export function App() {
     }
   }, [dacpacLoader.pendingAutoVisualize, dacpacLoader.model, dacpacLoader.isLoading, handleVisualize, dacpacLoader]);
 
+  // Phase 2 completion: when visualize finishes (dacpac filtered or DB model received), transition to graph
+  useEffect(() => {
+    if (dacpacLoader.pendingVisualize && dacpacLoader.model && !dacpacLoader.isLoading) {
+      handleVisualize(dacpacLoader.model, dacpacLoader.selectedSchemas);
+      dacpacLoader.clearPendingVisualize();
+    }
+  }, [dacpacLoader.pendingVisualize, dacpacLoader.model, dacpacLoader.isLoading, handleVisualize, dacpacLoader]);
+
   const getResetFilter = (m: DacpacModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
     types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
@@ -439,7 +447,7 @@ export function App() {
   }
 
   if (view === 'selector') {
-    return <ProjectSelector onVisualize={handleVisualize} config={config} loader={dacpacLoader} />;
+    return <ProjectSelector config={config} loader={dacpacLoader} />;
   }
 
   return (

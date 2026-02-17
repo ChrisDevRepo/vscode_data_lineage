@@ -7,10 +7,10 @@ import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import type { LayoutConfig, EdgeStyle, TraceConfig, AnalysisConfig } from './engine/types';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
-  loadDmvQueries, executeDmvQueries, disconnectDatabase,
+  loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
 } from './engine/connectionManager';
 import type { IConnectionInfo } from './types/mssql';
-import { buildModelFromDmv, validateQueryResult } from './engine/dmvExtractor';
+import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './engine/dmvExtractor';
 import type { DmvResults } from './engine/dmvExtractor';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
@@ -375,11 +375,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                     return;
                   }
                   connectionUri = result.connectionUri;
-                  await runDbExtraction(panel, context, connectionUri, result.connectionInfo, progress, token);
+                  await runDbPhase1(panel, context, connectionUri, result.connectionInfo, progress, token);
                 } catch (err) {
                   const errorMsg = err instanceof Error ? err.message : String(err);
-                  outputChannel.error(`[DB] Extraction failed: ${errorMsg}`);
-                  panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'build' });
+                  outputChannel.error(`[DB] Phase 1 failed: ${errorMsg}`);
+                  panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'connect' });
                 } finally {
                   if (connectionUri) {
                     await disconnectDatabase(connectionUri, outputChannel).catch(err => {
@@ -419,10 +419,53 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                     return;
                   }
                   connectionUri = result.connectionUri;
-                  await runDbExtraction(panel, context, connectionUri, result.connectionInfo, progress, token);
+                  await runDbPhase1(panel, context, connectionUri, result.connectionInfo, progress, token);
                 } catch (err) {
                   const errorMsg = err instanceof Error ? err.message : String(err);
-                  outputChannel.error(`[DB] Extraction failed: ${errorMsg}`);
+                  outputChannel.error(`[DB] Phase 1 failed: ${errorMsg}`);
+                  panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'connect' });
+                } finally {
+                  if (connectionUri) {
+                    await disconnectDatabase(connectionUri, outputChannel).catch(err => {
+                      outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
+                    });
+                  }
+                }
+              },
+            );
+            break;
+          }
+          case 'db-visualize': {
+            await vscode.window.withProgress(
+              {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Data Lineage: Loading selected schemas',
+                cancellable: true,
+              },
+              async (progress, token) => {
+                let connectionUri: string | undefined;
+                try {
+                  // Reconnect using stored connectionInfo from Phase 1
+                  const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+                  if (!storedInfo) {
+                    panel.webview.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
+                    return;
+                  }
+
+                  let result = await connectDirect(storedInfo as IConnectionInfo, outputChannel);
+                  if (!result) {
+                    outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
+                    result = await promptForConnection(outputChannel);
+                  }
+                  if (!result || token.isCancellationRequested) {
+                    panel.webview.postMessage({ type: 'db-cancelled' });
+                    return;
+                  }
+                  connectionUri = result.connectionUri;
+                  await runDbPhase2(panel, context, connectionUri, message.schemas, progress, token);
+                } catch (err) {
+                  const errorMsg = err instanceof Error ? err.message : String(err);
+                  outputChannel.error(`[DB] Phase 2 extraction failed: ${errorMsg}`);
                   panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'build' });
                 } finally {
                   if (connectionUri) {
@@ -472,7 +515,8 @@ type WebviewMessage =
   | { type: 'update-ddl'; objectName: string; schema: string; sqlBody?: string }
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
-  | { type: 'db-reconnect' };
+  | { type: 'db-reconnect' }
+  | { type: 'db-visualize'; schemas: string[] };
 
 // ─── Read Extension Config ──────────────────────────────────────────────────
 
@@ -570,9 +614,13 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   return config;
 }
 
-// ─── Shared DB Extraction Logic ──────────────────────────────────────────────
+// ─── Two-Phase DB Extraction ─────────────────────────────────────────────────
 
-async function runDbExtraction(
+/**
+ * Phase 1: Connect, run lightweight schema-preview query, send SchemaPreview
+ * to webview for schema selection. Disconnects after sending.
+ */
+async function runDbPhase1(
   panel: vscode.WebviewPanel,
   context: vscode.ExtensionContext,
   connectionUri: string,
@@ -590,9 +638,73 @@ async function runDbExtraction(
     return;
   }
 
-  const resultMap = await executeDmvQueries(
+  // Find schema-preview query; fall back to full extraction if missing
+  const previewQuery = queries.find(q => q.name === 'schema-preview');
+  if (!previewQuery) {
+    outputChannel.warn('[DB] No schema-preview query found — falling back to full extraction');
+    await runDbFullExtraction(panel, context, connectionUri, connectionInfo, queries, progress, token);
+    return;
+  }
+
+  progress.report({ message: 'Querying schema overview...' });
+  panel.webview.postMessage({ type: 'db-progress', step: 1, total: 1, label: 'schema-preview' });
+
+  const previewResult = await executeDmvQueries(connectionUri, [previewQuery], outputChannel);
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  const result = previewResult.get('schema-preview');
+  if (result) {
+    const missing = validateQueryResult('schema-preview', result);
+    if (missing.length > 0) {
+      throw new Error(`Schema preview query is missing required columns: ${missing.join(', ')}.`);
+    }
+  }
+
+  const preview = buildSchemaPreview(result!);
+  outputChannel.info(`[DB] Schema preview: ${preview.schemas.length} schemas, ${preview.totalObjects} total objects`);
+
+  await context.workspaceState.update('lastDbSourceName', sourceName);
+  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
+
+  const config = await readExtensionConfig();
+  const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
+  panel.webview.postMessage({
+    type: 'db-schema-preview',
+    preview,
+    config,
+    sourceName,
+    lastSelectedSchemas,
+  });
+}
+
+/**
+ * Phase 2: Reconnect, run filtered DMV queries for selected schemas,
+ * build full model, send to webview.
+ */
+async function runDbPhase2(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  connectionUri: string,
+  schemas: string[],
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  progress.report({ message: 'Loading queries...' });
+  const queries = await loadDmvQueries(outputChannel, context.extensionUri);
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  const resultMap = await executeDmvQueriesFiltered(
     connectionUri,
     queries,
+    schemas,
     outputChannel,
     (step, total, label) => {
       progress.report({ message: `Query ${step}/${total}: ${label}`, increment: Math.round(100 / total) });
@@ -624,6 +736,63 @@ async function runDbExtraction(
   const model = buildModelFromDmv(dmvResults);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   outputChannel.info(`[DB] Model built: ${model.nodes.length} nodes, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
+
+  const sourceName = context.workspaceState.get<string>('lastDbSourceName') || 'Database';
+  const config = await readExtensionConfig();
+  panel.webview.postMessage({
+    type: 'db-model',
+    model,
+    config,
+    sourceName,
+  });
+}
+
+/**
+ * Fallback: full extraction in one shot (used when schema-preview query is missing
+ * from custom YAML).
+ */
+async function runDbFullExtraction(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  connectionUri: string,
+  connectionInfo: IConnectionInfo,
+  queries: import('./engine/connectionManager').DmvQuery[],
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
+  const dataQueries = queries.filter(q => q.name !== 'schema-preview');
+
+  const resultMap = await executeDmvQueries(
+    connectionUri,
+    dataQueries,
+    outputChannel,
+    (step, total, label) => {
+      progress.report({ message: `Query ${step}/${total}: ${label}`, increment: Math.round(100 / total) });
+      panel.webview.postMessage({ type: 'db-progress', step, total, label });
+    },
+  );
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  for (const [name, queryResult] of resultMap) {
+    const missing = validateQueryResult(name, queryResult);
+    if (missing.length > 0) {
+      throw new Error(`Query '${name}' is missing required columns: ${missing.join(', ')}.`);
+    }
+  }
+
+  const dmvResults: DmvResults = {
+    nodes: resultMap.get('nodes')!,
+    columns: resultMap.get('columns')!,
+    dependencies: resultMap.get('dependencies')!,
+  };
+
+  progress.report({ message: 'Building model...' });
+  const model = buildModelFromDmv(dmvResults);
 
   await context.workspaceState.update('lastDbSourceName', sourceName);
   await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));

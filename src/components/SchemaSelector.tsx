@@ -64,6 +64,7 @@ export const SchemaSelector = memo(function SchemaSelector({
                 style={{ width: 8, height: 8, backgroundColor: color }}
               />
               <span className="text-xs flex-1 truncate">{schema.name}</span>
+              <span className="text-[10px] tabular-nums ln-text-muted">{schema.nodeCount}</span>
             </label>
           );
         })}

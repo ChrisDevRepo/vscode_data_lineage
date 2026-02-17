@@ -179,6 +179,79 @@ export async function executeDmvQueries(
   return results;
 }
 
+// ─── Schema-Filtered Query Execution (Phase 2) ─────────────────────────────
+
+/** Column to filter on for each Phase 2 query */
+const SCHEMA_FILTER_COLUMNS: Record<string, string> = {
+  nodes: 'schema_name',
+  columns: 'schema_name',
+  dependencies: 'referencing_schema',
+};
+
+/**
+ * Wrap a DMV query as a subquery with a WHERE schema filter.
+ * Strips trailing ORDER BY (SQL Server disallows ORDER BY in subqueries
+ * without TOP/OFFSET), then wraps as `SELECT * FROM (inner) AS _sub WHERE ...`.
+ */
+export function wrapWithSchemaFilter(
+  sql: string,
+  schemaColumn: string,
+  schemas: string[],
+): string {
+  // Strip trailing ORDER BY clause (anchored to end-of-string)
+  const stripped = sql.replace(/\s+ORDER\s+BY\s+[\s\S]*$/i, '');
+  // Escape single quotes in schema names for SQL injection safety
+  const schemaList = schemas.map(s => `'${s.replace(/'/g, "''")}'`).join(', ');
+  return `SELECT * FROM (\n${stripped}\n) AS _sub\nWHERE _sub.${schemaColumn} IN (${schemaList})`;
+}
+
+/**
+ * Execute Phase 2 DMV queries with schema filtering.
+ * Wraps each query (except schema-preview) as a subquery with WHERE schema filter.
+ */
+export async function executeDmvQueriesFiltered(
+  connectionUri: string,
+  queries: DmvQuery[],
+  schemas: string[],
+  outputChannel: vscode.LogOutputChannel,
+  onProgress?: (step: number, total: number, label: string) => void,
+): Promise<Map<string, SimpleExecuteResult>> {
+  const api = await getMssqlApi(outputChannel);
+
+  if (!api.connectionSharing) {
+    throw new Error('MSSQL extension does not expose connectionSharing API. Please update to v1.34+.');
+  }
+
+  // Phase 2 queries only (exclude schema-preview)
+  const phase2Queries = queries.filter(q => q.name !== 'schema-preview');
+  const results = new Map<string, SimpleExecuteResult>();
+  const total = phase2Queries.length;
+
+  for (let i = 0; i < phase2Queries.length; i++) {
+    const query = phase2Queries[i];
+    const step = i + 1;
+    const schemaCol = SCHEMA_FILTER_COLUMNS[query.name];
+
+    // Wrap with schema filter if we know the column, otherwise run unfiltered
+    const sql = schemaCol
+      ? wrapWithSchemaFilter(query.sql, schemaCol, schemas)
+      : query.sql;
+
+    onProgress?.(step, total, query.name);
+    outputChannel.info(`[DB] Executing filtered query: ${query.name} (${step}/${total})...`);
+    outputChannel.debug(`[DB] SQL:\n${sql}`);
+
+    const start = Date.now();
+    const result = await api.connectionSharing.executeSimpleQuery(connectionUri, sql);
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+
+    outputChannel.info(`[DB] Query '${query.name}' returned ${result.rowCount} rows (${elapsed}s)`);
+    results.set(query.name, result);
+  }
+
+  return results;
+}
+
 /**
  * Disconnect from a database.
  */
