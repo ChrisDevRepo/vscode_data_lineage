@@ -11,6 +11,8 @@ export type StatusMessage = {
 
 export type LoadingContext = 'dacpac' | 'database' | null;
 
+export type LastSource = { type: 'dacpac' | 'database'; name: string };
+
 export interface DacpacLoaderState {
   model: DacpacModel | null;
   schemaPreview: SchemaPreview | null;
@@ -19,17 +21,15 @@ export interface DacpacLoaderState {
   loadingContext: LoadingContext;
   fileName: string | null;
   status: StatusMessage | null;
-  lastDacpacName: string | null;
-  lastDbSourceName: string | null;
+  lastSource: LastSource | null;
   mssqlAvailable: boolean | null;
   pendingAutoVisualize: boolean;
   pendingVisualize: boolean;
   openFile: () => void;
   resetToStart: () => void;
-  loadLast: () => void;
+  reopenLast: () => void;
   loadDemo: () => void;
   connectToDatabase: () => void;
-  reconnectToDatabase: () => void;
   cancelLoading: () => void;
   clearAutoVisualize: () => void;
   clearPendingVisualize: () => void;
@@ -48,8 +48,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [loadingContext, setLoadingContext] = useState<LoadingContext>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusMessage | null>(null);
-  const [lastDacpacName, setLastDacpacName] = useState<string | null>(null);
-  const [lastDbSourceName, setLastDbSourceName] = useState<string | null>(null);
+  const [lastSource, setLastSource] = useState<LastSource | null>(null);
   const [mssqlAvailable, setMssqlAvailable] = useState<boolean | null>(null);
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
@@ -145,13 +144,12 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
       if (msg.type === 'config-only') {
         if (msg.config) applyConfig(msg.config);
-        if (msg.lastDacpacName) setLastDacpacName(msg.lastDacpacName);
-        if (msg.lastDbSourceName) setLastDbSourceName(msg.lastDbSourceName);
+        if (msg.lastSource) setLastSource(msg.lastSource);
         return;
       }
 
       if (msg.type === 'last-dacpac-gone') {
-        setLastDacpacName(null);
+        setLastSource(null);
         setIsLoading(false);
         setLoadingContext(null);
         setStatus({ text: 'Previously opened file is no longer available.', type: 'warning' });
@@ -182,7 +180,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       if (msg.type === 'db-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
-        setLastDbSourceName(name);
+        setLastSource({ type: 'database', name });
         cachedElementsRef.current = null; // DB path doesn't use element cache
         applySchemaPreview(msg.preview, name, msg.lastSelectedSchemas);
         setIsLoading(false);
@@ -194,7 +192,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       if (msg.type === 'db-model') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
-        setLastDbSourceName(name);
+        setLastSource({ type: 'database', name });
         applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`, msg.lastSelectedSchemas);
         setIsLoading(false);
         setLoadingContext(null);
@@ -217,7 +215,9 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         setIsLoading(true);
         setLoadingContext('dacpac');
         setStatus(null);
-        setFileName(msg.fileName || 'dacpac');
+        const name = msg.fileName || 'dacpac';
+        setFileName(name);
+        setLastSource({ type: 'dacpac', name });
         try {
           const buffer = new Uint8Array(msg.data).buffer;
 
@@ -309,12 +309,19 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     cachedElementsRef.current = null;
   }, []);
 
-  const loadLast = useCallback(() => {
+  const reopenLast = useCallback(() => {
+    if (!lastSource) return;
     setIsLoading(true);
-    setLoadingContext('dacpac');
     setStatus(null);
-    vscodeApi.postMessage({ type: 'load-last-dacpac' });
-  }, [vscodeApi]);
+    if (lastSource.type === 'dacpac') {
+      setLoadingContext('dacpac');
+      vscodeApi.postMessage({ type: 'load-last-dacpac' });
+    } else {
+      setLoadingContext('database');
+      setStatus({ text: 'Reconnecting to database...', type: 'info' });
+      vscodeApi.postMessage({ type: 'db-reconnect' });
+    }
+  }, [vscodeApi, lastSource]);
 
   const loadDemo = useCallback(() => {
     setIsLoading(true);
@@ -328,13 +335,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setLoadingContext('database');
     setStatus({ text: 'Connecting to database...', type: 'info' });
     vscodeApi.postMessage({ type: 'db-connect' });
-  }, [vscodeApi]);
-
-  const reconnectToDatabase = useCallback(() => {
-    setIsLoading(true);
-    setLoadingContext('database');
-    setStatus({ text: 'Reconnecting to database...', type: 'info' });
-    vscodeApi.postMessage({ type: 'db-reconnect' });
   }, [vscodeApi]);
 
   const cancelLoading = useCallback(() => {
@@ -372,9 +372,9 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, []);
 
   return {
-    model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastDacpacName, lastDbSourceName,
+    model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastSource,
     mssqlAvailable, pendingAutoVisualize, pendingVisualize,
-    openFile, resetToStart, loadLast, loadDemo, connectToDatabase, reconnectToDatabase, cancelLoading,
+    openFile, resetToStart, reopenLast, loadDemo, connectToDatabase, cancelLoading,
     clearAutoVisualize, clearPendingVisualize, visualize,
     toggleSchema, selectAllSchemas, clearAllSchemas,
   };

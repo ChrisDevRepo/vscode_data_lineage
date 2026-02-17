@@ -57,9 +57,9 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
   const vscodeApi = useVsCode();
   const [logoFailed, setLogoFailed] = useState(false);
   const {
-    model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastDacpacName, lastDbSourceName,
+    model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastSource,
     mssqlAvailable,
-    openFile, resetToStart, loadLast, loadDemo, connectToDatabase, reconnectToDatabase, cancelLoading,
+    openFile, resetToStart, reopenLast, loadDemo, connectToDatabase, cancelLoading,
     visualize, toggleSchema, selectAllSchemas, clearAllSchemas,
   } = loader;
 
@@ -151,13 +151,19 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
             </div>
           )}
 
-          {!hasSource && !isLoading && lastDacpacName && (
+          {!hasSource && !isLoading && lastSource && (
             <Button
               variant="primary"
-              onClick={loadLast}
+              onClick={reopenLast}
+              disabled={lastSource.type === 'database' && mssqlAvailable !== true}
               className="w-full"
             >
-              Reopen {lastDacpacName}
+              {lastSource.type === 'database' && (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mr-2 flex-shrink-0">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                </svg>
+              )}
+              Reopen {lastSource.name}
             </Button>
           )}
 
@@ -168,20 +174,6 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
               className="w-full"
             >
               Load Demo Data
-            </Button>
-          )}
-
-          {!hasSource && !isLoading && lastDbSourceName && (
-            <Button
-              variant="primary"
-              onClick={reconnectToDatabase}
-              disabled={mssqlAvailable !== true}
-              className="w-full"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mr-2 flex-shrink-0">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-              </svg>
-              Reconnect {lastDbSourceName}
             </Button>
           )}
 

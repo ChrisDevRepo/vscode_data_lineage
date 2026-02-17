@@ -211,6 +211,24 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
+function getLastSource(context: vscode.ExtensionContext): { type: 'dacpac' | 'database'; name: string } | undefined {
+  const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
+  if (sourceType === 'database') {
+    const name = context.workspaceState.get<string>('lastDbSourceName');
+    return name ? { type: 'database', name } : undefined;
+  }
+  if (sourceType === 'dacpac') {
+    const name = context.workspaceState.get<string>('lastDacpacName');
+    return name ? { type: 'dacpac', name } : undefined;
+  }
+  // Migration: if lastSourceType not set, prefer dacpac if available
+  const dacpacName = context.workspaceState.get<string>('lastDacpacName');
+  if (dacpacName) return { type: 'dacpac', name: dacpacName };
+  const dbName = context.workspaceState.get<string>('lastDbSourceName');
+  if (dbName) return { type: 'database', name: dbName };
+  return undefined;
+}
+
 // ─── Open Panel ─────────────────────────────────────────────────────────────
 
 function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = false) {
@@ -257,9 +275,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               await handleLoadDemo(panel, context, true);
             } else {
               const config = await readExtensionConfig();
-              const lastDacpacName = context.workspaceState.get<string>('lastDacpacName');
-              const lastDbSourceName = context.workspaceState.get<string>('lastDbSourceName');
-              panel.webview.postMessage({ type: 'config-only', config, lastDacpacName, lastDbSourceName });
+              const lastSource = getLastSource(context);
+              panel.webview.postMessage({ type: 'config-only', config, lastSource });
             }
             break;
           }
@@ -277,6 +294,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                 if (isDacpacTooLarge(data.byteLength)) break;
                 await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
                 await context.workspaceState.update('lastDacpacName', fileName);
+                await context.workspaceState.update('lastSourceType', 'dacpac');
                 const config = await readExtensionConfig();
                 panel.webview.postMessage({
                   type: 'dacpac-data',
@@ -317,6 +335,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             } catch {
               await context.workspaceState.update('lastDacpacPath', undefined);
               await context.workspaceState.update('lastDacpacName', undefined);
+              await context.workspaceState.update('lastSourceType', undefined);
               panel.webview.postMessage({ type: 'last-dacpac-gone' });
               outputChannel.warn(`Last dacpac no longer available: ${lastPath}`);
             }
@@ -669,6 +688,7 @@ async function runDbPhase1(
 
   await context.workspaceState.update('lastDbSourceName', sourceName);
   await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
+  await context.workspaceState.update('lastSourceType', 'database');
 
   const config = await readExtensionConfig();
   const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
@@ -796,6 +816,7 @@ async function runDbFullExtraction(
 
   await context.workspaceState.update('lastDbSourceName', sourceName);
   await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
+  await context.workspaceState.update('lastSourceType', 'database');
   const config = await readExtensionConfig();
   const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
   panel.webview.postMessage({

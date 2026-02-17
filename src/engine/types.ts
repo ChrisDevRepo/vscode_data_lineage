@@ -227,7 +227,7 @@ export interface AnalysisMode {
 // ─── Extension → Webview Messages ───────────────────────────────────────────
 
 export type ExtensionMessage =
-  | { type: 'config-only'; config: ExtensionConfig; lastDacpacName?: string; lastDbSourceName?: string }
+  | { type: 'config-only'; config: ExtensionConfig; lastSource?: { type: 'dacpac' | 'database'; name: string } }
   | { type: 'dacpac-data'; data: number[]; fileName: string; config: ExtensionConfig; lastSelectedSchemas?: string[]; autoVisualize?: boolean }
   | { type: 'last-dacpac-gone' }
   | { type: 'themeChanged'; kind: string }
