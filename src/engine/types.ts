@@ -98,6 +98,38 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
 
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
 
+// ─── Intermediate extraction format (shared by dacpac + DMV extractors) ──────
+
+export interface ColumnDef {
+  name: string;
+  type: string;
+  nullable: string;
+  extra: string;
+}
+
+export interface ExtractedObject {
+  fullName: string;       // "[Schema].[Name]"
+  type: ObjectType;
+  bodyScript?: string;
+  columns?: ColumnDef[];  // table column metadata (for table design view)
+}
+
+export interface ExtractedDependency {
+  sourceName: string;     // "[Schema].[Name]" of referencing object
+  targetName: string;     // "[Schema].[Name]" of referenced object
+}
+
+// ─── DMV type mapping (sys.objects.type codes → ObjectType) ─────────────────
+
+export const DMV_TYPE_MAP: Record<string, ObjectType> = {
+  'U':  'table',
+  'V':  'view',
+  'P':  'procedure',
+  'FN': 'function',
+  'IF': 'function',
+  'TF': 'function',
+};
+
 // ─── Extension Config (from VS Code settings) ──────────────────────────────
 
 export interface LayoutConfig {
@@ -114,6 +146,7 @@ export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
 export interface TraceConfig {
   defaultUpstreamLevels: number;
   defaultDownstreamLevels: number;
+  hideCoWriters: boolean;
 }
 
 export interface AnalysisConfig {
@@ -137,7 +170,7 @@ export const DEFAULT_CONFIG = {
   maxNodes: 500,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true },
   edgeStyle: 'default' as const,
-  trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
+  trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
   analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
 } satisfies ExtensionConfig;
 
@@ -184,3 +217,16 @@ export interface AnalysisMode {
   result: AnalysisResult;
   activeGroupId: string | null;
 }
+
+// ─── Extension → Webview Messages ───────────────────────────────────────────
+
+export type ExtensionMessage =
+  | { type: 'config-only'; config: ExtensionConfig; lastDacpacName?: string; lastDbSourceName?: string }
+  | { type: 'dacpac-data'; data: number[]; fileName: string; config: ExtensionConfig; lastSelectedSchemas?: string[]; autoVisualize?: boolean }
+  | { type: 'last-dacpac-gone' }
+  | { type: 'themeChanged'; kind: string }
+  | { type: 'mssql-status'; available: boolean }
+  | { type: 'db-progress'; step: number; total: number; label: string }
+  | { type: 'db-model'; model: DacpacModel; config: ExtensionConfig; sourceName: string; lastSelectedSchemas?: string[] }
+  | { type: 'db-error'; message: string; phase: string }
+  | { type: 'db-cancelled' };

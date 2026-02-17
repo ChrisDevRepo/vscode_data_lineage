@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
+import { ReactFlowProvider } from '@xyflow/react';
 import { ProjectSelector } from './ProjectSelector';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeContextMenu } from './NodeContextMenu';
@@ -13,7 +13,9 @@ import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, computeSchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 
-type AppView = 'selector' | 'graph';
+type AppView = 'selector' | 'graph' | 'loading';
+
+const REBUILD_DELAY_MS = 400;
 
 interface ContextMenuState {
   x: number;
@@ -26,12 +28,12 @@ interface ContextMenuState {
 
 export function App() {
   const vscodeApi = useVsCode();
-  const [view, setView] = useState<AppView>('selector');
+  const isAutoVisualize = document.body.dataset.autoVisualize === 'true';
+  const [view, setView] = useState<AppView>(isAutoVisualize ? 'loading' : 'selector');
   const [model, setModel] = useState<DacpacModel | null>(null);
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
-  // Single source of truth for filter state
   const [filter, setFilter] = useState<FilterState>({
     schemas: new Set(),
     types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
@@ -59,7 +61,7 @@ export function App() {
         categoryCounts: result.categoryCounts,
       });
     }
-  }, []);
+  }, [vscodeApi]);
 
   const dacpacLoader = useDacpacLoader(applyConfig);
 
@@ -78,7 +80,9 @@ export function App() {
 
       // Create trimmed model: only selected schemas with exclusions applied
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
-      trimmed = applyExclusionPatterns(trimmed, config.excludePatterns);
+      trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, (msg) => {
+        vscodeApi.postMessage({ type: 'error', error: msg });
+      });
       trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
 
       setModel(trimmed);
@@ -89,6 +93,15 @@ export function App() {
     },
     [filter, rebuild, config]
   );
+
+  // Auto-visualize: when triggered from sidebar "Open Demo" command, skip schema selector
+  useEffect(() => {
+    if (dacpacLoader.pendingAutoVisualize && dacpacLoader.model && !dacpacLoader.isLoading) {
+      const allSchemas = new Set(dacpacLoader.model.schemas.map(s => s.name));
+      handleVisualize(dacpacLoader.model, allSchemas);
+      dacpacLoader.clearAutoVisualize();
+    }
+  }, [dacpacLoader.pendingAutoVisualize, dacpacLoader.model, dacpacLoader.isLoading, handleVisualize, dacpacLoader]);
 
   const getResetFilter = (m: DacpacModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
@@ -136,7 +149,7 @@ export function App() {
       setTimeout(() => {
         rebuild(model, filter, config);
         setIsRebuilding(false);
-      }, 400);
+      }, REBUILD_DELAY_MS);
     }
   }, [vscodeApi, model, filter, config, rebuild]);
 
@@ -303,7 +316,7 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  // ─── Analysis Mode ──────────────────────────────────────────────────────
+  // Analysis Mode
 
   const openAnalysis = useCallback((type: AnalysisType) => {
     // End any active trace / close detail search
@@ -336,7 +349,7 @@ export function App() {
       const result = runAnalysis(graph, 'orphans', config.analysis, config.maxNodes);
       setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
     }
-  }, [graph, analysisMode, config.analysis]);
+  }, [graph, analysisMode, config.analysis, config.maxNodes]);
 
   const closeAnalysis = useCallback(() => {
     // Clear analysis overlay — same restore as leaving trace mode
@@ -420,6 +433,10 @@ export function App() {
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
+
+  if (view === 'loading') {
+    return null;
+  }
 
   if (view === 'selector') {
     return <ProjectSelector onVisualize={handleVisualize} config={config} loader={dacpacLoader} />;

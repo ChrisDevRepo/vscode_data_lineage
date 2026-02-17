@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { CloseIcon } from './ui/CloseIcon';
 
 interface SidePanelProps {
   title: string;
@@ -18,8 +19,10 @@ export function SidePanel({ title, icon, onClose, children }: SidePanelProps) {
                 style={{ color: 'var(--ln-sidebar-header-fg)' }}>{title}</span>
         </div>
         <button onClick={onClose}
-                className="text-xs opacity-60 hover:opacity-100 cursor-pointer"
-                style={{ color: 'var(--ln-fg)' }}>✕</button>
+                className="opacity-60 hover:opacity-100 cursor-pointer"
+                style={{ color: 'var(--ln-fg)' }}>
+          <CloseIcon className="w-3.5 h-3.5" />
+        </button>
       </div>
       {children}
     </div>

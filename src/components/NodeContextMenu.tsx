@@ -93,7 +93,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
         <div className="my-1 ln-border-top" />
 
         <button
-          onClick={() => { navigator.clipboard.writeText(`[${schema}].[${nodeName}]`); onClose(); }}
+          onClick={() => { navigator.clipboard.writeText(`[${schema}].[${nodeName}]`).catch(() => {}); onClose(); }}
           className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
           title="Copy [schema].[name] to clipboard"
         >

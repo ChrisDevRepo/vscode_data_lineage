@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
+import { useVsCode } from '../contexts/VsCodeContext';
 
 import { CustomNode, type CustomNodeData } from './CustomNode';
 import { Legend } from './Legend';
@@ -33,6 +34,10 @@ import { getSchemaColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
+
+const FIT_VIEW_PADDING = 0.15;
+const FIT_VIEW_DURATION = 800;
+const AUTO_FIT_DELAY_MS = 100;
 
 interface GraphCanvasProps {
   flowNodes: FlowNode<CustomNodeData>[];
@@ -112,6 +117,7 @@ export function GraphCanvas({
   isRebuilding = false,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
+  const vscodeApi = useVsCode();
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -121,7 +127,7 @@ export function GraphCanvas({
   );
 
   const handleFitView = useCallback(() => {
-    fitView({ padding: 0.15, duration: 800 });
+    fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }, [fitView]);
 
   const minimapNodeColor = useCallback(
@@ -129,29 +135,31 @@ export function GraphCanvas({
     []
   );
 
+  // Zoom and center on a specific node
+  const zoomToNode = useCallback((nodeId: string) => {
+    setTimeout(() => {
+      const targetNode = getNode(nodeId);
+      if (targetNode?.position) {
+        setCenter(
+          targetNode.position.x + NODE_WIDTH / 2,
+          targetNode.position.y + NODE_HEIGHT / 2,
+          { zoom: 0.8, duration: 800 }
+        );
+      }
+    }, 100);
+  }, [getNode, setCenter]);
+
   // Execute search: find node and zoom to it
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const foundNode = schema
       ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
       : flowNodes.find(n => n.data.label === name);
-    
+
     if (foundNode) {
-      // Highlight the node (add yellow border)
       onNodeClick(foundNode.id);
-      
-      // Zoom and center on the node
-      setTimeout(() => {
-        const targetNode = getNode(foundNode.id);
-        if (targetNode?.position) {
-          setCenter(
-            targetNode.position.x + NODE_WIDTH / 2,
-            targetNode.position.y + NODE_HEIGHT / 2,
-            { zoom: 0.8, duration: 800 }
-          );
-        }
-      }, 100);
+      zoomToNode(foundNode.id);
     }
-  }, [flowNodes, getNode, setCenter, onNodeClick]);
+  }, [flowNodes, zoomToNode, onNodeClick]);
 
   // Export current graph to Draw.io format
   const handleExportDrawio = useCallback(() => {
@@ -166,25 +174,23 @@ export function GraphCanvas({
       a.click();
       URL.revokeObjectURL(url);
     }).catch((err) => {
-      console.error('[Data Lineage] Draw.io export failed:', err);
+      vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [flowNodes, flowEdges, availableSchemas, filter.schemas]);
+  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, vscodeApi]);
 
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
   useEffect(() => {
     const timer = setTimeout(() => {
-      fitView({ padding: 0.15, duration: 800 });
-    }, 100);
+      fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+    }, AUTO_FIT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [flowNodes, fitView]);
 
-  // ── Local state: source of truth for positions (survives highlight changes) ──
+  // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
 
-  // Sync from upstream ONLY when the graph data itself changes (rebuild/filter/trace)
-  // We use flowNodes reference identity — it only changes on rebuild, not on highlight
   useEffect(() => {
     setLocalNodes(flowNodes);
   }, [flowNodes]);
@@ -261,6 +267,12 @@ export function GraphCanvas({
     });
   }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
 
+  // Stable allNodes list for autocomplete/search (only changes when displayNodes changes)
+  const allNodes = useMemo(
+    () => displayNodes.map(n => ({ id: n.id, name: n.data.label, schema: n.data.schema, type: n.data.objectType })),
+    [displayNodes],
+  );
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <Toolbar
@@ -288,12 +300,7 @@ export function GraphCanvas({
         onOpenAnalysis={onOpenAnalysis}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
-        allNodes={displayNodes.map(n => ({
-          id: n.id,
-          name: n.data.label,
-          schema: n.data.schema,
-          type: n.data.objectType
-        }))}
+        allNodes={allNodes}
         metrics={metrics}
       />
 
@@ -329,12 +336,7 @@ export function GraphCanvas({
       {(trace.mode === 'pathfinding' || trace.mode === 'path-applied') && trace.selectedNodeId && onApplyPath && (
         <PathFinderBar
           sourceNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
-          allNodes={displayNodes.map(n => ({
-            id: n.id,
-            name: n.data.label,
-            schema: n.data.schema,
-            type: n.data.objectType,
-          }))}
+          allNodes={allNodes}
           pathResult={trace.mode === 'path-applied' ? {
             found: true,
             nodeCount: trace.tracedNodeIds.size,
@@ -436,16 +438,7 @@ export function GraphCanvas({
                       })}
                       onResultClick={(nodeId) => {
                         onNodeClick(nodeId);
-                        setTimeout(() => {
-                          const targetNode = getNode(nodeId);
-                          if (targetNode?.position) {
-                            setCenter(
-                              targetNode.position.x + NODE_WIDTH / 2,
-                              targetNode.position.y + NODE_HEIGHT / 2,
-                              { zoom: 0.8, duration: 800 }
-                            );
-                          }
-                        }, 100);
+                        zoomToNode(nodeId);
                       }}
                     />
                   ) : null}

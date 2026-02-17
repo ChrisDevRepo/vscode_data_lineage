@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { ObjectType } from '../engine/types';
 import { TYPE_LABELS, TYPE_COLORS } from '../utils/schemaColors';
 import { Button } from './ui/Button';
@@ -16,13 +16,22 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
 }: TypeFilterDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
+
   return (
     <div className="relative">
       <Button
         onClick={() => setIsOpen(!isOpen)}
         variant="icon"
         title="Filter Types"
-        style={isOpen ? { background: 'var(--vscode-toolbar-activeBackground)' } : undefined}
+        style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

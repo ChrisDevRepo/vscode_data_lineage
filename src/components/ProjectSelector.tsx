@@ -58,8 +58,10 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
   const vscodeApi = useVsCode();
   const [logoFailed, setLogoFailed] = useState(false);
   const {
-    model, selectedSchemas, isLoading, fileName, status, lastDacpacName,
-    openFile, loadLast, loadDemo, toggleSchema, selectAllSchemas, clearAllSchemas,
+    model, selectedSchemas, isLoading, loadingContext, fileName, status, lastDacpacName, lastDbSourceName,
+    mssqlAvailable,
+    openFile, resetToStart, loadLast, loadDemo, connectToDatabase, cancelLoading,
+    toggleSchema, selectAllSchemas, clearAllSchemas,
   } = loader;
 
   const selectedCount = model
@@ -89,18 +91,26 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
         </div>
 
         <div className="px-4 py-4 space-y-4">
-          {/* File picker */}
+          {/* File picker / loading indicator */}
           <div>
             <label className="block text-xs font-medium mb-1.5 ln-text">Database Project</label>
             <div
-              className="flex items-center gap-3 px-3 py-2.5 rounded cursor-pointer transition-colors ln-file-picker"
-              onClick={openFile}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded transition-colors ln-file-picker ${isLoading ? 'cursor-default' : 'cursor-pointer'}`}
+              onClick={isLoading ? undefined : model ? resetToStart : openFile}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-              </svg>
+              {isLoading && loadingContext === 'database' ? (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted animate-pulse">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+              )}
               {isLoading ? (
-                <span className="text-xs ln-text-muted">Parsing...</span>
+                <span className="text-xs ln-text-muted">
+                  {loadingContext === 'database' ? 'Connecting to database...' : 'Parsing...'}
+                </span>
               ) : fileName ? (
                 <div className="flex-1 min-w-0">
                   <span className="text-xs font-medium truncate block ln-text">{fileName}</span>
@@ -108,9 +118,20 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
               ) : (
                 <span className="text-xs ln-text-placeholder">Select a .dacpac file...</span>
               )}
-              {fileName && <span className="text-[10px] ln-text-muted">Change</span>}
+              {!isLoading && fileName && <span className="text-[10px] ln-text-muted">Change</span>}
             </div>
           </div>
+
+          {/* Cancel button during loading */}
+          {isLoading && (
+            <Button
+              variant="ghost"
+              onClick={cancelLoading}
+              className="w-full"
+            >
+              Cancel
+            </Button>
+          )}
 
           {/* Quick actions */}
           {!model && !isLoading && (
@@ -138,6 +159,35 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
               className="w-full"
             >
               Load Demo Data
+            </Button>
+          )}
+
+          {!model && !isLoading && lastDbSourceName && (
+            <Button
+              variant="primary"
+              onClick={connectToDatabase}
+              disabled={mssqlAvailable !== true}
+              className="w-full"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mr-2 flex-shrink-0">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+              </svg>
+              Reconnect {lastDbSourceName}
+            </Button>
+          )}
+
+          {!model && !isLoading && (
+            <Button
+              variant="secondary"
+              onClick={connectToDatabase}
+              disabled={mssqlAvailable !== true}
+              title={mssqlAvailable === false ? 'Install the MSSQL extension (ms-mssql.mssql) to connect to a live database' : undefined}
+              className="w-full"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mr-2 flex-shrink-0">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+              </svg>
+              Connect to Database
             </Button>
           )}
 

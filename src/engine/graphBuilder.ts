@@ -139,7 +139,8 @@ function filterCoWriters(
 export function traceNode(
   graph: Graph,
   nodeId: string,
-  mode: 'upstream' | 'downstream' | 'both'
+  mode: 'upstream' | 'downstream' | 'both',
+  hideCoWriters = true
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
@@ -164,7 +165,7 @@ export function traceNode(
   }
 
   const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
-  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
+  return hideCoWriters ? filterCoWriters(graph, nodeId, nodeIds, edgeIds) : { nodeIds, edgeIds };
 }
 
 /**
@@ -175,7 +176,8 @@ export function traceNodeWithLevels(
   graph: Graph,
   nodeId: string,
   upstreamLevels: number,
-  downstreamLevels: number
+  downstreamLevels: number,
+  hideCoWriters = true
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
@@ -203,7 +205,7 @@ export function traceNodeWithLevels(
   }
 
   const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
-  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
+  return hideCoWriters ? filterCoWriters(graph, nodeId, nodeIds, edgeIds) : { nodeIds, edgeIds };
 }
 
 /**

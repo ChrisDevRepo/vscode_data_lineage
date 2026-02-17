@@ -1,0 +1,61 @@
+version: 1
+description: "Read-only catalog queries for Data Lineage Viz"
+required_permission: "VIEW DEFINITION"
+platforms: [SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool]
+
+queries:
+  - name: nodes
+    description: "All user objects + DDL definitions (combined via LEFT JOIN)"
+    sql: |
+      SELECT
+        s.name AS schema_name,
+        o.name AS object_name,
+        o.type AS type_code,
+        m.definition AS body_script
+      FROM sys.objects o
+      INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
+      WHERE o.type IN ('U','V','P','FN','IF','TF')
+        AND o.is_ms_shipped = 0
+        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+      ORDER BY s.name, o.name
+
+  - name: columns
+    description: "Column metadata for table DDL preview"
+    sql: |
+      SELECT
+        s.name AS schema_name,
+        o.name AS table_name,
+        c.column_id AS ordinal,
+        c.name AS column_name,
+        t.name AS type_name,
+        c.max_length,
+        c.precision,
+        c.scale,
+        c.is_nullable,
+        c.is_identity,
+        c.is_computed
+      FROM sys.columns c
+      INNER JOIN sys.objects o ON c.object_id = o.object_id
+      INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
+      WHERE o.type = 'U'
+        AND o.is_ms_shipped = 0
+        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+      ORDER BY s.name, o.name, c.column_id
+
+  - name: dependencies
+    description: "Object-level dependencies"
+    sql: |
+      SELECT
+        s1.name AS referencing_schema,
+        o1.name AS referencing_name,
+        COALESCE(d.referenced_schema_name, s1.name) AS referenced_schema,
+        d.referenced_entity_name AS referenced_name
+      FROM sys.sql_expression_dependencies d
+      INNER JOIN sys.objects o1 ON d.referencing_id = o1.object_id
+      INNER JOIN sys.schemas s1 ON o1.schema_id = s1.schema_id
+      WHERE d.referenced_id IS NOT NULL
+        AND o1.is_ms_shipped = 0
+        AND s1.name NOT IN ('sys','INFORMATION_SCHEMA')
+      ORDER BY referencing_schema, referencing_name

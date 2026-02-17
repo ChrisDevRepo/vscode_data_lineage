@@ -99,6 +99,10 @@
   --ln-wizard-btn-border: #3a3a4a;
   --ln-wizard-btn-hover-bg: #3a3a4e;
   --ln-wizard-hover-bg: rgba(255, 255, 255, 0.06);
+  --ln-wizard-link: #60a5fa;
+
+  /* Toolbar active */
+  --ln-toolbar-active-bg: var(--vscode-toolbar-activeBackground, rgba(0, 0, 0, 0.1));
 }
 
 /* Dark Theme Overrides */
@@ -440,7 +444,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   opacity: 0.7;
 }
 .ln-modal .ln-text-link {
-  color: #60a5fa;
+  color: var(--ln-wizard-link, #60a5fa);
 }
 .ln-modal .ln-border-bottom {
   border-color: var(--ln-wizard-border);

@@ -3,9 +3,11 @@
 ## Running Tests
 
 ```bash
-npm test                           # Run engine + parser edge-case tests
+npm test                           # Run all tests (352 total)
 npx tsx test/engine.test.ts        # Engine/integration tests only (115 tests)
-npx tsx test/parser-edge-cases.test.ts  # Syntactic parser tests only (123 tests)
+npx tsx test/parser-edge-cases.test.ts  # Syntactic parser tests only (127 tests)
+npx tsx test/graphAnalysis.test.ts      # Graph analysis tests only (59 tests)
+npx tsx test/dmvExtractor.test.ts       # DMV extractor tests only (51 tests)
 npm run test:integration           # VS Code webview integration tests
 ```
 
@@ -14,11 +16,12 @@ npm run test:integration           # VS Code webview integration tests
 | File | Tests | Purpose |
 |------|-------|---------|
 | `engine.test.ts` | 115 | Engine integration: extraction, parsing, graph, trace, security, direction |
-| `parser-edge-cases.test.ts` | 123 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
+| `parser-edge-cases.test.ts` | 127 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
+| `graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
+| `dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
 | `webview.integration.test.ts` | — | VS Code webview integration tests |
 | `runTest.ts` | — | Test runner for VS Code extension tests |
 | `suite/index.ts` | — | Mocha test suite configuration |
-| `compare-deps.ts` | — | Debug tool: compare XML BodyDependencies vs regex results per SP |
 
 ## Syntactic Parser Tests (`parser-edge-cases.test.ts`)
 
@@ -28,7 +31,7 @@ These tests verify every regex rule in `sqlBodyParser.ts` using synthetic SQL �
 |---------|-------------------|----------------|
 | 1. Preprocessing | String/comment/bracket neutralization | `clean_sql` |
 | 2. Source extraction | FROM, JOIN variants, APPLY, MERGE USING | `extract_sources_ansi`, `extract_sources_tsql_apply`, `extract_merge_using` |
-| 3. Target extraction | INSERT, UPDATE, MERGE, CTAS, SELECT INTO | `extract_targets_dml`, `extract_ctas`, `extract_select_into` |
+| 3. Target extraction | INSERT, UPDATE, MERGE, CTAS, SELECT INTO, COPY INTO, BULK INSERT | `extract_targets_dml`, `extract_ctas`, `extract_select_into`, `extract_copy_into`, `extract_bulk_insert` |
 | 4. EXEC calls | EXEC, EXECUTE, @var = proc, bare names | `extract_sp_calls` |
 | 5. UDF extraction | Inline scalar UDFs, false-positive guard | `extract_udf_calls` |
 | 6. CTE exclusion | CTE names excluded from sources | CTE helper |
@@ -42,6 +45,19 @@ These tests verify every regex rule in `sqlBodyParser.ts` using synthetic SQL �
 - **No false negatives** (missed real dependencies)
 - **Correct direction** (source vs target vs exec)
 - **Preprocessing correctness** (strings/comments don't leak through)
+
+## DMV Extractor Tests (`dmvExtractor.test.ts`)
+
+Tests the live database model builder using synthetic DMV data:
+
+| Section | What it validates |
+|---------|-------------------|
+| buildModelFromDmv | Node/edge/schema building from synthetic rows, shared helper integration |
+| Empty Database | Warning generated for empty result sets |
+| Column Validation | Required column contract enforcement, case-insensitive matching |
+| formatColumnType | Type string formatting (varchar, nvarchar, decimal, int, etc.) |
+| Duplicate Nodes | Deduplication by normalized ID |
+| Self-Reference | Self-referencing deps excluded from edges |
 
 ## Test Sections in `engine.test.ts`
 

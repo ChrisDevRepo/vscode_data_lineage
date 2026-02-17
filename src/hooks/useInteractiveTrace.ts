@@ -59,7 +59,8 @@ export function useInteractiveTrace(
       graph,
       nodeId,
       config.trace.defaultUpstreamLevels,
-      config.trace.defaultDownstreamLevels
+      config.trace.defaultDownstreamLevels,
+      config.trace.hideCoWriters
     );
 
     setTrace({
@@ -71,7 +72,7 @@ export function useInteractiveTrace(
       tracedNodeIds: nodeIds,
       tracedEdgeIds: edgeIds,
     });
-  }, [graph, config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels]);
+  }, [graph, config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels, config.trace.hideCoWriters]);
 
   // Phase 2: Apply trace with levels (filter graph, keep controls visible briefly)
   const applyTrace = useCallback(
@@ -82,7 +83,8 @@ export function useInteractiveTrace(
         graph,
         trace.selectedNodeId,
         upstreamLevels,
-        downstreamLevels
+        downstreamLevels,
+        config.trace.hideCoWriters
       );
 
       setTrace({
@@ -95,7 +97,7 @@ export function useInteractiveTrace(
         tracedEdgeIds: edgeIds,
       });
     },
-    [graph, trace.selectedNodeId]
+    [graph, trace.selectedNodeId, config.trace.hideCoWriters]
   );
 
   // Start path finding mode (from right-click "Find Path")
@@ -149,7 +151,6 @@ export function useInteractiveTrace(
     });
   }, []);
 
-  // Phase 3: End trace (clear immediately)
   const endTrace = useCallback((onComplete?: () => void) => {
     setTrace(createInitialTrace(config));
     if (onComplete) {
@@ -157,13 +158,7 @@ export function useInteractiveTrace(
     }
   }, [config]);
 
-  // Clear everything
-  const clearTrace = useCallback((onComplete?: () => void) => {
-    setTrace(createInitialTrace(config));
-    if (onComplete) {
-      setTimeout(onComplete, 0);
-    }
-  }, [config]);
+  const clearTrace = endTrace;
 
   // Memoize trace application to avoid re-rendering all nodes
   const { tracedNodes, tracedEdges } = useMemo(

@@ -196,7 +196,7 @@ function testSourceExtraction() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function testTargetExtraction() {
-  console.log('\n\u2500\u2500 3. Target extraction (INSERT/UPDATE/MERGE/CTAS/SELECT INTO) \u2500\u2500');
+  console.log('\n\u2500\u2500 3. Target extraction (INSERT/UPDATE/MERGE/CTAS/SELECT INTO/COPY INTO/BULK INSERT) \u2500\u2500');
 
   // INSERT INTO
   {
@@ -252,6 +252,34 @@ function testTargetExtraction() {
     assert(hasName(r.targets, 'T1'), 'INSERT INTO + UDF: T1 is target');
     assert(hasName(r.sources, 'dbo.udfCalc') || hasExact(r.sources, 'dbo.udfCalc'),
       'INSERT INTO + UDF: dbo.udfCalc captured as source (UDF)');
+  }
+
+  // COPY INTO (Fabric/Synapse)
+  {
+    const r = parseSqlBody(`COPY INTO [staging].[RawData] FROM 'https://storage.blob.core.windows.net/container/file.parquet'`);
+    assert(hasName(r.targets, 'RawData'), 'COPY INTO: RawData found as target');
+  }
+
+  // COPY INTO with brackets
+  {
+    const r = parseSqlBody(`COPY INTO [dbo].[FactSales]
+      FROM 'abfss://container@account.dfs.core.windows.net/data/*.csv'
+      WITH (FILE_TYPE = 'CSV', FIRSTROW = 2)`);
+    assert(hasName(r.targets, 'FactSales'), 'COPY INTO bracketed: FactSales found as target');
+  }
+
+  // BULK INSERT
+  {
+    const r = parseSqlBody(`BULK INSERT [dbo].[ImportData] FROM '\\\\server\\share\\data.csv'`);
+    assert(hasName(r.targets, 'ImportData'), 'BULK INSERT: ImportData found as target');
+  }
+
+  // BULK INSERT with options
+  {
+    const r = parseSqlBody(`BULK INSERT [staging].[RawImport]
+      FROM 'C:\\data\\export.csv'
+      WITH (FIELDTERMINATOR = ',', ROWTERMINATOR = '\\n', FIRSTROW = 2)`);
+    assert(hasName(r.targets, 'RawImport'), 'BULK INSERT with options: RawImport found as target');
   }
 }
 

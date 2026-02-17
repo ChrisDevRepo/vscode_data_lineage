@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
+import { CloseIcon } from './ui/CloseIcon';
 
 interface HelpModalProps {
   isOpen: boolean;
@@ -26,9 +27,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors ln-list-item ln-text"
               title="Close"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <CloseIcon className="w-5 h-5" />
             </button>
           </div>
           <div className="flex flex-col items-center text-center gap-4">
@@ -204,6 +203,33 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
                 <span><strong>Draw.io:</strong> editable <code>.drawio</code> file with colored nodes, edges, and schema legend</span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+              </svg>
+              <h3 className="text-lg font-semibold">Database Connection</h3>
+            </div>
+            <div className="ml-7 space-y-2 text-sm ln-text-muted">
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Connect to a live database via the <strong>MSSQL extension</strong> (<code>ms-mssql.mssql</code>)</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Requires <strong>VIEW DEFINITION</strong> permission on the database</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Supports SQL Server 2016+, Azure SQL, Fabric DW, Synapse</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Customize queries via <code>dataLineageViz.dmvQueriesFile</code> setting — see <code>docs/DMV_QUERIES.md</code> for the YAML specification</span>
               </div>
             </div>
           </section>

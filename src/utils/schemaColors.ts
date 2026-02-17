@@ -1,17 +1,13 @@
 import type { ObjectType } from '../engine/types';
 
 export const TYPE_COLORS: Record<ObjectType, {
-  bg: string;       // Light mode node background
-  bgDark: string;   // Dark mode node background
   border: string;   // Border + badge color (same in both modes)
-  text: string;     // Light mode text
-  textDark: string; // Dark mode text
   icon: string;
 }> = {
-  table:     { bg: '#eff6ff', bgDark: '#1e3a5f', border: '#3b82f6', text: '#1e40af', textDark: '#93c5fd', icon: '■' },
-  view:      { bg: '#f0fdf4', bgDark: '#14352a', border: '#22c55e', text: '#166534', textDark: '#86efac', icon: '●' },
-  procedure: { bg: '#fefce8', bgDark: '#422006', border: '#eab308', text: '#854d0e', textDark: '#fde047', icon: '▲' },
-  function:  { bg: '#fff7ed', bgDark: '#431407', border: '#f97316', text: '#9a3412', textDark: '#fdba74', icon: '◆' },
+  table:     { border: '#3b82f6', icon: '■' },
+  view:      { border: '#22c55e', icon: '●' },
+  procedure: { border: '#eab308', icon: '▲' },
+  function:  { border: '#f97316', icon: '◆' },
 };
 
 export const TYPE_LABELS: Record<ObjectType, string> = {

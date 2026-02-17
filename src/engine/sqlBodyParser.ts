@@ -96,6 +96,20 @@ const DEFAULT_RULES: ParseRule[] = [
     flags: 'gi',
     description: 'SELECT INTO target',
   },
+  {
+    name: 'extract_copy_into', enabled: true, priority: 15,
+    category: 'target',
+    pattern: '\\bCOPY\\s+INTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
+    flags: 'gi',
+    description: 'COPY INTO target (Fabric/Synapse)',
+  },
+  {
+    name: 'extract_bulk_insert', enabled: true, priority: 16,
+    category: 'target',
+    pattern: '\\bBULK\\s+INSERT\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
+    flags: 'gi',
+    description: 'BULK INSERT target (SQL Server)',
+  },
   // ── Exec calls ──
   {
     name: 'extract_sp_calls', enabled: true, priority: 8,

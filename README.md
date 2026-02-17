@@ -57,7 +57,6 @@ Search `dataLineageViz` in Settings (`Ctrl+,`):
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `maxNodes` | `500` | Maximum nodes to display (10-1000) |
-| `logLevel` | `"info"` | Log verbosity: `info` or `debug` |
 
 **Parser**
 
@@ -97,8 +96,11 @@ Search `dataLineageViz` in Settings (`Ctrl+,`):
 
 | Command | Description |
 |---------|-------------|
-| **Data Lineage: Open** | Open the visualization panel |
+| **Data Lineage: Open Wizard** | Open the visualization panel |
+| **Data Lineage: Open Demo** | Load the AdventureWorks demo |
+| **Data Lineage: Settings** | Open extension settings |
 | **Data Lineage: Create Parse Rules** | Scaffold custom parsing configuration |
+| **Data Lineage: Create DMV Queries** | Scaffold custom DMV query configuration |
 
 ## FAQ
 

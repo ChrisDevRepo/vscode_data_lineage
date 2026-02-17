@@ -3,6 +3,44 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
 import { TYPE_COLORS, hashString, SCHEMA_COLORS_LIGHT } from '../utils/schemaColors';
 
+// ─── Draw.io Cell Types ─────────────────────────────────────────────────────
+
+interface MxGeometry {
+  '@_x'?: string;
+  '@_y'?: string;
+  '@_width'?: string;
+  '@_height'?: string;
+  '@_as': string;
+  '@_relative'?: string;
+}
+
+interface MxCell {
+  '@_id': string;
+  '@_value'?: string;
+  '@_style'?: string;
+  '@_vertex'?: string;
+  '@_edge'?: string;
+  '@_source'?: string;
+  '@_target'?: string;
+  '@_parent'?: string;
+  mxGeometry?: MxGeometry;
+}
+
+interface MxObject {
+  '@_id': string;
+  '@_label': string;
+  '@_tooltip': string;
+  '@_fullName': string;
+  '@_inputCount': string;
+  '@_outputCount': string;
+  mxCell: {
+    '@_style': string;
+    '@_vertex': string;
+    '@_parent': string;
+    mxGeometry: MxGeometry;
+  };
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const GRAPH_OFFSET_X = 300;
@@ -36,8 +74,8 @@ function buildLabel(d: CustomNodeData): string {
 
 // ─── Legend builder ──────────────────────────────────────────────────────────
 
-function buildLegend(schemas: string[], startId: number): { cells: any[]; nextId: number } {
-  const cells: any[] = [];
+function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nextId: number } {
+  const cells: MxCell[] = [];
   let id = startId;
 
   if (schemas.length === 0) return { cells, nextId: id };
@@ -102,7 +140,7 @@ function buildLegend(schemas: string[], startId: number): { cells: any[]; nextId
 
 // ─── Edge builder ────────────────────────────────────────────────────────────
 
-function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: string): any {
+function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: string): MxCell {
   const isBidi = edge.id.includes('↔');
 
   let style =
@@ -150,8 +188,8 @@ export function exportToDrawio(
   nextId = legend.nextId;
 
   // 2. Nodes (as <object> elements for metadata) + color band child cells
-  const nodeObjects: any[] = [];
-  const colorBandCells: any[] = [];
+  const nodeObjects: MxObject[] = [];
+  const colorBandCells: MxCell[] = [];
   for (const node of nodes) {
     const d = node.data as CustomNodeData;
     const nodeId = String(nextId++);
@@ -204,7 +242,7 @@ export function exportToDrawio(
   }
 
   // 3. Edges
-  const edgeCells: any[] = [];
+  const edgeCells: MxCell[] = [];
   for (const edge of edges) {
     const src = idMap.get(edge.source);
     const tgt = idMap.get(edge.target);

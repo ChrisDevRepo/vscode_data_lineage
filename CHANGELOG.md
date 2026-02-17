@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0] - 2026-02-17
+
+### Added
+- **Live Database Connection** — Connect directly via the MSSQL extension's native connection picker (`promptForConnection`). Supports SQL Server, Azure SQL, Fabric DW, and Synapse
+- **COPY INTO / BULK INSERT** — New parser rules for Fabric/Synapse and SQL Server bulk-load targets
+- **Sidebar** — Quick actions: Open Wizard, Open Demo, Settings
+- **Auto-Visualize Demo** — Sidebar "Open Demo" skips schema selection and goes directly to the graph
+- **Co-Writer Filter Setting** — New `trace.hideCoWriters` setting (default: on) to control whether co-writers are hidden in trace results
+
+### Changed
+- Removed `dataLineageViz.connections` setting — connections are now managed through the MSSQL extension's native picker, no JSON editing required
+
 ## [0.9.0] - 2026-02-15
 
 ### Added

@@ -84,22 +84,31 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "dataLineageViz.quickActions",
-        "contents": "Welcome to Data Lineage Viz!\n[Open](command:dataLineageViz.open)"
-      }
-    ],
     "commands": [
       {
         "command": "dataLineageViz.open",
-        "title": "Data Lineage: Open",
+        "title": "Data Lineage: Open Wizard",
         "icon": "$(graph)"
+      },
+      {
+        "command": "dataLineageViz.openDemo",
+        "title": "Data Lineage: Open Demo",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dataLineageViz.openSettings",
+        "title": "Data Lineage: Settings",
+        "icon": "$(gear)"
       },
       {
         "command": "dataLineageViz.createParseRules",
         "title": "Data Lineage: Create Parse Rules",
         "icon": "$(file-code)"
+      },
+      {
+        "command": "dataLineageViz.createDmvQueries",
+        "title": "Data Lineage: Create DMV Queries",
+        "icon": "$(database)"
       }
     ],
     "menus": {
@@ -141,6 +150,17 @@
             },
             "default": [],
             "markdownDescription": "Regex patterns to exclude objects (e.g. `_TEST$`, `^staging\\\\.`).",
+            "scope": "resource"
+          }
+        }
+      },
+      {
+        "title": "Database Connection",
+        "properties": {
+          "dataLineageViz.dmvQueriesFile": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Path to custom DMV queries YAML file. Leave empty to use built-in queries. See [dmvQueries.yaml](assets/dmvQueries.yaml) for format.",
             "scope": "resource"
           }
         }
@@ -234,6 +254,12 @@
             "maximum": 99,
             "markdownDescription": "Default downstream trace depth.",
             "scope": "resource"
+          },
+          "dataLineageViz.trace.hideCoWriters": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Hide co-writers in trace results. Co-writers are procedures that write to the same target table as the traced node but do not read from it — they are parallel writers, not part of the data lineage chain.",
+            "scope": "resource"
           }
         }
       },
@@ -276,7 +302,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/engine.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts",
+    "test": "tsx test/engine.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts",
     "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
   },
   "dependencies": {
