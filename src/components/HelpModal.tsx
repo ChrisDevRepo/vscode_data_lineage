@@ -144,7 +144,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span><strong>Unresolved</strong> — SQL references not found in the dacpac (e.g. external tables)</span>
+                <span><strong>Unresolved</strong> — SQL references not found in the data source (e.g. external tables)</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
@@ -217,7 +217,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <div className="ml-7 space-y-2 text-sm ln-text-muted">
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span>Connect to a live database via the <strong>MSSQL extension</strong> (<code>ms-mssql.mssql</code>)</span>
+                <span>Import from a database via the <strong>MSSQL extension</strong> (<code>ms-mssql.mssql</code>)</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
@@ -269,7 +269,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               <p>All settings use the <code>dataLineageViz.*</code> prefix. Open via <strong>Settings</strong> button below or <kbd className="px-1.5 py-0.5 rounded text-xs ln-kbd">Ctrl+,</kbd> and search "dataLineageViz".</p>
               <div className="p-2 rounded ln-bg-secondary">
                 <p><strong className="ln-text">Most settings apply automatically</strong> when changed in VS Code Settings.</p>
-                <p className="mt-1"><strong className="ln-text">Import settings</strong> (<code>parseRulesFile</code>, <code>excludePatterns</code>) require re-importing the dacpac — you'll see a notification when these change.</p>
+                <p className="mt-1"><strong className="ln-text">Import settings</strong> (<code>parseRulesFile</code>, <code>excludePatterns</code>) require reloading the data source — you'll see a notification when these change.</p>
               </div>
               <div>
                 <p className="font-semibold ln-text mb-1">General</p>

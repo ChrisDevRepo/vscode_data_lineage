@@ -60,7 +60,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
   const {
     model, selectedSchemas, isLoading, loadingContext, fileName, status, lastDacpacName, lastDbSourceName,
     mssqlAvailable,
-    openFile, resetToStart, loadLast, loadDemo, connectToDatabase, cancelLoading,
+    openFile, resetToStart, loadLast, loadDemo, connectToDatabase, reconnectToDatabase, cancelLoading,
     toggleSchema, selectAllSchemas, clearAllSchemas,
   } = loader;
 
@@ -116,7 +116,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
                   <span className="text-xs font-medium truncate block ln-text">{fileName}</span>
                 </div>
               ) : (
-                <span className="text-xs ln-text-placeholder">Select a .dacpac file...</span>
+                <span className="text-xs ln-text-placeholder">Select a data source...</span>
               )}
               {!isLoading && fileName && <span className="text-[10px] ln-text-muted">Change</span>}
             </div>
@@ -165,7 +165,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           {!model && !isLoading && lastDbSourceName && (
             <Button
               variant="primary"
-              onClick={connectToDatabase}
+              onClick={reconnectToDatabase}
               disabled={mssqlAvailable !== true}
               className="w-full"
             >
@@ -181,7 +181,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
               variant="secondary"
               onClick={connectToDatabase}
               disabled={mssqlAvailable !== true}
-              title={mssqlAvailable === false ? 'Install the MSSQL extension (ms-mssql.mssql) to connect to a live database' : undefined}
+              title={mssqlAvailable === false ? 'Install the MSSQL extension (ms-mssql.mssql) to import from a database' : undefined}
               className="w-full"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mr-2 flex-shrink-0">

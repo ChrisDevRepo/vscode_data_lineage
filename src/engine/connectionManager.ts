@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { IExtension, IConnectionInfo, SimpleExecuteResult } from '../types/mssql';
-import { resolveWorkspacePath } from '../utils/paths';
+import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
@@ -38,6 +38,7 @@ export async function loadDmvQueries(
         if (parsed?.queries && Array.isArray(parsed.queries)) {
           const valid = parsed.queries.filter(q => q.name && q.sql);
           if (valid.length > 0) {
+            await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
             outputChannel.info(`[DB] Loaded ${valid.length} DMV queries from ${path.basename(customPath)}`);
             return valid;
           }
@@ -112,6 +113,34 @@ export async function promptForConnection(
   outputChannel.info(`[DB] Connected`);
 
   return { connectionUri, connectionInfo };
+}
+
+/** Strip password and connectionString before persisting to workspaceState */
+export function stripSensitiveFields(info: IConnectionInfo): Omit<IConnectionInfo, 'password' | 'connectionString'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { password, connectionString, ...safe } = info;
+  return safe;
+}
+
+/**
+ * Connect directly using stored IConnectionInfo (bypasses the picker).
+ * Returns undefined on failure so the caller can fall back to promptForConnection.
+ */
+export async function connectDirect(
+  connectionInfo: IConnectionInfo,
+  outputChannel: vscode.LogOutputChannel,
+): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
+  const api = await getMssqlApi(outputChannel);
+
+  outputChannel.info(`[DB] Reconnecting to ${connectionInfo.server} / ${connectionInfo.database}...`);
+  try {
+    const connectionUri = await api.connect(connectionInfo, false);
+    outputChannel.info(`[DB] Reconnected`);
+    return { connectionUri, connectionInfo };
+  } catch (err) {
+    outputChannel.warn(`[DB] Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
+    return undefined;
+  }
 }
 
 /**

@@ -3,12 +3,13 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
-import { resolveWorkspacePath } from './utils/paths';
+import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import type { LayoutConfig, EdgeStyle, TraceConfig, AnalysisConfig } from './engine/types';
 import {
-  isMssqlAvailable, promptForConnection, loadDmvQueries,
-  executeDmvQueries, disconnectDatabase,
+  isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
+  loadDmvQueries, executeDmvQueries, disconnectDatabase,
 } from './engine/connectionManager';
+import type { IConnectionInfo } from './types/mssql';
 import { buildModelFromDmv, validateQueryResult } from './engine/dmvExtractor';
 import type { DmvResults } from './engine/dmvExtractor';
 
@@ -110,10 +111,10 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('dataLineageViz.parseRulesFile') || e.affectsConfiguration('dataLineageViz.excludePatterns')) {
         const label = e.affectsConfiguration('dataLineageViz.parseRulesFile') ? 'Parse rules' : 'Exclude patterns';
         const action = await vscode.window.showInformationMessage(
-          `${label} changed. Re-import your dacpac to apply.`,
-          'Open Dacpac'
+          `${label} changed. Reload your data source to apply.`,
+          'Reload'
         );
-        if (action === 'Open Dacpac') {
+        if (action === 'Reload') {
           vscode.commands.executeCommand('dataLineageViz.open');
         }
         return;
@@ -286,8 +287,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                 outputChannel.info(`── Opening ${fileName} ──`);
               } catch (err) {
                 const errorMsg = err instanceof Error ? err.message : String(err);
-                outputChannel.error(`Failed to read dacpac: ${errorMsg}`);
-                vscode.window.showErrorMessage(`Failed to read dacpac: ${errorMsg}`);
+                outputChannel.error(`Failed to read file: ${errorMsg}`);
+                vscode.window.showErrorMessage(`Failed to read file: ${errorMsg}`);
               }
             }
             break;
@@ -374,62 +375,51 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                     return;
                   }
                   connectionUri = result.connectionUri;
-                  const { connectionInfo } = result;
-                  const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
+                  await runDbExtraction(panel, context, connectionUri, result.connectionInfo, progress, token);
+                } catch (err) {
+                  const errorMsg = err instanceof Error ? err.message : String(err);
+                  outputChannel.error(`[DB] Extraction failed: ${errorMsg}`);
+                  panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'build' });
+                } finally {
+                  if (connectionUri) {
+                    await disconnectDatabase(connectionUri, outputChannel).catch(err => {
+                      outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
+                    });
+                  }
+                }
+              },
+            );
+            break;
+          }
+          case 'db-reconnect': {
+            await vscode.window.withProgress(
+              {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Data Lineage: Reconnecting to database',
+                cancellable: true,
+              },
+              async (progress, token) => {
+                let connectionUri: string | undefined;
+                try {
+                  const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+                  let result: { connectionUri: string; connectionInfo: IConnectionInfo } | undefined;
 
-                  progress.report({ message: 'Loading queries...' });
-                  const queries = await loadDmvQueries(outputChannel, context.extensionUri);
+                  if (storedInfo) {
+                    result = await connectDirect(storedInfo as IConnectionInfo, outputChannel);
+                  }
 
-                  if (token.isCancellationRequested) {
+                  // Fall back to picker if direct connect failed or no stored info
+                  if (!result) {
+                    outputChannel.info('[DB] Falling back to connection picker');
+                    result = await promptForConnection(outputChannel);
+                  }
+
+                  if (!result || token.isCancellationRequested) {
                     panel.webview.postMessage({ type: 'db-cancelled' });
                     return;
                   }
-
-                  const resultMap = await executeDmvQueries(
-                    connectionUri,
-                    queries,
-                    outputChannel,
-                    (step, total, label) => {
-                      progress.report({ message: `Query ${step}/${total}: ${label}`, increment: Math.round(100 / total) });
-                      panel.webview.postMessage({ type: 'db-progress', step, total, label });
-                    },
-                  );
-
-                  if (token.isCancellationRequested) {
-                    panel.webview.postMessage({ type: 'db-cancelled' });
-                    return;
-                  }
-
-                  for (const [name, queryResult] of resultMap) {
-                    const missing = validateQueryResult(name, queryResult);
-                    if (missing.length > 0) {
-                      throw new Error(`Query '${name}' is missing required columns: ${missing.join(', ')}.`);
-                    }
-                  }
-
-                  const dmvResults: DmvResults = {
-                    nodes: resultMap.get('nodes')!,
-                    columns: resultMap.get('columns')!,
-                    dependencies: resultMap.get('dependencies')!,
-                  };
-
-                  progress.report({ message: 'Building model...' });
-                  outputChannel.info('[DB] Building model from DMV results...');
-                  const start = Date.now();
-                  const model = buildModelFromDmv(dmvResults);
-                  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-                  outputChannel.info(`[DB] Model built: ${model.nodes.length} nodes, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
-
-                  await context.workspaceState.update('lastDbSourceName', sourceName);
-                  const config = await readExtensionConfig();
-                  const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
-                  panel.webview.postMessage({
-                    type: 'db-model',
-                    model,
-                    config,
-                    sourceName,
-                    lastSelectedSchemas,
-                  });
+                  connectionUri = result.connectionUri;
+                  await runDbExtraction(panel, context, connectionUri, result.connectionInfo, progress, token);
                 } catch (err) {
                   const errorMsg = err instanceof Error ? err.message : String(err);
                   outputChannel.error(`[DB] Extraction failed: ${errorMsg}`);
@@ -481,7 +471,8 @@ type WebviewMessage =
   | { type: 'show-ddl'; objectName: string; schema: string; sqlBody?: string }
   | { type: 'update-ddl'; objectName: string; schema: string; sqlBody?: string }
   | { type: 'check-mssql' }
-  | { type: 'db-connect' };
+  | { type: 'db-connect' }
+  | { type: 'db-reconnect' };
 
 // ─── Read Extension Config ──────────────────────────────────────────────────
 
@@ -559,6 +550,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
           config.parseRules = parsed;
           lastRulesLabel = `${parsed.rules.length} rules from ${path.basename(rulesPath)}`;
           outputChannel.debug(`[ParseRules] Read ${parsed.rules.length} rules from ${rulesPath}`);
+          await persistAbsolutePath('parseRulesFile', rulesPath, resolved);
         }
       } catch (err) {
         if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
@@ -576,6 +568,74 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   }
 
   return config;
+}
+
+// ─── Shared DB Extraction Logic ──────────────────────────────────────────────
+
+async function runDbExtraction(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  connectionUri: string,
+  connectionInfo: IConnectionInfo,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
+
+  progress.report({ message: 'Loading queries...' });
+  const queries = await loadDmvQueries(outputChannel, context.extensionUri);
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  const resultMap = await executeDmvQueries(
+    connectionUri,
+    queries,
+    outputChannel,
+    (step, total, label) => {
+      progress.report({ message: `Query ${step}/${total}: ${label}`, increment: Math.round(100 / total) });
+      panel.webview.postMessage({ type: 'db-progress', step, total, label });
+    },
+  );
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  for (const [name, queryResult] of resultMap) {
+    const missing = validateQueryResult(name, queryResult);
+    if (missing.length > 0) {
+      throw new Error(`Query '${name}' is missing required columns: ${missing.join(', ')}.`);
+    }
+  }
+
+  const dmvResults: DmvResults = {
+    nodes: resultMap.get('nodes')!,
+    columns: resultMap.get('columns')!,
+    dependencies: resultMap.get('dependencies')!,
+  };
+
+  progress.report({ message: 'Building model...' });
+  outputChannel.info('[DB] Building model from DMV results...');
+  const start = Date.now();
+  const model = buildModelFromDmv(dmvResults);
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  outputChannel.info(`[DB] Model built: ${model.nodes.length} nodes, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
+
+  await context.workspaceState.update('lastDbSourceName', sourceName);
+  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
+  const config = await readExtensionConfig();
+  const lastSelectedSchemas = context.workspaceState.get<string[]>('lastSelectedSchemas');
+  panel.webview.postMessage({
+    type: 'db-model',
+    model,
+    config,
+    sourceName,
+    lastSelectedSchemas,
+  });
 }
 
 // ─── Parse Rules Validation Feedback ─────────────────────────────────────────

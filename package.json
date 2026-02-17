@@ -2,7 +2,7 @@
   "name": "data-lineage-viz",
   "displayName": "Data Lineage Viz",
   "preview": true,
-  "description": "Visualize object dependencies and data lineage in SQL Server Database Projects (.dacpac)",
+  "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
   "version": "0.9.0",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
@@ -25,6 +25,9 @@
     "schema",
     "stored-procedure",
     "sql-server",
+    "azure-sql",
+    "fabric",
+    "synapse",
     "database-project",
     "data-lineage"
   ],
@@ -258,7 +261,7 @@
           "dataLineageViz.trace.hideCoWriters": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Hide co-writers in trace results. Co-writers are procedures that write to the same target table as the traced node but do not read from it — they are parallel writers, not part of the data lineage chain.",
+            "markdownDescription": "Hide sibling writers in trace results. Siblings are procedures that write to the same output table but aren't part of the traced data flow.",
             "scope": "resource"
           }
         }

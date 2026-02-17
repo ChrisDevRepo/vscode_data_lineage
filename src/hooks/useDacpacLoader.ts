@@ -27,6 +27,7 @@ export interface DacpacLoaderState {
   loadLast: () => void;
   loadDemo: () => void;
   connectToDatabase: () => void;
+  reconnectToDatabase: () => void;
   cancelLoading: () => void;
   clearAutoVisualize: () => void;
   toggleSchema: (name: string) => void;
@@ -183,8 +184,8 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
           }
         } catch (err) {
           if (gen !== loadGenRef.current) return; // stale load — discard
-          vscodeApi.postMessage({ type: 'error', error: err instanceof Error ? err.message : 'Failed to parse .dacpac' });
-          setStatus({ text: err instanceof Error ? err.message : 'Failed to parse .dacpac', type: 'error' });
+          vscodeApi.postMessage({ type: 'error', error: err instanceof Error ? err.message : 'Failed to parse file' });
+          setStatus({ text: err instanceof Error ? err.message : 'Failed to parse file', type: 'error' });
         } finally {
           if (gen === loadGenRef.current) {
             setIsLoading(false);
@@ -232,6 +233,13 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     vscodeApi.postMessage({ type: 'db-connect' });
   }, [vscodeApi]);
 
+  const reconnectToDatabase = useCallback(() => {
+    setIsLoading(true);
+    setLoadingContext('database');
+    setStatus({ text: 'Reconnecting to database...', type: 'info' });
+    vscodeApi.postMessage({ type: 'db-reconnect' });
+  }, [vscodeApi]);
+
   const cancelLoading = useCallback(() => {
     setIsLoading(false);
     setLoadingContext(null);
@@ -262,7 +270,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   return {
     model, selectedSchemas, isLoading, loadingContext, fileName, status, lastDacpacName, lastDbSourceName,
     mssqlAvailable, pendingAutoVisualize,
-    openFile, resetToStart, loadLast, loadDemo, connectToDatabase, cancelLoading, clearAutoVisualize,
+    openFile, resetToStart, loadLast, loadDemo, connectToDatabase, reconnectToDatabase, cancelLoading, clearAutoVisualize,
     toggleSchema, selectAllSchemas, clearAllSchemas,
   };
 }

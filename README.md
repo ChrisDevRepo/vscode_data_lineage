@@ -6,23 +6,33 @@
 
 > **Preview** — This extension is functional but under active development. Expect rough edges.
 
-Visualize object-level dependencies in SQL Server Database Projects (.dacpac). See how tables, views, stored procedures, and functions connect through an interactive graph.
+Visualize object-level dependencies from `.dacpac` files or by importing directly from SQL Server, Azure SQL, Fabric DW, or Synapse. See how tables, views, stored procedures, and functions connect through an interactive graph.
 
 ![Data Lineage Viz — search, trace, and preview DDL](images/viz-search-screenshot.png)
 
 ## Quick Start
 
-1. Open a workspace with a `.dacpac` file
-2. Run **Data Lineage: Open** (`Ctrl+Shift+P`)
-3. Select schemas and click **Visualize**
+**From a .dacpac file:**
+1. Run **Data Lineage: Open Wizard** (`Ctrl+Shift+P`)
+2. Select a `.dacpac` file, pick schemas, and click **Visualize**
 
-No `.dacpac` file? Click **Load Demo** in the wizard to explore the AdventureWorks sample database.
+**From a database:**
+1. Install the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql)
+2. Run **Data Lineage: Open Wizard** and click **Connect to Database**
+3. Pick a connection, select schemas, and click **Visualize**
+
+No database? Click **Load Demo** to explore the AdventureWorks sample.
 
 ## Features
 
+**Data Sources**
+- Import from SSDT and Fabric SDK `.dacpac` files
+- Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
+- Quick reconnect to your last data source
+
 **Visualization**
 - Search and navigate objects with autocomplete
-- Trace upstream and downstream dependencies
+- Trace upstream and downstream dependencies with sibling filtering
 - Find the shortest path between any two nodes
 - Schema-based color coding with interactive minimap
 
@@ -43,8 +53,8 @@ No `.dacpac` file? Click **Load Demo** in the wizard to explore the AdventureWor
 
 ## How It Works
 
-1. **Extract** — Reads `model.xml` from the .dacpac archive
-2. **Parse** — Extracts `BodyDependencies` + configurable regex patterns
+1. **Extract** — Reads `model.xml` from a .dacpac archive, or imports metadata via DMV queries from a database
+2. **Parse** — Extracts dependencies from XML metadata + configurable regex patterns
 3. **Graph** — Builds a directed graph with dagre layout
 4. **Render** — Interactive visualization with React Flow
 
@@ -83,6 +93,7 @@ Search `dataLineageViz` in Settings (`Ctrl+,`):
 |---------|---------|-------------|
 | `trace.defaultUpstreamLevels` | `3` | Default upstream trace depth (0-99) |
 | `trace.defaultDownstreamLevels` | `3` | Default downstream trace depth (0-99) |
+| `trace.hideCoWriters` | `true` | Hide sibling writers (procedures writing to the same output table) |
 
 **Analysis**
 
@@ -104,8 +115,8 @@ Search `dataLineageViz` in Settings (`Ctrl+,`):
 
 ## FAQ
 
-**Where do I get a .dacpac file?**
-A .dacpac (Data-tier Application Package) can be extracted or built from various tools including Visual Studio, VS Code, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications) for details.
+**Do I need a .dacpac file?**
+No — you can also import directly from a database using the MSSQL extension. If you prefer a .dacpac, it can be extracted or built from Visual Studio, VS Code, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications) for details.
 
 **Why are some dependencies missing?**
 Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) cannot be analyzed statically. Only compile-time dependencies are detected.

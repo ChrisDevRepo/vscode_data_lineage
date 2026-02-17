@@ -3,35 +3,18 @@
 ## [0.9.0] - 2026-02-17
 
 ### Added
-- **Live Database Connection** — Connect directly via the MSSQL extension's native connection picker (`promptForConnection`). Supports SQL Server, Azure SQL, Fabric DW, and Synapse
-- **COPY INTO / BULK INSERT** — New parser rules for Fabric/Synapse and SQL Server bulk-load targets
-- **Sidebar** — Quick actions: Open Wizard, Open Demo, Settings
-- **Auto-Visualize Demo** — Sidebar "Open Demo" skips schema selection and goes directly to the graph
-- **Co-Writer Filter Setting** — New `trace.hideCoWriters` setting (default: on) to control whether co-writers are hidden in trace results
+- **Database Import** — Import schema and dependencies from SQL Server, Azure SQL, Fabric DW, or Synapse
+- **Quick Reconnect** — Wizard remembers your last data source and offers one-click reopen or reconnect
+- **Find Path** — Right-click any node to discover the shortest path to another node
+- **Graph Analysis** — Structural insights: islands, hubs, orphans, longest paths, and cycles
+- **MiniMap** — Draggable overview map with schema-colored nodes
+- **Sidebar** — Quick access to the wizard, demo, and settings
+- **Sibling Filter** — Optionally hide unrelated procedures that write to the same table during trace
+- **COPY INTO / BULK INSERT** — Recognize bulk-load targets in Fabric, Synapse, and SQL Server
 
 ### Changed
-- Removed `dataLineageViz.connections` setting — connections are now managed through the MSSQL extension's native picker, no JSON editing required
-
-## [0.9.0] - 2026-02-15
-
-### Added
-- **Remember Last Dacpac** — Wizard remembers your last opened file and offers a one-click "Reopen" button; file picker now uses VS Code's native dialog
-- **Find Path** — Right-click any node → "Find Path" to discover the shortest connection to another node
-- **Graph Analysis** — Analyze dropdown with structural insights
-  - Islands: disconnected subgraphs
-  - Hubs: most-connected nodes
-  - Orphan Nodes: objects with no dependencies
-  - Longest Path: deepest dependency chains
-  - Cycles: circular dependencies
-- **MiniMap** — Interactive minimap with draggable viewport and schema-colored nodes
-
-### Changed
-- Consolidated utility directories, extracted shared hooks and helpers, improved type safety, and replaced hardcoded colors with theme-aware CSS variables
-- **Live Settings** — Layout, filtering, trace, and analysis settings now apply automatically when changed (no manual refresh needed)
-- **Parse Rules notification** — Changing `parseRulesFile` shows an actionable notification to re-import
-- **LogOutputChannel** — Switched to VS Code's native `LogOutputChannel` with proper severity levels; removed custom `logLevel` setting (use "Developer: Set Log Level" instead)
-- Better parse rule logging with category breakdown and consolidated import summary
-- Settings reorganized into Import, Layout, Trace, Analysis sections with `markdownDescription`
+- Settings apply automatically when changed — no manual reload needed
+- Settings reorganized into Import, Layout, Trace, and Analysis sections
 
 ## [0.8.2] - 2026-02-14
 
