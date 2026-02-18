@@ -58,7 +58,7 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
   const [logoFailed, setLogoFailed] = useState(false);
   const {
     model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastSource,
-    mssqlAvailable,
+    mssqlAvailable, isDemo,
     openFile, resetToStart, reopenLast, loadDemo, connectToDatabase, cancelLoading,
     visualize, toggleSchema, selectAllSchemas, clearAllSchemas,
   } = loader;
@@ -78,18 +78,20 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
   const overLimit = selectedCount > maxNodes;
 
   const handleVisualize = () => {
-    // Store deselected schemas so new schemas are visible on reopen
-    const allNames = schemas.map(s => s.name);
-    const deselected = allNames.filter(s => !selectedSchemas.has(s));
-    vscodeApi.postMessage({ type: 'save-schemas', deselected });
+    // Store deselected schemas so new schemas are visible on reopen (skip for demo)
+    if (!isDemo) {
+      const allNames = schemas.map(s => s.name);
+      const deselected = allNames.filter(s => !selectedSchemas.has(s));
+      vscodeApi.postMessage({ type: 'save-schemas', deselected });
+    }
     visualize(selectedSchemas);
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">
-      <div className="w-full max-w-md ln-panel" style={{ borderRadius: 6 }}>
+      <div className="w-full max-w-md ln-panel flex flex-col" style={{ borderRadius: 6, height: 520 }}>
         {/* Header */}
-        <div className="flex items-center justify-center px-4 py-4 ln-border-bottom">
+        <div className="flex items-center justify-center px-4 py-4 ln-border-bottom flex-shrink-0">
           {logoFailed ? (
             <span className="text-sm font-semibold ln-text">Data Lineage Viz</span>
           ) : (
@@ -102,7 +104,7 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
           )}
         </div>
 
-        <div className="px-4 py-4 space-y-4">
+        <div className="px-4 py-4 space-y-4 flex-1 overflow-y-auto">
           {/* File picker / loading indicator */}
           <div>
             <label className="block text-xs font-medium mb-1.5 ln-text">Database Project</label>

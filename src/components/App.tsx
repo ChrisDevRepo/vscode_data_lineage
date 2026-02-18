@@ -73,10 +73,6 @@ export function App() {
 
   const handleVisualize = useCallback(
     (dacpacModel: DacpacModel, selectedSchemas: Set<string>) => {
-      const allNames = dacpacModel.schemas.map(s => s.name);
-      const deselected = allNames.filter(s => !selectedSchemas.has(s));
-      vscodeApi.postMessage({ type: 'save-schemas', deselected });
-
       // Create trimmed model: only selected schemas with exclusions applied
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
       trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, (msg) => {

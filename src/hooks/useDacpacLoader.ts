@@ -25,6 +25,7 @@ export interface DacpacLoaderState {
   mssqlAvailable: boolean | null;
   pendingAutoVisualize: boolean;
   pendingVisualize: boolean;
+  isDemo: boolean;
   openFile: () => void;
   resetToStart: () => void;
   reopenLast: () => void;
@@ -52,6 +53,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [mssqlAvailable, setMssqlAvailable] = useState<boolean | null>(null);
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
+  const isDemoRef = useRef(false);
   const loadGenRef = useRef(0);
   const cachedElementsRef = useRef<XmlElement[] | null>(null);
 
@@ -293,6 +295,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const openFile = useCallback(() => {
+    isDemoRef.current = false;
     vscodeApi.postMessage({ type: 'open-dacpac' });
   }, [vscodeApi]);
 
@@ -312,6 +315,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   const reopenLast = useCallback(() => {
     if (!lastSource) return;
+    isDemoRef.current = false;
     setIsLoading(true);
     setStatus(null);
     if (lastSource.type === 'dacpac') {
@@ -325,6 +329,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi, lastSource]);
 
   const loadDemo = useCallback(() => {
+    isDemoRef.current = true;
     setIsLoading(true);
     setLoadingContext('dacpac');
     setStatus(null);
@@ -332,6 +337,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const connectToDatabase = useCallback(() => {
+    isDemoRef.current = false;
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Connecting to database...', type: 'info' });
@@ -375,7 +381,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   return {
     model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastSource,
-    mssqlAvailable, pendingAutoVisualize, pendingVisualize,
+    mssqlAvailable, pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current,
     openFile, resetToStart, reopenLast, loadDemo, connectToDatabase, cancelLoading,
     clearAutoVisualize, clearPendingVisualize, visualize,
     toggleSchema, selectAllSchemas, clearAllSchemas,
