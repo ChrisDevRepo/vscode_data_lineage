@@ -8,12 +8,11 @@ interface LegendProps {
 
 export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [, setThemeTick] = useState(0);
+  const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
 
-  // Re-render when VS Code theme changes so schema colors update
   useEffect(() => {
     const observer = new MutationObserver(() => {
-      setThemeTick(t => t + 1);
+      setThemeKind(document.body.getAttribute('data-vscode-theme-kind') ?? '');
     });
     observer.observe(document.body, {
       attributes: true,

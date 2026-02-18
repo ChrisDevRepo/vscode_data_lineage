@@ -15,6 +15,7 @@ import {
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
+  buildColumnDef,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { stripBrackets } from '../utils/sql';
@@ -248,35 +249,27 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
         const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
         const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
 
-        if (isComputed) {
-          cols.push({
-            name: colName,
-            type: '(computed)',
-            nullable: isNullable ? 'NULL' : 'NOT NULL',
-            extra: 'COMPUTED',
-          });
-          continue;
-        }
-
         // Resolve type from TypeSpecifier relationship
         let typeName = '?';
-        for (const colRel of asArray(colEl.Relationship)) {
-          if (colRel['@_Name'] !== 'TypeSpecifier') continue;
-          for (const tsEntry of asArray(colRel.Entry)) {
-            for (const tsEl of asArray(tsEntry.Element)) {
-              const tsProps = asArray(tsEl.Property);
-              const length = tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
-              const precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
-              const scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
-              for (const typeRel of asArray(tsEl.Relationship)) {
-                if (typeRel['@_Name'] !== 'Type') continue;
-                for (const typeEntry of asArray(typeRel.Entry)) {
-                  for (const ref of asArray(typeEntry.References as XmlReference | XmlReference[] | undefined)) {
-                    const raw = ref['@_Name'] ? stripBrackets(ref['@_Name']) : '?';
-                    typeName = raw;
-                    if (length) typeName += `(${length === '-1' ? 'max' : length})`;
-                    else if (precision && scale) typeName += `(${precision},${scale})`;
-                    else if (precision) typeName += `(${precision})`;
+        let length: string | undefined;
+        let precision: string | undefined;
+        let scale: string | undefined;
+
+        if (!isComputed) {
+          for (const colRel of asArray(colEl.Relationship)) {
+            if (colRel['@_Name'] !== 'TypeSpecifier') continue;
+            for (const tsEntry of asArray(colRel.Entry)) {
+              for (const tsEl of asArray(tsEntry.Element)) {
+                const tsProps = asArray(tsEl.Property);
+                length = tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
+                precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
+                scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
+                for (const typeRel of asArray(tsEl.Relationship)) {
+                  if (typeRel['@_Name'] !== 'Type') continue;
+                  for (const typeEntry of asArray(typeRel.Entry)) {
+                    for (const ref of asArray(typeEntry.References as XmlReference | XmlReference[] | undefined)) {
+                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']) : '?';
+                    }
                   }
                 }
               }
@@ -284,12 +277,7 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
           }
         }
 
-        cols.push({
-          name: colName,
-          type: typeName,
-          nullable: isNullable ? 'NULL' : 'NOT NULL',
-          extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
-        });
+        cols.push(buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale));
       }
     }
   }

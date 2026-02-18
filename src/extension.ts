@@ -16,6 +16,7 @@ import type { DmvResults } from './engine/dmvExtractor';
 // ─── Logging ────────────────────────────────────────────────────────────────
 
 let outputChannel: vscode.LogOutputChannel;
+let extensionUri: vscode.Uri;
 let lastRulesLabel = 'built-in rules';
 
 function getThemeClass(kind: vscode.ColorThemeKind): string {
@@ -89,6 +90,7 @@ function updateDdlIfOpen(ddlUri: vscode.Uri, message: { objectName: string; sche
 // ─── Activate ────────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
+  extensionUri = context.extensionUri;
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
   context.subscriptions.push(
@@ -261,241 +263,137 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       ddlContentMap.delete(ddlUri.toString());
     });
 
+    // ─── Message Handler Map ──────────────────────────────────────────────
+    type MessageHandlerMap = {
+      [K in WebviewMessage['type']]?: (msg: Extract<WebviewMessage, { type: K }>) => Promise<void> | void;
+    };
+
+    const handlers: MessageHandlerMap = {
+      'ready': async () => {
+        if (loadDemo) {
+          await handleLoadDemo(panel, context, true);
+        } else {
+          const config = await readExtensionConfig();
+          const lastSource = getLastSource(context);
+          panel.webview.postMessage({ type: 'config-only', config, lastSource });
+        }
+      },
+      'open-dacpac': async () => {
+        const uris = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          filters: { 'DACPAC': ['dacpac'] },
+          title: 'Select a .dacpac file',
+        });
+        if (uris && uris.length > 0) {
+          const fileUri = uris[0];
+          const fileName = path.basename(fileUri.fsPath);
+          try {
+            const data = await vscode.workspace.fs.readFile(fileUri);
+            if (isDacpacTooLarge(data.byteLength)) return;
+            await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
+            await context.workspaceState.update('lastDacpacName', fileName);
+            await context.workspaceState.update('lastSourceType', 'dacpac');
+            const config = await readExtensionConfig();
+            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, config });
+            outputChannel.info(`── Opening ${fileName} ──`);
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            outputChannel.error(`Failed to read file: ${errorMsg}`);
+            vscode.window.showErrorMessage(`Failed to read file: ${errorMsg}`);
+          }
+        }
+      },
+      'save-schemas': async (msg) => {
+        await context.workspaceState.update('lastDeselectedSchemas', msg.deselected);
+      },
+      'load-last-dacpac': async () => {
+        const lastPath = context.workspaceState.get<string>('lastDacpacPath');
+        if (!lastPath) return;
+        try {
+          const fileUri = vscode.Uri.file(lastPath);
+          const data = await vscode.workspace.fs.readFile(fileUri);
+          if (isDacpacTooLarge(data.byteLength)) return;
+          const config = await readExtensionConfig();
+          const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
+          panel.webview.postMessage({
+            type: 'dacpac-data',
+            data: Array.from(data),
+            fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
+            config,
+            lastDeselectedSchemas,
+          });
+          outputChannel.info(`── Reopening ${path.basename(lastPath)} ──`);
+        } catch {
+          await context.workspaceState.update('lastDacpacPath', undefined);
+          await context.workspaceState.update('lastDacpacName', undefined);
+          await context.workspaceState.update('lastSourceType', undefined);
+          await context.workspaceState.update('lastDeselectedSchemas', undefined);
+          panel.webview.postMessage({ type: 'last-dacpac-gone' });
+          outputChannel.warn(`Last dacpac no longer available: ${lastPath}`);
+        }
+      },
+      'load-demo': async () => { await handleLoadDemo(panel, context); },
+      'parse-rules-result': (msg) => { handleParseRulesResult(msg); },
+      'parse-stats': (msg) => { handleParseStats(msg.stats, msg.objectCount, msg.edgeCount, msg.schemaCount); },
+      'log': (msg) => { outputChannel.info(msg.text); },
+      'error': (msg) => {
+        outputChannel.error(msg.error);
+        if (msg.stack) outputChannel.debug(msg.stack);
+        vscode.window.showErrorMessage(`Data Lineage Error: ${msg.error}`);
+      },
+      'open-external': async (msg) => {
+        if (msg.url) await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+      },
+      'open-settings': () => { vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz'); },
+      'show-ddl': async (msg) => { await showDdl(ddlUri, msg); },
+      'update-ddl': (msg) => { updateDdlIfOpen(ddlUri, msg); },
+      'check-mssql': () => {
+        panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
+      },
+      'db-connect': () => withDbProgress(
+        panel, 'Data Lineage: Connecting to database',
+        () => promptForConnection(outputChannel),
+        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token),
+      ),
+      'db-reconnect': () => withDbProgress(
+        panel, 'Data Lineage: Reconnecting to database',
+        async () => {
+          const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+          if (storedInfo) {
+            const result = await connectDirect(storedInfo, outputChannel);
+            if (result) return result;
+            outputChannel.info('[DB] Falling back to connection picker');
+          }
+          return promptForConnection(outputChannel);
+        },
+        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token),
+      ),
+      'db-visualize': (msg) => withDbProgress(
+        panel, 'Data Lineage: Loading selected schemas',
+        async () => {
+          const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+          if (!storedInfo) {
+            panel.webview.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
+            return undefined;
+          }
+          const result = await connectDirect(storedInfo, outputChannel);
+          if (result) return result;
+          outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
+          return promptForConnection(outputChannel);
+        },
+        (conn, progress, token) => runDbPhase2(panel, context, conn.connectionUri, msg.schemas, progress, token),
+      ),
+    };
+
     panel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
         try {
-        switch (message.type) {
-          case 'ready': {
-            if (loadDemo) {
-              await handleLoadDemo(panel, context, true);
-            } else {
-              const config = await readExtensionConfig();
-              const lastSource = getLastSource(context);
-              panel.webview.postMessage({ type: 'config-only', config, lastSource });
-            }
-            break;
-          }
-          case 'open-dacpac': {
-            const uris = await vscode.window.showOpenDialog({
-              canSelectMany: false,
-              filters: { 'DACPAC': ['dacpac'] },
-              title: 'Select a .dacpac file',
-            });
-            if (uris && uris.length > 0) {
-              const fileUri = uris[0];
-              const fileName = path.basename(fileUri.fsPath);
-              try {
-                const data = await vscode.workspace.fs.readFile(fileUri);
-                if (isDacpacTooLarge(data.byteLength)) break;
-                await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
-                await context.workspaceState.update('lastDacpacName', fileName);
-                await context.workspaceState.update('lastSourceType', 'dacpac');
-                const config = await readExtensionConfig();
-                panel.webview.postMessage({
-                  type: 'dacpac-data',
-                  data: Array.from(data),
-                  fileName,
-                  config,
-                });
-                outputChannel.info(`── Opening ${fileName} ──`);
-              } catch (err) {
-                const errorMsg = err instanceof Error ? err.message : String(err);
-                outputChannel.error(`Failed to read file: ${errorMsg}`);
-                vscode.window.showErrorMessage(`Failed to read file: ${errorMsg}`);
-              }
-            }
-            break;
-          }
-          case 'save-schemas': {
-            await context.workspaceState.update('lastDeselectedSchemas', message.deselected);
-            break;
-          }
-          case 'load-last-dacpac': {
-            const lastPath = context.workspaceState.get<string>('lastDacpacPath');
-            if (!lastPath) return;
-            try {
-              const fileUri = vscode.Uri.file(lastPath);
-              const data = await vscode.workspace.fs.readFile(fileUri);
-              if (isDacpacTooLarge(data.byteLength)) break;
-              const config = await readExtensionConfig();
-              const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
-              panel.webview.postMessage({
-                type: 'dacpac-data',
-                data: Array.from(data),
-                fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
-                config,
-                lastDeselectedSchemas,
-              });
-              outputChannel.info(`── Reopening ${path.basename(lastPath)} ──`);
-            } catch {
-              await context.workspaceState.update('lastDacpacPath', undefined);
-              await context.workspaceState.update('lastDacpacName', undefined);
-              await context.workspaceState.update('lastSourceType', undefined);
-              await context.workspaceState.update('lastDeselectedSchemas', undefined);
-              panel.webview.postMessage({ type: 'last-dacpac-gone' });
-              outputChannel.warn(`Last dacpac no longer available: ${lastPath}`);
-            }
-            break;
-          }
-          case 'load-demo': {
-            await handleLoadDemo(panel, context);
-            break;
-          }
-          case 'parse-rules-result':
-            handleParseRulesResult(message);
-            break;
-          case 'parse-stats':
-            handleParseStats(message.stats, message.objectCount, message.edgeCount, message.schemaCount);
-            break;
-          case 'log':
-            outputChannel.info(message.text);
-            break;
-          case 'error':
-            outputChannel.error(message.error);
-            if (message.stack) outputChannel.debug(message.stack);
-            vscode.window.showErrorMessage(`Data Lineage Error: ${message.error}`);
-            break;
-          case 'open-external':
-            if (message.url) {
-              await vscode.env.openExternal(vscode.Uri.parse(message.url));
-            }
-            break;
-          case 'open-settings':
-            vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz');
-            break;
-          case 'show-ddl':
-            await showDdl(ddlUri, message);
-            break;
-          case 'update-ddl':
-            updateDdlIfOpen(ddlUri, message);
-            break;
-          case 'check-mssql': {
-            const available = isMssqlAvailable();
-            panel.webview.postMessage({ type: 'mssql-status', available });
-            break;
-          }
-          case 'db-connect': {
-            await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: 'Data Lineage: Connecting to database',
-                cancellable: true,
-              },
-              async (progress, token) => {
-                let connectionUri: string | undefined;
-                try {
-                  const result = await promptForConnection(outputChannel);
-                  if (!result || token.isCancellationRequested) {
-                    panel.webview.postMessage({ type: 'db-cancelled' });
-                    return;
-                  }
-                  connectionUri = result.connectionUri;
-                  await runDbPhase1(panel, context, connectionUri, result.connectionInfo, progress, token);
-                } catch (err) {
-                  const errorMsg = err instanceof Error ? err.message : String(err);
-                  outputChannel.error(`[DB] Phase 1 failed: ${errorMsg}`);
-                  panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'connect' });
-                } finally {
-                  if (connectionUri) {
-                    await disconnectDatabase(connectionUri, outputChannel).catch(err => {
-                      outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
-                    });
-                  }
-                }
-              },
-            );
-            break;
-          }
-          case 'db-reconnect': {
-            await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: 'Data Lineage: Reconnecting to database',
-                cancellable: true,
-              },
-              async (progress, token) => {
-                let connectionUri: string | undefined;
-                try {
-                  const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
-                  let result: { connectionUri: string; connectionInfo: IConnectionInfo } | undefined;
-
-                  if (storedInfo) {
-                    result = await connectDirect(storedInfo as IConnectionInfo, outputChannel);
-                  }
-
-                  // Fall back to picker if direct connect failed or no stored info
-                  if (!result) {
-                    outputChannel.info('[DB] Falling back to connection picker');
-                    result = await promptForConnection(outputChannel);
-                  }
-
-                  if (!result || token.isCancellationRequested) {
-                    panel.webview.postMessage({ type: 'db-cancelled' });
-                    return;
-                  }
-                  connectionUri = result.connectionUri;
-                  await runDbPhase1(panel, context, connectionUri, result.connectionInfo, progress, token);
-                } catch (err) {
-                  const errorMsg = err instanceof Error ? err.message : String(err);
-                  outputChannel.error(`[DB] Phase 1 failed: ${errorMsg}`);
-                  panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'connect' });
-                } finally {
-                  if (connectionUri) {
-                    await disconnectDatabase(connectionUri, outputChannel).catch(err => {
-                      outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
-                    });
-                  }
-                }
-              },
-            );
-            break;
-          }
-          case 'db-visualize': {
-            await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: 'Data Lineage: Loading selected schemas',
-                cancellable: true,
-              },
-              async (progress, token) => {
-                let connectionUri: string | undefined;
-                try {
-                  // Reconnect using stored connectionInfo from Phase 1
-                  const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
-                  if (!storedInfo) {
-                    panel.webview.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
-                    return;
-                  }
-
-                  let result = await connectDirect(storedInfo as IConnectionInfo, outputChannel);
-                  if (!result) {
-                    outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
-                    result = await promptForConnection(outputChannel);
-                  }
-                  if (!result || token.isCancellationRequested) {
-                    panel.webview.postMessage({ type: 'db-cancelled' });
-                    return;
-                  }
-                  connectionUri = result.connectionUri;
-                  await runDbPhase2(panel, context, connectionUri, message.schemas, progress, token);
-                } catch (err) {
-                  const errorMsg = err instanceof Error ? err.message : String(err);
-                  outputChannel.error(`[DB] Phase 2 extraction failed: ${errorMsg}`);
-                  panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'build' });
-                } finally {
-                  if (connectionUri) {
-                    await disconnectDatabase(connectionUri, outputChannel).catch(err => {
-                      outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
-                    });
-                  }
-                }
-              },
-            );
-            break;
-          }
-          default:
+          const handler = handlers[message.type] as ((msg: WebviewMessage) => Promise<void> | void) | undefined;
+          if (handler) {
+            await handler(message);
+          } else {
             outputChannel.debug(`Unknown webview message type: ${(message as { type: string }).type}`);
-        }
+          }
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           outputChannel.error(`Message handler failed for "${message.type}": ${errorMsg}`);
@@ -533,6 +431,44 @@ type WebviewMessage =
   | { type: 'db-reconnect' }
   | { type: 'db-visualize'; schemas: string[] };
 
+// ─── DB Progress Helper ─────────────────────────────────────────────────────
+
+interface DbConnectionResult { connectionUri: string; connectionInfo: IConnectionInfo }
+
+async function withDbProgress(
+  panel: vscode.WebviewPanel,
+  title: string,
+  connectFn: () => Promise<DbConnectionResult | undefined>,
+  phaseFn: (result: DbConnectionResult, progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Promise<void>,
+): Promise<void> {
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+    async (progress, token) => {
+      let connectionUri: string | undefined;
+      try {
+        const result = await connectFn();
+        if (!result || token.isCancellationRequested) {
+          panel.webview.postMessage({ type: 'db-cancelled' });
+          return;
+        }
+        connectionUri = result.connectionUri;
+        await phaseFn(result, progress, token);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const phase = title.includes('Loading') ? 'build' : 'connect';
+        outputChannel.error(`[DB] ${phase} failed: ${errorMsg}`);
+        panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase });
+      } finally {
+        if (connectionUri) {
+          await disconnectDatabase(connectionUri, outputChannel).catch(err => {
+            outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
+          });
+        }
+      }
+    },
+  );
+}
+
 // ─── Read Extension Config ──────────────────────────────────────────────────
 
 interface ExtensionConfigMessage {
@@ -548,6 +484,17 @@ interface ExtensionConfigMessage {
 function clamp(val: number, min: number, max: number, fallback: number): number {
   if (typeof val !== 'number' || isNaN(val)) return fallback;
   return Math.max(min, Math.min(max, val));
+}
+
+async function loadBuiltInParseRules(): Promise<Record<string, unknown>> {
+  const yamlUri = vscode.Uri.joinPath(extensionUri, 'assets', 'defaultParseRules.yaml');
+  const data = await vscode.workspace.fs.readFile(yamlUri);
+  const content = new TextDecoder().decode(data);
+  const parsed = yaml.load(content) as Record<string, unknown>;
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) {
+    throw new Error('Built-in defaultParseRules.yaml is invalid — missing "rules" array');
+  }
+  return parsed;
 }
 
 async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
@@ -582,11 +529,17 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     },
   };
 
-  // Load YAML parse rules if configured
+  // Load YAML parse rules — custom file if configured, otherwise built-in defaults.
+  // Single source of truth: assets/defaultParseRules.yaml (same pattern as DMV queries).
   const rulesPath = cfg.get<string>('parseRulesFile', '');
   if (!rulesPath) {
-    lastRulesLabel = 'built-in rules';
-    outputChannel.info('[ParseRules] Using built-in defaults (11 rules)');
+    try {
+      config.parseRules = await loadBuiltInParseRules();
+      lastRulesLabel = 'built-in rules';
+      outputChannel.info(`[ParseRules] Using built-in defaults (${(config.parseRules as Record<string, unknown[]>).rules.length} rules)`);
+    } catch (err) {
+      outputChannel.error(`[ParseRules] Failed to load built-in rules: ${err instanceof Error ? err.message : String(err)}`);
+    }
   } else {
     const resolved = resolveWorkspacePath(rulesPath);
     if (!resolved) {
@@ -594,6 +547,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
       vscode.window.showWarningMessage(
         `Parse rules: cannot resolve "${rulesPath}" — open a workspace folder or use an absolute path.`
       );
+      config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
     } else {
       try {
         const fileUri = vscode.Uri.file(resolved);
@@ -605,6 +559,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
           vscode.window.showWarningMessage(
             `Parse rules YAML invalid: missing "rules" array. Using built-in defaults.`
           );
+          config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
         } else {
           config.parseRules = parsed;
           lastRulesLabel = `${parsed.rules.length} rules from ${path.basename(rulesPath)}`;
@@ -622,6 +577,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
             `Failed to load parse rules: ${err instanceof Error ? err.message : String(err)}`
           );
         }
+        config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
       }
     }
   }

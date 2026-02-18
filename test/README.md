@@ -3,25 +3,52 @@
 ## Running Tests
 
 ```bash
-npm test                           # Run all tests (352 total)
-npx tsx test/engine.test.ts        # Engine/integration tests only (115 tests)
-npx tsx test/parser-edge-cases.test.ts  # Syntactic parser tests only (127 tests)
-npx tsx test/graphAnalysis.test.ts      # Graph analysis tests only (59 tests)
-npx tsx test/dmvExtractor.test.ts       # DMV extractor tests only (51 tests)
-npm run test:integration           # VS Code webview integration tests
+npm test                                       # Run all tests (327 total)
+npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (43 tests)
+npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (47 tests)
+npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (127 tests)
+npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (59 tests)
+npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (51 tests)
+npm run test:integration                       # VS Code webview integration tests
 ```
 
 ## Test Files
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `engine.test.ts` | 115 | Engine integration: extraction, parsing, graph, trace, security, direction |
+| `dacpacExtractor.test.ts` | 43 | Dacpac extraction, filtering, edge integrity, Fabric SDK, type-aware direction, CVE security, error handling |
+| `graphBuilder.test.ts` | 47 | Graph construction, dagre layout, BFS trace, cross-connection exclusion, co-writer filter |
 | `parser-edge-cases.test.ts` | 127 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
 | `dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
 | `webview.integration.test.ts` | — | VS Code webview integration tests |
 | `runTest.ts` | — | Test runner for VS Code extension tests |
 | `suite/index.ts` | — | Mocha test suite configuration |
+
+## Dacpac Extractor Tests (`dacpacExtractor.test.ts`)
+
+Tests the dacpac import pipeline end-to-end, covering both classic (Azure SQL) and SDK-style (Fabric DW) dacpacs:
+
+| Section | What it validates |
+|---------|-------------------|
+| DACPAC Extraction | Node/edge counts, schemas, object types from classic dacpac |
+| Schema Filtering | Schema filter + max node cap |
+| Edge Integrity | No dangling edges, no self-loops, no duplicates |
+| Fabric SDK Dacpac | Views/tables/procs/functions counts, QueryDependencies, BodyDependencies |
+| Type-Aware Direction | XML object type matches regex direction for all overlap deps (both dacpacs) |
+| Security: CVE-2026-25128 | Out-of-range numeric entity handling in fast-xml-parser v5 |
+| Import Error Handling | Non-ZIP, empty file, missing model.xml, empty dacpac warnings |
+
+## Graph Builder Tests (`graphBuilder.test.ts`)
+
+Tests graph construction and the BFS trace engine:
+
+| Section | What it validates |
+|---------|-------------------|
+| Graph Builder | Layout, positions, metrics, trace reachability |
+| Trace: No Siblings | BFS trace excludes cross-connection edges (leveled + unlimited + upstream-only) |
+| Trace: Co-Writer Filter | Co-writers excluded, bidirectional kept, table-origin passthrough |
+| Synapse Dacpac: Trace | Real SDK-style dacpac trace with cross-connection validation |
 
 ## Syntactic Parser Tests (`parser-edge-cases.test.ts`)
 
@@ -35,7 +62,7 @@ These tests verify every regex rule in `sqlBodyParser.ts` using synthetic SQL �
 | 4. EXEC calls | EXEC, EXECUTE, @var = proc, bare names | `extract_sp_calls` |
 | 5. UDF extraction | Inline scalar UDFs, false-positive guard | `extract_udf_calls` |
 | 6. CTE exclusion | CTE names excluded from sources | CTE helper |
-| 7. Skip patterns | Temp tables, variables, system objects, aliases, keywords | `shouldSkip()` |
+| 7. Extraction boundaries | Temp tables, variables, system objects, aliases | Regex (`\w+`), catalog resolution, `shouldSkip()` |
 | 8. Combined SQL | Multi-rule interaction in realistic SP body | All rules |
 | 9. Critical review | DELETE exclusion, OPENQUERY string protection | Design decisions |
 
@@ -58,24 +85,6 @@ Tests the live database model builder using synthetic DMV data:
 | formatColumnType | Type string formatting (varchar, nvarchar, decimal, int, etc.) |
 | Duplicate Nodes | Deduplication by normalized ID |
 | Self-Reference | Self-referencing deps excluded from edges |
-
-## Test Sections in `engine.test.ts`
-
-| Section | What it validates |
-|---------|-------------------|
-| DACPAC Extraction | Node/edge counts, schemas, object types from classic dacpac |
-| Schema Filtering | Schema filter + max node cap |
-| SQL Body Parser | All regex rules: FROM/JOIN, INSERT/UPDATE, EXEC, APPLY, CTE, MERGE, CTAS, SELECT INTO, string neutralization |
-| Trace: No Siblings | BFS trace excludes cross-connection edges (leveled + unlimited + upstream-only) |
-| Trace: Co-Writer Filter | Co-writers excluded, bidirectional kept, table-origin passthrough |
-| Synapse Dacpac: Trace | Real SDK-style dacpac trace with cross-connection validation |
-| Fabric SP Parsing | Full SP body parsing output for all 21 SDK-style procedures |
-| SSDT SP Parsing | Full SP body parsing output for all 10 classic procedures |
-| Graph Builder | Layout, positions, metrics, trace reachability |
-| Edge Integrity | No dangling edges, no self-loops, no duplicates |
-| SDK-style Dacpac | Views/tables/procs/functions counts, QueryDependencies, BodyDependencies |
-| Type-Aware Direction | Validates XML object type matches regex direction for all overlap deps |
-| Security: CVE-2026-25128 | Out-of-range numeric entity handling in fast-xml-parser v5 |
 
 ## Type-Aware Direction Test
 

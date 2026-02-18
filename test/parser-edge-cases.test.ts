@@ -3,7 +3,18 @@
  * Execute with: npx tsx test/parser-edge-cases.test.ts
  */
 
-import { parseSqlBody } from '../src/engine/sqlBodyParser';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import * as yaml from 'js-yaml';
+import { parseSqlBody, loadRules } from '../src/engine/sqlBodyParser';
+import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
+const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
+loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
 
 let passed = 0;
 let failed = 0;
@@ -409,38 +420,39 @@ function testCteExclusion() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 7. Skip patterns
+// 7. Parser extraction boundaries
 // ═══════════════════════════════════════════════════════════════════════════
 
 function testSkipPatterns() {
-  console.log('\n\u2500\u2500 7. Skip patterns \u2500\u2500');
+  console.log('\n\u2500\u2500 7. Parser extraction boundaries \u2500\u2500');
 
-  // Temp table
+  // Temp table — regex can't match # (not a word character)
   {
     const r = parseSqlBody(`SELECT * FROM #TempTable`);
-    assert(!r.sources.some(s => s.includes('#')), 'Temp table: #TempTable skipped');
+    assert(!r.sources.some(s => s.includes('#')), 'Temp table: #TempTable not matched by regex');
   }
 
-  // Table variable
+  // Table variable — regex can't match @ (not a word character)
   {
     const r = parseSqlBody(`SELECT * FROM @TableVar`);
-    assert(!r.sources.some(s => s.includes('@')), 'Table variable: @TableVar skipped');
+    assert(!r.sources.some(s => s.includes('@')), 'Table variable: @TableVar not matched by regex');
   }
 
-  // System proc
+  // System proc — parser extracts it; catalog resolution filters at graph build
   {
     const r = parseSqlBody(`EXEC sp_executesql @sql`);
-    assert(r.execCalls.length === 0, 'System proc: sp_executesql skipped');
+    assert(r.execCalls.some(s => s.toLowerCase() === 'sp_executesql'),
+      'System proc: sp_executesql extracted (catalog filters later)');
   }
 
-  // System fn
+  // System fn — parser extracts it; catalog resolution filters at graph build
   {
-    const r = parseSqlBody(`SELECT * FROM fn_helpcollations()`);
-    assert(!r.sources.some(s => s.toLowerCase().includes('fn_helpcollations')),
-      'System fn: fn_helpcollations skipped');
+    const r = parseSqlBody(`SELECT * FROM fn_helpcollations`);
+    assert(r.sources.some(s => s.toLowerCase() === 'fn_helpcollations'),
+      'System fn: fn_helpcollations extracted (catalog filters later)');
   }
 
-  // Single char alias
+  // Single char alias — parser-level guard (always table aliases)
   {
     const r = parseSqlBody(`SELECT * FROM [dbo].[Orders] o`);
     assert(hasExact(r.sources, 'dbo.Orders'), 'Single char alias: dbo.Orders found');
@@ -448,12 +460,12 @@ function testSkipPatterns() {
       'Single char alias: "o" NOT captured as source');
   }
 
-  // Keywords not captured
+  // SQL keyword after WHERE — no regex pattern matches it (not after FROM/JOIN/INSERT etc.)
   {
     const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE set = 1`);
-    assert(hasName(r.sources, 'T1'), 'Keyword skip: T1 found');
+    assert(hasName(r.sources, 'T1'), 'Keyword context: T1 found');
     assert(!r.sources.some(s => s.replace(/\[|\]/g, '').toLowerCase() === 'set'),
-      'Keyword skip: "set" NOT captured as source');
+      'Keyword context: "set" not matched (no regex captures after WHERE)');
   }
 }
 

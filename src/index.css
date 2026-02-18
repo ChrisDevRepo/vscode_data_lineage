@@ -2,11 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── VS Code Theme Integration ──────────────────────────────────────────── */
-/* Uses --vscode-* CSS variables so the extension automatically adapts to     */
-/* the user's active VS Code theme (light, dark, high contrast).              */
-/* Node type colors (blue/green/yellow/orange) remain fixed for readability.  */
-/* Theme adaptation is handled via data-vscode-theme-kind attribute on body.  */
+/* #region Theme Variables */
 
 :root {
   /* Background colors */
@@ -151,6 +147,10 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-highlight-blue-shadow: rgba(29, 78, 216, 0.35);
 }
 
+/* #endregion */
+
+/* #region Global Resets */
+
 * {
   box-sizing: border-box;
 }
@@ -166,7 +166,9 @@ body {
   font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
-/* Custom Tooltip Styling */
+/* #endregion */
+
+/* #region Tooltips */
 .ln-node-tooltip::before {
   content: attr(data-tooltip);
   position: absolute;
@@ -213,7 +215,9 @@ body {
   opacity: 1 !important;
 }
 
-/* ─── React Flow Overrides ───────────────────────────────────────────────── */
+/* #endregion */
+
+/* #region React Flow Overrides */
 
 .react-flow {
   width: 100%;
@@ -308,7 +312,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   color: var(--ln-fg);
 }
 
-/* ─── Component Classes ─────────────────────────────────────────────────── */
+/* #endregion */
+
+/* #region Components */
 
 /* Toolbar bar */
 .ln-toolbar {
@@ -628,7 +634,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   border: 1px solid var(--ln-input-border);
 }
 
-/* ─── Tooltip Styling (Browser Native) ──────────────────────────────────── */
+/* #endregion */
+
+/* #region Browser Tooltip + Color Scheme */
 /* Note: Native HTML tooltips (title attribute) have limited styling support. */
 /* This provides basic compatibility, but browser defaults may still show.    */
 
@@ -646,7 +654,9 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   color-scheme: dark;
 }
 
-/* ─── Sidebar (shared by Detail Search + Analysis) ────────────────────── */
+/* #endregion */
+
+/* #region Sidebar + Analysis */
 .ln-sidebar {
   width: 360px;
   max-height: calc(100vh - 120px);
@@ -728,3 +738,5 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 .ln-analysis-group-active:hover {
   background: var(--ln-analysis-bg);
 }
+
+/* #endregion */

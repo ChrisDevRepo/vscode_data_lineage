@@ -20,16 +20,26 @@ rules:
     flags: gi                       # Regex flags
     replacement: "..."                 # (preprocessing only) replacement string
     description: "FROM/JOIN sources"
-
-skip_prefixes:                      # Ignore matches starting with these
-  - "#"                             # Temp tables
-  - "@"                             # Variables
-  - "sys."                          # System objects
-
-skip_keywords:                      # Ignore matches equal to these
-  - select
-  - where
 ```
+
+## Parsing Pipeline
+
+```
+SQL body
+  → Stage 1: Preprocessing (clean_sql — strip comments, neutralize strings)
+  → Stage 2: CTE extraction (names excluded from source matches)
+  → Stage 3: Regex extraction (rules by priority: sources, targets, exec)
+  → Stage 4: Catalog validation (only real objects become edges)
+```
+
+Stage 4 runs in `modelBuilder` — regex results are checked against the catalog of known objects (from dacpac XML or database DMV queries). Only references matching real objects create graph edges. This makes the parser intentionally permissive: it extracts all potential references and lets catalog resolution decide.
+
+## Filtering Layers
+
+| Filter | When | What | Configurable |
+|--------|------|------|-------------|
+| Catalog resolution | Graph build | Only refs matching real objects (dacpac or DB) become edges | Automatic |
+| `excludePatterns` | Post-graph | User hides real objects from visualization | VS Code settings |
 
 ## Categories
 
@@ -62,9 +72,9 @@ Extraction rules use capture group 1 as the object reference.
 
 ## Fallback Behavior
 
-- **No YAML configured** — uses built-in defaults silently
-- **YAML missing or invalid** — uses built-in defaults + shows a warning
-- **YAML loads successfully** — replaces all defaults. Any rule not in your file is lost
+- **No YAML configured** — loads built-in rules from `assets/defaultParseRules.yaml` silently
+- **Custom YAML missing or invalid** — falls back to built-in rules + shows a warning
+- **Custom YAML loads successfully** — replaces all built-in rules. Any rule not in your file is lost
 
 ## XML Fallback Direction
 
@@ -88,11 +98,10 @@ This is validated by the `testTypeAwareDirection` test which confirms 100% accur
 | Dynamic SQL (`EXEC('...')`) | Content inside string not parsed | By design — cannot determine static dependencies | N/A |
 | Nested block comments (`/* /* */ */`) | Outer comment may not fully close | Single regex can't count nesting depth | Uncommon in SP bodies |
 
-All false positives are harmless — catalog resolution filters regex results against known dacpac objects. Only references matching real objects become graph edges.
+All false positives are harmless — catalog resolution filters regex results against known objects (dacpac or database). Only references matching real objects become graph edges.
 
 ## What Can't Be Customized
 
 - **Preprocessing** — `clean_sql` is built-in (hardcoded function replacement). The YAML rule documents the pattern but execution is always handled by `parseSqlBody()`. You can add additional preprocessing rules in custom YAML.
 - **CTE extraction** — always active, runs after preprocessing. CTE names are excluded from source matches automatically
-- **Catalog validation** — only references matching actual dacpac objects create edges
-- **Skip lists** — overridable via `skip_prefixes` / `skip_keywords` in your YAML
+- **Catalog validation** — only references matching real objects create edges (dacpac XML or DB DMV queries)

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import type { IExtension, IConnectionInfo, SimpleExecuteResult } from '../types/mssql';
+import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
@@ -90,6 +90,16 @@ async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExt
   return api;
 }
 
+async function getConnectionSharingApi(
+  outputChannel: vscode.LogOutputChannel,
+): Promise<IConnectionSharingService> {
+  const api = await getMssqlApi(outputChannel);
+  if (!api.connectionSharing) {
+    throw new Error('MSSQL extension does not expose connectionSharing API. Please update to v1.34+.');
+  }
+  return api.connectionSharing;
+}
+
 // ─── Prompt-Based Connection Flow ────────────────────────────────────────────
 
 /**
@@ -152,11 +162,7 @@ export async function executeDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   onProgress?: (step: number, total: number, label: string) => void,
 ): Promise<Map<string, SimpleExecuteResult>> {
-  const api = await getMssqlApi(outputChannel);
-
-  if (!api.connectionSharing) {
-    throw new Error('MSSQL extension does not expose connectionSharing API. Please update to v1.34+.');
-  }
+  const sharing = await getConnectionSharingApi(outputChannel);
 
   const results = new Map<string, SimpleExecuteResult>();
   const total = queries.length;
@@ -169,7 +175,7 @@ export async function executeDmvQueries(
     outputChannel.info(`[DB] Executing query: ${query.name} (${step}/${total})...`);
 
     const start = Date.now();
-    const result = await api.connectionSharing.executeSimpleQuery(connectionUri, query.sql);
+    const result = await sharing.executeSimpleQuery(connectionUri, query.sql);
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     outputChannel.info(`[DB] Query '${query.name}' returned ${result.rowCount} rows (${elapsed}s)`);
@@ -216,13 +222,8 @@ export async function executeDmvQueriesFiltered(
   outputChannel: vscode.LogOutputChannel,
   onProgress?: (step: number, total: number, label: string) => void,
 ): Promise<Map<string, SimpleExecuteResult>> {
-  const api = await getMssqlApi(outputChannel);
+  const sharing = await getConnectionSharingApi(outputChannel);
 
-  if (!api.connectionSharing) {
-    throw new Error('MSSQL extension does not expose connectionSharing API. Please update to v1.34+.');
-  }
-
-  // Phase 2 queries only (exclude schema-preview)
   const phase2Queries = queries.filter(q => q.name !== 'schema-preview');
   const results = new Map<string, SimpleExecuteResult>();
   const total = phase2Queries.length;
@@ -232,7 +233,6 @@ export async function executeDmvQueriesFiltered(
     const step = i + 1;
     const schemaCol = SCHEMA_FILTER_COLUMNS[query.name];
 
-    // Wrap with schema filter if we know the column, otherwise run unfiltered
     const sql = schemaCol
       ? wrapWithSchemaFilter(query.sql, schemaCol, schemas)
       : query.sql;
@@ -242,7 +242,7 @@ export async function executeDmvQueriesFiltered(
     outputChannel.debug(`[DB] SQL:\n${sql}`);
 
     const start = Date.now();
-    const result = await api.connectionSharing.executeSimpleQuery(connectionUri, sql);
+    const result = await sharing.executeSimpleQuery(connectionUri, sql);
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     outputChannel.info(`[DB] Query '${query.name}' returned ${result.rowCount} rows (${elapsed}s)`);
@@ -252,16 +252,11 @@ export async function executeDmvQueriesFiltered(
   return results;
 }
 
-/**
- * Disconnect from a database.
- */
 export async function disconnectDatabase(
   connectionUri: string,
   outputChannel: vscode.LogOutputChannel,
 ): Promise<void> {
-  const api = await getMssqlApi(outputChannel);
-  if (api.connectionSharing) {
-    await api.connectionSharing.disconnect(connectionUri);
-    outputChannel.info('[DB] Disconnected');
-  }
+  const sharing = await getConnectionSharingApi(outputChannel);
+  await sharing.disconnect(connectionUri);
+  outputChannel.info('[DB] Disconnected');
 }

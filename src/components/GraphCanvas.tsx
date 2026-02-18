@@ -211,7 +211,6 @@ export function GraphCanvas({
 
   // ── Display layer: highlight/dim applied on top of local positions ──
 
-  // Calculate level 1 neighbors for dimming effect
   const level1Neighbors = useMemo(() => {
     const neighbors = new Set<string>();
     if (highlightedNodeId && graph && graph.hasNode(highlightedNodeId)) {
@@ -221,7 +220,6 @@ export function GraphCanvas({
     return neighbors;
   }, [highlightedNodeId, graph]);
 
-  // Apply yellow highlight + dimming on top of localNodes (preserves drag positions)
   const displayNodes = useMemo(() => {
     return localNodes.map(node => {
       const isHighlighted = highlightedNodeId === node.id;
@@ -240,7 +238,6 @@ export function GraphCanvas({
     });
   }, [localNodes, highlightedNodeId, level1Neighbors]);
 
-  // Highlight edges connected to selected node
   const displayEdges = useMemo(() => {
     if (!highlightedNodeId) return localEdges;
 

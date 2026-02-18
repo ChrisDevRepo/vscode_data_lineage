@@ -6,6 +6,7 @@ import {
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
+  buildColumnDef,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue } from '../types/mssql';
@@ -101,38 +102,6 @@ function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   return map;
 }
 
-export function formatColumnType(
-  typeName: string, maxLength: string, precision: string, scale: string
-): string {
-  const t = typeName.toLowerCase();
-
-  // Types that never need length/precision
-  if (['int', 'bigint', 'smallint', 'tinyint', 'bit', 'float', 'real',
-    'money', 'smallmoney', 'date', 'datetime', 'datetime2', 'smalldatetime',
-    'datetimeoffset', 'time', 'timestamp', 'uniqueidentifier', 'xml',
-    'text', 'ntext', 'image', 'sql_variant', 'geography', 'geometry',
-    'hierarchyid', 'sysname'].includes(t)) {
-    return typeName;
-  }
-
-  // String/binary types: use max_length (-1 = max)
-  if (['varchar', 'nvarchar', 'char', 'nchar', 'varbinary', 'binary'].includes(t)) {
-    if (maxLength === '-1') return `${typeName}(max)`;
-    // nvarchar/nchar store 2 bytes per char — display char count
-    const len = (t.startsWith('n') && maxLength) ? String(Math.floor(parseInt(maxLength, 10) / 2)) : maxLength;
-    return len ? `${typeName}(${len})` : typeName;
-  }
-
-  // Decimal/numeric: precision,scale
-  if (['decimal', 'numeric'].includes(t)) {
-    if (precision && scale) return `${typeName}(${precision},${scale})`;
-    if (precision) return `${typeName}(${precision})`;
-    return typeName;
-  }
-
-  return typeName;
-}
-
 // ─── Extract: DMV Rows → Intermediate Format ────────────────────────────────
 
 function extractObjects(results: DmvResults): ExtractedObject[] {
@@ -140,27 +109,23 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
   const colColIdx = buildColumnIndex(results.columns);
 
   // Pre-build column data for tables (grouped by schema.table)
+  const isTruthy = (v: string) => v === '1' || v.toLowerCase() === 'true';
   const tableColumns = new Map<string, ColumnDef[]>();
   for (const row of results.columns.rows) {
     const schema = cellValue(row, colColIdx, 'schema_name');
     const table = cellValue(row, colColIdx, 'table_name');
     const key = `${schema}.${table}`.toLowerCase();
     if (!tableColumns.has(key)) tableColumns.set(key, []);
-    tableColumns.get(key)!.push({
-      name: cellValue(row, colColIdx, 'column_name'),
-      type: formatColumnType(
-        cellValue(row, colColIdx, 'type_name'),
-        cellValue(row, colColIdx, 'max_length'),
-        cellValue(row, colColIdx, 'precision'),
-        cellValue(row, colColIdx, 'scale'),
-      ),
-      nullable: cellValue(row, colColIdx, 'is_nullable') === '1' || cellValue(row, colColIdx, 'is_nullable').toLowerCase() === 'true' ? 'NULL' : 'NOT NULL',
-      extra: cellValue(row, colColIdx, 'is_identity') === '1' || cellValue(row, colColIdx, 'is_identity').toLowerCase() === 'true'
-        ? 'IDENTITY'
-        : cellValue(row, colColIdx, 'is_computed') === '1' || cellValue(row, colColIdx, 'is_computed').toLowerCase() === 'true'
-          ? 'COMPUTED'
-          : '',
-    });
+    tableColumns.get(key)!.push(buildColumnDef(
+      cellValue(row, colColIdx, 'column_name'),
+      cellValue(row, colColIdx, 'type_name'),
+      isTruthy(cellValue(row, colColIdx, 'is_nullable')),
+      isTruthy(cellValue(row, colColIdx, 'is_identity')),
+      isTruthy(cellValue(row, colColIdx, 'is_computed')),
+      cellValue(row, colColIdx, 'max_length'),
+      cellValue(row, colColIdx, 'precision'),
+      cellValue(row, colColIdx, 'scale'),
+    ));
   }
 
   const objects: ExtractedObject[] = [];

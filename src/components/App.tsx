@@ -47,12 +47,10 @@ export function App() {
   const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
-  // Dacpac loader lives here so state persists when navigating back
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
     setConfig(cfg);
     if (cfg.parseRules) {
       const result = loadRules(cfg.parseRules);
-      // Always notify extension host — success path was previously dead code
       vscodeApi.postMessage({
         type: 'parse-rules-result',
         loaded: result.loaded,
@@ -66,7 +64,6 @@ export function App() {
 
   const dacpacLoader = useDacpacLoader(applyConfig);
 
-  // Rebuild graph when filter changes (except on initial mount)
   const rebuild = useCallback(
     (m: DacpacModel, f: FilterState, cfg?: ExtensionConfig) => {
       buildFromModel(m, f, cfg || config);
@@ -76,7 +73,6 @@ export function App() {
 
   const handleVisualize = useCallback(
     (dacpacModel: DacpacModel, selectedSchemas: Set<string>) => {
-      // Store deselected schemas so new schemas are visible on reopen
       const allNames = dacpacModel.schemas.map(s => s.name);
       const deselected = allNames.filter(s => !selectedSchemas.has(s));
       vscodeApi.postMessage({ type: 'save-schemas', deselected });
@@ -97,22 +93,21 @@ export function App() {
     [filter, rebuild, config]
   );
 
-  // Auto-visualize: when triggered from sidebar "Open Demo" command, skip schema selector
   useEffect(() => {
-    if (dacpacLoader.pendingAutoVisualize && dacpacLoader.model && !dacpacLoader.isLoading) {
-      const allSchemas = new Set(dacpacLoader.model.schemas.map(s => s.name));
-      handleVisualize(dacpacLoader.model, allSchemas);
-      dacpacLoader.clearAutoVisualize();
-    }
-  }, [dacpacLoader.pendingAutoVisualize, dacpacLoader.model, dacpacLoader.isLoading, handleVisualize, dacpacLoader]);
+    if (!dacpacLoader.model || dacpacLoader.isLoading) return;
 
-  // Phase 2 completion: when visualize finishes (dacpac filtered or DB model received), transition to graph
-  useEffect(() => {
-    if (dacpacLoader.pendingVisualize && dacpacLoader.model && !dacpacLoader.isLoading) {
+    if (dacpacLoader.pendingAutoVisualize) {
+      handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
+      dacpacLoader.clearAutoVisualize();
+    } else if (dacpacLoader.pendingVisualize) {
       handleVisualize(dacpacLoader.model, dacpacLoader.selectedSchemas);
       dacpacLoader.clearPendingVisualize();
     }
-  }, [dacpacLoader.pendingVisualize, dacpacLoader.model, dacpacLoader.isLoading, handleVisualize, dacpacLoader]);
+  }, [
+    dacpacLoader.pendingAutoVisualize, dacpacLoader.pendingVisualize,
+    dacpacLoader.model, dacpacLoader.isLoading, dacpacLoader.selectedSchemas,
+    handleVisualize, dacpacLoader.clearAutoVisualize, dacpacLoader.clearPendingVisualize,
+  ]);
 
   const getResetFilter = (m: DacpacModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
@@ -328,8 +323,6 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  // Analysis Mode
-
   const openAnalysis = useCallback((type: AnalysisType) => {
     // End any active trace / close detail search
     endTrace();
@@ -355,7 +348,6 @@ export function App() {
     }
   }, [endTrace, filter, model, graph, config, buildFromModel]);
 
-  // When graph changes after orphan hideIsolated toggle, run the analysis
   useEffect(() => {
     if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
       const result = runAnalysis(graph, 'orphans', config.analysis, config.maxNodes);

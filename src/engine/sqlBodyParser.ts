@@ -1,10 +1,4 @@
-/**
- * SQL Body Parser — Regex-based dependency extraction from T-SQL bodies.
- *
- * Rules can be loaded from parseRules.yaml (user-editable) or fall back to
- * built-in defaults. Used to supplement XML BodyDependencies for stored
- * procedures where the dacpac may not fully capture all references.
- */
+// Regex-based T-SQL dependency extraction; rules loaded from YAML at runtime.
 
 import { stripBrackets } from '../utils/sql';
 
@@ -27,119 +21,12 @@ export interface ParseRule {
 
 export interface ParseRulesConfig {
   rules: ParseRule[];
-  skip_prefixes: string[];
-  skip_keywords: string[];
 }
 
-// ─── Built-in defaults ──────────────────────────────────────────────────────
-
-const DEFAULT_RULES: ParseRule[] = [
-  // ── Preprocessing ──
-  // Single-pass combined regex: strings and comments matched together, leftmost wins.
-  // This prevents -- inside strings being treated as comments (and vice versa).
-  // Uses function replacement in parseSqlBody() — the replacement field is not used.
-  {
-    name: 'clean_sql', enabled: true, priority: 1,
-    category: 'preprocessing',
-    pattern: "\\[[^\\]]+\\]|'(?:''|[^'])*'|--[^\\r\\n]*|\\/\\*[\\s\\S]*?\\*\\/",
-    flags: 'g',
-    description: 'Single-pass bracket/string/comment handling (built-in)',
-  },
-  // ── Source extraction ──
-  {
-    name: 'extract_sources_ansi', enabled: true, priority: 5,
-    category: 'source',
-    pattern: '\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'FROM/JOIN sources (handles 2- and 3-part names)',
-  },
-  {
-    name: 'extract_sources_tsql_apply', enabled: true, priority: 7,
-    category: 'source',
-    pattern: '\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'CROSS/OUTER APPLY sources',
-  },
-  {
-    name: 'extract_merge_using', enabled: true, priority: 9,
-    category: 'source',
-    pattern: '\\bMERGE\\b[\\s\\S]*?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'MERGE ... USING source table',
-  },
-  {
-    name: 'extract_udf_calls', enabled: true, priority: 10,
-    category: 'source',
-    pattern: '((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\(',
-    flags: 'gi',
-    description: 'Inline scalar UDF calls (schema.func() — requires 2+ part name)',
-  },
-  // ── Target extraction ──
-  {
-    name: 'extract_targets_dml', enabled: true, priority: 6,
-    category: 'target',
-    pattern: '\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — they destroy data, not lineage)',
-  },
-  {
-    name: 'extract_ctas', enabled: true, priority: 13,
-    category: 'target',
-    pattern: '\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+AS\\s+SELECT',
-    flags: 'gi',
-    description: 'CREATE TABLE AS SELECT target',
-  },
-  {
-    name: 'extract_select_into', enabled: true, priority: 14,
-    category: 'target',
-    pattern: '\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+FROM',
-    flags: 'gi',
-    description: 'SELECT INTO target',
-  },
-  {
-    name: 'extract_copy_into', enabled: true, priority: 15,
-    category: 'target',
-    pattern: '\\bCOPY\\s+INTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'COPY INTO target (Fabric/Synapse)',
-  },
-  {
-    name: 'extract_bulk_insert', enabled: true, priority: 16,
-    category: 'target',
-    pattern: '\\bBULK\\s+INSERT\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'BULK INSERT target (SQL Server)',
-  },
-  // ── Exec calls ──
-  {
-    name: 'extract_sp_calls', enabled: true, priority: 8,
-    category: 'exec',
-    pattern: '\\bEXEC(?:UTE)?\\s+(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'EXEC/EXECUTE procedure calls (including @var = proc pattern)',
-  },
-];
-
-const DEFAULT_SKIP_PREFIXES = [
-  '#', '@',                                // temp tables, variables
-  'sys.', 'sp_', 'xp_', 'fn_',           // system objects
-  'information_schema.',                   // ANSI metadata
-  'master.', 'msdb.', 'tempdb.', 'model.',// system databases
-];
-const DEFAULT_SKIP_KEYWORDS = new Set([
-  'set', 'declare', 'print', 'return', 'begin', 'end', 'if', 'else',
-  'while', 'break', 'continue', 'goto', 'try', 'catch', 'throw',
-  'raiserror', 'waitfor', 'as', 'is', 'null', 'not', 'and', 'or',
-  'select', 'where', 'group', 'order', 'having', 'top', 'distinct',
-  'table', 'index', 'view', 'procedure', 'function', 'trigger',
-  'values', 'output', 'with', 'nolock', 'on',
-]);
-
 // ─── Active config ──────────────────────────────────────────────────────────
+// Initialized empty — populated by loadRules() when config arrives from extension host.
 
-let activeRules: ParseRule[] = [...DEFAULT_RULES];
-let activeSkipPrefixes: string[] = [...DEFAULT_SKIP_PREFIXES];
-let activeSkipKeywords: Set<string> = new Set(DEFAULT_SKIP_KEYWORDS);
+let activeRules: ParseRule[] = [];
 
 export interface LoadRulesResult {
   loaded: number;
@@ -177,12 +64,12 @@ function validateRule(rule: unknown, index: number): { valid: boolean; name: str
   return { valid: true, name };
 }
 
-/** Load custom rules from parsed YAML config with validation */
+/** Load rules from parsed YAML config (built-in or custom) with validation */
 export function loadRules(config: ParseRulesConfig): LoadRulesResult {
   const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false, categoryCounts: {} };
 
   if (!config?.rules || !Array.isArray(config.rules)) {
-    result.errors.push('YAML missing "rules" array — using built-in defaults');
+    result.errors.push('YAML missing "rules" array');
     result.usedDefaults = true;
     resetRules();
     return result;
@@ -205,15 +92,13 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
   }
 
   if (validRules.length === 0) {
-    result.errors.push('No valid rules found — using built-in defaults');
+    result.errors.push('No valid rules found');
     result.usedDefaults = true;
     resetRules();
     return result;
   }
 
   activeRules = validRules.sort((a, b) => a.priority - b.priority);
-  activeSkipPrefixes = config.skip_prefixes || DEFAULT_SKIP_PREFIXES;
-  activeSkipKeywords = new Set(config.skip_keywords || DEFAULT_SKIP_KEYWORDS);
   result.loaded = validRules.length;
   for (const r of validRules) {
     result.categoryCounts[r.category] = (result.categoryCounts[r.category] || 0) + 1;
@@ -221,20 +106,9 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
   return result;
 }
 
-/** Category counts for the built-in DEFAULT_RULES */
-export function getDefaultRuleCounts(): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const r of DEFAULT_RULES) {
-    counts[r.category] = (counts[r.category] || 0) + 1;
-  }
-  return counts;
-}
-
-/** Reset to built-in defaults */
+/** Clear active rules (extension host is responsible for providing config) */
 export function resetRules() {
-  activeRules = [...DEFAULT_RULES];
-  activeSkipPrefixes = [...DEFAULT_SKIP_PREFIXES];
-  activeSkipKeywords = new Set(DEFAULT_SKIP_KEYWORDS);
+  activeRules = [];
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -310,9 +184,7 @@ function extractCteNames(sql: string): Set<string> {
     let nameMatch: RegExpExecArray | null;
     while ((nameMatch = nameRegex.exec(afterWith)) !== null) {
       const name = stripBrackets(nameMatch[1]).toLowerCase();
-      if (!activeSkipKeywords.has(name)) {
-        ctes.add(name);
-      }
+      ctes.add(name);
     }
   }
   return ctes;
@@ -346,9 +218,6 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>, cteNames?:
 }
 
 function shouldSkip(name: string): boolean {
-  const lower = name.toLowerCase();
-  if (activeSkipKeywords.has(lower)) return true;
-  if (activeSkipPrefixes.some((p) => lower.startsWith(p))) return true;
   // Single-character unqualified names are always table aliases (a, b, t, etc.)
   if (!name.includes('.') && name.length === 1) return true;
   return false;

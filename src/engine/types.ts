@@ -113,6 +113,63 @@ export interface ColumnDef {
   extra: string;
 }
 
+// ─── Shared Column Helpers (used by both dacpac + DMV extractors) ────────────
+
+/**
+ * Format a SQL type name with length/precision/scale modifiers.
+ * Handles nvarchar/nchar byte→char conversion and fixed-type detection.
+ */
+export function formatColumnType(
+  typeName: string, maxLength: string, precision: string, scale: string
+): string {
+  const t = typeName.toLowerCase();
+
+  // Types that never need length/precision
+  if (['int', 'bigint', 'smallint', 'tinyint', 'bit', 'float', 'real',
+    'money', 'smallmoney', 'date', 'datetime', 'datetime2', 'smalldatetime',
+    'datetimeoffset', 'time', 'timestamp', 'uniqueidentifier', 'xml',
+    'text', 'ntext', 'image', 'sql_variant', 'geography', 'geometry',
+    'hierarchyid', 'sysname'].includes(t)) {
+    return typeName;
+  }
+
+  // String/binary types: use max_length (-1 = max)
+  if (['varchar', 'nvarchar', 'char', 'nchar', 'varbinary', 'binary'].includes(t)) {
+    if (maxLength === '-1') return `${typeName}(max)`;
+    // nvarchar/nchar store 2 bytes per char — display char count
+    const len = (t.startsWith('n') && maxLength) ? String(Math.floor(parseInt(maxLength, 10) / 2)) : maxLength;
+    return len ? `${typeName}(${len})` : typeName;
+  }
+
+  // Decimal/numeric: precision,scale
+  if (['decimal', 'numeric'].includes(t)) {
+    if (precision && scale) return `${typeName}(${precision},${scale})`;
+    if (precision) return `${typeName}(${precision})`;
+    return typeName;
+  }
+
+  return typeName;
+}
+
+/** Build a ColumnDef from raw metadata — single code path for both dacpac and DMV. */
+export function buildColumnDef(
+  name: string,
+  typeName: string,
+  nullable: boolean,
+  isIdentity: boolean,
+  isComputed: boolean,
+  maxLength?: string,
+  precision?: string,
+  scale?: string,
+): ColumnDef {
+  return {
+    name,
+    type: isComputed ? '(computed)' : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? ''),
+    nullable: nullable ? 'NULL' : 'NOT NULL',
+    extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
+  };
+}
+
 export interface ExtractedObject {
   fullName: string;       // "[Schema].[Name]"
   type: ObjectType;

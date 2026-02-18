@@ -3,9 +3,22 @@
  * Execute with: npx tsx test/dmvExtractor.test.ts
  */
 
-import { buildModelFromDmv, validateQueryResult, formatColumnType } from '../src/engine/dmvExtractor';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import * as yaml from 'js-yaml';
+import { buildModelFromDmv, validateQueryResult } from '../src/engine/dmvExtractor';
+import { formatColumnType } from '../src/engine/types';
 import type { DmvResults } from '../src/engine/dmvExtractor';
 import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../src/types/mssql';
+import { loadRules } from '../src/engine/sqlBodyParser';
+import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
+const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
+loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
 
 let passed = 0;
 let failed = 0;

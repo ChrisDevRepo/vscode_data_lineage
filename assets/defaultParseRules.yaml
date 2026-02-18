@@ -1,7 +1,12 @@
-# ─── DACPAC Lineage Parser Rules ─────────────────────────────────────────────
+# ─── DACPAC Lineage Parser Rules (Single Source of Truth) ────────────────────
 # Regex rules for extracting SQL dependencies from stored procedure bodies.
 # Covers all MS SQL family: SQL Server, Azure Synapse, Microsoft Fabric DWH.
 # View and UDF dependencies come from dacpac XML — no regex parsing needed.
+#
+# This file is the ONLY definition of the built-in parse rules.
+# - Bundled in the VSIX and loaded at runtime by the extension host.
+# - Copied to user workspace when running "Create Parse Rules" command.
+# - No TypeScript fallback — this YAML is the source of truth.
 #
 # Rules run in priority order (lowest first). Disable rules with enabled: false.
 #
@@ -109,62 +114,3 @@ rules:
     pattern: "\\bEXEC(?:UTE)?\\s+(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: "EXEC/EXECUTE procedure calls (including @var = proc pattern)"
-
-# ─── Skip Patterns ──────────────────────────────────────────────────────────
-# Object names matching these prefixes are ignored (system objects, temp tables)
-skip_prefixes:
-  - "#"
-  - "@"
-  - "sys."
-  - "sp_"
-  - "xp_"
-  - "fn_"
-  - "information_schema."
-  - "master."
-  - "msdb."
-  - "tempdb."
-  - "model."
-
-# Keywords that look like identifiers but aren't
-skip_keywords:
-  - set
-  - declare
-  - print
-  - return
-  - begin
-  - end
-  - if
-  - else
-  - while
-  - break
-  - continue
-  - goto
-  - try
-  - catch
-  - throw
-  - raiserror
-  - waitfor
-  - as
-  - "is"
-  - "null"
-  - not
-  - and
-  - or
-  - select
-  - where
-  - group
-  - order
-  - having
-  - top
-  - distinct
-  - table
-  - index
-  - view
-  - procedure
-  - function
-  - trigger
-  - values
-  - output
-  - with
-  - nolock
-  - "on"

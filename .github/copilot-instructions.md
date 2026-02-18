@@ -1,6 +1,6 @@
 # Project Context
 
-VS Code extension for visualizing SQL database object dependencies from .dacpac files. React + ReactFlow frontend, graphology for graph data, dagre for layout.
+VS Code extension for visualizing SQL database object dependencies from .dacpac files or live database connections. React + ReactFlow frontend, graphology for graph data, dagre for layout.
 
 ## Architecture
 
@@ -11,9 +11,9 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 
 ### Key Directories
 
-- `src/engine/` — dacpac extraction, SQL parsing, graph building
+- `src/engine/` — dacpac extraction, live DB extraction, SQL parsing, graph building
 - `src/components/` — React UI (ReactFlow canvas, toolbar, filters, modals)
-- `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader`)
+- `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources)
 - `src/extension.ts` — VS Code API, webview lifecycle, message routing
 
 ### Key Files
@@ -30,7 +30,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All tests (352 total)
+npm test         # All tests (327 total)
 ```
 
 Press F5 to launch Extension Development Host.
@@ -39,7 +39,8 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/engine.test.ts` | 115 | Engine integration: extraction, graph, trace, direction validation |
+| `test/dacpacExtractor.test.ts` | 43 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security |
+| `test/graphBuilder.test.ts` | 47 | Graph construction, layout, BFS trace, co-writer filter |
 | `test/parser-edge-cases.test.ts` | 127 | Syntactic parser tests: all 11 rules + edge cases + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
 | `test/dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
@@ -48,7 +49,7 @@ Press F5 to launch Extension Development Host.
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run all tests (352 total)
+npm test              # Run all tests (327 total)
 npm run test:integration  # Run VS Code tests
 ```
 
@@ -69,12 +70,12 @@ Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `custome
 
 Key messages: `ready`, `config-only`, `dacpac-data`, `show-ddl`, `update-ddl`, `log`, `error`, `themeChanged`
 
-Database connection messages: `check-mssql`, `mssql-status`, `db-add-connection`, `db-connection-added`, `db-remove-connection`, `db-connection-removed`, `db-extract`, `db-progress`, `db-model`, `db-error`
+Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-reconnect`, `db-visualize`, `db-progress`, `db-schema-preview`, `db-model`, `db-error`, `db-cancelled`
 
 Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `save-schemas`, `parse-rules-result`, `parse-stats`
 
 ## SQL Parse Rules
 
-Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `parseRules.yaml` (11 rules across 4 categories: preprocessing, source, target, exec). Views/functions use dacpac XML dependencies directly.
+Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 11 rules across 4 categories: preprocessing, source, target, exec). Views/functions use dacpac XML dependencies directly.
 
 When modifying parse rules: run `npm test` before and after, zero regressions allowed.
