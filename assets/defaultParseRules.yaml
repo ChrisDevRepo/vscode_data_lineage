@@ -111,6 +111,6 @@ rules:
     enabled: true
     priority: 8
     category: exec
-    pattern: "\\bEXEC(?:UTE)?\\s+(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bEXEC(?:UTE)?\\s+(?!AS\\s+)(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
-    description: "EXEC/EXECUTE procedure calls (including @var = proc pattern)"
+    description: "EXEC/EXECUTE procedure calls (including @var = proc pattern; excludes EXECUTE AS context clause)"
