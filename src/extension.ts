@@ -294,7 +294,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             await context.workspaceState.update('lastDacpacName', fileName);
             await context.workspaceState.update('lastSourceType', 'dacpac');
             const config = await readExtensionConfig();
-            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, config });
+            const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
+            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, config, lastDeselectedSchemas });
             outputChannel.info(`── Opening ${fileName} ──`);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);

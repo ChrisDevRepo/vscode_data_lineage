@@ -173,16 +173,6 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
           {!hasSource && !isLoading && (
             <Button
               variant="secondary"
-              onClick={loadDemo}
-              className="w-full"
-            >
-              Load Demo Data
-            </Button>
-          )}
-
-          {!hasSource && !isLoading && (
-            <Button
-              variant="secondary"
               onClick={connectToDatabase}
               disabled={mssqlAvailable !== true}
               title={mssqlAvailable === false ? 'Install the MSSQL extension (ms-mssql.mssql) to import from a database' : undefined}
@@ -255,6 +245,18 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
           >
             Visualize
           </Button>
+
+          {/* Demo link — subtle footer */}
+          {!hasSource && !isLoading && (
+            <div className="text-center pt-1">
+              <button
+                className="text-[11px] ln-text-muted hover:underline"
+                onClick={loadDemo}
+              >
+                Try with demo data
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
