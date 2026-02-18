@@ -171,6 +171,7 @@ function parseElements(xml: string): XmlElement[] {
     isArray: (name) => name === 'Element' || name === 'Entry' || name === 'Property' || name === 'Relationship' || name === 'Annotation',
     parseTagValue: true,
     trimValues: true,
+    processEntities: false, // dacpac model.xml never uses XML entities — disable to prevent entity expansion DoS
   });
 
   let doc;
