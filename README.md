@@ -50,6 +50,7 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 
 - **Object-level only** — no column-level lineage
 - **Static analysis** — dynamic SQL (`EXEC(@sql)`) not detected
+- **Fully-qualified names only** — only `[schema].[object]` references are detected; unqualified names (aliases, CTEs, built-ins) are excluded
 
 ## How It Works
 
@@ -120,6 +121,9 @@ No — you can also import directly from a database using the MSSQL extension. I
 
 **Why are some dependencies missing?**
 Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) cannot be analyzed statically. Only compile-time dependencies are detected.
+
+**Why do unresolved references not show objects like CTEs or table aliases?**
+The parser only tracks **fully-qualified two-part names** (`[schema].[object]`). Unqualified references — CTE names, table aliases, built-in rowset functions like `FREETEXTTABLE` — are intentionally excluded before catalog lookup and never shown as unresolved. This is by design: the default SQL Server schema is a per-connection setting, so the extension cannot reliably infer which schema an unqualified name belongs to.
 
 ## Contributing
 

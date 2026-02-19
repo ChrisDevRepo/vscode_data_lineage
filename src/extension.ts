@@ -845,7 +845,7 @@ function handleParseStats(stats: {
   parsedRefs: number;
   resolvedEdges: number;
   droppedRefs: string[];
-  spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[];
+  spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[]; skippedRefs?: string[] }[];
 }, objectCount?: number, edgeCount?: number, schemaCount?: number) {
   const spDetails = stats.spDetails || [];
   const spCount = spDetails.length;
@@ -856,11 +856,15 @@ function handleParseStats(stats: {
     if (sp.unrelated.length > 0) {
       parts.push(`Unrelated: ${sp.unrelated.join(', ')}`);
     }
+    if (sp.skippedRefs && sp.skippedRefs.length > 0) {
+      parts.push(`Skipped (unqualified): ${sp.skippedRefs.join(', ')}`);
+    }
     outputChannel.debug(`[Parse] ${sp.name} — ${parts.join(', ')}`);
   }
 
-  // Warn: SPs with no inputs and no outputs
-  const empty = spDetails.filter(sp => sp.inCount === 0 && sp.outCount === 0);
+  // Warn: SPs with no inputs and no outputs AND no unresolved catalog refs.
+  // Exclude SPs that do have body refs but they fall outside the selected schemas.
+  const empty = spDetails.filter(sp => sp.inCount === 0 && sp.outCount === 0 && sp.unrelated.length === 0);
   if (empty.length > 0) {
     outputChannel.warn(`[Parse] ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
   }

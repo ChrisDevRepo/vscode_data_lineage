@@ -49,13 +49,31 @@ export function parseName(fullName: string): { schema: string; objectName: strin
   return { schema: 'DBO', objectName: parts[0] };
 }
 
-/** Normalize to lowercase "[schema].[object]" for consistent matching */
+/** Normalize to lowercase "[schema].[object]" for consistent matching.
+ *  Only call on fully-qualified (schema.object) names — single-part names have no
+ *  schema context and must be checked with isSchemaQualified() before calling this. */
 export function normalizeName(name: string): string {
   const parts = stripBrackets(name).split('.');
   if (parts.length >= 2) {
     return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
   }
-  return `[dbo].[${parts[0]}]`.toLowerCase();
+  // No schema qualifier — return bare name that will never match a node ID.
+  // We do NOT assume dbo because the default schema is a per-connection SQL Server setting.
+  return `[${parts[0]}]`.toLowerCase();
+}
+
+/** True when the raw captured name contains a schema qualifier (a dot). */
+function isSchemaQualified(name: string): boolean {
+  return stripBrackets(name).includes('.');
+}
+
+/** Well-known system schemas whose objects must never appear as lineage nodes. */
+const SYSTEM_SCHEMAS = new Set(['sys', 'information_schema']);
+
+/** True when the schema prefix of a schema-qualified name is a system schema. */
+function isSystemRef(name: string): boolean {
+  const schema = stripBrackets(name).split('.')[0].toLowerCase();
+  return SYSTEM_SCHEMAS.has(schema);
 }
 
 /** Add an edge if it doesn't already exist */
@@ -201,11 +219,17 @@ function buildNodesAndEdges(
     const parsed = parseSqlBody(node.bodyScript!);
     let spIn = 0, spOut = 0;
     const spUnrelated: string[] = [];
+    const spSkipped: string[] = [];
 
     // Collect target/exec IDs to exclude from dep fallback
+    // Only schema-qualified, non-system refs are eligible outbound candidates.
     const outboundIds = new Set<string>();
-    for (const dep of parsed.targets) outboundIds.add(normalizeName(dep));
-    for (const dep of parsed.execCalls) outboundIds.add(normalizeName(dep));
+    for (const dep of parsed.targets) {
+      if (isSchemaQualified(dep) && !isSystemRef(dep)) outboundIds.add(normalizeName(dep));
+    }
+    for (const dep of parsed.execCalls) {
+      if (isSchemaQualified(dep) && !isSystemRef(dep)) outboundIds.add(normalizeName(dep));
+    }
 
     // Add dependency edges not already handled by regex (exclude targets/exec to prevent reverse edges)
     // Direction is type-aware: procedures are EXEC calls (outbound), everything else is inbound
@@ -223,6 +247,8 @@ function buildNodesAndEdges(
     // Regex sources (inbound: dep → SP)
     const spLabel = `${node.schema}.${node.name}`;
     for (const dep of parsed.sources) {
+      if (!isSchemaQualified(dep)) { spSkipped.push(dep); continue; }
+      if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
       const depId = normalizeName(dep);
       stats.parsedRefs++;
       if (depId !== sourceId && nodeIds.has(depId)) {
@@ -237,6 +263,8 @@ function buildNodesAndEdges(
 
     // Regex targets (outbound: SP → dep)
     for (const dep of parsed.targets) {
+      if (!isSchemaQualified(dep)) { spSkipped.push(dep); continue; }
+      if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
       const depId = normalizeName(dep);
       stats.parsedRefs++;
       if (depId !== sourceId && nodeIds.has(depId)) {
@@ -251,6 +279,8 @@ function buildNodesAndEdges(
 
     // Regex exec calls (outbound: SP → called proc)
     for (const dep of parsed.execCalls) {
+      if (!isSchemaQualified(dep)) { spSkipped.push(dep); continue; }
+      if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
       const depId = normalizeName(dep);
       stats.parsedRefs++;
       if (depId !== sourceId && nodeIds.has(depId)) {
@@ -263,7 +293,11 @@ function buildNodesAndEdges(
       }
     }
 
-    stats.spDetails.push({ name: spLabel, inCount: spIn, outCount: spOut, unrelated: spUnrelated });
+    stats.spDetails.push({
+      name: spLabel, inCount: spIn, outCount: spOut,
+      unrelated: spUnrelated,
+      ...(spSkipped.length > 0 && { skippedRefs: spSkipped }),
+    });
   }
 
   return { nodes, edges, stats };

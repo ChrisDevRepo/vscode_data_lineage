@@ -106,6 +106,14 @@ rules:
     flags: gi
     description: "BULK INSERT target (SQL Server)"
 
+  - name: extract_update_alias_target
+    enabled: true
+    priority: 17
+    category: target
+    pattern: "\\bUPDATE\\s+(?!\\[?\\w+\\]?\\s*\\.)\\[?\\w+\\]?\\s+SET\\b[\\s\\S]{0,3000}?\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "UPDATE alias SET ... FROM schema.table — when UPDATE uses an alias (no dot), captures the actual write target from the FROM clause. Bidirectional edge expected: the table also appears as a source via extract_sources_ansi."
+
   # ── Exec calls ─────────────────────────────────────────────────────────────
   - name: extract_sp_calls
     enabled: true

@@ -29,16 +29,20 @@ SQL body
   → Stage 1: Preprocessing (clean_sql — strip comments, neutralize strings)
   → Stage 2: CTE extraction (names excluded from source matches)
   → Stage 3: Regex extraction (rules by priority: sources, targets, exec)
-  → Stage 4: Catalog validation (only real objects become edges)
+  → Stage 4: Qualification filter (unqualified names and system schemas silently skipped)
+  → Stage 5: Catalog validation (only real objects become edges)
 ```
 
-Stage 4 runs in `modelBuilder` — regex results are checked against the catalog of known objects (from dacpac XML or database DMV queries). Only references matching real objects create graph edges. This makes the parser intentionally permissive: it extracts all potential references and lets catalog resolution decide.
+Stage 4 and 5 run in `modelBuilder`:
+- **Qualification filter**: regex results without a schema qualifier (no dot) are collected as debug-only `skippedRefs` and never added to the graph or shown as unresolved references. System-schema refs (`sys.*`, `information_schema.*`) are also silently skipped. The parser only supports **fully-qualified two-part names** (`[schema].[object]`).
+- **Catalog validation**: schema-qualified refs are checked against the catalog of known objects (dacpac XML or DB DMVs). Only matching refs create graph edges.
 
 ## Filtering Layers
 
 | Filter | When | What | Configurable |
 |--------|------|------|-------------|
-| Catalog resolution | Graph build | Only refs matching real objects (dacpac or DB) become edges | Automatic |
+| Qualification filter | Graph build | Unqualified (no dot) and system-schema refs are skipped silently | Hardcoded |
+| Catalog resolution | Graph build | Only schema-qualified refs matching real objects become edges | Automatic |
 | `excludePatterns` | Post-graph | User hides real objects from visualization | VS Code settings |
 
 ## Categories
@@ -52,13 +56,13 @@ Stage 4 runs in `modelBuilder` — regex results are checked against the catalog
 
 Extraction rules use capture group 1 as the object reference.
 
-## Built-in Rules (11)
+## Built-in Rules (12)
 
 | Rule | Priority | Category | Captures |
 |------|----------|----------|----------|
 | `clean_sql` | 1 | preprocessing | Brackets `[...]` + strings `'...'` + comments `--` / `/* */` in one pass |
 | `extract_sources_ansi` | 5 | source | FROM / JOIN (all variants) |
-| `extract_targets_dml` | 6 | target | INSERT [INTO] / UPDATE / MERGE [INTO] |
+| `extract_targets_dml` | 6 | target | INSERT [INTO] / UPDATE [schema.table] / MERGE [INTO] |
 | `extract_sources_tsql_apply` | 7 | source | CROSS APPLY / OUTER APPLY |
 | `extract_sp_calls` | 8 | exec | EXEC / EXECUTE (including `@var = proc` pattern) |
 | `extract_merge_using` | 9 | source | MERGE ... USING source |
@@ -67,8 +71,11 @@ Extraction rules use capture group 1 as the object reference.
 | `extract_select_into` | 14 | target | SELECT INTO |
 | `extract_copy_into` | 15 | target | COPY INTO (Fabric/Synapse) |
 | `extract_bulk_insert` | 16 | target | BULK INSERT (SQL Server) |
+| `extract_update_alias_target` | 17 | target | UPDATE alias SET ... FROM schema.table (alias case) |
 
 **Preprocessing**: The `clean_sql` rule uses a single-pass combined regex where brackets, strings, and comments are matched together. The regex engine processes left-to-right — the **leftmost match wins**. A string like `' <--- ETL --->'` is matched as a string first, so `--` inside it is never treated as a comment. Brackets `[...]` are preserved (protecting quoted identifiers like `[column--name]`), strings are neutralized to `''`, comments are replaced with a space. This is the industry-standard "Best Regex Trick" for handling delimiter interactions.
+
+**UPDATE alias handling**: `extract_targets_dml` (priority 6) handles `UPDATE [schema].[Table]` directly. `extract_update_alias_target` (priority 17) handles `UPDATE alias SET ... FROM [schema].[Table]` — the negative lookahead `(?!\[?\w+\]?\s*\.)` ensures the two rules are mutually exclusive. When the alias rule fires, the FROM table also appears as a source (via `extract_sources_ansi`), producing a `⇄` bidirectional edge — semantically correct since the SP both reads and writes the target table.
 
 ## Fallback Behavior
 
@@ -93,15 +100,15 @@ This is validated by the `testTypeAwareDirection` test which confirms 100% accur
 
 | Pattern | Behavior | Why | Workaround |
 |---------|----------|-----|------------|
-| `UPDATE alias SET ... FROM table alias` | Table classified as source (READ) instead of target (WRITE) | Alias resolution requires semantic analysis beyond regex | Use full table name in UPDATE: `UPDATE [dbo].[Table] SET ...` |
-| `CTE(col1, col2) AS (...)` | CTE name may leak into sources | Column-list syntax not matched by CTE regex | Harmless — catalog resolution filters it |
+| `UPDATE alias SET ... FROM table alias` (subquery in SET) | Subquery table may be captured instead of outer FROM table | Non-greedy span picks first qualified name after FROM | Avoid subqueries in the SET clause when the table alias pattern is used; or use `UPDATE [schema].[Table] SET ...` directly |
 | Dynamic SQL (`EXEC('...')`) | Content inside string not parsed | By design — cannot determine static dependencies | N/A |
 | Nested block comments (`/* /* */ */`) | Outer comment may not fully close | Single regex can't count nesting depth | Uncommon in SP bodies |
 
-All false positives are harmless — catalog resolution filters regex results against known objects (dacpac or database). Only references matching real objects become graph edges.
+All false positives are harmless — catalog resolution filters regex results against known objects (dacpac or database). Only references matching real objects become graph edges. Unqualified references (CTEs, table aliases, built-in rowset functions like `FREETEXTTABLE`) are silently skipped before catalog lookup and never shown as unresolved.
 
 ## What Can't Be Customized
 
 - **Preprocessing** — `clean_sql` is built-in (hardcoded function replacement). The YAML rule documents the pattern but execution is always handled by `parseSqlBody()`. You can add additional preprocessing rules in custom YAML.
 - **CTE extraction** — always active, runs after preprocessing. CTE names are excluded from source matches automatically
+- **Qualification filter** — hardcoded in `modelBuilder`: unqualified and system-schema refs are always skipped
 - **Catalog validation** — only references matching real objects create edges (dacpac XML or DB DMV queries)

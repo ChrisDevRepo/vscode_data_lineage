@@ -57,9 +57,12 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const loadGenRef = useRef(0);
   const cachedElementsRef = useRef<XmlElement[] | null>(null);
 
-  // Auto-clear success/info status after 6s — keep warning/error visible, skip during active loading
+  // Auto-clear transient info messages after 6s (progress, connecting, loading...).
+  // Success messages persist until the next action — they carry meaningful summary information
+  // ("Found X objects across Y schemas") that the user needs while making schema selections.
+  // Warning/error messages are always kept visible until explicitly replaced.
   useEffect(() => {
-    if (status && (status.type === 'success' || status.type === 'info') && !isLoading) {
+    if (status && status.type === 'info' && !isLoading) {
       const timer = setTimeout(() => setStatus(null), 6000);
       return () => clearTimeout(timer);
     }

@@ -41,7 +41,7 @@ Press F5 to launch Extension Development Host.
 |------|-------|---------|
 | `test/dacpacExtractor.test.ts` | 43 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security |
 | `test/graphBuilder.test.ts` | 47 | Graph construction, layout, BFS trace, co-writer filter |
-| `test/parser-edge-cases.test.ts` | 127 | Syntactic parser tests: all 11 rules + edge cases + regression guards |
+| `test/parser-edge-cases.test.ts` | 127 | Syntactic parser tests: all 12 rules + edge cases + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
 | `test/dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
 | `test/webview.integration.test.ts` | — | VS Code integration tests |
@@ -76,6 +76,6 @@ Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open
 
 ## SQL Parse Rules
 
-Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 11 rules across 4 categories: preprocessing, source, target, exec). Views/functions use dacpac XML dependencies directly.
+Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 12 rules across 4 categories: preprocessing, source, target, exec). Views/functions use dacpac XML dependencies directly.
 
 When modifying parse rules: run `npm test` before and after, zero regressions allowed.

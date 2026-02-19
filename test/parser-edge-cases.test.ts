@@ -662,17 +662,16 @@ function testRegressionGuards() {
       'RG15: Bracket [dbo].[select] found (keyword in brackets is a valid table name)');
   }
 
-  // RG16: KNOWN LIMITATION — UPDATE alias loses write direction
-  // When using UPDATE alias SET... FROM real_table alias, the alias can't be resolved.
-  // The table appears as source (READ) instead of target (WRITE).
-  // XML BodyDependencies + type-aware fallback still places the table in the graph.
+  // RG16: UPDATE alias resolved via extract_update_alias_target rule
+  // UPDATE t SET ... FROM [dbo].[Target] t — alias rule captures [dbo].[Target] as write target.
+  // Target also appears as source (bidirectional ⇄ edge expected).
   {
     const r = parseSqlBody(`UPDATE t SET t.col = s.val FROM [dbo].[Target] t INNER JOIN [dbo].[Source] s ON t.id = s.id`);
+    assert(hasName(r.targets, 'Target'),
+      'RG16: UPDATE alias — Target captured as write target by extract_update_alias_target');
     assert(hasName(r.sources, 'Target'),
-      'RG16: KNOWN LIMITATION: UPDATE alias — Target appears as source (alias not resolvable)');
+      'RG16: UPDATE alias — Target also appears as source (⇄ bidirectional edge)');
     assert(hasName(r.sources, 'Source'), 'RG16: Source found');
-    assert(!hasName(r.targets, 'Target'),
-      'RG16: KNOWN LIMITATION: Target NOT in targets (alias resolution requires semantic analysis)');
   }
 }
 
