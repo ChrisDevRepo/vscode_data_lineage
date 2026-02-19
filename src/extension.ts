@@ -870,11 +870,13 @@ function handleParseStats(stats: {
   }
 
   // Info level: canonical summary (last line — contains everything the user needs)
-  if (objectCount !== undefined) {
-    outputChannel.info(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs dropped`);
-  } else {
-    outputChannel.info(`[Import] ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
+  const distinctDropped = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
+  if (objectCount !== undefined && objectCount > 0) {
+    outputChannel.info(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
+  } else if (objectCount === undefined) {
+    outputChannel.info(`[Import] ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
   }
+  // objectCount === 0: no [Import] line — UI already shows a warning
 }
 
 // ─── Webview HTML ───────────────────────────────────────────────────────────
