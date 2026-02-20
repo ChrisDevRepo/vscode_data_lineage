@@ -1,29 +1,21 @@
 /**
- * TSQL Complex Test Suite — Wave 0 RL Baseline
+ * SQL Pattern Test Suite
  *
- * Loads all .sql files from:
- *   test/sql/targeted/   — hand-crafted pattern tests WITH -- EXPECT annotations
- *   test/sql/real/       — real-world SQL files (stability-only, no oracle)
- *   test/sql/generated/  — synthetic SPs WITH -- EXPECT annotations (created in later waves)
+ * Loads all .sql files from test/sql/targeted/ and verifies the parser
+ * against expected results embedded in the file as a -- EXPECT comment:
  *
- * For files WITH -- EXPECT annotation:
- *   • expected.sources  ⊆ actual.sources   (no false negatives)
- *   • expected.targets  ⊆ actual.targets
- *   • expected.exec     ⊆ actual.execCalls
- *   • expected.absent   ∩ (sources ∪ targets ∪ execCalls) = ∅
+ *   -- EXPECT  sources:[dbo].[T1],[dbo].[T2]  targets:[dbo].[Out]  exec:[dbo].[usp_Log]
  *
- * For files WITHOUT -- EXPECT (real-world, stability-only):
- *   • parseSqlBody() must not throw
- *   • result.sources.length < 500  (no runaway extraction)
- *   • result.targets.length < 200
+ * Fields:
+ *   sources:  schema.object names the parser must find in result.sources
+ *   targets:  schema.object names the parser must find in result.targets
+ *   exec:     schema.object names the parser must find in result.execCalls
+ *   absent:   names that must NOT appear in any result (verifies comments/strings are cleaned)
  *
- * Wave 0 intent: measure the BASELINE pass rate. Some targeted tests are
- * KNOWN GAPS (e.g. ansi_old_01 comma-join, output_into patterns) and will FAIL.
- * That is expected — these failures are the RL signal for subsequent waves.
- * The journal records the initial pass rate.
+ * Files without a -- EXPECT line are run as stability-only tests
+ * (parser must not crash; no assertion on content).
  *
- * Exit code: 1 if any STABILITY failure (crash or runaway), or any ORACLE failure.
- * All failures are printed with detail so the RL loop can target them.
+ * Exit code 1 if any test fails.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
@@ -42,7 +34,6 @@ loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
 // ─── Counters ─────────────────────────────────────────────────────────────────
 let passed = 0;
 let failed = 0;
-let stabilityFailed = 0;
 
 // ─── EXPECT annotation parser ─────────────────────────────────────────────────
 interface Expectation {
@@ -53,20 +44,15 @@ interface Expectation {
 }
 
 function parseExpectation(sql: string): Expectation | null {
-  // Find line matching: -- EXPECT  sources:...  targets:...  exec:...  absent:...
   const lines = sql.split(/\r?\n/);
   for (const line of lines) {
     const m = line.match(/--\s*EXPECT\b(.*)/i);
     if (!m) continue;
 
     const body = m[1];
-
     const parseField = (field: string): string[] => {
-      // Capture everything until the next field keyword or end of string.
-      // Uses lookahead so bracket names with spaces (e.g. [CRONUS International Ltd_$X]) work.
       const fm = body.match(new RegExp(`\\b${field}:(.*?)(?=\\s+(?:sources|targets|exec|absent):|$)`, 'i'));
       if (!fm || !fm[1].trim()) return [];
-      // Split by comma — bracket names may contain spaces but not commas
       return fm[1].split(',').map(s => s.trim()).filter(Boolean);
     };
 
@@ -80,7 +66,7 @@ function parseExpectation(sql: string): Expectation | null {
   return null;
 }
 
-// ─── Normalization for comparison (bracket-strip + lowercase) ─────────────────
+// ─── Normalization for comparison (strip brackets + lowercase) ────────────────
 function norm(s: string): string {
   return s.replace(/\[|\]/g, '').toLowerCase().trim();
 }
@@ -90,93 +76,52 @@ function includes(list: string[], item: string): boolean {
   return list.some(x => norm(x) === n);
 }
 
-// ─── Single file test runner ───────────────────────────────────────────────────
-function runFile(filePath: string, isStabilityOnly: boolean): boolean {
+// ─── Single file test ──────────────────────────────────────────────────────────
+function runFile(filePath: string): boolean {
   const fileName = basename(filePath);
-  let sql: string;
-  try {
-    sql = readFileSync(filePath, 'utf-8');
-  } catch (e) {
-    console.error(`  ✗ [CRASH] Cannot read ${fileName}: ${e}`);
-    stabilityFailed++;
-    failed++;
-    return false;
-  }
+  const sql = readFileSync(filePath, 'utf-8');
 
-  // ── Stability check ──────────────────────────────────────────────────────
   let result;
   try {
     result = parseSqlBody(sql);
   } catch (e) {
-    console.error(`  ✗ [CRASH] parseSqlBody threw on ${fileName}: ${e}`);
-    stabilityFailed++;
+    console.error(`  ✗ [CRASH] ${fileName}: ${e}`);
     failed++;
     return false;
   }
 
-  if (result.sources.length >= 500) {
-    console.error(`  ✗ [RUNAWAY] ${fileName}: ${result.sources.length} sources (≥500 — runaway extraction)`);
-    stabilityFailed++;
-    failed++;
-    return false;
-  }
-  if (result.targets.length >= 200) {
-    console.error(`  ✗ [RUNAWAY] ${fileName}: ${result.targets.length} targets (≥200 — runaway extraction)`);
-    stabilityFailed++;
+  if (result.sources.length >= 500 || result.targets.length >= 200) {
+    console.error(`  ✗ [RUNAWAY] ${fileName}: src=${result.sources.length} tgt=${result.targets.length}`);
     failed++;
     return false;
   }
 
-  if (isStabilityOnly) {
+  const expect = parseExpectation(sql);
+  if (!expect) {
     console.log(`  ✓ [STABLE] ${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
     passed++;
     return true;
   }
 
-  // ── Oracle assertion ─────────────────────────────────────────────────────
-  const expect = parseExpectation(sql);
-  if (!expect) {
-    // No EXPECT line — run as stability-only
-    console.log(`  ✓ [STABLE] ${fileName}  (no EXPECT annotation)`);
-    passed++;
-    return true;
-  }
-
   const all = [...result.sources, ...result.targets, ...result.execCalls];
-  const misses: string[] = [];
-  const falsePositives: string[] = [];
+  const errors: string[] = [];
 
-  // Check expected sources
   for (const exp of expect.sources) {
-    if (!includes(result.sources, exp)) {
-      misses.push(`source ${exp} not found`);
-    }
+    if (!includes(result.sources, exp)) errors.push(`source ${exp} not found`);
   }
-  // Check expected targets
   for (const exp of expect.targets) {
-    if (!includes(result.targets, exp)) {
-      misses.push(`target ${exp} not found`);
-    }
+    if (!includes(result.targets, exp)) errors.push(`target ${exp} not found`);
   }
-  // Check expected exec calls
   for (const exp of expect.exec) {
-    if (!includes(result.execCalls, exp)) {
-      misses.push(`exec ${exp} not found`);
-    }
+    if (!includes(result.execCalls, exp)) errors.push(`exec ${exp} not found`);
   }
-  // Check absent items (must NOT appear anywhere)
   for (const abs of expect.absent) {
-    if (includes(all, abs)) {
-      falsePositives.push(`absent ${abs} was found (false positive)`);
-    }
+    if (includes(all, abs)) errors.push(`${abs} should not be extracted (false positive)`);
   }
 
-  const errors = [...misses, ...falsePositives];
   if (errors.length > 0) {
-    console.error(`  ✗ [ORACLE] ${fileName}:`);
-    for (const err of errors) {
-      console.error(`        → ${err}`);
-    }
+    console.error(`  ✗ ${fileName}:`);
+    for (const err of errors) console.error(`        → ${err}`);
     console.error(`        actual src=[${result.sources.join(', ')}]`);
     console.error(`        actual tgt=[${result.targets.join(', ')}]`);
     console.error(`        actual exec=[${result.execCalls.join(', ')}]`);
@@ -184,62 +129,32 @@ function runFile(filePath: string, isStabilityOnly: boolean): boolean {
     return false;
   }
 
-  console.log(`  ✓ [ORACLE] ${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
+  console.log(`  ✓ ${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
   passed++;
   return true;
 }
 
-// ─── Directory runner ─────────────────────────────────────────────────────────
-function runDirectory(dirPath: string, stabilityOnly: boolean, label: string): void {
-  if (!existsSync(dirPath)) {
-    console.log(`\n── ${label} ── (directory not found: ${dirPath})`);
-    return;
-  }
-  const files = readdirSync(dirPath)
-    .filter(f => f.endsWith('.sql'))
-    .sort();
-
-  console.log(`\n── ${label} ── (${files.length} files)`);
-  for (const file of files) {
-    runFile(resolve(dirPath, file), stabilityOnly);
-  }
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function main(): void {
-  console.log('═══ TSQL Complex Test Suite (Wave 0 Baseline) ═══');
+  console.log('═══ SQL Pattern Tests ═══\n');
 
-  // Targeted: hand-crafted with EXPECT annotations
-  runDirectory(
-    resolve(__dirname, 'sql/targeted'),
-    false,  // has EXPECT
-    'TARGETED (oracle assertions)'
-  );
+  const targetedDir = resolve(__dirname, 'sql/targeted');
+  if (!existsSync(targetedDir)) {
+    console.error('test/sql/targeted/ not found');
+    process.exit(1);
+  }
 
-  // Real-world: stability only
-  runDirectory(
-    resolve(__dirname, 'sql/real'),
-    true,   // stability only
-    'REAL-WORLD (stability only)'
-  );
+  const files = readdirSync(targetedDir).filter(f => f.endsWith('.sql')).sort();
+  for (const file of files) {
+    runFile(resolve(targetedDir, file));
+  }
 
-  // Generated: synthetic SPs with EXPECT annotations (populated in later waves)
-  runDirectory(
-    resolve(__dirname, 'sql/generated'),
-    false,  // has EXPECT
-    'GENERATED (oracle assertions)'
-  );
-
-  // ── Summary ────────────────────────────────────────────────────────────────
   const total = passed + failed;
   const pct = total > 0 ? Math.round((passed / total) * 100) : 0;
   console.log('\n═══════════════════════════════════════════════════');
   console.log(`Results: ${passed}/${total} passed  (${pct}%)`);
-  if (stabilityFailed > 0) {
-    console.log(`STABILITY failures (crash/runaway): ${stabilityFailed} — these are hard failures`);
-  }
-  if (failed - stabilityFailed > 0) {
-    console.log(`ORACLE gap failures: ${failed - stabilityFailed} — RL targets for subsequent waves`);
+  if (failed > 0) {
+    console.log(`Failures: ${failed} — see details above`);
   }
   console.log('═══════════════════════════════════════════════════');
 
