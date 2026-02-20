@@ -92,7 +92,7 @@ rules:
     enabled: true
     priority: 9
     category: source
-    pattern: "\\bMERGE\\b[\\s\\S]*?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bMERGE\\b[^;]{0,5000}?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: MERGE ... USING source table
 

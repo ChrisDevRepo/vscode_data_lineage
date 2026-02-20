@@ -2,8 +2,6 @@
 
 import { splitSqlName } from '../utils/sql';
 
-
-
 export interface ParsedDependencies {
   sources: string[];
   targets: string[];
@@ -78,7 +76,6 @@ function substituteCteUpdateAliases(sql: string): string {
 
   if (cteMap.size === 0) return sql;
 
-  // Rewrite: UPDATE cteName SET → UPDATE baseTable SET (only for known CTE aliases)
   return sql.replace(/\bUPDATE\s+(\w+)\s+SET\b/gi, (match, alias) => {
     const baseTable = cteMap.get(alias.toLowerCase());
     return baseTable ? `UPDATE ${baseTable} SET` : match;
@@ -176,7 +173,6 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
   for (let i = 0; i < config.rules.length; i++) {
     const raw = config.rules[i];
 
-    // Skip disabled rules silently
     if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
 
     const check = validateRule(raw, i);
@@ -244,10 +240,6 @@ export function parseSqlBody(sql: string): ParsedDependencies {
       clean = clean.replace(new RegExp(rule.pattern, rule.flags), rule.replacement);
     }
   }
-
-  // CTEs (WITH name AS (...)) do not need explicit filtering:
-  // normalizeCaptured() rejects all unqualified names (no dot), which covers all CTE aliases.
-  // CTEs are virtual constructs — they never appear in the object catalog.
 
   const sources = new Set<string>();
   const targets = new Set<string>();

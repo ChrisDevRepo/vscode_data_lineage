@@ -26,16 +26,14 @@ rules:
 
 ```
 SQL body
-  → Stage 1: Preprocessing (clean_sql — strip comments, neutralize strings)
-  → Stage 2: CTE extraction (names excluded from source matches)
-  → Stage 3: Regex extraction (rules by priority: sources, targets, exec)
-  → Stage 4: Qualification filter (unqualified names and system schemas silently skipped)
-  → Stage 5: Catalog validation (only real objects become edges)
+  → Stage 1: Preprocessing (TypeScript passes: block comments, strings, line comments, comma-joins, CTE alias substitution)
+  → Stage 2: YAML rule extraction (rules by priority: sources, targets, exec)
+  → Stage 3: Capture normalization (normalizeCaptured: rejects @vars, #temps, unqualified names, 4-part linked-server refs)
+  → Stage 4: Catalog validation (only real objects become edges)
 ```
 
-Stage 4 and 5 run in `modelBuilder`:
-- **Qualification filter**: regex results without a schema qualifier (no dot) are collected as debug-only `skippedRefs` and never added to the graph or shown as unresolved references. System-schema refs (`sys.*`, `information_schema.*`) are also silently skipped. The parser only supports **fully-qualified two-part names** (`[schema].[object]`).
-- **Catalog validation**: schema-qualified refs are checked against the catalog of known objects (dacpac XML or DB DMVs). Only matching refs create graph edges.
+Stage 4 runs in `modelBuilder.ts`:
+- **Catalog validation**: schema-qualified refs are checked against the catalog of known objects (dacpac XML or DB DMVs). Only matching refs create graph edges. Unqualified and system-schema refs (`sys.*`, `information_schema.*`) are rejected earlier in Stage 3 by `normalizeCaptured()`.
 
 ## Filtering Layers
 
@@ -72,6 +70,7 @@ Extraction rules use capture group 1 as the object reference.
 | `extract_copy_into` | 15 | target | COPY INTO (Fabric/Synapse) |
 | `extract_bulk_insert` | 16 | target | BULK INSERT (SQL Server) |
 | `extract_update_alias_target` | 17 | target | UPDATE alias SET ... FROM schema.table (alias case) |
+| `extract_output_into` | 18 | target | OUTPUT ... INTO schema.table (audit/staging tables) |
 
 **Preprocessing**: The `clean_sql` rule uses a single-pass combined regex where brackets, strings, and comments are matched together. The regex engine processes left-to-right — the **leftmost match wins**. A string like `' <--- ETL --->'` is matched as a string first, so `--` inside it is never treated as a comment. Brackets `[...]` are preserved (protecting quoted identifiers like `[column--name]`), strings are neutralized to `''`, comments are replaced with a space. This is the industry-standard "Best Regex Trick" for handling delimiter interactions.
 
@@ -102,15 +101,13 @@ This is validated by the `testTypeAwareDirection` test which confirms 100% accur
 |---------|----------|-----|------------|
 | `UPDATE alias SET ... FROM table alias` (subquery in SET) | Subquery table may be captured instead of outer FROM table | Non-greedy span picks first qualified name after FROM | Avoid subqueries in the SET clause when the table alias pattern is used; or use `UPDATE [schema].[Table] SET ...` directly |
 | Dynamic SQL (`EXEC('...')`) | Content inside string not parsed | By design — cannot determine static dependencies | N/A |
-| Nested block comments (`/* /* */ */`) | Outer comment may not fully close | Single regex can't count nesting depth | Uncommon in SP bodies |
+| Chained CTEs with no schema ref (`WITH c2 AS (… FROM c1) UPDATE c2`) | Write target not detected | `c1` has no schema dot — chain not resolved by the CTE alias substitution pass | Rewrite using `UPDATE [schema].[T]` directly |
 | No whitespace before bracket identifiers (`from[dbo].[T]`, `exec[dbo].[sp]`) | Dependency not detected | All rules require at least one space between keyword and object name — valid SQL but extremely rare formatting | Add a space: `FROM [dbo].[T]` |
-| Chained CTEs in UPDATE (`WITH c2 AS (… FROM c1) UPDATE c2`) | Write target not detected | `c1` has no schema dot — chain not resolved | Rewrite using `UPDATE [schema].[T]` directly instead of a chained CTE alias |
 
 All false positives are harmless — catalog resolution filters regex results against known objects (dacpac or database). Only references matching real objects become graph edges. Unqualified references (CTEs, table aliases, built-in rowset functions like `FREETEXTTABLE`) are silently skipped before catalog lookup and never shown as unresolved.
 
 ## What Can't Be Customized
 
-- **Preprocessing** — `clean_sql` is built-in (hardcoded function replacement). The YAML rule documents the pattern but execution is always handled by `parseSqlBody()`. You can add additional preprocessing rules in custom YAML.
-- **CTE extraction** — always active, runs after preprocessing. CTE names are excluded from source matches automatically
-- **Qualification filter** — hardcoded in `modelBuilder`: unqualified and system-schema refs are always skipped
+- **Preprocessing** — the four TypeScript passes (block comment removal, leftmost-match string/comment neutralization, ANSI comma-join normalization, CTE alias substitution) are hardcoded in `parseSqlBody()`. The `clean_sql` YAML rule documents the behavior but is not executed. You can add extra preprocessing rules in custom YAML.
+- **Capture normalization** — `normalizeCaptured()` always rejects `@vars`, `#temps`, unqualified names, and 4-part linked-server refs. Not configurable.
 - **Catalog validation** — only references matching real objects create edges (dacpac XML or DB DMV queries)

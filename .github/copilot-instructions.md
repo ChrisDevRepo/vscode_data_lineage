@@ -44,13 +44,13 @@ Press F5 to launch Extension Development Host.
 | `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 12 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
 | `test/dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
-| `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
+| `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/webview.integration.test.ts` | — | VS Code integration tests |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run all tests (342 unit + 55 tsql-complex)
+npm test              # Run all tests (342 unit + 54 tsql-complex)
 npm run test:integration  # Run VS Code tests
 ```
 
@@ -136,7 +136,7 @@ Rule authors write patterns that capture the raw SQL name — normalization is h
 
 ### Modifying Parse Rules
 
-When modifying `assets/defaultParseRules.yaml` or `sqlBodyParser.ts`: run full 3-dacpac baseline comparison (283 SPs). `npm test` alone is not sufficient.
+When modifying `assets/defaultParseRules.yaml` or `sqlBodyParser.ts`: run full 3-dacpac baseline comparison (301 SPs). `npm test` alone is not sufficient.
 
 ```bash
 npx tsx tmp/snapshot-deps.ts 2>/dev/null > tmp/baseline.tsv   # before
