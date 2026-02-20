@@ -147,17 +147,96 @@ Pass rate on generated SPs: **310/310 = 100%** (after fixing generator's `applyN
 
 ---
 
-### Wave 1 Plan: ANSI Comma-Join Coverage
+### Wave 1: ANSI Comma-Join Coverage
 
-**Target gap**: Patterns 1, 2 from gap table above (ANSI comma-join)
+**Branch**: `rl/wave-1-comma-join` (from `rl/wave-0-baseline`)
+**Date**: 2026-02-20
 
-**Competing agents** (3-way):
-- **Agent A (Conservative)**: Modify `extract_sources_ansi` to also match tables after commas in a FROM list. Pattern change: add a new alternative for `,\s*` before table name. Risk: may create false positives.
-- **Agent B (Expansive)**: Add a new rule `extract_sources_comma_join` with pattern `(?:FROM\s+|,\s*)(schema.table)` that fires only after a confirmed FROM context. Cleaner separation.
-- **Agent C (Structural)**: Add a preprocessing rule that rewrites `FROM t1, t2, t3` → `FROM t1 CROSS JOIN t2 CROSS JOIN t3` before extraction. Deterministic transformation, no regex ambiguity.
+**Target gap**: 3 failing tests — `ansi_old_01`, `ansi_old_02`, `ansi_old_04`
+**Root cause**: `extract_sources_ansi` requires `FROM|JOIN` keyword before each table. In `FROM t1, t2, t3`, only `t1` (after FROM) is captured; `t2`, `t3` have no keyword prefix.
 
-**Test**: `test/sql/targeted/ansi_old_01_comma_join.sql`, `ansi_old_02_outer_join_star.sql`, `ansi_old_04_mixed_modern_old.sql`
-**Success criterion**: All 3 files pass EXPECT assertions with zero regressions in 283-SP snapshot.
+---
+
+#### Three-Way Agent Competition
+
+**Agent A (Conservative YAML)**: Modify `extract_sources_ansi` to also match `, schema.table` after commas.
+
+*Attempt 1* — Schema-length guard `\w{3,}`: Pattern `(?:FROM|JOIN\s+|,\s*(?=\w{3,}\.))`. **FAILED** — multi-char table aliases (e.g. `jobs`, `sched`, `svr` in msdb SQL) pass the 3-char guard → runaway extraction (729 sources in `sqlserver2019_instmsdb.sql`, ≥500 limit exceeded).
+
+*Attempt 2* — Bracket-only variant: `,\s*(?=\[[^\]]+\]\.\[)`. **PARTIAL** — fixes `ansi_old_04` (bracket-quoted tables) but NOT `ansi_old_01`/`ansi_old_02` (unbracketed). Zero stability failures.
+
+| Metric | Agent A result |
+|--------|---------------|
+| Tests | 553/560 (+1 from 552) |
+| Stability failures | 0 |
+| Snapshot regressions | 0 |
+| Snapshot improvements | 0 |
+| **Score** | **2** |
+
+---
+
+**Agent B (YAML lookbehind)**: Add `extract_sources_comma_join` rule with lookbehind `(?<=\bFROM\b[^;]*)` to check FROM appeared before the comma.
+
+*Problem diagnosed*: The lookbehind crosses `GO` batch separators in large multi-statement SQL files. The msdb install script (`sqlserver2019_instmsdb.sql`) has hundreds of SPs — a FROM from SP#N appears before SELECT commas of SP#N+1 (no `;` barrier between `GO`-separated batches). Result: 729/735 false sources.
+
+**DISQUALIFIED** — stability failures in 2 real-world test files.
+
+| Metric | Agent B result |
+|--------|---------------|
+| Tests | 553/560 |
+| Stability failures | **2** (immediate disqualification) |
+| **Score** | **-∞** |
+
+---
+
+**Agent C (TypeScript forward-scan)**: Add `normalizeAnsiCommaJoins()` function to `sqlBodyParser.ts` that uses a forward-scanning regex to match `FROM t1 a1, t2 a2, ..., tN aN <terminator>` as a single pattern and replace commas with JOIN, then `extract_sources_ansi` captures all tables via the JOIN branch.
+
+*Key insight*: The forward-scanning pattern `\bFROM\s+(table,table,...)(table)(?=WHERE|JOIN|ORDER|...)` can only fire when FROM is literally followed by comma-separated tables. SELECT-list commas (which appear BEFORE FROM, not after) are structurally excluded. No lookbehind needed. No cross-statement boundary issues.
+
+```typescript
+function normalizeAnsiCommaJoins(sql: string): string {
+  const tableRef = '(?:\\[[^\\]]+\\]|\\w+)\\.(?:\\[[^\\]]+\\]|\\w+)(?:\\s+(?:AS\\s+)?\\w+)?';
+  return sql.replace(
+    new RegExp(
+      `\\bFROM\\s+((?:${tableRef}\\s*,\\s*)+${tableRef})` +
+      '(?=\\s*(?:WHERE\\b|JOIN\\b|INNER\\b|LEFT\\b|RIGHT\\b|FULL\\b|CROSS\\b|OUTER\\b|ON\\b|ORDER\\b|GROUP\\b|HAVING\\b|WITH\\b|SET\\b|;|\\)|$))',
+      'gi'
+    ),
+    (_, tables: string) => 'FROM ' + tables.replace(/\s*,\s*/g, ' JOIN ')
+  );
+}
+```
+
+Called in `parseSqlBody()` after Pass 1 cleansing (Pass 1.5), before YAML extraction rules.
+
+| Metric | Agent C result |
+|--------|---------------|
+| Tests | **555/560 (+3 from 552)** |
+| Stability failures | 0 |
+| Snapshot regressions | 0 |
+| Snapshot improvements | 1 SP (`spCreateSnapshot`: `[sys].[dm_pdw_exec_requests]` now found) |
+| **Score** | **8** |
+
+---
+
+#### Agent C Wins
+
+All 3 targeted tests now pass:
+- `ansi_old_01_comma_join.sql`: src=4 (was src=1) ✓
+- `ansi_old_02_outer_join_star.sql`: src=4 (was src=1) ✓
+- `ansi_old_04_mixed_modern_old.sql`: src=4 (was src=2) ✓
+
+Zero regressions on all 342 existing tests. Zero snapshot regressions on 283 dacpac SPs.
+
+**Remaining gap count**: 5 oracle failures (was 8 at wave 0):
+- `output_into_01`, `output_into_02`, `output_into_03` — OUTPUT INTO catalog (Wave 2 target)
+- `update_alias_03` — CTE-based UPDATE target (Wave 3 target)
+- `bad_format_01` — No-whitespace SQL (Low priority)
+
+**Files changed on this branch**:
+- `src/engine/sqlBodyParser.ts` — added `normalizeAnsiCommaJoins()` + call in `parseSqlBody()`
+- `tmp/wave1-agent-c.tsv` — snapshot after wave 1
+- `tmp/rl-journal.md` — this entry
 
 ---
 

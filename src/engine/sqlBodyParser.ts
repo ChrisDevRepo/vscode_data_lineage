@@ -41,6 +41,27 @@ export interface ParseRulesConfig {
 //   • -- line comments     → replaced with space (already removed by pass 0 for block)
 //   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
 
+/**
+ * Normalize ANSI comma-join FROM clauses to modern JOIN syntax before extraction rules run.
+ * FROM t1 a1, t2 a2, t3 a3 WHERE  →  FROM t1 a1 JOIN t2 a2 JOIN t3 a3 WHERE
+ *
+ * Only rewrites when the FROM clause contains comma-separated schema.table references
+ * followed by a FROM-terminating keyword (WHERE, JOIN, ORDER, etc.).
+ * SELECT-list commas are never affected — they appear before FROM, not after.
+ * Function-argument commas are never affected — they lack the FROM...terminator context.
+ */
+function normalizeAnsiCommaJoins(sql: string): string {
+  const tableRef = '(?:\\[[^\\]]+\\]|\\w+)\\.(?:\\[[^\\]]+\\]|\\w+)(?:\\s+(?:AS\\s+)?\\w+)?';
+  return sql.replace(
+    new RegExp(
+      `\\bFROM\\s+((?:${tableRef}\\s*,\\s*)+${tableRef})` +
+      '(?=\\s*(?:WHERE\\b|JOIN\\b|INNER\\b|LEFT\\b|RIGHT\\b|FULL\\b|CROSS\\b|OUTER\\b|ON\\b|ORDER\\b|GROUP\\b|HAVING\\b|WITH\\b|SET\\b|;|\\)|$))',
+      'gi'
+    ),
+    (_, tables: string) => 'FROM ' + tables.replace(/\s*,\s*/g, ' JOIN ')
+  );
+}
+
 /** Pass 0: counter-scan removes block comments including nested ones correctly. O(n), no regex. */
 function removeBlockComments(sql: string): string {
   let out = '';
@@ -161,6 +182,11 @@ export function parseSqlBody(sql: string): ParsedDependencies {
     if (match.startsWith("'")) return "''";                         // neutralize 'string literals'
     return ' ';                                                       // remove -- line comments
   });
+
+  // Pass 1.5: Normalize ANSI comma-join FROM clauses to modern JOIN syntax.
+  // Runs on clean SQL (after strings/comments removed) so it doesn't produce false matches.
+  // Only affects: FROM t1, t2, t3 WHERE  →  FROM t1 JOIN t2 JOIN t3 WHERE
+  clean = normalizeAnsiCommaJoins(clean);
 
   // Step 1b: Additional user-defined preprocessing rules (skip built-in clean_sql)
   for (const rule of activeRules) {
