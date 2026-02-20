@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Data Lineage Viz - VS Code Extension</title>
-  <meta name="description" content="VS Code extension for object-level dependency visualization of SQL Database Projects (.dacpac). Trace lineage, explore dependencies, and navigate your SQL codebase.">
-  <meta name="keywords" content="dacpac, sql server, lineage, dependencies, visualization, vscode extension, database, data lineage">
+  <meta name="description" content="VS Code extension for object-level dependency visualization from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases.">
+  <meta name="keywords" content="dacpac, sql server, azure sql, fabric, synapse, lineage, dependencies, visualization, vscode extension, database, data lineage">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1f2937; line-height: 1.6; }
@@ -77,7 +77,7 @@
       </div>
       <h1>Data Lineage Viz</h1>
       <p class="subtitle">
-        Object-level dependency visualization for SQL Database Projects — right inside VS Code. Currently in preview. No column-level lineage.
+        Object-level dependency visualization from .dacpac files or database imports — right inside VS Code. Currently in preview.
       </p>
       <div class="btn-row">
         <a href="https://youtu.be/5yr0yRZAa98" class="btn btn-dark">
@@ -112,34 +112,34 @@
 
   <section class="features">
     <div class="feature">
-      <div class="icon">&#9638;</div>
-      <h3>DACPAC Parsing</h3>
-      <p>Extract tables, views, stored procedures, and functions from SSDT and Fabric SDK .dacpac files.</p>
-    </div>
-    <div class="feature">
-      <div class="icon">&#128270;</div>
-      <h3>Detail Search</h3>
-      <p>Full-text search across SQL bodies with grouped results, code snippets, and match highlighting.</p>
+      <div class="icon">&#128193;</div>
+      <h3>Data Sources</h3>
+      <p>Import from .dacpac files or directly from SQL Server, Azure SQL, Fabric DW, and Synapse databases. Quick reconnect to your last source.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128269;</div>
-      <h3>Trace Dependencies</h3>
-      <p>Click any node to trace upstream and downstream dependencies with configurable depth.</p>
+      <h3>Search &amp; Navigate</h3>
+      <p>Search and navigate objects with autocomplete. Schema-based color coding with interactive minimap.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128268;</div>
+      <h3>Trace &amp; Find Path</h3>
+      <p>Trace upstream and downstream dependencies with sibling filtering, or find the shortest path between any two nodes.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128202;</div>
+      <h3>Graph Analysis</h3>
+      <p>Detect islands, hubs, orphans, longest paths, and circular dependencies at a glance.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128196;</div>
-      <h3>DDL Viewer</h3>
-      <p>Click a node to view its DDL with full syntax highlighting — no red squiggles, no diagnostics noise.</p>
+      <h3>DDL &amp; Search</h3>
+      <p>Click any node to view its DDL with full syntax highlighting. Full-text search across all SQL bodies.</p>
     </div>
     <div class="feature">
-      <div class="icon">&#9881;</div>
-      <h3>Configurable</h3>
-      <p>YAML parse rules, exclude patterns, layout direction, and trace depth — all via VS Code settings.</p>
-    </div>
-    <div class="feature">
-      <div class="icon">&#127912;</div>
-      <h3>Theme-Aware</h3>
-      <p>Adapts to your VS Code light, dark, or high-contrast theme automatically.</p>
+      <div class="icon">&#128230;</div>
+      <h3>Export &amp; Configure</h3>
+      <p>Export the lineage graph to Draw.io. Custom parse rules, layout, and trace settings. Adapts to all VS Code themes.</p>
     </div>
   </section>
 

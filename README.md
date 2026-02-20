@@ -6,82 +6,124 @@
 
 > **Preview** — This extension is functional but under active development. Expect rough edges.
 
-Visualize object-level dependencies in SQL Server Database Projects (.dacpac). See how tables, views, stored procedures, and functions connect through an interactive graph.
+Visualize object-level dependencies from `.dacpac` files or by importing directly from SQL Server, Azure SQL, Fabric DW, or Synapse. See how tables, views, stored procedures, and functions connect through an interactive graph.
 
 ![Data Lineage Viz — search, trace, and preview DDL](images/viz-search-screenshot.png)
 
 ## Quick Start
 
-1. Open a workspace with a `.dacpac` file
-2. Run **Data Lineage: Open** (`Ctrl+Shift+P`)
-3. Select schemas and click **Visualize**
+**From a .dacpac file:**
+1. Run **Data Lineage: Open Wizard** (`Ctrl+Shift+P`)
+2. Select a `.dacpac` file, pick schemas, and click **Visualize**
 
-No `.dacpac` file? Click **Load Demo** in the wizard to explore the AdventureWorks sample database.
+**From a database:**
+1. Install the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql)
+2. Run **Data Lineage: Open Wizard** and click **Connect to Database**
+3. Pick a connection, select schemas, and click **Visualize**
+
+No database? Click **Load Demo** to explore the AdventureWorks sample.
 
 ## Features
 
+**Data Sources**
+- Import from SSDT and SDK-style `.dacpac` files
+- Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
+- Quick reconnect to your last data source
+
 **Visualization**
 - Search and navigate objects with autocomplete
-- Trace upstream and downstream dependencies
+- Trace upstream and downstream dependencies with sibling filtering
+- Find the shortest path between any two nodes
+- Schema-based color coding with interactive minimap
+
+**Graph Analysis**
+- Detect islands, hubs, orphans, and circular dependencies
+- Find the longest dependency chains in your project
 - Filter by schema, object type, or regex patterns
-- Schema-based color coding
-- Switchable left-right / top-bottom layout
 
-**SQL Preview**
-- Click any node to view its DDL in a read-only SQL viewer
-- Full syntax highlighting, Ctrl+F search, bracket matching
-- Drag the SQL tab to a second monitor for side-by-side workflow
-
-**Customization**
-- [YAML-based custom parsing rules](docs/PARSE_RULES.md)
-- Configurable node limits for large projects
-- Exclude objects by regex patterns
+**SQL Preview & Export**
+- Click any node to view its DDL with full syntax highlighting
+- Full-text search across all SQL bodies with match highlighting
+- Export the lineage graph to Draw.io for documentation
 
 ## Limitations
 
 - **Object-level only** — no column-level lineage
 - **Static analysis** — dynamic SQL (`EXEC(@sql)`) not detected
+- **Fully-qualified names only** — only `[schema].[object]` references are detected; unqualified names (aliases, CTEs, built-ins) are excluded
 
 ## How It Works
 
-1. **Extract** — Reads `model.xml` from the .dacpac archive
-2. **Parse** — Extracts `BodyDependencies` + configurable regex patterns
+1. **Extract** — Reads `model.xml` from a .dacpac archive, or imports metadata via DMV queries from a database
+2. **Parse** — Extracts dependencies from XML metadata + configurable regex patterns
 3. **Graph** — Builds a directed graph with dagre layout
 4. **Render** — Interactive visualization with React Flow
 
 ## Configuration
 
-Search `dataLineageViz` in Settings:
+Search `dataLineageViz` in Settings (`Ctrl+,`):
+
+**General**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxNodes` | `500` | Maximum nodes to display (10-1000) |
+
+**Parser**
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `parseRulesFile` | `""` | Path to custom YAML parsing rules |
 | `excludePatterns` | `[]` | Regex patterns to exclude objects |
-| `maxNodes` | `250` | Maximum nodes to display (10-1000) |
+
+**Graph Layout**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `layout.direction` | `"LR"` | Layout direction: `LR` or `TB` |
 | `layout.rankSeparation` | `120` | Spacing between ranks/layers (20-300) |
 | `layout.nodeSeparation` | `30` | Spacing between nodes in same rank (10-200) |
+| `edgeStyle` | `"default"` | Edge style: `default`, `smoothstep`, `step`, `straight` |
 | `layout.edgeAnimation` | `true` | Animate edges during trace mode |
 | `layout.highlightAnimation` | `false` | Animate edges on node click (non-trace) |
+| `layout.minimapEnabled` | `true` | Show interactive minimap for large graphs |
+
+**Trace**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `trace.defaultUpstreamLevels` | `3` | Default upstream trace depth (0-99) |
 | `trace.defaultDownstreamLevels` | `3` | Default downstream trace depth (0-99) |
-| `edgeStyle` | `"default"` | Edge style: `default`, `smoothstep`, `step`, `straight` |
-| `logLevel` | `"info"` | Log verbosity: `info` or `debug` |
+| `trace.hideCoWriters` | `true` | Hide sibling writers (procedures writing to the same output table) |
+
+**Analysis**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `analysis.hubMinDegree` | `8` | Min connections for Hub analysis (1-50) |
+| `analysis.islandMaxSize` | `2` | Max island size to display (2-500) |
+| `analysis.longestPathMinNodes` | `5` | Min nodes for Longest Path analysis (2-50) |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| **Data Lineage: Open** | Open the visualization panel |
+| **Data Lineage: Open Wizard** | Open the visualization panel |
+| **Data Lineage: Open Demo** | Load the AdventureWorks demo |
+| **Data Lineage: Settings** | Open extension settings |
 | **Data Lineage: Create Parse Rules** | Scaffold custom parsing configuration |
+| **Data Lineage: Create DMV Queries** | Scaffold custom DMV query configuration |
 
 ## FAQ
 
-**Where do I get a .dacpac file?**
-A .dacpac (Data-tier Application Package) can be extracted or built from various tools including Visual Studio, VS Code, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications) for details.
+**Do I need a .dacpac file?**
+No — you can also import directly from a database using the MSSQL extension. If you prefer a .dacpac, it can be extracted or built from Visual Studio, VS Code, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications) for details.
 
 **Why are some dependencies missing?**
 Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) cannot be analyzed statically. Only compile-time dependencies are detected.
+
+**Why do unresolved references not show objects like CTEs or table aliases?**
+The parser only tracks **fully-qualified two-part names** (`[schema].[object]`). Unqualified references — CTE names, table aliases, built-in rowset functions like `FREETEXTTABLE` — are intentionally excluded before catalog lookup and never shown as unresolved. This is by design: the default SQL Server schema is a per-connection setting, so the extension cannot reliably infer which schema an unqualified name belongs to.
 
 ## Contributing
 

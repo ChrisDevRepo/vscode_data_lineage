@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import type { DacpacModel, ExtensionConfig } from '../engine/types';
+import type { ExtensionConfig } from '../engine/types';
 import type { StatusMessage, DacpacLoaderState } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { SchemaSelector } from './SchemaSelector';
 import { Button } from './ui/Button';
 
 interface ProjectSelectorProps {
-  onVisualize: (model: DacpacModel, selectedSchemas: Set<string>) => void;
   config: ExtensionConfig;
   loader: DacpacLoaderState;
 }
@@ -54,16 +53,23 @@ function StatusIcon({ type }: { type: StatusMessage['type'] }) {
   );
 }
 
-export function ProjectSelector({ onVisualize, config, loader }: ProjectSelectorProps) {
+export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
   const vscodeApi = useVsCode();
   const [logoFailed, setLogoFailed] = useState(false);
   const {
-    model, selectedSchemas, isLoading, fileName, status,
-    fileRef, handleFileChange, loadDemo, toggleSchema, selectAllSchemas, clearAllSchemas,
+    model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, status, lastSource,
+    mssqlAvailable, isDemo,
+    openFile, resetToStart, reopenLast, loadDemo, connectToDatabase, cancelLoading,
+    visualize, toggleSchema, selectAllSchemas, clearAllSchemas,
   } = loader;
 
-  const selectedCount = model
-    ? model.schemas
+  // Derive schemas from preview (Phase 1) or model (Phase 2 / back from graph / fallback)
+  const schemas = schemaPreview?.schemas ?? model?.schemas ?? [];
+  const hasSchemas = schemas.length > 0;
+  const hasSource = hasSchemas || !!model;
+
+  const selectedCount = hasSchemas
+    ? schemas
         .filter((s) => selectedSchemas.has(s.name))
         .reduce((sum, s) => sum + s.nodeCount, 0)
     : 0;
@@ -71,16 +77,26 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
   const maxNodes = config.maxNodes;
   const overLimit = selectedCount > maxNodes;
 
+  const handleVisualize = () => {
+    // Store deselected schemas so new schemas are visible on reopen (skip for demo)
+    if (!isDemo) {
+      const allNames = schemas.map(s => s.name);
+      const deselected = allNames.filter(s => !selectedSchemas.has(s));
+      vscodeApi.postMessage({ type: 'save-schemas', deselected });
+    }
+    visualize(selectedSchemas);
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">
-      <div className="w-full max-w-md ln-panel" style={{ borderRadius: 6 }}>
+      <div className="w-full max-w-md ln-panel flex flex-col" style={{ borderRadius: 6, height: 520 }}>
         {/* Header */}
-        <div className="flex items-center justify-center px-4 py-4 ln-border-bottom">
+        <div className="flex items-center justify-center px-4 py-4 ln-border-bottom flex-shrink-0">
           {logoFailed ? (
             <span className="text-sm font-semibold ln-text">Data Lineage Viz</span>
           ) : (
             <img
-              src={(window as any).LOGO_URI || '../images/logo.png'}
+              src={window.LOGO_URI || '../images/logo.png'}
               alt="Data Lineage Viz"
               className="h-10 w-auto"
               onError={() => setLogoFailed(true)}
@@ -88,33 +104,51 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           )}
         </div>
 
-        <div className="px-4 py-4 space-y-4">
-          {/* File picker */}
+        <div className="px-4 py-4 space-y-4 flex-1 overflow-y-auto">
+          {/* File picker / loading indicator */}
           <div>
             <label className="block text-xs font-medium mb-1.5 ln-text">Database Project</label>
             <div
-              className="flex items-center gap-3 px-3 py-2.5 rounded cursor-pointer transition-colors ln-file-picker"
-              onClick={() => fileRef.current?.click()}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded transition-colors ln-file-picker ${isLoading ? 'cursor-default' : 'cursor-pointer'}`}
+              onClick={isLoading ? undefined : hasSource ? resetToStart : openFile}
             >
-              <input ref={fileRef} type="file" accept=".dacpac" onChange={handleFileChange} className="hidden" />
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-              </svg>
+              {isLoading && loadingContext === 'database' ? (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted animate-pulse">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+              )}
               {isLoading ? (
-                <span className="text-xs ln-text-muted">Parsing...</span>
+                <span className="text-xs ln-text-muted">
+                  {loadingContext === 'database' ? 'Connecting to database...' : 'Parsing...'}
+                </span>
               ) : fileName ? (
                 <div className="flex-1 min-w-0">
                   <span className="text-xs font-medium truncate block ln-text">{fileName}</span>
                 </div>
               ) : (
-                <span className="text-xs ln-text-placeholder">Select a .dacpac file...</span>
+                <span className="text-xs ln-text-placeholder">Select a data source...</span>
               )}
-              {fileName && <span className="text-[10px] ln-text-muted">Change</span>}
+              {!isLoading && fileName && <span className="text-[10px] ln-text-muted">Change</span>}
             </div>
           </div>
 
-          {/* Load Demo Button */}
-          {!model && !isLoading && (
+          {/* Cancel button during loading */}
+          {isLoading && (
+            <Button
+              variant="ghost"
+              onClick={cancelLoading}
+              className="w-full"
+            >
+              Cancel
+            </Button>
+          )}
+
+          {/* Quick actions */}
+          {!hasSource && !isLoading && (
             <div className="flex items-center gap-2">
               <div className="flex-1 ln-border-top" />
               <span className="text-xs ln-text-muted">or</span>
@@ -122,13 +156,34 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
             </div>
           )}
 
-          {!model && !isLoading && (
+          {!hasSource && !isLoading && lastSource && (
             <Button
-              variant="secondary"
-              onClick={loadDemo}
+              variant="primary"
+              onClick={reopenLast}
+              disabled={lastSource.type === 'database' && mssqlAvailable !== true}
               className="w-full"
             >
-              Load Demo Data
+              {lastSource.type === 'database' && (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mr-2 flex-shrink-0">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                </svg>
+              )}
+              Reopen {lastSource.name}
+            </Button>
+          )}
+
+          {!hasSource && !isLoading && (
+            <Button
+              variant="secondary"
+              onClick={connectToDatabase}
+              disabled={mssqlAvailable !== true}
+              title={mssqlAvailable === false ? 'Install the MSSQL extension (ms-mssql.mssql) to import from a database' : undefined}
+              className="w-full"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mr-2 flex-shrink-0">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+              </svg>
+              Connect to Database
             </Button>
           )}
 
@@ -136,9 +191,13 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           {status && (
             <div className={`flex items-start gap-2.5 px-3 py-2.5 rounded text-xs ${STATUS_CLASSES[status.type]}`}>
               <StatusIcon type={status.type} />
-              <div className="pt-px">
-                <span style={{ color: ICON_COLORS[status.type] }}>{status.text}</span>
-                {status.type === 'warning' && model && model.schemas.length === 0 && (
+              <div className="pt-px min-w-0">
+                <span
+                  className="line-clamp-3 break-all"
+                  style={{ color: ICON_COLORS[status.type] }}
+                  title={status.text}
+                >{status.text}</span>
+                {status.type === 'warning' && hasSchemas && schemas.length === 0 && (
                   <p className="mt-1 ln-text-muted">Try a different file, or check the Output panel for details.</p>
                 )}
               </div>
@@ -146,9 +205,9 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           )}
 
           {/* Schema selector */}
-          {model && model.schemas.length > 0 && (
+          {hasSchemas && (
             <SchemaSelector
-              schemas={model.schemas}
+              schemas={schemas}
               selectedSchemas={selectedSchemas}
               onToggle={toggleSchema}
               onSelectAll={selectAllSchemas}
@@ -158,7 +217,7 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
 
           {/* Node count + limit warning — fixed height to prevent layout jump */}
           <div className="text-xs text-center py-1" style={{ minHeight: 24 }}>
-            {model && selectedCount > 0 && (
+            {hasSchemas && selectedCount > 0 && (
               overLimit ? (
                 <span>
                   <span className="ln-text-warning">{selectedCount}/{maxNodes} objects</span>
@@ -186,12 +245,24 @@ export function ProjectSelector({ onVisualize, config, loader }: ProjectSelector
           {/* Visualize */}
           <Button
             variant="primary"
-            onClick={() => model && onVisualize(model, selectedSchemas)}
-            disabled={!model || selectedSchemas.size === 0 || overLimit}
+            onClick={handleVisualize}
+            disabled={!hasSchemas || selectedSchemas.size === 0 || overLimit || isLoading}
             className="w-full"
           >
             Visualize
           </Button>
+
+          {/* Demo link — subtle footer */}
+          {!hasSource && !isLoading && (
+            <div className="text-center pt-1">
+              <button
+                className="text-[11px] ln-text-muted hover:underline"
+                onClick={loadDemo}
+              >
+                Try with demo data
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

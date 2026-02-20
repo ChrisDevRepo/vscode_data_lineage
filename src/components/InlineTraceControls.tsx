@@ -1,4 +1,5 @@
 import { memo, useState } from 'react';
+import { CloseIcon } from './ui/CloseIcon';
 
 interface InlineTraceControlsProps {
   startNodeId: string;
@@ -99,9 +100,7 @@ export const InlineTraceControls = memo(function InlineTraceControls({
           className="h-8 w-8 flex items-center justify-center rounded transition-colors ln-btn-secondary"
           title="Close Trace Configuration"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <CloseIcon />
         </button>
       </div>
     </div>

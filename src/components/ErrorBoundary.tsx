@@ -23,7 +23,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // Send error to extension host for OutputChannel logging
-    const vscodeApi = (window as any).vscode;
+    const vscodeApi = window.vscode;
     if (vscodeApi && typeof vscodeApi.postMessage === 'function') {
       vscodeApi.postMessage({
         type: 'error',

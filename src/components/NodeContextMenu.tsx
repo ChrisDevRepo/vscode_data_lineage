@@ -11,6 +11,7 @@ interface NodeContextMenuProps {
   isTracing: boolean;
   onClose: () => void;
   onTrace: (nodeId: string) => void;
+  onFindPath: (nodeId: string) => void;
   onViewDdl: (nodeId: string) => void;
   onShowDetails: (nodeId: string) => void;
 }
@@ -25,6 +26,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   isTracing,
   onClose,
   onTrace,
+  onFindPath,
   onViewDdl,
   onShowDetails,
 }: NodeContextMenuProps) {
@@ -50,7 +52,16 @@ export const NodeContextMenu = memo(function NodeContextMenu({
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
               </svg>
-              Start Trace
+              Trace Levels
+            </button>
+            <button
+              onClick={() => { onFindPath(nodeId); onClose(); }}
+              className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+              </svg>
+              Find Path
             </button>
             <div className="my-1 ln-border-top" />
           </>
@@ -82,7 +93,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
         <div className="my-1 ln-border-top" />
 
         <button
-          onClick={() => { navigator.clipboard.writeText(`[${schema}].[${nodeName}]`); onClose(); }}
+          onClick={() => { navigator.clipboard.writeText(`[${schema}].[${nodeName}]`).catch(() => {}); onClose(); }}
           className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
           title="Copy [schema].[name] to clipboard"
         >

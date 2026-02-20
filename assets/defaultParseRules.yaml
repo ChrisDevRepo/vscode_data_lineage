@@ -1,0 +1,117 @@
+# SQL Body Parser Rules — single source of truth for built-in rules.
+# Rules run in priority order (lowest first). Disable with enabled: false.
+# Full documentation: docs/PARSE_RULES.md
+#
+#   name / enabled / priority / category / pattern / flags / description
+#   category: preprocessing | source | target | exec
+#   pattern:  JavaScript regex — capture group 1 = object reference
+
+rules:
+  # ── Preprocessing ──────────────────────────────────────────────────────────
+  # clean_sql is read-only documentation — pattern changes have no effect.
+  - name: clean_sql
+    enabled: true
+    priority: 1
+    category: preprocessing
+    pattern: "\\[[^\\]]+\\]|\"[^\"]*\"|'(?:''|[^'])*'|--[^\\r\\n]*"
+    flags: g
+    description: "SQL cleansing — documents built-in TypeScript pipeline (not configurable via YAML; see PARSE_RULES.md)"
+
+  # ── Source extraction ──────────────────────────────────────────────────────
+  - name: extract_sources_ansi
+    enabled: true
+    priority: 5
+    category: source
+    pattern: "\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: FROM/JOIN sources
+
+  - name: extract_sources_tsql_apply
+    enabled: true
+    priority: 7
+    category: source
+    pattern: "\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: CROSS/OUTER APPLY sources
+
+  - name: extract_merge_using
+    enabled: true
+    priority: 9
+    category: source
+    pattern: "\\bMERGE\\b[^;]{0,5000}?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: MERGE ... USING source table
+
+  - name: extract_udf_calls
+    enabled: true
+    priority: 10
+    category: source
+    pattern: "((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\("
+    flags: gi
+    description: "Inline scalar UDF calls (schema.func())"
+
+  # ── Target extraction ──────────────────────────────────────────────────────
+  - name: extract_targets_dml
+    enabled: true
+    priority: 6
+    category: target
+    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|DELETE\\s+FROM\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: INSERT/UPDATE/DELETE FROM/MERGE targets
+
+  - name: extract_ctas
+    enabled: true
+    priority: 13
+    category: target
+    pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+AS\\s+SELECT"
+    flags: gi
+    description: CREATE TABLE AS SELECT target (Synapse/Fabric)
+
+  - name: extract_select_into
+    enabled: true
+    priority: 14
+    category: target
+    pattern: "\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+FROM"
+    flags: gi
+    description: SELECT INTO target
+
+  - name: extract_copy_into
+    enabled: true
+    priority: 15
+    category: target
+    pattern: "\\bCOPY\\s+INTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "COPY INTO target (Fabric/Synapse)"
+
+  - name: extract_bulk_insert
+    enabled: true
+    priority: 16
+    category: target
+    pattern: "\\bBULK\\s+INSERT\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "BULK INSERT target (SQL Server)"
+
+  - name: extract_update_alias_target
+    enabled: true
+    priority: 17
+    category: target
+    pattern: "\\bUPDATE\\s+(?!\\[?\\w+\\]?\\s*\\.)\\[?\\w+\\]?\\s+SET\\b[\\s\\S]{0,3000}?\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "UPDATE alias SET ... FROM schema.table (alias case)"
+
+  - name: extract_output_into
+    enabled: true
+    priority: 18
+    category: target
+    pattern: "\\bOUTPUT\\b[^;]{0,500}?\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "OUTPUT ... INTO schema.table"
+
+  # ── Exec calls ─────────────────────────────────────────────────────────────
+  - name: extract_sp_calls
+    enabled: true
+    priority: 8
+    category: exec
+    pattern: "\\bEXEC(?:UTE)?\\s+(?!AS\\s+)(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "EXEC/EXECUTE procedure calls"

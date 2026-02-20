@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Button } from './ui/Button';
 
 interface SchemaFilterDropdownProps {
@@ -19,6 +19,15 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
+
   const filteredSchemas = schemas.filter(s =>
     s.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -29,7 +38,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
         onClick={() => setIsOpen(!isOpen)}
         variant="icon"
         title="Filter Schemas"
-        style={isOpen ? { background: 'var(--vscode-toolbar-activeBackground)' } : undefined}
+        style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -50,7 +59,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
       {isOpen && (
         <>
           <div className="fixed inset-0 z-20" onMouseDown={() => setIsOpen(false)} />
-          <div className="absolute top-full mt-2 w-80 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown">
+          <div className="absolute top-full mt-2 w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown">
             <div className="mb-2">
               <input
                 type="text"

@@ -2,11 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── VS Code Theme Integration ──────────────────────────────────────────── */
-/* Uses --vscode-* CSS variables so the extension automatically adapts to     */
-/* the user's active VS Code theme (light, dark, high contrast).              */
-/* Node type colors (blue/green/yellow/orange) remain fixed for readability.  */
-/* Theme adaptation is handled via data-vscode-theme-kind attribute on body.  */
+/* #region Theme Variables */
 
 :root {
   /* Background colors */
@@ -57,6 +53,11 @@
   --ln-warning-border: var(--vscode-editorWarning-border, #cca700);
   --ln-warning-fg: var(--vscode-editorWarning-foreground, #cca700);
 
+  /* Analysis colors */
+  --ln-analysis-bg: var(--vscode-editorInfo-background, rgba(0, 120, 215, 0.08));
+  --ln-analysis-border: var(--vscode-editorInfo-border, #3794ff);
+  --ln-analysis-icon: var(--vscode-editorInfo-foreground, #3794ff);
+
   /* Validation colors */
   --ln-validation-error-bg: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
   --ln-validation-error-border: var(--vscode-inputValidation-errorBorder, #be1100);
@@ -68,6 +69,14 @@
   /* Node colors */
   --ln-node-bg: rgba(255, 255, 255, 0.95);
   --ln-node-border: rgba(0, 0, 0, 0.15);
+
+  /* Highlight colors (node selection glow) */
+  --ln-highlight-yellow: #eab308;
+  --ln-highlight-yellow-glow: rgba(234, 179, 8, 0.4);
+  --ln-highlight-yellow-shadow: rgba(234, 179, 8, 0.3);
+  --ln-highlight-blue: #2563eb;
+  --ln-highlight-blue-glow: rgba(37, 99, 235, 0.4);
+  --ln-highlight-blue-shadow: rgba(37, 99, 235, 0.3);
 
   /* Edge colors */
   --ln-edge-color: #94a3b8;
@@ -86,6 +95,10 @@
   --ln-wizard-btn-border: #3a3a4a;
   --ln-wizard-btn-hover-bg: #3a3a4e;
   --ln-wizard-hover-bg: rgba(255, 255, 255, 0.06);
+  --ln-wizard-link: #60a5fa;
+
+  /* Toolbar active */
+  --ln-toolbar-active-bg: var(--vscode-toolbar-activeBackground, rgba(0, 0, 0, 0.1));
 }
 
 /* Dark Theme Overrides */
@@ -96,6 +109,12 @@ body[data-vscode-theme-kind="vscode-dark"] {
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.15);
   --ln-dropdown-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
   --ln-hover-bg: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
+  --ln-highlight-yellow: #eab308;
+  --ln-highlight-yellow-glow: rgba(234, 179, 8, 0.5);
+  --ln-highlight-yellow-shadow: rgba(234, 179, 8, 0.35);
+  --ln-highlight-blue: #60a5fa;
+  --ln-highlight-blue-glow: rgba(96, 165, 250, 0.5);
+  --ln-highlight-blue-shadow: rgba(96, 165, 250, 0.35);
 }
 
 /* High Contrast Theme Overrides */
@@ -106,6 +125,12 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-node-shadow-dimmed: none;
   --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
   --ln-border: var(--vscode-contrastBorder, #6fc3df);
+  --ln-highlight-yellow: #fbbf24;
+  --ln-highlight-yellow-glow: rgba(251, 191, 36, 0.6);
+  --ln-highlight-yellow-shadow: rgba(251, 191, 36, 0.4);
+  --ln-highlight-blue: #93c5fd;
+  --ln-highlight-blue-glow: rgba(147, 197, 253, 0.6);
+  --ln-highlight-blue-shadow: rgba(147, 197, 253, 0.4);
 }
 body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
@@ -114,7 +139,17 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-node-shadow-dimmed: none;
   --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
   --ln-border: var(--vscode-contrastBorder, #0f4a85);
+  --ln-highlight-yellow: #ca8a04;
+  --ln-highlight-yellow-glow: rgba(202, 138, 4, 0.5);
+  --ln-highlight-yellow-shadow: rgba(202, 138, 4, 0.35);
+  --ln-highlight-blue: #1d4ed8;
+  --ln-highlight-blue-glow: rgba(29, 78, 216, 0.5);
+  --ln-highlight-blue-shadow: rgba(29, 78, 216, 0.35);
 }
+
+/* #endregion */
+
+/* #region Global Resets */
 
 * {
   box-sizing: border-box;
@@ -131,7 +166,9 @@ body {
   font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
-/* Custom Tooltip Styling */
+/* #endregion */
+
+/* #region Tooltips */
 .ln-node-tooltip::before {
   content: attr(data-tooltip);
   position: absolute;
@@ -178,7 +215,9 @@ body {
   opacity: 1 !important;
 }
 
-/* ─── React Flow Overrides ───────────────────────────────────────────────── */
+/* #endregion */
+
+/* #region React Flow Overrides */
 
 .react-flow {
   width: 100%;
@@ -200,7 +239,18 @@ body {
 
 .react-flow__minimap {
   border-radius: 8px;
-  border: 1px solid var(--ln-border);
+  border: 1px solid color-mix(in srgb, var(--ln-border) 60%, transparent);
+  background: color-mix(in srgb, var(--ln-bg-secondary) 75%, transparent);
+}
+
+body[data-vscode-theme-kind="vscode-dark"] .react-flow__minimap-mask,
+body[data-vscode-theme-kind="vscode-high-contrast"] .react-flow__minimap-mask {
+  fill: rgba(0, 0, 0, 0.5) !important;
+}
+
+body[data-vscode-theme-kind="vscode-high-contrast"] .react-flow__minimap,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
+  border: 2px solid var(--vscode-contrastBorder);
 }
 
 .react-flow__controls {
@@ -262,7 +312,9 @@ body {
   color: var(--ln-fg);
 }
 
-/* ─── Component Classes ─────────────────────────────────────────────────── */
+/* #endregion */
+
+/* #region Components */
 
 /* Toolbar bar */
 .ln-toolbar {
@@ -338,6 +390,14 @@ body {
 .ln-btn-icon:hover:not(:disabled) {
   background: var(--ln-hover-bg);
 }
+.ln-btn-icon-active {
+  background: var(--ln-button-bg);
+  color: var(--ln-button-fg);
+  border-color: transparent;
+}
+.ln-btn-icon-active:hover:not(:disabled) {
+  background: var(--ln-button-hover-bg);
+}
 
 /* Dropdown panels */
 .ln-dropdown {
@@ -367,15 +427,61 @@ body {
   border-top: 1px solid var(--ln-border);
 }
 
-/* Modal */
+/* Modal — always dark, matching the wizard aesthetic */
 .ln-modal-overlay {
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(4px);
 }
 .ln-modal {
-  background: var(--ln-bg);
-  border: 1px solid var(--ln-border);
+  background: var(--ln-wizard-bg);
+  border: 1px solid var(--ln-wizard-border);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-text,
+.ln-modal .ln-text-muted,
+.ln-modal h3,
+.ln-modal span,
+.ln-modal p,
+.ln-modal code {
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-text-muted {
+  opacity: 0.7;
+}
+.ln-modal .ln-text-link {
+  color: var(--ln-wizard-link, #60a5fa);
+}
+.ln-modal .ln-border-bottom {
+  border-color: var(--ln-wizard-border);
+}
+.ln-modal .ln-border-top {
+  border-color: var(--ln-wizard-border);
+}
+.ln-modal .ln-kbd {
+  background: var(--ln-wizard-input-bg);
+  border-color: var(--ln-wizard-border);
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-list-item {
+  color: var(--ln-wizard-fg);
+}
+.ln-modal .ln-list-item:hover {
+  background: var(--ln-wizard-hover-bg);
+}
+.ln-modal .ln-btn-secondary {
+  background: var(--ln-wizard-btn-bg);
+  color: var(--ln-wizard-fg);
+  border-color: var(--ln-wizard-btn-border);
+}
+.ln-modal .ln-btn-secondary:hover:not(:disabled) {
+  background: var(--ln-wizard-btn-hover-bg);
+}
+.ln-modal code {
+  background: var(--ln-wizard-input-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
 }
 
 /* Panel (card-like container) */
@@ -398,7 +504,7 @@ body {
 }
 .ln-legend-header {
   background: transparent;
-  color: var(--ln-sidebar-header-fg);
+  color: var(--ln-fg);
 }
 
 /* Trace banner */
@@ -437,7 +543,7 @@ body {
   border: 1px solid var(--ln-border);
 }
 
-/* Start screen — outer background follows VS Code theme */
+/* Start screen — outer area follows the active theme */
 .ln-start-screen {
   background: var(--ln-bg);
 }
@@ -464,11 +570,11 @@ body {
 .ln-start-screen .ln-panel .ln-text-warning {
   color: var(--ln-warning-fg);
 }
-.ln-start-screen .ln-panel .ln-border-top,
-.ln-start-screen .ln-panel .ln-border-bottom {
+.ln-start-screen .ln-panel .ln-border-top {
   border-color: var(--ln-wizard-border);
 }
 .ln-start-screen .ln-panel .ln-border-bottom {
+  border-color: var(--ln-wizard-border);
   background: var(--ln-wizard-bg);
 }
 .ln-start-screen .ln-panel .ln-file-picker {
@@ -528,7 +634,9 @@ body {
   border: 1px solid var(--ln-input-border);
 }
 
-/* ─── Tooltip Styling (Browser Native) ──────────────────────────────────── */
+/* #endregion */
+
+/* #region Browser Tooltip + Color Scheme */
 /* Note: Native HTML tooltips (title attribute) have limited styling support. */
 /* This provides basic compatibility, but browser defaults may still show.    */
 
@@ -546,8 +654,10 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   color-scheme: dark;
 }
 
-/* ─── Detail Search Sidebar ─────────────────────────────────────────────── */
-.ln-detail-search {
+/* #endregion */
+
+/* #region Sidebar + Analysis */
+.ln-sidebar {
   width: 360px;
   max-height: calc(100vh - 120px);
   overflow-y: auto;
@@ -558,7 +668,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   color: var(--ln-fg);
 }
 
-.ln-detail-search summary {
+.ln-sidebar summary {
   cursor: pointer;
   padding: 6px 10px;
   font-weight: 600;
@@ -596,3 +706,37 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   border-radius: 2px;
   padding: 0 1px;
 }
+
+/* ─── Analysis Banner ──────────────────────────────────────────────────── */
+.ln-analysis-banner {
+  background: var(--ln-analysis-bg);
+  border-bottom: 1px solid var(--ln-analysis-border);
+}
+
+.ln-analysis-groups {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.ln-analysis-group-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--ln-border-light);
+  transition: background 0.1s;
+}
+
+.ln-analysis-group-item:hover {
+  background: var(--ln-bg-secondary);
+}
+
+.ln-analysis-group-active {
+  background: var(--ln-analysis-bg);
+  border-left: 3px solid var(--ln-analysis-border);
+  padding-left: 7px;
+}
+
+.ln-analysis-group-active:hover {
+  background: var(--ln-analysis-bg);
+}
+
+/* #endregion */

@@ -3,7 +3,18 @@
  * Execute with: npx tsx test/parser-edge-cases.test.ts
  */
 
-import { parseSqlBody } from '../src/engine/sqlBodyParser';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import * as yaml from 'js-yaml';
+import { parseSqlBody, loadRules } from '../src/engine/sqlBodyParser';
+import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
+const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
+loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
 
 let passed = 0;
 let failed = 0;
@@ -196,7 +207,7 @@ function testSourceExtraction() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function testTargetExtraction() {
-  console.log('\n\u2500\u2500 3. Target extraction (INSERT/UPDATE/MERGE/CTAS/SELECT INTO) \u2500\u2500');
+  console.log('\n\u2500\u2500 3. Target extraction (INSERT/UPDATE/MERGE/CTAS/SELECT INTO/COPY INTO/BULK INSERT) \u2500\u2500');
 
   // INSERT INTO
   {
@@ -252,6 +263,34 @@ function testTargetExtraction() {
     assert(hasName(r.targets, 'T1'), 'INSERT INTO + UDF: T1 is target');
     assert(hasName(r.sources, 'dbo.udfCalc') || hasExact(r.sources, 'dbo.udfCalc'),
       'INSERT INTO + UDF: dbo.udfCalc captured as source (UDF)');
+  }
+
+  // COPY INTO (Fabric/Synapse)
+  {
+    const r = parseSqlBody(`COPY INTO [staging].[RawData] FROM 'https://storage.blob.core.windows.net/container/file.parquet'`);
+    assert(hasName(r.targets, 'RawData'), 'COPY INTO: RawData found as target');
+  }
+
+  // COPY INTO with brackets
+  {
+    const r = parseSqlBody(`COPY INTO [dbo].[FactSales]
+      FROM 'abfss://container@account.dfs.core.windows.net/data/*.csv'
+      WITH (FILE_TYPE = 'CSV', FIRSTROW = 2)`);
+    assert(hasName(r.targets, 'FactSales'), 'COPY INTO bracketed: FactSales found as target');
+  }
+
+  // BULK INSERT
+  {
+    const r = parseSqlBody(`BULK INSERT [dbo].[ImportData] FROM '\\\\server\\share\\data.csv'`);
+    assert(hasName(r.targets, 'ImportData'), 'BULK INSERT: ImportData found as target');
+  }
+
+  // BULK INSERT with options
+  {
+    const r = parseSqlBody(`BULK INSERT [staging].[RawImport]
+      FROM 'C:\\data\\export.csv'
+      WITH (FIELDTERMINATOR = ',', ROWTERMINATOR = '\\n', FIRSTROW = 2)`);
+    assert(hasName(r.targets, 'RawImport'), 'BULK INSERT with options: RawImport found as target');
   }
 }
 
@@ -381,38 +420,39 @@ function testCteExclusion() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 7. Skip patterns
+// 7. Parser extraction boundaries
 // ═══════════════════════════════════════════════════════════════════════════
 
 function testSkipPatterns() {
-  console.log('\n\u2500\u2500 7. Skip patterns \u2500\u2500');
+  console.log('\n\u2500\u2500 7. Parser extraction boundaries \u2500\u2500');
 
-  // Temp table
+  // Temp table — regex can't match # (not a word character)
   {
     const r = parseSqlBody(`SELECT * FROM #TempTable`);
-    assert(!r.sources.some(s => s.includes('#')), 'Temp table: #TempTable skipped');
+    assert(!r.sources.some(s => s.includes('#')), 'Temp table: #TempTable not matched by regex');
   }
 
-  // Table variable
+  // Table variable — regex can't match @ (not a word character)
   {
     const r = parseSqlBody(`SELECT * FROM @TableVar`);
-    assert(!r.sources.some(s => s.includes('@')), 'Table variable: @TableVar skipped');
+    assert(!r.sources.some(s => s.includes('@')), 'Table variable: @TableVar not matched by regex');
   }
 
-  // System proc
+  // System proc (unqualified) — normalizeCaptured filters unqualified names early (no schema.obj)
   {
     const r = parseSqlBody(`EXEC sp_executesql @sql`);
-    assert(r.execCalls.length === 0, 'System proc: sp_executesql skipped');
+    assert(!r.execCalls.some(s => s.toLowerCase().includes('sp_executesql')),
+      'System proc: sp_executesql NOT in execCalls (unqualified — filtered by normalizeCaptured)');
   }
 
-  // System fn
+  // System fn (unqualified) — normalizeCaptured filters unqualified names early (no schema.obj)
   {
-    const r = parseSqlBody(`SELECT * FROM fn_helpcollations()`);
+    const r = parseSqlBody(`SELECT * FROM fn_helpcollations`);
     assert(!r.sources.some(s => s.toLowerCase().includes('fn_helpcollations')),
-      'System fn: fn_helpcollations skipped');
+      'System fn: fn_helpcollations NOT in sources (unqualified — filtered by normalizeCaptured)');
   }
 
-  // Single char alias
+  // Single char alias — parser-level guard (always table aliases)
   {
     const r = parseSqlBody(`SELECT * FROM [dbo].[Orders] o`);
     assert(hasExact(r.sources, 'dbo.Orders'), 'Single char alias: dbo.Orders found');
@@ -420,12 +460,12 @@ function testSkipPatterns() {
       'Single char alias: "o" NOT captured as source');
   }
 
-  // Keywords not captured
+  // SQL keyword after WHERE — no regex pattern matches it (not after FROM/JOIN/INSERT etc.)
   {
     const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE set = 1`);
-    assert(hasName(r.sources, 'T1'), 'Keyword skip: T1 found');
+    assert(hasName(r.sources, 'T1'), 'Keyword context: T1 found');
     assert(!r.sources.some(s => s.replace(/\[|\]/g, '').toLowerCase() === 'set'),
-      'Keyword skip: "set" NOT captured as source');
+      'Keyword context: "set" not matched (no regex captures after WHERE)');
   }
 }
 
@@ -474,14 +514,14 @@ EXEC [dbo].[LogComplete]
 function testCriticalReviewEdgeCases() {
   console.log('\n\u2500\u2500 9. Edge cases from critical review \u2500\u2500');
 
-  // DELETE FROM should NOT produce a target (parser design: DELETE excluded)
+  // DELETE FROM produces a target (DELETE is a write — lineage fact)
   {
     const r = parseSqlBody(`DELETE FROM [dbo].[Target] WHERE Id = 1`);
-    assert(!hasName(r.targets, 'Target'),
-      'DELETE FROM: Target NOT in targets (DELETE excluded from lineage)');
-    // DELETE FROM is parsed by FROM rule, so it appears as source
+    assert(hasName(r.targets, 'Target'),
+      'DELETE FROM: Target IS in targets (DELETE is a write operation)');
+    // DELETE FROM also fires extract_sources_ansi (FROM keyword match) → bidirectional
     assert(hasName(r.sources, 'Target'),
-      'DELETE FROM: Target appears as source (via FROM keyword)');
+      'DELETE FROM: Target appears as source (via FROM keyword — bidirectional edge)');
   }
 
   // OPENQUERY: content inside string should not be extracted
@@ -622,17 +662,121 @@ function testRegressionGuards() {
       'RG15: Bracket [dbo].[select] found (keyword in brackets is a valid table name)');
   }
 
-  // RG16: KNOWN LIMITATION — UPDATE alias loses write direction
-  // When using UPDATE alias SET... FROM real_table alias, the alias can't be resolved.
-  // The table appears as source (READ) instead of target (WRITE).
-  // XML BodyDependencies + type-aware fallback still places the table in the graph.
+  // RG16: UPDATE alias resolved via extract_update_alias_target rule
+  // UPDATE t SET ... FROM [dbo].[Target] t — alias rule captures [dbo].[Target] as write target.
+  // Target also appears as source (bidirectional ⇄ edge expected).
   {
     const r = parseSqlBody(`UPDATE t SET t.col = s.val FROM [dbo].[Target] t INNER JOIN [dbo].[Source] s ON t.id = s.id`);
+    assert(hasName(r.targets, 'Target'),
+      'RG16: UPDATE alias — Target captured as write target by extract_update_alias_target');
     assert(hasName(r.sources, 'Target'),
-      'RG16: KNOWN LIMITATION: UPDATE alias — Target appears as source (alias not resolvable)');
+      'RG16: UPDATE alias — Target also appears as source (⇄ bidirectional edge)');
     assert(hasName(r.sources, 'Source'), 'RG16: Source found');
-    assert(!hasName(r.targets, 'Target'),
-      'RG16: KNOWN LIMITATION: Target NOT in targets (alias resolution requires semantic analysis)');
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. Cleansing and normalization improvements
+//     Tests for: nested block comments, bracket-aware name splitting,
+//     @var/#temp filtering, double-quote identifiers, 3/4-part names
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testCleansingAndNormalization() {
+  console.log('\n── 11. Cleansing and normalization improvements ──');
+
+  // ── Nested block comments ─────────────────────────────────────────────────
+
+  // Non-nested block comment — still works
+  {
+    const r = parseSqlBody(`SELECT * FROM /* this is a comment */ [dbo].[Orders]`);
+    assert(hasName(r.sources, 'Orders'), 'BC1: Non-nested block comment removed, table found');
+  }
+
+  // Nested block comment — inner */ no longer leaves "still here" text
+  {
+    const r = parseSqlBody(`SELECT * FROM [dbo].[Orders] /* outer /* inner */ still here */ WHERE 1=1`);
+    assert(hasName(r.sources, 'Orders'), 'BC2: Nested comment: Orders still found');
+    assert(!r.sources.some(s => s.toLowerCase().includes('still')),
+      'BC2: Nested comment: "still" NOT extracted as spurious reference');
+  }
+
+  // Deep nesting — depth 3
+  {
+    const r = parseSqlBody(`/* depth /* two /* three */ two */ one */ INSERT INTO [dbo].[T] SELECT * FROM [dbo].[S]`);
+    assert(hasName(r.targets, 'T'), 'BC3: Depth-3 nested comment: T is target');
+    assert(hasName(r.sources, 'S'), 'BC3: Depth-3 nested comment: S is source');
+  }
+
+  // ── Bracket-aware name splitting ──────────────────────────────────────────
+
+  // Object name containing a dot inside brackets
+  {
+    const r = parseSqlBody(`EXEC [dbo].[spLoad_Case4.5]`);
+    assert(r.execCalls.some(s => s.toLowerCase() === '[dbo].[spload_case4.5]'),
+      'BN1: Object name with dot in brackets treated as one identifier');
+  }
+
+  // 2-part bracket-quoted — dot inside object name is NOT a separator
+  {
+    const r = parseSqlBody(`SELECT * FROM [staging].[view.name]`);
+    assert(r.sources.some(s => s.toLowerCase() === '[staging].[view.name]'),
+      'BN2: Dot inside bracket-quoted name preserved as part of identifier');
+  }
+
+  // ── @var / #temp filtered early ───────────────────────────────────────────
+
+  // @tableVar — not captured by regex (@ not a word char), should not appear
+  {
+    const r = parseSqlBody(`SELECT * FROM @tableVar`);
+    assert(r.sources.length === 0, 'NF1: @tableVar not in sources');
+  }
+
+  // #TempTable — not captured by regex (# not a word char), should not appear
+  {
+    const r = parseSqlBody(`INSERT INTO #TempTable SELECT * FROM [dbo].[Src]`);
+    assert(!r.targets.some(s => s.includes('#')),
+      'NF2: #TempTable not in targets');
+    assert(hasName(r.sources, 'Src'), 'NF2: [dbo].[Src] source still found');
+  }
+
+  // Unqualified name (no dot) — rejected by normalizeCaptured
+  {
+    const r = parseSqlBody(`SELECT * FROM UnqualifiedTable`);
+    assert(r.sources.length === 0,
+      'NF3: Unqualified table name (no schema) rejected — not in sources');
+  }
+
+  // ── Double-quote identifiers ──────────────────────────────────────────────
+
+  // "schema"."table" — should be treated as [schema].[table]
+  {
+    const r = parseSqlBody(`SELECT * FROM "dbo"."Orders"`);
+    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
+      'DQ1: Double-quoted "dbo"."Orders" normalized to [dbo].[orders]');
+  }
+
+  // ── 3-part names: take last 2 (drop database prefix) ─────────────────────
+
+  // db.schema.object → schema.object (last 2 parts)
+  {
+    const r = parseSqlBody(`SELECT * FROM MyDB.dbo.Orders`);
+    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
+      'MP1: 3-part MyDB.dbo.Orders → [dbo].[orders] (database prefix stripped)');
+  }
+
+  // Bracket-quoted 3-part → also last 2
+  {
+    const r = parseSqlBody(`INSERT INTO [MyDB].[staging].[Orders] SELECT 1`);
+    assert(r.targets.some(s => s.toLowerCase() === '[staging].[orders]'),
+      'MP2: Bracket-quoted 3-part [MyDB].[staging].[Orders] → [staging].[orders]');
+  }
+
+  // 4-part linked server → rejected
+  {
+    const r = parseSqlBody(`SELECT * FROM [Server].[DB].[dbo].[Orders]`);
+    assert(!r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
+      'MP3: 4-part linked server ref rejected (never in local catalog)');
   }
 }
 
@@ -654,6 +798,7 @@ function main() {
   testCombinedComplexSql();
   testCriticalReviewEdgeCases();
   testRegressionGuards();
+  testCleansingAndNormalization();
 
   console.log(`\n\u2550\u2550\u2550 Results: ${passed} passed, ${failed} failed \u2550\u2550\u2550`);
   process.exit(failed > 0 ? 1 : 0);

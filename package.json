@@ -2,8 +2,8 @@
   "name": "data-lineage-viz",
   "displayName": "Data Lineage Viz",
   "preview": true,
-  "description": "Visualize object dependencies and data lineage in SQL Server Database Projects (.dacpac)",
-  "version": "0.8.2",
+  "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
+  "version": "0.9.0",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -25,6 +25,9 @@
     "schema",
     "stored-procedure",
     "sql-server",
+    "azure-sql",
+    "fabric",
+    "synapse",
     "database-project",
     "data-lineage"
   ],
@@ -84,22 +87,31 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "dataLineageViz.quickActions",
-        "contents": "Welcome to Data Lineage Viz!\n[Open](command:dataLineageViz.open)"
-      }
-    ],
     "commands": [
       {
         "command": "dataLineageViz.open",
-        "title": "Data Lineage: Open",
+        "title": "Data Lineage: Open Wizard",
         "icon": "$(graph)"
+      },
+      {
+        "command": "dataLineageViz.openDemo",
+        "title": "Data Lineage: Open Demo",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dataLineageViz.openSettings",
+        "title": "Data Lineage: Settings",
+        "icon": "$(gear)"
       },
       {
         "command": "dataLineageViz.createParseRules",
         "title": "Data Lineage: Create Parse Rules",
         "icon": "$(file-code)"
+      },
+      {
+        "command": "dataLineageViz.createDmvQueries",
+        "title": "Data Lineage: Create DMV Queries",
+        "icon": "$(database)"
       }
     ],
     "menus": {
@@ -111,124 +123,181 @@
         }
       ]
     },
-    "configuration": {
-      "title": "Data Lineage Viz",
-      "properties": {
-        "dataLineageViz.parseRulesFile": {
-          "type": "string",
-          "default": "",
-          "description": "Path to a custom parseRules.yaml file for SQL body parsing. Relative paths resolve from the workspace root. Leave empty to use built-in defaults.",
-          "scope": "resource"
-        },
-        "dataLineageViz.excludePatterns": {
-          "type": "array",
-          "items": {
-            "type": "string"
+    "configuration": [
+      {
+        "title": "General",
+        "properties": {
+          "dataLineageViz.maxNodes": {
+            "type": "number",
+            "default": 500,
+            "minimum": 10,
+            "maximum": 1000,
+            "description": "Maximum objects to import (10–1000).",
+            "scope": "resource"
+          }
+        }
+      },
+      {
+        "title": "Import",
+        "properties": {
+          "dataLineageViz.parseRulesFile": {
+            "type": "string",
+            "default": "",
+            "editPresentation": "multilineText",
+            "markdownDescription": "Path to custom `parseRules.yaml`. Leave empty for built-in defaults.",
+            "scope": "resource"
           },
-          "default": [],
-          "description": "Regex patterns to exclude objects at import time (matched against full name, e.g. 'dbo\\.tmp_.*', 'staging\\..*'). Excluded objects and their edges are removed before the graph model is built. Changes require re-importing the dacpac.",
-          "scope": "resource"
-        },
-        "dataLineageViz.maxNodes": {
-          "type": "number",
-          "default": 250,
-          "minimum": 10,
-          "maximum": 1000,
-          "description": "Maximum number of objects allowed for import. The Visualize button is disabled when the selection exceeds this limit. Higher values may impact performance.",
-          "scope": "resource"
-        },
-        "dataLineageViz.layout.direction": {
-          "type": "string",
-          "enum": [
-            "TB",
-            "LR"
-          ],
-          "default": "LR",
-          "enumDescriptions": [
-            "Top to Bottom (hierarchical)",
-            "Left to Right (horizontal flow, default)"
-          ],
-          "description": "Graph layout direction.",
-          "scope": "resource"
-        },
-        "dataLineageViz.layout.rankSeparation": {
-          "type": "number",
-          "default": 120,
-          "minimum": 20,
-          "maximum": 300,
-          "description": "Vertical (TB) or horizontal (LR) spacing between ranks/layers.",
-          "scope": "resource"
-        },
-        "dataLineageViz.layout.nodeSeparation": {
-          "type": "number",
-          "default": 30,
-          "minimum": 10,
-          "maximum": 200,
-          "description": "Spacing between nodes within the same rank.",
-          "scope": "resource"
-        },
-        "dataLineageViz.layout.edgeAnimation": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable edge animation during trace mode (animated flow lines on traced paths).",
-          "scope": "resource"
-        },
-        "dataLineageViz.layout.highlightAnimation": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable edge animation when clicking a node outside of trace mode.",
-          "scope": "resource"
-        },
-        "dataLineageViz.trace.defaultUpstreamLevels": {
-          "type": "number",
-          "default": 3,
-          "minimum": 0,
-          "maximum": 99,
-          "description": "Default number of upstream levels when starting a trace.",
-          "scope": "resource"
-        },
-        "dataLineageViz.trace.defaultDownstreamLevels": {
-          "type": "number",
-          "default": 3,
-          "minimum": 0,
-          "maximum": 99,
-          "description": "Default number of downstream levels when starting a trace.",
-          "scope": "resource"
-        },
-        "dataLineageViz.logLevel": {
-          "type": "string",
-          "enum": [
-            "info",
-            "debug"
-          ],
-          "default": "info",
-          "enumDescriptions": [
-            "Log key events only",
-            "Verbose logging for troubleshooting"
-          ],
-          "description": "Log verbosity in the 'Data Lineage Viz' output channel.",
-          "scope": "resource"
-        },
-        "dataLineageViz.edgeStyle": {
-          "type": "string",
-          "enum": [
-            "default",
-            "smoothstep",
-            "step",
-            "straight"
-          ],
-          "default": "default",
-          "enumDescriptions": [
-            "Smooth bezier curves (default)",
-            "Smooth step edges with rounded corners",
-            "Step edges with sharp corners",
-            "Straight lines"
-          ],
-          "description": "Style of edges/connections between nodes.",
-          "scope": "resource"
+          "dataLineageViz.excludePatterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "markdownDescription": "Regex patterns to exclude objects (e.g. `_TEST$`, `^staging\\\\.`).",
+            "scope": "resource"
+          }
+        }
+      },
+      {
+        "title": "Database Connection",
+        "properties": {
+          "dataLineageViz.dmvQueriesFile": {
+            "type": "string",
+            "default": "",
+            "editPresentation": "multilineText",
+            "markdownDescription": "Path to custom DMV queries YAML file. Leave empty to use built-in queries. See [dmvQueries.yaml](assets/dmvQueries.yaml) for format.",
+            "scope": "resource"
+          }
+        }
+      },
+      {
+        "title": "Layout",
+        "properties": {
+          "dataLineageViz.layout.direction": {
+            "type": "string",
+            "enum": [
+              "TB",
+              "LR"
+            ],
+            "default": "LR",
+            "enumDescriptions": [
+              "Top to Bottom (hierarchical)",
+              "Left to Right (horizontal flow, default)"
+            ],
+            "markdownDescription": "Graph direction.",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.rankSeparation": {
+            "type": "number",
+            "default": 120,
+            "minimum": 20,
+            "maximum": 300,
+            "markdownDescription": "Space between layers.",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.nodeSeparation": {
+            "type": "number",
+            "default": 30,
+            "minimum": 10,
+            "maximum": 200,
+            "markdownDescription": "Space between nodes in the same layer.",
+            "scope": "resource"
+          },
+          "dataLineageViz.edgeStyle": {
+            "type": "string",
+            "enum": [
+              "default",
+              "smoothstep",
+              "step",
+              "straight"
+            ],
+            "default": "default",
+            "enumDescriptions": [
+              "Smooth bezier curves (default)",
+              "Smooth step edges with rounded corners",
+              "Step edges with sharp corners",
+              "Straight lines"
+            ],
+            "markdownDescription": "Edge/connection style.",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.edgeAnimation": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Animate edges during trace.",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.highlightAnimation": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Animate edges on node click.",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.minimapEnabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show minimap.",
+            "scope": "resource"
+          }
+        }
+      },
+      {
+        "title": "Trace",
+        "properties": {
+          "dataLineageViz.trace.defaultUpstreamLevels": {
+            "type": "number",
+            "default": 3,
+            "minimum": 0,
+            "maximum": 99,
+            "markdownDescription": "Default upstream trace depth.",
+            "scope": "resource"
+          },
+          "dataLineageViz.trace.defaultDownstreamLevels": {
+            "type": "number",
+            "default": 3,
+            "minimum": 0,
+            "maximum": 99,
+            "markdownDescription": "Default downstream trace depth.",
+            "scope": "resource"
+          },
+          "dataLineageViz.trace.hideCoWriters": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Hide sibling writers in trace results. Siblings are procedures that write to the same output table but aren't part of the traced data flow.",
+            "scope": "resource"
+          }
+        }
+      },
+      {
+        "title": "Analysis",
+        "properties": {
+          "dataLineageViz.analysis.hubMinDegree": {
+            "type": "number",
+            "default": 8,
+            "minimum": 1,
+            "maximum": 50,
+            "markdownDescription": "Min connections to qualify as a hub.",
+            "scope": "resource"
+          },
+          "dataLineageViz.analysis.islandMaxSize": {
+            "type": "number",
+            "default": 2,
+            "minimum": 2,
+            "maximum": 500,
+            "markdownDescription": "Max size of disconnected subgraphs to show.",
+            "scope": "resource"
+          },
+          "dataLineageViz.analysis.longestPathMinNodes": {
+            "type": "number",
+            "default": 5,
+            "minimum": 2,
+            "maximum": 50,
+            "markdownDescription": "Min chain length for Longest Path analysis.",
+            "scope": "resource"
+          }
         }
       }
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build:ext && npm run build:webview",
@@ -238,24 +307,24 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "lint": "eslint src --ext ts,tsx",
-    "test": "tsx test/engine.test.ts && tsx test/parser-edge-cases.test.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts",
     "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@xyflow/react": "^12.4.0",
-    "fast-xml-parser": "^5.3.4",
+    "fast-xml-parser": "^5.3.6",
     "graphology": "^0.25.4",
+    "graphology-components": "^1.5.4",
+    "graphology-shortest-path": "^2.1.0",
     "graphology-traversal": "^0.3.1",
-    "graphology-types": "^0.24.7",
+    "graphology-types": "^0.24.8",
     "js-yaml": "^4.1.0",
     "jszip": "^3.10.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@types/dagre": "^0.7.52",
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
@@ -269,8 +338,6 @@
     "glob": "^13.0.0",
     "mocha": "^11.7.5",
     "postcss": "^8.4.49",
-    "sharp": "^0.34.5",
-    "svgo": "^4.0.0",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",

@@ -1,9 +1,33 @@
 # Changelog
 
-## [0.8.2] - 2026-02-13
+## [0.9.0] - 2026-02-20
+
+### Added
+- **Database Import** — Import schema and dependencies from SQL Server, Azure SQL, Fabric DW, or Synapse
+- **Quick Reconnect** — Wizard remembers your last data source and offers one-click reopen or reconnect
+- **Find Path** — Right-click any node to discover the shortest path to another node
+- **Graph Analysis** — Structural insights: islands, hubs, orphans, longest paths, and cycles
+- **MiniMap** — Draggable overview map with schema-colored nodes
+- **Sidebar** — Quick access to the wizard, demo, and settings
+- **Sibling Filter** — Optionally hide unrelated procedures that write to the same table during trace
+- **COPY INTO / BULK INSERT** — Recognize bulk-load targets in Fabric, Synapse, and SQL Server
+
+### Changed
+- Settings apply automatically when changed — no manual reload needed
+- Settings reorganized into Import, Layout, Trace, and Analysis sections
 
 ### Fixed
-- **Import feedback** — Wizard now shows status messages when loading a .dacpac, including errors for corrupt files and warnings for empty databases
+- **More dependencies detected** — Four patterns that previously produced incomplete lineage graphs are now handled correctly:
+  - Old-style comma joins (`FROM Orders, Customers`) — all tables now appear as sources, not just the first
+  - `DELETE` statements — the deleted table now shows as a write target, giving it the same bidirectional edge as INSERT/UPDATE
+  - `OUTPUT INTO` clauses — the audit or staging table receiving OUTPUT rows is now captured as a second write target
+  - CTE-based UPDATE (`WITH cte AS (…) UPDATE cte SET …`) — the underlying real table is resolved and recorded as the write target
+- **Parser** — SQL cleansing hardened: nested block comments, double-quoted identifiers, and bracket-quoted names with dots (e.g. `[sp.v4.5]`) all handled correctly
+
+## [0.8.2] - 2026-02-14
+
+### Fixed
+- **Import feedback** — Status messages for loading, errors, and empty databases
 
 ## [0.8.1] - 2026-02-08
 
@@ -34,7 +58,7 @@
 
 ### Fixed
 - **Animation Settings** — Edge animations now respond correctly to `highlightAnimation` and `edgeAnimation` settings (fixed missing useMemo dependencies)
-- **Default Values** — Fallback defaults now match package.json: maxNodes=250, rankSeparation=120, direction=LR
+- **Default Values** — Fallback defaults now match package.json: maxNodes=500, rankSeparation=120, direction=LR
 
 ## [0.7.1] - 2026-02-03
 
@@ -49,7 +73,7 @@
 
 ## [0.6.x] - 2026-01
 
-- **Fabric + SSDT Support** — Both traditional SSDT and Microsoft.Build.Sql (Fabric SDK) dacpacs fully supported
+- **Fabric + SSDT Support** — Both traditional SSDT and Microsoft.Build.Sql (SDK-style) dacpacs fully supported
 - **Interactive Trace** — Click any object to trace upstream/downstream dependencies with configurable depth
 - **Schema Focus** — Star a schema to focus on it and its neighbors; filter by schema and object type
 - **Smart Search** — Autocomplete with schema/type info and keyboard navigation

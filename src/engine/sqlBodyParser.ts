@@ -1,10 +1,6 @@
-/**
- * SQL Body Parser — Regex-based dependency extraction from T-SQL bodies.
- *
- * Rules can be loaded from parseRules.yaml (user-editable) or fall back to
- * built-in defaults. Used to supplement XML BodyDependencies for stored
- * procedures where the dacpac may not fully capture all references.
- */
+// Regex-based T-SQL dependency extraction; rules loaded from YAML at runtime.
+
+import { splitSqlName } from '../utils/sql';
 
 export interface ParsedDependencies {
   sources: string[];
@@ -25,111 +21,113 @@ export interface ParseRule {
 
 export interface ParseRulesConfig {
   rules: ParseRule[];
-  skip_prefixes: string[];
-  skip_keywords: string[];
 }
 
-// ─── Built-in defaults ──────────────────────────────────────────────────────
+// ─── SQL Cleansing — runs BEFORE all YAML rules ─────────────────────────────
+//
+// Rule authors do NOT need to think about comment removal or string literals.
+// The cleansing pipeline neutralizes all of that before any regex rule sees the SQL.
+//
+// Pass 0 — removeBlockComments(): counter-based O(n) scan
+//   Handles nested block comments: /* outer /* inner */ still outer */
+//   Regex cannot solve this (finite automaton, no stack) — TypeScript scanner required.
+//
+// Pass 1 — leftmost-match regex (applied inside parseSqlBody):
+//   /\[[^\]]+\]|'(?:''|[^'])*'|--[^\r\n]*/g
+//   • [bracket identifiers] → preserved as-is (YAML rules can still match them)
+//   • 'string literals'    → neutralized to ''  (content can't trigger false matches)
+//   • -- line comments     → replaced with space (already removed by pass 0 for block)
+//   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
 
-const DEFAULT_RULES: ParseRule[] = [
-  // ── Preprocessing ──
-  // Single-pass combined regex: strings and comments matched together, leftmost wins.
-  // This prevents -- inside strings being treated as comments (and vice versa).
-  // Uses function replacement in parseSqlBody() — the replacement field is not used.
-  {
-    name: 'clean_sql', enabled: true, priority: 1,
-    category: 'preprocessing',
-    pattern: "\\[[^\\]]+\\]|'(?:''|[^'])*'|--[^\\r\\n]*|\\/\\*[\\s\\S]*?\\*\\/",
-    flags: 'g',
-    description: 'Single-pass bracket/string/comment handling (built-in)',
-  },
-  // ── Source extraction ──
-  {
-    name: 'extract_sources_ansi', enabled: true, priority: 5,
-    category: 'source',
-    pattern: '\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'FROM/JOIN sources (handles 2- and 3-part names)',
-  },
-  {
-    name: 'extract_sources_tsql_apply', enabled: true, priority: 7,
-    category: 'source',
-    pattern: '\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'CROSS/OUTER APPLY sources',
-  },
-  {
-    name: 'extract_merge_using', enabled: true, priority: 9,
-    category: 'source',
-    pattern: '\\bMERGE\\b[\\s\\S]*?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'MERGE ... USING source table',
-  },
-  {
-    name: 'extract_udf_calls', enabled: true, priority: 10,
-    category: 'source',
-    pattern: '((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\(',
-    flags: 'gi',
-    description: 'Inline scalar UDF calls (schema.func() — requires 2+ part name)',
-  },
-  // ── Target extraction ──
-  {
-    name: 'extract_targets_dml', enabled: true, priority: 6,
-    category: 'target',
-    pattern: '\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — they destroy data, not lineage)',
-  },
-  {
-    name: 'extract_ctas', enabled: true, priority: 13,
-    category: 'target',
-    pattern: '\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+AS\\s+SELECT',
-    flags: 'gi',
-    description: 'CREATE TABLE AS SELECT target',
-  },
-  {
-    name: 'extract_select_into', enabled: true, priority: 14,
-    category: 'target',
-    pattern: '\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+FROM',
-    flags: 'gi',
-    description: 'SELECT INTO target',
-  },
-  // ── Exec calls ──
-  {
-    name: 'extract_sp_calls', enabled: true, priority: 8,
-    category: 'exec',
-    pattern: '\\bEXEC(?:UTE)?\\s+(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))',
-    flags: 'gi',
-    description: 'EXEC/EXECUTE procedure calls (including @var = proc pattern)',
-  },
-];
+/**
+ * Preprocessing: Replace CTE aliases in UPDATE statements with the CTE's base table.
+ * WITH Alias AS (... FROM [schema].[table] ...) UPDATE Alias SET
+ * → ... UPDATE [schema].[table] SET
+ *
+ * This allows extract_targets_dml to capture the actual write target instead of rejecting
+ * the unqualified CTE alias (normalizeCaptured rejects names without a schema dot).
+ *
+ * Strategy: for each CTE definition (WITH name AS (...) or , name AS (...)), extract the
+ * first schema-qualified FROM table in its body. When UPDATE targets a known CTE alias
+ * (no schema dot), rewrite it with that base table.
+ *
+ * Only the first FROM table per CTE is used — this is the directly updatable table.
+ * Nested subquery joins (LEFT JOIN (SELECT ... FROM inner) AS alias) appear later in
+ * the text and are skipped by the first-match heuristic.
+ */
+function substituteCteUpdateAliases(sql: string): string {
+  // Find CTE definitions: WITH name AS ( and , name AS ( (multi-CTE syntax)
+  const cteMap = new Map<string, string>(); // cteName (lowercase) → first base table expression
+  const ctePattern = /(?:\bWITH\b|,)\s*(\w+)\s+AS\s*\(/gi;
+  const KEYWORDS = /^(?:select|insert|update|delete|from|join|where|set|begin|end|values|exec|execute|top|distinct|all|as|on|and|or|not|in|is|null|by|order|group|having|into|case|when|then|else|return|declare|table|index|view|proc|procedure)$/i;
 
-const DEFAULT_SKIP_PREFIXES = [
-  '#', '@',                                // temp tables, variables
-  'sys.', 'sp_', 'xp_', 'fn_',           // system objects
-  'information_schema.',                   // ANSI metadata
-  'master.', 'msdb.', 'tempdb.', 'model.',// system databases
-];
-const DEFAULT_SKIP_KEYWORDS = new Set([
-  'set', 'declare', 'print', 'return', 'begin', 'end', 'if', 'else',
-  'while', 'break', 'continue', 'goto', 'try', 'catch', 'throw',
-  'raiserror', 'waitfor', 'as', 'is', 'null', 'not', 'and', 'or',
-  'select', 'where', 'group', 'order', 'having', 'top', 'distinct',
-  'table', 'index', 'view', 'procedure', 'function', 'trigger',
-  'values', 'output', 'with', 'nolock', 'on',
-]);
+  let m: RegExpExecArray | null;
+  while ((m = ctePattern.exec(sql)) !== null) {
+    const cteName = m[1];
+    if (KEYWORDS.test(cteName)) continue;
+    const bodyStart = m.index + m[0].length;
+    // Find first schema-qualified FROM reference within 3000 chars of CTE body start
+    const window = sql.slice(bodyStart, bodyStart + 3000);
+    const fromMatch = window.match(/\bFROM\s+((?:(?:\[[^\]]+\]|\w+)\.)+(?:\[[^\]]+\]|\w+))(?![\w\.])/i);
+    if (fromMatch) {
+      cteMap.set(cteName.toLowerCase(), fromMatch[1]);
+    }
+  }
+
+  if (cteMap.size === 0) return sql;
+
+  return sql.replace(/\bUPDATE\s+(\w+)\s+SET\b/gi, (match, alias) => {
+    const baseTable = cteMap.get(alias.toLowerCase());
+    return baseTable ? `UPDATE ${baseTable} SET` : match;
+  });
+}
+
+/**
+ * Normalize ANSI comma-join FROM clauses to modern JOIN syntax before extraction rules run.
+ * FROM t1 a1, t2 a2, t3 a3 WHERE  →  FROM t1 a1 JOIN t2 a2 JOIN t3 a3 WHERE
+ *
+ * Only rewrites when the FROM clause contains comma-separated schema.table references
+ * followed by a FROM-terminating keyword (WHERE, JOIN, ORDER, etc.).
+ * SELECT-list commas are never affected — they appear before FROM, not after.
+ * Function-argument commas are never affected — they lack the FROM...terminator context.
+ */
+function normalizeAnsiCommaJoins(sql: string): string {
+  const tableRef = '(?:\\[[^\\]]+\\]|\\w+)\\.(?:\\[[^\\]]+\\]|\\w+)(?:\\s+(?:AS\\s+)?\\w+)?';
+  return sql.replace(
+    new RegExp(
+      `\\bFROM\\s+((?:${tableRef}\\s*,\\s*)+${tableRef})` +
+      '(?=\\s*(?:WHERE\\b|JOIN\\b|INNER\\b|LEFT\\b|RIGHT\\b|FULL\\b|CROSS\\b|OUTER\\b|ON\\b|ORDER\\b|GROUP\\b|HAVING\\b|WITH\\b|SET\\b|;|\\)|$))',
+      'gi'
+    ),
+    (_, tables: string) => 'FROM ' + tables.replace(/\s*,\s*/g, ' JOIN ')
+  );
+}
+
+/** Pass 0: counter-scan removes block comments including nested ones correctly. O(n), no regex. */
+function removeBlockComments(sql: string): string {
+  let out = '';
+  let i = 0;
+  let depth = 0;
+  while (i < sql.length) {
+    if (sql[i] === '/' && sql[i + 1] === '*') { depth++; i += 2; continue; }
+    if (sql[i] === '*' && sql[i + 1] === '/' && depth > 0) { depth--; i += 2; continue; }
+    if (depth === 0) out += sql[i];
+    i++;
+  }
+  return out;
+}
 
 // ─── Active config ──────────────────────────────────────────────────────────
+// Initialized empty — populated by loadRules() when config arrives from extension host.
 
-let activeRules: ParseRule[] = [...DEFAULT_RULES];
-let activeSkipPrefixes: string[] = [...DEFAULT_SKIP_PREFIXES];
-let activeSkipKeywords: Set<string> = new Set(DEFAULT_SKIP_KEYWORDS);
+let activeRules: ParseRule[] = [];
 
 export interface LoadRulesResult {
   loaded: number;
   skipped: string[];       // rule names that failed validation
   errors: string[];        // human-readable error messages
   usedDefaults: boolean;   // true if fell back to defaults entirely
+  categoryCounts: Record<string, number>;  // e.g. { preprocessing: 1, source: 4, target: 3, exec: 1 }
 }
 
 const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec']);
@@ -147,9 +145,12 @@ function validateRule(rule: unknown, index: number): { valid: boolean; name: str
   if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
   if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
 
-  // Test-compile the regex
+  // Test-compile the regex and check for empty-match patterns
   try {
-    new RegExp(r.pattern as string, r.flags as string);
+    const testRegex = new RegExp(r.pattern as string, r.flags as string);
+    if (testRegex.test('')) {
+      return { valid: false, name, error: `${name}: regex matches empty string — this would cause infinite loops` };
+    }
   } catch (e) {
     return { valid: false, name, error: `${name}: invalid regex — ${e instanceof Error ? e.message : String(e)}` };
   }
@@ -157,12 +158,12 @@ function validateRule(rule: unknown, index: number): { valid: boolean; name: str
   return { valid: true, name };
 }
 
-/** Load custom rules from parsed YAML config with validation */
+/** Load rules from parsed YAML config (built-in or custom) with validation */
 export function loadRules(config: ParseRulesConfig): LoadRulesResult {
-  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false };
+  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false, categoryCounts: {} };
 
   if (!config?.rules || !Array.isArray(config.rules)) {
-    result.errors.push('YAML missing "rules" array — using built-in defaults');
+    result.errors.push('YAML missing "rules" array');
     result.usedDefaults = true;
     resetRules();
     return result;
@@ -172,7 +173,6 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
   for (let i = 0; i < config.rules.length; i++) {
     const raw = config.rules[i];
 
-    // Skip disabled rules silently
     if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
 
     const check = validateRule(raw, i);
@@ -185,41 +185,54 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
   }
 
   if (validRules.length === 0) {
-    result.errors.push('No valid rules found — using built-in defaults');
+    result.errors.push('No valid rules found');
     result.usedDefaults = true;
     resetRules();
     return result;
   }
 
   activeRules = validRules.sort((a, b) => a.priority - b.priority);
-  activeSkipPrefixes = config.skip_prefixes || DEFAULT_SKIP_PREFIXES;
-  activeSkipKeywords = new Set(config.skip_keywords || DEFAULT_SKIP_KEYWORDS);
   result.loaded = validRules.length;
+  for (const r of validRules) {
+    result.categoryCounts[r.category] = (result.categoryCounts[r.category] || 0) + 1;
+  }
   return result;
 }
 
-/** Reset to built-in defaults */
+/** Clear active rules (extension host is responsible for providing config) */
 export function resetRules() {
-  activeRules = [...DEFAULT_RULES];
-  activeSkipPrefixes = [...DEFAULT_SKIP_PREFIXES];
-  activeSkipKeywords = new Set(DEFAULT_SKIP_KEYWORDS);
-}
-
-/** Get current active rules (for UI display) */
-export function getActiveRules(): ParseRule[] {
-  return activeRules;
+  activeRules = [];
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export function parseSqlBody(sql: string): ParsedDependencies {
-  let clean = sql;
+  // Pass 0: Remove block comments (including nested) before the regex sees the SQL.
+  // This must run first — the leftmost-match regex below does NOT handle block comments.
+  let clean = removeBlockComments(sql);
 
-  // Step 1: Built-in SQL cleaning — single-pass string/comment handling.
+  // Pass 1: Leftmost-match regex — brackets, strings, and line comments.
+  // Block comments already gone (Pass 0), so the pattern is shorter and faster.
   // "The Best Regex Trick": leftmost match wins, so strings protect -- inside them.
-  clean = clean.replace(/\[[^\]]+\]|'(?:''|[^'])*'|--[^\r\n]*|\/\*[\s\S]*?\*\//g, (match) => {
-    return match.startsWith('[') ? match : match.startsWith("'") ? "''" : ' ';
+  // Double-quoted identifiers ("dbo"."Table") are normalized to bracket notation ([dbo].[Table])
+  // so YAML rules only need to handle one quoting style.
+  clean = clean.replace(/\[[^\]]+\]|"[^"]*"|'(?:''|[^'])*'|--[^\r\n]*/g, (match) => {
+    if (match.startsWith('[')) return match;                         // preserve [bracket identifiers]
+    if (match.startsWith('"')) return `[${match.slice(1, -1)}]`;   // "double-quote" → [bracket]
+    if (match.startsWith("'")) return "''";                         // neutralize 'string literals'
+    return ' ';                                                       // remove -- line comments
   });
+
+  // Pass 1.5: Normalize ANSI comma-join FROM clauses to modern JOIN syntax.
+  // Runs on clean SQL (after strings/comments removed) so it doesn't produce false matches.
+  // Only affects: FROM t1, t2, t3 WHERE  →  FROM t1 JOIN t2 JOIN t3 WHERE
+  clean = normalizeAnsiCommaJoins(clean);
+
+  // Pass 1.6: Substitute CTE aliases in UPDATE statements with the CTE's base table.
+  // WITH Alias AS (... FROM [schema].[table] ...) UPDATE Alias SET
+  // → ... UPDATE [schema].[table] SET
+  // Allows extract_targets_dml to find the actual write target for CTE-based UPDATEs.
+  clean = substituteCteUpdateAliases(clean);
 
   // Step 1b: Additional user-defined preprocessing rules (skip built-in clean_sql)
   for (const rule of activeRules) {
@@ -228,14 +241,11 @@ export function parseSqlBody(sql: string): ParsedDependencies {
     }
   }
 
-  // Step 2: Extract CTE names so they're skipped as table references
-  const cteNames = extractCteNames(clean);
-
   const sources = new Set<string>();
   const targets = new Set<string>();
   const execCalls = new Set<string>();
 
-  // Step 3: Extraction rules
+  // Step 2: Extraction rules
   // UDF matches collected separately to filter false positives from INSERT INTO table(cols).
   const udfSources = new Set<string>();
 
@@ -248,7 +258,7 @@ export function parseSqlBody(sql: string): ParsedDependencies {
       rule.category === 'target' ? targets :
       execCalls;
 
-    collectMatches(clean, new RegExp(rule.pattern, rule.flags), dest, cteNames);
+    collectMatches(clean, new RegExp(rule.pattern, rule.flags), dest);
   }
 
   // Add UDF sources that aren't already targets (a function can't be an INSERT/UPDATE target).
@@ -266,53 +276,58 @@ export function parseSqlBody(sql: string): ParsedDependencies {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Extract CTE names from WITH ... AS (...) patterns */
-function extractCteNames(sql: string): Set<string> {
-  const ctes = new Set<string>();
-  // Match WITH keyword, then scan ahead for "name AS (" patterns
-  // Use a greedy match to capture all CTEs before the main query body
-  const withRegex = /\bWITH\b/gi;
-  const nameRegex = /\b(\[?\w+\]?)\s+AS\s*\(/gi;
-  let withMatch: RegExpExecArray | null;
+const MAX_MATCHES_PER_RULE = 10_000;
 
-  while ((withMatch = withRegex.exec(sql)) !== null) {
-    // Scan from after WITH for all "name AS (" patterns
-    // Stop when we hit a top-level SELECT/INSERT/UPDATE/DELETE/MERGE not inside parens
-    const afterWith = sql.slice(withMatch.index + withMatch[0].length);
-    nameRegex.lastIndex = 0;
-    let nameMatch: RegExpExecArray | null;
-    while ((nameMatch = nameRegex.exec(afterWith)) !== null) {
-      const name = nameMatch[1].replace(/\[|\]/g, '').toLowerCase();
-      // Skip SQL keywords that can precede AS (e.g., "SELECT ... AS")
-      if (!activeSkipKeywords.has(name)) {
-        ctes.add(name);
-      }
-    }
-  }
-  return ctes;
-}
-
-function collectMatches(sql: string, regex: RegExp, out: Set<string>, cteNames?: Set<string>) {
+function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
+  let iterations = 0;
 
   while ((match = regex.exec(sql)) !== null) {
+    // Guard against zero-length matches causing infinite loops (user-provided regex)
+    if (match[0].length === 0) {
+      regex.lastIndex++;
+      continue;
+    }
+    // Safety limit: abort runaway regex (ReDoS or overly broad user patterns)
+    if (++iterations > MAX_MATCHES_PER_RULE) break;
+
     const raw = match[1];
     if (!raw) continue;
 
-    const normalized = raw.replace(/\[|\]/g, '').trim();
-    if (shouldSkip(normalized)) continue;
-    if (cteNames?.has(normalized.toLowerCase())) continue;
+    const normalized = normalizeCaptured(raw);
+    if (normalized === null) continue;
 
     out.add(normalized);
   }
 }
 
-function shouldSkip(name: string): boolean {
-  const lower = name.toLowerCase();
-  if (activeSkipKeywords.has(lower)) return true;
-  if (activeSkipPrefixes.some((p) => lower.startsWith(p))) return true;
-  // Single-character unqualified names are always table aliases (a, b, t, etc.)
-  if (!name.includes('.') && name.length === 1) return true;
-  return false;
+/**
+ * Normalize a raw regex capture to [schema].[object] for catalog lookup.
+ * Returns null to signal "skip this capture".
+ *
+ * This function is the single normalization gate for all rule captures.
+ * Rule authors do NOT need to handle any of these cases in their YAML patterns:
+ *
+ * - Bracket delimiters [schema].[object] → stripped
+ * - Double-quote identifiers "schema"."object" → stripped
+ * - @tableVariable / #TempTable → rejected (never in catalog)
+ * - Unqualified names (no dot) → rejected (require schema.object minimum)
+ * - CTE aliases → also rejected here (CTEs are unqualified, caught by the line above)
+ * - 3-part names db.schema.object → takes last 2 parts (schema.object)
+ * - 4-part+ names server.db.schema.object → rejected (linked server refs)
+ * - Lowercased for case-insensitive catalog lookup
+ */
+function normalizeCaptured(raw: string): string | null {
+  // Split bracket-aware: dots INSIDE [bracket identifiers] are part of the name, not separators.
+  // Example: [STAGING_CADENCE].[spLoadReconciliation_Case4.5] → 2 parts, not 3.
+  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const first = parts[0] ?? '';
+  if (first.startsWith('@') || first.startsWith('#')) return null;  // vars, temp tables
+  if (parts.length < 2) return null;                  // require schema.object minimum
+  if (parts.length >= 4) return null;                 // reject linked-server 4-part names
+  const schema = parts[parts.length - 2];
+  const obj    = parts[parts.length - 1];
+  if (!schema || !obj) return null;
+  return `[${schema}].[${obj}]`.toLowerCase();
 }

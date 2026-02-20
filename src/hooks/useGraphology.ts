@@ -1,18 +1,16 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { DacpacModel, FilterState, ObjectType, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
-import { buildGraph, getGraphMetrics, GraphResult } from '../engine/graphBuilder';
-import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { DacpacModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
+import { buildGraph, getGraphMetrics } from '../engine/graphBuilder';
+import { filterBySchemas } from '../engine/dacpacExtractor';
 
 interface UseGraphologyReturn {
   flowNodes: FlowNode<CustomNodeData>[];
   flowEdges: FlowEdge[];
   graph: Graph | null;
   metrics: ReturnType<typeof getGraphMetrics> | null;
-  isLoading: boolean;
-  error: string | null;
   buildFromModel: (model: DacpacModel, filter: FilterState, config?: ExtensionConfig) => void;
 }
 
@@ -21,51 +19,34 @@ export function useGraphology(): UseGraphologyReturn {
   const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([]);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fullModelRef = useRef<DacpacModel | null>(null);
 
   const buildFromModel = useCallback((model: DacpacModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
-    setIsLoading(true);
-    setError(null);
+    // Apply schema filter (with configurable maxNodes)
+    const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
-    try {
-      fullModelRef.current = model;
+    // Apply type filter
+    const typeFilteredNodes = filtered.nodes.filter((n) => filter.types.has(n.type));
+    const typeNodeIds = new Set(typeFilteredNodes.map((n) => n.id));
+    const typeFiltered: DacpacModel = {
+      ...filtered,
+      nodes: typeFilteredNodes,
+      edges: filtered.edges.filter((e) => typeNodeIds.has(e.source) && typeNodeIds.has(e.target)),
+    };
 
-      // Apply schema filter (with configurable maxNodes)
-      const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
+    // Apply focus schema filter (exclusion patterns applied earlier in handleVisualize)
+    const focusFiltered = applyFocusSchemaFilter(typeFiltered, filter.focusSchemas);
 
-      // Apply type filter
-      const typeFilteredNodes = filtered.nodes.filter((n) => filter.types.has(n.type));
-      const typeNodeIds = new Set(typeFilteredNodes.map((n) => n.id));
-      const typeFiltered: DacpacModel = {
-        ...filtered,
-        nodes: typeFilteredNodes,
-        edges: filtered.edges.filter((e) => typeNodeIds.has(e.source) && typeNodeIds.has(e.target)),
-      };
+    // Apply isolation filter (hide orphan nodes with no edges)
+    const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
 
-      // Apply exclusion patterns
-      const excluded = applyExclusionPatterns(typeFiltered, config.excludePatterns);
-
-      // Apply focus schema filter
-      const focusFiltered = applyFocusSchemaFilter(excluded, filter.focusSchemas);
-
-      // Apply isolation filter (hide orphan nodes with no edges)
-      const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
-
-      const result = buildGraph(isolationFiltered, config);
-      setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
-      setFlowEdges(result.flowEdges);
-      setGraph(result.graph);
-      setMetrics(getGraphMetrics(result.graph));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to build graph');
-    } finally {
-      setIsLoading(false);
-    }
+    const result = buildGraph(isolationFiltered, config);
+    setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
+    setFlowEdges(result.flowEdges);
+    setGraph(result.graph);
+    setMetrics(getGraphMetrics(result.graph));
   }, []);
 
-  return { flowNodes, flowEdges, graph, metrics, isLoading, error, buildFromModel };
+  return { flowNodes, flowEdges, graph, metrics, buildFromModel };
 }
 
 // ─── Isolation Filter (hide orphan / degree-0 nodes) ─────────────────────────

@@ -1,33 +1,44 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import { getUri } from './utilities/getUri';
-import { getNonce } from './utilities/getNonce';
+import { getUri } from './utils/getUri';
+import { getNonce } from './utils/getNonce';
+import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
+import type { LayoutConfig, EdgeStyle, TraceConfig, AnalysisConfig } from './engine/types';
+import {
+  isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
+  loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
+} from './engine/connectionManager';
+import type { IConnectionInfo } from './types/mssql';
+import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './engine/dmvExtractor';
+import type { DmvResults } from './engine/dmvExtractor';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
-let outputChannel: vscode.OutputChannel;
-type LogLevel = 'info' | 'debug';
-let currentLogLevel: LogLevel = 'info';
+let outputChannel: vscode.LogOutputChannel;
+let extensionUri: vscode.Uri;
+let lastRulesLabel = 'built-in rules';
 
-function log(message: string, level: LogLevel = 'info') {
-  if (level === 'debug' && currentLogLevel !== 'debug') return;
-  const timestamp = new Date().toISOString();
-  outputChannel?.appendLine(`[${timestamp}] ${message}`);
-  // Auto-show the output channel for errors
-  if (level === 'info' && message.includes('Error]')) {
-    outputChannel?.show(true); // true = preserveFocus
-  }
-}
-
-function refreshLogLevel() {
-  currentLogLevel = vscode.workspace.getConfiguration('dataLineageViz').get<LogLevel>('logLevel', 'info');
+function getThemeClass(kind: vscode.ColorThemeKind): string {
+  return kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
+    kind === vscode.ColorThemeKind.HighContrast ? 'vscode-high-contrast' :
+    kind === vscode.ColorThemeKind.HighContrastLight ? 'vscode-high-contrast-light' :
+    'vscode-light';
 }
 
 // ─── DDL Virtual Document Provider ──────────────────────────────────────────
 
 const DDL_SCHEME = 'dacpac-ddl';
+const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
+
+function isDacpacTooLarge(bytes: number): boolean {
+  if (bytes <= MAX_DACPAC_BYTES) return false;
+  const mb = (bytes / 1024 / 1024).toFixed(1);
+  vscode.window.showErrorMessage(`Dacpac too large (${mb} MB). Maximum supported size is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`);
+  return true;
+}
 let panelCounter = 0;
+let activePanel: vscode.WebviewPanel | undefined;
 const ddlContentMap = new Map<string, string>();
 
 const ddlProvider = new class implements vscode.TextDocumentContentProvider {
@@ -50,17 +61,23 @@ async function showDdl(ddlUri: vscode.Uri, message: { objectName: string; schema
   ddlContentMap.set(key, content);
   ddlProvider.fire(ddlUri);
 
-  const doc = await vscode.workspace.openTextDocument(ddlUri);
-  if (doc.languageId !== 'dacpac-sql') {
-    await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
+  try {
+    const doc = await vscode.workspace.openTextDocument(ddlUri);
+    if (doc.languageId !== 'dacpac-sql') {
+      await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
+    }
+    // Re-set: setTextDocumentLanguage fires onDidCloseTextDocument which deletes the key
+    ddlContentMap.set(key, content);
+    await vscode.window.showTextDocument(doc, {
+      viewColumn: vscode.ViewColumn.Beside,
+      preserveFocus: true,
+      preview: true,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    outputChannel.error(`Failed to show DDL: ${errorMsg}`);
+    vscode.window.showErrorMessage(`Failed to open SQL Viewer: ${errorMsg}`);
   }
-  // Re-set: setTextDocumentLanguage fires onDidCloseTextDocument which deletes the key
-  ddlContentMap.set(key, content);
-  await vscode.window.showTextDocument(doc, {
-    viewColumn: vscode.ViewColumn.Beside,
-    preserveFocus: true,
-    preview: true,
-  });
 }
 
 function updateDdlIfOpen(ddlUri: vscode.Uri, message: { objectName: string; schema: string; sqlBody?: string }) {
@@ -73,7 +90,8 @@ function updateDdlIfOpen(ddlUri: vscode.Uri, message: { objectName: string; sche
 // ─── Activate ────────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
-  outputChannel = vscode.window.createOutputChannel('Data Lineage Viz');
+  extensionUri = context.extensionUri;
+  outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(DDL_SCHEME, ddlProvider)
@@ -88,25 +106,42 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  refreshLogLevel();
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('dataLineageViz.logLevel')) refreshLogLevel();
-    })
-  );
-  log('[Extension] Activated');
+    vscode.workspace.onDidChangeConfiguration(async (e) => {
+      if (!activePanel) return;
 
-  // Register Quick Actions TreeView
-  const quickActionsProvider = new QuickActionsProvider();
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', quickActionsProvider)
-  );
-  
-  // Command: Open (shows wizard with file picker + demo option)
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dataLineageViz.open', () => {
-      openPanel(context, 'Data Lineage Viz');
+      if (e.affectsConfiguration('dataLineageViz.parseRulesFile') || e.affectsConfiguration('dataLineageViz.excludePatterns')) {
+        const label = e.affectsConfiguration('dataLineageViz.parseRulesFile') ? 'Parse rules' : 'Exclude patterns';
+        const action = await vscode.window.showInformationMessage(
+          `${label} changed. Reload your data source to apply.`,
+          'Reload'
+        );
+        if (action === 'Reload') {
+          vscode.commands.executeCommand('dataLineageViz.open');
+        }
+        return;
+      }
+
+      // All other settings: auto-push to webview → triggers rebuild
+      if (e.affectsConfiguration('dataLineageViz')) {
+        const config = await readExtensionConfig();
+        activePanel.webview.postMessage({ type: 'config-only', config });
+        outputChannel.debug('[Config] Settings changed — pushed to webview');
+      }
     })
+  );
+  outputChannel.info('Activated');
+
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', new SidebarProvider())
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
+    vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
+    vscode.commands.registerCommand('dataLineageViz.openSettings', () =>
+      vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz')
+    ),
   );
 
   // Command: Create Parse Rules YAML scaffold
@@ -132,9 +167,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       // Copy the bundled default YAML as a starting point
-      const defaultYaml = getDefaultParseRulesYaml();
-      const encoder = new TextEncoder();
-      await vscode.workspace.fs.writeFile(targetUri, encoder.encode(defaultYaml));
+      const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'defaultParseRules.yaml');
+      const defaultYaml = await vscode.workspace.fs.readFile(sourceUri);
+      await vscode.workspace.fs.writeFile(targetUri, defaultYaml);
 
       const doc = await vscode.workspace.openTextDocument(targetUri);
       await vscode.window.showTextDocument(doc);
@@ -143,11 +178,57 @@ export function activate(context: vscode.ExtensionContext) {
       );
     })
   );
+
+  // Command: Create DMV Queries YAML scaffold
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dataLineageViz.createDmvQueries', async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (!folder) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+
+      const targetUri = vscode.Uri.joinPath(folder.uri, 'dmvQueries.yaml');
+
+      try {
+        await vscode.workspace.fs.stat(targetUri);
+        const doc = await vscode.workspace.openTextDocument(targetUri);
+        await vscode.window.showTextDocument(doc);
+        return;
+      } catch {
+        // File doesn't exist, create it
+      }
+
+      // Copy the bundled default YAML as a starting point
+      const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'dmvQueries.yaml');
+      const sourceData = await vscode.workspace.fs.readFile(sourceUri);
+      await vscode.workspace.fs.writeFile(targetUri, sourceData);
+
+      const doc = await vscode.workspace.openTextDocument(targetUri);
+      await vscode.window.showTextDocument(doc);
+      vscode.window.showInformationMessage(
+        'Created dmvQueries.yaml in workspace root. Set "dataLineageViz.dmvQueriesFile" to "dmvQueries.yaml" to use it.'
+      );
+    })
+  );
+}
+
+function getLastSource(context: vscode.ExtensionContext): { type: 'dacpac' | 'database'; name: string } | undefined {
+  const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
+  if (sourceType === 'database') {
+    const name = context.workspaceState.get<string>('lastDbSourceName');
+    return name ? { type: 'database', name } : undefined;
+  }
+  if (sourceType === 'dacpac') {
+    const name = context.workspaceState.get<string>('lastDacpacName');
+    return name ? { type: 'dacpac', name } : undefined;
+  }
+  return undefined;
 }
 
 // ─── Open Panel ─────────────────────────────────────────────────────────────
 
-function openPanel(context: vscode.ExtensionContext, title: string) {
+function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = false) {
   try {
     const panelId = ++panelCounter;
     const ddlUri = vscode.Uri.parse(`${DDL_SCHEME}:panel-${panelId}/DDL`);
@@ -166,73 +247,158 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
       }
     );
 
-    panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
+    activePanel = panel;
+    panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, loadDemo);
 
+    let panelDisposed = false;
     const themeChangeListener = vscode.window.onDidChangeActiveColorTheme((theme) => {
-      const themeClass =
-        theme.kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
-        theme.kind === vscode.ColorThemeKind.HighContrast ? 'vscode-high-contrast' :
-        theme.kind === vscode.ColorThemeKind.HighContrastLight ? 'vscode-high-contrast-light' :
-        'vscode-light';
-      panel.webview.postMessage({ type: 'themeChanged', kind: themeClass });
+      if (panelDisposed) return;
+      panel.webview.postMessage({ type: 'themeChanged', kind: getThemeClass(theme.kind) });
     });
 
     panel.onDidDispose(() => {
+      panelDisposed = true;
+      activePanel = undefined;
       themeChangeListener.dispose();
       ddlContentMap.delete(ddlUri.toString());
     });
 
-    panel.webview.onDidReceiveMessage(
-      async (message) => {
-        if (message.type === 'ready') {
+    // ─── Message Handler Map ──────────────────────────────────────────────
+    type MessageHandlerMap = {
+      [K in WebviewMessage['type']]?: (msg: Extract<WebviewMessage, { type: K }>) => Promise<void> | void;
+    };
+
+    const handlers: MessageHandlerMap = {
+      'ready': async () => {
+        if (loadDemo) {
+          await handleLoadDemo(panel, context, true);
+        } else {
           const config = await readExtensionConfig();
-          panel.webview.postMessage({ type: 'config-only', config });
+          const lastSource = getLastSource(context);
+          panel.webview.postMessage({ type: 'config-only', config, lastSource });
         }
-        if (message.type === 'load-demo') {
-          const config = await readExtensionConfig();
+      },
+      'open-dacpac': async () => {
+        const uris = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          filters: { 'DACPAC': ['dacpac'] },
+          title: 'Select a .dacpac file',
+        });
+        if (uris && uris.length > 0) {
+          const fileUri = uris[0];
+          const fileName = path.basename(fileUri.fsPath);
           try {
-            const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
-            const data = await vscode.workspace.fs.readFile(demoUri);
-            panel.webview.postMessage({
-              type: 'dacpac-data',
-              data: Array.from(data),
-              fileName: 'AdventureWorks (Demo)',
-              config,
-            });
-            log('[Extension] Demo dacpac loaded');
+            const data = await vscode.workspace.fs.readFile(fileUri);
+            if (isDacpacTooLarge(data.byteLength)) return;
+            await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
+            await context.workspaceState.update('lastDacpacName', fileName);
+            await context.workspaceState.update('lastSourceType', 'dacpac');
+            const config = await readExtensionConfig();
+            const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
+            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, config, lastDeselectedSchemas });
+            outputChannel.info(`── Opening ${fileName} ──`);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
-            log(`[Extension Error] Failed to load demo: ${errorMsg}`);
-            vscode.window.showErrorMessage(`Failed to load demo: ${errorMsg}`);
+            outputChannel.error(`Failed to read file: ${errorMsg}`);
+            vscode.window.showErrorMessage(`Failed to read file: ${errorMsg}`);
           }
         }
-        if (message.type === 'parse-rules-warning') {
-          handleParseRulesWarning(message);
+      },
+      'save-schemas': async (msg) => {
+        await context.workspaceState.update('lastDeselectedSchemas', msg.deselected);
+      },
+      'load-last-dacpac': async () => {
+        const lastPath = context.workspaceState.get<string>('lastDacpacPath');
+        if (!lastPath) return;
+        try {
+          const fileUri = vscode.Uri.file(lastPath);
+          const data = await vscode.workspace.fs.readFile(fileUri);
+          if (isDacpacTooLarge(data.byteLength)) return;
+          const config = await readExtensionConfig();
+          const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
+          panel.webview.postMessage({
+            type: 'dacpac-data',
+            data: Array.from(data),
+            fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
+            config,
+            lastDeselectedSchemas,
+          });
+          outputChannel.info(`── Reopening ${path.basename(lastPath)} ──`);
+        } catch {
+          await context.workspaceState.update('lastDacpacPath', undefined);
+          await context.workspaceState.update('lastDacpacName', undefined);
+          await context.workspaceState.update('lastSourceType', undefined);
+          await context.workspaceState.update('lastDeselectedSchemas', undefined);
+          panel.webview.postMessage({ type: 'last-dacpac-gone' });
+          outputChannel.warn(`Last dacpac no longer available: ${lastPath}`);
         }
-        if (message.type === 'parse-stats') {
-          handleParseStats(message.stats);
-        }
-        if (message.type === 'log') {
-          log(`[Webview] ${message.text}`);
-        }
-        if (message.type === 'error') {
-          log(`[Webview Error] ${message.error}`);
-          if (message.stack) log(`[Webview Error Stack] ${message.stack}`, 'debug');
-          vscode.window.showErrorMessage(`Data Lineage Error: ${message.error}`);
-        }
-        if (message.type === 'open-external') {
-          if (message.url) {
-            await vscode.env.openExternal(vscode.Uri.parse(message.url));
+      },
+      'load-demo': async () => { await handleLoadDemo(panel, context); },
+      'parse-rules-result': (msg) => { handleParseRulesResult(msg); },
+      'parse-stats': (msg) => { handleParseStats(msg.stats, msg.objectCount, msg.edgeCount, msg.schemaCount); },
+      'log': (msg) => { outputChannel.info(msg.text); },
+      'error': (msg) => {
+        outputChannel.error(msg.error);
+        if (msg.stack) outputChannel.debug(msg.stack);
+        vscode.window.showErrorMessage(`Data Lineage Error: ${msg.error}`);
+      },
+      'open-external': async (msg) => {
+        if (msg.url) await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+      },
+      'open-settings': () => { vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz'); },
+      'show-ddl': async (msg) => { await showDdl(ddlUri, msg); },
+      'update-ddl': (msg) => { updateDdlIfOpen(ddlUri, msg); },
+      'check-mssql': () => {
+        panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
+      },
+      'db-connect': () => withDbProgress(
+        panel, 'Data Lineage: Connecting to database',
+        () => promptForConnection(outputChannel),
+        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token),
+      ),
+      'db-reconnect': () => withDbProgress(
+        panel, 'Data Lineage: Reconnecting to database',
+        async () => {
+          const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+          if (storedInfo) {
+            const result = await connectDirect(storedInfo, outputChannel);
+            if (result) return result;
+            outputChannel.info('[DB] Falling back to connection picker');
           }
-        }
-        if (message.type === 'open-settings') {
-          vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz');
-        }
-        if (message.type === 'show-ddl') {
-          await showDdl(ddlUri, message);
-        }
-        if (message.type === 'update-ddl') {
-          updateDdlIfOpen(ddlUri, message);
+          return promptForConnection(outputChannel);
+        },
+        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token),
+      ),
+      'db-visualize': (msg) => withDbProgress(
+        panel, 'Data Lineage: Loading selected schemas',
+        async () => {
+          const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+          if (!storedInfo) {
+            panel.webview.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
+            return undefined;
+          }
+          const result = await connectDirect(storedInfo, outputChannel);
+          if (result) return result;
+          outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
+          return promptForConnection(outputChannel);
+        },
+        (conn, progress, token) => runDbPhase2(panel, context, conn.connectionUri, msg.schemas, progress, token),
+      ),
+    };
+
+    panel.webview.onDidReceiveMessage(
+      async (message: WebviewMessage) => {
+        try {
+          const handler = handlers[message.type] as ((msg: WebviewMessage) => Promise<void> | void) | undefined;
+          if (handler) {
+            await handler(message);
+          } else {
+            outputChannel.debug(`Unknown webview message type: ${(message as { type: string }).type}`);
+          }
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          outputChannel.error(`Message handler failed for "${message.type}": ${errorMsg}`);
+          vscode.window.showErrorMessage(`Data Lineage Error: ${errorMsg}`);
         }
       },
       undefined,
@@ -240,9 +406,68 @@ function openPanel(context: vscode.ExtensionContext, title: string) {
     );
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    log(`[Extension Error] ${errorMsg}`);
+    outputChannel.error(errorMsg);
     vscode.window.showErrorMessage(`Failed to open Data Lineage: ${errorMsg}`);
   }
+}
+
+// ─── Webview Message Types ──────────────────────────────────────────────────
+
+type WebviewMessage =
+  | { type: 'ready' }
+  | { type: 'open-dacpac' }
+  | { type: 'save-schemas'; deselected: string[] }
+  | { type: 'load-last-dacpac' }
+  | { type: 'load-demo' }
+  | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
+  | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
+  | { type: 'log'; text: string }
+  | { type: 'error'; error: string; stack?: string }
+  | { type: 'open-external'; url?: string }
+  | { type: 'open-settings' }
+  | { type: 'show-ddl'; objectName: string; schema: string; sqlBody?: string }
+  | { type: 'update-ddl'; objectName: string; schema: string; sqlBody?: string }
+  | { type: 'check-mssql' }
+  | { type: 'db-connect' }
+  | { type: 'db-reconnect' }
+  | { type: 'db-visualize'; schemas: string[] };
+
+// ─── DB Progress Helper ─────────────────────────────────────────────────────
+
+interface DbConnectionResult { connectionUri: string; connectionInfo: IConnectionInfo }
+
+async function withDbProgress(
+  panel: vscode.WebviewPanel,
+  title: string,
+  connectFn: () => Promise<DbConnectionResult | undefined>,
+  phaseFn: (result: DbConnectionResult, progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Promise<void>,
+): Promise<void> {
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+    async (progress, token) => {
+      let connectionUri: string | undefined;
+      try {
+        const result = await connectFn();
+        if (!result || token.isCancellationRequested) {
+          panel.webview.postMessage({ type: 'db-cancelled' });
+          return;
+        }
+        connectionUri = result.connectionUri;
+        await phaseFn(result, progress, token);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const phase = title.includes('Loading') ? 'build' : 'connect';
+        outputChannel.error(`[DB] ${phase} failed: ${errorMsg}`);
+        panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase });
+      } finally {
+        if (connectionUri) {
+          await disconnectDatabase(connectionUri, outputChannel).catch(err => {
+            outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
+          });
+        }
+      }
+    },
+  );
 }
 
 // ─── Read Extension Config ──────────────────────────────────────────────────
@@ -251,9 +476,26 @@ interface ExtensionConfigMessage {
   parseRules?: unknown;
   excludePatterns: string[];
   maxNodes: number;
-  layout: { direction: string; rankSeparation: number; nodeSeparation: number; edgeAnimation: boolean; highlightAnimation: boolean };
-  edgeStyle: string;
-  trace: { defaultUpstreamLevels: number; defaultDownstreamLevels: number };
+  layout: LayoutConfig;
+  edgeStyle: EdgeStyle;
+  trace: TraceConfig;
+  analysis: AnalysisConfig;
+}
+
+function clamp(val: number, min: number, max: number, fallback: number): number {
+  if (typeof val !== 'number' || isNaN(val)) return fallback;
+  return Math.max(min, Math.min(max, val));
+}
+
+async function loadBuiltInParseRules(): Promise<Record<string, unknown>> {
+  const yamlUri = vscode.Uri.joinPath(extensionUri, 'assets', 'defaultParseRules.yaml');
+  const data = await vscode.workspace.fs.readFile(yamlUri);
+  const content = new TextDecoder().decode(data);
+  const parsed = yaml.load(content) as Record<string, unknown>;
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) {
+    throw new Error('Built-in defaultParseRules.yaml is invalid — missing "rules" array');
+  }
+  return parsed;
 }
 
 async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
@@ -262,46 +504,72 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const config: ExtensionConfigMessage = {
     excludePatterns: cfg.get<string[]>('excludePatterns', []).filter(p => {
       try { new RegExp(p); return true; } catch {
-        log(`[Config] Invalid excludePattern "${p}" — not a valid regex. Pattern removed.`);
+        outputChannel.warn(`[Config] Invalid excludePattern "${p}" — not a valid regex. Pattern removed.`);
         return false;
       }
     }),
-    maxNodes: cfg.get<number>('maxNodes', 250),
+    maxNodes: clamp(cfg.get<number>('maxNodes', 500), 10, 1000, 500),
     layout: {
-      direction: cfg.get<string>('layout.direction', 'LR'),
-      rankSeparation: cfg.get<number>('layout.rankSeparation', 120),
-      nodeSeparation: cfg.get<number>('layout.nodeSeparation', 30),
+      direction: cfg.get<'TB' | 'LR'>('layout.direction', 'LR')!,
+      rankSeparation: clamp(cfg.get<number>('layout.rankSeparation', 120), 20, 300, 120),
+      nodeSeparation: clamp(cfg.get<number>('layout.nodeSeparation', 30), 10, 200, 30),
       edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', true),
       highlightAnimation: cfg.get<boolean>('layout.highlightAnimation', false),
+      minimapEnabled: cfg.get<boolean>('layout.minimapEnabled', true),
     },
-    edgeStyle: cfg.get<string>('edgeStyle', 'default'),
+    edgeStyle: cfg.get<EdgeStyle>('edgeStyle', 'default')!,
     trace: {
-      defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels', 3),
-      defaultDownstreamLevels: cfg.get<number>('trace.defaultDownstreamLevels', 3),
+      defaultUpstreamLevels: clamp(cfg.get<number>('trace.defaultUpstreamLevels', 3), 0, 99, 3),
+      defaultDownstreamLevels: clamp(cfg.get<number>('trace.defaultDownstreamLevels', 3), 0, 99, 3),
+      hideCoWriters: cfg.get<boolean>('trace.hideCoWriters', true),
+    },
+    analysis: {
+      hubMinDegree: clamp(cfg.get<number>('analysis.hubMinDegree', 8), 1, 50, 8),
+      islandMaxSize: clamp(cfg.get<number>('analysis.islandMaxSize', 2), 2, 500, 2),
+      longestPathMinNodes: clamp(cfg.get<number>('analysis.longestPathMinNodes', 5), 2, 50, 5),
     },
   };
 
-  // Load YAML parse rules if configured
+  // Load YAML parse rules — custom file if configured, otherwise built-in defaults.
+  // Single source of truth: assets/defaultParseRules.yaml (same pattern as DMV queries).
   const rulesPath = cfg.get<string>('parseRulesFile', '');
-  if (rulesPath) {
+  if (!rulesPath) {
+    try {
+      config.parseRules = await loadBuiltInParseRules();
+      lastRulesLabel = 'built-in rules';
+      outputChannel.info(`[ParseRules] Using built-in defaults (${(config.parseRules as Record<string, unknown[]>).rules.length} rules)`);
+    } catch (err) {
+      outputChannel.error(`[ParseRules] Failed to load built-in rules: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else {
     const resolved = resolveWorkspacePath(rulesPath);
-    if (resolved) {
+    if (!resolved) {
+      outputChannel.warn(`[ParseRules] Cannot resolve "${rulesPath}" — no workspace folder open`);
+      vscode.window.showWarningMessage(
+        `Parse rules: cannot resolve "${rulesPath}" — open a workspace folder or use an absolute path.`
+      );
+      config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
+    } else {
       try {
         const fileUri = vscode.Uri.file(resolved);
         const data = await vscode.workspace.fs.readFile(fileUri);
         const content = new TextDecoder().decode(data);
         const parsed = yaml.load(content) as Record<string, unknown>;
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) {
-          log(`[ParseRules] Invalid YAML structure in ${rulesPath} — missing "rules" array`);
+          outputChannel.warn(`[ParseRules] Invalid YAML in ${rulesPath} — missing "rules" array`);
           vscode.window.showWarningMessage(
             `Parse rules YAML invalid: missing "rules" array. Using built-in defaults.`
           );
+          config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
         } else {
           config.parseRules = parsed;
-          log(`[ParseRules] Loaded ${parsed.rules.length} rules from ${rulesPath}`, 'debug');
+          lastRulesLabel = `${parsed.rules.length} rules from ${path.basename(rulesPath)}`;
+          outputChannel.debug(`[ParseRules] Read ${parsed.rules.length} rules from ${rulesPath}`);
+          await persistAbsolutePath('parseRulesFile', rulesPath, resolved);
         }
       } catch (err) {
         if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
+          outputChannel.warn(`[ParseRules] File not found: ${rulesPath} — using built-in defaults`);
           vscode.window.showWarningMessage(
             `Parse rules file not found: ${rulesPath}. Using built-in defaults.`
           );
@@ -310,6 +578,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
             `Failed to load parse rules: ${err instanceof Error ? err.message : String(err)}`
           );
         }
+        config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
       }
     }
   }
@@ -317,32 +586,258 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   return config;
 }
 
+// ─── Two-Phase DB Extraction ─────────────────────────────────────────────────
+
+/**
+ * Phase 1: Connect, run lightweight schema-preview query, send SchemaPreview
+ * to webview for schema selection. Disconnects after sending.
+ */
+async function runDbPhase1(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  connectionUri: string,
+  connectionInfo: IConnectionInfo,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
+
+  progress.report({ message: 'Loading queries...' });
+  const queries = await loadDmvQueries(outputChannel, context.extensionUri);
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  // Find schema-preview query; fall back to full extraction if missing
+  const previewQuery = queries.find(q => q.name === 'schema-preview');
+  if (!previewQuery) {
+    outputChannel.warn('[DB] No schema-preview query found — falling back to full extraction');
+    await runDbFullExtraction(panel, context, connectionUri, connectionInfo, queries, progress, token);
+    return;
+  }
+
+  progress.report({ message: 'Querying schema overview...' });
+  panel.webview.postMessage({ type: 'db-progress', step: 1, total: 1, label: 'schema-preview' });
+
+  const previewResult = await executeDmvQueries(connectionUri, [previewQuery], outputChannel);
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  const result = previewResult.get('schema-preview');
+  if (result) {
+    const missing = validateQueryResult('schema-preview', result);
+    if (missing.length > 0) {
+      throw new Error(`Schema preview query is missing required columns: ${missing.join(', ')}.`);
+    }
+  }
+
+  const preview = buildSchemaPreview(result!);
+  outputChannel.info(`[DB] Schema preview: ${preview.schemas.length} schemas, ${preview.totalObjects} total objects`);
+
+  await context.workspaceState.update('lastDbSourceName', sourceName);
+  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
+  await context.workspaceState.update('lastSourceType', 'database');
+
+  const config = await readExtensionConfig();
+  const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
+  panel.webview.postMessage({
+    type: 'db-schema-preview',
+    preview,
+    config,
+    sourceName,
+    lastDeselectedSchemas,
+  });
+}
+
+/**
+ * Phase 2: Reconnect, run filtered DMV queries for selected schemas,
+ * build full model, send to webview.
+ */
+async function runDbPhase2(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  connectionUri: string,
+  schemas: string[],
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  progress.report({ message: 'Loading queries...' });
+  const queries = await loadDmvQueries(outputChannel, context.extensionUri);
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  const resultMap = await executeDmvQueriesFiltered(
+    connectionUri,
+    queries,
+    schemas,
+    outputChannel,
+    (step, total, label) => {
+      progress.report({ message: `Query ${step}/${total}: ${label}`, increment: Math.round(100 / total) });
+      panel.webview.postMessage({ type: 'db-progress', step, total, label });
+    },
+  );
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  for (const [name, queryResult] of resultMap) {
+    const missing = validateQueryResult(name, queryResult);
+    if (missing.length > 0) {
+      throw new Error(`Query '${name}' is missing required columns: ${missing.join(', ')}.`);
+    }
+  }
+
+  const dmvResults: DmvResults = {
+    nodes: resultMap.get('nodes')!,
+    columns: resultMap.get('columns')!,
+    dependencies: resultMap.get('dependencies')!,
+  };
+
+  progress.report({ message: 'Building model...' });
+  outputChannel.info('[DB] Building model from DMV results...');
+  const start = Date.now();
+  const model = buildModelFromDmv(dmvResults);
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  outputChannel.info(`[DB] Model built: ${model.nodes.length} nodes, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
+
+  const sourceName = context.workspaceState.get<string>('lastDbSourceName') || 'Database';
+  const config = await readExtensionConfig();
+  panel.webview.postMessage({
+    type: 'db-model',
+    model,
+    config,
+    sourceName,
+  });
+}
+
+/**
+ * Fallback: full extraction in one shot (used when schema-preview query is missing
+ * from custom YAML).
+ */
+async function runDbFullExtraction(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  connectionUri: string,
+  connectionInfo: IConnectionInfo,
+  queries: import('./engine/connectionManager').DmvQuery[],
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
+  const dataQueries = queries.filter(q => q.name !== 'schema-preview');
+
+  const resultMap = await executeDmvQueries(
+    connectionUri,
+    dataQueries,
+    outputChannel,
+    (step, total, label) => {
+      progress.report({ message: `Query ${step}/${total}: ${label}`, increment: Math.round(100 / total) });
+      panel.webview.postMessage({ type: 'db-progress', step, total, label });
+    },
+  );
+
+  if (token.isCancellationRequested) {
+    panel.webview.postMessage({ type: 'db-cancelled' });
+    return;
+  }
+
+  for (const [name, queryResult] of resultMap) {
+    const missing = validateQueryResult(name, queryResult);
+    if (missing.length > 0) {
+      throw new Error(`Query '${name}' is missing required columns: ${missing.join(', ')}.`);
+    }
+  }
+
+  const dmvResults: DmvResults = {
+    nodes: resultMap.get('nodes')!,
+    columns: resultMap.get('columns')!,
+    dependencies: resultMap.get('dependencies')!,
+  };
+
+  progress.report({ message: 'Building model...' });
+  const model = buildModelFromDmv(dmvResults);
+
+  await context.workspaceState.update('lastDbSourceName', sourceName);
+  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
+  await context.workspaceState.update('lastSourceType', 'database');
+  const config = await readExtensionConfig();
+  const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
+  panel.webview.postMessage({
+    type: 'db-model',
+    model,
+    config,
+    sourceName,
+    lastDeselectedSchemas,
+  });
+}
+
 // ─── Parse Rules Validation Feedback ─────────────────────────────────────────
 
-function handleParseRulesWarning(message: {
+function formatCategoryCounts(counts?: Record<string, number>): string {
+  if (!counts || Object.keys(counts).length === 0) return '';
+  const order = ['preprocessing', 'source', 'target', 'exec'];
+  const parts = order.filter(c => counts[c]).map(c => `${counts[c]} ${c}`);
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
+
+async function handleLoadDemo(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, autoVisualize = false) {
+  const config = await readExtensionConfig();
+  try {
+    const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
+    const data = await vscode.workspace.fs.readFile(demoUri);
+    if (isDacpacTooLarge(data.byteLength)) return;
+    panel.webview.postMessage({
+      type: 'dacpac-data',
+      data: Array.from(data),
+      fileName: 'AdventureWorks (Demo)',
+      config,
+      autoVisualize,
+    });
+    outputChannel.info('── Opening AdventureWorks (Demo) ──');
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    outputChannel.error(`Failed to load demo: ${errorMsg}`);
+    vscode.window.showErrorMessage(`Failed to load demo: ${errorMsg}`);
+  }
+}
+
+function handleParseRulesResult(message: {
   loaded: number;
   skipped: string[];
   errors: string[];
   usedDefaults: boolean;
+  categoryCounts?: Record<string, number>;
 }) {
   // Detail per-rule errors at debug level
   for (const err of message.errors) {
-    log(`[ParseRules] ${err}`, 'debug');
+    outputChannel.debug(`[ParseRules] ${err}`);
   }
 
-  // Summary at info level + VS Code notification
+  const breakdown = formatCategoryCounts(message.categoryCounts);
+
+  // Summary at info level + VS Code notification for problems
   if (message.usedDefaults) {
-    log(`[ParseRules] YAML invalid — using built-in defaults`);
+    outputChannel.warn('[ParseRules] YAML invalid — using built-in defaults');
     vscode.window.showWarningMessage(
-      `Parse rules YAML invalid — using built-in defaults. Set logLevel to "debug" for details.`
+      'Parse rules YAML invalid — using built-in defaults. Check Output channel for details.'
     );
   } else if (message.skipped.length > 0) {
-    log(`[ParseRules] ${message.loaded} loaded, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
+    outputChannel.warn(`[ParseRules] ${message.loaded} loaded${breakdown}, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
     vscode.window.showWarningMessage(
-      `Parse rules: ${message.loaded} loaded, ${message.skipped.length} skipped (${message.skipped.join(', ')}). Set logLevel to "debug" for details.`
+      `Parse rules: ${message.loaded} loaded, ${message.skipped.length} skipped (${message.skipped.join(', ')}). Check Output channel for details.`
     );
   } else {
-    log(`[ParseRules] Custom rules loaded: ${message.loaded} rules`);
+    outputChannel.info(`[ParseRules] Custom rules loaded: ${message.loaded} rules${breakdown}`);
   }
 }
 
@@ -350,40 +845,52 @@ function handleParseStats(stats: {
   parsedRefs: number;
   resolvedEdges: number;
   droppedRefs: string[];
-  spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[];
-}) {
+  spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[];
+}, objectCount?: number, edgeCount?: number, schemaCount?: number) {
   const spDetails = stats.spDetails || [];
   const spCount = spDetails.length;
 
-  // Info level: summary only
-  log(`[Parse] ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} unrelated refs removed`);
-
-  // Debug level: one line per SP with details
+  // Debug level: opener + one line per SP + closer
+  if (spCount > 0) {
+    outputChannel.debug(`[Parse] Starting — ${spCount} procedure(s) with ${lastRulesLabel}`);
+  }
   for (const sp of spDetails) {
-    const parts = [`In: ${sp.inCount}`, `Out: ${sp.outCount}`];
+    const inLabel = sp.inRefs && sp.inRefs.length > 0 ? sp.inRefs.join(', ') : String(sp.inCount);
+    const outLabel = sp.outRefs && sp.outRefs.length > 0 ? sp.outRefs.join(', ') : String(sp.outCount);
+    const parts = [`In(${sp.inCount}): ${inLabel}`, `Out(${sp.outCount}): ${outLabel}`];
     if (sp.unrelated.length > 0) {
       parts.push(`Unrelated: ${sp.unrelated.join(', ')}`);
     }
-    log(`[Parse] ${sp.name} — ${parts.join(', ')}`, 'debug');
+    if (sp.skippedRefs && sp.skippedRefs.length > 0) {
+      parts.push(`Skipped: ${sp.skippedRefs.join(', ')}`);
+    }
+    outputChannel.debug(`[Parse] ${sp.name} — ${parts.join(' | ')}`);
+  }
+  if (spCount > 0) {
+    const distinctDroppedCount = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
+    outputChannel.debug(`[Parse] Done — ${stats.resolvedEdges} resolved, ${stats.droppedRefs.length} dropped (${distinctDroppedCount} distinct unrelated)`);
   }
 
-  // Warn: SPs with no inputs and no outputs
-  const empty = spDetails.filter(sp => sp.inCount === 0 && sp.outCount === 0);
+  // Warn: SPs with no inputs and no outputs AND no unresolved catalog refs.
+  // Exclude SPs that do have body refs but they fall outside the selected schemas.
+  const empty = spDetails.filter(sp => sp.inCount === 0 && sp.outCount === 0 && sp.unrelated.length === 0);
   if (empty.length > 0) {
-    log(`[Parse] Warning: ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
+    outputChannel.warn(`[Parse] ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
   }
-}
 
-function resolveWorkspacePath(relativePath: string): string | undefined {
-  if (path.isAbsolute(relativePath)) return relativePath;
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) return undefined;
-  return path.join(folder.uri.fsPath, relativePath);
+  // Info level: canonical summary (last line — contains everything the user needs)
+  const distinctDropped = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
+  if (objectCount !== undefined && objectCount > 0) {
+    outputChannel.info(`[Summary] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
+  } else if (objectCount === undefined) {
+    outputChannel.info(`[Summary] ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
+  }
+  // objectCount === 0: no [Summary] line — UI already shows a warning
 }
 
 // ─── Webview HTML ───────────────────────────────────────────────────────────
 
-function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo = false): string {
   // Get URIs for the CSS and JS files from the React build output
   const stylesUri = getUri(webview, extensionUri, ["dist", "assets", "index.css"]);
   const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
@@ -391,13 +898,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
 
   const nonce = getNonce();
 
-  // Get current theme kind for proper styling
-  const themeKind = vscode.window.activeColorTheme.kind;
-  const themeClass = 
-    themeKind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
-    themeKind === vscode.ColorThemeKind.HighContrast ? 'vscode-high-contrast' :
-    themeKind === vscode.ColorThemeKind.HighContrastLight ? 'vscode-high-contrast-light' :
-    'vscode-light';
+  const themeClass = getThemeClass(vscode.window.activeColorTheme.kind);
 
   return /*html*/ `
     <!DOCTYPE html>
@@ -409,217 +910,38 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         <link rel="stylesheet" type="text/css" href="${stylesUri}">
         <title>Data Lineage Viz</title>
       </head>
-      <body class="vscode-body" data-vscode-theme-kind="${themeClass}">
+      <body class="vscode-body" data-vscode-theme-kind="${themeClass}"${loadDemo ? ' data-auto-visualize="true"' : ''}>
         <div id="root"></div>
         <script nonce="${nonce}">
           window.LOGO_URI = "${logoUri}";
         </script>
         <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
-        <script nonce="${nonce}">
-          // Listen for theme changes from VS Code
-          window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.type === 'themeChanged') {
-              document.body.setAttribute('data-vscode-theme-kind', message.kind);
-            }
-          });
-        </script>
       </body>
     </html>
   `;
 }
 
-// ─── Default Parse Rules YAML ───────────────────────────────────────────────
+// ─── Sidebar TreeView ────────────────────────────────────────────────────────
 
-function getDefaultParseRulesYaml(): string {
-  return `# ─── DACPAC Lineage Parser Rules ─────────────────────────────────────────────
-# Regex rules for extracting SQL dependencies from stored procedure bodies.
-# Covers all MS SQL family: SQL Server, Azure Synapse, Microsoft Fabric DWH.
-# View and UDF dependencies come from dacpac XML — no regex parsing needed.
-#
-# Rules run in priority order (lowest first). Disable rules with enabled: false.
-#
-#   name:        Unique identifier
-#   enabled:     true/false to toggle
-#   priority:    Execution order (lower = earlier)
-#   category:    preprocessing | source | target | exec
-#   pattern:     JavaScript regex (capture group 1 = object reference)
-#   flags:       Regex flags (gi = global, case-insensitive)
-#   replacement: (preprocessing only) replacement string
-#   description: What this rule extracts
-# ─────────────────────────────────────────────────────────────────────────────
+class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+  getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
 
-rules:
-  # ── Preprocessing ──────────────────────────────────────────────────────────
-  # Single-pass: brackets, strings, and comments matched together, leftmost wins.
-  # Built-in function replacement (brackets → keep, strings → neutralize, comments → remove).
-  - name: clean_sql
-    enabled: true
-    priority: 1
-    category: preprocessing
-    pattern: "\\\\[[^\\\\]]+\\\\]|'(?:''|[^'])*'|--[^\\\\r\\\\n]*|\\\\/\\\\*[\\\\s\\\\S]*?\\\\*\\\\/"
-    flags: g
-    description: "Single-pass bracket/string/comment handling (built-in)"
-
-  # ── Source extraction ──────────────────────────────────────────────────────
-  - name: extract_sources_ansi
-    enabled: true
-    priority: 5
-    category: source
-    pattern: "\\\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\\\s+(?:OUTER\\\\s+)?)?JOIN)\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
-    flags: gi
-    description: FROM/JOIN sources (handles 2- and 3-part names)
-
-  - name: extract_sources_tsql_apply
-    enabled: true
-    priority: 7
-    category: source
-    pattern: "\\\\b(?:CROSS|OUTER)\\\\s+APPLY\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
-    flags: gi
-    description: CROSS/OUTER APPLY sources
-
-  - name: extract_merge_using
-    enabled: true
-    priority: 9
-    category: source
-    pattern: "\\\\bMERGE\\\\b[\\\\s\\\\S]*?\\\\bUSING\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
-    flags: gi
-    description: MERGE ... USING source table
-
-  - name: extract_udf_calls
-    enabled: true
-    priority: 10
-    category: source
-    pattern: "((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)+(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s*\\\\("
-    flags: gi
-    description: "Inline scalar UDF calls (schema.func() — requires 2+ part name)"
-
-  # ── Target extraction ──────────────────────────────────────────────────────
-  - name: extract_targets_dml
-    enabled: true
-    priority: 6
-    category: target
-    pattern: "\\\\b(?:INSERT\\\\s+(?:INTO\\\\s+)?|UPDATE\\\\s+|MERGE\\\\s+(?:INTO\\\\s+)?)((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
-    flags: gi
-    description: INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — not lineage)
-
-  - name: extract_ctas
-    enabled: true
-    priority: 13
-    category: target
-    pattern: "\\\\bCREATE\\\\s+TABLE\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s+AS\\\\s+SELECT"
-    flags: gi
-    description: CREATE TABLE AS SELECT target (Synapse/Fabric)
-
-  - name: extract_select_into
-    enabled: true
-    priority: 14
-    category: target
-    pattern: "\\\\bINTO\\\\s+((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))\\\\s+FROM"
-    flags: gi
-    description: SELECT INTO target
-
-  # ── Exec calls ─────────────────────────────────────────────────────────────
-  - name: extract_sp_calls
-    enabled: true
-    priority: 8
-    category: exec
-    pattern: "\\\\bEXEC(?:UTE)?\\\\s+(?:@\\\\w+\\\\s*=\\\\s*)?((?:(?:\\\\[[^\\\\]]+\\\\]|\\\\w+)\\\\.)*(?:\\\\[[^\\\\]]+\\\\]|\\\\w+))"
-    flags: gi
-    description: "EXEC/EXECUTE procedure calls (including @var = proc pattern)"
-
-# ─── Skip Patterns ──────────────────────────────────────────────────────────
-# Object names matching these prefixes are ignored (system objects, temp tables)
-skip_prefixes:
-  - "#"
-  - "@"
-  - "sys."
-  - "sp_"
-  - "xp_"
-  - "fn_"
-  - "information_schema."
-  - "master."
-  - "msdb."
-  - "tempdb."
-  - "model."
-
-# Keywords that look like identifiers but aren't
-skip_keywords:
-  - set
-  - declare
-  - print
-  - return
-  - begin
-  - end
-  - if
-  - else
-  - while
-  - break
-  - continue
-  - goto
-  - try
-  - catch
-  - throw
-  - raiserror
-  - waitfor
-  - as
-  - "is"
-  - "null"
-  - not
-  - and
-  - or
-  - select
-  - where
-  - group
-  - order
-  - having
-  - top
-  - distinct
-  - table
-  - index
-  - view
-  - procedure
-  - function
-  - trigger
-  - values
-  - output
-  - with
-  - nolock
-  - "on"
-`;
-}
-
-// ─── Quick Actions TreeView Provider ─────────────────────────────────────────
-
-class QuickActionsProvider implements vscode.TreeDataProvider<QuickAction> {
-  getTreeItem(element: QuickAction): vscode.TreeItem {
-    return element;
-  }
-
-  getChildren(): QuickAction[] {
+  getChildren(): vscode.TreeItem[] {
     return [
-      new QuickAction(
-        'Open',
-        'dataLineageViz.open',
-        new vscode.ThemeIcon('graph')
-      ),
+      sidebarItem('Open Wizard', 'dataLineageViz.open', 'graph'),
+      sidebarItem('Open Demo', 'dataLineageViz.openDemo', 'play'),
+      sidebarItem('Settings', 'dataLineageViz.openSettings', 'gear'),
     ];
   }
 }
 
-class QuickAction extends vscode.TreeItem {
-  constructor(
-    label: string,
-    commandId: string,
-    iconPath?: vscode.ThemeIcon
-  ) {
-    super(label, vscode.TreeItemCollapsibleState.None);
-    this.command = {
-      command: commandId,
-      title: label,
-    };
-    this.iconPath = iconPath;
-  }
+function sidebarItem(label: string, commandId: string, icon: string): vscode.TreeItem {
+  const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+  item.command = { command: commandId, title: label };
+  item.iconPath = new vscode.ThemeIcon(icon);
+  return item;
 }
 
-export function deactivate() {}
+export function deactivate() {
+  ddlContentMap.clear();
+}

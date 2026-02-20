@@ -1,13 +1,14 @@
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
+import { bidirectional } from 'graphology-shortest-path';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DacpacModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './types';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 60;
+export const NODE_WIDTH = 220;
+export const NODE_HEIGHT = 60;
 
 /** Collect edges that flow between depth levels in the BFS direction.
  *  Upstream edges: A→B where A.depth > B.depth (further → closer to origin).
@@ -138,7 +139,8 @@ function filterCoWriters(
 export function traceNode(
   graph: Graph,
   nodeId: string,
-  mode: 'upstream' | 'downstream' | 'both'
+  mode: 'upstream' | 'downstream' | 'both',
+  hideCoWriters = true
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
@@ -163,7 +165,7 @@ export function traceNode(
   }
 
   const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
-  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
+  return hideCoWriters ? filterCoWriters(graph, nodeId, nodeIds, edgeIds) : { nodeIds, edgeIds };
 }
 
 /**
@@ -174,7 +176,8 @@ export function traceNodeWithLevels(
   graph: Graph,
   nodeId: string,
   upstreamLevels: number,
-  downstreamLevels: number
+  downstreamLevels: number,
+  hideCoWriters = true
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
@@ -202,7 +205,45 @@ export function traceNodeWithLevels(
   }
 
   const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
-  return filterCoWriters(graph, nodeId, nodeIds, edgeIds);
+  return hideCoWriters ? filterCoWriters(graph, nodeId, nodeIds, edgeIds) : { nodeIds, edgeIds };
+}
+
+/**
+ * Find the shortest directed path between two nodes.
+ * Tries source→target first (downstream), then target→source (upstream).
+ */
+export function computeShortestPath(
+  graph: Graph,
+  sourceId: string,
+  targetId: string
+): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
+  if (!graph.hasNode(sourceId) || !graph.hasNode(targetId)) return null;
+
+  let path = bidirectional(graph, sourceId, targetId);
+  if (!path) {
+    path = bidirectional(graph, targetId, sourceId);
+  }
+  if (!path) return null;
+
+  const nodeIds = new Set(path);
+  const edgeIds = new Set<string>();
+  for (let i = 0; i < path.length - 1; i++) {
+    const edge = graph.edge(path[i], path[i + 1]);
+    if (edge) edgeIds.add(edge);
+  }
+  return { nodeIds, edgeIds };
+}
+
+// ─── Analysis-Specific Layouts ──────────────────────────────────────────────
+
+function gridLayout(nodeIds: string[], cols: number = 4): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>();
+  const cellW = NODE_WIDTH + 40;
+  const cellH = NODE_HEIGHT + 40;
+  nodeIds.forEach((id, i) => {
+    positions.set(id, { x: (i % cols) * cellW, y: Math.floor(i / cols) * cellH });
+  });
+  return positions;
 }
 
 export function applyTraceToFlow(
@@ -211,7 +252,10 @@ export function applyTraceToFlow(
   trace: TraceState,
   config: ExtensionConfig = DEFAULT_CONFIG
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
-  if (trace.mode === 'none' || trace.mode === 'configuring' || !trace.selectedNodeId) {
+  if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
+    return { nodes: flowNodes, edges: flowEdges };
+  }
+  if (trace.tracedNodeIds.size === 0) {
     return { nodes: flowNodes, edges: flowEdges };
   }
 
@@ -230,19 +274,28 @@ export function applyTraceToFlow(
     return traced;
   });
 
-  // RELAYOUT the traced subset with dagre for optimal positioning
-  const positions = dagreLayout({
-    nodeIds: filteredNodes.map(n => n.id),
-    edges: filteredEdges.map(e => ({ source: e.source, target: e.target })),
-    config,
-  });
+  // RELAYOUT the traced subset — dispatch layout by analysis type
+  let positions: Map<string, { x: number; y: number }>;
+  if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {
+    positions = gridLayout(filteredNodes.map(n => n.id));
+  } else {
+    positions = dagreLayout({
+      nodeIds: filteredNodes.map(n => n.id),
+      edges: filteredEdges.map(e => ({ source: e.source, target: e.target })),
+      config,
+    });
+  }
 
   const nodes = filteredNodes.map((n) => ({
     ...n,
     position: positions.get(n.id) || n.position,
     data: {
       ...n.data,
-      highlighted: n.id === trace.selectedNodeId,
+      highlighted: n.id === trace.selectedNodeId
+        ? true
+        : n.id === trace.targetNodeId
+          ? 'yellow' as const
+          : false,
     },
   }));
 

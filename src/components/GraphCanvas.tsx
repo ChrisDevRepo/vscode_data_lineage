@@ -3,6 +3,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   useReactFlow,
   applyNodeChanges,
   applyEdgeChanges,
@@ -16,17 +17,27 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
+import { useVsCode } from '../contexts/VsCodeContext';
 
 import { CustomNode, type CustomNodeData } from './CustomNode';
 import { Legend } from './Legend';
 import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner } from './TracedFilterBanner';
+import { PathFinderBar } from './PathFinderBar';
+import { AnalysisBanner } from './AnalysisBanner';
+import { AnalysisSidebar } from './AnalysisSidebar';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
-import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel } from '../engine/types';
+import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
+import { getSchemaColor } from '../utils/schemaColors';
+import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
+
+const FIT_VIEW_PADDING = 0.15;
+const FIT_VIEW_DURATION = 800;
+const AUTO_FIT_DELAY_MS = 100;
 
 interface GraphCanvasProps {
   flowNodes: FlowNode<CustomNodeData>[];
@@ -58,6 +69,13 @@ interface GraphCanvasProps {
   model?: DacpacModel | null;
   infoBarNodeId?: string | null;
   onCloseInfoBar?: () => void;
+  analysisMode?: AnalysisMode | null;
+  onOpenAnalysis?: (type: AnalysisType) => void;
+  onCloseAnalysis?: () => void;
+  onSelectAnalysisGroup?: (groupId: string) => void;
+  onClearAnalysisGroup?: () => void;
+  onApplyPath?: (targetNodeId: string) => boolean;
+  isRebuilding?: boolean;
 }
 
 export function GraphCanvas({
@@ -90,8 +108,16 @@ export function GraphCanvas({
   model,
   infoBarNodeId,
   onCloseInfoBar,
+  analysisMode,
+  onOpenAnalysis,
+  onCloseAnalysis,
+  onSelectAnalysisGroup,
+  onClearAnalysisGroup,
+  onApplyPath,
+  isRebuilding = false,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
+  const vscodeApi = useVsCode();
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -101,32 +127,39 @@ export function GraphCanvas({
   );
 
   const handleFitView = useCallback(() => {
-    fitView({ padding: 0.15, duration: 800 });
+    fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }, [fitView]);
+
+  const minimapNodeColor = useCallback(
+    (node: FlowNode<CustomNodeData>) => getSchemaColor(String(node.data.schema)),
+    []
+  );
+
+  // Zoom and center on a specific node
+  const zoomToNode = useCallback((nodeId: string) => {
+    setTimeout(() => {
+      const targetNode = getNode(nodeId);
+      if (targetNode?.position) {
+        setCenter(
+          targetNode.position.x + NODE_WIDTH / 2,
+          targetNode.position.y + NODE_HEIGHT / 2,
+          { zoom: 0.8, duration: 800 }
+        );
+      }
+    }, 100);
+  }, [getNode, setCenter]);
 
   // Execute search: find node and zoom to it
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const foundNode = schema
       ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
       : flowNodes.find(n => n.data.label === name);
-    
+
     if (foundNode) {
-      // Highlight the node (add yellow border)
       onNodeClick(foundNode.id);
-      
-      // Zoom and center on the node
-      setTimeout(() => {
-        const targetNode = getNode(foundNode.id);
-        if (targetNode?.position) {
-          setCenter(
-            targetNode.position.x + 110, // Center of node
-            targetNode.position.y + 30,
-            { zoom: 0.8, duration: 800 }
-          );
-        }
-      }, 100);
+      zoomToNode(foundNode.id);
     }
-  }, [flowNodes, getNode, setCenter, onNodeClick]);
+  }, [flowNodes, zoomToNode, onNodeClick]);
 
   // Export current graph to Draw.io format
   const handleExportDrawio = useCallback(() => {
@@ -140,24 +173,24 @@ export function GraphCanvas({
       a.download = 'lineage.drawio';
       a.click();
       URL.revokeObjectURL(url);
+    }).catch((err) => {
+      vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [flowNodes, flowEdges, availableSchemas, filter.schemas]);
+  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, vscodeApi]);
 
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
   useEffect(() => {
     const timer = setTimeout(() => {
-      fitView({ padding: 0.15, duration: 800 });
-    }, 100);
+      fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+    }, AUTO_FIT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [flowNodes, fitView]);
 
-  // ── Local state: source of truth for positions (survives highlight changes) ──
+  // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
 
-  // Sync from upstream ONLY when the graph data itself changes (rebuild/filter/trace)
-  // We use flowNodes reference identity — it only changes on rebuild, not on highlight
   useEffect(() => {
     setLocalNodes(flowNodes);
   }, [flowNodes]);
@@ -178,21 +211,15 @@ export function GraphCanvas({
 
   // ── Display layer: highlight/dim applied on top of local positions ──
 
-  // Calculate level 1 neighbors for dimming effect
   const level1Neighbors = useMemo(() => {
     const neighbors = new Set<string>();
     if (highlightedNodeId && graph && graph.hasNode(highlightedNodeId)) {
-      try {
-        const nodeNeighbors = graph.neighbors(highlightedNodeId);
-        nodeNeighbors.forEach(n => neighbors.add(n));
-      } catch (e) {
-        // Node may not exist in graph
-      }
+      const nodeNeighbors = graph.neighbors(highlightedNodeId);
+      nodeNeighbors.forEach(n => neighbors.add(n));
     }
     return neighbors;
   }, [highlightedNodeId, graph]);
 
-  // Apply yellow highlight + dimming on top of localNodes (preserves drag positions)
   const displayNodes = useMemo(() => {
     return localNodes.map(node => {
       const isHighlighted = highlightedNodeId === node.id;
@@ -211,7 +238,6 @@ export function GraphCanvas({
     });
   }, [localNodes, highlightedNodeId, level1Neighbors]);
 
-  // Highlight edges connected to selected node
   const displayEdges = useMemo(() => {
     if (!highlightedNodeId) return localEdges;
 
@@ -226,13 +252,19 @@ export function GraphCanvas({
           opacity: isConnected ? 1 : 0.6,
         },
         animated: isConnected && (
-          (trace.mode === 'applied' || trace.mode === 'filtered')
+          (trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied')
             ? config.layout.edgeAnimation
             : config.layout.highlightAnimation
         ),
       };
     });
   }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
+
+  // Stable allNodes list for autocomplete/search (only changes when displayNodes changes)
+  const allNodes = useMemo(
+    () => displayNodes.map(n => ({ id: n.id, name: n.data.label, schema: n.data.schema, type: n.data.objectType })),
+    [displayNodes],
+  );
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
@@ -256,14 +288,12 @@ export function GraphCanvas({
         hasHighlightedNode={!!highlightedNodeId}
         onToggleDetailSearch={onToggleDetailSearch}
         isDetailSearchOpen={isDetailSearchOpen}
+        isAnalysisActive={!!analysisMode}
+        analysisType={analysisMode?.type ?? null}
+        onOpenAnalysis={onOpenAnalysis}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
-        allNodes={displayNodes.map(n => ({
-          id: n.id,
-          name: n.data.label,
-          schema: n.data.schema,
-          type: n.data.objectType
-        }))}
+        allNodes={allNodes}
         metrics={metrics}
       />
 
@@ -295,8 +325,39 @@ export function GraphCanvas({
         />
       )}
 
+      {/* Path Finder Bar — shown during pathfinding modes */}
+      {(trace.mode === 'pathfinding' || trace.mode === 'path-applied') && trace.selectedNodeId && onApplyPath && (
+        <PathFinderBar
+          sourceNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
+          allNodes={allNodes}
+          pathResult={trace.mode === 'path-applied' ? {
+            found: true,
+            nodeCount: trace.tracedNodeIds.size,
+            edgeCount: trace.tracedEdgeIds.size,
+          } : null}
+          onFindPath={onApplyPath}
+          onClose={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
+        />
+      )}
+
+      {/* Analysis Banner - shown when analysis mode is active */}
+      {analysisMode && onCloseAnalysis && (
+        <AnalysisBanner
+          analysis={analysisMode}
+          onClose={onCloseAnalysis}
+        />
+      )}
+
       <div className="flex-1 relative overflow-hidden">
-        {flowNodes.length === 0 ? (
+        {isRebuilding && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--ln-bg)', opacity: 0.85 }}>
+            <svg className="animate-spin h-8 w-8" style={{ color: 'var(--ln-fg-muted)' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+        )}
+        {flowNodes.length === 0 && !isRebuilding ? (
           <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--ln-fg-muted)' }}>
             No objects match current filters. Adjust type toggles or search term.
           </div>
@@ -335,41 +396,52 @@ export function GraphCanvas({
             >
               <Background gap={16} />
               <Controls showInteractive={true} position="bottom-left" />
-              {isDetailSearchOpen && onToggleDetailSearch && (
+              {config.layout.minimapEnabled && (
+                <MiniMap
+                  pannable
+                  zoomable
+                  position="bottom-right"
+                  nodeColor={minimapNodeColor}
+                  nodeBorderRadius={4}
+                  ariaLabel="Graph minimap"
+                />
+              )}
+              {(isDetailSearchOpen || analysisMode) && (
                 <Panel position="top-left">
-                  <DetailSearchSidebar
-                    onClose={onToggleDetailSearch}
-                    allNodes={displayNodes.map(n => {
-                      const modelNode = model?.nodes.find(mn => mn.id === n.id);
-                      return {
-                        id: n.id,
-                        name: String(n.data.label),
-                        schema: String(n.data.schema),
-                        type: n.data.objectType as ObjectType,
-                        bodyScript: modelNode?.bodyScript,
-                      };
-                    })}
-                    onResultClick={(nodeId) => {
-                      onNodeClick(nodeId);
-                      setTimeout(() => {
-                        const targetNode = getNode(nodeId);
-                        if (targetNode?.position) {
-                          setCenter(
-                            targetNode.position.x + 110,
-                            targetNode.position.y + 30,
-                            { zoom: 0.8, duration: 800 }
-                          );
-                        }
-                      }, 100);
-                    }}
-                  />
+                  {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
+                    <AnalysisSidebar
+                      analysis={analysisMode}
+                      graph={graph}
+                      onSelectGroup={onSelectAnalysisGroup}
+                      onClearGroup={onClearAnalysisGroup}
+                      onClose={onCloseAnalysis}
+                    />
+                  ) : onToggleDetailSearch ? (
+                    <DetailSearchSidebar
+                      onClose={onToggleDetailSearch}
+                      allNodes={displayNodes.map(n => {
+                        const modelNode = model?.nodes.find(mn => mn.id === n.id);
+                        return {
+                          id: n.id,
+                          name: String(n.data.label),
+                          schema: String(n.data.schema),
+                          type: n.data.objectType as ObjectType,
+                          bodyScript: modelNode?.bodyScript,
+                        };
+                      })}
+                      onResultClick={(nodeId) => {
+                        onNodeClick(nodeId);
+                        zoomToNode(nodeId);
+                      }}
+                    />
+                  ) : null}
                 </Panel>
               )}
             </ReactFlow>
           </div>
         )}
 
-        <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isDetailSearchOpen={isDetailSearchOpen} />
+        <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
       </div>
 
       {infoBarNodeId && model && graph && (

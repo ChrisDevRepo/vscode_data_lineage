@@ -2,11 +2,9 @@ import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 import {
   DacpacModel,
-  LineageNode,
-  LineageEdge,
-  SchemaInfo,
   ObjectType,
-  ParseStats,
+  SchemaInfo,
+  SchemaPreview,
   ELEMENT_TYPE_MAP,
   TRACKED_ELEMENT_TYPES,
   XmlElement,
@@ -14,25 +12,115 @@ import {
   XmlRelationship,
   XmlEntry,
   XmlReference,
+  ExtractedObject,
+  ExtractedDependency,
+  ColumnDef,
+  buildColumnDef,
 } from './types';
-import { parseSqlBody } from './sqlBodyParser';
+import { buildModel, parseName, normalizeName } from './modelBuilder';
+import { stripBrackets } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
   const xml = await extractModelXml(buffer);
   const elements = parseElements(xml);
-  const { nodes, edges, stats } = buildNodesAndEdges(elements);
-  const schemas = computeSchemas(nodes);
 
+  const objects = extractObjects(elements);
+  const deps = extractDependencies(elements);
+  const model = buildModel(objects, deps);
+
+  // Override warnings for dacpac-specific messages
   const warnings: string[] = [];
   if (elements.length === 0) {
     warnings.push('This dacpac appears to be empty.');
-  } else if (nodes.length === 0) {
+  } else if (model.nodes.length === 0) {
     warnings.push('No tables, views, or stored procedures found in this file.');
   }
 
-  return { nodes, edges, schemas, parseStats: stats, warnings: warnings.length > 0 ? warnings : undefined };
+  return { ...model, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+/**
+ * Phase 1: Lightweight schema preview — counts schemas + types without extracting
+ * body scripts, columns, or dependencies. Returns parsed elements for Phase 2 reuse.
+ */
+export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
+  preview: SchemaPreview;
+  elements: XmlElement[];
+}> {
+  const xml = await extractModelXml(buffer);
+  const elements = parseElements(xml);
+  const preview = computeSchemaPreviewFromElements(elements);
+  return { preview, elements };
+}
+
+/**
+ * Phase 2: Full extraction filtered to selected schemas only.
+ * Uses pre-parsed elements from Phase 1 to avoid re-unzipping and re-parsing XML.
+ * Skips body script extraction and regex parsing for unselected schemas.
+ */
+export function extractDacpacFiltered(
+  elements: XmlElement[],
+  selectedSchemas: Set<string>,
+): DacpacModel {
+  // Pre-filter elements by schema (uppercased for consistent matching)
+  const upperSchemas = new Set(Array.from(selectedSchemas).map(s => s.toUpperCase()));
+  const filtered = elements.filter(el => {
+    const name = el['@_Name'];
+    if (!name || !TRACKED_ELEMENT_TYPES.has(el['@_Type'])) return false;
+    const { schema } = parseName(name);
+    return upperSchemas.has(schema);
+  });
+
+  const objects = extractObjects(filtered);
+  const deps = extractDependencies(filtered);
+  const model = buildModel(objects, deps);
+
+  const warnings: string[] = [];
+  if (model.nodes.length === 0) {
+    warnings.push('No tables, views, or stored procedures found for selected schemas.');
+  }
+  return { ...model, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview {
+  const schemaMap = new Map<string, SchemaInfo>();
+  const seen = new Set<string>();
+  let totalObjects = 0;
+
+  for (const el of elements) {
+    const type = el['@_Type'];
+    const name = el['@_Name'];
+    if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
+
+    // Deduplicate by normalized ID (same as extractObjects)
+    const id = normalizeName(name);
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const { schema } = parseName(name);
+    const objType = ELEMENT_TYPE_MAP[type];
+
+    let info = schemaMap.get(schema);
+    if (!info) {
+      info = { name: schema, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
+      schemaMap.set(schema, info);
+    }
+    info.nodeCount++;
+    info.types[objType]++;
+    totalObjects++;
+  }
+
+  const schemas = Array.from(schemaMap.values()).sort((a, b) => b.nodeCount - a.nodeCount);
+  const warnings: string[] = [];
+  if (elements.length === 0) {
+    warnings.push('This dacpac appears to be empty.');
+  } else if (totalObjects === 0) {
+    warnings.push('No tables, views, or stored procedures found in this file.');
+  }
+
+  return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 export function filterBySchemas(
@@ -44,7 +132,6 @@ export function filterBySchemas(
   const limited = filtered.slice(0, maxNodes);
   const nodeIds = new Set(limited.map((n) => n.id));
 
-  // Keep edges where both ends are in the filtered set
   const edges = model.edges.filter(
     (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
   );
@@ -84,6 +171,7 @@ function parseElements(xml: string): XmlElement[] {
     isArray: (name) => name === 'Element' || name === 'Entry' || name === 'Property' || name === 'Relationship' || name === 'Annotation',
     parseTagValue: true,
     trimValues: true,
+    processEntities: false, // dacpac model.xml never uses XML entities — disable to prevent entity expansion DoS
   });
 
   let doc;
@@ -98,142 +186,107 @@ function parseElements(xml: string): XmlElement[] {
   return asArray(model.Element);
 }
 
-// ─── Node & Edge Extraction ────────────────────────────────────────────────
+// ─── Extract: XML → Intermediate Format ─────────────────────────────────────
 
-function buildNodesAndEdges(elements: XmlElement[]): {
-  nodes: LineageNode[];
-  edges: LineageEdge[];
-  stats: ParseStats;
-} {
-  const nodes: LineageNode[] = [];
-  const nodeIds = new Set<string>();
-  const edges: LineageEdge[] = [];
-  const edgeKeys = new Set<string>();
+function extractObjects(elements: XmlElement[]): ExtractedObject[] {
+  const objects: ExtractedObject[] = [];
+  const seen = new Set<string>();
 
   for (const el of elements) {
     const type = el['@_Type'];
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
+
+    const id = normalizeName(name);
+    if (seen.has(id)) continue;
+    seen.add(id);
 
     const objType = ELEMENT_TYPE_MAP[type];
     const { schema, objectName } = parseName(name);
-    const id = normalizeName(name);
-
-    if (nodeIds.has(id)) continue;
-    nodeIds.add(id);
-
     const bodyScript = getBodyScript(el, type, schema, objectName);
 
-    nodes.push({
-      id,
-      schema,
-      name: objectName,
-      fullName: name,
-      type: objType,
-      bodyScript,
-    });
+    // For tables without bodyScript: extract column metadata
+    let columns: ColumnDef[] | undefined;
+    if (!bodyScript && type === 'SqlTable') {
+      columns = extractColumnsFromXml(el);
+    }
+
+    objects.push({ fullName: name, type: objType, bodyScript, columns });
   }
 
-  // Second pass: extract edges from BodyDependencies + SP body parsing
-  const stats: ParseStats = { parsedRefs: 0, resolvedEdges: 0, droppedRefs: [], spDetails: [] };
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  return objects;
+}
+
+function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
+  const deps: ExtractedDependency[] = [];
 
   for (const el of elements) {
     const name = el['@_Name'];
     const type = el['@_Type'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
 
-    const sourceId = normalizeName(name);
-
-    // 1. XML BodyDependencies
-    // For regex-parsed SPs, defer XML deps so we can exclude targets/exec
-    // (XML deps are all dep→SP which is wrong direction for writes and exec calls)
-    const xmlDeps = extractBodyDependencies(el);
-    const node = nodeMap.get(sourceId);
-    const willRegexParse = node?.bodyScript && type === 'SqlProcedure';
-
-    if (!willRegexParse) {
-      for (const dep of xmlDeps) {
-        const targetId = normalizeName(dep);
-        if (targetId !== sourceId && nodeIds.has(targetId)) {
-          addEdge(edges, edgeKeys, targetId, sourceId, 'body');
-        }
-      }
-    }
-
-    // 2. Regex-based body parsing for SPs only (views/UDFs use dacpac XML deps)
-    if (willRegexParse) {
-      const parsed = parseSqlBody(node.bodyScript!);
-      let spIn = 0, spOut = 0;
-      const spUnrelated: string[] = [];
-
-      // Collect target/exec IDs so we can exclude them from XML deps
-      const outboundIds = new Set<string>();
-      for (const dep of parsed.targets) outboundIds.add(normalizeName(dep));
-      for (const dep of parsed.execCalls) outboundIds.add(normalizeName(dep));
-
-      // Add XML deps not already handled by regex (exclude targets/exec to prevent reverse edges)
-      // Direction is type-aware: procedures are EXEC calls (outbound), everything else is inbound
-      for (const dep of xmlDeps) {
-        const depId = normalizeName(dep);
-        if (depId !== sourceId && nodeIds.has(depId) && !outboundIds.has(depId)) {
-          const depType = nodeMap.get(depId)?.type;
-          if (depType === 'procedure') {
-            addEdge(edges, edgeKeys, sourceId, depId, 'exec');   // SP → called proc (outbound)
-          } else {
-            addEdge(edges, edgeKeys, depId, sourceId, 'body');   // func/view/table → SP (inbound)
-          }
-        }
-      }
-
-      for (const dep of parsed.sources) {
-        const depId = normalizeName(dep);
-        stats.parsedRefs++;
-        if (depId !== sourceId && nodeIds.has(depId)) {
-          addEdge(edges, edgeKeys, depId, sourceId, 'body');
-          stats.resolvedEdges++;
-          spIn++;
-        } else if (depId !== sourceId) {
-          spUnrelated.push(dep);
-          stats.droppedRefs.push(`${name} → ${dep}`);
-        }
-      }
-      for (const dep of parsed.targets) {
-        const depId = normalizeName(dep);
-        stats.parsedRefs++;
-        if (depId !== sourceId && nodeIds.has(depId)) {
-          addEdge(edges, edgeKeys, sourceId, depId, 'body');
-          stats.resolvedEdges++;
-          spOut++;
-        } else if (depId !== sourceId) {
-          spUnrelated.push(dep);
-          stats.droppedRefs.push(`${name} → ${dep}`);
-        }
-      }
-      for (const dep of parsed.execCalls) {
-        const depId = normalizeName(dep);
-        stats.parsedRefs++;
-        if (depId !== sourceId && nodeIds.has(depId)) {
-          addEdge(edges, edgeKeys, sourceId, depId, 'exec');
-          stats.resolvedEdges++;
-          spOut++;
-        } else if (depId !== sourceId) {
-          spUnrelated.push(dep + ' (exec)');
-          stats.droppedRefs.push(`${name} → ${dep} (exec)`);
-        }
-      }
-
-      // Per-SP logging + stats
-      const spLabel = `${node.schema}.${node.name}`;
-      stats.spDetails.push({ name: spLabel, inCount: spIn, outCount: spOut, unrelated: spUnrelated });
-
+    const bodyDeps = extractBodyDependencies(el);
+    for (const dep of bodyDeps) {
+      deps.push({ sourceName: name, targetName: dep });
     }
   }
 
-  return { nodes, edges, stats };
+  return deps;
 }
 
-// ─── XML Helpers ────────────────────────────────────────────────────────────
+// ─── XML Column Extraction ──────────────────────────────────────────────────
+
+function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
+  const cols: ColumnDef[] = [];
+  const rels = asArray(el.Relationship);
+
+  for (const rel of rels) {
+    if (rel['@_Name'] !== 'Columns') continue;
+    for (const entry of asArray(rel.Entry)) {
+      for (const colEl of asArray(entry.Element)) {
+        const colName = stripBrackets((colEl['@_Name'] ?? '').split('.').pop() ?? '');
+        const props = asArray(colEl.Property);
+        const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
+        const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
+        const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
+
+        // Resolve type from TypeSpecifier relationship
+        let typeName = '?';
+        let length: string | undefined;
+        let precision: string | undefined;
+        let scale: string | undefined;
+
+        if (!isComputed) {
+          for (const colRel of asArray(colEl.Relationship)) {
+            if (colRel['@_Name'] !== 'TypeSpecifier') continue;
+            for (const tsEntry of asArray(colRel.Entry)) {
+              for (const tsEl of asArray(tsEntry.Element)) {
+                const tsProps = asArray(tsEl.Property);
+                length = tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
+                precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
+                scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
+                for (const typeRel of asArray(tsEl.Relationship)) {
+                  if (typeRel['@_Name'] !== 'Type') continue;
+                  for (const typeEntry of asArray(typeRel.Entry)) {
+                    for (const ref of asArray(typeEntry.References as XmlReference | XmlReference[] | undefined)) {
+                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']) : '?';
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        cols.push(buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale));
+      }
+    }
+  }
+
+  return cols;
+}
+
+// ─── XML Body Dependencies ──────────────────────────────────────────────────
 
 function extractBodyDependencies(el: XmlElement): string[] {
   const deps: string[] = [];
@@ -245,11 +298,9 @@ function extractBodyDependencies(el: XmlElement): string[] {
     for (const entry of entries) {
       const refs = asArray(entry.References as XmlReference | XmlReference[] | undefined);
       for (const ref of refs) {
-        // Skip BuiltIns (system types like [varchar], [int])
         if (ref['@_ExternalSource']) continue;
         const refName = ref['@_Name'];
         if (!refName) continue;
-        // Only keep schema.object level refs (2 parts), skip column refs (3+ parts)
         if (isObjectLevelRef(refName)) {
           deps.push(refName);
         }
@@ -258,6 +309,8 @@ function extractBodyDependencies(el: XmlElement): string[] {
   }
   return deps;
 }
+
+// ─── XML Body Script Extraction ─────────────────────────────────────────────
 
 function getBodyScript(el: XmlElement, type: string, schema: string, objectName: string): string | undefined {
   // Check for HeaderContents in SysCommentsObjectAnnotation (complete CREATE statement)
@@ -279,11 +332,7 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
 
   // No HeaderContents found — synthesize a CREATE header from metadata
   const bodyScript = getDirectBodyScript(el, type);
-  if (!bodyScript) {
-    // For tables: build a design view from column metadata
-    if (type === 'SqlTable') return buildTableDesign(el, schema, objectName);
-    return undefined;
-  }
+  if (!bodyScript) return undefined;
 
   const keyword = getSqlKeyword(type);
   if (keyword) {
@@ -299,104 +348,7 @@ function getSqlKeyword(type: string): string | undefined {
   return undefined;
 }
 
-/** Build a formatted table design view from dacpac column metadata */
-function buildTableDesign(el: XmlElement, schema: string, objectName: string): string {
-  const cols: { name: string; type: string; nullable: string; extra: string }[] = [];
-  const rels = asArray(el.Relationship);
-
-  for (const rel of rels) {
-    if (rel['@_Name'] !== 'Columns') continue;
-    for (const entry of asArray(rel.Entry)) {
-      for (const colEl of asArray(entry.Element)) {
-        const colName = (colEl['@_Name'] ?? '').split('.').pop()?.replace(/\[|\]/g, '') ?? '';
-        const props = asArray(colEl.Property);
-        const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
-        const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
-        const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
-
-        // Computed columns have no stored type
-        if (isComputed) {
-          cols.push({
-            name: colName,
-            type: '(computed)',
-            nullable: isNullable ? 'NULL' : 'NOT NULL',
-            extra: 'COMPUTED',
-          });
-          continue;
-        }
-
-        // Resolve type from TypeSpecifier relationship
-        let typeName = '?';
-        for (const colRel of asArray(colEl.Relationship)) {
-          if (colRel['@_Name'] !== 'TypeSpecifier') continue;
-          for (const tsEntry of asArray(colRel.Entry)) {
-            for (const tsEl of asArray(tsEntry.Element)) {
-              // Get length/precision/scale
-              const tsProps = asArray(tsEl.Property);
-              const length = tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
-              const precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
-              const scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
-              // Get base type name from nested Type relationship
-              for (const typeRel of asArray(tsEl.Relationship)) {
-                if (typeRel['@_Name'] !== 'Type') continue;
-                for (const typeEntry of asArray(typeRel.Entry)) {
-                  for (const ref of asArray(typeEntry.References as XmlReference | XmlReference[] | undefined)) {
-                    const raw = ref['@_Name']?.replace(/\[|\]/g, '') ?? '?';
-                    typeName = raw;
-                    if (length) typeName += `(${length === '-1' ? 'max' : length})`;
-                    else if (precision && scale) typeName += `(${precision},${scale})`;
-                    else if (precision) typeName += `(${precision})`;
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        cols.push({
-          name: colName,
-          type: typeName,
-          nullable: isNullable ? 'NULL' : 'NOT NULL',
-          extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
-        });
-      }
-    }
-  }
-
-  if (cols.length === 0) return `-- No column metadata for [${schema}].[${objectName}]`;
-
-  // Build ASCII table
-  const hasExtra = cols.some(c => c.extra);
-  const hCol = 'Column', hType = 'Type', hNull = 'Nullable', hExtra = '';
-  const wName = Math.max(hCol.length, ...cols.map(c => c.name.length));
-  const wType = Math.max(hType.length, ...cols.map(c => c.type.length));
-  const wNull = Math.max(hNull.length, ...cols.map(c => c.nullable.length));
-  const wExtra = hasExtra ? Math.max(hExtra.length, ...cols.map(c => c.extra.length)) : 0;
-
-  const sep = (f: string) => {
-    let s = `-- +${f.repeat(wName + 2)}+${f.repeat(wType + 2)}+${f.repeat(wNull + 2)}+`;
-    if (hasExtra) s += `${f.repeat(wExtra + 2)}+`;
-    return s;
-  };
-  const row = (n: string, t: string, nu: string, ex: string) => {
-    let s = `-- | ${n.padEnd(wName)} | ${t.padEnd(wType)} | ${nu.padEnd(wNull)} |`;
-    if (hasExtra) s += ` ${ex.padEnd(wExtra)} |`;
-    return s;
-  };
-
-  const out: string[] = [];
-  out.push(`-- TABLE: [${schema}].[${objectName}]`);
-  out.push(sep('-'));
-  out.push(row(hCol, hType, hNull, hExtra));
-  out.push(sep('-'));
-  for (const c of cols) out.push(row(c.name, c.type, c.nullable, c.extra));
-  out.push(sep('-'));
-
-  return out.join('\n');
-}
-
 function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
-  // Direct BodyScript property (SqlProcedure, SqlView)
   const props = asArray(el.Property);
   for (const prop of props) {
     const pName = prop['@_Name'];
@@ -451,61 +403,29 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
   return val;
 }
 
-// ─── Name Parsing ───────────────────────────────────────────────────────────
-
-/** Parse "[schema].[object]" — schema is uppercased for case-insensitive consistency */
-function parseName(fullName: string): { schema: string; objectName: string } {
-  const parts = fullName.replace(/\[|\]/g, '').split('.');
-  if (parts.length >= 2) {
-    return { schema: parts[0].toUpperCase(), objectName: parts[1] };
-  }
-  return { schema: 'DBO', objectName: parts[0] };
-}
-
-/** Normalize to lowercase "[schema].[object]" for consistent matching */
-function normalizeName(name: string): string {
-  const parts = name.replace(/\[|\]/g, '').split('.');
-  if (parts.length >= 2) {
-    return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
-  }
-  return `[dbo].[${parts[0]}]`.toLowerCase();
-}
+// ─── Utilities ──────────────────────────────────────────────────────────────
 
 /** Check if ref is object-level (2 parts) not column-level (3+ parts) */
 function isObjectLevelRef(name: string): boolean {
-  const parts = name.replace(/\[|\]/g, '').split('.');
+  const parts = stripBrackets(name).split('.');
   return parts.length === 2 && !parts[1].startsWith('@');
 }
 
-// ─── Schema Computation ────────────────────────────────────────────────────
-
-export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
-  const map = new Map<string, SchemaInfo>();
-  for (const node of nodes) {
-    let info = map.get(node.schema);
-    if (!info) {
-      info = {
-        name: node.schema,
-        nodeCount: 0,
-        types: { table: 0, view: 0, procedure: 0, function: 0 },
-      };
-      map.set(node.schema, info);
-    }
-    info.nodeCount++;
-    info.types[node.type]++;
-  }
-  return Array.from(map.values()).sort((a, b) => b.nodeCount - a.nodeCount);
+function asArray<T>(val: T | T[] | undefined | null): T[] {
+  if (val == null) return [];
+  return Array.isArray(val) ? val : [val];
 }
 
 // ─── Exclusion Patterns ─────────────────────────────────────────────────────
 
-export function applyExclusionPatterns(model: DacpacModel, patterns: string[]): DacpacModel {
+export function applyExclusionPatterns(model: DacpacModel, patterns: string[], onWarning?: (msg: string) => void): DacpacModel {
   if (!patterns || patterns.length === 0) return model;
 
   const regexes = patterns.map((p) => {
     try {
       return new RegExp(p, 'i');
-    } catch {
+    } catch (e) {
+      onWarning?.(`Invalid exclude pattern "${p}": ${e instanceof Error ? e.message : e}`);
       return null;
     }
   }).filter(Boolean) as RegExp[];
@@ -526,7 +446,7 @@ export function applyExclusionPatterns(model: DacpacModel, patterns: string[]): 
   const excludedNameById = new Map(excludedNodes.map((n) => [n.id, `${n.schema}.${n.name}`]));
   let parseStats = model.parseStats;
   if (parseStats && excludedIds.size > 0) {
-    const allEdges = model.edges; // pre-exclusion edges
+    const allEdges = model.edges;
     parseStats = {
       ...parseStats,
       spDetails: parseStats.spDetails.map((sp) => {
@@ -543,25 +463,4 @@ export function applyExclusionPatterns(model: DacpacModel, patterns: string[]): 
   }
 
   return { ...model, nodes, edges, parseStats };
-}
-
-// ─── Utilities ──────────────────────────────────────────────────────────────
-
-function asArray<T>(val: T | T[] | undefined | null): T[] {
-  if (val == null) return [];
-  return Array.isArray(val) ? val : [val];
-}
-
-function addEdge(
-  edges: LineageEdge[],
-  edgeKeys: Set<string>,
-  source: string,
-  target: string,
-  type: 'body' | 'exec'
-) {
-  const key = `${source}→${target}`;
-  if (!edgeKeys.has(key)) {
-    edgeKeys.add(key);
-    edges.push({ source, target, type });
-  }
 }

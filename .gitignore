@@ -26,6 +26,7 @@ test/*.dacpac
 CLAUDE.md
 .claude/
 tmp/
+PLAN*.md
 
 # Environment
 .env

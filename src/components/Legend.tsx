@@ -3,17 +3,16 @@ import { getSchemaColor } from '../utils/schemaColors';
 
 interface LegendProps {
   schemas: string[];
-  isDetailSearchOpen?: boolean;
+  isSidebarOpen?: boolean;
 }
 
-export const Legend = memo(function Legend({ schemas, isDetailSearchOpen }: LegendProps) {
+export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [, setThemeTick] = useState(0);
+  const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
 
-  // Re-render when VS Code theme changes so schema colors update
   useEffect(() => {
     const observer = new MutationObserver(() => {
-      setThemeTick(t => t + 1);
+      setThemeKind(document.body.getAttribute('data-vscode-theme-kind') ?? '');
     });
     observer.observe(document.body, {
       attributes: true,
@@ -25,14 +24,14 @@ export const Legend = memo(function Legend({ schemas, isDetailSearchOpen }: Lege
   return (
     <div
       className="absolute top-4 ln-legend rounded-md overflow-hidden z-10 transition-all duration-200"
-      style={{ left: isDetailSearchOpen ? 380 : 16 }}
+      style={{ left: isSidebarOpen ? 380 : 16 }}
     >
       <button
         onClick={() => setCollapsed(!collapsed)}
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-opacity-80 transition-colors text-left ln-legend-header"
       >
         <span className="text-[10px] font-normal uppercase tracking-wider">SCHEMAS</span>
-        <span className="text-[8px] opacity-50 ml-1.5">{collapsed ? '▼' : '▲'}</span>
+        <span className="text-[10px] opacity-70 ml-1.5">{collapsed ? '▼' : '▲'}</span>
       </button>
 
       {!collapsed && (

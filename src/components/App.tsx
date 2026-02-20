@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
+import { ReactFlowProvider } from '@xyflow/react';
 import { ProjectSelector } from './ProjectSelector';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeContextMenu } from './NodeContextMenu';
@@ -7,12 +7,16 @@ import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, ObjectType, FilterState, TraceState, ExtensionConfig } from '../engine/types';
+import type { DacpacModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
+import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
-import { filterBySchemas, computeSchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { computeSchemas } from '../engine/modelBuilder';
 
-type AppView = 'selector' | 'graph';
+type AppView = 'selector' | 'graph' | 'loading';
+
+const REBUILD_DELAY_MS = 400;
 
 interface ContextMenuState {
   x: number;
@@ -25,12 +29,12 @@ interface ContextMenuState {
 
 export function App() {
   const vscodeApi = useVsCode();
-  const [view, setView] = useState<AppView>('selector');
+  const isAutoVisualize = document.body.dataset.autoVisualize === 'true';
+  const [view, setView] = useState<AppView>(isAutoVisualize ? 'loading' : 'selector');
   const [model, setModel] = useState<DacpacModel | null>(null);
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
-  // Single source of truth for filter state
   const [filter, setFilter] = useState<FilterState>({
     schemas: new Set(),
     types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
@@ -40,30 +44,26 @@ export function App() {
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
-  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, endTrace, clearTrace } =
+  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
-  // Dacpac loader lives here so state persists when navigating back
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
     setConfig(cfg);
     if (cfg.parseRules) {
       const result = loadRules(cfg.parseRules);
-      if (result.errors.length > 0) {
-        // Send warnings back to extension host for OutputChannel + notification
-        vscodeApi.postMessage({
-          type: 'parse-rules-warning',
-          loaded: result.loaded,
-          skipped: result.skipped,
-          errors: result.errors,
-          usedDefaults: result.usedDefaults,
-        });
-      }
+      vscodeApi.postMessage({
+        type: 'parse-rules-result',
+        loaded: result.loaded,
+        skipped: result.skipped,
+        errors: result.errors,
+        usedDefaults: result.usedDefaults,
+        categoryCounts: result.categoryCounts,
+      });
     }
-  }, []);
+  }, [vscodeApi]);
 
   const dacpacLoader = useDacpacLoader(applyConfig);
 
-  // Rebuild graph when filter changes (except on initial mount)
   const rebuild = useCallback(
     (m: DacpacModel, f: FilterState, cfg?: ExtensionConfig) => {
       buildFromModel(m, f, cfg || config);
@@ -75,7 +75,9 @@ export function App() {
     (dacpacModel: DacpacModel, selectedSchemas: Set<string>) => {
       // Create trimmed model: only selected schemas with exclusions applied
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
-      trimmed = applyExclusionPatterns(trimmed, config.excludePatterns);
+      trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, (msg) => {
+        vscodeApi.postMessage({ type: 'error', error: msg });
+      });
       trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
 
       setModel(trimmed);
@@ -86,6 +88,22 @@ export function App() {
     },
     [filter, rebuild, config]
   );
+
+  useEffect(() => {
+    if (!dacpacLoader.model || dacpacLoader.isLoading) return;
+
+    if (dacpacLoader.pendingAutoVisualize) {
+      handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
+      dacpacLoader.clearAutoVisualize();
+    } else if (dacpacLoader.pendingVisualize) {
+      handleVisualize(dacpacLoader.model, dacpacLoader.selectedSchemas);
+      dacpacLoader.clearPendingVisualize();
+    }
+  }, [
+    dacpacLoader.pendingAutoVisualize, dacpacLoader.pendingVisualize,
+    dacpacLoader.model, dacpacLoader.isLoading, dacpacLoader.selectedSchemas,
+    handleVisualize, dacpacLoader.clearAutoVisualize, dacpacLoader.clearPendingVisualize,
+  ]);
 
   const getResetFilter = (m: DacpacModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
@@ -126,18 +144,29 @@ export function App() {
   }, [config, model, view, filter, rebuild]);
 
   const handleRebuild = useCallback(() => {
-    // Request fresh config from extension host — triggers config-only → applyConfig → rebuild via useEffect
+    // Re-read settings from extension host (picks up any changed VS Code settings)
     vscodeApi.postMessage({ type: 'ready' });
-  }, [vscodeApi]);
+    if (model) {
+      setIsRebuilding(true);
+      setTimeout(() => {
+        rebuild(model, filter, config);
+        setIsRebuilding(false);
+      }, REBUILD_DELAY_MS);
+    }
+  }, [vscodeApi, model, filter, config, rebuild]);
 
   const handleBack = useCallback(() => {
+    dacpacLoader.resetToStart();
     setView('selector');
     clearTrace();
-  }, [clearTrace]);
+  }, [dacpacLoader.resetToStart, clearTrace]);
 
+  const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
+  const prevHideIsolatedRef = useRef<boolean | null>(null);
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
@@ -290,17 +319,127 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  // Escape key: end trace
+  const openAnalysis = useCallback((type: AnalysisType) => {
+    // End any active trace / close detail search
+    endTrace();
+    setIsDetailSearchOpen(false);
+    setHighlightedNodeId(null);
+    setInfoBarNodeId(null);
+
+    if (type === 'orphans' && filter.hideIsolated) {
+      // Save current hideIsolated state and disable it so orphans become visible
+      prevHideIsolatedRef.current = true;
+      const nextFilter = { ...filter, hideIsolated: false };
+      setFilter(nextFilter);
+      if (model) {
+        // Rebuild with orphans visible, then run analysis on the new graph
+        buildFromModel(model, nextFilter, config);
+      }
+    } else {
+      // For islands/hubs, run analysis on current graph
+      if (graph) {
+        const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+        setAnalysisMode({ type, result, activeGroupId: null });
+      }
+    }
+  }, [endTrace, filter, model, graph, config, buildFromModel]);
+
+  useEffect(() => {
+    if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
+      const result = runAnalysis(graph, 'orphans', config.analysis, config.maxNodes);
+      setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
+    }
+  }, [graph, analysisMode, config.analysis, config.maxNodes]);
+
+  const closeAnalysis = useCallback(() => {
+    // Clear analysis overlay — same restore as leaving trace mode
+    endTrace();
+
+    // Undo orphans' hideIsolated change if needed
+    if (prevHideIsolatedRef.current !== null) {
+      const nextFilter = { ...filter, hideIsolated: true };
+      setFilter(nextFilter);
+      if (model) rebuild(model, nextFilter, config);
+      prevHideIsolatedRef.current = null;
+    }
+
+    setAnalysisMode(null);
+  }, [endTrace, filter, model, config, rebuild]);
+
+  const selectAnalysisGroup = useCallback((groupId: string) => {
+    if (!analysisMode || !graph) return;
+    const group = analysisMode.result.groups.find(g => g.id === groupId);
+    if (!group) return;
+
+    setAnalysisMode(prev => prev ? { ...prev, activeGroupId: groupId } : null);
+
+    // Compute subset node IDs
+    const nodeIdSet = new Set(group.nodeIds);
+    if (analysisMode.type === 'hubs') {
+      for (const hubId of group.nodeIds) {
+        if (graph.hasNode(hubId)) {
+          graph.forEachNeighbor(hubId, (neighbor) => nodeIdSet.add(neighbor));
+        }
+      }
+    }
+
+    // Compute subset edge IDs from the live graph
+    const edgeIds = new Set<string>();
+    if (analysisMode.type === 'longest-path') {
+      // Consecutive-pair edges only — same concept as computeShortestPath
+      for (let i = 0; i < group.nodeIds.length - 1; i++) {
+        const edge = graph.edge(group.nodeIds[i], group.nodeIds[i + 1]);
+        if (edge) edgeIds.add(edge);
+      }
+    } else {
+      // All edges between subset nodes that exist in current graph
+      graph.forEachEdge((edge, _attrs, source, target) => {
+        if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
+          edgeIds.add(edge);
+        }
+      });
+    }
+
+    // Determine origin node for highlighting
+    const originId = analysisMode.type === 'hubs' ? group.nodeIds[0]
+      : analysisMode.type === 'longest-path' ? group.nodeIds[0]
+      : undefined;
+
+    // Reuse trace pipeline for rendering (same as Find Path / Trace Levels)
+    applyAnalysisSubset(nodeIdSet, edgeIds, originId, analysisMode.type);
+  }, [analysisMode, graph, applyAnalysisSubset]);
+
+  const clearAnalysisGroup = useCallback(() => {
+    if (!analysisMode) return;
+    setAnalysisMode(prev => prev ? { ...prev, activeGroupId: null } : null);
+    endTrace();  // Clear subset overlay — full graph visible again
+  }, [analysisMode, endTrace]);
+
+  // Escape key: end trace or close analysis
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && trace.mode !== 'none') endTrace();
+      if (e.key === 'Escape') {
+        if (analysisMode) {
+          if (analysisMode.activeGroupId) {
+            clearAnalysisGroup();
+          } else {
+            closeAnalysis();
+          }
+        } else if (trace.mode !== 'none') {
+          endTrace();
+        }
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [trace.mode, endTrace]);
+  }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
+
+  if (view === 'loading') {
+    return null;
+  }
 
   if (view === 'selector') {
-    return <ProjectSelector onVisualize={handleVisualize} config={config} loader={dacpacLoader} />;
+    return <ProjectSelector config={config} loader={dacpacLoader} />;
   }
 
   return (
@@ -331,6 +470,13 @@ export function App() {
         onToggleFocusSchema={handleToggleFocusSchema}
         onToggleSchema={handleToggleSchema}
         availableSchemas={model?.schemas.map(s => s.name) || []}
+        analysisMode={analysisMode}
+        onOpenAnalysis={openAnalysis}
+        onCloseAnalysis={closeAnalysis}
+        onSelectAnalysisGroup={selectAnalysisGroup}
+        onClearAnalysisGroup={clearAnalysisGroup}
+        onApplyPath={applyPath}
+        isRebuilding={isRebuilding}
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}
@@ -356,9 +502,10 @@ export function App() {
           nodeName={contextMenu.nodeName}
           schema={contextMenu.schema}
           objectType={contextMenu.objectType}
-          isTracing={trace.mode !== 'none'}
+          isTracing={trace.mode !== 'none' || !!analysisMode}
           onClose={() => setContextMenu(null)}
           onTrace={(nodeId) => startTraceConfig(nodeId)}
+          onFindPath={(nodeId) => startPathFinding(nodeId)}
           onViewDdl={handleViewDdl}
           onShowDetails={(nodeId) => setInfoBarNodeId(nodeId)}
         />
