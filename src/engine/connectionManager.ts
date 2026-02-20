@@ -118,7 +118,7 @@ export async function promptForConnection(
     return undefined;
   }
 
-  outputChannel.info(`[DB] Connecting to ${connectionInfo.server} / ${connectionInfo.database}...`);
+  outputChannel.info(`[DB] >> Open: ${connectionInfo.server} / ${connectionInfo.database}`);
   const connectionUri = await api.connect(connectionInfo, false);
   outputChannel.info(`[DB] Connected`);
 
@@ -142,10 +142,10 @@ export async function connectDirect(
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
   const api = await getMssqlApi(outputChannel);
 
-  outputChannel.info(`[DB] Reconnecting to ${connectionInfo.server} / ${connectionInfo.database}...`);
+  outputChannel.info(`[DB] >> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
   try {
     const connectionUri = await api.connect(connectionInfo, false);
-    outputChannel.info(`[DB] Reconnected`);
+    outputChannel.info(`[DB] Connected`);
     return { connectionUri, connectionInfo };
   } catch (err) {
     outputChannel.warn(`[DB] Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
@@ -258,5 +258,5 @@ export async function disconnectDatabase(
 ): Promise<void> {
   const sharing = await getConnectionSharingApi(outputChannel);
   await sharing.disconnect(connectionUri);
-  outputChannel.info('[DB] Disconnected');
+  outputChannel.info('[DB] << Closed');
 }

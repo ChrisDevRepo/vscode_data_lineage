@@ -420,7 +420,7 @@ type WebviewMessage =
   | { type: 'load-last-dacpac' }
   | { type: 'load-demo' }
   | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
-  | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
+  | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
   | { type: 'log'; text: string }
   | { type: 'error'; error: string; stack?: string }
   | { type: 'open-external'; url?: string }
@@ -845,21 +845,30 @@ function handleParseStats(stats: {
   parsedRefs: number;
   resolvedEdges: number;
   droppedRefs: string[];
-  spDetails?: { name: string; inCount: number; outCount: number; unrelated: string[]; skippedRefs?: string[] }[];
+  spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[];
 }, objectCount?: number, edgeCount?: number, schemaCount?: number) {
   const spDetails = stats.spDetails || [];
   const spCount = spDetails.length;
 
-  // Debug level: one line per SP with details
+  // Debug level: opener + one line per SP + closer
+  if (spCount > 0) {
+    outputChannel.debug(`[Parse] Starting — ${spCount} procedure(s) with ${lastRulesLabel}`);
+  }
   for (const sp of spDetails) {
-    const parts = [`In: ${sp.inCount}`, `Out: ${sp.outCount}`];
+    const inLabel = sp.inRefs && sp.inRefs.length > 0 ? sp.inRefs.join(', ') : String(sp.inCount);
+    const outLabel = sp.outRefs && sp.outRefs.length > 0 ? sp.outRefs.join(', ') : String(sp.outCount);
+    const parts = [`In(${sp.inCount}): ${inLabel}`, `Out(${sp.outCount}): ${outLabel}`];
     if (sp.unrelated.length > 0) {
       parts.push(`Unrelated: ${sp.unrelated.join(', ')}`);
     }
     if (sp.skippedRefs && sp.skippedRefs.length > 0) {
-      parts.push(`Skipped (unqualified): ${sp.skippedRefs.join(', ')}`);
+      parts.push(`Skipped: ${sp.skippedRefs.join(', ')}`);
     }
-    outputChannel.debug(`[Parse] ${sp.name} — ${parts.join(', ')}`);
+    outputChannel.debug(`[Parse] ${sp.name} — ${parts.join(' | ')}`);
+  }
+  if (spCount > 0) {
+    const distinctDroppedCount = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
+    outputChannel.debug(`[Parse] Done — ${stats.resolvedEdges} resolved, ${stats.droppedRefs.length} dropped (${distinctDroppedCount} distinct unrelated)`);
   }
 
   // Warn: SPs with no inputs and no outputs AND no unresolved catalog refs.
@@ -872,11 +881,11 @@ function handleParseStats(stats: {
   // Info level: canonical summary (last line — contains everything the user needs)
   const distinctDropped = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
   if (objectCount !== undefined && objectCount > 0) {
-    outputChannel.info(`[Import] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
+    outputChannel.info(`[Summary] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
   } else if (objectCount === undefined) {
-    outputChannel.info(`[Import] ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
+    outputChannel.info(`[Summary] ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
   }
-  // objectCount === 0: no [Import] line — UI already shows a warning
+  // objectCount === 0: no [Summary] line — UI already shows a warning
 }
 
 // ─── Webview HTML ───────────────────────────────────────────────────────────

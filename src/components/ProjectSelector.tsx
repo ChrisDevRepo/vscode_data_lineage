@@ -191,8 +191,12 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
           {status && (
             <div className={`flex items-start gap-2.5 px-3 py-2.5 rounded text-xs ${STATUS_CLASSES[status.type]}`}>
               <StatusIcon type={status.type} />
-              <div className="pt-px">
-                <span style={{ color: ICON_COLORS[status.type] }}>{status.text}</span>
+              <div className="pt-px min-w-0">
+                <span
+                  className="line-clamp-3 break-all"
+                  style={{ color: ICON_COLORS[status.type] }}
+                  title={status.text}
+                >{status.text}</span>
                 {status.type === 'warning' && hasSchemas && schemas.length === 0 && (
                   <p className="mt-1 ln-text-muted">Try a different file, or check the Output panel for details.</p>
                 )}

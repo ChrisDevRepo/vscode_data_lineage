@@ -27,6 +27,8 @@ export interface SpParseDetail {
   name: string;             // schema.object
   inCount: number;          // resolved source refs
   outCount: number;         // resolved target/exec refs
+  inRefs?: string[];        // resolved source ref names (regex-matched)
+  outRefs?: string[];       // resolved target/exec ref names (regex-matched)
   unrelated: string[];      // schema-qualified refs not in catalog
   skippedRefs?: string[];   // unqualified refs (no dot) skipped before catalog lookup
   excluded?: string[];      // refs removed by exclusion patterns

@@ -241,6 +241,8 @@ function buildNodesAndEdges(
     // SP: regex-based body parsing
     const parsed = parseSqlBody(node.bodyScript!);
     let spIn = 0, spOut = 0;
+    const spInRefs: string[] = [];
+    const spOutRefs: string[] = [];
     const spUnrelated: string[] = [];
     const spSkipped: string[] = [];
 
@@ -283,6 +285,8 @@ function buildNodesAndEdges(
         addEdge(edges, edgeKeys, depId, sourceId, 'body');
         stats.resolvedEdges++;
         spIn++;
+        const n = nodeMap.get(depId);
+        spInRefs.push(n ? `${n.schema}.${n.name}` : dep);
       } else if (depId !== sourceId) {
         spUnrelated.push(dep);
         stats.droppedRefs.push(`${spLabel} → ${dep}`);
@@ -299,6 +303,8 @@ function buildNodesAndEdges(
         addEdge(edges, edgeKeys, sourceId, depId, 'body');
         stats.resolvedEdges++;
         spOut++;
+        const n = nodeMap.get(depId);
+        spOutRefs.push(n ? `${n.schema}.${n.name}` : dep);
       } else if (depId !== sourceId) {
         spUnrelated.push(dep);
         stats.droppedRefs.push(`${spLabel} → ${dep}`);
@@ -315,6 +321,8 @@ function buildNodesAndEdges(
         addEdge(edges, edgeKeys, sourceId, depId, 'exec');
         stats.resolvedEdges++;
         spOut++;
+        const n = nodeMap.get(depId);
+        spOutRefs.push((n ? `${n.schema}.${n.name}` : dep) + ' (exec)');
       } else if (depId !== sourceId) {
         spUnrelated.push(dep + ' (exec)');
         stats.droppedRefs.push(`${spLabel} → ${dep} (exec)`);
@@ -323,6 +331,8 @@ function buildNodesAndEdges(
 
     stats.spDetails.push({
       name: spLabel, inCount: spIn, outCount: spOut,
+      ...(spInRefs.length > 0 && { inRefs: spInRefs }),
+      ...(spOutRefs.length > 0 && { outRefs: spOutRefs }),
       unrelated: spUnrelated,
       ...(spSkipped.length > 0 && { skippedRefs: spSkipped }),
     });
