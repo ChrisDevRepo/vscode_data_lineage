@@ -109,9 +109,9 @@ rules:
     enabled: true
     priority: 6
     category: target
-    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|DELETE\\s+FROM\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
-    description: INSERT/UPDATE/MERGE targets (DELETE/TRUNCATE excluded — not lineage)
+    description: INSERT/UPDATE/DELETE/MERGE targets (TRUNCATE excluded — not lineage)
 
   - name: extract_ctas
     enabled: true
@@ -152,6 +152,14 @@ rules:
     pattern: "\\bUPDATE\\s+(?!\\[?\\w+\\]?\\s*\\.)\\[?\\w+\\]?\\s+SET\\b[\\s\\S]{0,3000}?\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: "UPDATE alias SET ... FROM schema.table — when UPDATE uses an alias (no dot), captures the actual write target from the FROM clause. Bidirectional edge expected: the table also appears as a source via extract_sources_ansi."
+
+  - name: extract_output_into
+    enabled: true
+    priority: 18
+    category: target
+    pattern: "\\bOUTPUT\\b[^;]{0,500}?\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    flags: gi
+    description: "OUTPUT ... INTO [schema].[table] — second write target in INSERT/UPDATE/DELETE/MERGE with OUTPUT clause. Uses [^;] to prevent cross-statement matches. @tableVariable captures are rejected by normalizeCaptured."
 
   # ── Exec calls ─────────────────────────────────────────────────────────────
   - name: extract_sp_calls

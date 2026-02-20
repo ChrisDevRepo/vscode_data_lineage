@@ -119,9 +119,10 @@ Based on 557 passing oracle tests and 283 dacpac SPs:
 | Brackets with spaces `[CRONUS Int Ltd_$X]` | ✓ Handled | `\[[^\]]+\]` matches spaces |
 | EXECUTE AS context clause | ✓ Handled | `(?!AS\s+)` in extract_sp_calls |
 | CTE chain (base tables found) | ✓ Handled | CTE names have no dot → rejected |
-| FROM comma-join (old ANSI) | ✗ **Gap** | Wave 1 candidate |
-| OUTPUT INTO catalog table | ✗ **Gap** | Wave 3 candidate |
-| CTE-based UPDATE target | ✗ **Gap** | Wave 4 candidate |
+| `DELETE FROM [schema].[table]` | ✓ Handled | `extract_targets_dml` (Wave 2) |
+| `OUTPUT...INTO [schema].[table]` | ✓ Handled | `extract_output_into` (Wave 2) |
+| FROM comma-join (old ANSI) | ✓ Handled | `normalizeAnsiCommaJoins()` (Wave 1) |
+| CTE-based UPDATE target | ✗ **Gap** | Wave 3 target |
 | No-whitespace SQL | ✗ **Gap** | Low priority |
 | Dynamic SQL `EXEC(@var)` | — By design | Not parseable |
 | OPENQUERY / linked servers | — By design | 4-part refs rejected |
@@ -240,17 +241,85 @@ Zero regressions on all 342 existing tests. Zero snapshot regressions on 283 dac
 
 ---
 
-### Wave 2 Plan: OUTPUT INTO Catalog Table
+### Wave 2: OUTPUT INTO + DELETE FROM Targets
 
-**Target gap**: Pattern 3 (OUTPUT INTO)
+**Branch**: `rl/wave-2-output-into` (from `rl/wave-1-comma-join`)
+**Date**: 2026-02-20
 
-**Competing agents** (3-way):
-- **Agent A**: Add `extract_output_into` rule: `\bOUTPUT\b[\s\S]{0,500}?\bINTO\s+(schema.table)` — captures the table after INTO within 500 chars of OUTPUT.
-- **Agent B**: Extend `extract_targets_dml` to include OUTPUT INTO as a target. Would need: `(?:INSERT\s+(?:INTO\s+)?|UPDATE\s+|MERGE\s+(?:INTO\s+)?|OUTPUT\s+[\s\S]{0,500}?INTO\s+)`.
-- **Agent C (Structural)**: Add a preprocessing rule that rewrites `OUTPUT...INTO [schema].[table]` → `__OUTPUT_TARGET__ [schema].[table]` and then a simple extraction rule catches it. Avoids complex regex.
+**Target gaps**:
+- Pattern 3 (OUTPUT INTO): `output_into_01`, `output_into_02`, `output_into_03`
+- Bonus: DELETE FROM treated as target (was only showing as source via FROM keyword)
 
-**Test**: `test/sql/targeted/output_into_01-03.sql`
-**Check first**: Frequency in 252 customer SPs (scan for OUTPUT keyword).
+**Pre-check**: 26/252 customer SPs (10%) use `OUTPUT...INTO`. All INTO targets in customer data are `@tableVar` or `#temp` — rejected by `normalizeCaptured()`. So the rule is correct by design but customer dacpac snapshot shows 0 improvement (all catalog improvements come from targeted tests).
+
+---
+
+#### Root Cause Analysis
+
+All 3 failing tests share the same structure:
+- `INSERT/UPDATE/DELETE FROM [dbo].[primaryTable] ... OUTPUT INSERTED/DELETED.* INTO [schema].[secondTable]`
+- `[schema].[secondTable]` was either missing from targets OR incorrectly in sources (via `extract_udf_calls` false positive: `[schema].[table](` matched as UDF call because column list follows)
+
+**UDF false positive mechanism**: `extract_udf_calls` pattern `(schema.obj)\s*\(` fires on `INTO [dbo].[MessageArchive] (col1, col2)` because `(` follows the table name. Self-corrects once the table is in targets (filter: "add UDF sources not already in targets").
+
+**DELETE FROM gap**: `extract_targets_dml` previously excluded DELETE. `DELETE FROM [dbo].[Session]` was captured as SOURCE by `extract_sources_ansi` (FROM keyword match), NOT as target. For `output_into_03`, we need `[dbo].[Session]` in targets.
+
+---
+
+#### Agent A (Winner — YAML changes only)
+
+Two changes to `assets/defaultParseRules.yaml`:
+
+**Change 1**: Extended `extract_targets_dml` to include `DELETE\s+FROM\s+`:
+```yaml
+pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|DELETE\\s+FROM\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+```
+**Change 2**: New `extract_output_into` rule (priority 18):
+```yaml
+- name: extract_output_into
+  enabled: true
+  priority: 18
+  category: target
+  pattern: "\\bOUTPUT\\b[^;]{0,500}?\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+  flags: gi
+  description: "OUTPUT ... INTO [schema].[table] — uses [^;] (not [\s\S]) to prevent cross-statement matches"
+```
+
+**Key design choice**: `[^;]` instead of `[\s\S]` in OUTPUT INTO pattern. `[\s\S]` crosses statement boundaries and can match EXEC output parameters (`EXEC proc @result OUTPUT` then later `INTO table`). `[^;]` hard-stops at semicolons, keeping the match within one statement.
+
+**Test updated**: `parser-edge-cases.test.ts` test "DELETE FROM excluded from lineage" updated to reflect new behavior (DELETE IS now a lineage target).
+
+| Metric | Agent A result |
+|--------|---------------|
+| Tests (342 unit) | **342/342** (all pass) |
+| Tests (tsql-complex) | **558/560 (+3 from 555)** |
+| Stability failures | 0 |
+| Snapshot regressions | 0 |
+| Snapshot improvements | 0 (customer OUTPUT INTO all @vars) |
+| **Score** | **6** (3 improved × 2) |
+
+**Agents B/C**: Not run — Agent A achieves zero regressions + full target coverage. No need to compete.
+
+---
+
+#### Wave 2 Summary
+
+All 3 OUTPUT INTO targeted tests now pass:
+- `output_into_01_insert.sql`: `[dbo].[MessageArchive]` now in targets (not sources) ✓
+- `output_into_02_update_archive.sql`: `[audit].[AccountChangeLog]` now in targets ✓
+- `output_into_03_delete.sql`: `[dbo].[Session]` (DELETE target) + `[dbo].[ExpiredSession]` (OUTPUT INTO) both in targets ✓
+
+**Remaining gap count**: 2 oracle failures (was 5 before wave 2):
+- `update_alias_03` — CTE-based UPDATE target (Wave 3 target)
+- `bad_format_01` — No-whitespace SQL (Low priority)
+
+**Files changed on this branch**:
+- `assets/defaultParseRules.yaml` — extended `extract_targets_dml` + new `extract_output_into` rule
+- `test/parser-edge-cases.test.ts` — updated DELETE FROM test to reflect new behavior
+- `tmp/wave2-agent-a.tsv` — snapshot after wave 2
+- `tmp/rl-journal.md` — this entry
+
+---
 
 ---
 
