@@ -1,14 +1,6 @@
 # Changelog
 
-## [0.9.1] - 2026-02-20
-
-### Fixed
-- **Parser — ANSI comma-join sources** — `FROM t1, t2, t3` (SQL-92 style) now correctly extracts all tables as sources; previously only the first was captured
-- **Parser — DELETE target** — `DELETE FROM [schema].[table]` now recorded as a write target (bidirectional edge), matching INSERT/UPDATE/MERGE behavior
-- **Parser — OUTPUT INTO target** — `OUTPUT INSERTED.col INTO [schema].[AuditTable]` now captured as a second write target; `@tableVar` forms correctly rejected
-- **Parser — CTE-based UPDATE** — `WITH cte AS (SELECT … FROM [schema].[T]) UPDATE cte SET …` now resolves the CTE alias to its base table and records it as a write target
-
-## [0.9.0] - 2026-02-17
+## [0.9.0] - 2026-02-20
 
 ### Added
 - **Database Import** — Import schema and dependencies from SQL Server, Azure SQL, Fabric DW, or Synapse
@@ -25,7 +17,12 @@
 - Settings reorganized into Import, Layout, Trace, and Analysis sections
 
 ### Fixed
-- **Parser** — Separate SQL cleansing from rule matching: nested block comments now removed correctly (counter-scan), double-quoted identifiers normalized to brackets, bracket-quoted names with dots (e.g. `[sp.v4.5]`) no longer split incorrectly
+- **More dependencies detected** — Four patterns that previously produced incomplete lineage graphs are now handled correctly:
+  - Old-style comma joins (`FROM Orders, Customers`) — all tables now appear as sources, not just the first
+  - `DELETE` statements — the deleted table now shows as a write target, giving it the same bidirectional edge as INSERT/UPDATE
+  - `OUTPUT INTO` clauses — the audit or staging table receiving OUTPUT rows is now captured as a second write target
+  - CTE-based UPDATE (`WITH cte AS (…) UPDATE cte SET …`) — the underlying real table is resolved and recorded as the write target
+- **Parser** — SQL cleansing hardened: nested block comments, double-quoted identifiers, and bracket-quoted names with dots (e.g. `[sp.v4.5]`) all handled correctly
 
 ## [0.8.2] - 2026-02-14
 

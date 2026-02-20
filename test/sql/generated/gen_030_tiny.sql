@@ -1,4 +1,0 @@
--- GENERATED SP 30: tier=tiny flags=[noFormatting]
--- EXPECT  sources:[rpt].[SalesSummary]  targets:[rpt].[MonthlyOrders]  exec:[dbo].[usp_GenerateInvoice]
-
-CREATE PROCEDURE [rpt].[usp_GenTiny_030] @BatchID    INT = 0, @ProcessDate DATETIME = NULL AS BEGIN SET NOCOUNT ON; IF @ProcessDate IS NULL SET @ProcessDate = GETDATE(); DECLARE @RowCount INT = 0; DECLARE @StartTime DATETIME = GETUTCDATE(); INSERT INTO rpt.MonthlyOrders ([SourceID], [SourceName], [LoadedAt]) SELECT s.[ID], s.[Name], GETUTCDATE() FROM   rpt.SalesSummary AS s WHERE  s.[IsDeleted] = 0; SET @RowCount = @RowCount + @@ROWCOUNT; EXEC [dbo].[usp_GenerateInvoice] @ProcessDate = GETDATE(), @BatchID = @BatchID; SELECT @RowCount = COUNT(*) FROM rpt.SalesSummary WHERE [IsDeleted] = 0; RETURN @RowCount; END GO

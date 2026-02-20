@@ -3,12 +3,13 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all tests (327 total)
+npm test                                       # Run all tests (342 unit + 80 tsql-complex)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (43 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (47 tests)
-npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (127 tests)
+npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (142 tests)
 npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (59 tests)
 npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (51 tests)
+npx tsx test/tsql-complex.test.ts              # SQL corpus tests (80 tests)
 npm run test:integration                       # VS Code webview integration tests
 ```
 
@@ -18,9 +19,10 @@ npm run test:integration                       # VS Code webview integration tes
 |------|-------|---------|
 | `dacpacExtractor.test.ts` | 43 | Dacpac extraction, filtering, edge integrity, Fabric SDK, type-aware direction, CVE security, error handling |
 | `graphBuilder.test.ts` | 47 | Graph construction, dagre layout, BFS trace, cross-connection exclusion, co-writer filter |
-| `parser-edge-cases.test.ts` | 127 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
+| `parser-edge-cases.test.ts` | 142 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
 | `dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
+| `tsql-complex.test.ts` | 80 | **SQL corpus tests** — real-world + targeted SQL files; oracle (`-- EXPECT`) and stability-only tests |
 | `webview.integration.test.ts` | — | VS Code webview integration tests |
 | `runTest.ts` | — | Test runner for VS Code extension tests |
 | `suite/index.ts` | — | Mocha test suite configuration |

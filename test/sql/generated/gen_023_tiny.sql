@@ -1,4 +1,0 @@
--- GENERATED SP 23: tier=tiny flags=[noFormatting]
--- EXPECT  sources:[fin].[Account],[ops].[PickList]  targets:[dbo].[Region]  exec:[etl].[usp_LoadOrders]
-
-CREATE PROCEDURE [hr].[usp_GenTiny_023] @BatchID    INT = 0, @ProcessDate DATETIME = NULL AS BEGIN SET NOCOUNT ON; IF @ProcessDate IS NULL SET @ProcessDate = GETDATE(); DECLARE @RowCount INT = 0; DECLARE @StartTime DATETIME = GETUTCDATE(); INSERT INTO [dbo].[Region] ([SourceID], [SourceName], [LoadedAt]) SELECT s.[ID], s.[Name], GETUTCDATE() FROM   [fin].[Account] AS s WHERE  s.[IsDeleted] = 0; SET @RowCount = @RowCount + @@ROWCOUNT; EXEC [etl].[usp_LoadOrders] @ProcessDate = GETDATE(), @BatchID = @BatchID; SELECT @RowCount = COUNT(*) FROM [fin].[Account] WHERE [IsDeleted] = 0; SELECT @RowCount = COUNT(*) FROM [ops].[PickList] WHERE [IsDeleted] = 0; RETURN @RowCount; END GO

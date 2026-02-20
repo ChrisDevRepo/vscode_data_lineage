@@ -1,4 +1,0 @@
--- GENERATED SP 1: tier=tiny flags=[noFormatting]
--- EXPECT  sources:[etl].[BatchControl]  targets:[dbo].[Customer]  exec:[etl].[usp_LoadOrders]
-
-CREATE PROCEDURE [hr].[usp_GenTiny_001] @BatchID    INT = 0, @ProcessDate DATETIME = NULL AS BEGIN SET NOCOUNT ON; IF @ProcessDate IS NULL SET @ProcessDate = GETDATE(); DECLARE @RowCount INT = 0; DECLARE @StartTime DATETIME = GETUTCDATE(); INSERT INTO [dbo].[Customer] ([SourceID], [SourceName], [LoadedAt]) SELECT s.[ID], s.[Name], GETUTCDATE() FROM   etl.BatchControl AS s WHERE  s.[IsDeleted] = 0; SET @RowCount = @RowCount + @@ROWCOUNT; EXEC etl.usp_LoadOrders @ProcessDate = GETDATE(), @BatchID = @BatchID; SELECT @RowCount = COUNT(*) FROM etl.BatchControl WHERE [IsDeleted] = 0; RETURN @RowCount; END GO
