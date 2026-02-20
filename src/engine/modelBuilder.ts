@@ -89,6 +89,16 @@ function isSystemRef(name: string): boolean {
   return SYSTEM_SCHEMAS.has(schema);
 }
 
+function inferBodyDirection(body: string, schema: string, name: string): 'write' | 'read' {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `\\b(?:UPDATE|INSERT(?:\\s+INTO)?|DELETE(?:\\s+FROM)?|MERGE(?:\\s+INTO)?|TRUNCATE\\s+TABLE)\\s+` +
+    `(?:TOP\\s*\\([^)]*\\)\\s*)?(?:\\[?${esc(schema)}\\]?\\.)?\\[?${esc(name)}\\]?`,
+    'i',
+  );
+  return pattern.test(body) ? 'write' : 'read';
+}
+
 /** Add an edge if it doesn't already exist */
 export function addEdge(
   edges: LineageEdge[],
@@ -245,12 +255,17 @@ function buildNodesAndEdges(
     }
 
     // Add dependency edges not already handled by regex (exclude targets/exec to prevent reverse edges)
-    // Direction is type-aware: procedures are EXEC calls (outbound), everything else is inbound
     for (const depId of xmlDeps) {
       if (!outboundIds.has(depId)) {
-        const depType = nodeMap.get(depId)?.type;
-        if (depType === 'procedure') {
+        const depNode = nodeMap.get(depId);
+        if (depNode?.type === 'procedure') {
           addEdge(edges, edgeKeys, sourceId, depId, 'exec');
+        } else if (
+          depNode?.type === 'table' &&
+          node.bodyScript &&
+          inferBodyDirection(node.bodyScript, depNode.schema, depNode.name) === 'write'
+        ) {
+          addEdge(edges, edgeKeys, sourceId, depId, 'body');
         } else {
           addEdge(edges, edgeKeys, depId, sourceId, 'body');
         }

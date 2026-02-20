@@ -54,13 +54,13 @@ Stage 4 runs in `modelBuilder.ts`:
 
 Extraction rules use capture group 1 as the object reference.
 
-## Built-in Rules (12)
+## Built-in Rules (13)
 
 | Rule | Priority | Category | Captures |
 |------|----------|----------|----------|
 | `clean_sql` | 1 | preprocessing | Brackets `[...]` + strings `'...'` + comments `--` / `/* */` in one pass |
 | `extract_sources_ansi` | 5 | source | FROM / JOIN (all variants) |
-| `extract_targets_dml` | 6 | target | INSERT [INTO] / UPDATE [schema.table] / MERGE [INTO] |
+| `extract_targets_dml` | 6 | target | INSERT [INTO] / UPDATE / DELETE FROM / MERGE [INTO] |
 | `extract_sources_tsql_apply` | 7 | source | CROSS APPLY / OUTER APPLY |
 | `extract_sp_calls` | 8 | exec | EXEC / EXECUTE (including `@var = proc` pattern) |
 | `extract_merge_using` | 9 | source | MERGE ... USING source |

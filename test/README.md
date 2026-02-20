@@ -3,12 +3,12 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all tests (342 unit + 54 tsql-complex)
+npm test                                       # Run all tests (344 unit + 54 tsql-complex)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (43 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (47 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (142 tests)
 npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (59 tests)
-npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (51 tests)
+npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (53 tests)
 npx tsx test/tsql-complex.test.ts              # SQL pattern tests (54 tests)
 npm run test:integration                       # VS Code webview integration tests
 ```
@@ -21,7 +21,7 @@ npm run test:integration                       # VS Code webview integration tes
 | `graphBuilder.test.ts` | 47 | Graph construction, dagre layout, BFS trace, cross-connection exclusion, co-writer filter |
 | `parser-edge-cases.test.ts` | 142 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
+| `dmvExtractor.test.ts` | 53 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
 | `tsql-complex.test.ts` | 54 | **SQL pattern tests** — targeted SQL files covering each parser pattern; expected results embedded as `-- EXPECT` comments |
 | `webview.integration.test.ts` | — | VS Code webview integration tests |
 | `runTest.ts` | — | Test runner for VS Code extension tests |
@@ -77,7 +77,7 @@ These tests verify every regex rule in `sqlBodyParser.ts` using synthetic SQL �
 
 ## DMV Extractor Tests (`dmvExtractor.test.ts`)
 
-Tests the live database model builder using synthetic DMV data:
+Tests the database import model builder using synthetic DMV data:
 
 | Section | What it validates |
 |---------|-------------------|
@@ -87,6 +87,7 @@ Tests the live database model builder using synthetic DMV data:
 | formatColumnType | Type string formatting (varchar, nvarchar, decimal, int, etc.) |
 | Duplicate Nodes | Deduplication by normalized ID |
 | Self-Reference | Self-referencing deps excluded from edges |
+| Fallback Body Direction | Unqualified table refs: WRITE if body has UPDATE/INSERT/MERGE/TRUNCATE near name, else READ |
 
 ## Type-Aware Direction Test
 

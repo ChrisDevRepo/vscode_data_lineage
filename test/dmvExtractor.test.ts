@@ -304,6 +304,45 @@ function testSelfReferenceExcluded() {
   assertEq(model.edges.length, 0, 'Self-references produce no edges');
 }
 
+function testFallbackBodyDirection() {
+  console.log('\n── DMV Extractor: Fallback Body Direction ──');
+
+  // SP body uses unqualified table refs (no schema prefix) — regex skips them (normalizeCaptured rejects).
+  // MS metadata (DMV deps) knows about both tables with schema. inferBodyDirection() should
+  // correctly classify writes vs reads based on the keyword preceding the table name.
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('WriteTarget'), cell('U '), nullCell()],
+    [cell('dbo'), cell('ReadSource'),  cell('U '), nullCell()],
+    [cell('dbo'), cell('TestFallbackSP'), cell('P '),
+      cell('CREATE PROCEDURE dbo.TestFallbackSP AS UPDATE WriteTarget SET x = 1; SELECT * FROM ReadSource')],
+  ];
+
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('TestFallbackSP'), cell('dbo'), cell('WriteTarget')],
+    [cell('dbo'), cell('TestFallbackSP'), cell('dbo'), cell('ReadSource')],
+  ];
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  const writeEdge = model.edges.find(e =>
+    e.source === '[dbo].[testfallbacksp]' && e.target === '[dbo].[writetarget]'
+  );
+  assert(writeEdge !== undefined, 'Fallback: unqualified UPDATE → WRITE edge (SP → table)');
+
+  const readEdge = model.edges.find(e =>
+    e.source === '[dbo].[readsource]' && e.target === '[dbo].[testfallbacksp]'
+  );
+  assert(readEdge !== undefined, 'Fallback: unqualified FROM → READ edge (table → SP)');
+}
+
 // ─── Run ────────────────────────────────────────────────────────────────────
 
 testBuildModelFromDmv();
@@ -312,6 +351,7 @@ testValidateQueryResult();
 testFormatColumnType();
 testDuplicateNodes();
 testSelfReferenceExcluded();
+testFallbackBodyDirection();
 
 console.log(`\n═══ DMV Extractor: ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);

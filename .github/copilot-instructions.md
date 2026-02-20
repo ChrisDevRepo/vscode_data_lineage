@@ -1,6 +1,6 @@
 # Project Context
 
-VS Code extension for visualizing SQL database object dependencies from .dacpac files or live database connections. React + ReactFlow frontend, graphology for graph data, dagre for layout.
+VS Code extension for visualizing SQL database object dependencies from .dacpac files or database import (via MSSQL extension). React + ReactFlow frontend, graphology for graph data, dagre for layout.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 
 ### Key Directories
 
-- `src/engine/` — dacpac extraction, live DB extraction, SQL parsing, graph building
+- `src/engine/` — dacpac extraction, database import, SQL parsing, graph building
 - `src/components/` — React UI (ReactFlow canvas, toolbar, filters, modals)
 - `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources)
 - `src/extension.ts` — VS Code API, webview lifecycle, message routing
@@ -21,16 +21,16 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 | File | Purpose |
 |------|---------|
 | `src/engine/connectionManager.ts` | MSSQL extension API wrapper, connection management |
-| `src/engine/dmvExtractor.ts` | Build DacpacModel from live database DMV queries |
+| `src/engine/dmvExtractor.ts` | Build DacpacModel from database import via DMV queries |
 | `src/types/mssql.d.ts` | Type declarations for MSSQL extension API |
-| `assets/dmvQueries.yaml` | Built-in DMV queries for live database extraction |
+| `assets/dmvQueries.yaml` | Built-in DMV queries for database import |
 
 ## Build & Test
 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All tests (342 unit + 55 tsql-complex)
+npm test         # All tests (344 unit + 54 tsql-complex)
 ```
 
 Press F5 to launch Extension Development Host.
@@ -43,14 +43,14 @@ Press F5 to launch Extension Development Host.
 | `test/graphBuilder.test.ts` | 47 | Graph construction, layout, BFS trace, co-writer filter |
 | `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 12 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `test/dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
+| `test/dmvExtractor.test.ts` | 53 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/webview.integration.test.ts` | — | VS Code integration tests |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run all tests (342 unit + 54 tsql-complex)
+npm test              # Run all tests (344 unit + 54 tsql-complex)
 npm run test:integration  # Run VS Code tests
 ```
 
@@ -78,6 +78,13 @@ Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open
 ## SQL Parse Rules
 
 Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 12 rules across 4 categories: preprocessing, source, target, exec). Views/functions use dacpac XML dependencies directly.
+
+When regex misses a dep that MS metadata (XML/DMV) knows about, a fallback in `modelBuilder.ts` applies:
+- Procedure dep → EXEC outbound edge
+- Table dep → `inferBodyDirection()` scans the raw body for the table name after a write keyword (UPDATE/INSERT/MERGE/TRUNCATE TABLE); WRITE if found, READ otherwise
+- View/function dep → READ inbound (read-only by SQL design)
+
+The DMV `dependencies` query uses `referenced_entity_name IS NOT NULL` (not `referenced_id IS NOT NULL`) to also include caller-dependent deps (schema-less `EXEC SomeProc`) that SQL Server resolves by caller schema.
 
 ### Cleansing Pipeline (runs before any YAML rule)
 

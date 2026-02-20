@@ -1,6 +1,6 @@
 # Custom DMV Queries
 
-The extension can connect to a live database via the MSSQL extension and extract metadata using DMV (Dynamic Management View) queries. The SQL is defined in a YAML file that you can customize.
+The extension can import from a database via the MSSQL extension using DMV (Dynamic Management View) queries. The SQL is defined in a YAML file that you can customize.
 
 ## Setup
 
