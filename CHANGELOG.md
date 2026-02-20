@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1] - 2026-02-20
+
+### Fixed
+- **Parser — ANSI comma-join sources** — `FROM t1, t2, t3` (SQL-92 style) now correctly extracts all tables as sources; previously only the first was captured
+- **Parser — DELETE target** — `DELETE FROM [schema].[table]` now recorded as a write target (bidirectional edge), matching INSERT/UPDATE/MERGE behavior
+- **Parser — OUTPUT INTO target** — `OUTPUT INSERTED.col INTO [schema].[AuditTable]` now captured as a second write target; `@tableVar` forms correctly rejected
+- **Parser — CTE-based UPDATE** — `WITH cte AS (SELECT … FROM [schema].[T]) UPDATE cte SET …` now resolves the CTE alias to its base table and records it as a write target
+
 ## [0.9.0] - 2026-02-17
 
 ### Added

@@ -30,7 +30,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All tests (342 total)
+npm test         # All tests (342 unit + 560 tsql-complex)
 ```
 
 Press F5 to launch Extension Development Host.
@@ -44,12 +44,13 @@ Press F5 to launch Extension Development Host.
 | `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 12 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
 | `test/dmvExtractor.test.ts` | 51 | DMV extractor: synthetic data, column validation, type formatting |
+| `test/tsql-complex.test.ts` | 560 | End-to-end parser corpus: real-world + targeted + synthetic SQL files; oracle (`-- EXPECT`) and stability-only tests |
 | `test/webview.integration.test.ts` | — | VS Code integration tests |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run all tests (342 total)
+npm test              # Run all tests (342 unit + 560 tsql-complex)
 npm run test:integration  # Run VS Code tests
 ```
 
@@ -80,7 +81,7 @@ Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defin
 
 ### Cleansing Pipeline (runs before any YAML rule)
 
-Two TypeScript passes run before YAML rules ever see the SQL body:
+Four TypeScript passes run before YAML rules ever see the SQL body:
 
 **Pass 0 — `removeBlockComments()`** (counter-scan, O(n)):
 Removes nested block comments correctly. Regex cannot solve nesting depth — a TypeScript counter-scan is required.
@@ -92,6 +93,17 @@ Using the "Best Regex Trick" — leftmost match wins, so bracket/string/comment 
 - `"double-quoted identifiers"` → converted to `[bracket]` notation
 - `'string literals'` → neutralized to `''` (content cannot trigger false matches)
 - `-- line comments` → replaced with space
+
+**Pass 1.5 — `normalizeAnsiCommaJoins()`** (TypeScript rewrite):
+Rewrites ANSI SQL-92 comma-joins to explicit JOIN syntax so the `FROM/JOIN` extraction rule can find all tables:
+`FROM t1, t2, t3` → `FROM t1 JOIN t2 JOIN t3`
+SELECT-list commas are safe: they always appear before the first `FROM` keyword in a query.
+
+**Pass 1.6 — `substituteCteUpdateAliases()`** (TypeScript rewrite):
+Resolves CTE aliases in `UPDATE cte SET` statements to the CTE's real base table.
+`WITH cte AS (SELECT … FROM [dbo].[T]) UPDATE cte SET …` → `… UPDATE [dbo].[T] SET …`
+Only fires for known CTE names; a keyword guard prevents SQL keywords from being treated as CTE names.
+**Known limitation**: chained CTEs (`WITH c2 AS (SELECT … FROM c1) UPDATE c2`) are not resolved — `c1` has no schema dot so `fromMatch` returns null for `c2`. Zero occurrences in 448 SPs checked; documented in `test/sql/targeted/cte_chained_limitation.sql`.
 
 **What YAML rule authors see** (what the regex receives):
 ```sql
