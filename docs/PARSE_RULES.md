@@ -103,6 +103,8 @@ This is validated by the `testTypeAwareDirection` test which confirms 100% accur
 | `UPDATE alias SET ... FROM table alias` (subquery in SET) | Subquery table may be captured instead of outer FROM table | Non-greedy span picks first qualified name after FROM | Avoid subqueries in the SET clause when the table alias pattern is used; or use `UPDATE [schema].[Table] SET ...` directly |
 | Dynamic SQL (`EXEC('...')`) | Content inside string not parsed | By design — cannot determine static dependencies | N/A |
 | Nested block comments (`/* /* */ */`) | Outer comment may not fully close | Single regex can't count nesting depth | Uncommon in SP bodies |
+| No whitespace before bracket identifiers (`from[dbo].[T]`, `exec[dbo].[sp]`) | Dependency not detected | All rules require at least one space between keyword and object name — valid SQL but extremely rare formatting | Add a space: `FROM [dbo].[T]` |
+| Chained CTEs in UPDATE (`WITH c2 AS (… FROM c1) UPDATE c2`) | Write target not detected | `c1` has no schema dot — chain not resolved | Rewrite using `UPDATE [schema].[T]` directly instead of a chained CTE alias |
 
 All false positives are harmless — catalog resolution filters regex results against known objects (dacpac or database). Only references matching real objects become graph edges. Unqualified references (CTEs, table aliases, built-in rowset functions like `FREETEXTTABLE`) are silently skipped before catalog lookup and never shown as unresolved.
 

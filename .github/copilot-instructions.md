@@ -105,6 +105,8 @@ Resolves CTE aliases in `UPDATE cte SET` statements to the CTE's real base table
 Only fires for known CTE names; a keyword guard prevents SQL keywords from being treated as CTE names.
 **Known limitation**: chained CTEs (`WITH c2 AS (SELECT … FROM c1) UPDATE c2`) are not resolved — `c1` has no schema dot so `fromMatch` returns null for `c2`. Zero occurrences in 448 SPs checked; documented in `test/sql/targeted/cte_chained_limitation.sql`.
 
+**Not supported — no whitespace before bracket identifiers**: `from[dbo].[T]` and `exec[dbo].[sp]` (no space between keyword and `[`) are not detected. All YAML rules require at least one space. This is valid T-SQL but extremely rare; standard SQL formatters always insert the space.
+
 **What YAML rule authors see** (what the regex receives):
 ```sql
 -- ORIGINAL:
