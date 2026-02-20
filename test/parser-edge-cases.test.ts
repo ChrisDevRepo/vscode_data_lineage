@@ -438,18 +438,18 @@ function testSkipPatterns() {
     assert(!r.sources.some(s => s.includes('@')), 'Table variable: @TableVar not matched by regex');
   }
 
-  // System proc — parser extracts it; catalog resolution filters at graph build
+  // System proc (unqualified) — normalizeCaptured filters unqualified names early (no schema.obj)
   {
     const r = parseSqlBody(`EXEC sp_executesql @sql`);
-    assert(r.execCalls.some(s => s.toLowerCase() === 'sp_executesql'),
-      'System proc: sp_executesql extracted (catalog filters later)');
+    assert(!r.execCalls.some(s => s.toLowerCase().includes('sp_executesql')),
+      'System proc: sp_executesql NOT in execCalls (unqualified — filtered by normalizeCaptured)');
   }
 
-  // System fn — parser extracts it; catalog resolution filters at graph build
+  // System fn (unqualified) — normalizeCaptured filters unqualified names early (no schema.obj)
   {
     const r = parseSqlBody(`SELECT * FROM fn_helpcollations`);
-    assert(r.sources.some(s => s.toLowerCase() === 'fn_helpcollations'),
-      'System fn: fn_helpcollations extracted (catalog filters later)');
+    assert(!r.sources.some(s => s.toLowerCase().includes('fn_helpcollations')),
+      'System fn: fn_helpcollations NOT in sources (unqualified — filtered by normalizeCaptured)');
   }
 
   // Single char alias — parser-level guard (always table aliases)
@@ -677,6 +677,111 @@ function testRegressionGuards() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 11. Cleansing and normalization improvements
+//     Tests for: nested block comments, bracket-aware name splitting,
+//     @var/#temp filtering, double-quote identifiers, 3/4-part names
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testCleansingAndNormalization() {
+  console.log('\n── 11. Cleansing and normalization improvements ──');
+
+  // ── Nested block comments ─────────────────────────────────────────────────
+
+  // Non-nested block comment — still works
+  {
+    const r = parseSqlBody(`SELECT * FROM /* this is a comment */ [dbo].[Orders]`);
+    assert(hasName(r.sources, 'Orders'), 'BC1: Non-nested block comment removed, table found');
+  }
+
+  // Nested block comment — inner */ no longer leaves "still here" text
+  {
+    const r = parseSqlBody(`SELECT * FROM [dbo].[Orders] /* outer /* inner */ still here */ WHERE 1=1`);
+    assert(hasName(r.sources, 'Orders'), 'BC2: Nested comment: Orders still found');
+    assert(!r.sources.some(s => s.toLowerCase().includes('still')),
+      'BC2: Nested comment: "still" NOT extracted as spurious reference');
+  }
+
+  // Deep nesting — depth 3
+  {
+    const r = parseSqlBody(`/* depth /* two /* three */ two */ one */ INSERT INTO [dbo].[T] SELECT * FROM [dbo].[S]`);
+    assert(hasName(r.targets, 'T'), 'BC3: Depth-3 nested comment: T is target');
+    assert(hasName(r.sources, 'S'), 'BC3: Depth-3 nested comment: S is source');
+  }
+
+  // ── Bracket-aware name splitting ──────────────────────────────────────────
+
+  // Object name containing a dot inside brackets
+  {
+    const r = parseSqlBody(`EXEC [dbo].[spLoad_Case4.5]`);
+    assert(r.execCalls.some(s => s.toLowerCase() === '[dbo].[spload_case4.5]'),
+      'BN1: Object name with dot in brackets treated as one identifier');
+  }
+
+  // 2-part bracket-quoted — dot inside object name is NOT a separator
+  {
+    const r = parseSqlBody(`SELECT * FROM [staging].[view.name]`);
+    assert(r.sources.some(s => s.toLowerCase() === '[staging].[view.name]'),
+      'BN2: Dot inside bracket-quoted name preserved as part of identifier');
+  }
+
+  // ── @var / #temp filtered early ───────────────────────────────────────────
+
+  // @tableVar — not captured by regex (@ not a word char), should not appear
+  {
+    const r = parseSqlBody(`SELECT * FROM @tableVar`);
+    assert(r.sources.length === 0, 'NF1: @tableVar not in sources');
+  }
+
+  // #TempTable — not captured by regex (# not a word char), should not appear
+  {
+    const r = parseSqlBody(`INSERT INTO #TempTable SELECT * FROM [dbo].[Src]`);
+    assert(!r.targets.some(s => s.includes('#')),
+      'NF2: #TempTable not in targets');
+    assert(hasName(r.sources, 'Src'), 'NF2: [dbo].[Src] source still found');
+  }
+
+  // Unqualified name (no dot) — rejected by normalizeCaptured
+  {
+    const r = parseSqlBody(`SELECT * FROM UnqualifiedTable`);
+    assert(r.sources.length === 0,
+      'NF3: Unqualified table name (no schema) rejected — not in sources');
+  }
+
+  // ── Double-quote identifiers ──────────────────────────────────────────────
+
+  // "schema"."table" — should be treated as [schema].[table]
+  {
+    const r = parseSqlBody(`SELECT * FROM "dbo"."Orders"`);
+    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
+      'DQ1: Double-quoted "dbo"."Orders" normalized to [dbo].[orders]');
+  }
+
+  // ── 3-part names: take last 2 (drop database prefix) ─────────────────────
+
+  // db.schema.object → schema.object (last 2 parts)
+  {
+    const r = parseSqlBody(`SELECT * FROM MyDB.dbo.Orders`);
+    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
+      'MP1: 3-part MyDB.dbo.Orders → [dbo].[orders] (database prefix stripped)');
+  }
+
+  // Bracket-quoted 3-part → also last 2
+  {
+    const r = parseSqlBody(`INSERT INTO [MyDB].[staging].[Orders] SELECT 1`);
+    assert(r.targets.some(s => s.toLowerCase() === '[staging].[orders]'),
+      'MP2: Bracket-quoted 3-part [MyDB].[staging].[Orders] → [staging].[orders]');
+  }
+
+  // 4-part linked server → rejected
+  {
+    const r = parseSqlBody(`SELECT * FROM [Server].[DB].[dbo].[Orders]`);
+    assert(!r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
+      'MP3: 4-part linked server ref rejected (never in local catalog)');
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Run all tests
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -693,6 +798,7 @@ function main() {
   testCombinedComplexSql();
   testCriticalReviewEdgeCases();
   testRegressionGuards();
+  testCleansingAndNormalization();
 
   console.log(`\n\u2550\u2550\u2550 Results: ${passed} passed, ${failed} failed \u2550\u2550\u2550`);
   process.exit(failed > 0 ? 1 : 0);

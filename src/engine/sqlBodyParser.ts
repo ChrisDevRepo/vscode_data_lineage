@@ -1,6 +1,8 @@
 // Regex-based T-SQL dependency extraction; rules loaded from YAML at runtime.
 
-import { stripBrackets } from '../utils/sql';
+import { splitSqlName } from '../utils/sql';
+
+
 
 export interface ParsedDependencies {
   sources: string[];
@@ -21,6 +23,36 @@ export interface ParseRule {
 
 export interface ParseRulesConfig {
   rules: ParseRule[];
+}
+
+// ─── SQL Cleansing — runs BEFORE all YAML rules ─────────────────────────────
+//
+// Rule authors do NOT need to think about comment removal or string literals.
+// The cleansing pipeline neutralizes all of that before any regex rule sees the SQL.
+//
+// Pass 0 — removeBlockComments(): counter-based O(n) scan
+//   Handles nested block comments: /* outer /* inner */ still outer */
+//   Regex cannot solve this (finite automaton, no stack) — TypeScript scanner required.
+//
+// Pass 1 — leftmost-match regex (applied inside parseSqlBody):
+//   /\[[^\]]+\]|'(?:''|[^'])*'|--[^\r\n]*/g
+//   • [bracket identifiers] → preserved as-is (YAML rules can still match them)
+//   • 'string literals'    → neutralized to ''  (content can't trigger false matches)
+//   • -- line comments     → replaced with space (already removed by pass 0 for block)
+//   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
+
+/** Pass 0: counter-scan removes block comments including nested ones correctly. O(n), no regex. */
+function removeBlockComments(sql: string): string {
+  let out = '';
+  let i = 0;
+  let depth = 0;
+  while (i < sql.length) {
+    if (sql[i] === '/' && sql[i + 1] === '*') { depth++; i += 2; continue; }
+    if (sql[i] === '*' && sql[i + 1] === '/' && depth > 0) { depth--; i += 2; continue; }
+    if (depth === 0) out += sql[i];
+    i++;
+  }
+  return out;
 }
 
 // ─── Active config ──────────────────────────────────────────────────────────
@@ -114,12 +146,20 @@ export function resetRules() {
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export function parseSqlBody(sql: string): ParsedDependencies {
-  let clean = sql;
+  // Pass 0: Remove block comments (including nested) before the regex sees the SQL.
+  // This must run first — the leftmost-match regex below does NOT handle block comments.
+  let clean = removeBlockComments(sql);
 
-  // Step 1: Built-in SQL cleaning — single-pass string/comment handling.
+  // Pass 1: Leftmost-match regex — brackets, strings, and line comments.
+  // Block comments already gone (Pass 0), so the pattern is shorter and faster.
   // "The Best Regex Trick": leftmost match wins, so strings protect -- inside them.
-  clean = clean.replace(/\[[^\]]+\]|'(?:''|[^'])*'|--[^\r\n]*|\/\*[\s\S]*?\*\//g, (match) => {
-    return match.startsWith('[') ? match : match.startsWith("'") ? "''" : ' ';
+  // Double-quoted identifiers ("dbo"."Table") are normalized to bracket notation ([dbo].[Table])
+  // so YAML rules only need to handle one quoting style.
+  clean = clean.replace(/\[[^\]]+\]|"[^"]*"|'(?:''|[^'])*'|--[^\r\n]*/g, (match) => {
+    if (match.startsWith('[')) return match;                         // preserve [bracket identifiers]
+    if (match.startsWith('"')) return `[${match.slice(1, -1)}]`;   // "double-quote" → [bracket]
+    if (match.startsWith("'")) return "''";                         // neutralize 'string literals'
+    return ' ';                                                       // remove -- line comments
   });
 
   // Step 1b: Additional user-defined preprocessing rules (skip built-in clean_sql)
@@ -129,14 +169,15 @@ export function parseSqlBody(sql: string): ParsedDependencies {
     }
   }
 
-  // Step 2: Extract CTE names so they're skipped as table references
-  const cteNames = extractCteNames(clean);
+  // CTEs (WITH name AS (...)) do not need explicit filtering:
+  // normalizeCaptured() rejects all unqualified names (no dot), which covers all CTE aliases.
+  // CTEs are virtual constructs — they never appear in the object catalog.
 
   const sources = new Set<string>();
   const targets = new Set<string>();
   const execCalls = new Set<string>();
 
-  // Step 3: Extraction rules
+  // Step 2: Extraction rules
   // UDF matches collected separately to filter false positives from INSERT INTO table(cols).
   const udfSources = new Set<string>();
 
@@ -149,7 +190,7 @@ export function parseSqlBody(sql: string): ParsedDependencies {
       rule.category === 'target' ? targets :
       execCalls;
 
-    collectMatches(clean, new RegExp(rule.pattern, rule.flags), dest, cteNames);
+    collectMatches(clean, new RegExp(rule.pattern, rule.flags), dest);
   }
 
   // Add UDF sources that aren't already targets (a function can't be an INSERT/UPDATE target).
@@ -167,32 +208,9 @@ export function parseSqlBody(sql: string): ParsedDependencies {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Extract CTE names from WITH ... AS (...) patterns */
-function extractCteNames(sql: string): Set<string> {
-  const ctes = new Set<string>();
-  // Match WITH keyword, then scan ahead for "name AS (" patterns
-  // Use a greedy match to capture all CTEs before the main query body
-  const withRegex = /\bWITH\b/gi;
-  const nameRegex = /\b(\[?\w+\]?)\s+AS\s*\(/gi;
-  let withMatch: RegExpExecArray | null;
-
-  while ((withMatch = withRegex.exec(sql)) !== null) {
-    // Scan from after WITH for all "name AS (" patterns
-    // Stop when we hit a top-level SELECT/INSERT/UPDATE/DELETE/MERGE not inside parens
-    const afterWith = sql.slice(withMatch.index + withMatch[0].length);
-    nameRegex.lastIndex = 0;
-    let nameMatch: RegExpExecArray | null;
-    while ((nameMatch = nameRegex.exec(afterWith)) !== null) {
-      const name = stripBrackets(nameMatch[1]).toLowerCase();
-      ctes.add(name);
-    }
-  }
-  return ctes;
-}
-
 const MAX_MATCHES_PER_RULE = 10_000;
 
-function collectMatches(sql: string, regex: RegExp, out: Set<string>, cteNames?: Set<string>) {
+function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
   let iterations = 0;
@@ -209,16 +227,39 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>, cteNames?:
     const raw = match[1];
     if (!raw) continue;
 
-    const normalized = stripBrackets(raw).trim();
-    if (shouldSkip(normalized)) continue;
-    if (cteNames?.has(normalized.toLowerCase())) continue;
+    const normalized = normalizeCaptured(raw);
+    if (normalized === null) continue;
 
     out.add(normalized);
   }
 }
 
-function shouldSkip(name: string): boolean {
-  // Single-character unqualified names are always table aliases (a, b, t, etc.)
-  if (!name.includes('.') && name.length === 1) return true;
-  return false;
+/**
+ * Normalize a raw regex capture to [schema].[object] for catalog lookup.
+ * Returns null to signal "skip this capture".
+ *
+ * This function is the single normalization gate for all rule captures.
+ * Rule authors do NOT need to handle any of these cases in their YAML patterns:
+ *
+ * - Bracket delimiters [schema].[object] → stripped
+ * - Double-quote identifiers "schema"."object" → stripped
+ * - @tableVariable / #TempTable → rejected (never in catalog)
+ * - Unqualified names (no dot) → rejected (require schema.object minimum)
+ * - CTE aliases → also rejected here (CTEs are unqualified, caught by the line above)
+ * - 3-part names db.schema.object → takes last 2 parts (schema.object)
+ * - 4-part+ names server.db.schema.object → rejected (linked server refs)
+ * - Lowercased for case-insensitive catalog lookup
+ */
+function normalizeCaptured(raw: string): string | null {
+  // Split bracket-aware: dots INSIDE [bracket identifiers] are part of the name, not separators.
+  // Example: [STAGING_CADENCE].[spLoadReconciliation_Case4.5] → 2 parts, not 3.
+  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const first = parts[0] ?? '';
+  if (first.startsWith('@') || first.startsWith('#')) return null;  // vars, temp tables
+  if (parts.length < 2) return null;                  // require schema.object minimum
+  if (parts.length >= 4) return null;                 // reject linked-server 4-part names
+  const schema = parts[parts.length - 2];
+  const obj    = parts[parts.length - 1];
+  if (!schema || !obj) return null;
+  return `[${schema}].[${obj}]`.toLowerCase();
 }

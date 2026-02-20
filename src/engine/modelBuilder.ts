@@ -17,7 +17,7 @@ import {
   ColumnDef,
 } from './types';
 import { parseSqlBody } from './sqlBodyParser';
-import { stripBrackets } from '../utils/sql';
+import { stripBrackets, splitSqlName } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -40,9 +40,11 @@ export function buildModel(
 
 // ─── Name Parsing ───────────────────────────────────────────────────────────
 
-/** Parse "[schema].[object]" — schema is uppercased for case-insensitive consistency */
+/** Parse "[schema].[object]" — schema is uppercased for case-insensitive consistency.
+ *  Uses bracket-aware splitting so dots inside [bracket identifiers] are not treated as
+ *  separators (e.g., [spLoadReconciliation_Case4.5] stays as one part). */
 export function parseName(fullName: string): { schema: string; objectName: string } {
-  const parts = stripBrackets(fullName).split('.');
+  const parts = splitSqlName(fullName).map(p => stripBrackets(p));
   if (parts.length >= 2) {
     return { schema: parts[0].toUpperCase(), objectName: parts[1] };
   }
@@ -50,16 +52,25 @@ export function parseName(fullName: string): { schema: string; objectName: strin
 }
 
 /** Normalize to lowercase "[schema].[object]" for consistent matching.
- *  Only call on fully-qualified (schema.object) names — single-part names have no
- *  schema context and must be checked with isSchemaQualified() before calling this. */
+ *  Uses bracket-aware splitting so dots inside [bracket identifiers] are part of the name.
+ *  - 2-part  [schema].[object]              → [schema].[object]
+ *  - 3-part  [db].[schema].[object]         → [schema].[object]  (take last 2)
+ *  - 4-part+ [srv].[db].[schema].[object]   → never in catalog  */
 export function normalizeName(name: string): string {
-  const parts = stripBrackets(name).split('.');
-  if (parts.length >= 2) {
-    return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
+  const parts = splitSqlName(name).map(p => stripBrackets(p));
+  if (parts.length < 2) {
+    // No schema qualifier — return bare name that will never match a node ID.
+    // We do NOT assume dbo because the default schema is a per-connection SQL Server setting.
+    return `[${parts[0] ?? ''}]`.toLowerCase();
   }
-  // No schema qualifier — return bare name that will never match a node ID.
-  // We do NOT assume dbo because the default schema is a per-connection SQL Server setting.
-  return `[${parts[0]}]`.toLowerCase();
+  if (parts.length >= 4) {
+    // Linked-server / cross-database 4-part name — always reject (never in local catalog).
+    return `[__external__].[${parts[parts.length - 1]}]`;
+  }
+  // For 2-part and 3-part: take the last two parts (schema and object).
+  // 3-part db.schema.object: dropping the database prefix is correct — the catalog only
+  // contains local objects identified by schema.object.
+  return `[${parts[parts.length - 2]}].[${parts[parts.length - 1]}]`.toLowerCase();
 }
 
 /** True when the raw captured name contains a schema qualifier (a dot). */
@@ -67,8 +78,10 @@ function isSchemaQualified(name: string): boolean {
   return stripBrackets(name).includes('.');
 }
 
-/** Well-known system schemas whose objects must never appear as lineage nodes. */
-const SYSTEM_SCHEMAS = new Set(['sys', 'information_schema']);
+/** Well-known system schemas whose objects must never appear as lineage nodes.
+ *  msdb/tempdb/model/master are SQL Server system databases whose schemas (dbo, etc.)
+ *  are commonly referenced in SPs but are never part of user lineage. */
+const SYSTEM_SCHEMAS = new Set(['sys', 'information_schema', 'msdb', 'tempdb', 'model', 'master']);
 
 /** True when the schema prefix of a schema-qualified name is a system schema. */
 function isSystemRef(name: string): boolean {

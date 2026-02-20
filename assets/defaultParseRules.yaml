@@ -18,19 +18,58 @@
 #   flags:       Regex flags (gi = global, case-insensitive)
 #   replacement: (preprocessing only) replacement string
 #   description: What this rule extracts
+#
+# ── What the SQL looks like when your rules receive it ───────────────────────
+#
+# Before any YAML rule runs, the TypeScript cleansing pipeline transforms the SQL:
+#
+#  ORIGINAL SQL:
+#    /* filter /* nested */ comment */ SELECT col -- line comment
+#    FROM [dbo].[Orders]  /* comment */
+#    JOIN "staging"."Log" ON ...      -- double-quoted identifiers
+#    WHERE x = 'don''t skip this'
+#    EXEC [dbo].[sp_Proc]
+#
+#  AFTER CLEANSING (what your regex sees):
+#    SELECT col
+#    FROM [dbo].[Orders]
+#    JOIN [staging].[Log] ON ...      ← "double-quotes" converted to [brackets]
+#    WHERE x = ''                     ← string content neutralized
+#    EXEC [dbo].[sp_Proc]
+#
+# Key guarantees for rule authors:
+#  • Block comments removed (including nested /* /* */ */ — TypeScript counter-scan)
+#  • Line comments (--) removed
+#  • String literals replaced with '' (content cannot produce false matches)
+#  • [bracket identifiers] preserved exactly as written
+#  • "double-quoted" identifiers converted to [bracket] notation
+#  • Capture group 1 is normalized before catalog lookup:
+#      - [schema].[object] and "schema"."object" → [schema].[object]
+#      - 3-part db.schema.object → schema.object (database prefix stripped)
+#      - 4-part server.db.schema.object → rejected (never in local catalog)
+#      - @variables and #temp tables → rejected (never in catalog)
+#      - Unqualified names (no dot) → rejected (schema.object required)
 # ─────────────────────────────────────────────────────────────────────────────
 
 rules:
   # ── Preprocessing ──────────────────────────────────────────────────────────
-  # Single-pass: brackets, strings, and comments matched together, leftmost wins.
-  # Built-in function replacement (brackets → keep, strings → neutralize, comments → remove).
+  # NOTE: The clean_sql rule below DOCUMENTS the built-in cleansing behavior.
+  # It is NOT executed as a configurable rule — the actual implementation is
+  # hardcoded in sqlBodyParser.ts (removeBlockComments + Phase 1 leftmost-match).
+  # Modifying this rule's pattern has NO EFFECT. To change preprocessing,
+  # edit sqlBodyParser.ts directly.
   - name: clean_sql
     enabled: true
     priority: 1
     category: preprocessing
-    pattern: "\\[[^\\]]+\\]|'(?:''|[^'])*'|--[^\\r\\n]*|\\/\\*[\\s\\S]*?\\*\\/"
+    pattern: "\\[[^\\]]+\\]|\"[^\"]*\"|'(?:''|[^'])*'|--[^\\r\\n]*"
     flags: g
-    description: "Single-pass bracket/string/comment handling (built-in)"
+    description: >
+      Documents built-in SQL cleansing (TypeScript, not configurable via YAML).
+      Pass 0: counter-scan removes nested block comments /* /* */ */.
+      Pass 1: leftmost-match — [brackets] preserved, "double-quotes" → [brackets],
+      'strings' neutralized to '', -- comments removed. Block comments already gone.
+      Result: clean SQL with only bracket-quoted identifiers, suitable for regex rules.
 
   # ── Source extraction ──────────────────────────────────────────────────────
   - name: extract_sources_ansi

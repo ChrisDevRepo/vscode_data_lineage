@@ -16,6 +16,9 @@
 - Settings apply automatically when changed — no manual reload needed
 - Settings reorganized into Import, Layout, Trace, and Analysis sections
 
+### Fixed
+- **Parser** — Separate SQL cleansing from rule matching: nested block comments now removed correctly (counter-scan), double-quoted identifiers normalized to brackets, bracket-quoted names with dots (e.g. `[sp.v4.5]`) no longer split incorrectly
+
 ## [0.8.2] - 2026-02-14
 
 ### Fixed
