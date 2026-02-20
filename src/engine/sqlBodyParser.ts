@@ -42,6 +42,50 @@ export interface ParseRulesConfig {
 //   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
 
 /**
+ * Preprocessing: Replace CTE aliases in UPDATE statements with the CTE's base table.
+ * WITH Alias AS (... FROM [schema].[table] ...) UPDATE Alias SET
+ * → ... UPDATE [schema].[table] SET
+ *
+ * This allows extract_targets_dml to capture the actual write target instead of rejecting
+ * the unqualified CTE alias (normalizeCaptured rejects names without a schema dot).
+ *
+ * Strategy: for each CTE definition (WITH name AS (...) or , name AS (...)), extract the
+ * first schema-qualified FROM table in its body. When UPDATE targets a known CTE alias
+ * (no schema dot), rewrite it with that base table.
+ *
+ * Only the first FROM table per CTE is used — this is the directly updatable table.
+ * Nested subquery joins (LEFT JOIN (SELECT ... FROM inner) AS alias) appear later in
+ * the text and are skipped by the first-match heuristic.
+ */
+function substituteCteUpdateAliases(sql: string): string {
+  // Find CTE definitions: WITH name AS ( and , name AS ( (multi-CTE syntax)
+  const cteMap = new Map<string, string>(); // cteName (lowercase) → first base table expression
+  const ctePattern = /(?:\bWITH\b|,)\s*(\w+)\s+AS\s*\(/gi;
+  const KEYWORDS = /^(?:select|insert|update|delete|from|join|where|set|begin|end|values|exec|execute|top|distinct|all|as|on|and|or|not|in|is|null|by|order|group|having|into|case|when|then|else|return|declare|table|index|view|proc|procedure)$/i;
+
+  let m: RegExpExecArray | null;
+  while ((m = ctePattern.exec(sql)) !== null) {
+    const cteName = m[1];
+    if (KEYWORDS.test(cteName)) continue;
+    const bodyStart = m.index + m[0].length;
+    // Find first schema-qualified FROM reference within 3000 chars of CTE body start
+    const window = sql.slice(bodyStart, bodyStart + 3000);
+    const fromMatch = window.match(/\bFROM\s+((?:(?:\[[^\]]+\]|\w+)\.)+(?:\[[^\]]+\]|\w+))(?![\w\.])/i);
+    if (fromMatch) {
+      cteMap.set(cteName.toLowerCase(), fromMatch[1]);
+    }
+  }
+
+  if (cteMap.size === 0) return sql;
+
+  // Rewrite: UPDATE cteName SET → UPDATE baseTable SET (only for known CTE aliases)
+  return sql.replace(/\bUPDATE\s+(\w+)\s+SET\b/gi, (match, alias) => {
+    const baseTable = cteMap.get(alias.toLowerCase());
+    return baseTable ? `UPDATE ${baseTable} SET` : match;
+  });
+}
+
+/**
  * Normalize ANSI comma-join FROM clauses to modern JOIN syntax before extraction rules run.
  * FROM t1 a1, t2 a2, t3 a3 WHERE  →  FROM t1 a1 JOIN t2 a2 JOIN t3 a3 WHERE
  *
@@ -187,6 +231,12 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   // Runs on clean SQL (after strings/comments removed) so it doesn't produce false matches.
   // Only affects: FROM t1, t2, t3 WHERE  →  FROM t1 JOIN t2 JOIN t3 WHERE
   clean = normalizeAnsiCommaJoins(clean);
+
+  // Pass 1.6: Substitute CTE aliases in UPDATE statements with the CTE's base table.
+  // WITH Alias AS (... FROM [schema].[table] ...) UPDATE Alias SET
+  // → ... UPDATE [schema].[table] SET
+  // Allows extract_targets_dml to find the actual write target for CTE-based UPDATEs.
+  clean = substituteCteUpdateAliases(clean);
 
   // Step 1b: Additional user-defined preprocessing rules (skip built-in clean_sql)
   for (const rule of activeRules) {
