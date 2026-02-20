@@ -1,0 +1,281 @@
+-- GENERATED SP 255: tier=monster flags=[cursorLoop,massiveComments,bracketedEverything,deepTryCatch,variableTableHeavy,excessiveDeclare]
+-- EXPECT  sources:[stg].[ProductStage],[rpt].[MonthlyOrders],[fin].[Account],[ops].[ReturnOrder],[dbo].[Category],[dbo].[Customer],[dbo].[Shipper],[dbo].[Account]  targets:[hr].[Employee],[stg].[OrderStage],[etl].[LoadLog]  exec:[dbo].[usp_GenerateInvoice],[etl].[usp_ValidateStage],[rpt].[usp_RefreshSummary],[audit].[usp_LogChange],[etl].[usp_LoadOrders]
+
+CREATE PROCEDURE [etl].[usp_GenMonster_255]
+    @BatchID    INT = 0,
+    @ProcessDate DATETIME = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF @ProcessDate IS NULL SET @ProcessDate = GETDATE();
+
+    DECLARE @BatchID INT = 0;
+    DECLARE @ProcessDate DATETIME = GETDATE();
+    DECLARE @RowCount INT;
+    DECLARE @ErrorMessage NVARCHAR(4000);
+    DECLARE @ErrorSeverity INT;
+    DECLARE @ErrorState INT;
+    DECLARE @RetryCount INT = 0;
+    DECLARE @MaxRetries INT = 3;
+    DECLARE @StartTime DATETIME = GETUTCDATE();
+    DECLARE @EndTime DATETIME;
+    DECLARE @DebugMode BIT = 0;
+    DECLARE @SchemaVersion NVARCHAR(20) = N'1.0';
+    DECLARE @ProcName NVARCHAR(128) = OBJECT_NAME(@@PROCID);
+    DECLARE @AppName NVARCHAR(128) = APP_NAME();
+    DECLARE @HostName NVARCHAR(128) = HOST_NAME();
+    DECLARE @UserName NVARCHAR(128) = SUSER_SNAME();
+    DECLARE @DBName NVARCHAR(128) = DB_NAME();
+    DECLARE @ServerName NVARCHAR(128) = @@SERVERNAME;
+    DECLARE @SPID INT = @@SPID;
+    DECLARE @NestLevel INT = @@NESTLEVEL;
+
+    DECLARE @TempBuffer TABLE ([ID] INT, [Name] NVARCHAR(200), [Amount] DECIMAL(18,2));
+    -- @table variable populated from logic above — not a catalog dependency
+    DECLARE @StagingRows TABLE ([ID] INT, [Name] NVARCHAR(200), [Amount] DECIMAL(18,2));
+    -- @table variable populated from logic above — not a catalog dependency
+
+    /*
+     * ─── Processing Block 1 ─────────────────────────────────────────────────
+     * This section handles the core ETL for batch 1.
+     * Original implementation: 2015-03-12 (developer: J.Smith)
+     * Last modified: 2022-11-08 (developer: M.Jones) — added retry logic
+     *
+     * LEGACY NOTE: The following was removed in v3.2:
+     *   -- INSERT INTO dbo.OldArchive SELECT * FROM dbo.Deprecated WHERE Status = 1
+     *   -- UPDATE dbo.Legacy SET Flag = 0
+     *
+     * Do NOT re-enable the above — table dbo.OldArchive was dropped 2020-04-01
+     */
+    DECLARE cur_Process CURSOR LOCAL FAST_FORWARD FOR
+        SELECT [ID], [Name] FROM [stg].[ProductStage] WHERE [Status] = N'PENDING';
+    
+    DECLARE @CurID INT, @CurName NVARCHAR(200);
+    OPEN cur_Process;
+    FETCH NEXT FROM cur_Process INTO @CurID, @CurName;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        -- Process each row
+        SET @BatchID = @CurID;
+        PRINT N'Processing: ' + ISNULL(@CurName, N'NULL');
+        FETCH NEXT FROM cur_Process INTO @CurID, @CurName;
+    END
+    CLOSE cur_Process;
+    DEALLOCATE cur_Process;
+
+    /*
+     * ─── Processing Block 2 ─────────────────────────────────────────────────
+     * This section handles the core ETL for batch 2.
+     * Original implementation: 2015-03-12 (developer: J.Smith)
+     * Last modified: 2022-11-08 (developer: M.Jones) — added retry logic
+     *
+     * LEGACY NOTE: The following was removed in v3.2:
+     *   -- INSERT INTO dbo.OldArchive SELECT * FROM dbo.Deprecated WHERE Status = 1
+     *   -- UPDATE dbo.Legacy SET Flag = 0
+     *
+     * Do NOT re-enable the above — table dbo.OldArchive was dropped 2020-04-01
+     */
+    BEGIN TRY
+        BEGIN TRY
+            BEGIN TRY
+                INSERT INTO [hr].[Employee] ([SourceID], [SourceName], [LoadedAt])
+                SELECT s.[ID], s.[Name], GETUTCDATE()
+                FROM   [stg].[ProductStage] AS s
+                WHERE  s.[IsDeleted] = 0;
+            END TRY
+            BEGIN CATCH
+                SET @ErrorMessage = ERROR_MESSAGE();
+                SET @ErrorSeverity = ERROR_SEVERITY();
+                SET @ErrorState = ERROR_STATE();
+                RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+            END CATCH
+        END TRY
+        BEGIN CATCH
+            SET @ErrorMessage = ERROR_MESSAGE();
+            SET @ErrorSeverity = ERROR_SEVERITY();
+            SET @ErrorState = ERROR_STATE();
+            RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+        END CATCH
+    END TRY
+    BEGIN CATCH
+        SET @ErrorMessage = ERROR_MESSAGE();
+        SET @ErrorSeverity = ERROR_SEVERITY();
+        SET @ErrorState = ERROR_STATE();
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+    END CATCH
+    SET @RowCount = @RowCount + @@ROWCOUNT;
+
+    /*
+     * ─── Processing Block 3 ─────────────────────────────────────────────────
+     * This section handles the core ETL for batch 3.
+     * Original implementation: 2015-03-12 (developer: J.Smith)
+     * Last modified: 2022-11-08 (developer: M.Jones) — added retry logic
+     *
+     * LEGACY NOTE: The following was removed in v3.2:
+     *   -- INSERT INTO dbo.OldArchive SELECT * FROM dbo.Deprecated WHERE Status = 1
+     *   -- UPDATE dbo.Legacy SET Flag = 0
+     *
+     * Do NOT re-enable the above — table dbo.OldArchive was dropped 2020-04-01
+     */
+    BEGIN TRY
+        BEGIN TRY
+            BEGIN TRY
+                INSERT INTO [stg].[OrderStage] ([SourceID], [RefID], [Amount], [LoadedAt])
+                SELECT
+                    a.[ID]          AS SourceID,
+                    b.[ID]          AS RefID,
+                    ISNULL(a.[Amount], 0) AS Amount,
+                    GETUTCDATE()    AS LoadedAt
+                FROM   [stg].[ProductStage] AS a
+                JOIN   [rpt].[MonthlyOrders] AS c ON c.[ID] = a.[ID]
+                JOIN   [fin].[Account] AS d ON d.[ID] = a.[ID]
+                WHERE  a.[Status] = N'PENDING';
+            END TRY
+            BEGIN CATCH
+                SET @ErrorMessage = ERROR_MESSAGE();
+                SET @ErrorSeverity = ERROR_SEVERITY();
+                SET @ErrorState = ERROR_STATE();
+                RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+            END CATCH
+        END TRY
+        BEGIN CATCH
+            SET @ErrorMessage = ERROR_MESSAGE();
+            SET @ErrorSeverity = ERROR_SEVERITY();
+            SET @ErrorState = ERROR_STATE();
+            RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+        END CATCH
+    END TRY
+    BEGIN CATCH
+        SET @ErrorMessage = ERROR_MESSAGE();
+        SET @ErrorSeverity = ERROR_SEVERITY();
+        SET @ErrorState = ERROR_STATE();
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+    END CATCH
+    SET @RowCount = @RowCount + @@ROWCOUNT;
+
+    /*
+     * ─── Processing Block 4 ─────────────────────────────────────────────────
+     * This section handles the core ETL for batch 4.
+     * Original implementation: 2015-03-12 (developer: J.Smith)
+     * Last modified: 2022-11-08 (developer: M.Jones) — added retry logic
+     *
+     * LEGACY NOTE: The following was removed in v3.2:
+     *   -- INSERT INTO dbo.OldArchive SELECT * FROM dbo.Deprecated WHERE Status = 1
+     *   -- UPDATE dbo.Legacy SET Flag = 0
+     *
+     * Do NOT re-enable the above — table dbo.OldArchive was dropped 2020-04-01
+     */
+    BEGIN TRY
+        BEGIN TRY
+            BEGIN TRY
+                INSERT INTO [etl].[LoadLog] ([SourceID], [RefID], [Amount], [LoadedAt])
+                SELECT
+                    a.[ID]          AS SourceID,
+                    b.[ID]          AS RefID,
+                    ISNULL(a.[Amount], 0) AS Amount,
+                    GETUTCDATE()    AS LoadedAt
+                FROM   [stg].[ProductStage] AS a
+                JOIN   [rpt].[MonthlyOrders] AS c ON c.[ID] = a.[ID]
+                JOIN   [fin].[Account] AS d ON d.[ID] = a.[ID]
+                WHERE  a.[Status] = N'PENDING';
+            END TRY
+            BEGIN CATCH
+                SET @ErrorMessage = ERROR_MESSAGE();
+                SET @ErrorSeverity = ERROR_SEVERITY();
+                SET @ErrorState = ERROR_STATE();
+                RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+            END CATCH
+        END TRY
+        BEGIN CATCH
+            SET @ErrorMessage = ERROR_MESSAGE();
+            SET @ErrorSeverity = ERROR_SEVERITY();
+            SET @ErrorState = ERROR_STATE();
+            RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+        END CATCH
+    END TRY
+    BEGIN CATCH
+        SET @ErrorMessage = ERROR_MESSAGE();
+        SET @ErrorSeverity = ERROR_SEVERITY();
+        SET @ErrorState = ERROR_STATE();
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+    END CATCH
+    SET @RowCount = @RowCount + @@ROWCOUNT;
+
+    /*
+     * ─── Processing Block 5 ─────────────────────────────────────────────────
+     * This section handles the core ETL for batch 5.
+     * Original implementation: 2015-03-12 (developer: J.Smith)
+     * Last modified: 2022-11-08 (developer: M.Jones) — added retry logic
+     *
+     * LEGACY NOTE: The following was removed in v3.2:
+     *   -- INSERT INTO dbo.OldArchive SELECT * FROM dbo.Deprecated WHERE Status = 1
+     *   -- UPDATE dbo.Legacy SET Flag = 0
+     *
+     * Do NOT re-enable the above — table dbo.OldArchive was dropped 2020-04-01
+     */
+    UPDATE t
+    SET    t.[Status]      = s.[Status],
+           t.[UpdatedDate] = GETUTCDATE()
+    FROM   [hr].[Employee] AS t
+    JOIN   [rpt].[MonthlyOrders] AS s ON s.[ID] = t.[SourceID]
+    WHERE  t.[Status] = N'PENDING';
+    SET @RowCount = @RowCount + @@ROWCOUNT;
+
+    /*
+     * ─── Processing Block 6 ─────────────────────────────────────────────────
+     * This section handles the core ETL for batch 6.
+     * Original implementation: 2015-03-12 (developer: J.Smith)
+     * Last modified: 2022-11-08 (developer: M.Jones) — added retry logic
+     *
+     * LEGACY NOTE: The following was removed in v3.2:
+     *   -- INSERT INTO dbo.OldArchive SELECT * FROM dbo.Deprecated WHERE Status = 1
+     *   -- UPDATE dbo.Legacy SET Flag = 0
+     *
+     * Do NOT re-enable the above — table dbo.OldArchive was dropped 2020-04-01
+     */
+    MERGE INTO [etl].[LoadLog] AS tgt
+    USING [dbo].[Account] AS src ON src.[ID] = tgt.[ID]
+    WHEN MATCHED THEN
+        UPDATE SET tgt.[Name] = src.[Name], tgt.[UpdatedDate] = GETUTCDATE()
+    WHEN NOT MATCHED BY TARGET THEN
+        INSERT ([ID], [Name], [CreatedDate]) VALUES (src.[ID], src.[Name], GETUTCDATE())
+    WHEN NOT MATCHED BY SOURCE THEN
+        UPDATE SET tgt.[IsDeleted] = 1;
+
+    EXEC [dbo].[usp_GenerateInvoice] @ProcessDate = GETDATE(), @BatchID = @BatchID;
+
+    EXEC [etl].[usp_ValidateStage] @ProcessDate = GETDATE(), @BatchID = @BatchID;
+
+    EXEC [rpt].[usp_RefreshSummary] @ProcessDate = GETDATE(), @BatchID = @BatchID;
+
+    EXEC [audit].[usp_LogChange] @ProcessDate = GETDATE(), @BatchID = @BatchID;
+
+    EXEC [etl].[usp_LoadOrders] @ProcessDate = GETDATE(), @BatchID = @BatchID;
+
+    -- Reference read: [stg].[ProductStage]
+    SELECT @RowCount = COUNT(*) FROM [stg].[ProductStage] WHERE [IsDeleted] = 0;
+
+    -- Reference read: [rpt].[MonthlyOrders]
+    SELECT @RowCount = COUNT(*) FROM [rpt].[MonthlyOrders] WHERE [IsDeleted] = 0;
+
+    -- Reference read: [fin].[Account]
+    SELECT @RowCount = COUNT(*) FROM [fin].[Account] WHERE [IsDeleted] = 0;
+
+    -- Reference read: [ops].[ReturnOrder]
+    SELECT @RowCount = COUNT(*) FROM [ops].[ReturnOrder] WHERE [IsDeleted] = 0;
+
+    -- Reference read: [dbo].[Category]
+    SELECT @RowCount = COUNT(*) FROM [dbo].[Category] WHERE [IsDeleted] = 0;
+
+    -- Reference read: [dbo].[Customer]
+    SELECT @RowCount = COUNT(*) FROM [dbo].[Customer] WHERE [IsDeleted] = 0;
+
+    -- Reference read: [dbo].[Shipper]
+    SELECT @RowCount = COUNT(*) FROM [dbo].[Shipper] WHERE [IsDeleted] = 0;
+
+    -- Reference read: [dbo].[Account]
+    SELECT @RowCount = COUNT(*) FROM [dbo].[Account] WHERE [IsDeleted] = 0;
+
+    RETURN @RowCount;
+END
+GO

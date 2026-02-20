@@ -1,0 +1,4 @@
+-- GENERATED SP 27: tier=tiny flags=[noFormatting]
+-- EXPECT  sources:[rpt].[CustomerChurn],[hr].[Employee]  targets:[hr].[Position]  exec:[dbo].[usp_UpdateCustomer]
+
+CREATE PROCEDURE [rpt].[usp_GenTiny_027] @BatchID    INT = 0, @ProcessDate DATETIME = NULL AS BEGIN SET NOCOUNT ON; IF @ProcessDate IS NULL SET @ProcessDate = GETDATE(); DECLARE @RowCount INT = 0; DECLARE @StartTime DATETIME = GETUTCDATE(); INSERT INTO hr.Position ([SourceID], [SourceName], [LoadedAt]) SELECT s.[ID], s.[Name], GETUTCDATE() FROM   rpt.CustomerChurn AS s WHERE  s.[IsDeleted] = 0; SET @RowCount = @RowCount + @@ROWCOUNT; EXEC [dbo].[usp_UpdateCustomer] @ProcessDate = GETDATE(), @BatchID = @BatchID; SELECT @RowCount = COUNT(*) FROM rpt.CustomerChurn WHERE [IsDeleted] = 0; SELECT @RowCount = COUNT(*) FROM hr.Employee WHERE [IsDeleted] = 0; RETURN @RowCount; END GO

@@ -1,0 +1,4 @@
+-- GENERATED SP 9: tier=tiny flags=[noFormatting]
+-- EXPECT  sources:[rpt].[CustomerChurn],[dbo].[Product]  targets:[stg].[ProductStage]  exec:
+
+CREATE PROCEDURE [hr].[usp_GenTiny_009] @BatchID    INT = 0, @ProcessDate DATETIME = NULL AS BEGIN SET NOCOUNT ON; IF @ProcessDate IS NULL SET @ProcessDate = GETDATE(); DECLARE @RowCount INT = 0; DECLARE @StartTime DATETIME = GETUTCDATE(); INSERT INTO [stg].[ProductStage] ([SourceID], [SourceName], [LoadedAt]) SELECT s.[ID], s.[Name], GETUTCDATE() FROM   [rpt].[CustomerChurn] AS s WHERE  s.[IsDeleted] = 0; SET @RowCount = @RowCount + @@ROWCOUNT; SELECT @RowCount = COUNT(*) FROM [rpt].[CustomerChurn] WHERE [IsDeleted] = 0; SELECT @RowCount = COUNT(*) FROM dbo.Product WHERE [IsDeleted] = 0; RETURN @RowCount; END GO

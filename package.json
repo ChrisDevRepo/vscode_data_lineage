@@ -307,7 +307,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts",
     "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
   },
   "dependencies": {
