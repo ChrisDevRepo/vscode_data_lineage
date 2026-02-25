@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.1] - 2026-02-25
+
+### Changed
+- Added Workspace Trust support — extension now works in restricted workspaces
+
 ## [0.9.0] - 2026-02-20
 
 ### Added
