@@ -4,7 +4,7 @@
 ![VS Code](https://img.shields.io/badge/vscode-1.85+-blue.svg)
 ![Status](https://img.shields.io/badge/status-preview-orange.svg)
 
-> **Preview** — This extension is functional but under active development. Expect rough edges.
+> **Preview** — This extension is functional but under active development.
 
 Visualize object-level dependencies from `.dacpac` files or by importing directly from SQL Server, Azure SQL, Fabric DW, or Synapse. See how tables, views, stored procedures, and functions connect through an interactive graph.
 
@@ -127,7 +127,7 @@ The parser only tracks **fully-qualified two-part names** (`[schema].[object]`).
 
 ## Contributing
 
-Bug reports are welcome. Feature requests are not being accepted — this project is maintained for personal use. You're welcome to fork and extend it under the MIT license. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports are welcome. This is a personal project — for custom features, fork and extend it under the MIT license. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

@@ -221,9 +221,22 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           </section>
         </div>
 
-        <div className="mt-8 pt-6 flex items-center justify-between ln-border-top">
+        <div className="mt-8 pt-6 ln-border-top space-y-4">
+          <p className="text-xs text-center ln-text-muted">
+            Found a bug?{' '}
+            <button
+              onClick={() => vscodeApi.postMessage({ type: 'open-external', url: 'https://github.com/ChrisDevRepo/vscode_data_lineage/issues' })}
+              className="ln-text-link hover:underline cursor-pointer"
+            >Open an issue</button>
+            {' · '}Enjoying it?{' '}
+            <button
+              onClick={() => vscodeApi.postMessage({ type: 'open-external', url: 'https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz&ssr=false#review-details' })}
+              className="ln-text-link hover:underline cursor-pointer"
+            >Leave a review ★</button>
+          </p>
+          <div className="flex items-center justify-between">
           <div className="text-xs ln-text-muted">
-            <p className="mb-1">Data Lineage Viz v0.9.0</p>
+            <p className="mb-1">Data Lineage Viz v0.9.1</p>
             <p>SQL Server Database Project Dependency Viewer</p>
           </div>
           <div className="flex items-center gap-2">
@@ -255,6 +268,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </svg>
               LinkedIn
             </button>
+          </div>
           </div>
         </div>
       </div>
