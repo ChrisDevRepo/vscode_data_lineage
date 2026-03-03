@@ -81,12 +81,12 @@ export function App() {
       trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
 
       setModel(trimmed);
-      const f = { ...filter, schemas: new Set(trimmed.schemas.map(s => s.name)) };
+      const f = getResetFilter(trimmed);
       setFilter(f);
       rebuild(trimmed, f, config);
       setView('graph');
     },
-    [filter, rebuild, config]
+    [rebuild, config]
   );
 
   useEffect(() => {

@@ -28,10 +28,10 @@ export function buildModel(
   deps: ExtractedDependency[],
   allObjects?: ExtractedObject[],
 ): DacpacModel {
-  const { nodes, edges, stats } = buildNodesAndEdges(objects, deps, allObjects);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects);
   const schemas = computeSchemas(nodes);
   const catalog = buildCatalog(allObjects ?? objects);
-  const neighborIndex = buildNeighborIndex(edges);
+  const neighborIndex = buildNeighborIndex(edges, neighborPairs);
 
   const warnings: string[] = [];
   if (objects.length === 0) {
@@ -65,15 +65,20 @@ function buildCatalog(allObjects: ExtractedObject[]): Record<string, CatalogEntr
 
 // ─── NeighborIndex Builder ───────────────────────────────────────────────────
 
-/** Build an O(1) neighbor lookup from edges. */
-function buildNeighborIndex(edges: LineageEdge[]): NeighborIndex {
+/** Build an O(1) neighbor lookup from edges plus optional cross-schema neighbor pairs. */
+function buildNeighborIndex(
+  edges: LineageEdge[],
+  extraPairs?: Array<{ source: string; target: string }>,
+): NeighborIndex {
   const index: NeighborIndex = {};
-  for (const edge of edges) {
-    if (!index[edge.target]) index[edge.target] = { in: [], out: [] };
-    if (!index[edge.source]) index[edge.source] = { in: [], out: [] };
-    index[edge.target].in.push(edge.source);
-    index[edge.source].out.push(edge.target);
-  }
+  const addPair = (source: string, target: string) => {
+    if (!index[target]) index[target] = { in: [], out: [] };
+    if (!index[source]) index[source] = { in: [], out: [] };
+    if (!index[target].in.includes(source)) index[target].in.push(source);
+    if (!index[source].out.includes(target)) index[source].out.push(target);
+  };
+  for (const edge of edges) addPair(edge.source, edge.target);
+  for (const pair of extraPairs ?? []) addPair(pair.source, pair.target);
   return index;
 }
 
@@ -217,17 +222,26 @@ function buildNodesAndEdges(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
   allObjects?: ExtractedObject[],
-): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats } {
+): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
   // Phase 1: Build nodes
   const nodes: LineageNode[] = [];
   const nodeIds = new Set<string>();
 
-  // Full catalog IDs (includes cross-schema objects) — used to distinguish
-  // "cross-schema known" refs from truly unresolved ones.
+  // Full catalog IDs and metadata — used for cross-schema classification and direction inference.
   const allNodeIds = new Set<string>();
+  const allObjectMeta = new Map<string, { schema: string; name: string; type: ObjectType }>();
   if (allObjects) {
-    for (const obj of allObjects) allNodeIds.add(normalizeName(obj.fullName));
+    for (const obj of allObjects) {
+      const id = normalizeName(obj.fullName);
+      allNodeIds.add(id);
+      const { schema, objectName } = parseName(obj.fullName);
+      allObjectMeta.set(id, { schema, name: objectName, type: obj.type });
+    }
   }
+
+  // Cross-schema neighbor pairs: schema-qualified, in full catalog, outside filter context.
+  // Populated by all dep paths so NodeInfoBar shows them with ⊘ even when not rendered.
+  const neighborPairs: Array<{ source: string; target: string }> = [];
 
   for (const obj of objects) {
     const { schema, objectName } = parseName(obj.fullName);
@@ -258,17 +272,24 @@ function buildNodesAndEdges(
   const stats: ParseStats = { parsedRefs: 0, resolvedEdges: 0, droppedRefs: [], spDetails: [] };
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-  // Group dependencies by source
+  // Group dependencies by source.
+  // crossSchemaDepsForNode tracks deps where source ∈ filter context, target ∈ full catalog only.
   const depsPerSource = new Map<string, string[]>();
+  const crossSchemaDepsForNode = new Map<string, string[]>();
   for (const dep of deps) {
     const sourceId = normalizeName(dep.sourceName);
     const targetId = normalizeName(dep.targetName);
 
     if (sourceId === targetId) continue;
-    if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) continue;
+    if (!nodeIds.has(sourceId)) continue;
 
-    if (!depsPerSource.has(sourceId)) depsPerSource.set(sourceId, []);
-    depsPerSource.get(sourceId)!.push(targetId);
+    if (nodeIds.has(targetId)) {
+      if (!depsPerSource.has(sourceId)) depsPerSource.set(sourceId, []);
+      depsPerSource.get(sourceId)!.push(targetId);
+    } else if (allNodeIds.size > 0 && allNodeIds.has(targetId)) {
+      if (!crossSchemaDepsForNode.has(sourceId)) crossSchemaDepsForNode.set(sourceId, []);
+      crossSchemaDepsForNode.get(sourceId)!.push(targetId);
+    }
   }
 
   // Process each node's edges
@@ -281,6 +302,10 @@ function buildNodesAndEdges(
       // Non-SP: add dependency edges as inbound (dep → this node)
       for (const depId of xmlDeps) {
         addEdge(edges, edgeKeys, depId, sourceId, 'body');
+      }
+      // Cross-schema deps for non-SP: referenced object is upstream (inbound).
+      for (const csDepId of crossSchemaDepsForNode.get(sourceId) ?? []) {
+        neighborPairs.push({ source: csDepId, target: sourceId });
       }
       continue;
     }
@@ -320,6 +345,23 @@ function buildNodesAndEdges(
         }
       }
     }
+    // XML fallback for cross-schema deps of this SP: infer direction from catalog metadata.
+    for (const csDepId of crossSchemaDepsForNode.get(sourceId) ?? []) {
+      if (!outboundIds.has(csDepId)) {
+        const meta = allObjectMeta.get(csDepId);
+        if (meta?.type === 'procedure') {
+          neighborPairs.push({ source: sourceId, target: csDepId }); // outbound exec
+        } else if (
+          meta?.type === 'table' &&
+          node.bodyScript &&
+          inferBodyDirection(node.bodyScript, meta.schema, meta.name) === 'write'
+        ) {
+          neighborPairs.push({ source: sourceId, target: csDepId }); // outbound write
+        } else {
+          neighborPairs.push({ source: csDepId, target: sourceId }); // inbound read
+        }
+      }
+    }
 
     // Regex sources (inbound: dep → SP)
     const spLabel = `${node.schema}.${node.name}`;
@@ -336,7 +378,7 @@ function buildNodesAndEdges(
           const n = nodeMap.get(depId);
           spInRefs.push(n ? `${n.schema}.${n.name}` : dep);
         } else if (allNodeIds.size > 0 && allNodeIds.has(depId)) {
-          // Known cross-schema object — no edge to selected schema, not unresolved.
+          neighborPairs.push({ source: depId, target: sourceId }); // inbound: cross-schema dep is upstream
         } else {
           spUnrelated.push(dep);
           stats.droppedRefs.push(`${spLabel} → ${dep}`);
@@ -358,7 +400,7 @@ function buildNodesAndEdges(
           const n = nodeMap.get(depId);
           spOutRefs.push(n ? `${n.schema}.${n.name}` : dep);
         } else if (allNodeIds.size > 0 && allNodeIds.has(depId)) {
-          // Known cross-schema object — no edge to selected schema, not unresolved.
+          neighborPairs.push({ source: sourceId, target: depId }); // outbound: SP writes/reads cross-schema dep
         } else {
           spUnrelated.push(dep);
           stats.droppedRefs.push(`${spLabel} → ${dep}`);
@@ -380,7 +422,7 @@ function buildNodesAndEdges(
           const n = nodeMap.get(depId);
           spOutRefs.push((n ? `${n.schema}.${n.name}` : dep) + ' (exec)');
         } else if (allNodeIds.size > 0 && allNodeIds.has(depId)) {
-          // Known cross-schema object — no edge to selected schema, not unresolved.
+          neighborPairs.push({ source: sourceId, target: depId }); // outbound exec: SP calls cross-schema proc
         } else {
           spUnrelated.push(dep + ' (exec)');
           stats.droppedRefs.push(`${spLabel} → ${dep} (exec)`);
@@ -397,5 +439,5 @@ function buildNodesAndEdges(
     });
   }
 
-  return { nodes, edges, stats };
+  return { nodes, edges, stats, neighborPairs };
 }
