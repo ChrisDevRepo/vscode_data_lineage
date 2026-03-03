@@ -274,8 +274,10 @@ function buildNodesAndEdges(
 
   // Group dependencies by source.
   // crossSchemaDepsForNode tracks deps where source ∈ filter context, target ∈ full catalog only.
+  // unresolvableDepsForNode tracks deps where target is schema-qualified but not in any catalog.
   const depsPerSource = new Map<string, string[]>();
   const crossSchemaDepsForNode = new Map<string, string[]>();
+  const unresolvableDepsForNode = new Map<string, string[]>();
   for (const dep of deps) {
     const sourceId = normalizeName(dep.sourceName);
     const targetId = normalizeName(dep.targetName);
@@ -289,6 +291,13 @@ function buildNodesAndEdges(
     } else if (allNodeIds.size > 0 && allNodeIds.has(targetId)) {
       if (!crossSchemaDepsForNode.has(sourceId)) crossSchemaDepsForNode.set(sourceId, []);
       crossSchemaDepsForNode.get(sourceId)!.push(targetId);
+    } else {
+      // Target not in filter context and not in full catalog.
+      // Track schema-qualified, non-system names so they surface as Unresolved — no silent drop.
+      if (isSchemaQualified(dep.targetName) && !isSystemRef(dep.targetName)) {
+        if (!unresolvableDepsForNode.has(sourceId)) unresolvableDepsForNode.set(sourceId, []);
+        unresolvableDepsForNode.get(sourceId)!.push(dep.targetName);
+      }
     }
   }
 
@@ -363,8 +372,14 @@ function buildNodesAndEdges(
       }
     }
 
-    // Regex sources (inbound: dep → SP)
+    // Metadata deps with no catalog match — surface as Unresolved so no schema-qualified name is silently dropped.
     const spLabel = `${node.schema}.${node.name}`;
+    for (const rawName of unresolvableDepsForNode.get(sourceId) ?? []) {
+      spUnrelated.push(rawName);
+      stats.droppedRefs.push(`${spLabel} → ${rawName}`);
+    }
+
+    // Regex sources (inbound: dep → SP)
     for (const dep of parsed.sources) {
       if (!isSchemaQualified(dep)) { spSkipped.push(dep); continue; }
       if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
