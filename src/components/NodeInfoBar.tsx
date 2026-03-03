@@ -50,14 +50,14 @@ function NeighborHoverList({
       <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 min-w-[260px] rounded shadow-lg py-1.5 px-2 text-xs ln-modal">
         {sortedSchemas.map(([schema, items]) => (
           <div key={schema}>
-            <div className="text-[10px] uppercase tracking-wide ln-text-dim pt-1.5 pb-0.5 first:pt-0 border-b ln-border">
+            <div className="text-[10px] uppercase tracking-wide ln-text pt-1.5 pb-0.5 first:pt-0 border-b ln-border">
               {schema}
             </div>
             {items.map(({ id, entry }) => {
               const icon = TYPE_COLORS[entry.type]?.icon ?? '?';
               const hidden = !visibleNodeIds.has(id);
               return (
-                <div key={id} className="py-0.5 flex items-center gap-1 ln-text whitespace-nowrap">
+                <div key={id} className={`py-0.5 flex items-center gap-1 whitespace-nowrap ${hidden ? 'ln-text-dim' : 'ln-text'}`}>
                   <span className="opacity-60 select-none">{icon}</span>
                   <span className="flex-1">{entry.name}</span>
                   {hidden && (
