@@ -4,15 +4,22 @@ required_permission: "VIEW DEFINITION"
 platforms: [SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool]
 
 # Two-phase loading:
-#   Phase 1 — schema-preview runs first to show available schemas with counts.
+#   Phase 1 — schema-preview + all-objects run first.
+#     schema-preview  : counts per schema for the schema-selection wizard.
+#     all-objects     : lightweight full object catalog (no DDL, no columns) used in
+#                       Phase 2 to classify SP dependencies as "cross-schema known" vs
+#                       "truly unresolved" and to display correct schema.name pairs in
+#                       the dependency details panel.
 #   Phase 2 — nodes/columns/dependencies run after the user selects schemas.
 #             Each Phase 2 query is wrapped as a subquery with a WHERE filter
 #             on the selected schemas, so only matching rows are returned.
+#             DDL bodies (nodes) and column metadata are fetched for selected schemas
+#             only — keeping Phase 2 fast even in large warehouses.
 
 queries:
   # ── Phase 1: Schema Preview ────────────────────────────────────────────────
   - name: schema-preview
-    description: "Phase 1: schema names with per-type object counts (runs first for schema selection)"
+    description: "Phase 1: schema names with per-type object counts (runs first for schema selection wizard)"
     sql: |
       SELECT
         s.name AS schema_name,
@@ -26,9 +33,30 @@ queries:
       GROUP BY s.name, o.type
       ORDER BY s.name, o.type
 
+  # ── Phase 1: Full Object Catalog ────────────────────────────────────────────
+  - name: all-objects
+    description: >
+      Phase 1: complete object catalog across ALL schemas (no DDL, no columns).
+      Runs alongside schema-preview to enable cross-schema reference resolution in Phase 2.
+      When a stored procedure in schema A references a table in schema B (not selected),
+      this catalog classifies that reference as "cross-schema known" rather than
+      "unresolved". Also provides catalog-original schema casing for display in the
+      dependency details panel (In / Out counts and neighbor tooltips).
+    sql: |
+      SELECT
+        s.name AS schema_name,
+        o.name AS object_name,
+        o.type AS type_code
+      FROM sys.objects o
+      INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      WHERE o.type IN ('U','V','P','FN','IF','TF')
+        AND o.is_ms_shipped = 0
+        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+      ORDER BY s.name, o.name
+
   # ── Phase 2: Full Extraction (filtered by selected schemas) ─────────────────
   - name: nodes
-    description: "All user objects + DDL definitions (combined via LEFT JOIN)"
+    description: "Phase 2: DDL definitions for selected schemas (combined via LEFT JOIN)"
     sql: |
       SELECT
         s.name AS schema_name,
@@ -44,7 +72,7 @@ queries:
       ORDER BY s.name, o.name
 
   - name: columns
-    description: "Column metadata for table DDL preview"
+    description: "Phase 2: column metadata for table DDL preview (selected schemas)"
     sql: |
       SELECT
         s.name AS schema_name,
@@ -68,7 +96,13 @@ queries:
       ORDER BY s.name, o.name, c.column_id
 
   - name: dependencies
-    description: "Object-level dependencies"
+    description: >
+      Phase 2: object-level SQL expression dependencies (referencing → referenced).
+      Uses referenced_entity_name IS NOT NULL (not referenced_id IS NOT NULL) to
+      include caller-dependent deps where SQL Server resolves the schema from the
+      caller's default schema at runtime (e.g., EXEC SomeProc without schema prefix).
+      COALESCE falls back to the referencing object's schema when no schema is
+      explicitly specified in the SQL source.
     sql: |
       SELECT
         s1.name AS referencing_schema,

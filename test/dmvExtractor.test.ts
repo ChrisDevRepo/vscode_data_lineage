@@ -118,17 +118,29 @@ function testBuildModelFromDmv() {
 
   // Schema computation
   assertEq(model.schemas.length, 2, 'Should have 2 schemas');
-  const dboSchema = model.schemas.find(s => s.name === 'DBO');
-  const salesSchema = model.schemas.find(s => s.name === 'SALES');
-  assert(dboSchema !== undefined, 'DBO schema found');
-  assert(salesSchema !== undefined, 'SALES schema found');
-  assertEq(dboSchema!.nodeCount, 4, 'DBO has 4 nodes');
-  assertEq(salesSchema!.nodeCount, 2, 'SALES has 2 nodes');
+  const dboSchema = model.schemas.find(s => s.name === 'dbo');
+  const salesSchema = model.schemas.find(s => s.name === 'sales');
+  assert(dboSchema !== undefined, 'dbo schema found');
+  assert(salesSchema !== undefined, 'sales schema found');
+  assertEq(dboSchema!.nodeCount, 4, 'dbo has 4 nodes');
+  assertEq(salesSchema!.nodeCount, 2, 'sales has 2 nodes');
 
   // Node IDs are normalized
   const customerNode = model.nodes.find(n => n.name === 'Customers');
   assertEq(customerNode?.id, '[dbo].[customers]', 'Customer ID normalized to lowercase');
-  assertEq(customerNode?.schema, 'DBO', 'Customer schema uppercased');
+  assertEq(customerNode?.schema, 'dbo', 'Customer schema preserved in catalog-original casing');
+
+  // Catalog and neighborIndex are present and populated
+  assert(model.catalog !== undefined, 'Catalog present');
+  assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node');
+  assert(model.neighborIndex !== undefined, 'NeighborIndex present');
+  assert(model.caseInsensitive === true, 'caseInsensitive flag set');
+
+  // neighborIndex: vActiveCustomers should have Customers as inbound neighbor
+  const viewId = '[dbo].[vactivecustomers]';
+  assert(model.neighborIndex[viewId]?.in.includes('[dbo].[customers]'), 'neighborIndex: Customers → vActiveCustomers');
+  // catalog: Customers entry should have original casing
+  assert(model.catalog['[dbo].[customers]']?.schema === 'dbo', 'catalog: Customers schema is dbo');
 
   // Edges
   assert(model.edges.length > 0, `Has ${model.edges.length} edges`);

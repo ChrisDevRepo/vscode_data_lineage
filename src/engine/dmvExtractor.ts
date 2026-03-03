@@ -17,11 +17,14 @@ export interface DmvResults {
   nodes: SimpleExecuteResult;
   columns: SimpleExecuteResult;
   dependencies: SimpleExecuteResult;
+  /** Phase 1 all-objects result: full cross-schema catalog for dependency resolution. */
+  allObjects?: SimpleExecuteResult;
 }
 
 /**
  * Phase 1: Build SchemaPreview from the schema-preview query result.
  * Maps (schema_name, type_code, object_count) rows → SchemaInfo[].
+ * Schema names are preserved in their catalog-original casing.
  */
 export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   const colIdx = buildColumnIndex(result);
@@ -29,7 +32,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   let totalObjects = 0;
 
   for (const row of result.rows) {
-    const schemaName = cellValue(row, colIdx, 'schema_name').toUpperCase();
+    const schemaName = cellValue(row, colIdx, 'schema_name'); // preserve catalog casing
     const typeCode = cellValue(row, colIdx, 'type_code').trim();
     const count = parseInt(cellValue(row, colIdx, 'object_count'), 10) || 0;
     const objType = DMV_TYPE_MAP[typeCode];
@@ -56,7 +59,8 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
 export function buildModelFromDmv(results: DmvResults): DacpacModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
-  const model = buildModel(objects, deps);
+  const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
+  const model = buildModel(objects, deps, allObjects);
 
   const warnings: string[] = [];
   if (objects.length === 0) {
@@ -70,6 +74,7 @@ export function buildModelFromDmv(results: DmvResults): DacpacModel {
 
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   'schema-preview': ['schema_name', 'type_code', 'object_count'],
+  'all-objects': ['schema_name', 'object_name', 'type_code'],
   nodes: ['schema_name', 'object_name', 'type_code', 'body_script'],
   columns: ['schema_name', 'table_name', 'ordinal', 'column_name',
     'type_name', 'max_length', 'precision', 'scale',
@@ -180,4 +185,32 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
   }
 
   return deps;
+}
+
+/**
+ * Extract lightweight stubs from the all-objects query result.
+ * Used to build the full cross-schema catalog for reference classification.
+ * Schema names are preserved in catalog-original casing (no uppercasing).
+ */
+function extractAllObjects(result: SimpleExecuteResult): ExtractedObject[] {
+  const colIdx = buildColumnIndex(result);
+  const seen = new Set<string>();
+  const objects: ExtractedObject[] = [];
+
+  for (const row of result.rows) {
+    const schemaName = cellValue(row, colIdx, 'schema_name');
+    const objectName = cellValue(row, colIdx, 'object_name');
+    const typeCode = cellValue(row, colIdx, 'type_code').trim();
+    const objType = DMV_TYPE_MAP[typeCode];
+    if (!objType) continue;
+
+    const fullName = `[${schemaName}].[${objectName}]`;
+    const id = normalizeName(fullName);
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    objects.push({ fullName, type: objType });
+  }
+
+  return objects;
 }

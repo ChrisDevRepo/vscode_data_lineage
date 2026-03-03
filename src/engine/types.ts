@@ -41,10 +41,31 @@ export interface ParseStats {
   spDetails: SpParseDetail[];  // per-SP breakdown
 }
 
+/** Per-object display entry — covers ALL known objects including cross-schema ones. */
+export type CatalogEntry = { schema: string; name: string; type: ObjectType };
+
+/**
+ * O(1) neighbor lookup keyed by node ID.
+ * Built once in buildModel() from model.edges.
+ * Plain Record (not Map) so it survives JSON serialization across postMessage.
+ * `in`  = upstream   nodes (data flows INTO this node)
+ * `out` = downstream nodes (data flows OUT of this node)
+ */
+export type NeighborIndex = Record<string, { in: string[]; out: string[] }>;
+
 export interface DacpacModel {
   nodes: LineageNode[];
   edges: LineageEdge[];
   schemas: SchemaInfo[];
+  /**
+   * Display catalog covering all known objects (including cross-schema ones not
+   * visible in the current graph). Keyed by normalized node ID "[schema].[name]".
+   */
+  catalog: Record<string, CatalogEntry>;
+  /** O(1) in/out neighbor lookup derived from model.edges. */
+  neighborIndex: NeighborIndex;
+  /** Always true — SQL Server is case-insensitive by default. */
+  caseInsensitive: boolean;
   parseStats?: ParseStats;
   warnings?: string[];
 }

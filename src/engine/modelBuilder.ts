@@ -15,6 +15,8 @@ import {
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
+  CatalogEntry,
+  NeighborIndex,
 } from './types';
 import { parseSqlBody } from './sqlBodyParser';
 import { stripBrackets, splitSqlName } from '../utils/sql';
@@ -24,9 +26,12 @@ import { stripBrackets, splitSqlName } from '../utils/sql';
 export function buildModel(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
+  allObjects?: ExtractedObject[],
 ): DacpacModel {
-  const { nodes, edges, stats } = buildNodesAndEdges(objects, deps);
+  const { nodes, edges, stats } = buildNodesAndEdges(objects, deps, allObjects);
   const schemas = computeSchemas(nodes);
+  const catalog = buildCatalog(allObjects ?? objects);
+  const neighborIndex = buildNeighborIndex(edges);
 
   const warnings: string[] = [];
   if (objects.length === 0) {
@@ -35,20 +40,54 @@ export function buildModel(
     warnings.push('No tables, views, or stored procedures found.');
   }
 
-  return { nodes, edges, schemas, parseStats: stats, warnings: warnings.length > 0 ? warnings : undefined };
+  return {
+    nodes, edges, schemas, catalog, neighborIndex,
+    caseInsensitive: true,
+    parseStats: stats,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
+}
+
+// ─── Catalog Builder ────────────────────────────────────────────────────────
+
+/**
+ * Build a display catalog keyed by normalized node ID.
+ * Covers all objects (including cross-schema ones not in the selected schema set).
+ */
+function buildCatalog(allObjects: ExtractedObject[]): Record<string, CatalogEntry> {
+  const catalog: Record<string, CatalogEntry> = {};
+  for (const obj of allObjects) {
+    const { schema, objectName } = parseName(obj.fullName);
+    catalog[normalizeName(obj.fullName)] = { schema, name: objectName, type: obj.type };
+  }
+  return catalog;
+}
+
+// ─── NeighborIndex Builder ───────────────────────────────────────────────────
+
+/** Build an O(1) neighbor lookup from edges. */
+function buildNeighborIndex(edges: LineageEdge[]): NeighborIndex {
+  const index: NeighborIndex = {};
+  for (const edge of edges) {
+    if (!index[edge.target]) index[edge.target] = { in: [], out: [] };
+    if (!index[edge.source]) index[edge.source] = { in: [], out: [] };
+    index[edge.target].in.push(edge.source);
+    index[edge.source].out.push(edge.target);
+  }
+  return index;
 }
 
 // ─── Name Parsing ───────────────────────────────────────────────────────────
 
-/** Parse "[schema].[object]" — schema is uppercased for case-insensitive consistency.
+/** Parse "[schema].[object]" — returns catalog-original casing for schema and name.
  *  Uses bracket-aware splitting so dots inside [bracket identifiers] are not treated as
  *  separators (e.g., [spLoadReconciliation_Case4.5] stays as one part). */
 export function parseName(fullName: string): { schema: string; objectName: string } {
   const parts = splitSqlName(fullName).map(p => stripBrackets(p));
   if (parts.length >= 2) {
-    return { schema: parts[0].toUpperCase(), objectName: parts[1] };
+    return { schema: parts[0], objectName: parts[1] };
   }
-  return { schema: 'DBO', objectName: parts[0] };
+  return { schema: 'dbo', objectName: parts[0] };
 }
 
 /** Normalize to lowercase "[schema].[object]" for consistent matching.
@@ -177,10 +216,18 @@ export function buildTableDesignAscii(
 function buildNodesAndEdges(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
+  allObjects?: ExtractedObject[],
 ): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats } {
   // Phase 1: Build nodes
   const nodes: LineageNode[] = [];
   const nodeIds = new Set<string>();
+
+  // Full catalog IDs (includes cross-schema objects) — used to distinguish
+  // "cross-schema known" refs from truly unresolved ones.
+  const allNodeIds = new Set<string>();
+  if (allObjects) {
+    for (const obj of allObjects) allNodeIds.add(normalizeName(obj.fullName));
+  }
 
   for (const obj of objects) {
     const { schema, objectName } = parseName(obj.fullName);
@@ -281,15 +328,19 @@ function buildNodesAndEdges(
       if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
       const depId = normalizeName(dep);
       stats.parsedRefs++;
-      if (depId !== sourceId && nodeIds.has(depId)) {
-        addEdge(edges, edgeKeys, depId, sourceId, 'body');
-        stats.resolvedEdges++;
-        spIn++;
-        const n = nodeMap.get(depId);
-        spInRefs.push(n ? `${n.schema}.${n.name}` : dep);
-      } else if (depId !== sourceId) {
-        spUnrelated.push(dep);
-        stats.droppedRefs.push(`${spLabel} → ${dep}`);
+      if (depId !== sourceId) {
+        if (nodeIds.has(depId)) {
+          addEdge(edges, edgeKeys, depId, sourceId, 'body');
+          stats.resolvedEdges++;
+          spIn++;
+          const n = nodeMap.get(depId);
+          spInRefs.push(n ? `${n.schema}.${n.name}` : dep);
+        } else if (allNodeIds.size > 0 && allNodeIds.has(depId)) {
+          // Known cross-schema object — no edge to selected schema, not unresolved.
+        } else {
+          spUnrelated.push(dep);
+          stats.droppedRefs.push(`${spLabel} → ${dep}`);
+        }
       }
     }
 
@@ -299,15 +350,19 @@ function buildNodesAndEdges(
       if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
       const depId = normalizeName(dep);
       stats.parsedRefs++;
-      if (depId !== sourceId && nodeIds.has(depId)) {
-        addEdge(edges, edgeKeys, sourceId, depId, 'body');
-        stats.resolvedEdges++;
-        spOut++;
-        const n = nodeMap.get(depId);
-        spOutRefs.push(n ? `${n.schema}.${n.name}` : dep);
-      } else if (depId !== sourceId) {
-        spUnrelated.push(dep);
-        stats.droppedRefs.push(`${spLabel} → ${dep}`);
+      if (depId !== sourceId) {
+        if (nodeIds.has(depId)) {
+          addEdge(edges, edgeKeys, sourceId, depId, 'body');
+          stats.resolvedEdges++;
+          spOut++;
+          const n = nodeMap.get(depId);
+          spOutRefs.push(n ? `${n.schema}.${n.name}` : dep);
+        } else if (allNodeIds.size > 0 && allNodeIds.has(depId)) {
+          // Known cross-schema object — no edge to selected schema, not unresolved.
+        } else {
+          spUnrelated.push(dep);
+          stats.droppedRefs.push(`${spLabel} → ${dep}`);
+        }
       }
     }
 
@@ -317,15 +372,19 @@ function buildNodesAndEdges(
       if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
       const depId = normalizeName(dep);
       stats.parsedRefs++;
-      if (depId !== sourceId && nodeIds.has(depId)) {
-        addEdge(edges, edgeKeys, sourceId, depId, 'exec');
-        stats.resolvedEdges++;
-        spOut++;
-        const n = nodeMap.get(depId);
-        spOutRefs.push((n ? `${n.schema}.${n.name}` : dep) + ' (exec)');
-      } else if (depId !== sourceId) {
-        spUnrelated.push(dep + ' (exec)');
-        stats.droppedRefs.push(`${spLabel} → ${dep} (exec)`);
+      if (depId !== sourceId) {
+        if (nodeIds.has(depId)) {
+          addEdge(edges, edgeKeys, sourceId, depId, 'exec');
+          stats.resolvedEdges++;
+          spOut++;
+          const n = nodeMap.get(depId);
+          spOutRefs.push((n ? `${n.schema}.${n.name}` : dep) + ' (exec)');
+        } else if (allNodeIds.size > 0 && allNodeIds.has(depId)) {
+          // Known cross-schema object — no edge to selected schema, not unresolved.
+        } else {
+          spUnrelated.push(dep + ' (exec)');
+          stats.droppedRefs.push(`${spLabel} → ${dep} (exec)`);
+        }
       }
     }
 

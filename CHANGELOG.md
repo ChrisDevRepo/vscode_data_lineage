@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.2] - 2026-03-03
+
+### Added
+- **Cross-schema catalog** — Two-phase DB import now loads a full object catalog in Phase 1 alongside the schema preview. Cross-schema references are correctly classified as known (not unresolved), even when those schemas are not selected for visualization.
+- **Schema-grouped neighbor details** — The dependency detail bar now shows In/Out neighbors grouped by schema name, sorted alphabetically, with a ⊘ indicator for objects not visible in the current graph view (filtered by type, focus-schema, search, or node cap).
+
+### Changed
+- **Catalog-original casing** — Schema and object names are now displayed exactly as defined in the database (e.g. `SalesLT.Customer` instead of `SALESLT.CUSTOMER`).
+
 ## [0.9.1] - 2026-02-25
 
 ### Changed

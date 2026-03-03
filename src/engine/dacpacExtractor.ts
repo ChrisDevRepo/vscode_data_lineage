@@ -27,8 +27,9 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
   const elements = parseElements(xml);
 
   const objects = extractObjects(elements);
+  const allObjects = extractObjectsLightweight(elements);
   const deps = extractDependencies(elements);
-  const model = buildModel(objects, deps);
+  const model = buildModel(objects, deps, allObjects);
 
   // Override warnings for dacpac-specific messages
   const warnings: string[] = [];
@@ -64,18 +65,21 @@ export function extractDacpacFiltered(
   elements: XmlElement[],
   selectedSchemas: Set<string>,
 ): DacpacModel {
-  // Pre-filter elements by schema (uppercased for consistent matching)
-  const upperSchemas = new Set(Array.from(selectedSchemas).map(s => s.toUpperCase()));
+  // Pre-filter elements by schema — case-insensitive comparison so that
+  // e.g. 'SalesLT' selected from the UI matches 'SalesLT' from parseName.
+  const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
   const filtered = elements.filter(el => {
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(el['@_Type'])) return false;
     const { schema } = parseName(name);
-    return upperSchemas.has(schema);
+    return lowerSchemas.has(schema.toLowerCase());
   });
 
+  // Full lightweight catalog for cross-schema resolution
+  const allObjects = extractObjectsLightweight(elements);
   const objects = extractObjects(filtered);
   const deps = extractDependencies(filtered);
-  const model = buildModel(objects, deps);
+  const model = buildModel(objects, deps, allObjects);
 
   const warnings: string[] = [];
   if (model.nodes.length === 0) {
@@ -128,7 +132,9 @@ export function filterBySchemas(
   selectedSchemas: Set<string>,
   maxNodes = 150
 ): DacpacModel {
-  const filtered = model.nodes.filter((n) => selectedSchemas.has(n.schema));
+  // Case-insensitive comparison so UI-provided schema names match model.schemas
+  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
+  const filtered = model.nodes.filter((n) => lowerSelected.has(n.schema.toLowerCase()));
   const limited = filtered.slice(0, maxNodes);
   const nodeIds = new Set(limited.map((n) => n.id));
 
@@ -139,10 +145,37 @@ export function filterBySchemas(
   return {
     nodes: limited,
     edges,
-    schemas: model.schemas.filter((s) => selectedSchemas.has(s.name)),
+    schemas: model.schemas.filter((s) => lowerSelected.has(s.name.toLowerCase())),
+    // Catalog and neighborIndex are preserved from the full model — they cover allObjects
+    // and all edges, which NodeInfoBar needs for correct cross-schema neighbor display.
+    catalog: model.catalog,
+    neighborIndex: model.neighborIndex,
+    caseInsensitive: model.caseInsensitive,
     parseStats: model.parseStats,
     warnings: model.warnings,
   };
+}
+
+// ─── Lightweight Object Extractor (for catalog / allObjects) ────────────────
+
+/**
+ * Extract all tracked objects as lightweight stubs (no body scripts, no columns).
+ * Used to build the full cross-schema catalog for neighbor display and reference
+ * classification (cross-schema-known vs truly-unresolved).
+ */
+function extractObjectsLightweight(elements: XmlElement[]): ExtractedObject[] {
+  const seen = new Set<string>();
+  const objects: ExtractedObject[] = [];
+  for (const el of elements) {
+    const type = el['@_Type'];
+    const name = el['@_Name'];
+    if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
+    const id = normalizeName(name);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    objects.push({ fullName: name, type: ELEMENT_TYPE_MAP[type] });
+  }
+  return objects;
 }
 
 // ─── ZIP + XML ──────────────────────────────────────────────────────────────

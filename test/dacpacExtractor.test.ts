@@ -55,8 +55,14 @@ async function testExtraction() {
 
   // Check schemas match expected
   const schemaNames = model.schemas.map(s => s.name);
-  assert(schemaNames.includes('DBO'), 'Schema "dbo" found');
-  assert(schemaNames.includes('SALES'), 'Schema "SALES" found');
+  assert(schemaNames.includes('dbo'), 'Schema "dbo" found');
+  assert(schemaNames.includes('Sales'), 'Schema "Sales" found (catalog-original casing)');
+
+  // Catalog and neighborIndex populated
+  assert(model.catalog !== undefined, 'Catalog present');
+  assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node');
+  assert(model.neighborIndex !== undefined, 'NeighborIndex present');
+  assert(model.caseInsensitive === true, 'caseInsensitive flag set');
 
   // Check specific known objects
   const nodeNames = model.nodes.map(n => n.fullName);
@@ -72,17 +78,23 @@ async function testExtraction() {
 async function testFiltering(model: Awaited<ReturnType<typeof extractDacpac>>) {
   console.log('\n── Schema Filtering ──');
 
-  const salesLT = filterBySchemas(model, new Set(['SALES']));
-  assert(salesLT.nodes.every(n => n.schema === 'SALES'), 'All filtered nodes are SALES schema');
-  assert(salesLT.nodes.length > 0, `SALES has ${salesLT.nodes.length} nodes`);
+  const salesLT = filterBySchemas(model, new Set(['Sales']));
+  assert(salesLT.nodes.every(n => n.schema === 'Sales'), 'All filtered nodes are Sales schema');
+  assert(salesLT.nodes.length > 0, `Sales has ${salesLT.nodes.length} nodes`);
   assert(salesLT.nodes.length < model.nodes.length, 'Filtered set is smaller than full set');
 
-  const dbo = filterBySchemas(model, new Set(['DBO']));
-  assert(dbo.nodes.every(n => n.schema === 'DBO'), 'All filtered nodes are dbo schema');
+  const dbo = filterBySchemas(model, new Set(['dbo']));
+  assert(dbo.nodes.every(n => n.schema === 'dbo'), 'All filtered nodes are dbo schema');
 
   // Max nodes cap
-  const capped = filterBySchemas(model, new Set(['DBO', 'SALES']), 5);
+  const capped = filterBySchemas(model, new Set(['dbo', 'Sales']), 5);
   assert(capped.nodes.length <= 5, `Capped at ${capped.nodes.length} nodes (max 5)`);
+
+  // filterBySchemas preserves catalog and neighborIndex
+  assert(salesLT.catalog !== undefined, 'filterBySchemas preserves catalog');
+  assert(salesLT.neighborIndex !== undefined, 'filterBySchemas preserves neighborIndex');
+  assert(Object.keys(salesLT.catalog).length >= Object.keys(model.catalog).length,
+    'filterBySchemas catalog is not smaller than full model catalog');
 }
 
 // ─── Edge Integrity ─────────────────────────────────────────────────────────

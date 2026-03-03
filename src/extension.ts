@@ -9,7 +9,7 @@ import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
 } from './engine/connectionManager';
-import type { IConnectionInfo } from './types/mssql';
+import type { IConnectionInfo, SimpleExecuteResult } from './types/mssql';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './engine/dmvExtractor';
 import type { DmvResults } from './engine/dmvExtractor';
 
@@ -267,7 +267,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     type MessageHandlerMap = {
       [K in WebviewMessage['type']]?: (msg: Extract<WebviewMessage, { type: K }>) => Promise<void> | void;
     };
-
+    // Cache the Phase 1 all-objects result for use in Phase 2 (cross-schema resolution).
+    // Scoped to this panel so multiple panels don’t share state.
+    let allObjectsCache: SimpleExecuteResult | undefined;
     const handlers: MessageHandlerMap = {
       'ready': async () => {
         if (loadDemo) {
@@ -354,7 +356,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'db-connect': () => withDbProgress(
         panel, 'Data Lineage: Connecting to database',
         () => promptForConnection(outputChannel),
-        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token),
+        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token,
+          (result) => { allObjectsCache = result; }),
       ),
       'db-reconnect': () => withDbProgress(
         panel, 'Data Lineage: Reconnecting to database',
@@ -367,7 +370,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           }
           return promptForConnection(outputChannel);
         },
-        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token),
+        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token,
+          (result) => { allObjectsCache = result; }),
       ),
       'db-visualize': (msg) => withDbProgress(
         panel, 'Data Lineage: Loading selected schemas',
@@ -382,7 +386,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
           return promptForConnection(outputChannel);
         },
-        (conn, progress, token) => runDbPhase2(panel, context, conn.connectionUri, msg.schemas, progress, token),
+        (conn, progress, token) => runDbPhase2(panel, context, conn.connectionUri, msg.schemas, progress, token, allObjectsCache),
       ),
     };
 
@@ -589,8 +593,10 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
 // ─── Two-Phase DB Extraction ─────────────────────────────────────────────────
 
 /**
- * Phase 1: Connect, run lightweight schema-preview query, send SchemaPreview
- * to webview for schema selection. Disconnects after sending.
+ * Phase 1: Connect, run schema-preview + all-objects queries.
+ * Sends SchemaPreview to webview for schema selection.
+ * Caches the all-objects result via onCacheAllObjects for Phase 2 cross-schema resolution.
+ * Disconnects after sending.
  */
 async function runDbPhase1(
   panel: vscode.WebviewPanel,
@@ -599,6 +605,7 @@ async function runDbPhase1(
   connectionInfo: IConnectionInfo,
   progress: vscode.Progress<{ message?: string; increment?: number }>,
   token: vscode.CancellationToken,
+  onCacheAllObjects: (result: SimpleExecuteResult) => void,
 ): Promise<void> {
   const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
 
@@ -619,9 +626,13 @@ async function runDbPhase1(
   }
 
   progress.report({ message: 'Querying schema overview...' });
-  panel.webview.postMessage({ type: 'db-progress', step: 1, total: 1, label: 'schema-preview' });
+  panel.webview.postMessage({ type: 'db-progress', step: 1, total: 2, label: 'schema-preview' });
 
-  const previewResult = await executeDmvQueries(connectionUri, [previewQuery], outputChannel);
+  // Run schema-preview (always) and all-objects (if available) in parallel
+  const allObjectsQuery = queries.find(q => q.name === 'all-objects');
+  const phase1Queries = allObjectsQuery ? [previewQuery, allObjectsQuery] : [previewQuery];
+
+  const previewResult = await executeDmvQueries(connectionUri, phase1Queries, outputChannel);
 
   if (token.isCancellationRequested) {
     panel.webview.postMessage({ type: 'db-cancelled' });
@@ -634,6 +645,19 @@ async function runDbPhase1(
     if (missing.length > 0) {
       throw new Error(`Schema preview query is missing required columns: ${missing.join(', ')}.`);
     }
+  }
+
+  // Cache the all-objects result for Phase 2 cross-schema resolution
+  if (allObjectsQuery) {
+    const allObjectsResult = previewResult.get('all-objects');
+    if (allObjectsResult) {
+      onCacheAllObjects(allObjectsResult);
+      outputChannel.info(`[DB] Full catalog: ${allObjectsResult.rowCount} objects loaded for cross-schema resolution`);
+    } else {
+      outputChannel.warn('[DB] all-objects query returned no result — cross-schema resolution disabled');
+    }
+  } else {
+    outputChannel.warn('[DB] No all-objects query found in YAML — cross-schema resolution disabled');
   }
 
   const preview = buildSchemaPreview(result!);
@@ -656,7 +680,7 @@ async function runDbPhase1(
 
 /**
  * Phase 2: Reconnect, run filtered DMV queries for selected schemas,
- * build full model, send to webview.
+ * build full model (with cross-schema catalog from Phase 1 allObjects), send to webview.
  */
 async function runDbPhase2(
   panel: vscode.WebviewPanel,
@@ -665,6 +689,7 @@ async function runDbPhase2(
   schemas: string[],
   progress: vscode.Progress<{ message?: string; increment?: number }>,
   token: vscode.CancellationToken,
+  allObjects?: SimpleExecuteResult,
 ): Promise<void> {
   progress.report({ message: 'Loading queries...' });
   const queries = await loadDmvQueries(outputChannel, context.extensionUri);
@@ -701,6 +726,7 @@ async function runDbPhase2(
     nodes: resultMap.get('nodes')!,
     columns: resultMap.get('columns')!,
     dependencies: resultMap.get('dependencies')!,
+    allObjects,
   };
 
   progress.report({ message: 'Building model...' });

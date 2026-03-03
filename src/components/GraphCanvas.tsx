@@ -266,6 +266,13 @@ export function GraphCanvas({
     [displayNodes],
   );
 
+  // IDs of nodes currently rendered in the graph (after all filters: type, focus-schema,
+  // search, maxNodes cap). Used by NodeInfoBar to show ⊘ on neighbors not in view.
+  const visibleNodeIds = useMemo(
+    () => new Set(localNodes.map(n => n.id)),
+    [localNodes],
+  );
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <Toolbar
@@ -444,11 +451,13 @@ export function GraphCanvas({
         <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
       </div>
 
-      {infoBarNodeId && model && graph && (
+      {infoBarNodeId && model && (
         <NodeInfoBar
           nodeId={infoBarNodeId}
-          model={model}
-          graph={graph}
+          catalog={model.catalog}
+          neighborIndex={model.neighborIndex}
+          visibleNodeIds={visibleNodeIds}
+          parseStats={model.parseStats}
           onClose={onCloseInfoBar || (() => {})}
         />
       )}
