@@ -2,6 +2,9 @@
 
 ## [0.9.2] - 2026-03-03
 
+### Fixed
+- Updated dependencies to address security vulnerabilities reported by GitHub
+
 ### Added
 - **Cross-schema catalog** — Two-phase DB import now loads a full object catalog in Phase 1 alongside the schema preview. Cross-schema references are correctly classified as known (not unresolved), even when those schemas are not selected for visualization.
 - **Schema-grouped neighbor details** — The dependency detail bar now shows In/Out neighbors grouped by schema name, sorted alphabetically, with a ⊘ indicator for objects not visible in the current graph view (filtered by type, focus-schema, search, or node cap).
