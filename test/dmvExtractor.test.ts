@@ -355,6 +355,140 @@ function testFallbackBodyDirection() {
   assert(readEdge !== undefined, 'Fallback: unqualified FROM → READ edge (table → SP)');
 }
 
+// ─── Test: Cross-schema EXEC appears in Out with ⊘ when dbo is excluded ─────
+
+function testCrossSchemaNeighborIndex() {
+  console.log('\n── DMV: Cross-Schema Out (EXEC [dbo].[uspLogError] from HumanResources SP) ──');
+
+  // Scenario: user selected HumanResources only — dbo is excluded from the schema filter.
+  // Phase 1 allObjects contains the full catalog including dbo objects.
+  // SP uspUpdateEmployeePersonalInfo:
+  //   UPDATE [HumanResources].[Employee]  → intra-schema write edge
+  //   EXECUTE [dbo].[uspLogError]         → cross-schema exec → Out with ⊘
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const SP_BODY = [
+    'CREATE PROCEDURE [HumanResources].[uspUpdateEmployeePersonalInfo]',
+    '    @BusinessEntityID [int], @NationalIDNumber [nvarchar](15)',
+    'WITH EXECUTE AS CALLER AS BEGIN',
+    '    BEGIN TRY',
+    '        UPDATE [HumanResources].[Employee]',
+    '        SET [NationalIDNumber] = @NationalIDNumber',
+    '        WHERE [BusinessEntityID] = @BusinessEntityID;',
+    '    END TRY',
+    '    BEGIN CATCH',
+    '        EXECUTE [dbo].[uspLogError];',
+    '    END CATCH;',
+    'END;',
+  ].join('\n');
+
+  const nodesRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('Employee'), cell('U '), nullCell()],
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P '), cell(SP_BODY)],
+  ];
+
+  // Phase 2 deps — referencing_schema = HumanResources so both rows pass the schema filter
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('HumanResources'), cell('Employee')],
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('dbo'), cell('uspLogError')],
+  ];
+
+  // Phase 1 allObjects — full catalog incl. dbo (dbo was not selected, but Phase 1 sees everything)
+  const allObjCols = cols('schema_name', 'object_name', 'type_code');
+  const allObjRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('Employee'), cell('U ')],
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P ')],
+    [cell('dbo'), cell('uspLogError'), cell('P ')],
+    [cell('dbo'), cell('ErrorLog'), cell('U ')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+    allObjects: makeResult(allObjCols, allObjRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  const spId = '[humanresources].[uspupdateemployeepersonalinfo]';
+  const empId = '[humanresources].[employee]';
+  const logErrId = '[dbo].[usplogerror]';
+
+  // Only HumanResources nodes rendered
+  assertEq(model.nodes.length, 2, 'Only HumanResources nodes rendered (dbo excluded)');
+  assert(!model.nodes.some(n => n.schema === 'dbo'), 'No dbo node in graph');
+
+  // No graph edge to dbo — it is outside the filter
+  assert(!model.edges.some(e => e.source === logErrId || e.target === logErrId),
+    'No graph edge to [dbo].[uspLogError]');
+
+  // Intra-schema write edge must exist
+  assert(model.edges.some(e => e.source === spId && e.target === empId),
+    'Intra-schema write edge SP → Employee exists');
+
+  // Key: cross-schema exec must appear in neighborIndex.out with ⊘
+  const spN = model.neighborIndex[spId];
+  assert(spN !== undefined, 'neighborIndex entry exists for SP');
+  assert(spN?.out.includes(logErrId),
+    `SP.out includes [dbo].[uspLogError] (got: ${JSON.stringify(spN?.out)})`);
+
+  // Reverse: dbo.uspLogError.in points back to SP
+  const logErrN = model.neighborIndex[logErrId];
+  assert(logErrN !== undefined, 'neighborIndex entry exists for [dbo].[uspLogError]');
+  assert(logErrN?.in.includes(spId),
+    `[dbo].[uspLogError].in includes SP (got: ${JSON.stringify(logErrN?.in)})`);
+
+  // catalog must contain dbo objects for display name resolution
+  const logErrC = model.catalog[logErrId];
+  assert(logErrC !== undefined, 'catalog contains [dbo].[uspLogError]');
+  assertEq(logErrC?.schema, 'dbo', 'catalog[dbo.uspLogError].schema');
+  assertEq(logErrC?.name, 'uspLogError', 'catalog[dbo.uspLogError].name');
+  assertEq(logErrC?.type, 'procedure', 'catalog[dbo.uspLogError].type');
+}
+
+// ─── Test: Cross-schema dep in Unresolved when allObjects absent ─────────────
+
+function testCrossSchemaUnresolvedWhenNoAllObjects() {
+  console.log('\n── DMV: Cross-schema dep → Unresolved when allObjects absent ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P '),
+      cell('CREATE PROCEDURE [HumanResources].[uspUpdateEmployeePersonalInfo] AS BEGIN EXECUTE [dbo].[uspLogError]; END')],
+  ];
+
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('dbo'), cell('uspLogError')],
+  ];
+
+  // allObjects intentionally absent — simulates Phase 1 not having all-objects query
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+  const spId = '[humanresources].[uspupdateemployeepersonalinfo]';
+
+  // Metadata dep must surface in Unresolved — never silently dropped
+  const detail = model.parseStats?.spDetails.find(d => d.name.toLowerCase() === 'humanresources.uspupdateemployeepersonalinfo');
+  assert(detail !== undefined, 'spDetails entry found for SP');
+  const hasUnresolved = detail?.unrelated.some(r => r.toLowerCase().includes('usplogerror'));
+  assert(hasUnresolved === true,
+    `spDetails.unrelated contains uspLogError (got: ${JSON.stringify(detail?.unrelated)})`);
+
+  // No neighborIndex entry for dbo.uspLogError (cannot create one without catalog)
+  const logErrId = '[dbo].[usplogerror]';
+  assert(model.neighborIndex[logErrId] === undefined,
+    'No neighborIndex entry for unknown dbo.uspLogError when allObjects absent');
+}
+
 // ─── Run ────────────────────────────────────────────────────────────────────
 
 testBuildModelFromDmv();
@@ -364,6 +498,8 @@ testFormatColumnType();
 testDuplicateNodes();
 testSelfReferenceExcluded();
 testFallbackBodyDirection();
+testCrossSchemaNeighborIndex();
+testCrossSchemaUnresolvedWhenNoAllObjects();
 
 console.log(`\n═══ DMV Extractor: ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);
