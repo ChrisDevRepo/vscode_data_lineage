@@ -42,7 +42,7 @@ export interface IConnectionInfo {
   server: string;
   database: string;
   user: string;
-  password: string;
+  password?: string;
   authenticationType: string;
   email?: string;
   accountId?: string;

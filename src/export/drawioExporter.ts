@@ -1,7 +1,7 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TYPE_COLORS, hashString, SCHEMA_COLORS_LIGHT } from '../utils/schemaColors';
+import { TYPE_COLORS, getSchemaColor } from '../utils/schemaColors';
 
 // ─── Draw.io Cell Types ─────────────────────────────────────────────────────
 
@@ -48,10 +48,6 @@ const NODE_W = 180;
 const NODE_H = 70;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getSchemaColor(schema: string): string {
-  return SCHEMA_COLORS_LIGHT[Math.abs(hashString(schema)) % SCHEMA_COLORS_LIGHT.length];
-}
 
 /** Escape user-provided text for safe HTML embedding inside Draw.io labels. */
 function esc(s: string): string {
@@ -112,7 +108,7 @@ function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nex
   // One row per schema: colored square + label
   for (let i = 0; i < schemas.length; i++) {
     const y = padY + headerH + i * rowH + 10;
-    const color = getSchemaColor(schemas[i]);
+    const color = getSchemaColor(schemas[i], true);
 
     // Colored square
     cells.push({
@@ -195,7 +191,7 @@ export function exportToDrawio(
     const nodeId = String(nextId++);
     idMap.set(node.id, nodeId);
 
-    const schemaColor = getSchemaColor(d.schema);
+    const schemaColor = getSchemaColor(d.schema, true);
 
     nodeObjects.push({
       '@_id': nodeId,

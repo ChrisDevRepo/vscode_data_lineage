@@ -10,6 +10,9 @@ import { DacpacModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './type
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 60;
 
+/** Typed tuple for React Flow edge label background padding. */
+const LABEL_BG_PAD: [number, number] = [4, 4];
+
 /** Collect edges that flow between depth levels in the BFS direction.
  *  Upstream edges: A→B where A.depth > B.depth (further → closer to origin).
  *  Downstream edges: A→B where B.depth > A.depth (closer → further from origin).
@@ -409,7 +412,7 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         label: '⇄',
         labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
         labelBgStyle: { fill: 'transparent' },
-        labelBgPadding: [4, 4] as [number, number],
+        labelBgPadding: LABEL_BG_PAD,
         style: {
           stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,

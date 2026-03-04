@@ -6,11 +6,12 @@
 - Updated dependencies to address security vulnerabilities reported by GitHub
 
 ### Added
-- **Cross-schema catalog** — Two-phase DB import now loads a full object catalog in Phase 1 alongside the schema preview. Cross-schema references are correctly classified as known (not unresolved), even when those schemas are not selected for visualization.
-- **Schema-grouped neighbor details** — The dependency detail bar now shows In/Out neighbors grouped by schema name, sorted alphabetically, with a ⊘ indicator for objects not visible in the current graph view (filtered by type, focus-schema, search, or node cap).
+- **View/function parser supplement** — body parser runs as fallback for views and functions; dependencies found beyond MS metadata are added to the graph.
+- **Cross-schema catalog** — Phase 1 DB import pre-loads the full object catalog; cross-schema references from unselected schemas resolve correctly instead of being marked unresolved.
+- **Schema-grouped neighbor details** — In/Out neighbor list groups by schema, sorted alphabetically; ⊘ marks objects not visible in the current view.
 
 ### Changed
-- **Catalog-original casing** — Schema and object names are now displayed exactly as defined in the database (e.g. `SalesLT.Customer` instead of `SALESLT.CUSTOMER`).
+- **Catalog-original casing** — Schema and object names displayed exactly as defined in the database.
 
 ## [0.9.1] - 2026-02-25
 

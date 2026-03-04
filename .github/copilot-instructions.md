@@ -30,7 +30,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All tests (344 unit + 54 tsql-complex)
+npm test         # All unit tests (374 unit + 54 tsql-complex)
 ```
 
 Press F5 to launch Extension Development Host.
@@ -39,22 +39,23 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 43 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security |
-| `test/graphBuilder.test.ts` | 47 | Graph construction, layout, BFS trace, co-writer filter |
-| `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 12 rules + edge cases + cleansing pipeline + regression guards |
+| `test/dacpacExtractor.test.ts` | 49 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security |
+| `test/graphBuilder.test.ts` | 51 | Graph construction, layout, BFS trace, co-writer filter |
+| `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 13 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `test/dmvExtractor.test.ts` | 53 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
+| `test/dmvExtractor.test.ts` | 73 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/webview.integration.test.ts` | — | VS Code integration tests |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run all tests (344 unit + 54 tsql-complex)
+npm test                  # Run all unit tests
 npm run test:integration  # Run VS Code tests
 ```
 
 Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `customer-data/` (gitignored).
+
 
 ## Code Rules
 
@@ -77,7 +78,9 @@ Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open
 
 ## SQL Parse Rules
 
-Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 12 rules across 4 categories: preprocessing, source, target, exec). Views/functions use dacpac XML dependencies directly.
+Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 13 rules across 4 categories: preprocessing, source, target, exec).
+
+Views/functions use MS metadata as the primary source (dacpac XML `BodyDependencies` / `sys.sql_expression_dependencies`). As a supplement, `modelBuilder.ts` also runs the parser on their body scripts to catch any gaps in MS metadata — only the **delta** (parser findings beyond what metadata already captured) is recorded in `spDetails` (as `inRefs`) and surfaced in the NodeInfoBar detail panel. SQL Server XML type method calls (`nodes`, `value`, `exist`, `query`, `modify`) are recognized by the supplement and skipped — they look like `[alias].[method]` to the parser but are never real catalog references.
 
 When regex misses a dep that MS metadata (XML/DMV) knows about, a fallback in `modelBuilder.ts` applies:
 - Procedure dep → EXEC outbound edge
@@ -146,9 +149,8 @@ Rule authors write patterns that capture the raw SQL name — normalization is h
 When modifying `assets/defaultParseRules.yaml` or `sqlBodyParser.ts`: run full 3-dacpac baseline comparison (301 SPs). `npm test` alone is not sufficient.
 
 ```bash
-npx tsx tmp/snapshot-deps.ts 2>/dev/null > tmp/baseline.tsv   # before
-# apply change
-npx tsx tmp/snapshot-deps.ts 2>/dev/null > tmp/after.tsv      # after
-diff tmp/baseline.tsv tmp/after.tsv                            # must be empty or positive only
-npm test                                                        # all suites must pass
+# run full 3-dacpac baseline comparison before and after changes
+# see .claude/ docs for snapshot tooling details
+diff tmp/baseline.tsv tmp/after.tsv   # must be empty or positive only
+npm test                               # all suites must pass
 ```

@@ -10,6 +10,7 @@ build/
 *.vsix
 
 # Testing
+test-internal/
 customer-data/
 .vscode-test/
 coverage/

@@ -59,8 +59,8 @@ export function hashString(str: string): number {
   return hash;
 }
 
-export function getSchemaColor(schema: string): string {
-  const colors = isDarkTheme() ? SCHEMA_COLORS_DARK : SCHEMA_COLORS_LIGHT;
+export function getSchemaColor(schema: string, forceLight?: boolean): string {
+  const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
   const idx = Math.abs(hashString(schema)) % colors.length;
   return colors[idx];
 }

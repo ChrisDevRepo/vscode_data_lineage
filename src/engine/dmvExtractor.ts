@@ -178,6 +178,11 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
     const depSchema = cellValue(row, depColIdx, 'referenced_schema');
     const depName = cellValue(row, depColIdx, 'referenced_name');
 
+    // Only schema-qualified references are supported (schema.object minimum).
+    // Unqualified references (referenced_schema_name IS NULL in DMV) are rejected —
+    // SQL Server's default-schema resolution is caller-dependent and not reliable.
+    if (!depSchema) continue;
+
     deps.push({
       sourceName: `[${refSchema}].[${refName}]`,
       targetName: `[${depSchema}].[${depName}]`,

@@ -150,5 +150,9 @@ function renderMeta(
       return `${meta.from} → ${meta.to}`;
     case 'cycles':
       return `${meta.count} node${Number(meta.count) !== 1 ? 's' : ''}`;
+    default: {
+      const _exhaustive: never = type;
+      return String(_exhaustive);
+    }
   }
 }

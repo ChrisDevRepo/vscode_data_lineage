@@ -42,7 +42,6 @@ export function buildModel(
 
   return {
     nodes, edges, schemas, catalog, neighborIndex,
-    caseInsensitive: true,
     parseStats: stats,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
@@ -126,6 +125,10 @@ function isSchemaQualified(name: string): boolean {
  *  msdb/tempdb/model/master are SQL Server system databases whose schemas (dbo, etc.)
  *  are commonly referenced in SPs but are never part of user lineage. */
 const SYSTEM_SCHEMAS = new Set(['sys', 'information_schema', 'msdb', 'tempdb', 'model', 'master']);
+
+/** SQL Server XML data type methods that look like schema.object to the parser.
+ *  e.g. [ref].[value], [resume].[nodes] — never real catalog references. */
+const XML_METHODS = new Set(['nodes', 'value', 'exist', 'query', 'modify']);
 
 /** True when the schema prefix of a schema-qualified name is a system schema. */
 function isSystemRef(name: string): boolean {
@@ -283,7 +286,16 @@ function buildNodesAndEdges(
     const targetId = normalizeName(dep.targetName);
 
     if (sourceId === targetId) continue;
-    if (!nodeIds.has(sourceId)) continue;
+
+    if (!nodeIds.has(sourceId)) {
+      // Source is from an unselected schema (possible when the deps query includes OR referenced_schema).
+      // If source is in the full catalog and target IS a selected node, record as an inbound
+      // cross-schema neighbor: target is upstream data for the unselected source object.
+      if (allNodeIds.size > 0 && allNodeIds.has(sourceId) && nodeIds.has(targetId)) {
+        neighborPairs.push({ source: targetId, target: sourceId }); // target feeds source (default: read)
+      }
+      continue;
+    }
 
     if (nodeIds.has(targetId)) {
       if (!depsPerSource.has(sourceId)) depsPerSource.set(sourceId, []);
@@ -316,6 +328,63 @@ function buildNodesAndEdges(
       for (const csDepId of crossSchemaDepsForNode.get(sourceId) ?? []) {
         neighborPairs.push({ source: csDepId, target: sourceId });
       }
+
+      // Views and functions: parser supplement — MS metadata is primary source.
+      // Parser runs as fallback; only differences beyond metadata are recorded.
+      // All parser-found refs are inbound (views/functions never write).
+      // Logs: edges added beyond metadata (inRefs), unresolvable refs (unrelated).
+      if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
+        const parsed = parseSqlBody(node.bodyScript);
+        const xmlDepIds = new Set(xmlDeps);
+        const spLabel = `${node.schema}.${node.name}`;
+        const spParserAdded: string[] = []; // edges added by parser beyond MS metadata
+        const spUnrelated: string[] = [];
+        const spSkipped: string[] = [];
+
+        for (const dep of parsed.sources) {
+          if (!isSchemaQualified(dep)) { spSkipped.push(dep); continue; }
+          if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
+          const depId = normalizeName(dep);
+          if (depId === sourceId || xmlDepIds.has(depId)) continue; // already from metadata — no delta
+          stats.parsedRefs++;
+          if (nodeIds.has(depId)) {
+            addEdge(edges, edgeKeys, depId, sourceId, 'body');
+            stats.resolvedEdges++;
+            const n = nodeMap.get(depId);
+            spParserAdded.push(n ? `${n.schema}.${n.name}` : dep); // log the delta
+          } else if (allNodeIds.size > 0 && allNodeIds.has(depId)) {
+            neighborPairs.push({ source: depId, target: sourceId });
+          } else {
+            // Not in any catalog. Skip SQL Server XML type method calls
+            // (e.g. [ref].[value], [resume].[nodes]) — they look like schema.object
+            // to the parser but are never real catalog references.
+            const parts = splitSqlName(dep);
+            const objPart = stripBrackets(parts[parts.length - 1]).toLowerCase();
+            if (XML_METHODS.has(objPart)) { spSkipped.push(dep); continue; }
+            spUnrelated.push(dep);
+            stats.droppedRefs.push(`${spLabel} → ${dep}`);
+          }
+        }
+
+        // Surface metadata refs not in any catalog (previously silently dropped for non-SPs)
+        for (const rawName of unresolvableDepsForNode.get(sourceId) ?? []) {
+          spUnrelated.push(rawName);
+          stats.droppedRefs.push(`${spLabel} → ${rawName}`);
+        }
+
+        // Only emit a spDetails entry when there is something to report (delta only)
+        if (spParserAdded.length > 0 || spUnrelated.length > 0 || spSkipped.length > 0) {
+          stats.spDetails.push({
+            name: spLabel,
+            inCount: spParserAdded.length,
+            outCount: 0,
+            ...(spParserAdded.length > 0 && { inRefs: spParserAdded }),
+            unrelated: spUnrelated,
+            ...(spSkipped.length > 0 && { skippedRefs: spSkipped }),
+          });
+        }
+      }
+
       continue;
     }
 

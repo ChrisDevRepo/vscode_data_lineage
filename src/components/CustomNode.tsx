@@ -27,7 +27,7 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
     `${data.schema}.${data.label}`,
     `Object Type: ${TYPE_LABELS[data.objectType]}`,
     `In: ${data.inDegree} | Out: ${data.outDegree}`,
-  ].filter(Boolean).join('\n');
+  ].join('\n');
 
   return (
     <div

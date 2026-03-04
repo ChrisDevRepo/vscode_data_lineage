@@ -62,7 +62,6 @@ async function testExtraction() {
   assert(model.catalog !== undefined, 'Catalog present');
   assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node');
   assert(model.neighborIndex !== undefined, 'NeighborIndex present');
-  assert(model.caseInsensitive === true, 'caseInsensitive flag set');
 
   // Check specific known objects
   const nodeNames = model.nodes.map(n => n.fullName);

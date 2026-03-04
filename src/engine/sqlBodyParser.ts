@@ -132,7 +132,7 @@ export interface LoadRulesResult {
 
 const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec']);
 
-function validateRule(rule: unknown, index: number): { valid: boolean; name: string; error?: string } {
+function validateRule(rule: unknown, index: number): { valid: true; name: string } | { valid: false; name: string; error: string } {
   const r = rule as Record<string, unknown>;
   const name = typeof r?.name === 'string' ? r.name : `rule[${index}]`;
 
@@ -180,7 +180,7 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
       validRules.push(raw as ParseRule);
     } else {
       result.skipped.push(check.name);
-      result.errors.push(check.error!);
+      result.errors.push(check.error);
     }
   }
 

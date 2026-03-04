@@ -64,8 +64,6 @@ export interface DacpacModel {
   catalog: Record<string, CatalogEntry>;
   /** O(1) in/out neighbor lookup derived from model.edges. */
   neighborIndex: NeighborIndex;
-  /** Always true — SQL Server is case-insensitive by default. */
-  caseInsensitive: boolean;
   parseStats?: ParseStats;
   warnings?: string[];
 }

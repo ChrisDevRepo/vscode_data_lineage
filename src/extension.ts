@@ -162,7 +162,8 @@ export function activate(context: vscode.ExtensionContext) {
         const doc = await vscode.workspace.openTextDocument(targetUri);
         await vscode.window.showTextDocument(doc);
         return;
-      } catch {
+      } catch (err) {
+        if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
         // File doesn't exist, create it
       }
 
@@ -195,7 +196,8 @@ export function activate(context: vscode.ExtensionContext) {
         const doc = await vscode.workspace.openTextDocument(targetUri);
         await vscode.window.showTextDocument(doc);
         return;
-      } catch {
+      } catch (err) {
+        if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
         // File doesn't exist, create it
       }
 
@@ -388,6 +390,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         },
         (conn, progress, token) => runDbPhase2(panel, context, conn.connectionUri, msg.schemas, progress, token, allObjectsCache),
       ),
+      'reload': () => {
+        panel.dispose();
+        openPanel(context, title, loadDemo);
+      },
     };
 
     panel.webview.onDidReceiveMessage(
@@ -434,6 +440,7 @@ type WebviewMessage =
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
   | { type: 'db-reconnect' }
+  | { type: 'reload' }
   | { type: 'db-visualize'; schemas: string[] };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
@@ -876,9 +883,10 @@ function handleParseStats(stats: {
   const spDetails = stats.spDetails || [];
   const spCount = spDetails.length;
 
-  // Debug level: opener + one line per SP + closer
+  // Debug level: opener + one line per object + closer
+  // spDetails covers SPs (full regex parse) and views/functions (parser supplement — delta only).
   if (spCount > 0) {
-    outputChannel.debug(`[Parse] Starting — ${spCount} procedure(s) with ${lastRulesLabel}`);
+    outputChannel.debug(`[Parse] Starting — ${spCount} object(s) with ${lastRulesLabel}`);
   }
   for (const sp of spDetails) {
     const inLabel = sp.inRefs && sp.inRefs.length > 0 ? sp.inRefs.join(', ') : String(sp.inCount);
@@ -897,9 +905,13 @@ function handleParseStats(stats: {
     outputChannel.debug(`[Parse] Done — ${stats.resolvedEdges} resolved, ${stats.droppedRefs.length} dropped (${distinctDroppedCount} distinct unrelated)`);
   }
 
-  // Warn: SPs with no inputs and no outputs AND no unresolved catalog refs.
+  // Warn: procedures with no inputs and no outputs AND no unresolved catalog refs.
+  // Exclude entries that have body refs but they were all skipped (e.g. XML method calls for views).
   // Exclude SPs that do have body refs but they fall outside the selected schemas.
-  const empty = spDetails.filter(sp => sp.inCount === 0 && sp.outCount === 0 && sp.unrelated.length === 0);
+  const empty = spDetails.filter(sp =>
+    sp.inCount === 0 && sp.outCount === 0 && sp.unrelated.length === 0 &&
+    !(sp.skippedRefs && sp.skippedRefs.length > 0)
+  );
   if (empty.length > 0) {
     outputChannel.warn(`[Parse] ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
   }
@@ -907,9 +919,9 @@ function handleParseStats(stats: {
   // Info level: canonical summary (last line — contains everything the user needs)
   const distinctDropped = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
   if (objectCount !== undefined && objectCount > 0) {
-    outputChannel.info(`[Summary] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
+    outputChannel.info(`[Summary] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
   } else if (objectCount === undefined) {
-    outputChannel.info(`[Summary] ${lastRulesLabel}, ${spCount} procedures parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
+    outputChannel.info(`[Summary] ${lastRulesLabel}, ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
   }
   // objectCount === 0: no [Summary] line — UI already shows a warning
 }

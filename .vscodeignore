@@ -23,6 +23,16 @@ node_modules/**
 docs/**
 CONTRIBUTING.md
 
+# Integration test infrastructure (internal only — never in VSIX)
+scripts/**
+
+# Internal test infrastructure (gitignored, must not leak into VSIX)
+test-internal/**
+
+# Environment files (must never be packaged)
+.env
+.env.*
+
 # Misc
 PLAN*.md
 CLAUDE.md

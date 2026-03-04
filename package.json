@@ -313,7 +313,8 @@
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
     "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts",
-    "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
+    "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts",
+    "test:db": "tsx test-internal/integration-db.test.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
@@ -331,7 +332,10 @@
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
+    "@types/mssql": "^9",
     "@types/mocha": "^10.0.10",
+    "dotenv": "^16",
+    "mssql": "^11",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

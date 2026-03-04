@@ -150,7 +150,6 @@ export function filterBySchemas(
     // and all edges, which NodeInfoBar needs for correct cross-schema neighbor display.
     catalog: model.catalog,
     neighborIndex: model.neighborIndex,
-    caseInsensitive: model.caseInsensitive,
     parseStats: model.parseStats,
     warnings: model.warnings,
   };
@@ -250,7 +249,7 @@ function extractObjects(elements: XmlElement[]): ExtractedObject[] {
   return objects;
 }
 
-function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
+export function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   const deps: ExtractedDependency[] = [];
 
   for (const el of elements) {
@@ -321,26 +320,49 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
 
 // ─── XML Body Dependencies ──────────────────────────────────────────────────
 
+// Relationship names that carry object-level dependencies.
+// ExpressionDependencies: computed column expressions in SqlTable (nested inside SqlComputedColumn).
+// CheckExpressionDependencies: CHECK constraint expressions calling UDFs.
+const DEPENDENCY_RELATIONSHIPS = new Set([
+  'BodyDependencies',
+  'QueryDependencies',
+  'ExpressionDependencies',
+  'CheckExpressionDependencies',
+]);
+
 function extractBodyDependencies(el: XmlElement): string[] {
   const deps: string[] = [];
-  const rels = asArray(el.Relationship);
+  collectDeps(el, deps);
+  return deps;
+}
 
+// Recursively collects object-level dependency references from all known
+// dependency relationship types, including those nested inside child elements
+// (e.g. SqlComputedColumn inside a table's Columns relationship).
+function collectDeps(el: XmlElement, deps: string[]): void {
+  const rels = asArray(el.Relationship);
   for (const rel of rels) {
-    if (rel['@_Name'] !== 'BodyDependencies' && rel['@_Name'] !== 'QueryDependencies') continue;
     const entries = asArray(rel.Entry);
-    for (const entry of entries) {
-      const refs = asArray(entry.References as XmlReference | XmlReference[] | undefined);
-      for (const ref of refs) {
-        if (ref['@_ExternalSource']) continue;
-        const refName = ref['@_Name'];
-        if (!refName) continue;
-        if (isObjectLevelRef(refName)) {
-          deps.push(refName);
+    if (DEPENDENCY_RELATIONSHIPS.has(rel['@_Name'])) {
+      for (const entry of entries) {
+        const refs = asArray(entry.References as XmlReference | XmlReference[] | undefined);
+        for (const ref of refs) {
+          if (ref['@_ExternalSource']) continue;
+          const refName = ref['@_Name'];
+          if (!refName) continue;
+          if (isObjectLevelRef(refName)) {
+            deps.push(refName);
+          }
         }
       }
     }
+    // Recurse into nested Element children (e.g. SqlComputedColumn inside Columns)
+    for (const entry of entries) {
+      for (const child of asArray(entry.Element as XmlElement | XmlElement[] | undefined)) {
+        collectDeps(child, deps);
+      }
+    }
   }
-  return deps;
 }
 
 // ─── XML Body Script Extraction ─────────────────────────────────────────────

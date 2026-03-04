@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { CloseIcon } from './ui/CloseIcon';
 
@@ -9,6 +9,7 @@ interface HelpModalProps {
 
 export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalProps) {
   const vscodeApi = useVsCode();
+  const [logoError, setLogoError] = useState(false);
   if (!isOpen) return null;
 
   return (
@@ -31,19 +32,16 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             </button>
           </div>
           <div className="flex flex-col items-center text-center gap-4">
-            <img
-              src={window.LOGO_URI || '../images/logo.png'}
-              alt="Data Lineage Viz"
-              className="h-16 w-auto"
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-                const fallback = document.createElement('div');
-                fallback.className = 'text-3xl font-bold ln-text';
-                fallback.textContent = 'Data Lineage Viz';
-                target.parentElement?.appendChild(fallback);
-              }}
-            />
+            {logoError ? (
+              <div className="text-3xl font-bold ln-text">Data Lineage Viz</div>
+            ) : (
+              <img
+                src={window.LOGO_URI || '../images/logo.png'}
+                alt="Data Lineage Viz"
+                className="h-16 w-auto"
+                onError={() => setLogoError(true)}
+              />
+            )}
             <div>
               <p className="text-base ln-text-muted">
                 SQL Server Database Project Dependency Viewer
