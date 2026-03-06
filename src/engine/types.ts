@@ -1,6 +1,6 @@
 // ─── Core Types ──────────────────────────────────────────────────────────────
 
-export type ObjectType = 'table' | 'view' | 'procedure' | 'function';
+export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
 
 export interface LineageNode {
   id: string;            // "[schema].[name]"
@@ -9,6 +9,7 @@ export interface LineageNode {
   fullName: string;      // "[schema].[name]" as in dacpac
   type: ObjectType;
   bodyScript?: string;   // SQL body for SPs/Views/UDFs
+  externalKind?: 'et' | 'openrowset' | 'cross_db'; // set for type === 'external'
 }
 
 export interface LineageEdge {
@@ -122,6 +123,7 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
   SqlInlineTableValuedFunction: 'function',
   SqlMultiStatementTableValuedFunction: 'function',
   SqlTableValuedFunction: 'function',
+  // 'SqlExternalTable': 'external',  // dacpac v2 — element name TBC, needs test dacpac with ET
 };
 
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
@@ -133,6 +135,18 @@ export interface ColumnDef {
   type: string;
   nullable: string;
   extra: string;
+  unique?: string;  // UQ constraint name when column participates; display shows "UQ" flag
+  check?: string;   // CK constraint name for column-level check; display shows "CK" flag
+}
+
+/** Foreign key constraint metadata — attached to table ExtractedObject (DMV path). */
+export interface ForeignKeyInfo {
+  name: string;          // constraint name (display casing)
+  columns: string[];     // parent column names (multi-col FK in column_ordinal order)
+  refSchema: string;     // referenced schema
+  refTable: string;      // referenced table
+  refColumns: string[];  // referenced column names (same order as columns[])
+  onDelete: string;      // referential action: NO ACTION | CASCADE | SET NULL | SET DEFAULT
 }
 
 // ─── Shared Column Helpers (used by both dacpac + DMV extractors) ────────────
@@ -196,7 +210,9 @@ export interface ExtractedObject {
   fullName: string;       // "[Schema].[Name]"
   type: ObjectType;
   bodyScript?: string;
-  columns?: ColumnDef[];  // table column metadata (for table design view)
+  columns?: ColumnDef[];          // table column metadata (for table design view)
+  fks?: ForeignKeyInfo[];         // FK constraints (DMV path only; undefined on dacpac path)
+  externalKind?: 'et' | 'openrowset' | 'cross_db'; // set when type === 'external'
 }
 
 export interface ExtractedDependency {
@@ -213,6 +229,7 @@ export const DMV_TYPE_MAP: Record<string, ObjectType> = {
   'FN': 'function',
   'IF': 'function',
   'TF': 'function',
+  'ET': 'external',  // External Table (PolyBase / data virtualization)
 };
 
 // ─── Extension Config (from VS Code settings) ──────────────────────────────

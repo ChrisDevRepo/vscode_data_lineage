@@ -15,6 +15,7 @@ import {
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
+  ForeignKeyInfo,
   CatalogEntry,
   NeighborIndex,
 } from './types';
@@ -191,7 +192,7 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
       info = {
         name: node.schema,
         nodeCount: 0,
-        types: { table: 0, view: 0, procedure: 0, function: 0 },
+        types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 },
       };
       map.set(key, info);
     }
@@ -207,34 +208,81 @@ function buildTableDesignAscii(
   cols: ColumnDef[],
   schema: string,
   objectName: string,
+  fks?: ForeignKeyInfo[],
 ): string {
   if (cols.length === 0) return `-- No column metadata for [${schema}].[${objectName}]`;
 
-  const hasExtra = cols.some(c => c.extra);
-  const hCol = 'Column', hType = 'Type', hNull = 'Nullable', hExtra = '';
-  const wName = Math.max(hCol.length, ...cols.map(c => c.name.length));
-  const wType = Math.max(hType.length, ...cols.map(c => c.type.length));
-  const wNull = Math.max(hNull.length, ...cols.map(c => c.nullable.length));
-  const wExtra = hasExtra ? Math.max(hExtra.length, ...cols.map(c => c.extra.length)) : 0;
+  const hasExtra  = cols.some(c => c.extra);
+  const hasUnique = cols.some(c => c.unique);
+  const hasCheck  = cols.some(c => c.check);
+
+  const hCol = 'Column', hType = 'Type', hNull = 'Nullable';
+  const wName  = Math.max(hCol.length,  ...cols.map(c => c.name.length));
+  const wType  = Math.max(hType.length, ...cols.map(c => c.type.length));
+  const wNull  = Math.max(hNull.length, ...cols.map(c => c.nullable.length));
+  const wExtra = hasExtra  ? Math.max(0, ...cols.map(c => c.extra.length))  : 0;
+  const wUq    = hasUnique ? 2 : 0;  // "UQ" flag — fixed width
+  const wCk    = hasCheck  ? 2 : 0;  // "CK" flag — fixed width
 
   const sep = (f: string) => {
     let s = `-- +${f.repeat(wName + 2)}+${f.repeat(wType + 2)}+${f.repeat(wNull + 2)}+`;
-    if (hasExtra) s += `${f.repeat(wExtra + 2)}+`;
+    if (hasExtra)  s += `${f.repeat(wExtra + 2)}+`;
+    if (hasUnique) s += `${f.repeat(wUq + 2)}+`;
+    if (hasCheck)  s += `${f.repeat(wCk + 2)}+`;
     return s;
   };
-  const row = (n: string, t: string, nu: string, ex: string) => {
+  const row = (n: string, t: string, nu: string, ex: string, uq: string, ck: string) => {
     let s = `-- | ${n.padEnd(wName)} | ${t.padEnd(wType)} | ${nu.padEnd(wNull)} |`;
-    if (hasExtra) s += ` ${ex.padEnd(wExtra)} |`;
+    if (hasExtra)  s += ` ${ex.padEnd(wExtra)} |`;
+    if (hasUnique) s += ` ${uq.padEnd(wUq)} |`;
+    if (hasCheck)  s += ` ${ck.padEnd(wCk)} |`;
     return s;
   };
 
   const out: string[] = [];
   out.push(`-- TABLE: [${schema}].[${objectName}]`);
   out.push(sep('-'));
-  out.push(row(hCol, hType, hNull, hExtra));
+  // Header row: include UQ/CK column headers only when the columns are shown
+  const hExtra = hasExtra  ? '' : '';
+  const hUq    = hasUnique ? 'UQ' : '';
+  const hCk    = hasCheck  ? 'CK' : '';
+  out.push(row(hCol, hType, hNull, hExtra, hUq, hCk));
   out.push(sep('-'));
-  for (const c of cols) out.push(row(c.name, c.type, c.nullable, c.extra));
+  for (const c of cols) {
+    out.push(row(c.name, c.type, c.nullable, c.extra ?? '', c.unique ? 'UQ' : '', c.check ? 'CK' : ''));
+  }
   out.push(sep('-'));
+
+  // FK section — only when FK data is present
+  if (fks && fks.length > 0) {
+    const hCon  = 'Constraint';
+    const hCols = 'Column(s)';
+    const hRef  = 'References';
+    const hDel  = 'On Delete';
+
+    const fkDisplayCols = fks.map(fk => fk.columns.join(', '));
+    const fkDisplayRefs = fks.map(fk => `[${fk.refSchema}].[${fk.refTable}](${fk.refColumns.join(', ')})`);
+
+    const wCon  = Math.max(hCon.length,  ...fks.map(fk => fk.name.length));
+    const wCols = Math.max(hCols.length, ...fkDisplayCols.map(s => s.length));
+    const wRef  = Math.max(hRef.length,  ...fkDisplayRefs.map(s => s.length));
+    const wDel  = Math.max(hDel.length,  ...fks.map(fk => fk.onDelete.length));
+
+    const fkSep = (f: string) =>
+      `-- +${f.repeat(wCon + 2)}+${f.repeat(wCols + 2)}+${f.repeat(wRef + 2)}+${f.repeat(wDel + 2)}+`;
+    const fkRow = (con: string, c: string, r: string, d: string) =>
+      `-- | ${con.padEnd(wCon)} | ${c.padEnd(wCols)} | ${r.padEnd(wRef)} | ${d.padEnd(wDel)} |`;
+
+    out.push('--');
+    out.push('-- FOREIGN KEYS');
+    out.push(fkSep('-'));
+    out.push(fkRow(hCon, hCols, hRef, hDel));
+    out.push(fkSep('-'));
+    for (let i = 0; i < fks.length; i++) {
+      out.push(fkRow(fks[i].name, fkDisplayCols[i], fkDisplayRefs[i], fks[i].onDelete));
+    }
+    out.push(fkSep('-'));
+  }
 
   return out.join('\n');
 }
@@ -276,7 +324,7 @@ function buildNodesAndEdges(
     // For tables without bodyScript: render design view from column metadata
     let bodyScript = obj.bodyScript;
     if (!bodyScript && obj.type === 'table' && obj.columns && obj.columns.length > 0) {
-      bodyScript = buildTableDesignAscii(obj.columns, schema, objectName);
+      bodyScript = buildTableDesignAscii(obj.columns, schema, objectName, obj.fks);
     }
 
     nodes.push({
@@ -286,6 +334,7 @@ function buildNodesAndEdges(
       fullName: obj.fullName,
       type: obj.type,
       bodyScript,
+      ...(obj.externalKind && { externalKind: obj.externalKind }),
     });
   }
 
@@ -433,7 +482,7 @@ function buildNodesAndEdges(
         if (depNode?.type === 'procedure') {
           addEdge(edges, edgeKeys, sourceId, depId, 'exec');
         } else if (
-          depNode?.type === 'table' &&
+          (depNode?.type === 'table' || depNode?.type === 'external') &&
           node.bodyScript &&
           inferBodyDirection(node.bodyScript, depNode.schema, depNode.name) === 'write'
         ) {
@@ -450,7 +499,7 @@ function buildNodesAndEdges(
         if (meta?.type === 'procedure') {
           neighborPairs.push({ source: sourceId, target: csDepId }); // outbound exec
         } else if (
-          meta?.type === 'table' &&
+          (meta?.type === 'table' || meta?.type === 'external') &&
           node.bodyScript &&
           inferBodyDirection(node.bodyScript, meta.schema, meta.name) === 'write'
         ) {

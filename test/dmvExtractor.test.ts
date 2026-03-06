@@ -488,6 +488,213 @@ function testCrossSchemaUnresolvedWhenNoAllObjects() {
     'No neighborIndex entry for unknown dbo.uspLogError when allObjects absent');
 }
 
+// ─── Test: External Table (ET) nodes ─────────────────────────────────────────
+
+function testExternalTableNodes() {
+  console.log('\n── DMV Extractor: External Table (ET) Nodes ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    // Regular table
+    [cell('dbo'), cell('LocalOrders'), cell('U '), nullCell()],
+    // External table — type_code 'ET' (char(2) padded)
+    [cell('ext'), cell('ExternalSales'), cell('ET'), nullCell()],
+    // SP that reads from external table
+    [cell('dbo'), cell('uspLoadSales'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[uspLoadSales] AS\nINSERT INTO [dbo].[LocalOrders]\nSELECT * FROM [ext].[ExternalSales]')],
+  ];
+
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('uspLoadSales'), cell('dbo'), cell('LocalOrders')],
+    [cell('dbo'), cell('uspLoadSales'), cell('ext'), cell('ExternalSales')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  // Node count and types
+  assertEq(model.nodes.length, 3, 'Should have 3 nodes (1 table, 1 external, 1 SP)');
+  const extNodes = model.nodes.filter(n => n.type === 'external');
+  assertEq(extNodes.length, 1, 'Should have 1 external node');
+
+  // External node properties
+  const extNode = extNodes[0];
+  assert(extNode !== undefined, 'External node exists');
+  assertEq(extNode?.schema, 'ext', 'External node has correct schema');
+  assertEq(extNode?.name, 'ExternalSales', 'External node has correct name (original casing)');
+  assertEq(extNode?.id, '[ext].[externalsales]', 'External node ID is lowercase-normalized');
+  assertEq(extNode?.externalKind, 'et', 'External node has externalKind=et');
+  assert(extNode?.bodyScript === undefined || extNode?.bodyScript === null,
+    'External node has no bodyScript (ET has no SQL body)');
+
+  // Schema info includes external type count
+  const extSchema = model.schemas.find(s => s.name === 'ext');
+  assert(extSchema !== undefined, 'ext schema present in schemas');
+  assertEq(extSchema?.types?.external ?? 0, 1, 'ext schema counts 1 external node');
+
+  // External node in catalog
+  const extId = '[ext].[externalsales]';
+  const catEntry = model.catalog[extId];
+  assert(catEntry !== undefined, 'External node in catalog');
+  assertEq(catEntry?.type, 'external', 'catalog entry type=external');
+
+  // Edge: SP reads from external table (FROM clause → external is source/upstream)
+  const readEdge = model.edges.find(e =>
+    e.source === extId && e.target === '[dbo].[uspLoadsales]'.toLowerCase()
+  );
+  assert(readEdge !== undefined,
+    `Read edge external → SP exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`);
+
+  // Edge: SP writes to local table
+  const writeEdge = model.edges.find(e =>
+    e.source === '[dbo].[uspLoadsales]'.toLowerCase() && e.target === '[dbo].[localorders]'
+  );
+  assert(writeEdge !== undefined, 'Write edge SP → LocalOrders exists');
+
+  // NeighborIndex: external table has SP in its out neighbors
+  const spId = '[dbo].[uspLoadsales]'.toLowerCase();
+  const extNeighbors = model.neighborIndex[extId];
+  assert(extNeighbors !== undefined, 'neighborIndex entry for external node');
+  assert(extNeighbors?.out.includes(spId),
+    `External node out-neighbors include SP (got: ${JSON.stringify(extNeighbors?.out)})`);
+}
+
+function testExternalTableWriteDirection() {
+  console.log('\n── DMV Extractor: External Table Write Direction (CETAS) ──');
+
+  // CETAS pattern: SP writes INTO external table (Synapse/Fabric CETAS)
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('SourceData'), cell('U '), nullCell()],
+    [cell('ext'), cell('ExportTarget'), cell('ET'), nullCell()],
+    [cell('dbo'), cell('uspExportData'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[uspExportData] AS\nINSERT INTO [ext].[ExportTarget]\nSELECT * FROM [dbo].[SourceData]')],
+  ];
+
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('uspExportData'), cell('dbo'), cell('SourceData')],
+    [cell('dbo'), cell('uspExportData'), cell('ext'), cell('ExportTarget')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  const extId = '[ext].[exporttarget]';
+  const spId = '[dbo].[uspexportdata]';
+  const srcId = '[dbo].[sourcedata]';
+
+  // WRITE edge: SP → external target (INSERT INTO)
+  const writeEdge = model.edges.find(e => e.source === spId && e.target === extId);
+  assert(writeEdge !== undefined,
+    `Write edge SP → ExportTarget exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`);
+
+  // READ edge: SourceData → SP
+  const readEdge = model.edges.find(e => e.source === srcId && e.target === spId);
+  assert(readEdge !== undefined, 'Read edge SourceData → SP exists');
+}
+
+// ─── Constraint Tests ────────────────────────────────────────────────────────
+
+function buildConstraintsResult(): SimpleExecuteResult {
+  const constraintCols = cols(
+    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
+    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
+  );
+  const rows: DbCellValue[][] = [
+    // FK: Orders.CustomerId → Customers.Id
+    [cell('dbo'), cell('Orders'), cell('FK'), cell('FK_Orders_Customers'),
+      cell('CustomerId'), cell('1'), cell('dbo'), cell('Customers'), cell('Id'), cell('NO ACTION')],
+    // FK: Orders.ProductId → Products.Id
+    [cell('dbo'), cell('Orders'), cell('FK'), cell('FK_Orders_Products'),
+      cell('ProductId'), cell('1'), cell('dbo'), cell('Products'), cell('Id'), cell('CASCADE')],
+    // UQ: Customers.Name
+    [cell('dbo'), cell('Customers'), cell('UQ'), cell('UQ_Customers_Name'),
+      cell('Name'), cell('1'), nullCell(), nullCell(), nullCell(), nullCell()],
+    // CK: Products.Id (column-level)
+    [cell('dbo'), cell('Products'), cell('CK'), cell('CK_Products_Id'),
+      cell('Id'), nullCell(), nullCell(), nullCell(), nullCell(), nullCell()],
+  ];
+  return makeResult(constraintCols, rows);
+}
+
+function testConstraintMapsEnrichColumns() {
+  console.log('\n── DMV Extractor: constraint enrichment ──');
+
+  const baseResults = buildSyntheticResults();
+  const resultsWithConstraints: DmvResults = {
+    ...baseResults,
+    constraints: buildConstraintsResult(),
+  };
+  const model = buildModelFromDmv(resultsWithConstraints);
+
+  // Customers.Name should have UQ flag in design view
+  const customersNode = model.nodes.find(n => n.name === 'Customers');
+  assert(customersNode !== undefined, 'Customers node found');
+  assert(customersNode?.bodyScript?.includes('UQ'), 'Customers design view has UQ flag');
+  assert(!customersNode?.bodyScript?.includes('FOREIGN KEYS'), 'Customers has no FK section (no FKs on Customers)');
+
+  // Orders should have FK section
+  const ordersNode = model.nodes.find(n => n.name === 'Orders');
+  assert(ordersNode !== undefined, 'Orders node found');
+  assert(ordersNode?.bodyScript?.includes('FOREIGN KEYS'), 'Orders design view has FOREIGN KEYS section');
+  assert(ordersNode?.bodyScript?.includes('FK_Orders_Customers'), 'Orders shows FK_Orders_Customers');
+  assert(ordersNode?.bodyScript?.includes('FK_Orders_Products'), 'Orders shows FK_Orders_Products');
+  assert(ordersNode?.bodyScript?.includes('CASCADE'), 'Orders FK shows CASCADE on delete');
+  assert(ordersNode?.bodyScript?.includes('[dbo].[Customers]'), 'Orders FK references Customers');
+
+  // Products.Id should have CK flag
+  const productsNode = model.nodes.find(n => n.name === 'Products');
+  assert(productsNode !== undefined, 'Products node found');
+  assert(productsNode?.bodyScript?.includes('CK'), 'Products design view has CK flag');
+}
+
+function testConstraintsMissingResultGraceful() {
+  console.log('\n── DMV Extractor: no constraints result (dacpac-path compat) ──');
+
+  const results = buildSyntheticResults();  // no constraints field
+  const model = buildModelFromDmv(results);
+
+  const ordersNode = model.nodes.find(n => n.name === 'Orders');
+  assert(ordersNode !== undefined, 'Orders node found without constraints');
+  assert(!ordersNode?.bodyScript?.includes('FOREIGN KEYS'), 'No FK section when constraints absent');
+  assert(!ordersNode?.bodyScript?.includes('UQ'), 'No UQ column when constraints absent');
+
+  // Design view still works as before
+  assert(ordersNode?.bodyScript?.includes('OrderId'), 'Column design view still present');
+}
+
+function testValidateQueryResultConstraints() {
+  console.log('\n── DMV Extractor: validateQueryResult — constraints ──');
+
+  const constraintCols = cols(
+    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
+    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
+  );
+  const result = makeResult(constraintCols, []);
+  const missing = validateQueryResult('constraints', result);
+  assertEq(missing.length, 0, 'No missing columns for valid constraints result');
+
+  const incomplete = makeResult(cols('schema_name', 'table_name'), []);
+  const missingCols = validateQueryResult('constraints', incomplete);
+  assert(missingCols.length > 0, 'Missing columns detected for incomplete constraints result');
+}
+
 // ─── Run ────────────────────────────────────────────────────────────────────
 
 testBuildModelFromDmv();
@@ -499,6 +706,11 @@ testSelfReferenceExcluded();
 testFallbackBodyDirection();
 testCrossSchemaNeighborIndex();
 testCrossSchemaUnresolvedWhenNoAllObjects();
+testExternalTableNodes();
+testExternalTableWriteDirection();
+testConstraintMapsEnrichColumns();
+testConstraintsMissingResultGraceful();
+testValidateQueryResultConstraints();
 
 console.log(`\n═══ DMV Extractor: ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);

@@ -668,7 +668,13 @@ async function runDbPhase1(
   }
 
   const preview = buildSchemaPreview(result!);
-  outputChannel.info(`[DB] Schema preview: ${preview.schemas.length} schemas, ${preview.totalObjects} total objects`);
+  const etPreviewTotal = preview.schemas.reduce((sum, s) => sum + (s.types.external ?? 0), 0);
+  outputChannel.info(`[DB] Schema preview: ${preview.schemas.length} schemas, ${preview.totalObjects} total objects${etPreviewTotal > 0 ? ` (${etPreviewTotal} external ⬡)` : ''}`);
+  if (etPreviewTotal > 0) {
+    for (const s of preview.schemas.filter(s => s.types.external > 0)) {
+      outputChannel.debug(`[DB] Schema '${s.name}': ${s.types.external} external table(s) detected`);
+    }
+  }
 
   await context.workspaceState.update('lastDbSourceName', sourceName);
   await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
@@ -734,6 +740,7 @@ async function runDbPhase2(
     columns: resultMap.get('columns')!,
     dependencies: resultMap.get('dependencies')!,
     allObjects,
+    constraints: resultMap.get('constraints'),
   };
 
   progress.report({ message: 'Building model...' });
@@ -741,7 +748,12 @@ async function runDbPhase2(
   const start = Date.now();
   const model = buildModelFromDmv(dmvResults);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-  outputChannel.info(`[DB] Model built: ${model.nodes.length} nodes, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
+  const extNodes = model.nodes.filter(n => n.type === 'external');
+  const extSuffix = extNodes.length > 0 ? `, incl. ${extNodes.length} external (⬡)` : '';
+  outputChannel.info(`[DB] Model built: ${model.nodes.length} nodes${extSuffix}, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
+  if (extNodes.length > 0) {
+    outputChannel.debug(`[DB] External nodes: ${extNodes.map(n => n.fullName).join(', ')}`);
+  }
 
   const sourceName = context.workspaceState.get<string>('lastDbSourceName') || 'Database';
   const config = await readExtensionConfig();
@@ -795,6 +807,7 @@ async function runDbFullExtraction(
     nodes: resultMap.get('nodes')!,
     columns: resultMap.get('columns')!,
     dependencies: resultMap.get('dependencies')!,
+    constraints: resultMap.get('constraints'),
   };
 
   progress.report({ message: 'Building model...' });

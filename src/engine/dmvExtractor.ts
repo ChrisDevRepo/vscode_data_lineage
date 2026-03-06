@@ -6,6 +6,7 @@ import {
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
+  ForeignKeyInfo,
   buildColumnDef,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
@@ -20,6 +21,8 @@ export interface DmvResults {
   dependencies: SimpleExecuteResult;
   /** Phase 1 all-objects result: full cross-schema catalog for dependency resolution. */
   allObjects?: SimpleExecuteResult;
+  /** Phase 2 constraints result: FK, UQ, CK metadata for table design view. */
+  constraints?: SimpleExecuteResult;
 }
 
 /**
@@ -42,7 +45,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
     const key = schemaKey(schemaName);
     let info = schemaMap.get(key);
     if (!info) {
-      info = { name: schemaName, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
+      info = { name: schemaName, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
       schemaMap.set(key, info);
     }
     info.nodeCount += count;
@@ -81,6 +84,8 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   columns: ['schema_name', 'table_name', 'ordinal', 'column_name',
     'type_name', 'max_length', 'precision', 'scale',
     'is_nullable', 'is_identity', 'is_computed'],
+  constraints: ['schema_name', 'table_name', 'constraint_type', 'constraint_name',
+    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete'],
   dependencies: ['referencing_schema', 'referencing_name',
     'referenced_schema', 'referenced_name'],
 };
@@ -109,13 +114,84 @@ function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   return map;
 }
 
+// ─── Constraint Maps ────────────────────────────────────────────────────────
+
+interface ConstraintMaps {
+  /** Key: "schema.table.column" (lowercase) → UQ constraint name */
+  uqColMap: Map<string, string>;
+  /** Key: "schema.table.column" (lowercase) → CK constraint name */
+  ckColMap: Map<string, string>;
+  /** Key: "schema.table" (lowercase) → FK list */
+  fkMap: Map<string, ForeignKeyInfo[]>;
+}
+
+/**
+ * Parse the combined constraints result set into three lookup maps.
+ * Rows are discriminated by constraint_type ('FK' | 'UQ' | 'CK').
+ * FK rows accumulate per-column entries then get merged into ForeignKeyInfo objects.
+ */
+function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
+  const colIdx = buildColumnIndex(result);
+  const uqColMap = new Map<string, string>();
+  const ckColMap = new Map<string, string>();
+
+  // Accumulate FK column pairs keyed by "schema.table.constraint" (lowercase)
+  // Each entry holds the in-progress ForeignKeyInfo being built
+  const fkPartial = new Map<string, ForeignKeyInfo>();
+  const fkMap = new Map<string, ForeignKeyInfo[]>();
+
+  for (const row of result.rows) {
+    const schemaName = cellValue(row, colIdx, 'schema_name');
+    const tableName  = cellValue(row, colIdx, 'table_name');
+    const ctype      = cellValue(row, colIdx, 'constraint_type');
+    const cname      = cellValue(row, colIdx, 'constraint_name');
+    const colName    = cellValue(row, colIdx, 'column_name');
+
+    const tableKey = `${schemaName}.${tableName}`.toLowerCase();
+    const colKey   = `${tableKey}.${colName}`.toLowerCase();
+
+    if (ctype === 'UQ') {
+      // First UQ entry for a column wins (multiple UQ constraints on same column is unusual)
+      if (!uqColMap.has(colKey)) uqColMap.set(colKey, cname);
+
+    } else if (ctype === 'CK') {
+      if (!ckColMap.has(colKey)) ckColMap.set(colKey, cname);
+
+    } else if (ctype === 'FK') {
+      const refSchema = cellValue(row, colIdx, 'ref_schema');
+      const refTable  = cellValue(row, colIdx, 'ref_table');
+      const refCol    = cellValue(row, colIdx, 'ref_column');
+      const onDelete  = cellValue(row, colIdx, 'on_delete');
+
+      const fkKey = `${tableKey}.${cname}`.toLowerCase();
+      let fk = fkPartial.get(fkKey);
+      if (!fk) {
+        fk = { name: cname, columns: [], refSchema, refTable, refColumns: [], onDelete };
+        fkPartial.set(fkKey, fk);
+        // Register in fkMap in order of first appearance
+        if (!fkMap.has(tableKey)) fkMap.set(tableKey, []);
+        fkMap.get(tableKey)!.push(fk);
+      }
+      fk.columns.push(colName);
+      fk.refColumns.push(refCol);
+    }
+  }
+
+  return { uqColMap, ckColMap, fkMap };
+}
+
 // ─── Extract: DMV Rows → Intermediate Format ────────────────────────────────
 
 function extractObjects(results: DmvResults): ExtractedObject[] {
   const nodeColIdx = buildColumnIndex(results.nodes);
   const colColIdx = buildColumnIndex(results.columns);
 
-  // Pre-build column data for tables (grouped by schema.table)
+  // Build constraint maps if the constraints query was executed
+  const constraintMaps = results.constraints
+    ? buildConstraintMaps(results.constraints)
+    : null;
+
+  // Pre-build column data for tables (grouped by schema.table, lowercase key)
   const isTruthy = (v: string) => v === '1' || v.toLowerCase() === 'true';
   const tableColumns = new Map<string, ColumnDef[]>();
   for (const row of results.columns.rows) {
@@ -152,11 +228,22 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     if (seen.has(id)) continue;
     seen.add(id);
 
-    // For tables without body: attach column metadata for design view
+    // For tables without body: attach column metadata (+ UQ/CK enrichment) for design view
     let columns: ColumnDef[] | undefined;
+    let fks: ForeignKeyInfo[] | undefined;
     if (!bodyScript && objType === 'table') {
-      const colKey = `${schemaName}.${objectName}`.toLowerCase();
-      columns = tableColumns.get(colKey);
+      const tableKey = `${schemaName}.${objectName}`.toLowerCase();
+      columns = tableColumns.get(tableKey);
+
+      // Enrich columns with UQ/CK flags from constraint maps (lookup key only — no re-fetch)
+      if (columns && constraintMaps) {
+        for (const col of columns) {
+          const ck = `${tableKey}.${col.name}`.toLowerCase();
+          col.unique = constraintMaps.uqColMap.get(ck) ?? '';
+          col.check  = constraintMaps.ckColMap.get(ck) ?? '';
+        }
+        fks = constraintMaps.fkMap.get(tableKey);
+      }
     }
 
     objects.push({
@@ -164,6 +251,8 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       type: objType,
       bodyScript: bodyScript || undefined,
       columns,
+      fks,
+      ...(objType === 'external' && { externalKind: 'et' as const }),
     });
   }
 

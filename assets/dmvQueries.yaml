@@ -27,7 +27,7 @@ queries:
         COUNT(*) AS object_count
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-      WHERE o.type IN ('U','V','P','FN','IF','TF')
+      WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
         AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
         AND NOT EXISTS (
@@ -54,7 +54,7 @@ queries:
         o.type AS type_code
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-      WHERE o.type IN ('U','V','P','FN','IF','TF')
+      WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
         AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
         AND NOT EXISTS (
@@ -76,7 +76,7 @@ queries:
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
       LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
-      WHERE o.type IN ('U','V','P','FN','IF','TF')
+      WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
         AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
         AND NOT EXISTS (
@@ -114,6 +114,118 @@ queries:
             AND ep.name = 'microsoft_database_tools_support'
         )
       ORDER BY s.name, o.name, c.column_id
+
+  - name: constraints
+    description: >
+      Phase 2: table constraint metadata for FK, UQ, and CK annotations in the table design view.
+      Returns one result set combining three constraint types via UNION ALL, distinguished by
+      constraint_type ('FK' | 'UQ' | 'CK'). Schema-filtered the same way as the columns query
+      (wrapWithSchemaFilter on schema_name = parent table's schema).
+
+      FK (foreign key): one row per FK column pair.
+        sys.foreign_keys + sys.foreign_key_columns + sys.columns (parent + ref) + sys.objects/schemas.
+        ref_schema/ref_table/ref_column identify the referenced object (may be in an unselected schema —
+        the filter applies only to the parent table's schema so cross-schema FK targets are shown).
+        on_delete = referential action: NO ACTION | CASCADE | SET NULL | SET DEFAULT.
+
+      UQ (unique constraint): one row per column. Uses sys.key_constraints WHERE type='UQ' joined
+        via unique_index_id to sys.index_columns. Primary keys (type='PK') are excluded.
+        Composite UQ constraints appear as multiple rows sharing the same constraint_name.
+        column_ordinal (key_ordinal) preserves the index key order.
+
+      CK (check constraint, column-level only): sys.check_constraints WHERE parent_column_id != 0.
+        IMPORTANT — in SQL Server most CHECK constraints are TABLE-LEVEL (parent_column_id = 0),
+        even when they only reference a single column. Column-level checks occur only when CHECK
+        is written inline in a column definition (e.g. [Price] MONEY CHECK ([Price] >= 0)).
+        Table-level CK support (parent_column_id = 0) is a future addition.
+
+      This query is fully user-customizable. Override it by setting
+      dataLineageViz.dmvQueriesFile to a YAML file with a 'constraints' entry.
+      Required permission: VIEW DEFINITION (same as all other queries in this file).
+    sql: |
+      WITH fk_cols AS (
+        -- FK constraints: one row per FK column pair.
+        -- sys.foreign_keys:          constraint metadata (name, referential actions)
+        -- sys.foreign_key_columns:   per-column pair (parent + referenced column IDs)
+        -- sys.columns (c, rc):       resolve column IDs to names
+        -- sys.objects / sys.schemas: resolve object IDs to qualified schema.table names
+        SELECT
+          s.name   AS schema_name,
+          t.name   AS table_name,
+          'FK'     AS constraint_type,
+          fk.name  AS constraint_name,
+          c.name   AS column_name,
+          fkc.constraint_column_id AS column_ordinal,
+          rs.name  AS ref_schema,
+          rt.name  AS ref_table,
+          rc.name  AS ref_column,
+          fk.delete_referential_action_desc AS on_delete
+        FROM sys.foreign_keys fk
+        INNER JOIN sys.objects t   ON fk.parent_object_id     = t.object_id
+        INNER JOIN sys.schemas s   ON t.schema_id             = s.schema_id
+        INNER JOIN sys.foreign_key_columns fkc
+                                   ON fk.object_id            = fkc.constraint_object_id
+        INNER JOIN sys.columns c   ON fkc.parent_object_id    = c.object_id
+                                  AND fkc.parent_column_id    = c.column_id
+        INNER JOIN sys.objects rt  ON fk.referenced_object_id = rt.object_id
+        INNER JOIN sys.schemas rs  ON rt.schema_id            = rs.schema_id
+        INNER JOIN sys.columns rc  ON fkc.referenced_object_id = rc.object_id
+                                  AND fkc.referenced_column_id = rc.column_id
+      ),
+      uq_cols AS (
+        -- Unique constraints (sys.key_constraints WHERE type = 'UQ').
+        -- Primary keys (type = 'PK') are intentionally excluded.
+        -- unique_index_id links to sys.index_columns for this specific constraint's index.
+        -- Composite UQ: multiple rows share constraint_name; column_ordinal = key position.
+        SELECT
+          s.name  AS schema_name,
+          t.name  AS table_name,
+          'UQ'    AS constraint_type,
+          kc.name AS constraint_name,
+          c.name  AS column_name,
+          ic.key_ordinal AS column_ordinal,
+          NULL AS ref_schema,
+          NULL AS ref_table,
+          NULL AS ref_column,
+          NULL AS on_delete
+        FROM sys.key_constraints kc
+        INNER JOIN sys.objects t   ON kc.parent_object_id = t.object_id
+        INNER JOIN sys.schemas s   ON t.schema_id         = s.schema_id
+        INNER JOIN sys.index_columns ic
+                                   ON ic.object_id        = t.object_id
+                                  AND ic.index_id         = kc.unique_index_id
+        INNER JOIN sys.columns c   ON ic.object_id        = c.object_id
+                                  AND ic.column_id        = c.column_id
+        WHERE kc.type = 'UQ'
+      ),
+      ck_cols AS (
+        -- Column-level check constraints only (parent_column_id != 0).
+        -- SQL Server note: most CHECK constraints are TABLE-LEVEL (parent_column_id = 0),
+        -- even when they only reference a single column. Table-level checks are excluded here
+        -- because they cannot be attributed to a specific column in the design view.
+        -- Column-level checks arise when CHECK is written inline in a column definition.
+        SELECT
+          s.name  AS schema_name,
+          t.name  AS table_name,
+          'CK'    AS constraint_type,
+          cc.name AS constraint_name,
+          c.name  AS column_name,
+          NULL    AS column_ordinal,
+          NULL AS ref_schema,
+          NULL AS ref_table,
+          NULL AS ref_column,
+          NULL AS on_delete
+        FROM sys.check_constraints cc
+        INNER JOIN sys.objects t ON cc.parent_object_id = t.object_id
+        INNER JOIN sys.schemas s ON t.schema_id         = s.schema_id
+        INNER JOIN sys.columns c ON cc.parent_object_id = c.object_id
+                                AND cc.parent_column_id = c.column_id
+        WHERE cc.parent_column_id != 0
+      )
+      SELECT * FROM fk_cols
+      UNION ALL SELECT * FROM uq_cols
+      UNION ALL SELECT * FROM ck_cols
+      ORDER BY schema_name, table_name, constraint_type, constraint_name, column_ordinal
 
   - name: dependencies
     description: >

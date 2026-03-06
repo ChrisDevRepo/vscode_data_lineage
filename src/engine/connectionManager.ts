@@ -190,6 +190,7 @@ export async function executeDmvQueries(
 const SCHEMA_FILTER_COLUMNS: Record<string, string> = {
   nodes: 'schema_name',
   columns: 'schema_name',
+  constraints: 'schema_name',  // parent table's schema — cross-schema FK targets still visible
   dependencies: 'referencing_schema',
 };
 
