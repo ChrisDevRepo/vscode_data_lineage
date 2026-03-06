@@ -1,4 +1,5 @@
 import type { ObjectType } from '../engine/types';
+import { schemaKey } from './sql';
 
 export const TYPE_COLORS: Record<ObjectType, {
   border: string;   // Border + badge color (same in both modes)
@@ -23,7 +24,7 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
 
 export const SCHEMA_COLORS_LIGHT = [
   '#4E79A7', // Tableau Blue
-  '#F28E2B', // Tableau Orange  
+  '#F28E2B', // Tableau Orange
   '#E15759', // Tableau Red
   '#76B7B2', // Tableau Teal
   '#59A14F', // Tableau Green
@@ -38,7 +39,7 @@ export const SCHEMA_COLORS_LIGHT = [
 const SCHEMA_COLORS_DARK = [
   '#8AB8E6', // Lighter Blue (more visible on dark)
   '#FFAD5C', // Lighter Orange
-  '#FF8A8C', // Lighter Red  
+  '#FF8A8C', // Lighter Red
   '#A1D6D1', // Lighter Teal
   '#88C580', // Lighter Green
   '#F7E589', // Lighter Yellow
@@ -54,14 +55,14 @@ export function hashString(str: string): number {
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // 32-bit integer
+    hash |= 0;
   }
   return hash;
 }
 
 export function getSchemaColor(schema: string, forceLight?: boolean): string {
   const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
-  const idx = Math.abs(hashString(schema)) % colors.length;
+  const idx = Math.abs(hashString(schemaKey(schema))) % colors.length;
   return colors[idx];
 }
 

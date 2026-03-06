@@ -18,7 +18,7 @@ import {
   buildColumnDef,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
-import { stripBrackets } from '../utils/sql';
+import { stripBrackets, schemaKey } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
   const deps = extractDependencies(elements);
   const model = buildModel(objects, deps, allObjects);
 
-  // Override warnings for dacpac-specific messages
+  // Dacpac-specific warning messages
   const warnings: string[] = [];
   if (elements.length === 0) {
     warnings.push('This dacpac appears to be empty.');
@@ -98,7 +98,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
 
-    // Deduplicate by normalized ID (same as extractObjects)
+    // Deduplicate by normalized ID
     const id = normalizeName(name);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -106,10 +106,11 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     const { schema } = parseName(name);
     const objType = ELEMENT_TYPE_MAP[type];
 
-    let info = schemaMap.get(schema);
+    const key = schemaKey(schema);
+    let info = schemaMap.get(key);
     if (!info) {
       info = { name: schema, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
-      schemaMap.set(schema, info);
+      schemaMap.set(key, info);
     }
     info.nodeCount++;
     info.types[objType]++;

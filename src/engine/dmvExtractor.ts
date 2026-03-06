@@ -10,6 +10,7 @@ import {
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue } from '../types/mssql';
+import { schemaKey } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -38,10 +39,11 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
     const objType = DMV_TYPE_MAP[typeCode];
     if (!objType) continue;
 
-    let info = schemaMap.get(schemaName);
+    const key = schemaKey(schemaName);
+    let info = schemaMap.get(key);
     if (!info) {
       info = { name: schemaName, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
-      schemaMap.set(schemaName, info);
+      schemaMap.set(key, info);
     }
     info.nodeCount += count;
     info.types[objType] += count;

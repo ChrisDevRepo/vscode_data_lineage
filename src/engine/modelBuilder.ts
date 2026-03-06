@@ -19,7 +19,7 @@ import {
   NeighborIndex,
 } from './types';
 import { parseSqlBody } from './sqlBodyParser';
-import { stripBrackets, splitSqlName } from '../utils/sql';
+import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -29,8 +29,22 @@ export function buildModel(
   allObjects?: ExtractedObject[],
 ): DacpacModel {
   const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects);
+
+  // CI normalization: unify node.schema to a single canonical display name (first-seen from
+  // metadata) across all nodes that belong to the same logical schema.
+  // In CI mode this merges e.g. 'DBO' and 'dbo' → one consistent display name.
+  // In CS mode schemaKey(x) === x, so this pass is a no-op.
+  const schemaCanonical = new Map<string, string>(); // schemaKey → first-seen display name
+  for (const node of nodes) {
+    const k = schemaKey(node.schema);
+    if (!schemaCanonical.has(k)) schemaCanonical.set(k, node.schema);
+  }
+  for (const node of nodes) {
+    node.schema = schemaCanonical.get(schemaKey(node.schema))!;
+  }
+
   const schemas = computeSchemas(nodes);
-  const catalog = buildCatalog(allObjects ?? objects);
+  const catalog = buildCatalog(allObjects ?? objects, schemaCanonical);
   const neighborIndex = buildNeighborIndex(edges, neighborPairs);
 
   const warnings: string[] = [];
@@ -52,12 +66,17 @@ export function buildModel(
 /**
  * Build a display catalog keyed by normalized node ID.
  * Covers all objects (including cross-schema ones not in the selected schema set).
+ * Uses schemaCanonical map to ensure catalog entries use the same display name as nodes.
  */
-function buildCatalog(allObjects: ExtractedObject[]): Record<string, CatalogEntry> {
+function buildCatalog(
+  allObjects: ExtractedObject[],
+  schemaCanonical: Map<string, string>,
+): Record<string, CatalogEntry> {
   const catalog: Record<string, CatalogEntry> = {};
   for (const obj of allObjects) {
     const { schema, objectName } = parseName(obj.fullName);
-    catalog[normalizeName(obj.fullName)] = { schema, name: objectName, type: obj.type };
+    const displaySchema = schemaCanonical.get(schemaKey(schema)) ?? schema;
+    catalog[normalizeName(obj.fullName)] = { schema: displaySchema, name: objectName, type: obj.type };
   }
   return catalog;
 }
@@ -147,7 +166,7 @@ function inferBodyDirection(body: string, schema: string, name: string): 'write'
 }
 
 /** Add an edge if it doesn't already exist */
-export function addEdge(
+function addEdge(
   edges: LineageEdge[],
   edgeKeys: Set<string>,
   source: string,
@@ -166,14 +185,15 @@ export function addEdge(
 export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
   const map = new Map<string, SchemaInfo>();
   for (const node of nodes) {
-    let info = map.get(node.schema);
+    const key = schemaKey(node.schema);
+    let info = map.get(key);
     if (!info) {
       info = {
         name: node.schema,
         nodeCount: 0,
         types: { table: 0, view: 0, procedure: 0, function: 0 },
       };
-      map.set(node.schema, info);
+      map.set(key, info);
     }
     info.nodeCount++;
     info.types[node.type]++;
@@ -183,7 +203,7 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
 
 // ─── Table Design ASCII Renderer ────────────────────────────────────────────
 
-export function buildTableDesignAscii(
+function buildTableDesignAscii(
   cols: ColumnDef[],
   schema: string,
   objectName: string,

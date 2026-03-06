@@ -33,6 +33,9 @@ test-internal/**
 .env
 .env.*
 
+# Claude Code session temp files (created by Claude CLI — must not leak into VSIX)
+tmpclaude-*
+
 # Misc
 PLAN*.md
 CLAUDE.md
