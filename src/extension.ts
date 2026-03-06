@@ -633,10 +633,10 @@ async function runDbPhase1(
   }
 
   progress.report({ message: 'Querying schema overview...' });
-  panel.webview.postMessage({ type: 'db-progress', step: 1, total: 2, label: 'schema-preview' });
-
   // Run schema-preview (always) and all-objects (if available) in parallel
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
+
+  panel.webview.postMessage({ type: 'db-progress', step: 1, total: allObjectsQuery ? 2 : 1, label: 'schema-preview' });
   const phase1Queries = allObjectsQuery ? [previewQuery, allObjectsQuery] : [previewQuery];
 
   const previewResult = await executeDmvQueries(connectionUri, phase1Queries, outputChannel);
@@ -667,7 +667,10 @@ async function runDbPhase1(
     outputChannel.warn('[DB] No all-objects query found in YAML — cross-schema resolution disabled');
   }
 
-  const preview = buildSchemaPreview(result!);
+  if (!result) {
+    throw new Error('Schema preview query returned no result.');
+  }
+  const preview = buildSchemaPreview(result);
   const etPreviewTotal = preview.schemas.reduce((sum, s) => sum + (s.types.external ?? 0), 0);
   outputChannel.info(`[DB] Schema preview: ${preview.schemas.length} schemas, ${preview.totalObjects} total objects${etPreviewTotal > 0 ? ` (${etPreviewTotal} external ⬡)` : ''}`);
   if (etPreviewTotal > 0) {
