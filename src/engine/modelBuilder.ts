@@ -213,8 +213,8 @@ function buildTableDesignAscii(
   if (cols.length === 0) return `-- No column metadata for [${schema}].[${objectName}]`;
 
   const hasExtra  = cols.some(c => c.extra);
-  const hasUnique = cols.some(c => c.unique);
-  const hasCheck  = cols.some(c => c.check);
+  const hasUnique = cols.some(c => c.unique !== undefined);
+  const hasCheck  = cols.some(c => c.check !== undefined);
 
   const hCol = 'Column', hType = 'Type', hNull = 'Nullable';
   const wName  = Math.max(hCol.length,  ...cols.map(c => c.name.length));
@@ -242,7 +242,6 @@ function buildTableDesignAscii(
   const out: string[] = [];
   out.push(`-- TABLE: [${schema}].[${objectName}]`);
   out.push(sep('-'));
-  // Header row: include UQ/CK column headers only when the columns are shown
   const hExtra = hasExtra  ? '' : '';
   const hUq    = hasUnique ? 'UQ' : '';
   const hCk    = hasCheck  ? 'CK' : '';
@@ -253,35 +252,39 @@ function buildTableDesignAscii(
   }
   out.push(sep('-'));
 
-  // FK section — only when FK data is present
-  if (fks && fks.length > 0) {
-    const hCon  = 'Constraint';
-    const hCols = 'Column(s)';
-    const hRef  = 'References';
-    const hDel  = 'On Delete';
-
-    const fkDisplayCols = fks.map(fk => fk.columns.join(', '));
-    const fkDisplayRefs = fks.map(fk => `[${fk.refSchema}].[${fk.refTable}](${fk.refColumns.join(', ')})`);
-
-    const wCon  = Math.max(hCon.length,  ...fks.map(fk => fk.name.length));
-    const wCols = Math.max(hCols.length, ...fkDisplayCols.map(s => s.length));
-    const wRef  = Math.max(hRef.length,  ...fkDisplayRefs.map(s => s.length));
-    const wDel  = Math.max(hDel.length,  ...fks.map(fk => fk.onDelete.length));
-
-    const fkSep = (f: string) =>
-      `-- +${f.repeat(wCon + 2)}+${f.repeat(wCols + 2)}+${f.repeat(wRef + 2)}+${f.repeat(wDel + 2)}+`;
-    const fkRow = (con: string, c: string, r: string, d: string) =>
-      `-- | ${con.padEnd(wCon)} | ${c.padEnd(wCols)} | ${r.padEnd(wRef)} | ${d.padEnd(wDel)} |`;
-
+  if (fks !== undefined) {
     out.push('--');
     out.push('-- FOREIGN KEYS');
-    out.push(fkSep('-'));
-    out.push(fkRow(hCon, hCols, hRef, hDel));
-    out.push(fkSep('-'));
-    for (let i = 0; i < fks.length; i++) {
-      out.push(fkRow(fks[i].name, fkDisplayCols[i], fkDisplayRefs[i], fks[i].onDelete));
+
+    if (fks.length === 0) {
+      out.push('-- (none)');
+    } else {
+      const hCon  = 'Constraint';
+      const hCols = 'Column(s)';
+      const hRef  = 'References';
+      const hDel  = 'On Delete';
+
+      const fkDisplayCols = fks.map(fk => fk.columns.join(', '));
+      const fkDisplayRefs = fks.map(fk => `[${fk.refSchema}].[${fk.refTable}](${fk.refColumns.join(', ')})`);
+
+      const wCon  = Math.max(hCon.length,  ...fks.map(fk => fk.name.length));
+      const wCols = Math.max(hCols.length, ...fkDisplayCols.map(s => s.length));
+      const wRef  = Math.max(hRef.length,  ...fkDisplayRefs.map(s => s.length));
+      const wDel  = Math.max(hDel.length,  ...fks.map(fk => fk.onDelete.length));
+
+      const fkSep = (f: string) =>
+        `-- +${f.repeat(wCon + 2)}+${f.repeat(wCols + 2)}+${f.repeat(wRef + 2)}+${f.repeat(wDel + 2)}+`;
+      const fkRow = (con: string, c: string, r: string, d: string) =>
+        `-- | ${con.padEnd(wCon)} | ${c.padEnd(wCols)} | ${r.padEnd(wRef)} | ${d.padEnd(wDel)} |`;
+
+      out.push(fkSep('-'));
+      out.push(fkRow(hCon, hCols, hRef, hDel));
+      out.push(fkSep('-'));
+      for (let i = 0; i < fks.length; i++) {
+        out.push(fkRow(fks[i].name, fkDisplayCols[i], fkDisplayRefs[i], fks[i].onDelete));
+      }
+      out.push(fkSep('-'));
     }
-    out.push(fkSep('-'));
   }
 
   return out.join('\n');

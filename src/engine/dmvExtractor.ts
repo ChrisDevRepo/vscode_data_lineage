@@ -242,7 +242,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
           col.unique = constraintMaps.uqColMap.get(ck) ?? '';
           col.check  = constraintMaps.ckColMap.get(ck) ?? '';
         }
-        fks = constraintMaps.fkMap.get(tableKey);
+        fks = constraintMaps.fkMap.get(tableKey) ?? [];
       }
     }
 

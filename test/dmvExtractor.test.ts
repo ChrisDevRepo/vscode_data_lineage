@@ -647,7 +647,8 @@ function testConstraintMapsEnrichColumns() {
   const customersNode = model.nodes.find(n => n.name === 'Customers');
   assert(customersNode !== undefined, 'Customers node found');
   assert(customersNode?.bodyScript?.includes('UQ'), 'Customers design view has UQ flag');
-  assert(!customersNode?.bodyScript?.includes('FOREIGN KEYS'), 'Customers has no FK section (no FKs on Customers)');
+  assert(customersNode?.bodyScript?.includes('FOREIGN KEYS'), 'Customers has FK section (shows "(none)" when no FKs)');
+  assert(customersNode?.bodyScript?.includes('(none)'), 'Customers FK section shows (none)');
 
   // Orders should have FK section
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
