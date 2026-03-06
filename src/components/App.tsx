@@ -37,7 +37,7 @@ export function App() {
 
   const [filter, setFilter] = useState<FilterState>({
     schemas: new Set(),
-    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
+    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
     searchTerm: '',
     hideIsolated: true,
     focusSchemas: new Set(),
@@ -107,7 +107,7 @@ export function App() {
 
   const getResetFilter = (m: DacpacModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
-    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
+    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
     searchTerm: '',
     hideIsolated: true,
     focusSchemas: new Set(),

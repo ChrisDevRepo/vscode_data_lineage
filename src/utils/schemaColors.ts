@@ -1,14 +1,12 @@
 import type { ObjectType } from '../engine/types';
 import { schemaKey } from './sql';
 
-export const TYPE_COLORS: Record<ObjectType, {
-  border: string;   // Border + badge color (same in both modes)
-  icon: string;
-}> = {
-  table:     { border: '#3b82f6', icon: '■' },
-  view:      { border: '#22c55e', icon: '●' },
-  procedure: { border: '#eab308', icon: '▲' },
-  function:  { border: '#f97316', icon: '◆' },
+export const TYPE_COLORS: Record<ObjectType, { icon: string }> = {
+  table:     { icon: '■' },
+  view:      { icon: '●' },
+  procedure: { icon: '▲' },
+  function:  { icon: '◆' },
+  external:  { icon: '⬡' },
 };
 
 export const TYPE_LABELS: Record<ObjectType, string> = {
@@ -16,6 +14,7 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
   view: 'View',
   procedure: 'Stored Procedure',
   function: 'Function',
+  external: 'External',
 };
 
 // ─── Tableau 10 color palette (official colors) ─────────────────────────────

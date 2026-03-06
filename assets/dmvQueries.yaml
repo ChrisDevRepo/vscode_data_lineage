@@ -23,10 +23,11 @@ queries:
     sql: |
       SELECT
         s.name AS schema_name,
-        o.type AS type_code,
+        CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END AS type_code,
         COUNT(*) AS object_count
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      LEFT JOIN sys.tables st ON o.object_id = st.object_id
       WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
         AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
@@ -35,8 +36,8 @@ queries:
           WHERE ep.major_id = o.object_id AND ep.class = 1
             AND ep.name = 'microsoft_database_tools_support'
         )
-      GROUP BY s.name, o.type
-      ORDER BY s.name, o.type
+      GROUP BY s.name, CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END
+      ORDER BY s.name, CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END
 
   # ── Phase 1: Full Object Catalog ────────────────────────────────────────────
   - name: all-objects
@@ -51,9 +52,10 @@ queries:
       SELECT
         s.name AS schema_name,
         o.name AS object_name,
-        o.type AS type_code
+        CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END AS type_code
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      LEFT JOIN sys.tables st ON o.object_id = st.object_id
       WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
         AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
@@ -71,10 +73,11 @@ queries:
       SELECT
         s.name AS schema_name,
         o.name AS object_name,
-        o.type AS type_code,
+        CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END AS type_code,
         m.definition AS body_script
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      LEFT JOIN sys.tables st ON o.object_id = st.object_id
       LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
       WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0

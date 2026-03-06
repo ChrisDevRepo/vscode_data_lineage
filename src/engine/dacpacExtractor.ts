@@ -109,7 +109,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     const key = schemaKey(schema);
     let info = schemaMap.get(key);
     if (!info) {
-      info = { name: schema, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
+      info = { name: schema, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
       schemaMap.set(key, info);
     }
     info.nodeCount++;
