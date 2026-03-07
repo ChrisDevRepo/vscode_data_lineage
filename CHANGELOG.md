@@ -1,11 +1,13 @@
 # Changelog
 
-## [0.9.2] - 2026-03-03
+## [0.9.2] - 2026-03-07
 
 ### Fixed
 - Updated dependencies to address security vulnerabilities reported by GitHub
 
 ### Added
+- **Table design viewer** — Tables and external tables open in a styled HTML view with column details, constraints, and foreign keys.
+- **Table statistics** — Quick Stats (distinct counts, null%) and Detail Stats (+ min/max, string lengths) for database-imported tables, with platform-aware sampling.
 - **Table constraint info** — Table design view shows UQ/CK columns and FK section.
 - **External Table nodes** — External tables shown as hexagon nodes (⬡) with column design view.
 - **View/function parser supplement** — body parser runs as fallback for views and functions; dependencies found beyond MS metadata are added to the graph.

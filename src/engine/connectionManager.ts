@@ -269,6 +269,25 @@ export async function executeDmvQueriesFiltered(
   return results;
 }
 
+/** Get server info (version, edition) for a connected database. */
+export async function getServerInfo(
+  connectionUri: string,
+  outputChannel: vscode.LogOutputChannel,
+): Promise<import('../types/mssql').IServerInfo> {
+  const sharing = await getConnectionSharingApi(outputChannel);
+  return sharing.getServerInfo(connectionUri);
+}
+
+/** Execute a single SQL query against a connected database. */
+export async function executeSimpleQuery(
+  connectionUri: string,
+  sql: string,
+  outputChannel: vscode.LogOutputChannel,
+): Promise<SimpleExecuteResult> {
+  const sharing = await getConnectionSharingApi(outputChannel);
+  return sharing.executeSimpleQuery(connectionUri, sql);
+}
+
 export async function disconnectDatabase(
   connectionUri: string,
   outputChannel: vscode.LogOutputChannel,

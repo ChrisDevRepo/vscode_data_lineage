@@ -186,6 +186,8 @@ export function App() {
           schema: node.schema,
           objectType: node.type,
           sqlBody: node.bodyScript,
+          bodyHtml: node.bodyHtml,
+          columns: node.columns,
         });
       }
     },
@@ -222,6 +224,8 @@ export function App() {
           schema: node.schema,
           objectType: node.type,
           sqlBody: node.bodyScript,
+          bodyHtml: node.bodyHtml,
+          columns: node.columns,
         });
       }
     },

@@ -183,8 +183,8 @@ function testBuildModelFromDmv() {
 
   // Table body scripts (design view from columns)
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
-  assert(ordersNode?.bodyScript?.includes('OrderId'), 'Orders table has column design view');
-  assert(ordersNode?.bodyScript?.includes('int'), 'Orders table design shows int type');
+  assert(ordersNode?.bodyHtml?.includes('OrderId'), 'Orders table has column design view');
+  assert(ordersNode?.bodyHtml?.includes('int'), 'Orders table design shows int type');
 
   // No warnings for valid data
   assert(model.warnings === undefined, 'No warnings for valid data');
@@ -646,23 +646,23 @@ function testConstraintMapsEnrichColumns() {
   // Customers.Name should have UQ flag in design view
   const customersNode = model.nodes.find(n => n.name === 'Customers');
   assert(customersNode !== undefined, 'Customers node found');
-  assert(customersNode?.bodyScript?.includes('UQ'), 'Customers design view has UQ flag');
-  assert(customersNode?.bodyScript?.includes('FOREIGN KEYS'), 'Customers has FK section (shows "(none)" when no FKs)');
-  assert(customersNode?.bodyScript?.includes('(none)'), 'Customers FK section shows (none)');
+  assert(customersNode?.bodyHtml?.includes('UQ'), 'Customers design view has UQ flag');
+  assert(customersNode?.bodyHtml?.includes('FOREIGN KEYS'), 'Customers has FK section (shows "(none)" when no FKs)');
+  assert(customersNode?.bodyHtml?.includes('(none)'), 'Customers FK section shows (none)');
 
   // Orders should have FK section
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
   assert(ordersNode !== undefined, 'Orders node found');
-  assert(ordersNode?.bodyScript?.includes('FOREIGN KEYS'), 'Orders design view has FOREIGN KEYS section');
-  assert(ordersNode?.bodyScript?.includes('FK_Orders_Customers'), 'Orders shows FK_Orders_Customers');
-  assert(ordersNode?.bodyScript?.includes('FK_Orders_Products'), 'Orders shows FK_Orders_Products');
-  assert(ordersNode?.bodyScript?.includes('CASCADE'), 'Orders FK shows CASCADE on delete');
-  assert(ordersNode?.bodyScript?.includes('[dbo].[Customers]'), 'Orders FK references Customers');
+  assert(ordersNode?.bodyHtml?.includes('FOREIGN KEYS'), 'Orders design view has FOREIGN KEYS section');
+  assert(ordersNode?.bodyHtml?.includes('FK_Orders_Customers'), 'Orders shows FK_Orders_Customers');
+  assert(ordersNode?.bodyHtml?.includes('FK_Orders_Products'), 'Orders shows FK_Orders_Products');
+  assert(ordersNode?.bodyHtml?.includes('CASCADE'), 'Orders FK shows CASCADE on delete');
+  assert(ordersNode?.bodyHtml?.includes('[dbo].[Customers]'), 'Orders FK references Customers');
 
   // Products.Id should have CK flag
   const productsNode = model.nodes.find(n => n.name === 'Products');
   assert(productsNode !== undefined, 'Products node found');
-  assert(productsNode?.bodyScript?.includes('CK'), 'Products design view has CK flag');
+  assert(productsNode?.bodyHtml?.includes('CK'), 'Products design view has CK flag');
 }
 
 function testConstraintsMissingResultGraceful() {
@@ -673,11 +673,11 @@ function testConstraintsMissingResultGraceful() {
 
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
   assert(ordersNode !== undefined, 'Orders node found without constraints');
-  assert(!ordersNode?.bodyScript?.includes('FOREIGN KEYS'), 'No FK section when constraints absent');
-  assert(!ordersNode?.bodyScript?.includes('UQ'), 'No UQ column when constraints absent');
+  assert(!ordersNode?.bodyHtml?.includes('FOREIGN KEYS'), 'No FK section when constraints absent');
+  assert(!ordersNode?.bodyHtml?.includes('UQ'), 'No UQ column when constraints absent');
 
   // Design view still works as before
-  assert(ordersNode?.bodyScript?.includes('OrderId'), 'Column design view still present');
+  assert(ordersNode?.bodyHtml?.includes('OrderId'), 'Column design view still present');
 }
 
 function testValidateQueryResultConstraints() {

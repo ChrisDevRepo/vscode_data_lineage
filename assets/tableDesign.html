@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --bg: var(--vscode-editor-background, #1e1e1e);
+    --fg: var(--vscode-editor-foreground, #cccccc);
+    --fg-muted: var(--vscode-descriptionForeground, #999999);
+    --fg-dim: var(--vscode-disabledForeground, #666666);
+    --border: var(--vscode-panel-border, #444444);
+    --hover-bg: var(--vscode-list-hoverBackground, rgba(255,255,255,0.05));
+    --badge-bg: var(--vscode-badge-background, #4d4d4d);
+    --badge-fg: var(--vscode-badge-foreground, #ffffff);
+    --btn-bg: var(--vscode-button-secondaryBackground, #3a3d41);
+    --btn-fg: var(--vscode-button-secondaryForeground, #ffffff);
+    --btn-hover: var(--vscode-button-secondaryHoverBackground, #45494e);
+    --btn-primary-bg: var(--vscode-button-background, #0e639c);
+    --btn-primary-fg: var(--vscode-button-foreground, #ffffff);
+    --btn-primary-hover: var(--vscode-button-hoverBackground, #1177bb);
+    --warning-fg: var(--vscode-editorWarning-foreground, #cca700);
+    --contrast-border: var(--vscode-contrastBorder, transparent);
+    --info-fg: var(--vscode-editorInfo-foreground, #3794ff);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
+    font-size: var(--vscode-font-size, 13px);
+    padding: 16px;
+    line-height: 1.5;
+  }
+  h2 {
+    font-size: 1.15em;
+    font-weight: 600;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 {
+    font-size: 1em;
+    font-weight: 600;
+    margin-top: 20px;
+    margin-bottom: 8px;
+    color: var(--fg-muted);
+  }
+  .type-icon { margin-right: 6px; }
+  .type-table { color: #3b82f6; }
+  .type-external { color: #22c55e; }
+  .design-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--border);
+    border: 1px solid var(--contrast-border, var(--border));
+  }
+  .design-table th,
+  .design-table td {
+    padding: 4px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .design-table th {
+    background: var(--hover-bg);
+    font-weight: 600;
+    font-size: 0.92em;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--fg-muted);
+  }
+  .design-table tbody tr:nth-child(even) {
+    background: var(--hover-bg);
+  }
+  .design-table tbody tr:hover {
+    background: rgba(255,255,255,0.08);
+  }
+  .col-name { font-weight: 500; }
+  .col-type { color: var(--info-fg); font-family: var(--vscode-editor-font-family, monospace); font-size: 0.95em; }
+  .col-nullable { color: var(--fg-muted); }
+  .badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.85em;
+    font-weight: 500;
+    background: var(--badge-bg);
+    color: var(--badge-fg);
+  }
+  .badge-pk, .badge-identity { background: #0e639c; }
+  .badge-computed { background: #6c6c6c; }
+  .badge-uq { background: #7c3aed; }
+  .badge-ck { background: #b45309; }
+  .fk-table { margin-top: 4px; }
+  .empty { color: var(--fg-dim); font-style: italic; margin: 8px 0; }
+
+  /* Statistics section */
+  .stats-section {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .stats-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .stats-header h3 { margin: 0; flex-shrink: 0; }
+  .stats-btn {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    cursor: pointer;
+    font-size: 0.9em;
+    font-family: inherit;
+  }
+  .stats-btn:hover { background: var(--btn-hover); }
+  .stats-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .stats-btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-fg);
+    border-color: var(--btn-primary-bg);
+  }
+  .stats-btn-primary:hover { background: var(--btn-primary-hover); }
+
+  /* KPI badges */
+  .kpi-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .kpi-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 3px;
+    background: var(--badge-bg);
+    color: var(--badge-fg);
+    font-size: 0.9em;
+    font-weight: 500;
+  }
+  .kpi-badge .kpi-value { font-weight: 700; }
+
+  /* Stats table */
+  .stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--border);
+    margin-top: 8px;
+  }
+  .stats-table th,
+  .stats-table td {
+    padding: 4px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .stats-table th {
+    background: var(--hover-bg);
+    font-weight: 600;
+    font-size: 0.92em;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--fg-muted);
+  }
+  .stats-table tbody tr:nth-child(even) {
+    background: var(--hover-bg);
+  }
+  .stats-table td.num { text-align: right; font-family: var(--vscode-editor-font-family, monospace); font-size: 0.95em; }
+  .null-warn { background: rgba(204, 167, 0, 0.1); }
+
+  /* Uniqueness bar */
+  .uniq-bar {
+    display: inline-block;
+    width: 40px;
+    height: 10px;
+    background: var(--fg-dim);
+    border-radius: 2px;
+    overflow: hidden;
+    vertical-align: middle;
+    margin-left: 6px;
+  }
+  .uniq-bar-fill {
+    height: 100%;
+    background: var(--info-fg);
+    border-radius: 2px 0 0 2px;
+  }
+
+  .stats-skipped { color: var(--fg-dim); font-style: italic; margin-top: 8px; font-size: 0.9em; }
+  .stats-error { color: var(--warning-fg); margin-top: 8px; }
+  .stats-loading { color: var(--fg-muted); margin-top: 8px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--fg-dim); border-top-color: var(--info-fg); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+{{content}}
+<div class="stats-section" id="stats-section" {{statsDisplay}}>
+  <div class="stats-header">
+    <h3>STATISTICS</h3>
+    <button class="stats-btn stats-btn-primary" id="btn-quick" onclick="requestStats('quick')">Quick Stats</button>
+    <button class="stats-btn" id="btn-detail" onclick="requestStats('detail')">Detail Stats</button>
+  </div>
+  <div id="stats-container"></div>
+</div>
+<script>
+  const vscode = acquireVsCodeApi();
+  const schema = {{schema}};
+  const objectName = {{objectName}};
+
+  function requestStats(mode) {
+    document.getElementById('btn-quick').disabled = true;
+    document.getElementById('btn-detail').disabled = true;
+    document.getElementById('stats-container').innerHTML = '<p class="stats-loading"><span class="spinner"></span> Loading ' + mode + ' statistics...</p>';
+    vscode.postMessage({ type: 'table-stats-request', schema, objectName, mode });
+  }
+
+  window.addEventListener('message', event => {
+    const msg = event.data;
+    if (msg.type === 'table-stats-result') {
+      renderStats(msg);
+      document.getElementById('btn-quick').disabled = false;
+      document.getElementById('btn-detail').disabled = false;
+    } else if (msg.type === 'table-stats-error') {
+      document.getElementById('stats-container').innerHTML = '<p class="stats-error">' + escHtml(msg.message) + '</p>';
+      document.getElementById('btn-quick').disabled = false;
+      document.getElementById('btn-detail').disabled = false;
+    }
+  });
+
+  function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function renderStats(msg) {
+    const stats = msg.stats;
+    const mode = msg.mode;
+    const container = document.getElementById('stats-container');
+    let html = '';
+
+    // KPI badges
+    html += '<div class="kpi-row">';
+    html += '<span class="kpi-badge"><span class="kpi-value">' + stats.rowCount.toLocaleString() + '</span> rows</span>';
+    const profiled = stats.columns.filter(c => !c.skipped).length;
+    const total = stats.columns.length;
+    html += '<span class="kpi-badge"><span class="kpi-value">' + profiled + '/' + total + '</span> columns</span>';
+    if (stats.sampled) {
+      html += '<span class="kpi-badge">sampled ' + (stats.samplePercent || '?') + '%</span>';
+    } else {
+      html += '<span class="kpi-badge">full scan</span>';
+    }
+    html += '</div>';
+
+    // Check if detail columns needed
+    const hasMinMax = mode === 'detail' && stats.columns.some(c => c.min !== undefined || c.max !== undefined);
+    const hasLen = mode === 'detail' && stats.columns.some(c => c.minLength !== undefined);
+
+    // Stats table
+    html += '<table class="stats-table"><thead><tr>';
+    html += '<th>Column</th><th>Distinct</th><th>Nulls</th>';
+    if (hasMinMax) html += '<th>Min</th><th>Max</th>';
+    if (hasLen) html += '<th>Len</th>';
+    html += '</tr></thead><tbody>';
+
+    for (const col of stats.columns) {
+      if (col.skipped) continue;
+      const pct = stats.rowCount > 0 ? col.distinctCount / stats.rowCount : 0;
+      const barW = Math.round(Math.min(pct, 1) * 100);
+      const nullCell = col.nullCount === null ? '<td class="num">&mdash;</td>'
+        : col.nullCount === 0 ? '<td class="num">0</td>'
+        : '<td class="num null-warn">' + col.nullCount.toLocaleString() + ' (' + col.nullPercent.toFixed(1) + '%)</td>';
+
+      html += '<tr>';
+      html += '<td>' + escHtml(col.name) + '</td>';
+      html += '<td class="num">' + col.distinctCount.toLocaleString() + ' <span class="uniq-bar"><span class="uniq-bar-fill" style="width:' + barW + '%"></span></span></td>';
+      html += nullCell;
+      if (hasMinMax) html += '<td class="num">' + (col.min !== undefined ? escHtml(String(col.min)) : '') + '</td><td class="num">' + (col.max !== undefined ? escHtml(String(col.max)) : '') + '</td>';
+      if (hasLen) html += '<td class="num">' + (col.minLength !== undefined ? col.minLength + '\u2026' + col.maxLength : '') + '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+
+    // Skipped columns
+    const skipped = stats.columns.filter(c => c.skipped);
+    if (skipped.length > 0) {
+      html += '<p class="stats-skipped">' + skipped.length + ' column(s) skipped (' + skipped.map(c => escHtml(c.type)).join(', ') + ')</p>';
+    }
+
+    container.innerHTML = html;
+  }
+</script>
+</body>
+</html>

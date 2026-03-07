@@ -8,7 +8,9 @@ export interface LineageNode {
   name: string;          // object name without brackets/schema
   fullName: string;      // "[schema].[name]" as in dacpac
   type: ObjectType;
-  bodyScript?: string;   // SQL body for SPs/Views/UDFs
+  bodyScript?: string;   // SQL body for SPs/Views/UDFs; ASCII table design for tables
+  bodyHtml?: string;     // HTML table design for tables/externals (webview rendering)
+  columns?: ColumnDef[]; // column metadata (tables/externals only, for profiling)
   externalKind?: 'et'; // set for type === 'external'
 }
 
@@ -286,6 +288,14 @@ export interface AnalysisConfig {
   longestPathMinNodes: number;
 }
 
+export interface TableStatsConfig {
+  enabled: boolean;
+  sampleThreshold: number;
+  sampleSize: number;
+  useApproxDistinct: boolean;
+  queryTimeout: number;
+}
+
 export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   excludePatterns: string[];
@@ -294,6 +304,7 @@ export interface ExtensionConfig {
   edgeStyle: EdgeStyle;
   trace: TraceConfig;
   analysis: AnalysisConfig;
+  tableStatistics: TableStatsConfig;
 }
 
 export const DEFAULT_CONFIG = {
@@ -303,6 +314,7 @@ export const DEFAULT_CONFIG = {
   edgeStyle: 'default' as const,
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
   analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
+  tableStatistics: { enabled: true, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
 } satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────

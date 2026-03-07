@@ -176,6 +176,54 @@
         }
       },
       {
+        "title": "Table Statistics",
+        "properties": {
+          "dataLineageViz.tableStatistics.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Enable table statistics buttons in the table design viewer (DB mode only).",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.sampleThreshold": {
+            "type": "number",
+            "default": 100000,
+            "minimum": 0,
+            "maximum": 999999999,
+            "markdownDescription": "Row count above which sampling is used. Tables with fewer rows get a full scan. Set to `0` to always sample.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.sampleSize": {
+            "type": "number",
+            "default": 10000,
+            "minimum": 100,
+            "maximum": 1000000,
+            "markdownDescription": "Target sample size (rows). Converted to `TABLESAMPLE(N PERCENT)` or `TOP N` depending on platform.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.useApproxDistinct": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Use `APPROX_COUNT_DISTINCT` (HyperLogLog, ~2% error, much faster) instead of exact `COUNT(DISTINCT)`. Supported on SQL Server 2019+, Azure SQL, Synapse, Fabric.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.queryTimeout": {
+            "type": "number",
+            "default": 60,
+            "minimum": 10,
+            "maximum": 600,
+            "markdownDescription": "Query timeout in seconds for profiling queries.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.queriesFile": {
+            "type": "string",
+            "default": "",
+            "editPresentation": "multilineText",
+            "markdownDescription": "Path to custom profiling queries YAML. Leave empty for built-in defaults. See [profilingQueries.yaml](assets/profilingQueries.yaml) for format.",
+            "scope": "resource"
+          }
+        }
+      },
+      {
         "title": "Layout",
         "properties": {
           "dataLineageViz.layout.direction": {
@@ -312,7 +360,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/profilingEngine.test.ts",
     "test:db": "tsx test-internal/integration-db.test.ts"
   },
   "dependencies": {

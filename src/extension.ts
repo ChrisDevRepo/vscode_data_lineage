@@ -4,12 +4,15 @@ import * as yaml from 'js-yaml';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
-import { DEFAULT_CONFIG, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig } from './engine/types';
+import { DEFAULT_CONFIG, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ObjectType } from './engine/types';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
+  getServerInfo, executeSimpleQuery,
 } from './engine/connectionManager';
 import type { IConnectionInfo, SimpleExecuteResult } from './types/mssql';
+import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult } from './engine/profilingEngine';
+import type { StatsMode } from './engine/profilingEngine';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './engine/dmvExtractor';
 import type { DmvResults } from './engine/dmvExtractor';
 
@@ -50,14 +53,41 @@ const ddlProvider = new class implements vscode.TextDocumentContentProvider {
   fire(uri: vscode.Uri) { this._onDidChange.fire(uri); }
 };
 
-function formatDdlContent(message: { objectName: string; schema: string; sqlBody?: string }): string {
-  const { objectName, schema, sqlBody } = message;
-  return sqlBody || `-- No DDL available for [${schema}].[${objectName}]`;
+type DdlMessage = { objectName: string; schema: string; objectType?: ObjectType; sqlBody?: string; bodyHtml?: string; columns?: import('./engine/types').ColumnDef[] };
+
+function isTableType(objectType?: ObjectType): boolean {
+  return objectType === 'table' || objectType === 'external';
 }
 
-async function showDdl(ddlUri: vscode.Uri, message: { objectName: string; schema: string; sqlBody?: string }) {
+// ─── DDL Table Webview ──────────────────────────────────────────────────────
+
+let ddlWebviewPanel: vscode.WebviewPanel | undefined;
+let ddlWebviewContext: vscode.ExtensionContext | undefined;
+let ddlWebviewColumns: import('./engine/types').ColumnDef[] | undefined;
+let tableDesignTemplate: string | undefined;
+
+async function getDdlWebviewHtml(
+  contentHtml: string, isDbMode: boolean, statsEnabled: boolean, schema: string, objectName: string,
+): Promise<string> {
+  if (!tableDesignTemplate) {
+    const tplUri = vscode.Uri.joinPath(extensionUri, 'assets', 'tableDesign.html');
+    tableDesignTemplate = new TextDecoder().decode(await vscode.workspace.fs.readFile(tplUri));
+  }
+  return tableDesignTemplate
+    .replace('{{content}}', contentHtml)
+    .replace('{{schema}}', JSON.stringify(schema))
+    .replace('{{objectName}}', JSON.stringify(objectName))
+    .replace('{{statsDisplay}}', isDbMode && statsEnabled ? '' : 'style="display:none"');
+}
+
+// ─── DDL Text Editor (SPs, Views, Functions) ───────────────────────────────
+
+async function showDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
+  // Close table webview when switching to text editor
+  if (ddlWebviewPanel) { ddlWebviewPanel.dispose(); }
+
   const key = ddlUri.toString();
-  const content = formatDdlContent(message);
+  const content = message.sqlBody || `-- No DDL available for [${message.schema}].[${message.objectName}]`;
   ddlContentMap.set(key, content);
   ddlProvider.fire(ddlUri);
 
@@ -66,7 +96,6 @@ async function showDdl(ddlUri: vscode.Uri, message: { objectName: string; schema
     if (doc.languageId !== 'dacpac-sql') {
       await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
     }
-    // Re-set: setTextDocumentLanguage fires onDidCloseTextDocument which deletes the key
     ddlContentMap.set(key, content);
     await vscode.window.showTextDocument(doc, {
       viewColumn: vscode.ViewColumn.Beside,
@@ -80,11 +109,86 @@ async function showDdl(ddlUri: vscode.Uri, message: { objectName: string; schema
   }
 }
 
-function updateDdlIfOpen(ddlUri: vscode.Uri, message: { objectName: string; schema: string; sqlBody?: string }) {
+function updateDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
   const key = ddlUri.toString();
   if (!ddlContentMap.has(key)) return;
-  ddlContentMap.set(key, formatDdlContent(message));
+  ddlContentMap.set(key, message.sqlBody || `-- No DDL available for [${message.schema}].[${message.objectName}]`);
   ddlProvider.fire(ddlUri);
+}
+
+// ─── DDL Table Webview (Tables, External Tables) ───────────────────────────
+
+async function showOrUpdateTableWebview(context: vscode.ExtensionContext, message: DdlMessage, createIfMissing: boolean): Promise<void> {
+  if (!createIfMissing && !ddlWebviewPanel) return;
+
+  // Close text editor tabs when opening table webview (symmetric with showDdlTextEditor closing webview)
+  if (createIfMissing) {
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === DDL_SCHEME) {
+          await vscode.window.tabGroups.close(tab);
+        }
+      }
+    }
+  }
+
+  const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
+  const isDbMode = sourceType === 'database';
+  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+  const statsEnabled = cfg.get<boolean>('tableStatistics.enabled', true);
+  ddlWebviewColumns = message.columns;
+
+  const html = await getDdlWebviewHtml(message.bodyHtml!, isDbMode, statsEnabled, message.schema, message.objectName);
+  const title = `Table: [${message.schema}].[${message.objectName}]`;
+
+  if (ddlWebviewPanel) {
+    ddlWebviewPanel.webview.html = html;
+    if (createIfMissing) ddlWebviewPanel.reveal(undefined, true);
+  } else {
+    ddlWebviewPanel = vscode.window.createWebviewPanel(
+      'dataLineageDdlViewer',
+      title,
+      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+      { enableScripts: true, retainContextWhenHidden: false },
+    );
+    ddlWebviewPanel.webview.html = html;
+    ddlWebviewContext = context;
+
+    ddlWebviewPanel.webview.onDidReceiveMessage(
+      async (msg: { type: string; schema?: string; objectName?: string; mode?: string }) => {
+        if (msg.type === 'table-stats-request') {
+          await handleTableStatsRequest(context, msg.schema!, msg.objectName!, msg.mode as 'quick' | 'detail');
+        }
+      },
+      undefined,
+      context.subscriptions
+    );
+
+    ddlWebviewPanel.onDidDispose(() => {
+      ddlWebviewPanel = undefined;
+      ddlWebviewContext = undefined;
+      ddlWebviewColumns = undefined;
+    }, undefined, context.subscriptions);
+  }
+  ddlWebviewPanel.title = title;
+}
+
+// ─── DDL Router ─────────────────────────────────────────────────────────────
+
+async function showDdl(context: vscode.ExtensionContext, ddlUri: vscode.Uri, message: DdlMessage) {
+  if (isTableType(message.objectType) && message.bodyHtml) {
+    await showOrUpdateTableWebview(context, message, true);
+  } else {
+    await showDdlTextEditor(ddlUri, message);
+  }
+}
+
+async function updateDdlIfOpen(ddlUri: vscode.Uri, message: DdlMessage) {
+  if (isTableType(message.objectType) && message.bodyHtml) {
+    if (ddlWebviewContext) await showOrUpdateTableWebview(ddlWebviewContext, message, false);
+  } else {
+    updateDdlTextEditor(ddlUri, message);
+  }
 }
 
 // ─── Activate ────────────────────────────────────────────────────────────────
@@ -321,8 +425,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         if (msg.url) await vscode.env.openExternal(vscode.Uri.parse(msg.url));
       },
       'open-settings': () => { vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz'); },
-      'show-ddl': async (msg) => { await showDdl(ddlUri, msg); },
-      'update-ddl': (msg) => { updateDdlIfOpen(ddlUri, msg); },
+      'show-ddl': async (msg) => { await showDdl(context, ddlUri, msg as DdlMessage); },
+      'update-ddl': async (msg) => { await updateDdlIfOpen(ddlUri, msg as DdlMessage); },
       'check-mssql': () => {
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
       },
@@ -406,8 +510,8 @@ type WebviewMessage =
   | { type: 'error'; error: string; stack?: string }
   | { type: 'open-external'; url?: string }
   | { type: 'open-settings' }
-  | { type: 'show-ddl'; objectName: string; schema: string; sqlBody?: string }
-  | { type: 'update-ddl'; objectName: string; schema: string; sqlBody?: string }
+  | { type: 'show-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; bodyHtml?: string; columns?: import('./engine/types').ColumnDef[] }
+  | { type: 'update-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; bodyHtml?: string; columns?: import('./engine/types').ColumnDef[] }
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
   | { type: 'db-reconnect' }
@@ -462,6 +566,7 @@ interface ExtensionConfigMessage {
   edgeStyle: EdgeStyle;
   trace: TraceConfig;
   analysis: AnalysisConfig;
+  tableStatistics: TableStatsConfig;
 }
 
 function clamp(val: number, min: number, max: number, fallback: number): number {
@@ -511,6 +616,13 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
       hubMinDegree: clamp(cfg.get<number>('analysis.hubMinDegree', DEFAULT_CONFIG.analysis.hubMinDegree), 1, 50, DEFAULT_CONFIG.analysis.hubMinDegree),
       islandMaxSize: clamp(cfg.get<number>('analysis.islandMaxSize', DEFAULT_CONFIG.analysis.islandMaxSize), 2, maxNodes, DEFAULT_CONFIG.analysis.islandMaxSize),
       longestPathMinNodes: clamp(cfg.get<number>('analysis.longestPathMinNodes', DEFAULT_CONFIG.analysis.longestPathMinNodes), 2, 50, DEFAULT_CONFIG.analysis.longestPathMinNodes),
+    },
+    tableStatistics: {
+      enabled: cfg.get<boolean>('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled),
+      sampleThreshold: clamp(cfg.get<number>('tableStatistics.sampleThreshold', DEFAULT_CONFIG.tableStatistics.sampleThreshold), 0, 999999999, DEFAULT_CONFIG.tableStatistics.sampleThreshold),
+      sampleSize: clamp(cfg.get<number>('tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize), 100, 1000000, DEFAULT_CONFIG.tableStatistics.sampleSize),
+      useApproxDistinct: cfg.get<boolean>('tableStatistics.useApproxDistinct', DEFAULT_CONFIG.tableStatistics.useApproxDistinct),
+      queryTimeout: clamp(cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout), 10, 600, DEFAULT_CONFIG.tableStatistics.queryTimeout),
     },
   };
 
@@ -568,6 +680,140 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   }
 
   return config;
+}
+
+// ─── Table Statistics ────────────────────────────────────────────────────────
+
+async function handleTableStatsRequest(
+  context: vscode.ExtensionContext,
+  schema: string,
+  objectName: string,
+  mode: StatsMode,
+): Promise<void> {
+  if (!ddlWebviewPanel) return;
+  const panel = ddlWebviewPanel;
+
+  const cols = ddlWebviewColumns;
+  if (!cols || cols.length === 0) {
+    panel.webview.postMessage({ type: 'table-stats-error', message: 'No column metadata available for profiling.' });
+    return;
+  }
+
+  const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+  if (!storedInfo) {
+    panel.webview.postMessage({ type: 'table-stats-error', message: 'No stored connection. Please reconnect via the graph panel.' });
+    return;
+  }
+
+  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+  const sampleThreshold = cfg.get<number>('tableStatistics.sampleThreshold', DEFAULT_CONFIG.tableStatistics.sampleThreshold);
+  const sampleSize = cfg.get<number>('tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize);
+  const useApprox = cfg.get<boolean>('tableStatistics.useApproxDistinct', DEFAULT_CONFIG.tableStatistics.useApproxDistinct);
+  const queryTimeout = cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout) * 1000;
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Profiling [${schema}].[${objectName}]...`, cancellable: true },
+    async (progress, token) => {
+      let connectionUri: string | undefined;
+      try {
+        // Connect
+        progress.report({ message: 'Connecting...' });
+        const result = await connectDirect(storedInfo, outputChannel);
+        if (!result) {
+          panel.webview.postMessage({ type: 'table-stats-error', message: 'Failed to reconnect. Please reconnect via the graph panel.' });
+          return;
+        }
+        connectionUri = result.connectionUri;
+
+        if (token.isCancellationRequested) return;
+
+        // Get server info for platform detection
+        const serverInfo = await getServerInfo(connectionUri, outputChannel);
+        const engineEdition = serverInfo.engineEditionId;
+        outputChannel.info(`[Stats] Platform: engineEditionId=${engineEdition}, server=${serverInfo.serverVersion}`);
+
+        // Row count from DMV
+        progress.report({ message: 'Getting row count...' });
+        const rowCountSql = buildRowCountQuery(schema, objectName);
+        outputChannel.info(`[Stats] Row count query:\n${rowCountSql}`);
+        const rowCountResult = await withTimeout(executeSimpleQuery(connectionUri, rowCountSql, outputChannel), queryTimeout);
+        const rowCount = rowCountResult.rowCount > 0 ? parseInt(rowCountResult.rows[0][0].displayValue, 10) || 0 : 0;
+        outputChannel.info(`[Stats] Row count: ${rowCount.toLocaleString()}`);
+
+        if (token.isCancellationRequested) return;
+
+        // Build profiling query
+        progress.report({ message: `Running ${mode} profiling...` });
+        const aggregations = buildColumnAggregations(cols, useApprox, mode);
+        const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
+
+        if (!profilingSql) {
+          panel.webview.postMessage({ type: 'table-stats-error', message: 'No profilable columns found.' });
+          return;
+        }
+
+        outputChannel.info(`[Stats] Profiling query (${mode}):\n${profilingSql}`);
+        const start = Date.now();
+
+        let profilingResult: SimpleExecuteResult;
+        try {
+          profilingResult = await withTimeout(executeSimpleQuery(connectionUri, profilingSql, outputChannel), queryTimeout);
+        } catch (err) {
+          // Retry without sampling on TABLESAMPLE failure (e.g., Fabric DWH)
+          if (String(err).includes('TABLESAMPLE') && engineEdition !== 11) {
+            outputChannel.warn(`[Stats] TABLESAMPLE failed, retrying without sampling...`);
+            const fallbackSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, 0, sampleThreshold, sampleSize);
+            profilingResult = await withTimeout(executeSimpleQuery(connectionUri, fallbackSql, outputChannel), queryTimeout);
+          } else {
+            throw err;
+          }
+        }
+
+        const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+        outputChannel.info(`[Stats] Profiling completed in ${elapsed}s (${profilingResult.rowCount} rows returned)`);
+
+        if (profilingResult.rowCount === 0 || profilingResult.rows.length === 0) {
+          panel.webview.postMessage({ type: 'table-stats-error', message: 'Profiling query returned no results. Table may be empty.' });
+          return;
+        }
+
+        // Parse result: map column aliases to values
+        const resultRow: Record<string, string> = {};
+        for (let i = 0; i < profilingResult.columnInfo.length; i++) {
+          const colName = profilingResult.columnInfo[i].columnName;
+          const value = profilingResult.rows[0][i].displayValue;
+          resultRow[colName] = value;
+        }
+
+        const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
+        const samplePercent = needsSampling
+          ? (engineEdition === 11 ? Math.round((sampleSize / rowCount) * 100) : Math.min(100, Math.ceil((sampleSize / rowCount) * 100)))
+          : undefined;
+
+        const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
+        panel.webview.postMessage({ type: 'table-stats-result', stats, mode });
+
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        outputChannel.error(`[Stats] Failed: ${errorMsg}`);
+        panel.webview.postMessage({ type: 'table-stats-error', message: errorMsg });
+        vscode.window.showErrorMessage(`Table Statistics Error: ${errorMsg}`);
+      } finally {
+        if (connectionUri) {
+          await disconnectDatabase(connectionUri, outputChannel).catch(err => {
+            outputChannel.warn(`[Stats] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
+          });
+        }
+      }
+    }
+  );
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Query timed out after ${ms / 1000}s. Increase dataLineageViz.tableStatistics.queryTimeout if needed.`)), ms)),
+  ]);
 }
 
 // ─── Two-Phase DB Extraction ─────────────────────────────────────────────────

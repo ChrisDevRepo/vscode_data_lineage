@@ -1,0 +1,82 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Table Profiling Queries — Data Lineage Viz
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# These queries are READ-ONLY and do not modify any data.
+# Required permissions: SELECT on target table, VIEW SERVER STATE (for DMV row count).
+#
+# Platforms: SQL Server 2022+, Azure SQL Database, Synapse Dedicated SQL Pool,
+#            Microsoft Fabric Data Warehouse.
+#
+# ── How the column-profile query is generated ─────────────────────────────────
+#
+# The extension reads column metadata (name, type, nullable) from the model
+# and generates one SELECT with per-column aggregations. Rules:
+#
+#   Column type          │ Quick Stats           │ Detail Stats (adds)
+#   ─────────────────────┼───────────────────────┼───────────────────────
+#   int, bigint, ...     │ Distinct, Null count* │ MIN, MAX
+#   decimal, float, ...  │ Distinct, Null count* │ MIN, MAX
+#   varchar, nvarchar    │ Distinct, Null count* │ MIN(LEN), MAX(LEN)
+#   date, datetime, ...  │ Distinct, Null count* │ MIN, MAX
+#   bit                  │ Distinct, Null count* │ (nothing extra)
+#   uniqueidentifier     │ Distinct, Null count* │ (nothing extra)
+#   binary, image, xml,  │ (skipped entirely)    │ (skipped entirely)
+#   geography, geometry  │                       │
+#   COMPUTED columns     │ (skipped entirely)    │ (skipped entirely)
+#
+#   * Null count is ONLY generated for nullable columns.
+#     NOT NULL columns skip this aggregation — no wasted I/O.
+#   * APPROX_COUNT_DISTINCT is used by default (HyperLogLog, ~2% error).
+#     Set useApproxDistinct=false for exact COUNT(DISTINCT).
+#
+# ── Example: generated SQL for [HumanResources].[Employee] ────────────────────
+#
+#   SELECT
+#     APPROX_COUNT_DISTINCT([BusinessEntityID]) AS [BusinessEntityID__d],
+#     MIN([BusinessEntityID])                   AS [BusinessEntityID__min],
+#     MAX([BusinessEntityID])                   AS [BusinessEntityID__max],
+#     APPROX_COUNT_DISTINCT([NationalIDNumber]) AS [NationalIDNumber__d],
+#     MIN(LEN([NationalIDNumber]))              AS [NationalIDNumber__minl],
+#     MAX(LEN([NationalIDNumber]))              AS [NationalIDNumber__maxl],
+#     APPROX_COUNT_DISTINCT([BirthDate])        AS [BirthDate__d],
+#     MIN([BirthDate])                          AS [BirthDate__min],
+#     MAX([BirthDate])                          AS [BirthDate__max],
+#     APPROX_COUNT_DISTINCT([SalariedFlag])     AS [SalariedFlag__d]
+#     -- OrganizationNode (hierarchyid) → skipped
+#   FROM [HumanResources].[Employee] TABLESAMPLE(10 PERCENT)
+#
+# ── Sampling ──────────────────────────────────────────────────────────────────
+#
+#   Platform              │ Sampling method
+#   ──────────────────────┼──────────────────────────────────
+#   SQL Server 2022+      │ TABLESAMPLE(P PERCENT)
+#   Azure SQL Database    │ TABLESAMPLE(P PERCENT)
+#   Synapse Dedicated     │ TABLESAMPLE(P PERCENT)
+#   Fabric DWH            │ TOP N (TABLESAMPLE not supported)
+#
+#   When row count (from DMV) ≤ sampleThreshold setting → full scan.
+#   PERCENT = CEIL(sampleSize / rowCount * 100), capped at 100.
+#
+# ── VS Code Settings ─────────────────────────────────────────────────────────
+#
+#   dataLineageViz.tableStatistics.enabled          (default: true)
+#   dataLineageViz.tableStatistics.sampleThreshold  (default: 100000)
+#   dataLineageViz.tableStatistics.sampleSize       (default: 10000)
+#   dataLineageViz.tableStatistics.useApproxDistinct (default: true)
+#   dataLineageViz.tableStatistics.queriesFile      (optional: path to custom YAML)
+#
+# ──────────────────────────────────────────────────────────────────────────────
+
+version: 1
+
+queries:
+  - name: row-count
+    description: >
+      Fast row count estimate from sys.partitions DMV (no table scan).
+      Uses index_id IN (0, 1) to cover both heaps and clustered indexes.
+    sql: |
+      SELECT SUM(p.rows) AS row_count
+      FROM sys.partitions p
+      WHERE p.object_id = OBJECT_ID('[{schema}].[{table}]')
+        AND p.index_id IN (0, 1)

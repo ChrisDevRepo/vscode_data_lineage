@@ -470,22 +470,22 @@ async function testConstraints() {
   // and CK_Employee_BirthDate on the BirthDate column
   const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
   assert(!!employee, 'HumanResources.Employee node found');
-  const empDdl = employee?.bodyScript ?? '';
+  const empDdl = employee?.bodyHtml ?? '';
   assert(empDdl.includes('FOREIGN KEYS'), 'Employee table design has FK section');
   assert(empDdl.includes('FK_Employee_Person_BusinessEntityID'), 'Employee has FK_Employee_Person_BusinessEntityID');
   assert(empDdl.includes('Person'), 'FK references Person table');
-  assert(empDdl.includes('| CK |'), 'Employee table design has CK column header');
+  assert(empDdl.includes('badge-ck'), 'Employee table design has CK badge');
   assert(empDdl.includes('CK_Employee_BirthDate') || empDdl.includes('CK'), 'BirthDate column has CK flag');
 
   // [Production].[Document] has a UQ constraint on rowguid
   const document = model.nodes.find(n => n.schema === 'Production' && n.name === 'Document');
   assert(!!document, 'Production.Document node found');
-  const docDdl = document?.bodyScript ?? '';
-  assert(docDdl.includes('| UQ |'), 'Document table design has UQ column header');
+  const docDdl = document?.bodyHtml ?? '';
+  assert(docDdl.includes('badge-uq'), 'Document table design has UQ badge');
   assert(docDdl.includes('UQ'), 'Document rowguid column shows UQ flag');
 
   // A table without FKs still shows the FK section with "(none)"
-  const noFkTable = model.nodes.find(n => n.type === 'table' && n.bodyScript?.includes('FOREIGN KEYS') && n.bodyScript?.includes('(none)'));
+  const noFkTable = model.nodes.find(n => n.type === 'table' && n.bodyHtml?.includes('FOREIGN KEYS') && n.bodyHtml?.includes('(none)'));
   assert(!!noFkTable, 'Table with no FKs still shows FK section with "(none)"');
 
   // SDK-style dacpac: no constraints, but FK section should still appear (fks = [] not undefined)
@@ -494,8 +494,8 @@ async function testConstraints() {
   const fabricModel = await extractDacpac(fabricBuf.buffer as ArrayBuffer);
   const fabricTable = fabricModel.nodes.find(n => n.type === 'table');
   assert(!!fabricTable, 'SDK-style dacpac has at least one table');
-  assert(fabricTable?.bodyScript?.includes('FOREIGN KEYS') ?? false, 'SDK-style table still shows FK section');
-  assert(fabricTable?.bodyScript?.includes('(none)') ?? false, 'SDK-style table FK section shows "(none)"');
+  assert(fabricTable?.bodyHtml?.includes('FOREIGN KEYS') ?? false, 'SDK-style table still shows FK section');
+  assert(fabricTable?.bodyHtml?.includes('(none)') ?? false, 'SDK-style table FK section shows "(none)"');
 }
 
 // ─── Run all tests ──────────────────────────────────────────────────────────

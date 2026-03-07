@@ -199,92 +199,74 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
   return Array.from(map.values()).sort((a, b) => b.nodeCount - a.nodeCount);
 }
 
-// ─── Table Design ASCII Renderer ────────────────────────────────────────────
+// ─── Table Design HTML Renderer ──────────────────────────────────────────────
 
-function buildTableDesignAscii(
+export function buildTableDesignHtml(
   cols: ColumnDef[],
   schema: string,
   objectName: string,
+  objectType: 'table' | 'external' = 'table',
   fks?: ForeignKeyInfo[],
 ): string {
-  if (cols.length === 0) return `-- No column metadata for [${schema}].[${objectName}]`;
+  if (cols.length === 0) return `<p class="empty">No column metadata for [${schema}].[${objectName}]</p>`;
+
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const typeIcon = objectType === 'external' ? '⬡' : '■';
+  const typeLabel = objectType === 'external' ? 'EXTERNAL TABLE' : 'TABLE';
 
   const hasExtra  = cols.some(c => c.extra);
-  const hasUnique = cols.some(c => c.unique !== undefined);
-  const hasCheck  = cols.some(c => c.check !== undefined);
+  const hasUnique = cols.some(c => c.unique !== undefined && c.unique !== '');
+  const hasCheck  = cols.some(c => c.check !== undefined && c.check !== '');
 
-  const hCol = 'Column', hType = 'Type', hNull = 'Nullable';
-  const wName  = Math.max(hCol.length,  ...cols.map(c => c.name.length));
-  const wType  = Math.max(hType.length, ...cols.map(c => c.type.length));
-  const wNull  = Math.max(hNull.length, ...cols.map(c => c.nullable.length));
-  const wExtra = hasExtra  ? Math.max(0, ...cols.map(c => c.extra.length))  : 0;
-  const wUq    = hasUnique ? 2 : 0;  // "UQ" flag — fixed width
-  const wCk    = hasCheck  ? 2 : 0;  // "CK" flag — fixed width
+  const lines: string[] = [];
+  lines.push(`<h2><span class="type-icon type-${objectType}">${typeIcon}</span> ${esc(typeLabel)}: [${esc(schema)}].[${esc(objectName)}]</h2>`);
 
-  const sep = (f: string) => {
-    let s = `-- +${f.repeat(wName + 2)}+${f.repeat(wType + 2)}+${f.repeat(wNull + 2)}+`;
-    if (hasExtra)  s += `${f.repeat(wExtra + 2)}+`;
-    if (hasUnique) s += `${f.repeat(wUq + 2)}+`;
-    if (hasCheck)  s += `${f.repeat(wCk + 2)}+`;
-    return s;
-  };
-  const row = (n: string, t: string, nu: string, ex: string, uq: string, ck: string) => {
-    let s = `-- | ${n.padEnd(wName)} | ${t.padEnd(wType)} | ${nu.padEnd(wNull)} |`;
-    if (hasExtra)  s += ` ${ex.padEnd(wExtra)} |`;
-    if (hasUnique) s += ` ${uq.padEnd(wUq)} |`;
-    if (hasCheck)  s += ` ${ck.padEnd(wCk)} |`;
-    return s;
-  };
-
-  const out: string[] = [];
-  out.push(`-- TABLE: [${schema}].[${objectName}]`);
-  out.push(sep('-'));
-  const hExtra = '';
-  const hUq    = hasUnique ? 'UQ' : '';
-  const hCk    = hasCheck  ? 'CK' : '';
-  out.push(row(hCol, hType, hNull, hExtra, hUq, hCk));
-  out.push(sep('-'));
+  // Columns table
+  lines.push('<table class="design-table">');
+  lines.push('<thead><tr>');
+  lines.push('<th>Column</th><th>Type</th><th>Nullable</th>');
+  if (hasExtra) lines.push('<th>Extra</th>');
+  if (hasUnique) lines.push('<th>UQ</th>');
+  if (hasCheck) lines.push('<th>CK</th>');
+  lines.push('</tr></thead>');
+  lines.push('<tbody>');
   for (const c of cols) {
-    out.push(row(c.name, c.type, c.nullable, c.extra ?? '', c.unique ? 'UQ' : '', c.check ? 'CK' : ''));
+    const extraBadge = c.extra ? `<span class="badge badge-${c.extra.replace(/[()]/g, '').toLowerCase()}">${esc(c.extra)}</span>` : '';
+    const uqBadge = c.unique ? '<span class="badge badge-uq">UQ</span>' : '';
+    const ckBadge = c.check ? '<span class="badge badge-ck">CK</span>' : '';
+    lines.push('<tr>');
+    lines.push(`<td class="col-name">${esc(c.name)}</td>`);
+    lines.push(`<td class="col-type">${esc(c.type)}</td>`);
+    lines.push(`<td class="col-nullable">${esc(c.nullable)}</td>`);
+    if (hasExtra) lines.push(`<td class="col-extra">${extraBadge}</td>`);
+    if (hasUnique) lines.push(`<td class="col-uq">${uqBadge}</td>`);
+    if (hasCheck) lines.push(`<td class="col-ck">${ckBadge}</td>`);
+    lines.push('</tr>');
   }
-  out.push(sep('-'));
+  lines.push('</tbody></table>');
 
+  // FK table
   if (fks !== undefined) {
-    out.push('--');
-    out.push('-- FOREIGN KEYS');
-
+    lines.push('<h3>FOREIGN KEYS</h3>');
     if (fks.length === 0) {
-      out.push('-- (none)');
+      lines.push('<p class="empty">(none)</p>');
     } else {
-      const hCon  = 'Constraint';
-      const hCols = 'Column(s)';
-      const hRef  = 'References';
-      const hDel  = 'On Delete';
-
-      const fkDisplayCols = fks.map(fk => fk.columns.join(', '));
-      const fkDisplayRefs = fks.map(fk => `[${fk.refSchema}].[${fk.refTable}](${fk.refColumns.join(', ')})`);
-
-      const wCon  = Math.max(hCon.length,  ...fks.map(fk => fk.name.length));
-      const wCols = Math.max(hCols.length, ...fkDisplayCols.map(s => s.length));
-      const wRef  = Math.max(hRef.length,  ...fkDisplayRefs.map(s => s.length));
-      const wDel  = Math.max(hDel.length,  ...fks.map(fk => fk.onDelete.length));
-
-      const fkSep = (f: string) =>
-        `-- +${f.repeat(wCon + 2)}+${f.repeat(wCols + 2)}+${f.repeat(wRef + 2)}+${f.repeat(wDel + 2)}+`;
-      const fkRow = (con: string, c: string, r: string, d: string) =>
-        `-- | ${con.padEnd(wCon)} | ${c.padEnd(wCols)} | ${r.padEnd(wRef)} | ${d.padEnd(wDel)} |`;
-
-      out.push(fkSep('-'));
-      out.push(fkRow(hCon, hCols, hRef, hDel));
-      out.push(fkSep('-'));
-      for (let i = 0; i < fks.length; i++) {
-        out.push(fkRow(fks[i].name, fkDisplayCols[i], fkDisplayRefs[i], fks[i].onDelete));
+      lines.push('<table class="design-table fk-table">');
+      lines.push('<thead><tr><th>Constraint</th><th>Column(s)</th><th>References</th><th>On Delete</th></tr></thead>');
+      lines.push('<tbody>');
+      for (const fk of fks) {
+        lines.push('<tr>');
+        lines.push(`<td>${esc(fk.name)}</td>`);
+        lines.push(`<td>${esc(fk.columns.join(', '))}</td>`);
+        lines.push(`<td>[${esc(fk.refSchema)}].[${esc(fk.refTable)}](${esc(fk.refColumns.join(', '))})</td>`);
+        lines.push(`<td>${esc(fk.onDelete)}</td>`);
+        lines.push('</tr>');
       }
-      out.push(fkSep('-'));
+      lines.push('</tbody></table>');
     }
   }
 
-  return out.join('\n');
+  return lines.join('\n');
 }
 
 // ─── Core Pipeline ──────────────────────────────────────────────────────────
@@ -322,9 +304,10 @@ function buildNodesAndEdges(
     nodeIds.add(id);
 
     // For tables (and external tables) without bodyScript: render design view from column metadata
-    let bodyScript = obj.bodyScript;
+    const bodyScript = obj.bodyScript;
+    let bodyHtml: string | undefined;
     if (!bodyScript && (obj.type === 'table' || obj.type === 'external') && obj.columns && obj.columns.length > 0) {
-      bodyScript = buildTableDesignAscii(obj.columns, schema, objectName, obj.fks);
+      bodyHtml = buildTableDesignHtml(obj.columns, schema, objectName, obj.type as 'table' | 'external', obj.fks);
     }
 
     nodes.push({
@@ -334,6 +317,8 @@ function buildNodesAndEdges(
       fullName: obj.fullName,
       type: obj.type,
       bodyScript,
+      ...(bodyHtml && { bodyHtml }),
+      ...(obj.columns && obj.columns.length > 0 && { columns: obj.columns }),
       ...(obj.externalKind && { externalKind: obj.externalKind }),
     });
   }
