@@ -64,11 +64,11 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-export function buildModelFromDmv(results: DmvResults, currentDatabase?: string): DacpacModel {
+export function buildModelFromDmv(results: DmvResults, currentDatabase?: string, externalRefsEnabled = true): DacpacModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
   const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
-  const model = buildModel(objects, deps, allObjects, currentDatabase);
+  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled);
 
   const warnings: string[] = [];
   if (objects.length === 0) {

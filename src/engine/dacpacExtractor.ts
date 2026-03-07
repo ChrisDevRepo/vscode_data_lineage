@@ -139,11 +139,21 @@ export function filterBySchemas(
   maxNodes = DEFAULT_CONFIG.maxNodes
 ): DacpacModel {
   // Case-insensitive comparison so UI-provided schema names match model.schemas
-  // Virtual external nodes (schema='') bypass schema filter — they have their own toggle
+  // Virtual nodes (schema='') are included only if connected to a selected-schema node (via edges).
+  // The ExternalRefsDropdown handles visibility independently.
   const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
-  const filtered = model.nodes.filter((n) =>
-    (n.externalType === 'file' || n.externalType === 'db') || lowerSelected.has(n.schema.toLowerCase())
+  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(n.schema.toLowerCase()));
+  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
+  // Collect virtual node IDs that have at least one edge connecting to a selected-schema node
+  const connectedVirtualIds = new Set<string>();
+  for (const e of model.edges) {
+    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
+    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
+  }
+  const virtualNodes = model.nodes.filter((n) =>
+    (n.externalType === 'file' || n.externalType === 'db') && connectedVirtualIds.has(n.id)
   );
+  const filtered = [...schemaNodes, ...virtualNodes];
   const limited = filtered.slice(0, maxNodes);
   const nodeIds = new Set(limited.map((n) => n.id));
 

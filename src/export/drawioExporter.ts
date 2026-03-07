@@ -137,6 +137,7 @@ function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: s
 
   let style =
     'edgeStyle=orthogonalEdgeStyle;curved=1;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;' +
+    'exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;' +
     'strokeColor=#999999;strokeWidth=0.8;endArrow=classic;endFill=1;';
 
   if (isBidi) {

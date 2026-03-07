@@ -286,7 +286,9 @@ export const TableDetailPanel = memo(function TableDetailPanel({
 
           {/* Column table */}
           {columns.length === 0 ? (
-            <div className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>No column metadata available.</div>
+            <div className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>
+              {isVirtualExt ? 'Virtual reference — column metadata not available.' : 'No column metadata available.'}
+            </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>

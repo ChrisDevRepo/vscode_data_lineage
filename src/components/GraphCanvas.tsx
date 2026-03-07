@@ -80,6 +80,7 @@ interface GraphCanvasProps {
   isRebuilding?: boolean;
   tableDetailPanel?: ReactNode;
   isPanelOpen?: boolean;
+  sourceName?: string;
 }
 
 export function GraphCanvas({
@@ -123,6 +124,7 @@ export function GraphCanvas({
   isRebuilding = false,
   tableDetailPanel,
   isPanelOpen,
+  sourceName,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -178,17 +180,12 @@ export function GraphCanvas({
     import('../export/drawioExporter').then(({ exportToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
       const xml = exportToDrawio(flowNodes, flowEdges, schemas);
-      const blob = new Blob([xml], { type: 'application/xml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'lineage.drawio';
-      a.click();
-      URL.revokeObjectURL(url);
+      const base = sourceName?.replace(/\.dacpac$/i, '') || 'lineage';
+      vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, vscodeApi]);
+  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight

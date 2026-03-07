@@ -26,6 +26,9 @@ interface ContextMenuState {
   nodeId: string;
   nodeName: string;
   schema: string;
+  externalType?: 'et' | 'file' | 'db';
+  externalUrl?: string;
+  fullName?: string;
   objectType: ObjectType;
 }
 
@@ -227,6 +230,9 @@ export function App() {
         nodeName: String(node.data.label),
         schema: String(node.data.schema),
         objectType: node.data.objectType as ObjectType,
+        externalType: node.data.externalType,
+        externalUrl: node.data.externalUrl,
+        fullName: String(node.data.fullName),
       });
     },
     [flowNodes]
@@ -576,6 +582,7 @@ export function App() {
         onBack={handleBack}
         tableDetailPanel={tableDetailPanelElement}
         isPanelOpen={tableDetailNode !== null}
+        sourceName={dacpacLoader.lastSource?.name}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
@@ -598,6 +605,9 @@ export function App() {
           nodeName={contextMenu.nodeName}
           schema={contextMenu.schema}
           objectType={contextMenu.objectType}
+          externalType={contextMenu.externalType}
+          externalUrl={contextMenu.externalUrl}
+          fullName={contextMenu.fullName}
           isTracing={trace.mode !== 'none' || !!analysisMode}
           onClose={() => setContextMenu(null)}
           onTrace={(nodeId) => startTraceConfig(nodeId)}

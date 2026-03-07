@@ -16,6 +16,7 @@ import {
   ExtractedDependency,
   CatalogEntry,
   NeighborIndex,
+  DEFAULT_CONFIG,
   createEmptySchemaInfo,
 } from './types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
@@ -28,8 +29,9 @@ export function buildModel(
   deps: ExtractedDependency[],
   allObjects?: ExtractedObject[],
   currentDatabase?: string,
+  externalRefsEnabled = true,
 ): DacpacModel {
-  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled);
 
   // CI normalization: unify node.schema to a single canonical display name (first-seen from
   // metadata) across all nodes that belong to the same logical schema.
@@ -207,6 +209,7 @@ function addEdge(
 export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
   const map = new Map<string, SchemaInfo>();
   for (const node of nodes) {
+    if (node.externalType === 'file' || node.externalType === 'db') continue; // virtual nodes have no schema
     const key = schemaKey(node.schema);
     let info = map.get(key);
     if (!info) {
@@ -545,6 +548,7 @@ function buildNodesAndEdges(
   deps: ExtractedDependency[],
   allObjects?: ExtractedObject[],
   currentDatabase?: string,
+  externalRefsEnabled = true,
 ): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
   const { nodes, nodeIds } = buildNodeList(objects);
   const { allNodeIds, allObjectMeta } = buildFullCatalog(allObjects);
@@ -569,7 +573,9 @@ function buildNodesAndEdges(
   }
 
   // Create virtual nodes for external refs (file URLs + cross-DB 3-part names)
-  createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase);
+  if (externalRefsEnabled) {
+    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase);
+  }
 
   return { nodes, edges, stats, neighborPairs };
 }
@@ -611,6 +617,9 @@ function createVirtualNodes(
   crossDbMetaDeps: Map<string, string[]>,
   currentDatabase?: string,
 ): void {
+  // Budget: virtual nodes must not push total past maxNodes
+  let budget = Math.max(0, DEFAULT_CONFIG.maxNodes - nodes.length);
+
   // A. File virtual nodes — OPENROWSET, COPY FROM, BULK FROM
   const fileNodeMap = new Map<string, string>(); // url → virtualNodeId
   const nodeSnapshot = [...nodes]; // iterate copy since we push new nodes
@@ -624,6 +633,8 @@ function createVirtualNodes(
         virtualId = `[__ext__].[${hash}]`;
         fileNodeMap.set(ref.url, virtualId);
         if (!nodeIds.has(virtualId)) {
+          if (budget <= 0) continue;
+          budget--;
           nodeIds.add(virtualId);
           nodes.push({
             id: virtualId, schema: '', name: lastUrlSegment(ref.url),
@@ -643,15 +654,17 @@ function createVirtualNodes(
     return false;
   };
 
-  const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string) => {
-    if (!nodeIds.has(crossDbId)) {
-      nodeIds.add(crossDbId);
-      nodes.push({
-        id: crossDbId, schema: '', name: `${schema}.${object}`,
-        fullName: crossDbId, type: 'external', externalType: 'db',
-        externalDatabase: db,
-      });
-    }
+  const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string): boolean => {
+    if (nodeIds.has(crossDbId)) return true;
+    if (budget <= 0) return false;
+    budget--;
+    nodeIds.add(crossDbId);
+    nodes.push({
+      id: crossDbId, schema: '', name: `${schema}.${object}`,
+      fullName: crossDbId, type: 'external', externalType: 'db',
+      externalDatabase: db,
+    });
+    return true;
   };
 
   // B1. From regex parser (dot-separated "db.schema.object" strings)
@@ -663,7 +676,7 @@ function createVirtualNodes(
       const localId = `[${schema}].[${object}]`;
       const crossDbId = `[${db}].[${schema}].[${object}]`;
       if (isLocalRef(db, localId)) continue;
-      ensureCrossDbNode(db, schema, object, crossDbId);
+      if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
       addEdge(edges, edgeKeys, crossDbId, nodeId, 'body'); // cross-DB source → local node
     }
     for (const ref of targets) {
@@ -673,7 +686,7 @@ function createVirtualNodes(
       const localId = `[${schema}].[${object}]`;
       const crossDbId = `[${db}].[${schema}].[${object}]`;
       if (isLocalRef(db, localId)) continue;
-      ensureCrossDbNode(db, schema, object, crossDbId);
+      if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
       addEdge(edges, edgeKeys, nodeId, crossDbId, 'body'); // local node → cross-DB target
     }
   }
@@ -694,7 +707,7 @@ function createVirtualNodes(
         }
         continue;
       }
-      ensureCrossDbNode(db, schema, object, crossDbId);
+      if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
       addEdge(edges, edgeKeys, sourceId, crossDbId, 'body');
     }
   }

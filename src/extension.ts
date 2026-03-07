@@ -355,6 +355,27 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         if (msg.url) await vscode.env.openExternal(vscode.Uri.parse(msg.url));
       },
       'open-settings': () => { vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz'); },
+      'export-file': async (msg) => {
+        const defaultUri = vscode.workspace.workspaceFolders?.[0]?.uri
+          ? vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, msg.defaultName)
+          : vscode.Uri.file(msg.defaultName);
+        const ext = msg.defaultName.split('.').pop() || 'drawio';
+        const uri = await vscode.window.showSaveDialog({
+          defaultUri,
+          filters: { 'Draw.io': [ext] },
+          title: 'Export Diagram',
+        });
+        if (!uri) return;
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
+        outputChannel.info(`Exported: ${uri.fsPath}`);
+        const result = await vscode.window.showInformationMessage(
+          `Exported to ${vscode.workspace.asRelativePath(uri)}`,
+          'Open File',
+        );
+        if (result === 'Open File') {
+          await vscode.commands.executeCommand('vscode.open', uri);
+        }
+      },
       'show-ddl': async (msg) => { await showDdlTextEditor(ddlUri, msg as DdlMessage); },
       'update-ddl': async (msg) => { updateDdlTextEditor(ddlUri, msg as DdlMessage); },
       'table-stats-request': async (msg) => {
@@ -450,7 +471,8 @@ type WebviewMessage =
   | { type: 'db-reconnect' }
   | { type: 'reload' }
   | { type: 'db-visualize'; schemas: string[] }
-  | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'detail'; columns?: import('./engine/types').ColumnDef[] };
+  | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'detail'; columns?: import('./engine/types').ColumnDef[] }
+  | { type: 'export-file'; data: string; defaultName: string };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
 
@@ -909,7 +931,8 @@ async function runDbPhase2(
   outputChannel.info('[DB] Building model from DMV results...');
   const start = Date.now();
   const currentDatabase = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo')?.database;
-  const model = buildModelFromDmv(dmvResults, currentDatabase);
+  const preConfig = await readExtensionConfig();
+  const model = buildModelFromDmv(dmvResults, currentDatabase, preConfig.externalRefs.enabled);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   const extNodes = model.nodes.filter(n => n.type === 'external');
   const extSuffix = extNodes.length > 0 ? `, incl. ${extNodes.length} external (⬡)` : '';
@@ -919,11 +942,10 @@ async function runDbPhase2(
   }
 
   const sourceName = context.workspaceState.get<string>('lastDbSourceName') || 'Database';
-  const config = await readExtensionConfig();
   panel.webview.postMessage({
     type: 'db-model',
     model,
-    config,
+    config: preConfig,
     sourceName,
   });
 }

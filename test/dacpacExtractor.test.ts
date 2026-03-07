@@ -58,12 +58,13 @@ async function testFiltering(model: Awaited<ReturnType<typeof extractDacpac>>) {
   console.log('\n── Schema Filtering ──');
 
   const salesLT = filterBySchemas(model, new Set(['Sales']));
-  assert(salesLT.nodes.every(n => n.schema === 'Sales'), 'All filtered nodes are Sales schema');
+  const isVirtual = (n: { externalType?: string }) => n.externalType === 'file' || n.externalType === 'db';
+  assert(salesLT.nodes.every(n => n.schema === 'Sales' || isVirtual(n)), 'All filtered nodes are Sales schema (or connected virtual)');
   assert(salesLT.nodes.length > 0, `Sales has ${salesLT.nodes.length} nodes`);
   assert(salesLT.nodes.length < model.nodes.length, 'Filtered set is smaller than full set');
 
   const dbo = filterBySchemas(model, new Set(['dbo']));
-  assert(dbo.nodes.every(n => n.schema === 'dbo'), 'All filtered nodes are dbo schema');
+  assert(dbo.nodes.every(n => n.schema === 'dbo' || isVirtual(n)), 'All filtered nodes are dbo schema (or connected virtual)');
 
   // Max nodes cap
   const capped = filterBySchemas(model, new Set(['dbo', 'Sales']), 5);
