@@ -17,11 +17,23 @@ export interface ColumnStats {
   distinctCount: number;
   nullCount: number | null;    // null = NOT NULL column, skipped
   nullPercent: number | null;
+  completeness: number;        // 1 - (nullCount / rowCount), always computed
+  uniqueness: number;          // distinctCount / rowCount, always computed
   min?: string;
   max?: string;
+  mean?: number;               // integer/decimal only (standard mode)
+  stdDev?: number;             // integer/decimal only (standard mode)
   minLength?: number;
   maxLength?: number;
+  zeroCount?: number;          // integer/decimal, nullable only (standard mode)
+  emptyCount?: number;         // string (standard mode)
   skipped?: boolean;
+}
+
+export interface TopValue {
+  value: string;
+  count: number;
+  percent: number;
 }
 
 export interface TableStats {
@@ -32,7 +44,7 @@ export interface TableStats {
   warnings?: string[];
 }
 
-export type StatsMode = 'quick' | 'detail';
+export type StatsMode = 'quick' | 'standard';
 
 // ─── Type Classification ────────────────────────────────────────────────────
 
@@ -111,14 +123,23 @@ export function buildColumnAggregations(
       fragments.push(`SUM(CASE WHEN ${qn} IS NULL THEN 1 ELSE 0 END) AS ${alias('n')}`);
     }
 
-    // Detail mode: additional aggregations based on type
-    if (mode === 'detail') {
-      if (cat === 'integer' || cat === 'decimal' || cat === 'datetime') {
+    // Standard mode: additional aggregations based on type
+    if (mode === 'standard') {
+      if (cat === 'integer' || cat === 'decimal') {
+        fragments.push(`MIN(${qn}) AS ${alias('min')}`);
+        fragments.push(`MAX(${qn}) AS ${alias('max')}`);
+        fragments.push(`AVG(CAST(${qn} AS float)) AS ${alias('avg')}`);
+        fragments.push(`STDEV(CAST(${qn} AS float)) AS ${alias('sd')}`);
+        if (isNullable) {
+          fragments.push(`SUM(CASE WHEN ${qn} = 0 THEN 1 ELSE 0 END) AS ${alias('z')}`);
+        }
+      } else if (cat === 'datetime') {
         fragments.push(`MIN(${qn}) AS ${alias('min')}`);
         fragments.push(`MAX(${qn}) AS ${alias('max')}`);
       } else if (cat === 'string') {
         fragments.push(`MIN(LEN(${qn})) AS ${alias('minl')}`);
         fragments.push(`MAX(LEN(${qn})) AS ${alias('maxl')}`);
+        fragments.push(`SUM(CASE WHEN ${qn} = '' THEN 1 ELSE 0 END) AS ${alias('e')}`);
       }
     }
 
@@ -226,6 +247,8 @@ export function parseProfilingResult(
         distinctCount: 0,
         nullCount: null,
         nullPercent: null,
+        completeness: 1,
+        uniqueness: 0,
         skipped: true,
       });
       continue;
@@ -234,6 +257,8 @@ export function parseProfilingResult(
     const distinctCount = safeInt(row[`${col.name}__d`], `${col.name} distinct`);
     const nullCount = isNullable ? safeInt(row[`${col.name}__n`], `${col.name} nulls`) : null;
     const nullPercent = nullCount !== null && rowCount > 0 ? (nullCount / rowCount) * 100 : null;
+    const completeness = nullCount !== null && rowCount > 0 ? 1 - (nullCount / rowCount) : 1;
+    const uniqueness = rowCount > 0 ? Math.min(distinctCount / rowCount, 1) : 0;
 
     const entry: ColumnStats = {
       name: col.name,
@@ -241,21 +266,68 @@ export function parseProfilingResult(
       distinctCount,
       nullCount,
       nullPercent,
+      completeness,
+      uniqueness,
     };
 
-    // Detail fields
+    // Standard-mode fields
     const minRaw = row[`${col.name}__min`];
     const maxRaw = row[`${col.name}__max`];
     if (minRaw !== undefined) entry.min = minRaw;
     if (maxRaw !== undefined) entry.max = maxRaw;
+
+    const avgRaw = row[`${col.name}__avg`];
+    const sdRaw = row[`${col.name}__sd`];
+    if (avgRaw !== undefined) entry.mean = parseFloat(avgRaw) || 0;
+    if (sdRaw !== undefined) entry.stdDev = parseFloat(sdRaw) || 0;
 
     const minlRaw = row[`${col.name}__minl`];
     const maxlRaw = row[`${col.name}__maxl`];
     if (minlRaw !== undefined) entry.minLength = safeInt(minlRaw, `${col.name} minLen`);
     if (maxlRaw !== undefined) entry.maxLength = safeInt(maxlRaw, `${col.name} maxLen`);
 
+    const zRaw = row[`${col.name}__z`];
+    if (zRaw !== undefined) entry.zeroCount = safeInt(zRaw, `${col.name} zeroCount`);
+
+    const eRaw = row[`${col.name}__e`];
+    if (eRaw !== undefined) entry.emptyCount = safeInt(eRaw, `${col.name} emptyCount`);
+
     columns.push(entry);
   }
 
   return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+// ─── Top-N Values (on-demand per column) ─────────────────────────────────────
+
+/**
+ * Build a Top-N frequency query for a single column.
+ * Returns the N most frequent values with counts.
+ */
+export function buildTopNQuery(
+  schema: string,
+  tableName: string,
+  colName: string,
+  topN: number,
+): string {
+  const fullTable = `${qi(schema)}.${qi(tableName)}`;
+  const qn = qi(colName);
+  return `SELECT TOP ${topN} CAST(${qn} AS nvarchar(200)) AS val, COUNT(*) AS cnt\nFROM ${fullTable}\nGROUP BY ${qn}\nORDER BY cnt DESC`;
+}
+
+/**
+ * Parse Top-N query rows into TopValue array.
+ */
+export function parseTopNResult(
+  rows: Array<{ val: string; cnt: string }>,
+  rowCount: number,
+): TopValue[] {
+  return rows.map(r => {
+    const count = parseInt(r.cnt, 10) || 0;
+    return {
+      value: r.val ?? '(NULL)',
+      count,
+      percent: rowCount > 0 ? (count / rowCount) * 100 : 0,
+    };
+  });
 }

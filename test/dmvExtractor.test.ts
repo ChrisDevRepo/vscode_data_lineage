@@ -673,6 +673,132 @@ function testValidateQueryResultConstraints() {
   assert(missingCols.length > 0, 'Missing columns detected for incomplete constraints result');
 }
 
+// ─── Test: Cross-DB Dependencies via referenced_database ─────────────────────
+
+function testCrossDbDepsFromDmv() {
+  console.log('\n── DMV Extractor: Cross-DB Dependencies (referenced_database) ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
+    [cell('dbo'), cell('spLoadFromArchive'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[spLoadFromArchive] AS\nINSERT INTO [dbo].[Sales]\nSELECT * FROM [ArchiveDB].[dbo].[ArchivedSales]')],
+  ];
+
+  // 5-column deps — includes referenced_database
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
+  const depsRows: DbCellValue[][] = [
+    // Local dep: SP → Sales (no database)
+    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('Sales'), nullCell()],
+    // Cross-DB dep: SP → ArchiveDB.dbo.ArchivedSales
+    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('ArchivedSales'), cell('ArchiveDB')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  // Cross-DB virtual node should be created
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(crossDbNode !== undefined, 'CrossDB-DMV: virtual db node created from referenced_database');
+  // DMV metadata path lowercases all parts (modelBuilder.ts L705)
+  assertEq(crossDbNode?.externalDatabase?.toLowerCase(), 'archivedb', 'CrossDB-DMV: externalDatabase set correctly');
+  assertEq(crossDbNode?.schema, '', 'CrossDB-DMV: virtual node has empty schema');
+  assert(crossDbNode!.name.toLowerCase().includes('archivedsales'), 'CrossDB-DMV: virtual node name includes object name');
+
+  // Edge: SP → cross-DB node (cross-DB is a source in the SP body, so cross-DB → SP)
+  const crossDbEdge = model.edges.find(e =>
+    e.target === '[dbo].[sploadfromarchive]' && e.source === crossDbNode!.id
+  );
+  assert(crossDbEdge !== undefined,
+    `CrossDB-DMV: cross-DB → SP edge exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`);
+
+  // Local edge still works: SP writes to Sales
+  const localEdge = model.edges.find(e =>
+    e.source === '[dbo].[sploadfromarchive]' && e.target === '[dbo].[sales]'
+  );
+  assert(localEdge !== undefined, 'CrossDB-DMV: local SP → Sales write edge exists');
+
+  // Total: 2 real + 1 virtual = 3 nodes
+  assertEq(model.nodes.length, 3, 'CrossDB-DMV: 2 real + 1 virtual = 3 nodes');
+}
+
+function testCrossDbSameDbSuppression() {
+  console.log('\n── DMV Extractor: Cross-DB same-DB suppression via currentDatabase ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
+    [cell('dbo'), cell('ArchivedSales'), cell('U '), nullCell()],
+    [cell('dbo'), cell('spLoad'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM [dbo].[ArchivedSales]')],
+  ];
+
+  // Cross-DB dep where database = currentDatabase → should resolve locally
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
+  const depsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('ArchivedSales'), cell('MyDB')],
+    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('Sales'), nullCell()],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  // Pass currentDatabase = 'MyDB' — same as referenced_database
+  const model = buildModelFromDmv(results, 'MyDB');
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(crossDbNode === undefined, 'CrossDB-SameDB: no virtual node when referenced_database = currentDatabase');
+  assertEq(model.nodes.length, 3, 'CrossDB-SameDB: only 3 real nodes');
+}
+
+function testETInAllObjectsCatalog() {
+  console.log('\n── DMV Extractor: ET in allObjects catalog ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('ext'), cell('S3Data'), cell('ET'), nullCell()],
+  ];
+
+  const allObjCols = cols('schema_name', 'object_name', 'type_code');
+  const allObjRows: DbCellValue[][] = [
+    [cell('ext'), cell('S3Data'), cell('ET')],
+    [cell('dbo'), cell('Orders'), cell('U ')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []),
+    allObjects: makeResult(allObjCols, allObjRows),
+  };
+
+  const model = buildModelFromDmv(results);
+  assertEq(model.nodes.length, 1, 'ET-AllObj: 1 rendered node');
+  assertEq(model.nodes[0].type, 'external', 'ET-AllObj: type=external');
+  assertEq(model.nodes[0].externalType, 'et', 'ET-AllObj: externalType=et');
+
+  // Catalog from allObjects should map ET + regular table
+  const etCat = model.catalog['[ext].[s3data]'];
+  assert(etCat !== undefined, 'ET-AllObj: catalog entry for ET from allObjects');
+  assertEq(etCat?.type, 'external', 'ET-AllObj: catalog type=external');
+
+  const ordersCat = model.catalog['[dbo].[orders]'];
+  assert(ordersCat !== undefined, 'ET-AllObj: catalog entry for dbo.Orders from allObjects');
+}
+
 // ─── Run ────────────────────────────────────────────────────────────────────
 
 testBuildModelFromDmv();
@@ -686,6 +812,9 @@ testCrossSchemaNeighborIndex();
 testCrossSchemaUnresolvedWhenNoAllObjects();
 testExternalTableNodes();
 testExternalTableWriteDirection();
+testCrossDbDepsFromDmv();
+testCrossDbSameDbSuppression();
+testETInAllObjectsCatalog();
 testConstraintMapsEnrichColumns();
 testConstraintsMissingResultGraceful();
 testValidateQueryResultConstraints();

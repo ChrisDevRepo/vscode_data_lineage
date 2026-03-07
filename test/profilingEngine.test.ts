@@ -110,32 +110,35 @@ test('quick mode: distinct only for NOT NULL', () => {
   assert(!aggs[0].fragments[0].includes('IS NULL'), 'No null count for NOT NULL');
 });
 
-test('detail mode: int adds min/max', () => {
+test('standard mode: int NOT NULL adds min/max/avg/sd', () => {
   const cols = [col('Amount', 'int', 'NOT NULL')];
-  const aggs = buildColumnAggregations(cols, true, 'detail');
-  assert.equal(aggs[0].fragments.length, 3); // distinct + min + max
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  assert.equal(aggs[0].fragments.length, 5); // distinct + min + max + avg + sd (no zero for NOT NULL)
   assert(aggs[0].fragments[1].includes('MIN'), 'Has MIN');
   assert(aggs[0].fragments[2].includes('MAX'), 'Has MAX');
+  assert(aggs[0].fragments[3].includes('AVG'), 'Has AVG');
+  assert(aggs[0].fragments[4].includes('STDEV'), 'Has STDEV');
 });
 
-test('detail mode: string adds len', () => {
+test('standard mode: string NOT NULL adds len + empty', () => {
   const cols = [col('Name', 'varchar(100)', 'NOT NULL')];
-  const aggs = buildColumnAggregations(cols, true, 'detail');
-  assert.equal(aggs[0].fragments.length, 3); // distinct + minlen + maxlen
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  assert.equal(aggs[0].fragments.length, 4); // distinct + minlen + maxlen + empty
   assert(aggs[0].fragments[1].includes('MIN(LEN'), 'Has MIN(LEN)');
   assert(aggs[0].fragments[2].includes('MAX(LEN'), 'Has MAX(LEN)');
+  assert(aggs[0].fragments[3].includes("= ''"), 'Has empty count');
 });
 
-test('detail mode: bit has no min/max', () => {
+test('standard mode: bit has no min/max', () => {
   const cols = [col('Active', 'bit', 'NOT NULL')];
-  const aggs = buildColumnAggregations(cols, true, 'detail');
+  const aggs = buildColumnAggregations(cols, true, 'standard');
   assert.equal(aggs[0].fragments.length, 1); // distinct only
 });
 
-test('detail mode: datetime adds min/max', () => {
+test('standard mode: datetime NULL adds min/max', () => {
   const cols = [col('Created', 'datetime2', 'NULL')];
-  const aggs = buildColumnAggregations(cols, true, 'detail');
-  assert.equal(aggs[0].fragments.length, 4); // distinct + null + min + max
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  assert.equal(aggs[0].fragments.length, 4); // distinct + null + min + max (no avg/sd for datetime)
 });
 
 test('skipped types produce no aggregations', () => {
@@ -312,7 +315,7 @@ test('settings simulation: useApproxDistinct=true → APPROX_COUNT_DISTINCT', ()
 });
 
 test('settings simulation: full pipeline with custom settings', () => {
-  // Simulate: sampleThreshold=50000, sampleSize=25000, useApprox=false, detail mode
+  // Simulate: sampleThreshold=50000, sampleSize=25000, useApprox=false, standard mode
   const cols = [
     col('OrderID', 'int', 'NOT NULL'),
     col('Amount', 'decimal(12,2)', 'NULL'),
@@ -320,16 +323,16 @@ test('settings simulation: full pipeline with custom settings', () => {
     col('Created', 'date', 'NOT NULL'),
     col('Geo', 'geography', 'NULL'),
   ];
-  const aggs = buildColumnAggregations(cols, false, 'detail');
+  const aggs = buildColumnAggregations(cols, false, 'standard');
   assert.equal(aggs.length, 4, '4 profilable columns (Geo skipped)');
 
-  // OrderID: int NOT NULL → distinct + min + max = 3 fragments
-  assert.equal(aggs[0].fragments.length, 3, 'OrderID: distinct + min + max');
-  // Amount: decimal NULL → distinct + null + min + max = 4 fragments
-  assert.equal(aggs[1].fragments.length, 4, 'Amount: distinct + null + min + max');
-  // Region: varchar NULL → distinct + null + minlen + maxlen = 4 fragments
-  assert.equal(aggs[2].fragments.length, 4, 'Region: distinct + null + minlen + maxlen');
-  // Created: date NOT NULL → distinct + min + max = 3 fragments
+  // OrderID: int NOT NULL → distinct + min + max + avg + sd = 5 fragments (no zero for NOT NULL)
+  assert.equal(aggs[0].fragments.length, 5, 'OrderID: distinct + min + max + avg + sd');
+  // Amount: decimal NULL → distinct + null + min + max + avg + sd + zero = 7 fragments
+  assert.equal(aggs[1].fragments.length, 7, 'Amount: distinct + null + min + max + avg + sd + zero');
+  // Region: varchar NULL → distinct + null + minlen + maxlen + empty = 5 fragments
+  assert.equal(aggs[2].fragments.length, 5, 'Region: distinct + null + minlen + maxlen + empty');
+  // Created: date NOT NULL → distinct + min + max = 3 fragments (datetime: no avg/sd)
   assert.equal(aggs[3].fragments.length, 3, 'Created: distinct + min + max');
 
   const sql = buildProfilingQuery('dbo', 'Orders', aggs, 2, 200000, 50000, 25000);
@@ -337,8 +340,10 @@ test('settings simulation: full pipeline with custom settings', () => {
   assert(sql.includes('13 PERCENT'), 'ceil(25000/200000*100) = 13%');
   assert(sql.includes('COUNT(DISTINCT'), 'useApprox=false');
   assert(!sql.includes('APPROX_COUNT_DISTINCT'), 'No APPROX when useApprox=false');
-  assert(sql.includes('MIN(LEN'), 'String length in detail mode');
-  assert(sql.includes('MIN([Created])'), 'Date min in detail mode');
+  assert(sql.includes('MIN(LEN'), 'String length in standard mode');
+  assert(sql.includes('MIN([Created])'), 'Date min in standard mode');
+  assert(sql.includes('AVG(CAST'), 'Numeric avg in standard mode');
+  assert(sql.includes('STDEV(CAST'), 'Numeric stddev in standard mode');
 });
 
 // ─── buildRowCountQuery ─────────────────────────────────────────────────────
@@ -376,6 +381,8 @@ test('parses quick stats correctly', () => {
   assert.equal(stats.columns[0].name, 'Id');
   assert.equal(stats.columns[0].distinctCount, 100);
   assert.equal(stats.columns[0].nullCount, null);
+  assert.equal(stats.columns[0].completeness, 1);
+  assert.equal(stats.columns[0].uniqueness, 1);
   assert.equal(stats.columns[0].skipped, undefined);
 
   // Name: nullable, has null count
@@ -383,6 +390,8 @@ test('parses quick stats correctly', () => {
   assert.equal(stats.columns[1].distinctCount, 85);
   assert.equal(stats.columns[1].nullCount, 3);
   assert.equal(stats.columns[1].nullPercent, 3);
+  assert.equal(stats.columns[1].completeness, 0.97);
+  assert.equal(stats.columns[1].uniqueness, 0.85);
 
   // Geo: skipped
   assert.equal(stats.columns[2].name, 'Geo');

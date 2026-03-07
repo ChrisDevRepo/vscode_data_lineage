@@ -823,6 +823,25 @@ function testExternalRefExtraction() {
     const refs = extractExternalRefs(`SELECT * FROM dbo.Orders`);
     assert(refs.length === 0, 'ER6: Regular SQL \u2192 no external refs');
   }
+
+  // OPENROWSET with connection string (non-BULK) — should NOT match
+  {
+    const refs = extractExternalRefs(`
+      SELECT * FROM OPENROWSET('SQLNCLI', 'Server=remote;Database=Sales;Trusted_Connection=yes;',
+        'SELECT * FROM dbo.Orders')
+    `);
+    assert(refs.length === 0, 'ER7: Non-BULK OPENROWSET (connection string) \u2192 no file refs');
+  }
+
+  // COPY INTO with URL — captured
+  {
+    const refs = extractExternalRefs(`
+      COPY INTO dbo.Sales
+      FROM 'https://lake/a.csv'
+      WITH (FILE_TYPE = 'CSV')
+    `);
+    assert(refs.length >= 1, 'ER8: COPY INTO URL captured');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -853,6 +872,26 @@ function testCetasExtraction() {
     `);
     assert(!r.targets.some(t => t.toLowerCase().includes('rawdata')),
       'CETAS2: Plain CREATE EXTERNAL TABLE (no AS SELECT) NOT captured as target');
+  }
+
+  // CETAS with complex multi-option WITH clause
+  {
+    const r = parseSqlBody(`
+      CREATE PROCEDURE [dbo].[spExportPartitioned] AS
+      CREATE EXTERNAL TABLE [ext].[PartitionedExport]
+      WITH (
+        LOCATION = '/export/partitioned/',
+        DATA_SOURCE = MyLake,
+        FILE_FORMAT = ParquetFormat,
+        REJECT_TYPE = VALUE,
+        REJECT_VALUE = 0
+      )
+      AS SELECT col1, col2 FROM [dbo].[BigTable]
+    `);
+    assert(r.targets.some(t => t.toLowerCase().includes('partitionedexport')),
+      'CETAS3: Multi-option WITH clause parsed correctly');
+    assert(r.sources.some(t => t.toLowerCase().includes('bigtable')),
+      'CETAS3: FROM source in CETAS SELECT captured');
   }
 }
 

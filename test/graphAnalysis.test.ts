@@ -355,6 +355,55 @@ function testSubsetEdgeFiltering() {
   );
 }
 
+// ─── Virtual Nodes in Hub Analysis ───────────────────────────────────────────
+
+function testHubsWithVirtualNodes() {
+  console.log('\n── analyzeHubs with virtual nodes ──');
+
+  // File virtual node connects to 3 SPs (degree=3) → detected as hub
+  const g = makeGraph([
+    { id: 'file1', type: 'external' },
+    { id: 'sp1', type: 'procedure' },
+    { id: 'sp2', type: 'procedure' },
+    { id: 'sp3', type: 'procedure' },
+    { id: 't1', type: 'table' },
+    { id: 't2', type: 'table' },
+    { id: 't3', type: 'table' },
+  ], [
+    ['file1', 'sp1'], ['file1', 'sp2'], ['file1', 'sp3'],
+    ['sp1', 't1'], ['sp2', 't2'], ['sp3', 't3'],
+  ]);
+
+  const result = analyzeHubs(g, 3); // minDegree=3
+  assert(result.groups.length >= 1, 'VN-Hub: at least 1 hub detected');
+  assert(result.groups.some(grp => grp.nodeIds.includes('file1')),
+    'VN-Hub: file virtual node detected as hub (degree=3)');
+}
+
+// ─── Virtual Node as Bridge (Island Detection) ──────────────────────────────
+
+function testIslandWithVirtualBridge() {
+  console.log('\n── analyzeIslands with virtual bridge ──');
+
+  // Without file1: sp1+t1 and sp2+t2 would be two 2-node islands
+  // With file1 connecting both SPs: single 5-node component
+  const g = makeGraph([
+    { id: 'file1', type: 'external' },
+    { id: 'sp1', type: 'procedure' },
+    { id: 'sp2', type: 'procedure' },
+    { id: 't1', type: 'table' },
+    { id: 't2', type: 'table' },
+  ], [
+    ['file1', 'sp1'], ['file1', 'sp2'],
+    ['sp1', 't1'], ['sp2', 't2'],
+  ]);
+
+  const result = analyzeIslands(g, 2); // maxSize=2
+  // All 5 nodes connected via file1 → no small islands
+  assert(result.groups.length === 0,
+    `VN-Island: virtual node bridges components, no size-2 islands (got ${result.groups.length})`);
+}
+
 // ─── Run all tests ───────────────────────────────────────────────────────────
 
 testIslands();
@@ -364,5 +413,7 @@ testLongestPath();
 testLongestPathChainEdges();
 testCycles();
 testSubsetEdgeFiltering();
+testHubsWithVirtualNodes();
+testIslandWithVirtualBridge();
 
 printSummary('Graph Analysis');

@@ -11,6 +11,7 @@ import {
   buildColumnDef,
   enrichColumnsWithConstraints,
   createEmptySchemaInfo,
+  DEFAULT_CONFIG,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue } from '../types/mssql';
@@ -64,11 +65,11 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-export function buildModelFromDmv(results: DmvResults, currentDatabase?: string, externalRefsEnabled = true): DacpacModel {
+export function buildModelFromDmv(results: DmvResults, currentDatabase?: string, externalRefsEnabled = true, maxNodes = DEFAULT_CONFIG.maxNodes): DacpacModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
   const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
-  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled);
+  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes);
 
   const warnings: string[] = [];
   if (objects.length === 0) {

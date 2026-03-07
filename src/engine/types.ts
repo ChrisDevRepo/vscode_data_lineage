@@ -256,7 +256,7 @@ export interface ExtractedDependency {
 /** External file/URL reference detected by pre-cleansing regex pass. */
 export interface ExternalRef {
   url: string;
-  kind: 'openrowset' | 'copy_from' | 'bulk_from';
+  kind: string;
 }
 
 // ─── DMV type mapping (sys.objects.type codes → ObjectType) ─────────────────
@@ -313,6 +313,7 @@ export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   excludePatterns: string[];
   maxNodes: number;
+  dmvQueryTimeout: number;
   layout: LayoutConfig;
   trace: TraceConfig;
   analysis: AnalysisConfig;
@@ -330,6 +331,7 @@ export const DEFAULT_CONFIG = {
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
   analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
   tableStatistics: { enabled: true, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
+  dmvQueryTimeout: 120,
   externalRefs: { enabled: true },
 } satisfies ExtensionConfig;
 

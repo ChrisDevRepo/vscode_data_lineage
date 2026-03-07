@@ -14,10 +14,11 @@ export interface ParseRule {
   name: string;
   enabled: boolean;
   priority: number;
-  category: 'preprocessing' | 'source' | 'target' | 'exec';
+  category: 'preprocessing' | 'source' | 'target' | 'exec' | 'external_ref';
   pattern: string;
   flags: string;
   replacement?: string;
+  kind?: string;         // required for external_ref category (maps to ExternalRef.kind)
   description: string;
 }
 
@@ -135,7 +136,7 @@ export interface LoadRulesResult {
   categoryCounts: Record<string, number>;  // e.g. { preprocessing: 1, source: 4, target: 3, exec: 1 }
 }
 
-const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec']);
+const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec', 'external_ref']);
 
 function validateRule(rule: unknown, index: number): { valid: true; name: string } | { valid: false; name: string; error: string } {
   const r = rule as Record<string, unknown>;
@@ -145,7 +146,10 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
   if (typeof r.name !== 'string' || !r.name) return { valid: false, name, error: `${name}: missing 'name'` };
   if (typeof r.pattern !== 'string' || !r.pattern) return { valid: false, name, error: `${name}: missing 'pattern'` };
   if (typeof r.category !== 'string' || !VALID_CATEGORIES.has(r.category)) {
-    return { valid: false, name, error: `${name}: invalid category '${r.category}' (must be: preprocessing, source, target, exec)` };
+    return { valid: false, name, error: `${name}: invalid category '${r.category}' (must be: preprocessing, source, target, exec, external_ref)` };
+  }
+  if (r.category === 'external_ref' && (typeof r.kind !== 'string' || !r.kind)) {
+    return { valid: false, name, error: `${name}: external_ref rules require a non-empty 'kind' field` };
   }
   if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
   if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
@@ -389,33 +393,31 @@ function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>) {
 }
 
 // ─── External file/URL reference extraction (pre-cleansing pass) ────────────
+// Rules come from YAML (category: external_ref) — runs on RAW SQL before the
+// cleansing pipeline neutralizes string literals. Each rule needs a 'kind' field
+// that maps to ExternalRef.kind (e.g. 'openrowset', 'copy_from', 'bulk_from').
 
 import type { ExternalRef } from './types';
 
-const EXTERNAL_REF_PATTERNS: Array<{ regex: RegExp; kind: ExternalRef['kind'] }> = [
-  { regex: /\bOPENROWSET\s*\(\s*BULK\s+['"]([^'"]+)['"]/gi, kind: 'openrowset' },
-  { regex: /\bCOPY\s+INTO\s+\S+\s+FROM\s+['"]([^'"]+)['"]/gi, kind: 'copy_from' },
-  { regex: /\bBULK\s+INSERT\s+\S+\s+FROM\s+['"]([^'"]+)['"]/gi, kind: 'bulk_from' },
-];
-
 /**
  * Extract external file/URL references from RAW SQL (before cleansing).
- * Must run before the cleansing pipeline which neutralizes string literals.
+ * Uses external_ref rules from activeRules (loaded from YAML).
  * Deduplicates by URL — same URL returns only once.
  */
 export function extractExternalRefs(rawSql: string): ExternalRef[] {
   const seen = new Set<string>();
   const results: ExternalRef[] = [];
+  const extRules = activeRules.filter(r => r.category === 'external_ref');
 
-  for (const { regex, kind } of EXTERNAL_REF_PATTERNS) {
-    regex.lastIndex = 0;
+  for (const rule of extRules) {
+    const regex = new RegExp(rule.pattern, rule.flags);
     let match: RegExpExecArray | null;
     while ((match = regex.exec(rawSql)) !== null) {
       if (match[0].length === 0) { regex.lastIndex++; continue; }
       const url = match[1];
       if (url && !seen.has(url)) {
         seen.add(url);
-        results.push({ url, kind });
+        results.push({ url, kind: rule.kind! });
       }
     }
   }

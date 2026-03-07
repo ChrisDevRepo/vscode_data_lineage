@@ -194,11 +194,12 @@ export function App() {
       if (!node) return;
 
       if (node.type === 'table' || node.type === 'external') {
-        // Toggle table detail panel: same node closes, different node switches
+        // If panel is already open, refresh to show the clicked table (don't open from scratch)
         setTableDetailNode(prev => {
-          if (prev?.id === nodeId) return null;
+          if (!prev) return null;           // panel closed — stay closed
+          if (prev.id === nodeId) return prev; // same node — no change
           setTableStatsState({ phase: 'idle' });
-          return node;
+          return node;                      // different table — refresh panel
         });
       } else {
         // Update DDL text editor if already open (don't open on left-click)
@@ -310,14 +311,15 @@ export function App() {
         const focusNodeIds = new Set(
           model.nodes.filter(n => n.schema === schema).map(n => n.id)
         );
+        const nodeById = new Map(model.nodes.map(n => [n.id, n]));
         const neighborSchemas = new Set<string>([schema]);
         for (const e of model.edges) {
           if (focusNodeIds.has(e.source)) {
-            const target = model.nodes.find(n => n.id === e.target);
+            const target = nodeById.get(e.target);
             if (target) neighborSchemas.add(target.schema);
           }
           if (focusNodeIds.has(e.target)) {
-            const source = model.nodes.find(n => n.id === e.source);
+            const source = nodeById.get(e.source);
             if (source) neighborSchemas.add(source.schema);
           }
         }

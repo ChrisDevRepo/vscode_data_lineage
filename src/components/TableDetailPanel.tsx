@@ -72,7 +72,7 @@ function StatsResults({ stats, mode }: { stats: TableStats; mode: StatsMode }) {
             <th className="text-left pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)', width: '40%' }}>Column</th>
             <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Distinct</th>
             <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Null%</th>
-            {mode === 'detail' && (
+            {mode === 'standard' && (
               <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Min / Max</th>
             )}
           </tr>
@@ -97,7 +97,7 @@ function StatsResults({ stats, mode }: { stats: TableStats; mode: StatsMode }) {
                     : `${col.nullPercent.toFixed(1)}%`
                 }
               </td>
-              {mode === 'detail' && (
+              {mode === 'standard' && (
                 <td className="py-0.5 text-right font-mono text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
                   {col.skipped ? <span style={{ color: 'var(--ln-fg-dim)' }}>—</span>
                     : col.min !== undefined ? `${col.min} / ${col.max}`
@@ -357,17 +357,17 @@ export const TableDetailPanel = memo(function TableDetailPanel({
                 </button>
                 <button
                   disabled={isLoading}
-                  onClick={() => onRequestStats('detail')}
+                  onClick={() => onRequestStats('standard')}
                   className="text-xs px-2.5 py-1 rounded cursor-pointer disabled:opacity-50"
                   style={{
-                    background: statsState.phase === 'result' && statsState.mode === 'detail'
+                    background: statsState.phase === 'result' && statsState.mode === 'standard'
                       ? 'var(--ln-button-bg)' : 'var(--ln-button-secondary-bg)',
-                    color: statsState.phase === 'result' && statsState.mode === 'detail'
+                    color: statsState.phase === 'result' && statsState.mode === 'standard'
                       ? 'var(--ln-button-fg)' : 'var(--ln-button-secondary-fg)',
                     border: '1px solid var(--ln-border-light)',
                   }}
                 >
-                  Detail Stats
+                  Standard Stats
                 </button>
               </div>
 

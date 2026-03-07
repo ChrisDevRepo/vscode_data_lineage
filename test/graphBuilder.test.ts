@@ -448,6 +448,140 @@ function testCetasTarget() {
   assert(!!cetasEdge, 'CETAS: SP → External Table edge exists (write target)');
 }
 
+// ─── Virtual Nodes: Budget Exhaustion (maxNodes cap) ─────────────────────────
+
+function testVirtualNodeBudgetExhaustion() {
+  console.log('\n── Virtual Nodes: Budget Exhaustion (maxNodes cap) ──');
+
+  // 3 real nodes + maxNodes=3 → budget=0 → no virtual nodes created
+  const objects = [
+    { fullName: '[dbo].[Sales]', type: 'table' as const },
+    { fullName: '[dbo].[Products]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spLoad]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spLoad] AS
+        SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT='PARQUET') AS r
+        UNION ALL SELECT * FROM OtherDB.dbo.Remote`,
+    },
+  ];
+  const deps = [
+    { sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' },
+  ];
+
+  const model = buildModel(objects, deps, undefined, undefined, true, 3); // maxNodes=3
+  const virtualNodes = model.nodes.filter(n => n.externalType === 'file' || n.externalType === 'db');
+  assert(virtualNodes.length === 0, 'Budget: no virtual nodes when maxNodes=realNodes');
+  assert(model.nodes.length === 3, 'Budget: only real nodes present');
+}
+
+// ─── Virtual Nodes: Mixed OPENROWSET + Cross-DB + Local ──────────────────────
+
+function testMixedExternalRefs() {
+  console.log('\n── Virtual Nodes: Mixed OPENROWSET + Cross-DB + Local ──');
+
+  const objects = [
+    { fullName: '[dbo].[FactSales]', type: 'table' as const },
+    { fullName: '[dim].[Product]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spETL]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spETL] AS
+        INSERT INTO [dbo].[FactSales]
+        SELECT p.*, r.* FROM [dim].[Product] p
+        CROSS JOIN OPENROWSET(BULK 'https://lake/raw.parquet', FORMAT='PARQUET') AS r
+        UNION ALL
+        SELECT * FROM Staging.dbo.Orders`,
+    },
+  ];
+  const deps = [
+    { sourceName: '[dbo].[spETL]', targetName: '[dbo].[FactSales]' },
+    { sourceName: '[dbo].[spETL]', targetName: '[dim].[Product]' },
+  ];
+
+  const model = buildModel(objects, deps);
+
+  // Local edges
+  const writeEdge = model.edges.find(e => e.source === '[dbo].[spetl]' && e.target === '[dbo].[factsales]');
+  assert(!!writeEdge, 'Mixed: SP → FactSales (write) edge');
+  const readEdge = model.edges.find(e => e.source === '[dim].[product]' && e.target === '[dbo].[spetl]');
+  assert(!!readEdge, 'Mixed: Product → SP (read) edge');
+
+  // File virtual node
+  const fileNode = model.nodes.find(n => n.externalType === 'file');
+  assert(!!fileNode, 'Mixed: file virtual node created');
+  const fileEdge = model.edges.find(e => e.source === fileNode!.id && e.target === '[dbo].[spetl]');
+  assert(!!fileEdge, 'Mixed: file → SP edge');
+
+  // Cross-DB virtual node
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(!!crossDbNode, 'Mixed: cross-DB virtual node created');
+  const crossDbEdge = model.edges.find(e => e.source === crossDbNode!.id && e.target === '[dbo].[spetl]');
+  assert(!!crossDbEdge, 'Mixed: cross-DB → SP edge (source)');
+
+  // Total: 3 real + 2 virtual = 5
+  assert(model.nodes.length === 5, `Mixed: 3 real + 2 virtual = 5 total (got ${model.nodes.length})`);
+}
+
+// ─── Virtual Nodes: Cross-DB Write Direction ─────────────────────────────────
+
+function testCrossDbWriteDirection() {
+  console.log('\n── Virtual Nodes: Cross-DB Write Direction ──');
+
+  const objects = [
+    { fullName: '[dbo].[LocalData]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spArchive]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spArchive] AS
+        INSERT INTO ArchiveDB.dbo.ArchivedSales
+        SELECT * FROM [dbo].[LocalData]`,
+    },
+  ];
+  const deps = [
+    { sourceName: '[dbo].[spArchive]', targetName: '[dbo].[LocalData]' },
+  ];
+
+  const model = buildModel(objects, deps);
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(!!crossDbNode, 'CrossDB-Write: virtual node created for target');
+
+  // Edge should be SP → cross-DB (write direction)
+  const writeEdge = model.edges.find(e =>
+    e.source === '[dbo].[sparchive]' && e.target === crossDbNode!.id
+  );
+  assert(!!writeEdge, 'CrossDB-Write: SP → cross-DB edge (outbound write)');
+
+  // Read edge from LocalData → SP should also exist
+  const readEdge = model.edges.find(e =>
+    e.source === '[dbo].[localdata]' && e.target === '[dbo].[sparchive]'
+  );
+  assert(!!readEdge, 'CrossDB-Write: LocalData → SP read edge exists');
+}
+
+// ─── Virtual Nodes: externalRefsEnabled=false ────────────────────────────────
+
+function testExternalRefsDisabled() {
+  console.log('\n── Virtual Nodes: externalRefsEnabled=false ──');
+
+  const objects = [
+    { fullName: '[dbo].[Sales]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spLoad]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spLoad] AS
+        SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT='PARQUET') AS r
+        UNION ALL SELECT * FROM OtherDB.dbo.Remote`,
+    },
+  ];
+  const deps = [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }];
+
+  const model = buildModel(objects, deps, undefined, undefined, false); // disabled
+  const virtualNodes = model.nodes.filter(n => n.externalType === 'file' || n.externalType === 'db');
+  assert(virtualNodes.length === 0, 'Disabled: no virtual nodes when externalRefsEnabled=false');
+  assert(model.nodes.length === 2, 'Disabled: only 2 real nodes');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -468,6 +602,10 @@ async function main() {
     testOpenrowsetDedup();
     testCopyIntoBulkInsert();
     testCetasTarget();
+    testVirtualNodeBudgetExhaustion();
+    testMixedExternalRefs();
+    testCrossDbWriteDirection();
+    testExternalRefsDisabled();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

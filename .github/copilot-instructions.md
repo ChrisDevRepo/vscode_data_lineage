@@ -46,11 +46,11 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 62 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
-| `test/graphBuilder.test.ts` | 51 | Graph construction, layout, BFS trace, co-writer filter |
-| `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 13 rules + edge cases + cleansing pipeline + regression guards |
+| `test/dacpacExtractor.test.ts` | 59 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
+| `test/graphBuilder.test.ts` | 84 | Graph construction, layout, BFS trace, co-writer filter |
+| `test/parser-edge-cases.test.ts` | 175 | Syntactic parser tests: all 14 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `test/dmvExtractor.test.ts` | 147 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
+| `test/dmvExtractor.test.ts` | 146 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/profilingEngine.test.ts` | 45 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
@@ -82,13 +82,13 @@ Key messages: `ready`, `config-only`, `dacpac-data`, `show-ddl`, `update-ddl`, `
 
 Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-reconnect`, `db-visualize`, `db-progress`, `db-schema-preview`, `db-model`, `db-error`, `db-cancelled`
 
-Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `save-schemas`, `parse-rules-result`, `parse-stats`
+Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `save-schemas`, `parse-rules-result`, `parse-stats`, `reload`, `export-file`
 
-Table statistics (Extension → Webview): `table-stats-result`, `table-stats-error`
+Table statistics: `table-stats-request` (Webview → Extension), `table-stats-result`, `table-stats-error` (Extension → Webview)
 
 ## SQL Parse Rules
 
-Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 13 rules across 4 categories: preprocessing, source, target, exec).
+Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 14 rules across 4 categories: preprocessing, source, target, exec).
 
 Views/functions use MS metadata as the primary source (dacpac XML `BodyDependencies` / `sys.sql_expression_dependencies`). As a supplement, `modelBuilder.ts` also runs the parser on their body scripts to catch any gaps in MS metadata — only the **delta** (parser findings beyond what metadata already captured) is recorded in `spDetails` (as `inRefs`) and surfaced in the NodeInfoBar detail panel. SQL Server XML type method calls (`nodes`, `value`, `exist`, `query`, `modify`) are recognized by the supplement and skipped — they look like `[alias].[method]` to the parser but are never real catalog references.
 

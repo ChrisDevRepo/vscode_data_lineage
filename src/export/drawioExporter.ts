@@ -1,7 +1,7 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TYPE_COLORS, getSchemaColor } from '../utils/schemaColors';
+import { TYPE_COLORS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
 // ─── Draw.io Cell Types ─────────────────────────────────────────────────────
@@ -56,11 +56,14 @@ const COLOR_BAND_W = 6;
 
 function buildLabel(d: CustomNodeData): string {
   const icon = TYPE_COLORS[d.objectType]?.icon || '■';
+  const schemaLabel = d.externalType === 'file' ? 'FILE SOURCE'
+    : d.externalType === 'db' ? 'CROSS-DATABASE'
+    : d.schema.toUpperCase();
   return (
     `<span style="color:#888888;font-size:14px;">${icon}</span>` +
     ` <span style="font-size:9px;color:#888888;">${d.inDegree}↓ ${d.outDegree}↑</span><br>` +
     `<b style="font-size:11px;color:#333333;">${escHtml(d.label)}</b><br>` +
-    `<span style="font-size:9px;color:#999999;">${escHtml(d.schema.toUpperCase())}</span>`
+    `<span style="font-size:9px;color:#999999;">${escHtml(schemaLabel)}</span>`
   );
 }
 
@@ -188,7 +191,8 @@ export function exportToDrawio(
     const nodeId = String(nextId++);
     idMap.set(node.id, nodeId);
 
-    const schemaColor = getSchemaColor(d.schema, true);
+    const isVirtual = d.externalType === 'file' || d.externalType === 'db';
+    const schemaColor = isVirtual ? getVirtualExtColor() : getSchemaColor(d.schema, true);
 
     nodeObjects.push({
       '@_id': nodeId,

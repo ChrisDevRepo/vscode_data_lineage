@@ -3,8 +3,13 @@
 # Full documentation: docs/PARSE_RULES.md
 #
 #   name / enabled / priority / category / pattern / flags / description
-#   category: preprocessing | source | target | exec
+#   category: preprocessing | source | target | exec | external_ref
 #   pattern:  JavaScript regex — capture group 1 = object reference
+#
+# external_ref rules run on RAW SQL (before cleansing) to extract file/URL
+# paths from string literals. They require an additional 'kind' field that
+# labels the reference type (e.g. openrowset, copy_from, bulk_from).
+# Capture group 1 = the URL/path inside quotes.
 
 rules:
   # ── Preprocessing ──────────────────────────────────────────────────────────
@@ -123,3 +128,35 @@ rules:
     pattern: "\\bEXEC(?:UTE)?\\s+(?!AS\\s+)(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: "EXEC/EXECUTE procedure calls"
+
+  # ── External references (pre-cleansing — runs on raw SQL) ──────────────────
+  # These rules extract file/URL paths from string literals in SQL.
+  # They run BEFORE the cleansing pipeline (which neutralizes string content).
+  # Each rule needs a 'kind' field — the label shown on the virtual node.
+  # To add custom external sources, add rules here with category: external_ref.
+  - name: extract_openrowset
+    enabled: true
+    priority: 50
+    category: external_ref
+    kind: openrowset
+    pattern: "\\bOPENROWSET\\s*\\(\\s*BULK\\s+['\"]([^'\"]+)['\"]"
+    flags: gi
+    description: "OPENROWSET(BULK 'url') file reference"
+
+  - name: extract_copy_from
+    enabled: true
+    priority: 51
+    category: external_ref
+    kind: copy_from
+    pattern: "\\bCOPY\\s+INTO\\s+\\S+\\s+FROM\\s+['\"]([^'\"]+)['\"]"
+    flags: gi
+    description: "COPY INTO ... FROM 'url' file reference"
+
+  - name: extract_bulk_from
+    enabled: true
+    priority: 52
+    category: external_ref
+    kind: bulk_from
+    pattern: "\\bBULK\\s+INSERT\\s+\\S+\\s+FROM\\s+['\"]([^'\"]+)['\"]"
+    flags: gi
+    description: "BULK INSERT ... FROM 'url' file reference"

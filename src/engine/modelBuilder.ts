@@ -30,8 +30,9 @@ export function buildModel(
   allObjects?: ExtractedObject[],
   currentDatabase?: string,
   externalRefsEnabled = true,
+  maxNodes = DEFAULT_CONFIG.maxNodes,
 ): DacpacModel {
-  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes);
 
   // CI normalization: unify node.schema to a single canonical display name (first-seen from
   // metadata) across all nodes that belong to the same logical schema.
@@ -549,6 +550,7 @@ function buildNodesAndEdges(
   allObjects?: ExtractedObject[],
   currentDatabase?: string,
   externalRefsEnabled = true,
+  maxNodes = DEFAULT_CONFIG.maxNodes,
 ): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
   const { nodes, nodeIds } = buildNodeList(objects);
   const { allNodeIds, allObjectMeta } = buildFullCatalog(allObjects);
@@ -574,7 +576,7 @@ function buildNodesAndEdges(
 
   // Create virtual nodes for external refs (file URLs + cross-DB 3-part names)
   if (externalRefsEnabled) {
-    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase);
+    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, maxNodes);
   }
 
   return { nodes, edges, stats, neighborPairs };
@@ -616,9 +618,10 @@ function createVirtualNodes(
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>,
   crossDbMetaDeps: Map<string, string[]>,
   currentDatabase?: string,
+  maxNodes = DEFAULT_CONFIG.maxNodes,
 ): void {
   // Budget: virtual nodes must not push total past maxNodes
-  let budget = Math.max(0, DEFAULT_CONFIG.maxNodes - nodes.length);
+  let budget = Math.max(0, maxNodes - nodes.length);
 
   // A. File virtual nodes — OPENROWSET, COPY FROM, BULK FROM
   const fileNodeMap = new Map<string, string>(); // url → virtualNodeId

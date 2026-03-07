@@ -11,9 +11,11 @@ import {
   getServerInfo, executeSimpleQuery,
 } from './engine/connectionManager';
 import type { IConnectionInfo, SimpleExecuteResult } from './types/mssql';
-import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, computeSamplePercent, parseProfilingResult } from './engine/profilingEngine';
+import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, buildTopNQuery, computeSamplePercent, parseProfilingResult, parseTopNResult } from './engine/profilingEngine';
 import type { StatsMode } from './engine/profilingEngine';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './engine/dmvExtractor';
+import { loadRules } from './engine/sqlBodyParser';
+import type { ParseRulesConfig } from './engine/sqlBodyParser';
 import type { DmvResults } from './engine/dmvExtractor';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
@@ -73,7 +75,7 @@ let statsConnectionUri: string | undefined;
 async function verifyStatsConnection(): Promise<boolean> {
   if (!statsConnectionUri) return false;
   try {
-    await withTimeout(executeSimpleQuery(statsConnectionUri, 'SELECT 1', outputChannel), 5000);
+    await withTimeout(executeSimpleQuery(statsConnectionUri, 'SELECT 1', outputChannel), DEFAULT_CONFIG.dmvQueryTimeout * 1000);
     return true;
   } catch {
     statsConnectionUri = undefined;
@@ -352,7 +354,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         vscode.window.showErrorMessage(`Data Lineage Error: ${msg.error}`);
       },
       'open-external': async (msg) => {
-        if (msg.url) await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        if (msg.url && /^https?:\/\//i.test(msg.url)) {
+          await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        }
       },
       'open-settings': () => { vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz'); },
       'export-file': async (msg) => {
@@ -380,6 +384,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'update-ddl': async (msg) => { updateDdlTextEditor(ddlUri, msg as DdlMessage); },
       'table-stats-request': async (msg) => {
         await handleTableStatsRequest(context, panel, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
+      },
+      'table-stats-topn-request': async (msg) => {
+        await handleTableStatsTopNRequest(panel, msg.schema, msg.objectName, msg.columnName, msg.rowCount);
       },
       'check-mssql': () => {
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
@@ -471,7 +478,8 @@ type WebviewMessage =
   | { type: 'db-reconnect' }
   | { type: 'reload' }
   | { type: 'db-visualize'; schemas: string[] }
-  | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'detail'; columns?: import('./engine/types').ColumnDef[] }
+  | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'standard'; columns?: import('./engine/types').ColumnDef[] }
+  | { type: 'table-stats-topn-request'; schema: string; objectName: string; columnName: string; rowCount: number }
   | { type: 'export-file'; data: string; defaultName: string };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
@@ -773,6 +781,44 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
+/**
+ * Handle on-demand Top-N frequency query for a single column.
+ * Reuses the persistent statsConnectionUri.
+ */
+async function handleTableStatsTopNRequest(
+  panel: vscode.WebviewPanel,
+  schema: string,
+  objectName: string,
+  columnName: string,
+  rowCount: number,
+): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+  const queryTimeout = clamp(cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout), 10, 600, DEFAULT_CONFIG.tableStatistics.queryTimeout) * 1000;
+
+  try {
+    if (!statsConnectionUri) {
+      panel.webview.postMessage({ type: 'table-stats-topn-error', columnName, message: 'No active connection.' });
+      return;
+    }
+
+    const sql = buildTopNQuery(schema, objectName, columnName, 5);
+    outputChannel.info(`[Stats] Top-N query for [${columnName}]:\n${sql}`);
+
+    const result = await withTimeout(executeSimpleQuery(statsConnectionUri, sql, outputChannel), queryTimeout);
+    const rows = result.rows.map(r => ({
+      val: r[0]?.displayValue ?? '',
+      cnt: r[1]?.displayValue ?? '0',
+    }));
+
+    const topValues = parseTopNResult(rows, rowCount);
+    panel.webview.postMessage({ type: 'table-stats-topn-result', columnName, values: topValues });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    outputChannel.error(`[Stats] Top-N failed for [${columnName}]: ${errorMsg}`);
+    panel.webview.postMessage({ type: 'table-stats-topn-error', columnName, message: errorMsg });
+  }
+}
+
 // ─── Two-Phase DB Extraction ─────────────────────────────────────────────────
 
 async function persistDbSourceState(context: vscode.ExtensionContext, sourceName: string, connectionInfo: IConnectionInfo): Promise<void> {
@@ -819,7 +865,7 @@ async function runDbPhase1(
   panel.webview.postMessage({ type: 'db-progress', step: 1, total: allObjectsQuery ? 2 : 1, label: 'schema-preview' });
   const phase1Queries = allObjectsQuery ? [previewQuery, allObjectsQuery] : [previewQuery];
 
-  const dmvTimeoutMs = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', 120) * 1000;
+  const dmvTimeoutMs = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const previewResult = await executeDmvQueries(connectionUri, phase1Queries, outputChannel, undefined, dmvTimeoutMs);
 
   if (token.isCancellationRequested) {
@@ -894,7 +940,7 @@ async function runDbPhase2(
     return;
   }
 
-  const dmvTimeoutMs = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', 120) * 1000;
+  const dmvTimeoutMs = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const resultMap = await executeDmvQueriesFiltered(
     connectionUri,
     queries,
@@ -932,7 +978,11 @@ async function runDbPhase2(
   const start = Date.now();
   const currentDatabase = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo')?.database;
   const preConfig = await readExtensionConfig();
-  const model = buildModelFromDmv(dmvResults, currentDatabase, preConfig.externalRefs.enabled);
+  if (preConfig.parseRules) {
+    const rulesResult = loadRules(preConfig.parseRules as ParseRulesConfig);
+    outputChannel.debug(`[DB] Parse rules loaded: ${rulesResult.loaded} rules (${Object.entries(rulesResult.categoryCounts).map(([k, v]) => `${k}: ${v}`).join(', ')})`);
+  }
+  const model = buildModelFromDmv(dmvResults, currentDatabase, preConfig.externalRefs.enabled, preConfig.maxNodes);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   const extNodes = model.nodes.filter(n => n.type === 'external');
   const extSuffix = extNodes.length > 0 ? `, incl. ${extNodes.length} external (⬡)` : '';
