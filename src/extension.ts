@@ -4,7 +4,7 @@ import * as yaml from 'js-yaml';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
-import type { LayoutConfig, EdgeStyle, TraceConfig, AnalysisConfig } from './engine/types';
+import { DEFAULT_CONFIG, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig } from './engine/types';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
@@ -144,74 +144,45 @@ export function activate(context: vscode.ExtensionContext) {
     ),
   );
 
-  // Command: Create Parse Rules YAML scaffold
+  // Commands: Create YAML scaffold files (parse rules + DMV queries)
   context.subscriptions.push(
-    vscode.commands.registerCommand('dataLineageViz.createParseRules', async () => {
-      const folder = vscode.workspace.workspaceFolders?.[0];
-      if (!folder) {
-        vscode.window.showWarningMessage('Open a workspace folder first.');
-        return;
-      }
-
-      const targetUri = vscode.Uri.joinPath(folder.uri, 'parseRules.yaml');
-      
-      try {
-        // Check if file exists
-        await vscode.workspace.fs.stat(targetUri);
-        // File exists, just open it
-        const doc = await vscode.workspace.openTextDocument(targetUri);
-        await vscode.window.showTextDocument(doc);
-        return;
-      } catch (err) {
-        if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
-        // File doesn't exist, create it
-      }
-
-      // Copy the bundled default YAML as a starting point
-      const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'defaultParseRules.yaml');
-      const defaultYaml = await vscode.workspace.fs.readFile(sourceUri);
-      await vscode.workspace.fs.writeFile(targetUri, defaultYaml);
-
-      const doc = await vscode.workspace.openTextDocument(targetUri);
-      await vscode.window.showTextDocument(doc);
-      vscode.window.showInformationMessage(
-        'Created parseRules.yaml in workspace root. Set "dataLineageViz.parseRulesFile" to "parseRules.yaml" to use it.'
-      );
-    })
+    vscode.commands.registerCommand('dataLineageViz.createParseRules', () =>
+      createYamlScaffold(context, 'parseRules.yaml', 'defaultParseRules.yaml', 'parseRulesFile')
+    ),
+    vscode.commands.registerCommand('dataLineageViz.createDmvQueries', () =>
+      createYamlScaffold(context, 'dmvQueries.yaml', 'dmvQueries.yaml', 'dmvQueriesFile')
+    ),
   );
+}
 
-  // Command: Create DMV Queries YAML scaffold
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dataLineageViz.createDmvQueries', async () => {
-      const folder = vscode.workspace.workspaceFolders?.[0];
-      if (!folder) {
-        vscode.window.showWarningMessage('Open a workspace folder first.');
-        return;
-      }
+async function createYamlScaffold(
+  context: vscode.ExtensionContext, fileName: string, sourceAsset: string, settingName: string
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    vscode.window.showWarningMessage('Open a workspace folder first.');
+    return;
+  }
 
-      const targetUri = vscode.Uri.joinPath(folder.uri, 'dmvQueries.yaml');
+  const targetUri = vscode.Uri.joinPath(folder.uri, fileName);
 
-      try {
-        await vscode.workspace.fs.stat(targetUri);
-        const doc = await vscode.workspace.openTextDocument(targetUri);
-        await vscode.window.showTextDocument(doc);
-        return;
-      } catch (err) {
-        if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
-        // File doesn't exist, create it
-      }
+  try {
+    await vscode.workspace.fs.stat(targetUri);
+    const doc = await vscode.workspace.openTextDocument(targetUri);
+    await vscode.window.showTextDocument(doc);
+    return;
+  } catch (err) {
+    if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
+  }
 
-      // Copy the bundled default YAML as a starting point
-      const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'dmvQueries.yaml');
-      const sourceData = await vscode.workspace.fs.readFile(sourceUri);
-      await vscode.workspace.fs.writeFile(targetUri, sourceData);
+  const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', sourceAsset);
+  const sourceData = await vscode.workspace.fs.readFile(sourceUri);
+  await vscode.workspace.fs.writeFile(targetUri, sourceData);
 
-      const doc = await vscode.workspace.openTextDocument(targetUri);
-      await vscode.window.showTextDocument(doc);
-      vscode.window.showInformationMessage(
-        'Created dmvQueries.yaml in workspace root. Set "dataLineageViz.dmvQueriesFile" to "dmvQueries.yaml" to use it.'
-      );
-    })
+  const doc = await vscode.workspace.openTextDocument(targetUri);
+  await vscode.window.showTextDocument(doc);
+  vscode.window.showInformationMessage(
+    `Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`
   );
 }
 
@@ -512,6 +483,8 @@ async function loadBuiltInParseRules(): Promise<Record<string, unknown>> {
 async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
 
+  const maxNodes = clamp(cfg.get<number>('maxNodes', DEFAULT_CONFIG.maxNodes), 10, 1000, DEFAULT_CONFIG.maxNodes);
+
   const config: ExtensionConfigMessage = {
     excludePatterns: cfg.get<string[]>('excludePatterns', []).filter(p => {
       try { new RegExp(p); return true; } catch {
@@ -519,25 +492,25 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
         return false;
       }
     }),
-    maxNodes: clamp(cfg.get<number>('maxNodes', 500), 10, 1000, 500),
+    maxNodes,
     layout: {
-      direction: cfg.get<'TB' | 'LR'>('layout.direction', 'LR')!,
-      rankSeparation: clamp(cfg.get<number>('layout.rankSeparation', 120), 20, 300, 120),
-      nodeSeparation: clamp(cfg.get<number>('layout.nodeSeparation', 30), 10, 200, 30),
-      edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', true),
-      highlightAnimation: cfg.get<boolean>('layout.highlightAnimation', false),
-      minimapEnabled: cfg.get<boolean>('layout.minimapEnabled', true),
+      direction: cfg.get<'TB' | 'LR'>('layout.direction', DEFAULT_CONFIG.layout.direction)!,
+      rankSeparation: clamp(cfg.get<number>('layout.rankSeparation', DEFAULT_CONFIG.layout.rankSeparation), 20, 300, DEFAULT_CONFIG.layout.rankSeparation),
+      nodeSeparation: clamp(cfg.get<number>('layout.nodeSeparation', DEFAULT_CONFIG.layout.nodeSeparation), 10, 200, DEFAULT_CONFIG.layout.nodeSeparation),
+      edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', DEFAULT_CONFIG.layout.edgeAnimation),
+      highlightAnimation: cfg.get<boolean>('layout.highlightAnimation', DEFAULT_CONFIG.layout.highlightAnimation),
+      minimapEnabled: cfg.get<boolean>('layout.minimapEnabled', DEFAULT_CONFIG.layout.minimapEnabled),
     },
-    edgeStyle: cfg.get<EdgeStyle>('edgeStyle', 'default')!,
+    edgeStyle: cfg.get<EdgeStyle>('edgeStyle', DEFAULT_CONFIG.edgeStyle)!,
     trace: {
-      defaultUpstreamLevels: clamp(cfg.get<number>('trace.defaultUpstreamLevels', 3), 0, 99, 3),
-      defaultDownstreamLevels: clamp(cfg.get<number>('trace.defaultDownstreamLevels', 3), 0, 99, 3),
-      hideCoWriters: cfg.get<boolean>('trace.hideCoWriters', true),
+      defaultUpstreamLevels: clamp(cfg.get<number>('trace.defaultUpstreamLevels', DEFAULT_CONFIG.trace.defaultUpstreamLevels), 0, 99, DEFAULT_CONFIG.trace.defaultUpstreamLevels),
+      defaultDownstreamLevels: clamp(cfg.get<number>('trace.defaultDownstreamLevels', DEFAULT_CONFIG.trace.defaultDownstreamLevels), 0, 99, DEFAULT_CONFIG.trace.defaultDownstreamLevels),
+      hideCoWriters: cfg.get<boolean>('trace.hideCoWriters', DEFAULT_CONFIG.trace.hideCoWriters),
     },
     analysis: {
-      hubMinDegree: clamp(cfg.get<number>('analysis.hubMinDegree', 8), 1, 50, 8),
-      islandMaxSize: clamp(cfg.get<number>('analysis.islandMaxSize', 2), 2, 500, 2),
-      longestPathMinNodes: clamp(cfg.get<number>('analysis.longestPathMinNodes', 5), 2, 50, 5),
+      hubMinDegree: clamp(cfg.get<number>('analysis.hubMinDegree', DEFAULT_CONFIG.analysis.hubMinDegree), 1, 50, DEFAULT_CONFIG.analysis.hubMinDegree),
+      islandMaxSize: clamp(cfg.get<number>('analysis.islandMaxSize', DEFAULT_CONFIG.analysis.islandMaxSize), 2, maxNodes, DEFAULT_CONFIG.analysis.islandMaxSize),
+      longestPathMinNodes: clamp(cfg.get<number>('analysis.longestPathMinNodes', DEFAULT_CONFIG.analysis.longestPathMinNodes), 2, 50, DEFAULT_CONFIG.analysis.longestPathMinNodes),
     },
   };
 

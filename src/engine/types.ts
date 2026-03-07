@@ -9,7 +9,7 @@ export interface LineageNode {
   fullName: string;      // "[schema].[name]" as in dacpac
   type: ObjectType;
   bodyScript?: string;   // SQL body for SPs/Views/UDFs
-  externalKind?: 'et' | 'openrowset' | 'cross_db'; // set for type === 'external'
+  externalKind?: 'et'; // set for type === 'external'
 }
 
 export interface LineageEdge {
@@ -207,13 +207,41 @@ export function buildColumnDef(
   };
 }
 
+// ─── Constraint Maps (shared by dacpac + DMV extractors) ─────────────────────
+
+export interface ConstraintMaps {
+  /** Key: "schema.table.column" (lowercase) → UQ constraint name */
+  uqColMap: Map<string, string>;
+  /** Key: "schema.table.column" (lowercase) → CK constraint name */
+  ckColMap: Map<string, string>;
+  /** Key: "schema.table" (lowercase) → FK list */
+  fkMap: Map<string, ForeignKeyInfo[]>;
+}
+
+/** Enrich columns with UQ/CK flags and return FK list for a table. */
+export function enrichColumnsWithConstraints(
+  columns: ColumnDef[], tableKey: string, maps: ConstraintMaps
+): ForeignKeyInfo[] {
+  for (const col of columns) {
+    const ck = `${tableKey}.${col.name}`.toLowerCase();
+    col.unique = maps.uqColMap.get(ck) ?? '';
+    col.check  = maps.ckColMap.get(ck) ?? '';
+  }
+  return maps.fkMap.get(tableKey) ?? [];
+}
+
+/** Factory for empty SchemaInfo — single source of truth for the zero-count init. */
+export function createEmptySchemaInfo(name: string): SchemaInfo {
+  return { name, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
+}
+
 export interface ExtractedObject {
   fullName: string;       // "[Schema].[Name]"
   type: ObjectType;
   bodyScript?: string;
   columns?: ColumnDef[];          // table column metadata (for table design view)
   fks?: ForeignKeyInfo[];         // FK constraints (dacpac + DMV paths; undefined only when not extracted)
-  externalKind?: 'et' | 'openrowset' | 'cross_db'; // set when type === 'external'
+  externalKind?: 'et'; // set when type === 'external'
 }
 
 export interface ExtractedDependency {
@@ -270,7 +298,7 @@ export interface ExtensionConfig {
 
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
-  maxNodes: 500,
+  maxNodes: 750,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true },
   edgeStyle: 'default' as const,
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },

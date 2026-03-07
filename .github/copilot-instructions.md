@@ -16,6 +16,13 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 - `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources)
 - `src/extension.ts` — VS Code API, webview lifecycle, message routing
 
+### Extraction Pipeline (DRY principle)
+
+Both dacpac and database import produce `ExtractedObject[]` + `ExtractedDependency[]` + `ConstraintMaps`.
+Post-extraction logic (schema aggregation, constraint enrichment, catalog building) lives exclusively
+in `modelBuilder.ts` and `types.ts`. The extractors are thin format adapters — they translate their
+source format into the shared intermediate types and nothing more.
+
 ### Key Files
 
 | File | Purpose |
@@ -30,7 +37,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All unit tests (374 unit + 54 tsql-complex)
+npm test         # All unit tests (477 total)
 ```
 
 Press F5 to launch Extension Development Host.
@@ -39,22 +46,20 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 49 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security |
+| `test/dacpacExtractor.test.ts` | 62 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
 | `test/graphBuilder.test.ts` | 51 | Graph construction, layout, BFS trace, co-writer filter |
 | `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 13 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `test/dmvExtractor.test.ts` | 73 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
+| `test/dmvExtractor.test.ts` | 109 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/webview.integration.test.ts` | — | VS Code integration tests |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
 npm test                  # Run all unit tests
-npm run test:integration  # Run VS Code tests
 ```
 
-Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `customer-data/` (gitignored).
+Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
 
 
 ## Code Rules

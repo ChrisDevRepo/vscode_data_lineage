@@ -1,6 +1,6 @@
 import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
-import type { AnalysisType, AnalysisResult, AnalysisGroup, AnalysisConfig } from './types';
+import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
 
 // ─── Islands (Connected Components) ─────────────────────────────────────────
 
@@ -142,7 +142,7 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
 
 // ─── Longest Path (Deepest Dependency Chain) ────────────────────────────────
 
-export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains: number = 250): AnalysisResult {
+export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }
@@ -283,7 +283,7 @@ export function analyzeCycles(graph: Graph): AnalysisResult {
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
-export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = 500): AnalysisResult {
+export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   switch (type) {
     case 'islands': return analyzeIslands(graph, analysisConfig.islandMaxSize);
     case 'hubs': return analyzeHubs(graph, analysisConfig.hubMinDegree);

@@ -134,7 +134,7 @@
         "properties": {
           "dataLineageViz.maxNodes": {
             "type": "number",
-            "default": 500,
+            "default": 750,
             "minimum": 10,
             "maximum": 1000,
             "description": "Maximum objects to import (10–1000).",
@@ -288,8 +288,8 @@
             "type": "number",
             "default": 2,
             "minimum": 2,
-            "maximum": 500,
-            "markdownDescription": "Max size of disconnected subgraphs to show.",
+            "maximum": 1000,
+            "markdownDescription": "Max size of disconnected subgraphs to show (bounded by maxNodes).",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {
@@ -313,7 +313,6 @@
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
     "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts",
-    "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts",
     "test:db": "tsx test-internal/integration-db.test.ts"
   },
   "dependencies": {
@@ -333,7 +332,6 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/mssql": "^9",
-    "@types/mocha": "^10.0.10",
     "dotenv": "^16",
     "mssql": "^11",
     "@types/node": "^20.11.0",
@@ -341,11 +339,9 @@
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.85.0",
     "@vitejs/plugin-react": "^4.3.0",
-    "@vscode/test-electron": "^2.5.2",
     "autoprefixer": "^10.4.20",
     "esbuild": "^0.25.0",
     "glob": "^13.0.0",
-    "mocha": "^12.0.0-beta-10",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",

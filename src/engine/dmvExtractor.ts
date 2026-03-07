@@ -7,7 +7,10 @@ import {
   ExtractedDependency,
   ColumnDef,
   ForeignKeyInfo,
+  ConstraintMaps,
   buildColumnDef,
+  enrichColumnsWithConstraints,
+  createEmptySchemaInfo,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue } from '../types/mssql';
@@ -45,7 +48,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
     const key = schemaKey(schemaName);
     let info = schemaMap.get(key);
     if (!info) {
-      info = { name: schemaName, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
+      info = createEmptySchemaInfo(schemaName);
       schemaMap.set(key, info);
     }
     info.nodeCount += count;
@@ -115,15 +118,6 @@ function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
 }
 
 // ─── Constraint Maps ────────────────────────────────────────────────────────
-
-interface ConstraintMaps {
-  /** Key: "schema.table.column" (lowercase) → UQ constraint name */
-  uqColMap: Map<string, string>;
-  /** Key: "schema.table.column" (lowercase) → CK constraint name */
-  ckColMap: Map<string, string>;
-  /** Key: "schema.table" (lowercase) → FK list */
-  fkMap: Map<string, ForeignKeyInfo[]>;
-}
 
 /**
  * Parse the combined constraints result set into three lookup maps.
@@ -235,14 +229,8 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       const tableKey = `${schemaName}.${objectName}`.toLowerCase();
       columns = tableColumns.get(tableKey);
 
-      // Enrich columns with UQ/CK flags from constraint maps (lookup key only — no re-fetch)
       if (columns && constraintMaps) {
-        for (const col of columns) {
-          const ck = `${tableKey}.${col.name}`.toLowerCase();
-          col.unique = constraintMaps.uqColMap.get(ck) ?? '';
-          col.check  = constraintMaps.ckColMap.get(ck) ?? '';
-        }
-        fks = constraintMaps.fkMap.get(tableKey) ?? [];
+        fks = enrichColumnsWithConstraints(columns, tableKey, constraintMaps);
       }
     }
 

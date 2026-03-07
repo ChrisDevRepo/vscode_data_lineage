@@ -3,14 +3,13 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all tests (423 unit + 54 tsql-complex)
+npm test                                       # Run all unit tests (477 total)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (62 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (51 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (142 tests)
 npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (59 tests)
-npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (73 tests)
+npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (109 tests)
 npx tsx test/tsql-complex.test.ts              # SQL pattern tests (54 tests)
-npm run test:integration                       # VS Code webview integration tests
 ```
 
 ## Test Files
@@ -21,11 +20,8 @@ npm run test:integration                       # VS Code webview integration tes
 | `graphBuilder.test.ts` | 51 | Graph construction, dagre layout, BFS trace, cross-connection exclusion, co-writer filter |
 | `parser-edge-cases.test.ts` | 142 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `dmvExtractor.test.ts` | 73 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
+| `dmvExtractor.test.ts` | 109 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
 | `tsql-complex.test.ts` | 54 | **SQL pattern tests** — targeted SQL files covering each parser pattern; expected results embedded as `-- EXPECT` comments |
-| `webview.integration.test.ts` | — | VS Code webview integration tests |
-| `runTest.ts` | — | Test runner for VS Code extension tests |
-| `suite/index.ts` | — | Mocha test suite configuration |
 
 ## Dacpac Extractor Tests (`dacpacExtractor.test.ts`)
 

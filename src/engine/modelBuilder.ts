@@ -18,6 +18,7 @@ import {
   ForeignKeyInfo,
   CatalogEntry,
   NeighborIndex,
+  createEmptySchemaInfo,
 } from './types';
 import { parseSqlBody } from './sqlBodyParser';
 import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
@@ -189,11 +190,7 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
     const key = schemaKey(node.schema);
     let info = map.get(key);
     if (!info) {
-      info = {
-        name: node.schema,
-        nodeCount: 0,
-        types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 },
-      };
+      info = createEmptySchemaInfo(node.schema);
       map.set(key, info);
     }
     info.nodeCount++;
@@ -242,7 +239,7 @@ function buildTableDesignAscii(
   const out: string[] = [];
   out.push(`-- TABLE: [${schema}].[${objectName}]`);
   out.push(sep('-'));
-  const hExtra = hasExtra  ? '' : '';
+  const hExtra = '';
   const hUq    = hasUnique ? 'UQ' : '';
   const hCk    = hasCheck  ? 'CK' : '';
   out.push(row(hCol, hType, hNull, hExtra, hUq, hCk));

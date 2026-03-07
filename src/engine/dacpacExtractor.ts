@@ -16,7 +16,11 @@ import {
   ExtractedDependency,
   ColumnDef,
   ForeignKeyInfo,
+  ConstraintMaps,
   buildColumnDef,
+  enrichColumnsWithConstraints,
+  createEmptySchemaInfo,
+  DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { stripBrackets, schemaKey } from '../utils/sql';
@@ -110,7 +114,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     const key = schemaKey(schema);
     let info = schemaMap.get(key);
     if (!info) {
-      info = { name: schema, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
+      info = createEmptySchemaInfo(schema);
       schemaMap.set(key, info);
     }
     info.nodeCount++;
@@ -132,7 +136,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
 export function filterBySchemas(
   model: DacpacModel,
   selectedSchemas: Set<string>,
-  maxNodes = 150
+  maxNodes = DEFAULT_CONFIG.maxNodes
 ): DacpacModel {
   // Case-insensitive comparison so UI-provided schema names match model.schemas
   const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
@@ -246,13 +250,7 @@ function extractObjects(elements: XmlElement[]): ExtractedObject[] {
     if (!bodyScript && (type === 'SqlTable' || type === 'SqlExternalTable')) {
       columns = extractColumnsFromXml(el);
       if (columns) {
-        const tableKey = normalizeName(name);
-        for (const col of columns) {
-          const ck = `${tableKey}.${col.name.toLowerCase()}`;
-          col.unique = constraintMaps.uqColMap.get(ck) ?? '';
-          col.check  = constraintMaps.ckColMap.get(ck) ?? '';
-        }
-        fks = constraintMaps.fkMap.get(tableKey) ?? [];
+        fks = enrichColumnsWithConstraints(columns, normalizeName(name), constraintMaps);
       }
     }
 
@@ -339,12 +337,6 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
 }
 
 // ─── XML Constraint Extraction ──────────────────────────────────────────────
-
-type ConstraintMaps = {
-  uqColMap: Map<string, string>;       // normalizeName(table).colname → UQ constraint short name
-  ckColMap: Map<string, string>;       // normalizeName(table).colname → CK constraint short name
-  fkMap:    Map<string, ForeignKeyInfo[]>; // normalizeName(table) → FK list
-};
 
 /** Get all @_Name values from a named Relationship's Entry.References. */
 function getRelRefs(el: XmlElement, relName: string): string[] {
