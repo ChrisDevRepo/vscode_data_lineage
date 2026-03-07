@@ -11,42 +11,7 @@ import {
   analyzeLongestPath,
   analyzeCycles,
 } from '../src/engine/graphAnalysis';
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
-
-// ─── Helper: build a directed graph from nodes + edges ────────────────────────
-
-function makeGraph(
-  nodes: Array<{ id: string; schema?: string; name?: string; type?: string }>,
-  edges: Array<[string, string]>
-): Graph {
-  const g = new Graph({ type: 'directed', multi: false });
-  for (const n of nodes) {
-    g.addNode(n.id, {
-      schema: n.schema || 'dbo',
-      name: n.name || n.id,
-      type: n.type || 'table',
-    });
-  }
-  for (const [s, t] of edges) {
-    const key = `${s}→${t}`;
-    if (!g.hasEdge(key)) {
-      g.addEdgeWithKey(key, s, t, { type: 'body' });
-    }
-  }
-  return g;
-}
+import { assert, makeGraph, printSummary } from './testUtils';
 
 // ─── analyzeIslands ──────────────────────────────────────────────────────────
 
@@ -400,5 +365,4 @@ testLongestPathChainEdges();
 testCycles();
 testSubsetEdgeFiltering();
 
-console.log(`\n── Results: ${passed} passed, ${failed} failed ──`);
-if (failed > 0) process.exit(1);
+printSummary('Graph Analysis');

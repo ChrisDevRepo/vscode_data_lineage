@@ -68,7 +68,7 @@ Search `dataLineageViz` in Settings (`Ctrl+,`):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `maxNodes` | `500` | Maximum nodes to display (10-1000) |
+| `maxNodes` | `750` | Maximum nodes to display (10-1000) |
 
 **Parser**
 
@@ -76,6 +76,23 @@ Search `dataLineageViz` in Settings (`Ctrl+,`):
 |---------|---------|-------------|
 | `parseRulesFile` | `""` | Path to custom YAML parsing rules |
 | `excludePatterns` | `[]` | Regex patterns to exclude objects |
+
+**Database Connection**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `dmvQueriesFile` | `""` | Path to custom DMV queries YAML file (leave empty for built-in) |
+
+**Table Statistics**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `tableStatistics.enabled` | `true` | Enable table statistics in the table design viewer (DB mode only) |
+| `tableStatistics.sampleThreshold` | `100000` | Row count above which sampling is used; set to `0` to always sample |
+| `tableStatistics.sampleSize` | `10000` | Target sample size in rows (converted to `TABLESAMPLE` or `TOP N` by platform) |
+| `tableStatistics.useApproxDistinct` | `true` | Use `APPROX_COUNT_DISTINCT` (faster, ~2% error) instead of exact `COUNT(DISTINCT)` |
+| `tableStatistics.queryTimeout` | `60` | Profiling query timeout in seconds (10-600) |
+| `tableStatistics.queriesFile` | `""` | Path to custom profiling queries YAML file (leave empty for built-in) |
 
 **Graph Layout**
 

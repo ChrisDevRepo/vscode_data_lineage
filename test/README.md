@@ -3,13 +3,14 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all unit tests (477 total)
+npm test                                       # Run all unit tests (560 total)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (62 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (51 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (142 tests)
 npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (59 tests)
-npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (109 tests)
+npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (147 tests)
 npx tsx test/tsql-complex.test.ts              # SQL pattern tests (54 tests)
+npx tsx test/profilingEngine.test.ts           # Profiling engine tests (45 tests)
 ```
 
 ## Test Files
@@ -20,8 +21,9 @@ npx tsx test/tsql-complex.test.ts              # SQL pattern tests (54 tests)
 | `graphBuilder.test.ts` | 51 | Graph construction, dagre layout, BFS trace, cross-connection exclusion, co-writer filter |
 | `parser-edge-cases.test.ts` | 142 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `dmvExtractor.test.ts` | 109 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
+| `dmvExtractor.test.ts` | 147 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, external tables, schema placeholder expansion |
 | `tsql-complex.test.ts` | 54 | **SQL pattern tests** — targeted SQL files covering each parser pattern; expected results embedded as `-- EXPECT` comments |
+| `profilingEngine.test.ts` | 45 | Table statistics: query generation, column classification, sampling logic, result parsing |
 
 ## Dacpac Extractor Tests (`dacpacExtractor.test.ts`)
 
@@ -105,6 +107,47 @@ Proves that the fallback direction logic (used for XML-only deps) is correct:
 Both produce the same artifact format (ZIP with `model.xml`). See `.claude/rules/test-data.md`.
 
 
+## Shared Test Utilities (`testUtils.ts`)
+
+All test files import shared helpers from `test/testUtils.ts`:
+
+| Export | Purpose |
+|--------|---------|
+| `assert(condition, msg)` | Boolean assertion with pass/fail output |
+| `assertEq(actual, expected, msg)` | Equality check with "expected X, got Y" on failure |
+| `test(name, fn)` | Try/catch wrapper — catches exceptions as failures |
+| `loadParseRules()` | Load parse rules from `assets/defaultParseRules.yaml` |
+| `testPath(...segments)` | Resolve path relative to `test/` directory |
+| `rootPath(...segments)` | Resolve path relative to project root |
+| `printSummary(label?)` | Print results and exit with code 1 on failures |
+| `makeGraph(nodes, edges)` | Build synthetic graphology graph for tests |
+| `hasName(list, name)` | Case-insensitive partial match on list |
+
+## Writing New Tests
+
+1. Create a new `.test.ts` file in `test/`:
+   ```typescript
+   import { assert, assertEq, printSummary } from './testUtils';
+
+   function testMyFeature() {
+     console.log('\n── My Feature ──');
+     assert(1 + 1 === 2, 'basic math works');
+     assertEq(myFunction('input'), 'expected', 'returns correct output');
+   }
+
+   testMyFeature();
+   printSummary('My Feature');
+   ```
+
+2. Add to the `test` script in `package.json` (chained with `&&`):
+   ```json
+   "test": "tsx test/existing.test.ts && tsx test/myFeature.test.ts"
+   ```
+
+3. Run your test: `npx tsx test/myFeature.test.ts`
+
+4. Update test counts in this README and `.github/copilot-instructions.md`.
+
 ## Adding Tests
 
 When modifying parse rules:
@@ -112,6 +155,10 @@ When modifying parse rules:
 2. Make your changes
 3. Run `npm test` after — zero regressions allowed
 
+## Internal Tests
+
+For integration tests requiring a live SQL Server, see `test-internal/README.md`. These are gitignored and not part of `npm test`.
+
 ## Test Data Rules
 
-Only AdventureWorks dacpacs allowed here. Customer data goes in `customer-data/` (gitignored).
+Only AdventureWorks dacpacs allowed here. Customer data goes in `customer-data/` (gitignored). Customer identifiers must never appear in test files, code comments, or documentation.

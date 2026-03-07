@@ -4,39 +4,15 @@
  */
 
 import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import { buildModelFromDmv, validateQueryResult } from '../src/engine/dmvExtractor';
 import { formatColumnType } from '../src/engine/types';
 import type { DmvResults } from '../src/engine/dmvExtractor';
 import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../src/types/mssql';
-import { loadRules } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../src/utils/sql';
+import { assert, assertEq, loadParseRules, rootPath, printSummary } from './testUtils';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
-const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
-loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
-
-function assertEq<T>(actual: T, expected: T, msg: string) {
-  assert(actual === expected, `${msg} (expected ${expected}, got ${actual})`);
-}
+loadParseRules();
 
 // ─── Test Data Helpers ──────────────────────────────────────────────────────
 
@@ -767,7 +743,7 @@ function testYamlQueriesHavePlaceholder() {
   console.log('\n── YAML queries: Phase 2 placeholder validation ──');
 
   // Load the ACTUAL dmvQueries.yaml and validate all Phase 2 queries have {{SCHEMAS}}
-  const yamlContent = readFileSync(resolve(__dirname, '../assets/dmvQueries.yaml'), 'utf-8');
+  const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
   const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
 
   const phase2 = config.queries.filter(q => (q.phase ?? 2) !== 1);
@@ -792,7 +768,7 @@ function testYamlQueriesHavePlaceholder() {
 function testExpandedSqlStructure() {
   console.log('\n── Expanded SQL structural validation ──');
 
-  const yamlContent = readFileSync(resolve(__dirname, '../assets/dmvQueries.yaml'), 'utf-8');
+  const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
   const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
   const phase2 = config.queries.filter(q => (q.phase ?? 2) !== 1);
 
@@ -826,5 +802,4 @@ testValidateSchemaPlaceholder();
 testYamlQueriesHavePlaceholder();
 testExpandedSqlStructure();
 
-console.log(`\n═══ DMV Extractor: ${passed} passed, ${failed} failed ═══\n`);
-if (failed > 0) process.exit(1);
+printSummary('DMV Extractor');

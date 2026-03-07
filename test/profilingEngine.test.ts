@@ -13,21 +13,7 @@ import {
   parseProfilingResult,
 } from '../src/engine/profilingEngine';
 import type { StatsMode } from '../src/engine/profilingEngine';
-
-let passed = 0;
-let failed = 0;
-
-function test(name: string, fn: () => void) {
-  try {
-    fn();
-    console.log(`  ✓ ${name}`);
-    passed++;
-  } catch (err) {
-    console.log(`  ✗ ${name}`);
-    console.log(`    ${err instanceof Error ? err.message : String(err)}`);
-    failed++;
-  }
-}
+import { test, printSummary } from './testUtils';
 
 function col(name: string, type: string, nullable = 'NULL', extra = ''): ColumnDef {
   return { name, type, nullable, extra };
@@ -442,8 +428,4 @@ test('computed columns marked as skipped', () => {
 
 // ─── Summary ────────────────────────────────────────────────────────────────
 
-console.log(`\n${'═'.repeat(51)}`);
-console.log(`Results: ${passed}/${passed + failed} passed  (${failed === 0 ? '100%' : Math.round(passed / (passed + failed) * 100) + '%'})`);
-console.log('═'.repeat(51));
-
-if (failed > 0) process.exit(1);
+printSummary('Profiling Engine');

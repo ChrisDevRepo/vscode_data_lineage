@@ -154,6 +154,16 @@ export async function connectDirect(
   }
 }
 
+function dmvTimeout<T>(promise: Promise<T>, ms: number, queryName: string): Promise<T> {
+  let handle: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise.finally(() => clearTimeout(handle)),
+    new Promise<never>((_, reject) => {
+      handle = setTimeout(() => reject(new Error(`DMV query "${queryName}" timed out after ${ms / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)), ms);
+    }),
+  ]);
+}
+
 /**
  * Execute DMV queries against a connected database.
  */
@@ -162,6 +172,7 @@ export async function executeDmvQueries(
   queries: DmvQuery[],
   outputChannel: vscode.LogOutputChannel,
   onProgress?: (step: number, total: number, label: string) => void,
+  queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
   const sharing = await getConnectionSharingApi(outputChannel);
 
@@ -176,7 +187,8 @@ export async function executeDmvQueries(
     outputChannel.info(`[DB] Executing query: ${query.name} (${step}/${total})...`);
 
     const start = Date.now();
-    const result = await sharing.executeSimpleQuery(connectionUri, query.sql);
+    const queryPromise = sharing.executeSimpleQuery(connectionUri, query.sql);
+    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     outputChannel.info(`[DB] Query '${query.name}' returned ${result.rowCount} rows (${elapsed}s)`);
@@ -198,6 +210,7 @@ export async function executeDmvQueriesFiltered(
   schemas: string[],
   outputChannel: vscode.LogOutputChannel,
   onProgress?: (step: number, total: number, label: string) => void,
+  queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
   const sharing = await getConnectionSharingApi(outputChannel);
 
@@ -222,7 +235,8 @@ export async function executeDmvQueriesFiltered(
     outputChannel.debug(`[DB] SQL:\n${sql}`);
 
     const start = Date.now();
-    const result = await sharing.executeSimpleQuery(connectionUri, sql);
+    const queryPromise = sharing.executeSimpleQuery(connectionUri, sql);
+    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     outputChannel.info(`[DB] Query '${query.name}' returned ${result.rowCount} rows (${elapsed}s)`);

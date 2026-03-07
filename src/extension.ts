@@ -308,7 +308,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             await context.workspaceState.update('lastSourceType', 'dacpac');
             const config = await readExtensionConfig();
             const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
-            panel.webview.postMessage({ type: 'dacpac-data', data, fileName, config, lastDeselectedSchemas });
+            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, config, lastDeselectedSchemas });
             outputChannel.info(`── Opening ${fileName} ──`);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
@@ -331,7 +331,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
           panel.webview.postMessage({
             type: 'dacpac-data',
-            data,
+            data: Array.from(data),
             fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
             config,
             lastDeselectedSchemas,

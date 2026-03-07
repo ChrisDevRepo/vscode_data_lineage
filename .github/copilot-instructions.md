@@ -37,7 +37,7 @@ source format into the shared intermediate types and nothing more.
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All unit tests (477 total)
+npm test         # All unit tests
 ```
 
 Press F5 to launch Extension Development Host.
@@ -50,8 +50,9 @@ Press F5 to launch Extension Development Host.
 | `test/graphBuilder.test.ts` | 51 | Graph construction, layout, BFS trace, co-writer filter |
 | `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 13 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `test/dmvExtractor.test.ts` | 109 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables |
+| `test/dmvExtractor.test.ts` | 147 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
+| `test/profilingEngine.test.ts` | 45 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
@@ -59,7 +60,9 @@ Press F5 to launch Extension Development Host.
 npm test                  # Run all unit tests
 ```
 
-Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
+Shared test helpers in `test/testUtils.ts` — `assert()`, `assertEq()`, `test()`, `loadParseRules()`, `testPath()`, `printSummary()`, `makeGraph()`. Import from `./testUtils` in new test files.
+
+Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers must never appear in public source code, test files, or comments. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
 
 
 ## Code Rules
@@ -81,6 +84,8 @@ Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-reconnect`, 
 
 Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `save-schemas`, `parse-rules-result`, `parse-stats`
 
+Table statistics (Extension → Webview): `table-stats-result`, `table-stats-error`
+
 ## SQL Parse Rules
 
 Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 13 rules across 4 categories: preprocessing, source, target, exec).
@@ -92,7 +97,7 @@ When regex misses a dep that MS metadata (XML/DMV) knows about, a fallback in `m
 - Table dep → `inferBodyDirection()` scans the raw body for the table name after a write keyword (UPDATE/INSERT/MERGE/TRUNCATE TABLE); WRITE if found, READ otherwise
 - View/function dep → READ inbound (read-only by SQL design)
 
-The DMV `dependencies` query uses `referenced_entity_name IS NOT NULL` (not `referenced_id IS NOT NULL`) to also include caller-dependent deps (schema-less `EXEC SomeProc`) that SQL Server resolves by caller schema.
+The DMV `dependencies` query filters to `referenced_schema_name IS NOT NULL AND referenced_entity_name IS NOT NULL` — unqualified (schema-less) refs where SQL Server cannot determine the target schema are excluded at the SQL Server level.
 
 ### Cleansing Pipeline (runs before any YAML rule)
 
@@ -155,7 +160,6 @@ When modifying `assets/defaultParseRules.yaml` or `sqlBodyParser.ts`: run full 3
 
 ```bash
 # run full 3-dacpac baseline comparison before and after changes
-# see .claude/ docs for snapshot tooling details
 diff tmp/baseline.tsv tmp/after.tsv   # must be empty or positive only
 npm test                               # all suites must pass
 ```

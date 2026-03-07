@@ -4,27 +4,11 @@
  */
 
 import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 import { extractDacpac } from '../src/engine/dacpacExtractor';
 import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics } from '../src/engine/graphBuilder';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
+import { assert, makeGraph, testPath, printSummary } from './testUtils';
 
 // ─── Graph Builder ──────────────────────────────────────────────────────────
 
@@ -179,7 +163,7 @@ function testCoWriterFilter() {
 
 async function testSynapseTrace() {
   console.log('\n── Synapse Dacpac: Trace No Siblings ──');
-  const dacpacPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
+  const dacpacPath = testPath('AdventureWorks_sdk-style.dacpac');
   const buffer = readFileSync(dacpacPath);
   const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
@@ -244,7 +228,7 @@ async function main() {
 
   try {
     // Load dacpac for integration tests
-    const buffer = readFileSync(resolve(__dirname, './AdventureWorks.dacpac'));
+    const buffer = readFileSync(testPath('AdventureWorks.dacpac'));
     const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
     await testGraphBuilder(model);
@@ -253,11 +237,9 @@ async function main() {
     await testSynapseTrace();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
-    failed++;
   }
 
-  console.log(`\n═══ Results: ${passed} passed, ${failed} failed ═══`);
-  process.exit(failed > 0 ? 1 : 0);
+  printSummary('Graph Builder');
 }
 
 main();

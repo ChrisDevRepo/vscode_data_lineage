@@ -408,7 +408,7 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         id: `${canonSource}↔${canonTarget}`,
         source: canonSource,
         target: canonTarget,
-        type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
+        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
         label: '⇄',
         labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
         labelBgStyle: { fill: 'transparent' },
@@ -427,7 +427,7 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         id: fwd,
         source: edge.source,
         target: edge.target,
-        type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
+        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
         style: {
           stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,

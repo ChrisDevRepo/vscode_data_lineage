@@ -326,7 +326,7 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
  */
 function normalizeCaptured(raw: string): string | null {
   // Split bracket-aware: dots INSIDE [bracket identifiers] are part of the name, not separators.
-  // Example: [STAGING_CADENCE].[spLoadReconciliation_Case4.5] → 2 parts, not 3.
+  // Example: [MySchema].[spWithDots_v1.0] → 2 parts, not 3.
   const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;  // vars, temp tables

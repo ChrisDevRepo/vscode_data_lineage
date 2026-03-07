@@ -184,12 +184,9 @@ WHERE p.object_id = OBJECT_ID('${qiStr(schema)}.${qiStr(tableName)}')
   AND p.index_id IN (0, 1)`;
 }
 
-/** Compute the TABLESAMPLE percent (Fabric uses TOP N instead — caller handles that). */
-export function computeSamplePercent(engineEdition: number, sampleSize: number, rowCount: number): number {
+/** Compute the TABLESAMPLE percent. Fabric uses TOP N instead (handled by buildProfilingQuery caller). */
+export function computeSamplePercent(_engineEdition: number, sampleSize: number, rowCount: number): number {
   if (rowCount <= 0) return 100;
-  if (engineEdition === ENGINE_EDITION_FABRIC) {
-    return Math.round((sampleSize / rowCount) * 100);
-  }
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }
 

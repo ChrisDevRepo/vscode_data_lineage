@@ -3,43 +3,10 @@
  * Execute with: npx tsx test/parser-edge-cases.test.ts
  */
 
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
-import { parseSqlBody, loadRules } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+import { parseSqlBody } from '../src/engine/sqlBodyParser';
+import { assert, hasName, loadParseRules, printSummary } from './testUtils';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
-const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
-loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  \u2713 ${msg}`);
-    passed++;
-  } else {
-    console.error(`  \u2717 ${msg}`);
-    failed++;
-  }
-}
-
-/** Helper: check that a list contains a value (case-insensitive partial match on the last part) */
-function hasName(list: string[], name: string): boolean {
-  const lower = name.toLowerCase();
-  return list.some(s => {
-    const norm = s.replace(/\[|\]/g, '').toLowerCase();
-    // Match if the full normalized string equals the name, or if the last part after '.' matches
-    if (norm === lower) return true;
-    const parts = norm.split('.');
-    return parts[parts.length - 1] === lower;
-  });
-}
+loadParseRules();
 
 /** Helper: check exact match including schema (case-insensitive) */
 function hasExact(list: string[], name: string): boolean {
@@ -800,8 +767,7 @@ function main() {
   testRegressionGuards();
   testCleansingAndNormalization();
 
-  console.log(`\n\u2550\u2550\u2550 Results: ${passed} passed, ${failed} failed \u2550\u2550\u2550`);
-  process.exit(failed > 0 ? 1 : 0);
+  printSummary('SQL Body Parser Edge Cases');
 }
 
 main();

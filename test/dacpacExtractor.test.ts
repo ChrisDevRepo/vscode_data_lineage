@@ -4,32 +4,12 @@
  */
 
 import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
 import { extractDacpac, filterBySchemas } from '../src/engine/dacpacExtractor';
-import { parseSqlBody, loadRules } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+import { parseSqlBody } from '../src/engine/sqlBodyParser';
+import { assert, loadParseRules, testPath, printSummary } from './testUtils';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DACPAC_PATH = resolve(__dirname, './AdventureWorks.dacpac');
-
-// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
-const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
-loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
+const DACPAC_PATH = testPath('AdventureWorks.dacpac');
+loadParseRules();
 
 // ─── Extraction ─────────────────────────────────────────────────────────────
 
@@ -121,7 +101,7 @@ async function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>
 
 async function testFabricDacpac() {
   console.log('\n── Fabric SDK Dacpac ──');
-  const fabricPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
+  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
   const buffer = readFileSync(fabricPath);
   const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
@@ -203,8 +183,8 @@ async function testTypeAwareDirection() {
   }
 
   const dacpacs = [
-    { label: 'Classic', path: resolve(__dirname, './AdventureWorks.dacpac') },
-    { label: 'SDK-style', path: resolve(__dirname, './AdventureWorks_sdk-style.dacpac') },
+    { label: 'Classic', path: testPath('AdventureWorks.dacpac') },
+    { label: 'SDK-style', path: testPath('AdventureWorks_sdk-style.dacpac') },
   ];
 
   for (const { label, path } of dacpacs) {
@@ -489,7 +469,7 @@ async function testConstraints() {
   assert(!!noFkTable, 'Table with no FKs still shows FK section with "(none)"');
 
   // SDK-style dacpac: no constraints, but FK section should still appear (fks = [] not undefined)
-  const fabricPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
+  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
   const fabricBuf = readFileSync(fabricPath);
   const fabricModel = await extractDacpac(fabricBuf.buffer as ArrayBuffer);
   const fabricTable = fabricModel.nodes.find(n => n.type === 'table');
@@ -514,11 +494,9 @@ async function main() {
     await testConstraints();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
-    failed++;
   }
 
-  console.log(`\n═══ Results: ${passed} passed, ${failed} failed ═══`);
-  process.exit(failed > 0 ? 1 : 0);
+  printSummary('DACPAC Extractor');
 }
 
 main();

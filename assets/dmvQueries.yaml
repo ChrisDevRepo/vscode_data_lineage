@@ -113,7 +113,7 @@ queries:
       INNER JOIN sys.objects o ON c.object_id = o.object_id
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
       INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
-      WHERE o.type = 'U'
+      WHERE o.type IN ('U', 'ET')
         AND o.is_ms_shipped = 0
         AND s.name IN ({{SCHEMAS}})
         AND NOT EXISTS (
