@@ -13,6 +13,7 @@ import type { DmvResults } from '../src/engine/dmvExtractor';
 import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../src/types/mssql';
 import { loadRules } from '../src/engine/sqlBodyParser';
 import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+import { wrapWithSchemaFilter } from '../src/utils/sql';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -712,6 +713,52 @@ testExternalTableWriteDirection();
 testConstraintMapsEnrichColumns();
 testConstraintsMissingResultGraceful();
 testValidateQueryResultConstraints();
+
+// ─── wrapWithSchemaFilter ─────────────────────────────────────────────────────
+
+function testWrapWithSchemaFilter() {
+  console.log('\n── wrapWithSchemaFilter ──');
+
+  // Simple query (no CTE)
+  const simpleSql = `SELECT s.name, o.name FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nORDER BY s.name`;
+  const wrapped = wrapWithSchemaFilter(simpleSql, 'schema_name', ['dbo', 'Sales']);
+  assert(wrapped.includes('SELECT * FROM ('), 'Simple: wraps as subquery');
+  assert(wrapped.includes("WHERE _sub.schema_name IN ('dbo', 'Sales')"), 'Simple: has WHERE filter');
+  assert(!wrapped.includes('ORDER BY s.name'), 'Simple: ORDER BY stripped');
+
+  // CTE query (constraints-style)
+  const cteSql = `WITH fk AS (\n  SELECT s.name AS schema_name, t.name\n  FROM sys.foreign_keys fk\n  INNER JOIN sys.objects t ON fk.parent_object_id = t.object_id\n  INNER JOIN sys.schemas s ON t.schema_id = s.schema_id\n)\nSELECT * FROM fk\nORDER BY schema_name`;
+  const wrappedCte = wrapWithSchemaFilter(cteSql, 'schema_name', ['HumanResources']);
+  assert(wrappedCte.startsWith('WITH fk AS'), 'CTE: keeps WITH prefix outside subquery');
+  assert(wrappedCte.includes('SELECT * FROM (\nSELECT * FROM fk\n) AS _sub'), 'CTE: wraps final SELECT as subquery');
+  assert(wrappedCte.includes("WHERE _sub.schema_name IN ('HumanResources')"), 'CTE: has WHERE filter');
+  assert(!wrappedCte.includes('ORDER BY schema_name'), 'CTE: ORDER BY stripped');
+
+  // CTE must NOT be inside a subquery (the old broken pattern)
+  const afterFromParen = wrappedCte.indexOf('SELECT * FROM (');
+  const withinSubquery = wrappedCte.indexOf('WITH', afterFromParen);
+  assert(withinSubquery === -1 || withinSubquery < afterFromParen, 'CTE: no WITH inside subquery parens');
+
+  // Multi-CTE with UNION ALL (real constraints query pattern)
+  const multiCteSql = `WITH fk AS (\n  SELECT s.name AS schema_name FROM sys.foreign_keys fk\n  INNER JOIN sys.schemas s ON s.schema_id = fk.schema_id\n),\nuq AS (\n  SELECT s.name AS schema_name FROM sys.key_constraints kc\n  INNER JOIN sys.schemas s ON s.schema_id = kc.schema_id\n)\nSELECT * FROM fk\nUNION ALL SELECT * FROM uq\nORDER BY schema_name`;
+  const wrappedMulti = wrapWithSchemaFilter(multiCteSql, 'schema_name', ['dbo']);
+  assert(wrappedMulti.startsWith('WITH fk AS'), 'Multi-CTE: WITH prefix preserved');
+  assert(wrappedMulti.includes('SELECT * FROM (\nSELECT * FROM fk\nUNION ALL SELECT * FROM uq\n) AS _sub'), 'Multi-CTE: entire UNION ALL wrapped as subquery');
+  assert(wrappedMulti.includes("WHERE _sub.schema_name IN ('dbo')"), 'Multi-CTE: WHERE filter applied');
+  assert(!wrappedMulti.includes('ORDER BY schema_name'), 'Multi-CTE: ORDER BY stripped');
+
+  // Dependencies query (OR filter)
+  const depsSql = `SELECT s1.name AS referencing_schema, d.referenced_schema_name AS referenced_schema\nFROM sys.sql_expression_dependencies d\nORDER BY referencing_schema`;
+  const wrappedDeps = wrapWithSchemaFilter(depsSql, 'referencing_schema', ['dbo']);
+  assert(wrappedDeps.includes('_sub.referencing_schema IN'), 'Deps: OR filter — referencing_schema');
+  assert(wrappedDeps.includes('_sub.referenced_schema  IN'), 'Deps: OR filter — referenced_schema');
+
+  // SQL injection: single quote in schema name
+  const injected = wrapWithSchemaFilter(simpleSql, 'schema_name', ["O'Brien"]);
+  assert(injected.includes("'O''Brien'"), 'SQL injection: single quote escaped');
+}
+
+testWrapWithSchemaFilter();
 
 console.log(`\n═══ DMV Extractor: ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);

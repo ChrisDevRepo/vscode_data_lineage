@@ -7,7 +7,7 @@
  * Target platforms: SQL Server 2022+, Azure SQL, Synapse Dedicated SQL Pool, Fabric DWH.
  */
 
-import type { ColumnDef } from './types';
+import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -29,6 +29,7 @@ export interface TableStats {
   columns: ColumnStats[];
   sampled: boolean;
   samplePercent?: number;
+  warnings?: string[];
 }
 
 export type StatsMode = 'quick' | 'detail';
@@ -60,7 +61,7 @@ export function extractBaseType(typeStr: string): string {
 
 /** Classify a column's SQL type into a category for profiling. */
 export function classifyColumn(col: ColumnDef): ColCategory {
-  if (col.extra === 'COMPUTED' || col.type === '(computed)') return 'skip';
+  if (col.extra === 'COMPUTED') return 'skip';
   const base = extractBaseType(col.type);
   return TYPE_CATEGORIES[base] ?? 'skip';
 }
@@ -95,8 +96,6 @@ export function buildColumnAggregations(
 
     const qn = qi(col.name);
     const fragments: string[] = [];
-    const distinctFn = useApprox ? 'APPROX_COUNT_DISTINCT' : 'COUNT(DISTINCT';
-    const distinctClose = useApprox ? ')' : ')';
     const alias = (suffix: string) => qi(`${col.name}__${suffix}`);
 
     // Distinct count — always
@@ -161,13 +160,10 @@ export function buildProfilingQuery(
   let tablesampleClause = '';
 
   if (needsSampling) {
-    const isFabric = engineEdition === 11;
-    if (isFabric) {
-      // Fabric DWH: no TABLESAMPLE, use TOP N
+    if (engineEdition === ENGINE_EDITION_FABRIC) {
       topClause = `TOP ${sampleSize} `;
     } else {
-      // SQL Server, Azure SQL, Synapse Dedicated: TABLESAMPLE PERCENT
-      const pct = Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
+      const pct = computeSamplePercent(engineEdition, sampleSize, rowCount);
       tablesampleClause = ` TABLESAMPLE(${pct} PERCENT)`;
     }
   }
@@ -175,12 +171,26 @@ export function buildProfilingQuery(
   return `SELECT ${topClause}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
 }
 
+/** Bracket-quote a SQL identifier for use inside a T-SQL string literal. */
+function qiStr(name: string): string {
+  return qi(name).replace(/'/g, "''");
+}
+
 /** Build DMV row count query for a table. */
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
 FROM sys.partitions p
-WHERE p.object_id = OBJECT_ID('${qi(schema)}.${qi(tableName)}')
+WHERE p.object_id = OBJECT_ID('${qiStr(schema)}.${qiStr(tableName)}')
   AND p.index_id IN (0, 1)`;
+}
+
+/** Compute the TABLESAMPLE percent (Fabric uses TOP N instead — caller handles that). */
+export function computeSamplePercent(engineEdition: number, sampleSize: number, rowCount: number): number {
+  if (rowCount <= 0) return 100;
+  if (engineEdition === ENGINE_EDITION_FABRIC) {
+    return Math.round((sampleSize / rowCount) * 100);
+  }
+  return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }
 
 // ─── Result Parsing ─────────────────────────────────────────────────────────
@@ -196,6 +206,17 @@ export function parseProfilingResult(
   samplePercent?: number,
 ): TableStats {
   const columns: ColumnStats[] = [];
+  const warnings: string[] = [];
+
+  function safeInt(raw: string | undefined, label: string): number {
+    if (raw === undefined) return 0;
+    const n = parseInt(raw, 10);
+    if (Number.isNaN(n)) {
+      warnings.push(`${label}: expected number, got '${raw}'`);
+      return 0;
+    }
+    return n;
+  }
 
   for (const col of cols) {
     const cat = classifyColumn(col);
@@ -213,10 +234,8 @@ export function parseProfilingResult(
       continue;
     }
 
-    const distinctRaw = row[`${col.name}__d`];
-    const nullRaw = isNullable ? row[`${col.name}__n`] : undefined;
-    const distinctCount = distinctRaw !== undefined ? parseInt(distinctRaw, 10) || 0 : 0;
-    const nullCount = nullRaw !== undefined ? parseInt(nullRaw, 10) || 0 : null;
+    const distinctCount = safeInt(row[`${col.name}__d`], `${col.name} distinct`);
+    const nullCount = isNullable ? safeInt(row[`${col.name}__n`], `${col.name} nulls`) : null;
     const nullPercent = nullCount !== null && rowCount > 0 ? (nullCount / rowCount) * 100 : null;
 
     const entry: ColumnStats = {
@@ -235,11 +254,11 @@ export function parseProfilingResult(
 
     const minlRaw = row[`${col.name}__minl`];
     const maxlRaw = row[`${col.name}__maxl`];
-    if (minlRaw !== undefined) entry.minLength = parseInt(minlRaw, 10) || 0;
-    if (maxlRaw !== undefined) entry.maxLength = parseInt(maxlRaw, 10) || 0;
+    if (minlRaw !== undefined) entry.minLength = safeInt(minlRaw, `${col.name} minLen`);
+    if (maxlRaw !== undefined) entry.maxLength = safeInt(maxlRaw, `${col.name} maxLen`);
 
     columns.push(entry);
   }
 
-  return { rowCount, columns, sampled, samplePercent };
+  return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
 }

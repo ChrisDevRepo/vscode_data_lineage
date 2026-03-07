@@ -21,7 +21,7 @@ import {
   createEmptySchemaInfo,
 } from './types';
 import { parseSqlBody } from './sqlBodyParser';
-import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
+import { stripBrackets, splitSqlName, schemaKey, escHtml } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -208,9 +208,7 @@ export function buildTableDesignHtml(
   objectType: 'table' | 'external' = 'table',
   fks?: ForeignKeyInfo[],
 ): string {
-  if (cols.length === 0) return `<p class="empty">No column metadata for [${schema}].[${objectName}]</p>`;
-
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (cols.length === 0) return `<p class="empty">No column metadata for [${escHtml(schema)}].[${escHtml(objectName)}]</p>`;
   const typeIcon = objectType === 'external' ? '⬡' : '■';
   const typeLabel = objectType === 'external' ? 'EXTERNAL TABLE' : 'TABLE';
 
@@ -219,7 +217,7 @@ export function buildTableDesignHtml(
   const hasCheck  = cols.some(c => c.check !== undefined && c.check !== '');
 
   const lines: string[] = [];
-  lines.push(`<h2><span class="type-icon type-${objectType}">${typeIcon}</span> ${esc(typeLabel)}: [${esc(schema)}].[${esc(objectName)}]</h2>`);
+  lines.push(`<h2><span class="type-icon type-${objectType}">${typeIcon}</span> ${escHtml(typeLabel)}: [${escHtml(schema)}].[${escHtml(objectName)}]</h2>`);
 
   // Columns table
   lines.push('<table class="design-table">');
@@ -231,13 +229,13 @@ export function buildTableDesignHtml(
   lines.push('</tr></thead>');
   lines.push('<tbody>');
   for (const c of cols) {
-    const extraBadge = c.extra ? `<span class="badge badge-${c.extra.replace(/[()]/g, '').toLowerCase()}">${esc(c.extra)}</span>` : '';
+    const extraBadge = c.extra ? `<span class="badge badge-${c.extra.replace(/[()]/g, '').toLowerCase()}">${escHtml(c.extra)}</span>` : '';
     const uqBadge = c.unique ? '<span class="badge badge-uq">UQ</span>' : '';
     const ckBadge = c.check ? '<span class="badge badge-ck">CK</span>' : '';
     lines.push('<tr>');
-    lines.push(`<td class="col-name">${esc(c.name)}</td>`);
-    lines.push(`<td class="col-type">${esc(c.type)}</td>`);
-    lines.push(`<td class="col-nullable">${esc(c.nullable)}</td>`);
+    lines.push(`<td class="col-name">${escHtml(c.name)}</td>`);
+    lines.push(`<td class="col-type">${escHtml(c.type)}</td>`);
+    lines.push(`<td class="col-nullable">${escHtml(c.nullable)}</td>`);
     if (hasExtra) lines.push(`<td class="col-extra">${extraBadge}</td>`);
     if (hasUnique) lines.push(`<td class="col-uq">${uqBadge}</td>`);
     if (hasCheck) lines.push(`<td class="col-ck">${ckBadge}</td>`);
@@ -256,10 +254,10 @@ export function buildTableDesignHtml(
       lines.push('<tbody>');
       for (const fk of fks) {
         lines.push('<tr>');
-        lines.push(`<td>${esc(fk.name)}</td>`);
-        lines.push(`<td>${esc(fk.columns.join(', '))}</td>`);
-        lines.push(`<td>[${esc(fk.refSchema)}].[${esc(fk.refTable)}](${esc(fk.refColumns.join(', '))})</td>`);
-        lines.push(`<td>${esc(fk.onDelete)}</td>`);
+        lines.push(`<td>${escHtml(fk.name)}</td>`);
+        lines.push(`<td>${escHtml(fk.columns.join(', '))}</td>`);
+        lines.push(`<td>[${escHtml(fk.refSchema)}].[${escHtml(fk.refTable)}](${escHtml(fk.refColumns.join(', '))})</td>`);
+        lines.push(`<td>${escHtml(fk.onDelete)}</td>`);
         lines.push('</tr>');
       }
       lines.push('</tbody></table>');

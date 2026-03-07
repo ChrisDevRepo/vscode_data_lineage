@@ -4,14 +4,14 @@ import * as yaml from 'js-yaml';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
-import { DEFAULT_CONFIG, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ObjectType } from './engine/types';
+import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ObjectType } from './engine/types';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
   getServerInfo, executeSimpleQuery,
 } from './engine/connectionManager';
 import type { IConnectionInfo, SimpleExecuteResult } from './types/mssql';
-import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult } from './engine/profilingEngine';
+import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, computeSamplePercent, parseProfilingResult } from './engine/profilingEngine';
 import type { StatsMode } from './engine/profilingEngine';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './engine/dmvExtractor';
 import type { DmvResults } from './engine/dmvExtractor';
@@ -787,10 +787,13 @@ async function handleTableStatsRequest(
 
         const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
         const samplePercent = needsSampling
-          ? (engineEdition === 11 ? Math.round((sampleSize / rowCount) * 100) : Math.min(100, Math.ceil((sampleSize / rowCount) * 100)))
+          ? computeSamplePercent(engineEdition, sampleSize, rowCount)
           : undefined;
 
         const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
+        if (stats.warnings) {
+          for (const w of stats.warnings) outputChannel.warn(`[Stats] Parse warning: ${w}`);
+        }
         panel.webview.postMessage({ type: 'table-stats-result', stats, mode });
 
       } catch (err) {
@@ -817,6 +820,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 // ─── Two-Phase DB Extraction ─────────────────────────────────────────────────
+
+async function persistDbSourceState(context: vscode.ExtensionContext, sourceName: string, connectionInfo: IConnectionInfo): Promise<void> {
+  await context.workspaceState.update('lastDbSourceName', sourceName);
+  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
+  await context.workspaceState.update('lastSourceType', 'database');
+}
 
 /**
  * Phase 1: Connect, run schema-preview + all-objects queries.
@@ -898,9 +907,7 @@ async function runDbPhase1(
     }
   }
 
-  await context.workspaceState.update('lastDbSourceName', sourceName);
-  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
-  await context.workspaceState.update('lastSourceType', 'database');
+  await persistDbSourceState(context, sourceName, connectionInfo);
 
   const config = await readExtensionConfig();
   const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
@@ -1035,9 +1042,7 @@ async function runDbFullExtraction(
   progress.report({ message: 'Building model...' });
   const model = buildModelFromDmv(dmvResults);
 
-  await context.workspaceState.update('lastDbSourceName', sourceName);
-  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
-  await context.workspaceState.update('lastSourceType', 'database');
+  await persistDbSourceState(context, sourceName, connectionInfo);
   const config = await readExtensionConfig();
   const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
   panel.webview.postMessage({

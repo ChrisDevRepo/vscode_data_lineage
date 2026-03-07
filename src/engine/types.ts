@@ -307,6 +307,9 @@ export interface ExtensionConfig {
   tableStatistics: TableStatsConfig;
 }
 
+/** Fabric Data Warehouse engineEditionId — used for platform-specific query branching. */
+export const ENGINE_EDITION_FABRIC = 11;
+
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
   maxNodes: 750,

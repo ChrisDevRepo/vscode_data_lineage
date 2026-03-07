@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
+import { wrapWithSchemaFilter, SCHEMA_FILTER_COLUMNS } from '../utils/sql';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
@@ -185,69 +186,6 @@ export async function executeDmvQueries(
 }
 
 // ─── Schema-Filtered Query Execution (Phase 2) ─────────────────────────────
-
-/** Column to filter on for each Phase 2 query */
-const SCHEMA_FILTER_COLUMNS: Record<string, string> = {
-  nodes: 'schema_name',
-  columns: 'schema_name',
-  constraints: 'schema_name',  // parent table's schema — cross-schema FK targets still visible
-  dependencies: 'referencing_schema',
-};
-
-/**
- * Wrap a DMV query as a subquery with a WHERE schema filter.
- * Strips trailing ORDER BY (SQL Server disallows ORDER BY in subqueries
- * without TOP/OFFSET), then wraps as `SELECT * FROM (inner) AS _sub WHERE ...`.
- *
- * For the `dependencies` query the filter uses OR to match BOTH referencing_schema
- * AND referenced_schema.  This ensures that inbound cross-schema edges
- * (unselected SP → selected table) are captured alongside the standard outbound
- * ones (selected SP → unselected table).  The modelBuilder handles source-not-in-
- * nodeIds rows as cross-schema neighborPairs.
- */
-export function wrapWithSchemaFilter(
-  sql: string,
-  schemaColumn: string,
-  schemas: string[],
-): string {
-  // Strip trailing ORDER BY clause (anchored to end-of-string)
-  const stripped = sql.replace(/\s+ORDER\s+BY\s+[\s\S]*$/i, '');
-  // Escape single quotes in schema names for SQL injection safety
-  const schemaList = schemas.map(s => `'${s.replace(/'/g, "''")}'`).join(', ');
-
-  // CTE queries (WITH ... AS) cannot be wrapped in a subquery.
-  // Instead, wrap the final SELECT inside the CTE as a subquery.
-  const hasCte = /^\s*;?\s*WITH\s+/i.test(stripped);
-
-  if (hasCte) {
-    // Find the final SELECT (after all CTEs) and wrap it
-    const lastSelectIdx = stripped.lastIndexOf('SELECT');
-    if (lastSelectIdx < 0) return stripped; // safety: shouldn't happen
-    const ctePart = stripped.slice(0, lastSelectIdx);
-    const selectPart = stripped.slice(lastSelectIdx);
-
-    if (schemaColumn === 'referencing_schema') {
-      return (
-        `${ctePart}SELECT * FROM (\n${selectPart}\n) AS _sub\n` +
-        `WHERE _sub.referencing_schema IN (${schemaList})\n` +
-        `   OR _sub.referenced_schema  IN (${schemaList})`
-      );
-    }
-    return `${ctePart}SELECT * FROM (\n${selectPart}\n) AS _sub\nWHERE _sub.${schemaColumn} IN (${schemaList})`;
-  }
-
-  if (schemaColumn === 'referencing_schema') {
-    // dependencies query: include rows where EITHER the referencing OR the referenced
-    // object belongs to a selected schema so no cross-schema inbound edge is missed.
-    return (
-      `SELECT * FROM (\n${stripped}\n) AS _sub\n` +
-      `WHERE _sub.referencing_schema IN (${schemaList})\n` +
-      `   OR _sub.referenced_schema  IN (${schemaList})`
-    );
-  }
-
-  return `SELECT * FROM (\n${stripped}\n) AS _sub\nWHERE _sub.${schemaColumn} IN (${schemaList})`;
-}
 
 /**
  * Execute Phase 2 DMV queries with schema filtering.

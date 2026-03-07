@@ -2,6 +2,7 @@ import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
 import { TYPE_COLORS, getSchemaColor } from '../utils/schemaColors';
+import { escHtml } from '../utils/sql';
 
 // ─── Draw.io Cell Types ─────────────────────────────────────────────────────
 
@@ -49,11 +50,6 @@ const NODE_H = 70;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Escape user-provided text for safe HTML embedding inside Draw.io labels. */
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 // ─── Node HTML label ────────────────────────────────────────────────────────
 
 const COLOR_BAND_W = 6;
@@ -63,8 +59,8 @@ function buildLabel(d: CustomNodeData): string {
   return (
     `<span style="color:#888888;font-size:14px;">${icon}</span>` +
     ` <span style="font-size:9px;color:#888888;">${d.inDegree}↓ ${d.outDegree}↑</span><br>` +
-    `<b style="font-size:11px;color:#333333;">${esc(d.label)}</b><br>` +
-    `<span style="font-size:9px;color:#999999;">${esc(d.schema.toUpperCase())}</span>`
+    `<b style="font-size:11px;color:#333333;">${escHtml(d.label)}</b><br>` +
+    `<span style="font-size:9px;color:#999999;">${escHtml(d.schema.toUpperCase())}</span>`
   );
 }
 
@@ -123,7 +119,7 @@ function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nex
     // Schema name text
     cells.push({
       '@_id': String(id++),
-      '@_value': esc(schemas[i]),
+      '@_value': escHtml(schemas[i]),
       '@_style': 'text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=0;strokeColor=none;fillColor=none;fontSize=11;fontColor=#333333;',
       '@_vertex': '1',
       '@_parent': '1',
