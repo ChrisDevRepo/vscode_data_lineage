@@ -171,6 +171,12 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
     }
   }
 
+  // Defensive: drop FKs with mismatched column counts (malformed result set)
+  for (const [tableKey, fks] of fkMap) {
+    const valid = fks.filter(fk => fk.columns.length === fk.refColumns.length);
+    if (valid.length !== fks.length) fkMap.set(tableKey, valid);
+  }
+
   return { uqColMap, ckColMap, fkMap };
 }
 

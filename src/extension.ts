@@ -42,7 +42,18 @@ function isDacpacTooLarge(bytes: number): boolean {
 }
 let panelCounter = 0;
 let activePanel: vscode.WebviewPanel | undefined;
+const DDL_CACHE_MAX = 50;
 const ddlContentMap = new Map<string, string>();
+
+/** Set a DDL cache entry, evicting the oldest if the cache exceeds DDL_CACHE_MAX. */
+function ddlCacheSet(key: string, value: string): void {
+  ddlContentMap.delete(key); // re-insert at end for LRU ordering
+  ddlContentMap.set(key, value);
+  if (ddlContentMap.size > DDL_CACHE_MAX) {
+    const oldest = ddlContentMap.keys().next().value;
+    if (oldest !== undefined) ddlContentMap.delete(oldest);
+  }
+}
 
 const ddlProvider = new class implements vscode.TextDocumentContentProvider {
   private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
@@ -88,7 +99,7 @@ async function showDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
 
   const key = ddlUri.toString();
   const content = message.sqlBody || `-- No DDL available for [${message.schema}].[${message.objectName}]`;
-  ddlContentMap.set(key, content);
+  ddlCacheSet(key, content);
   ddlProvider.fire(ddlUri);
 
   try {
@@ -96,7 +107,7 @@ async function showDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
     if (doc.languageId !== 'dacpac-sql') {
       await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
     }
-    ddlContentMap.set(key, content);
+    ddlCacheSet(key, content);
     await vscode.window.showTextDocument(doc, {
       viewColumn: vscode.ViewColumn.Beside,
       preserveFocus: true,
@@ -112,7 +123,7 @@ async function showDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
 function updateDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
   const key = ddlUri.toString();
   if (!ddlContentMap.has(key)) return;
-  ddlContentMap.set(key, message.sqlBody || `-- No DDL available for [${message.schema}].[${message.objectName}]`);
+  ddlCacheSet(key, message.sqlBody || `-- No DDL available for [${message.schema}].[${message.objectName}]`);
   ddlProvider.fire(ddlUri);
 }
 

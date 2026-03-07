@@ -402,7 +402,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       // Parent and referenced columns — refs are 3-part [schema].[table].[col]
       const parentCols  = getRelRefs(el, 'Columns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
       const refColsList = getRelRefs(el, 'ForeignColumns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
-      if (parentCols.length === 0) continue;
+      if (parentCols.length === 0 || parentCols.length !== refColsList.length) continue;
       const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'DeleteAction')?.['@_Value'] ?? '';
       const onDelete = FK_DELETE_ACTION[deleteVal] ?? 'NO ACTION';
       const list = fkMap.get(tableKey) ?? [];

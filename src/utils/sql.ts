@@ -52,7 +52,7 @@ export function splitSqlName(name: string): string[] {
 
 /** Escape a string for safe HTML interpolation. */
 export function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ─── Schema Placeholder Expansion ───────────────────────────────────────────
