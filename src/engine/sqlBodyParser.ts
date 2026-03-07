@@ -39,6 +39,9 @@ export interface ParseRulesConfig {
 //   • -- line comments     → replaced with space (already removed by pass 0 for block)
 //   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
 
+/** Max chars to scan after `CTE AS (` for the first FROM clause — limits scan on huge SQL bodies */
+const CTE_BODY_WINDOW_CHARS = 3000;
+
 /**
  * Preprocessing: Replace CTE aliases in UPDATE statements with the CTE's base table.
  * WITH Alias AS (... FROM [schema].[table] ...) UPDATE Alias SET
@@ -66,8 +69,8 @@ function substituteCteUpdateAliases(sql: string): string {
     const cteName = m[1];
     if (KEYWORDS.test(cteName)) continue;
     const bodyStart = m.index + m[0].length;
-    // Find first schema-qualified FROM reference within 3000 chars of CTE body start
-    const window = sql.slice(bodyStart, bodyStart + 3000);
+    // Find first schema-qualified FROM reference within CTE_BODY_WINDOW_CHARS of CTE body start
+    const window = sql.slice(bodyStart, bodyStart + CTE_BODY_WINDOW_CHARS);
     const fromMatch = window.match(/\bFROM\s+((?:(?:\[[^\]]+\]|\w+)\.)+(?:\[[^\]]+\]|\w+))(?![\w\.])/i);
     if (fromMatch) {
       cteMap.set(cteName.toLowerCase(), fromMatch[1]);

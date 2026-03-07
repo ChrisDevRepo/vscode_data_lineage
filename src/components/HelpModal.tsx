@@ -234,7 +234,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           </p>
           <div className="flex items-center justify-between">
           <div className="text-xs ln-text-muted">
-            <p className="mb-1">Data Lineage Viz v0.9.2</p>
+            <p className="mb-1">Data Lineage Viz v{__APP_VERSION__}</p>
             <p>SQL Server Database Project Dependency Viewer</p>
           </div>
           <div className="flex items-center gap-2">

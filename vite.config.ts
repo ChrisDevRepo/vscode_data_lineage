@@ -1,9 +1,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
+import pkg from './package.json';
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // Inject version at build time — single source of truth from package.json
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   root: 'src',
   base: './',
   build: {

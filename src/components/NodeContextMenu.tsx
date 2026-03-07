@@ -97,7 +97,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
 
         <button
           onClick={() => {
-            navigator.clipboard.writeText(`[${schema}].[${nodeName}]`)
+            (navigator.clipboard?.writeText(`[${schema}].[${nodeName}]`) ?? Promise.reject(new Error('Clipboard unavailable')))
               .then(() => onClose())
               .catch(() => { setCopyFailed(true); setTimeout(() => setCopyFailed(false), 2000); });
           }}

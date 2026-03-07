@@ -42,7 +42,7 @@ export function buildModel(
     if (!schemaCanonical.has(k)) schemaCanonical.set(k, node.schema);
   }
   for (const node of nodes) {
-    node.schema = schemaCanonical.get(schemaKey(node.schema))!;
+    node.schema = schemaCanonical.get(schemaKey(node.schema))!; // safe: every key was inserted in the loop above
   }
 
   const schemas = computeSchemas(nodes);
