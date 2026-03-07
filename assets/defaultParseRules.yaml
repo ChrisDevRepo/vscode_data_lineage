@@ -107,6 +107,14 @@ rules:
     flags: gi
     description: "OUTPUT ... INTO schema.table"
 
+  - name: extract_cetas
+    enabled: true
+    priority: 19
+    category: target
+    pattern: "\\bCREATE\\s+EXTERNAL\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s[^;]{0,2000}?\\bAS\\s+SELECT"
+    flags: gi
+    description: "CREATE EXTERNAL TABLE AS SELECT target (Synapse/Fabric)"
+
   # ── Exec calls ─────────────────────────────────────────────────────────────
   - name: extract_sp_calls
     enabled: true

@@ -158,10 +158,10 @@ function testBuildModelFromDmv() {
   assert(model.parseStats !== undefined, 'Parse stats present');
   assertEq(model.parseStats!.spDetails.length, 2, '2 SPs in parse details');
 
-  // Table body scripts (design view from columns)
+  // Table columns available on node
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
-  assert(ordersNode?.bodyHtml?.includes('OrderId'), 'Orders table has column design view');
-  assert(ordersNode?.bodyHtml?.includes('int'), 'Orders table design shows int type');
+  assert(ordersNode?.columns?.some(c => c.name === 'OrderId'), 'Orders table has OrderId column');
+  assert(ordersNode?.columns?.some(c => c.type.includes('int')), 'Orders table has int type column');
 
   // No warnings for valid data
   assert(model.warnings === undefined, 'No warnings for valid data');
@@ -508,7 +508,7 @@ function testExternalTableNodes() {
   assertEq(extNode?.schema, 'ext', 'External node has correct schema');
   assertEq(extNode?.name, 'ExternalSales', 'External node has correct name (original casing)');
   assertEq(extNode?.id, '[ext].[externalsales]', 'External node ID is lowercase-normalized');
-  assertEq(extNode?.externalKind, 'et', 'External node has externalKind=et');
+  assertEq(extNode?.externalType, 'et', 'External node has externalType=et');
   assert(extNode?.bodyScript === undefined || extNode?.bodyScript === null,
     'External node has no bodyScript (ET has no SQL body)');
 
@@ -620,26 +620,26 @@ function testConstraintMapsEnrichColumns() {
   };
   const model = buildModelFromDmv(resultsWithConstraints);
 
-  // Customers.Name should have UQ flag in design view
+  // Customers.Name should have UQ flag
   const customersNode = model.nodes.find(n => n.name === 'Customers');
   assert(customersNode !== undefined, 'Customers node found');
-  assert(customersNode?.bodyHtml?.includes('UQ'), 'Customers design view has UQ flag');
-  assert(customersNode?.bodyHtml?.includes('FOREIGN KEYS'), 'Customers has FK section (shows "(none)" when no FKs)');
-  assert(customersNode?.bodyHtml?.includes('(none)'), 'Customers FK section shows (none)');
+  assert(customersNode?.columns?.some(c => c.unique !== undefined && c.unique !== ''), 'Customers has UQ flag on column');
+  // Customers has no FKs → fks should be empty array
+  assert(customersNode?.fks !== undefined && customersNode.fks.length === 0, 'Customers has empty fks array (no FKs)');
 
-  // Orders should have FK section
+  // Orders should have FK data on node
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
   assert(ordersNode !== undefined, 'Orders node found');
-  assert(ordersNode?.bodyHtml?.includes('FOREIGN KEYS'), 'Orders design view has FOREIGN KEYS section');
-  assert(ordersNode?.bodyHtml?.includes('FK_Orders_Customers'), 'Orders shows FK_Orders_Customers');
-  assert(ordersNode?.bodyHtml?.includes('FK_Orders_Products'), 'Orders shows FK_Orders_Products');
-  assert(ordersNode?.bodyHtml?.includes('CASCADE'), 'Orders FK shows CASCADE on delete');
-  assert(ordersNode?.bodyHtml?.includes('[dbo].[Customers]'), 'Orders FK references Customers');
+  assert((ordersNode?.fks?.length ?? 0) > 0, 'Orders has FK constraints');
+  assert(ordersNode!.fks!.some(fk => fk.name === 'FK_Orders_Customers'), 'Orders has FK_Orders_Customers');
+  assert(ordersNode!.fks!.some(fk => fk.name === 'FK_Orders_Products'), 'Orders has FK_Orders_Products');
+  assert(ordersNode!.fks!.some(fk => fk.onDelete === 'CASCADE'), 'Orders FK has CASCADE on delete');
+  assert(ordersNode!.fks!.some(fk => fk.refTable === 'Customers'), 'Orders FK references Customers');
 
   // Products.Id should have CK flag
   const productsNode = model.nodes.find(n => n.name === 'Products');
   assert(productsNode !== undefined, 'Products node found');
-  assert(productsNode?.bodyHtml?.includes('CK'), 'Products design view has CK flag');
+  assert(productsNode?.columns?.some(c => c.check !== undefined && c.check !== ''), 'Products has CK flag on column');
 }
 
 function testConstraintsMissingResultGraceful() {
@@ -650,11 +650,11 @@ function testConstraintsMissingResultGraceful() {
 
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
   assert(ordersNode !== undefined, 'Orders node found without constraints');
-  assert(!ordersNode?.bodyHtml?.includes('FOREIGN KEYS'), 'No FK section when constraints absent');
-  assert(!ordersNode?.bodyHtml?.includes('UQ'), 'No UQ column when constraints absent');
+  assert(ordersNode?.fks === undefined || ordersNode.fks.length === 0, 'No FKs when constraints absent');
+  assert(!ordersNode?.columns?.some(c => c.unique !== undefined && c.unique !== ''), 'No UQ flags when constraints absent');
 
-  // Design view still works as before
-  assert(ordersNode?.bodyHtml?.includes('OrderId'), 'Column design view still present');
+  // Columns still present
+  assert(ordersNode?.columns?.some(c => c.name === 'OrderId'), 'Columns still present without constraints');
 }
 
 function testValidateQueryResultConstraints() {

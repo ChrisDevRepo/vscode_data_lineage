@@ -3,7 +3,7 @@
  * Execute with: npx tsx test/parser-edge-cases.test.ts
  */
 
-import { parseSqlBody } from '../src/engine/sqlBodyParser';
+import { parseSqlBody, extractExternalRefs } from '../src/engine/sqlBodyParser';
 import { assert, hasName, loadParseRules, printSummary } from './testUtils';
 
 loadParseRules();
@@ -543,11 +543,13 @@ function testRegressionGuards() {
     assert(hasName(r.execCalls, 'CalcTotal'), 'RG4: EXEC @var=proc (no spaces) found');
   }
 
-  // RG5: Three-part name (database.schema.table — cross-db ref)
+  // RG5: Three-part name (database.schema.table — cross-db ref → crossDbSources)
   {
     const r = parseSqlBody(`SELECT * FROM OtherDB.dbo.RemoteTable`);
-    assert(r.sources.some(s => s.toLowerCase().includes('remotetable')),
-      'RG5: Three-part name captured (catalog resolution will filter)');
+    assert(r.crossDbSources.some(s => s === 'otherdb.dbo.remotetable'),
+      'RG5: Three-part name → crossDbSources (not local sources)');
+    assert(!r.sources.some(s => s.toLowerCase().includes('remotetable')),
+      'RG5: Three-part name NOT in local sources');
   }
 
   // RG6: Newlines between keyword and table name
@@ -723,27 +725,33 @@ function testCleansingAndNormalization() {
       'DQ1: Double-quoted "dbo"."Orders" normalized to [dbo].[orders]');
   }
 
-  // ── 3-part names: take last 2 (drop database prefix) ─────────────────────
+  // ── 3-part names: routed to crossDb arrays (not local sources/targets) ────
 
-  // db.schema.object → schema.object (last 2 parts)
+  // db.schema.object → crossDbSources
   {
     const r = parseSqlBody(`SELECT * FROM MyDB.dbo.Orders`);
-    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
-      'MP1: 3-part MyDB.dbo.Orders → [dbo].[orders] (database prefix stripped)');
+    assert(r.crossDbSources.some(s => s === 'mydb.dbo.orders'),
+      'MP1: 3-part MyDB.dbo.Orders → crossDbSources');
+    assert(!r.sources.some(s => s.toLowerCase().includes('orders')),
+      'MP1: 3-part NOT in local sources');
   }
 
-  // Bracket-quoted 3-part → also last 2
+  // Bracket-quoted 3-part → crossDbTargets
   {
     const r = parseSqlBody(`INSERT INTO [MyDB].[staging].[Orders] SELECT 1`);
-    assert(r.targets.some(s => s.toLowerCase() === '[staging].[orders]'),
-      'MP2: Bracket-quoted 3-part [MyDB].[staging].[Orders] → [staging].[orders]');
+    assert(r.crossDbTargets.some(s => s === 'mydb.staging.orders'),
+      'MP2: Bracket-quoted 3-part → crossDbTargets');
+    assert(!r.targets.some(s => s.toLowerCase().includes('orders')),
+      'MP2: 3-part NOT in local targets');
   }
 
-  // 4-part linked server → rejected
+  // 4-part linked server → server stripped, treated as 3-part cross-DB
   {
     const r = parseSqlBody(`SELECT * FROM [Server].[DB].[dbo].[Orders]`);
     assert(!r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
-      'MP3: 4-part linked server ref rejected (never in local catalog)');
+      'MP3: 4-part NOT in local sources');
+    assert(r.crossDbSources.some(s => s === 'db.dbo.orders'),
+      'MP3: 4-part → crossDbSources (server stripped, last 3 parts)');
   }
 }
 
@@ -752,8 +760,225 @@ function testCleansingAndNormalization() {
 // Run all tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 12. External file/URL reference extraction (pre-cleansing)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testExternalRefExtraction() {
+  console.log('\n\u2500\u2500 12. External file/URL reference extraction \u2500\u2500');
+
+  // OPENROWSET BULK
+  {
+    const refs = extractExternalRefs(`
+      SELECT * FROM OPENROWSET(BULK 'https://storage.blob.core.windows.net/data/sales.parquet',
+      FORMAT = 'PARQUET') AS r
+    `);
+    assert(refs.length === 1, 'ER1: OPENROWSET BULK detected');
+    assert(refs[0].kind === 'openrowset', 'ER1: kind is openrowset');
+    assert(refs[0].url.includes('sales.parquet'), 'ER1: URL captured');
+  }
+
+  // COPY INTO
+  {
+    const refs = extractExternalRefs(`
+      COPY INTO dbo.TargetTable FROM 'https://storage.blob.core.windows.net/data/input.csv'
+      WITH (FILE_TYPE = 'CSV')
+    `);
+    assert(refs.length === 1, 'ER2: COPY INTO FROM detected');
+    assert(refs[0].kind === 'copy_from', 'ER2: kind is copy_from');
+  }
+
+  // BULK INSERT
+  {
+    const refs = extractExternalRefs(`
+      BULK INSERT dbo.TargetTable FROM 'C:\\Data\\import.csv'
+      WITH (FIELDTERMINATOR = ',')
+    `);
+    assert(refs.length === 1, 'ER3: BULK INSERT FROM detected');
+    assert(refs[0].kind === 'bulk_from', 'ER3: kind is bulk_from');
+  }
+
+  // Deduplication: same URL in multiple statements → single ref
+  {
+    const refs = extractExternalRefs(`
+      SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT = 'PARQUET') AS a
+      UNION ALL
+      SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT = 'PARQUET') AS b
+    `);
+    assert(refs.length === 1, 'ER4: Duplicate URL deduplicated');
+  }
+
+  // Multiple distinct URLs
+  {
+    const refs = extractExternalRefs(`
+      SELECT * FROM OPENROWSET(BULK 'https://lake/a.parquet', FORMAT = 'PARQUET') AS a
+      UNION ALL
+      SELECT * FROM OPENROWSET(BULK 'https://lake/b.parquet', FORMAT = 'PARQUET') AS b
+    `);
+    assert(refs.length === 2, 'ER5: Two distinct URLs \u2192 two refs');
+  }
+
+  // No match — regular SQL
+  {
+    const refs = extractExternalRefs(`SELECT * FROM dbo.Orders`);
+    assert(refs.length === 0, 'ER6: Regular SQL \u2192 no external refs');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 13. CETAS rule extraction
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testCetasExtraction() {
+  console.log('\n\u2500\u2500 13. CETAS rule extraction \u2500\u2500');
+
+  // CREATE EXTERNAL TABLE AS SELECT → target
+  {
+    const r = parseSqlBody(`
+      CREATE EXTERNAL TABLE [ext].[SalesExport]
+      WITH (LOCATION = '/export/sales/', DATA_SOURCE = ExtDS, FILE_FORMAT = ParquetFF)
+      AS SELECT * FROM [dbo].[Sales]
+    `);
+    assert(r.targets.some(t => t.toLowerCase() === '[ext].[salesexport]'),
+      'CETAS1: CREATE EXTERNAL TABLE target captured');
+    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[sales]'),
+      'CETAS1: FROM source also captured');
+  }
+
+  // Not a CETAS (no AS SELECT)
+  {
+    const r = parseSqlBody(`
+      CREATE EXTERNAL TABLE [ext].[RawData] (id INT, name VARCHAR(100))
+      WITH (LOCATION = '/raw/', DATA_SOURCE = ExtDS)
+    `);
+    assert(!r.targets.some(t => t.toLowerCase().includes('rawdata')),
+      'CETAS2: Plain CREATE EXTERNAL TABLE (no AS SELECT) NOT captured as target');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14. Real-world external ref patterns (Synapse/Fabric/PolyBase)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testRealWorldExternalRefs() {
+  console.log('\n── 14. Real-world external ref patterns ──');
+
+  // Synapse Serverless: OPENROWSET with wildcard path (Fabric/Synapse common pattern)
+  {
+    const refs = extractExternalRefs(`
+      SELECT r.filepath(1) AS [Year], r.filepath(2) AS [Month], *
+      FROM OPENROWSET(
+        BULK 'https://myaccount.dfs.core.windows.net/curated/fact_sales/year=*/month=*/*.parquet',
+        FORMAT = 'DELTA'
+      ) WITH (
+        SalesKey INT, OrderDate DATE, Amount DECIMAL(18,2)
+      ) AS r
+    `);
+    assert(refs.length === 1, 'RW1: Synapse serverless OPENROWSET with wildcard path');
+    assert(refs[0].kind === 'openrowset', 'RW1: Correct kind');
+  }
+
+  // COPY INTO with SAS token in URL (Synapse Dedicated common pattern)
+  {
+    const refs = extractExternalRefs(`
+      COPY INTO dbo.FactSales
+      FROM 'https://mydatalake.blob.core.windows.net/staging/sales/*.parquet'
+      WITH (
+        FILE_TYPE = 'PARQUET',
+        CREDENTIAL = (IDENTITY = 'Shared Access Signature', SECRET = 'sv=2020-08-04&ss=b')
+      )
+    `);
+    assert(refs.length === 1, 'RW2: COPY INTO with SAS credential');
+    assert(refs[0].kind === 'copy_from', 'RW2: Correct kind');
+  }
+
+  // Cross-DB 3-part: Synapse cross-database query (common in lakehouse architecture)
+  {
+    const r = parseSqlBody(`
+      CREATE PROCEDURE [dbo].[spConsolidate] AS
+      INSERT INTO dbo.ConsolidatedSales
+      SELECT s.*, p.ProductName
+      FROM SalesDB.dbo.FactSales s
+      INNER JOIN ProductDB.catalog.DimProduct p ON s.ProductKey = p.ProductKey
+    `);
+    assert(r.crossDbSources.length >= 2, `RW3: Two cross-DB sources detected (got ${r.crossDbSources.length})`);
+    assert(r.crossDbSources.some(s => s.includes('salesdb')), 'RW3: SalesDB source detected');
+    assert(r.crossDbSources.some(s => s.includes('productdb')), 'RW3: ProductDB source detected');
+  }
+
+  // 4-part linked server → strip server, keep 3-part
+  {
+    const r = parseSqlBody(`
+      CREATE PROCEDURE [dbo].[spRemoteLoad] AS
+      SELECT * FROM LinkedSrv.RemoteDB.dbo.Customers
+    `);
+    assert(r.crossDbSources.some(s => s.includes('remotedb')), 'RW4: 4-part linked server → 3-part cross-DB source');
+    assert(!r.crossDbSources.some(s => s.includes('linkedsrv')), 'RW4: Server name stripped');
+  }
+
+  // OPENROWSET inside a view (not just SPs)
+  {
+    const refs = extractExternalRefs(`
+      CREATE VIEW [lake].[vwRawSales] AS
+      SELECT * FROM OPENROWSET(
+        BULK 'https://adls.dfs.core.windows.net/bronze/sales/*.csv',
+        FORMAT = 'CSV', PARSER_VERSION = '2.0',
+        HEADER_ROW = TRUE
+      ) AS csv_data
+    `);
+    assert(refs.length === 1, 'RW5: OPENROWSET in view body detected');
+  }
+
+  // BULK INSERT with UNC path (SQL Server on-prem pattern)
+  {
+    const refs = extractExternalRefs(`
+      BULK INSERT dbo.ImportedData
+      FROM '\\\\fileserver\\data\\export_20240101.csv'
+      WITH (FIELDTERMINATOR = '|', ROWTERMINATOR = '\\n', FIRSTROW = 2)
+    `);
+    assert(refs.length === 1, 'RW6: BULK INSERT with UNC path');
+    assert(refs[0].kind === 'bulk_from', 'RW6: Correct kind');
+  }
+
+  // Mixed: SP with both OPENROWSET and cross-DB in same body
+  {
+    const body = `
+      CREATE PROCEDURE [etl].[spLoadMixed] AS
+      INSERT INTO dbo.Staging
+      SELECT * FROM OPENROWSET(BULK 'https://lake.dfs.core.windows.net/raw/data.parquet', FORMAT='PARQUET') AS src
+      UNION ALL
+      SELECT * FROM ArchiveDB.dbo.HistoricalData
+    `;
+    const refs = extractExternalRefs(body);
+    assert(refs.length === 1, 'RW7: OPENROWSET detected in mixed body');
+
+    const r = parseSqlBody(body);
+    assert(r.crossDbSources.some(s => s.includes('archivedb')), 'RW7: Cross-DB ref also detected in same body');
+  }
+
+  // CETAS with multi-line WITH clause (real Synapse pattern)
+  {
+    const r = parseSqlBody(`
+      CREATE EXTERNAL TABLE [export].[DailyReport]
+      WITH (
+        LOCATION = '/reports/daily/',
+        DATA_SOURCE = ExternalDataSource,
+        FILE_FORMAT = ParquetFileFormat
+      )
+      AS SELECT
+        OrderDate, SUM(Amount) AS TotalAmount
+      FROM dbo.FactSales
+      GROUP BY OrderDate
+    `);
+    assert(r.targets.some(t => t.toLowerCase().includes('dailyreport')),
+      'RW8: CETAS with multi-line WITH clause detected');
+    assert(r.sources.some(s => s.toLowerCase().includes('factsales')),
+      'RW8: FROM source in CETAS SELECT also captured');
+  }
+}
+
 function main() {
-  console.log('\u2550\u2550\u2550 SQL Body Parser Edge Case Tests \u2550\u2550\u2550');
+  console.log('═══ SQL Body Parser Edge Case Tests ═══');
 
   testPreprocessing();
   testSourceExtraction();
@@ -766,6 +991,9 @@ function main() {
   testCriticalReviewEdgeCases();
   testRegressionGuards();
   testCleansingAndNormalization();
+  testExternalRefExtraction();
+  testCetasExtraction();
+  testRealWorldExternalRefs();
 
   printSummary('SQL Body Parser Edge Cases');
 }

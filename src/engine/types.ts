@@ -3,15 +3,17 @@
 export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
 
 export interface LineageNode {
-  id: string;            // "[schema].[name]"
-  schema: string;        // "dbo", "SalesLT", etc.
+  id: string;            // "[schema].[name]" (2-part local), "[db].[schema].[name]" (3-part cross-DB), "[__ext__].[hash]" (file)
+  schema: string;        // "dbo", "SalesLT", etc. — empty string for virtual nodes (file/db)
   name: string;          // object name without brackets/schema
   fullName: string;      // "[schema].[name]" as in dacpac
   type: ObjectType;
-  bodyScript?: string;   // SQL body for SPs/Views/UDFs; ASCII table design for tables
-  bodyHtml?: string;     // HTML table design for tables/externals (webview rendering)
+  bodyScript?: string;   // SQL body for SPs/Views/UDFs
   columns?: ColumnDef[]; // column metadata (tables/externals only, for profiling)
-  externalKind?: 'et'; // set for type === 'external'
+  fks?: ForeignKeyInfo[];// FK constraints (tables/externals only)
+  externalType?: 'et' | 'file' | 'db'; // set for type === 'external'
+  externalUrl?: string;       // full URL for file virtual nodes (tooltip)
+  externalDatabase?: string;  // DB name for cross-DB virtual nodes (tooltip)
 }
 
 export interface LineageEdge {
@@ -45,7 +47,7 @@ export interface ParseStats {
 }
 
 /** Per-object display entry — covers ALL known objects including cross-schema ones. */
-export type CatalogEntry = { schema: string; name: string; type: ObjectType };
+export type CatalogEntry = { schema: string; name: string; type: ObjectType; externalType?: 'et' | 'file' | 'db' };
 
 /**
  * O(1) neighbor lookup keyed by node ID.
@@ -243,12 +245,18 @@ export interface ExtractedObject {
   bodyScript?: string;
   columns?: ColumnDef[];          // table column metadata (for table design view)
   fks?: ForeignKeyInfo[];         // FK constraints (dacpac + DMV paths; undefined only when not extracted)
-  externalKind?: 'et'; // set when type === 'external'
+  externalType?: 'et' | 'file' | 'db'; // set when type === 'external'
 }
 
 export interface ExtractedDependency {
   sourceName: string;     // "[Schema].[Name]" of referencing object
-  targetName: string;     // "[Schema].[Name]" of referenced object
+  targetName: string;     // "[Schema].[Name]" of referenced object — 3-part "[DB].[Schema].[Name]" for cross-DB
+}
+
+/** External file/URL reference detected by pre-cleansing regex pass. */
+export interface ExternalRef {
+  url: string;
+  kind: 'openrowset' | 'copy_from' | 'bulk_from';
 }
 
 // ─── DMV type mapping (sys.objects.type codes → ObjectType) ─────────────────
@@ -297,6 +305,10 @@ export interface TableStatsConfig {
   queryTimeout: number;
 }
 
+export interface ExternalRefsConfig {
+  enabled: boolean;
+}
+
 export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   excludePatterns: string[];
@@ -305,6 +317,7 @@ export interface ExtensionConfig {
   trace: TraceConfig;
   analysis: AnalysisConfig;
   tableStatistics: TableStatsConfig;
+  externalRefs: ExternalRefsConfig;
 }
 
 /** Fabric Data Warehouse engineEditionId — used for platform-specific query branching. */
@@ -317,6 +330,7 @@ export const DEFAULT_CONFIG = {
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
   analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
   tableStatistics: { enabled: true, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
+  externalRefs: { enabled: true },
 } satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────
@@ -327,6 +341,8 @@ export interface FilterState {
   searchTerm: string;
   hideIsolated: boolean;
   focusSchemas: Set<string>;
+  showExternalRefs: boolean;
+  externalRefTypes: Set<'file' | 'db'>;
 }
 
 export interface TraceState {

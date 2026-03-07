@@ -43,6 +43,8 @@ export function App() {
     searchTerm: '',
     hideIsolated: true,
     focusSchemas: new Set(),
+    showExternalRefs: true,
+    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
@@ -113,6 +115,8 @@ export function App() {
     searchTerm: '',
     hideIsolated: true,
     focusSchemas: new Set(),
+    showExternalRefs: true,
+    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
   });
 
   const handleRefresh = useCallback(() => {
@@ -201,7 +205,6 @@ export function App() {
           schema: node.schema,
           objectType: node.type,
           sqlBody: node.bodyScript,
-          bodyHtml: node.bodyHtml,
           columns: node.columns,
         });
       }
@@ -246,7 +249,6 @@ export function App() {
           schema: node.schema,
           objectType: node.type,
           sqlBody: node.bodyScript,
-          bodyHtml: node.bodyHtml,
           columns: node.columns,
         });
       }
@@ -319,6 +321,25 @@ export function App() {
       }
 
       const next = { ...prev, focusSchemas, schemas };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleToggleExternalRefs = useCallback(() => {
+    setFilter((prev) => {
+      const next = { ...prev, showExternalRefs: !prev.showExternalRefs };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleToggleExternalRefType = useCallback((subType: 'file' | 'db') => {
+    setFilter((prev) => {
+      const externalRefTypes = new Set(prev.externalRefTypes);
+      if (externalRefTypes.has(subType)) externalRefTypes.delete(subType);
+      else externalRefTypes.add(subType);
+      const next = { ...prev, externalRefTypes };
       if (model) rebuild(model, next, config);
       return next;
     });
@@ -502,7 +523,9 @@ export function App() {
       schema={tableDetailNode.schema}
       objectName={tableDetailNode.name}
       objectType={tableDetailNode.type as 'table' | 'external'}
+      externalType={tableDetailNode.externalType}
       columns={tableDetailNode.columns ?? []}
+      fks={tableDetailNode.fks ?? []}
       statsState={tableStatsState}
       onClose={() => { setTableDetailNode(null); setTableStatsState({ phase: 'idle' }); }}
       onRequestStats={handleRequestStats}
@@ -538,6 +561,8 @@ export function App() {
         onToggleIsolated={handleToggleIsolated}
         onToggleFocusSchema={handleToggleFocusSchema}
         onToggleSchema={handleToggleSchema}
+        onToggleExternalRefs={handleToggleExternalRefs}
+        onToggleExternalRefType={handleToggleExternalRefType}
         availableSchemas={model?.schemas.map(s => s.name) || []}
         analysisMode={analysisMode}
         onOpenAnalysis={openAnalysis}

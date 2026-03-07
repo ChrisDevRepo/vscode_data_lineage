@@ -33,8 +33,11 @@ export function useGraphology(): UseGraphologyReturn {
       edges: filtered.edges.filter((e) => typeNodeIds.has(e.source) && typeNodeIds.has(e.target)),
     };
 
+    // Apply external refs filter (virtual file/db nodes have their own toggle)
+    const extRefsFiltered = applyExternalRefsFilter(typeFiltered, filter.showExternalRefs, filter.externalRefTypes);
+
     // Apply focus schema filter (exclusion patterns applied earlier in handleVisualize)
-    const focusFiltered = applyFocusSchemaFilter(typeFiltered, filter.focusSchemas);
+    const focusFiltered = applyFocusSchemaFilter(extRefsFiltered, filter.focusSchemas);
 
     // Apply isolation filter (hide orphan nodes with no edges)
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
@@ -88,6 +91,31 @@ function applyFocusSchemaFilter(
 
   const keepIds = new Set([...focusNodeIds, ...neighborIds]);
   const nodes = model.nodes.filter((n) => keepIds.has(n.id));
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
+
+  return { ...model, nodes, edges };
+}
+
+// ─── External Refs Filter (virtual file/db nodes) ────────────────────────────
+
+function applyExternalRefsFilter(
+  model: DacpacModel,
+  showExternalRefs: boolean,
+  externalRefTypes: Set<'file' | 'db'>
+): DacpacModel {
+  // Virtual nodes: externalType 'file' or 'db'. ET nodes are unaffected.
+  const isVirtual = (n: { externalType?: string }) =>
+    n.externalType === 'file' || n.externalType === 'db';
+
+  // If master toggle is on and both sub-types are on, pass through
+  if (showExternalRefs && externalRefTypes.has('file') && externalRefTypes.has('db')) return model;
+
+  const nodes = model.nodes.filter((n) => {
+    if (!isVirtual(n)) return true;
+    if (!showExternalRefs) return false;
+    return externalRefTypes.has(n.externalType as 'file' | 'db');
+  });
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 

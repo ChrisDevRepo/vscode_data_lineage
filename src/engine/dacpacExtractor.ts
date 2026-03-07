@@ -139,8 +139,11 @@ export function filterBySchemas(
   maxNodes = DEFAULT_CONFIG.maxNodes
 ): DacpacModel {
   // Case-insensitive comparison so UI-provided schema names match model.schemas
+  // Virtual external nodes (schema='') bypass schema filter — they have their own toggle
   const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
-  const filtered = model.nodes.filter((n) => lowerSelected.has(n.schema.toLowerCase()));
+  const filtered = model.nodes.filter((n) =>
+    (n.externalType === 'file' || n.externalType === 'db') || lowerSelected.has(n.schema.toLowerCase())
+  );
   const limited = filtered.slice(0, maxNodes);
   const nodeIds = new Set(limited.map((n) => n.id));
 
@@ -260,7 +263,7 @@ function extractObjects(elements: XmlElement[]): ExtractedObject[] {
       bodyScript,
       columns,
       fks,
-      ...(type === 'SqlExternalTable' && { externalKind: 'et' as const }),
+      ...(type === 'SqlExternalTable' && { externalType: 'et' as const }),
     });
   }
 

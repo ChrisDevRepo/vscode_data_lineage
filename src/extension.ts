@@ -4,7 +4,7 @@ import * as yaml from 'js-yaml';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
-import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ObjectType } from './engine/types';
+import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ExternalRefsConfig, type ObjectType } from './engine/types';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
@@ -64,11 +64,7 @@ const ddlProvider = new class implements vscode.TextDocumentContentProvider {
   fire(uri: vscode.Uri) { this._onDidChange.fire(uri); }
 };
 
-type DdlMessage = { objectName: string; schema: string; objectType?: ObjectType; sqlBody?: string; bodyHtml?: string; columns?: import('./engine/types').ColumnDef[] };
-
-function isTableType(objectType?: ObjectType): boolean {
-  return objectType === 'table' || objectType === 'external';
-}
+type DdlMessage = { objectName: string; schema: string; objectType?: ObjectType; sqlBody?: string; columns?: import('./engine/types').ColumnDef[] };
 
 // ─── Stats Connection Reuse ──────────────────────────────────────────────────
 
@@ -447,8 +443,8 @@ type WebviewMessage =
   | { type: 'error'; error: string; stack?: string }
   | { type: 'open-external'; url?: string }
   | { type: 'open-settings' }
-  | { type: 'show-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; bodyHtml?: string; columns?: import('./engine/types').ColumnDef[] }
-  | { type: 'update-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; bodyHtml?: string; columns?: import('./engine/types').ColumnDef[] }
+  | { type: 'show-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; columns?: import('./engine/types').ColumnDef[] }
+  | { type: 'update-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; columns?: import('./engine/types').ColumnDef[] }
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
   | { type: 'db-reconnect' }
@@ -504,6 +500,7 @@ interface ExtensionConfigMessage {
   trace: TraceConfig;
   analysis: AnalysisConfig;
   tableStatistics: TableStatsConfig;
+  externalRefs: ExternalRefsConfig;
 }
 
 function clamp(val: number, min: number, max: number, fallback: number): number {
@@ -560,6 +557,9 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
       sampleSize: clamp(cfg.get<number>('tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize), 100, 1000000, DEFAULT_CONFIG.tableStatistics.sampleSize),
       useApproxDistinct: cfg.get<boolean>('tableStatistics.useApproxDistinct', DEFAULT_CONFIG.tableStatistics.useApproxDistinct),
       queryTimeout: clamp(cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout), 10, 600, DEFAULT_CONFIG.tableStatistics.queryTimeout),
+    },
+    externalRefs: {
+      enabled: cfg.get<boolean>('externalRefs.enabled', DEFAULT_CONFIG.externalRefs.enabled),
     },
   };
 
@@ -908,7 +908,8 @@ async function runDbPhase2(
   progress.report({ message: 'Building model...' });
   outputChannel.info('[DB] Building model from DMV results...');
   const start = Date.now();
-  const model = buildModelFromDmv(dmvResults);
+  const currentDatabase = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo')?.database;
+  const model = buildModelFromDmv(dmvResults, currentDatabase);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   const extNodes = model.nodes.filter(n => n.type === 'external');
   const extSuffix = extNodes.length > 0 ? `, incl. ${extNodes.length} external (⬡)` : '';

@@ -64,11 +64,11 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-export function buildModelFromDmv(results: DmvResults): DacpacModel {
+export function buildModelFromDmv(results: DmvResults, currentDatabase?: string): DacpacModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
   const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
-  const model = buildModel(objects, deps, allObjects);
+  const model = buildModel(objects, deps, allObjects, currentDatabase);
 
   const warnings: string[] = [];
   if (objects.length === 0) {
@@ -246,7 +246,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       bodyScript: bodyScript || undefined,
       columns,
       fks,
-      ...(objType === 'external' && { externalKind: 'et' as const }),
+      ...(objType === 'external' && { externalType: 'et' as const }),
     });
   }
 
@@ -262,15 +262,21 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
     const refName = cellValue(row, depColIdx, 'referencing_name');
     const depSchema = cellValue(row, depColIdx, 'referenced_schema');
     const depName = cellValue(row, depColIdx, 'referenced_name');
+    const depDatabase = cellValue(row, depColIdx, 'referenced_database');
 
     // Only schema-qualified references are supported (schema.object minimum).
     // Unqualified references (referenced_schema_name IS NULL in DMV) are rejected —
     // SQL Server's default-schema resolution is caller-dependent and not reliable.
     if (!depSchema) continue;
 
+    // Cross-database reference: emit 3-part target [db].[schema].[name]
+    const targetName = depDatabase
+      ? `[${depDatabase}].[${depSchema}].[${depName}]`
+      : `[${depSchema}].[${depName}]`;
+
     deps.push({
       sourceName: `[${refSchema}].[${refName}]`,
-      targetName: `[${depSchema}].[${depName}]`,
+      targetName,
     });
   }
 

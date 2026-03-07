@@ -5,6 +5,7 @@ import { Button } from './ui/Button';
 import { HelpModal } from './HelpModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
 import { TypeFilterDropdown } from './TypeFilterDropdown';
+import { ExternalRefsDropdown } from './ExternalRefsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 
 interface ToolbarProps {
@@ -32,6 +33,10 @@ interface ToolbarProps {
   isAnalysisActive?: boolean;
   analysisType?: AnalysisType | null;
   onOpenAnalysis?: (type: AnalysisType) => void;
+  showExternalRefs?: boolean;
+  externalRefTypes?: Set<'file' | 'db'>;
+  onToggleExternalRefs?: () => void;
+  onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -66,6 +71,10 @@ export const Toolbar = memo(function Toolbar({
   isAnalysisActive = false,
   analysisType = null,
   onOpenAnalysis,
+  showExternalRefs = true,
+  externalRefTypes = new Set<'file' | 'db'>(['file', 'db']),
+  onToggleExternalRefs,
+  onToggleExternalRefType,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
@@ -107,6 +116,14 @@ export const Toolbar = memo(function Toolbar({
         </Button>
         <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onToggleFocusSchema={onToggleFocusSchema} />
         <TypeFilterDropdown types={types} onToggleType={onToggleType} />
+        {onToggleExternalRefs && onToggleExternalRefType && (
+          <ExternalRefsDropdown
+            showExternalRefs={showExternalRefs}
+            externalRefTypes={externalRefTypes}
+            onToggleMaster={onToggleExternalRefs}
+            onToggleSubType={onToggleExternalRefType}
+          />
+        )}
 
         <div className="w-px h-6 ln-divider" />
 

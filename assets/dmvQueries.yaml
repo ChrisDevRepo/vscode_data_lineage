@@ -242,7 +242,8 @@ queries:
         s1.name AS referencing_schema,
         o1.name AS referencing_name,
         d.referenced_schema_name AS referenced_schema,
-        d.referenced_entity_name AS referenced_name
+        d.referenced_entity_name AS referenced_name,
+        d.referenced_database_name AS referenced_database
       FROM sys.sql_expression_dependencies d
       INNER JOIN sys.objects o1 ON d.referencing_id = o1.object_id
       INNER JOIN sys.schemas s1 ON o1.schema_id = s1.schema_id

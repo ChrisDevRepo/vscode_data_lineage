@@ -83,6 +83,9 @@ export function buildGraph(model: DacpacModel, config: ExtensionConfig = DEFAULT
       objectType: node.type,
       inDegree: graph.hasNode(node.id) ? graph.inDegree(node.id) : 0,
       outDegree: graph.hasNode(node.id) ? graph.outDegree(node.id) : 0,
+      ...(node.externalType && { externalType: node.externalType }),
+      ...(node.externalUrl && { externalUrl: node.externalUrl }),
+      ...(node.externalDatabase && { externalDatabase: node.externalDatabase }),
     },
   }));
 

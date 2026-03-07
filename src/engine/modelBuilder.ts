@@ -14,14 +14,12 @@ import {
   ParseStats,
   ExtractedObject,
   ExtractedDependency,
-  ColumnDef,
-  ForeignKeyInfo,
   CatalogEntry,
   NeighborIndex,
   createEmptySchemaInfo,
 } from './types';
-import { parseSqlBody } from './sqlBodyParser';
-import { stripBrackets, splitSqlName, schemaKey, escHtml } from '../utils/sql';
+import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
+import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -29,8 +27,9 @@ export function buildModel(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
   allObjects?: ExtractedObject[],
+  currentDatabase?: string,
 ): DacpacModel {
-  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase);
 
   // CI normalization: unify node.schema to a single canonical display name (first-seen from
   // metadata) across all nodes that belong to the same logical schema.
@@ -47,6 +46,14 @@ export function buildModel(
 
   const schemas = computeSchemas(nodes);
   const catalog = buildCatalog(allObjects ?? objects, schemaCanonical);
+
+  // Inject virtual nodes (file, cross-DB) into catalog — they're not in objects/allObjects
+  for (const node of nodes) {
+    if (node.externalType === 'file' || node.externalType === 'db') {
+      catalog[node.id] = { schema: '', name: node.name, type: 'external', externalType: node.externalType };
+    }
+  }
+
   const neighborIndex = buildNeighborIndex(edges, neighborPairs);
 
   const warnings: string[] = [];
@@ -78,7 +85,10 @@ function buildCatalog(
   for (const obj of allObjects) {
     const { schema, objectName } = parseName(obj.fullName);
     const displaySchema = schemaCanonical.get(schemaKey(schema)) ?? schema;
-    catalog[normalizeName(obj.fullName)] = { schema: displaySchema, name: objectName, type: obj.type };
+    catalog[normalizeName(obj.fullName)] = {
+      schema: displaySchema, name: objectName, type: obj.type,
+      ...(obj.externalType && { externalType: obj.externalType }),
+    };
   }
   return catalog;
 }
@@ -209,74 +219,6 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
   return Array.from(map.values()).sort((a, b) => b.nodeCount - a.nodeCount);
 }
 
-// ─── Table Design HTML Renderer ──────────────────────────────────────────────
-
-export function buildTableDesignHtml(
-  cols: ColumnDef[],
-  schema: string,
-  objectName: string,
-  objectType: 'table' | 'external' = 'table',
-  fks?: ForeignKeyInfo[],
-): string {
-  if (cols.length === 0) return `<p class="empty">No column metadata for [${escHtml(schema)}].[${escHtml(objectName)}]</p>`;
-  const typeIcon = objectType === 'external' ? '⬡' : '■';
-  const typeLabel = objectType === 'external' ? 'EXTERNAL TABLE' : 'TABLE';
-
-  const hasExtra  = cols.some(c => c.extra);
-  const hasUnique = cols.some(c => c.unique !== undefined && c.unique !== '');
-  const hasCheck  = cols.some(c => c.check !== undefined && c.check !== '');
-
-  const lines: string[] = [];
-  lines.push(`<h2><span class="type-icon type-${objectType}">${typeIcon}</span> ${escHtml(typeLabel)}: [${escHtml(schema)}].[${escHtml(objectName)}]</h2>`);
-
-  // Columns table
-  lines.push('<table class="design-table">');
-  lines.push('<thead><tr>');
-  lines.push('<th>Column</th><th>Type</th><th>Nullable</th>');
-  if (hasExtra) lines.push('<th>Extra</th>');
-  if (hasUnique) lines.push('<th>UQ</th>');
-  if (hasCheck) lines.push('<th>CK</th>');
-  lines.push('</tr></thead>');
-  lines.push('<tbody>');
-  for (const c of cols) {
-    const extraBadge = c.extra ? `<span class="badge badge-${c.extra.replace(/[()]/g, '').toLowerCase()}">${escHtml(c.extra)}</span>` : '';
-    const uqBadge = c.unique ? '<span class="badge badge-uq">UQ</span>' : '';
-    const ckBadge = c.check ? '<span class="badge badge-ck">CK</span>' : '';
-    lines.push('<tr>');
-    lines.push(`<td class="col-name">${escHtml(c.name)}</td>`);
-    lines.push(`<td class="col-type">${escHtml(c.type)}</td>`);
-    lines.push(`<td class="col-nullable">${escHtml(c.nullable)}</td>`);
-    if (hasExtra) lines.push(`<td class="col-extra">${extraBadge}</td>`);
-    if (hasUnique) lines.push(`<td class="col-uq">${uqBadge}</td>`);
-    if (hasCheck) lines.push(`<td class="col-ck">${ckBadge}</td>`);
-    lines.push('</tr>');
-  }
-  lines.push('</tbody></table>');
-
-  // FK table
-  if (fks !== undefined) {
-    lines.push('<h3>FOREIGN KEYS</h3>');
-    if (fks.length === 0) {
-      lines.push('<p class="empty">(none)</p>');
-    } else {
-      lines.push('<table class="design-table fk-table">');
-      lines.push('<thead><tr><th>Constraint</th><th>Column(s)</th><th>References</th><th>On Delete</th></tr></thead>');
-      lines.push('<tbody>');
-      for (const fk of fks) {
-        lines.push('<tr>');
-        lines.push(`<td>${escHtml(fk.name)}</td>`);
-        lines.push(`<td>${escHtml(fk.columns.join(', '))}</td>`);
-        lines.push(`<td>[${escHtml(fk.refSchema)}].[${escHtml(fk.refTable)}](${escHtml(fk.refColumns.join(', '))})</td>`);
-        lines.push(`<td>${escHtml(fk.onDelete)}</td>`);
-        lines.push('</tr>');
-      }
-      lines.push('</tbody></table>');
-    }
-  }
-
-  return lines.join('\n');
-}
-
 // ─── Core Pipeline ──────────────────────────────────────────────────────────
 
 /** Convert ExtractedObjects to LineageNodes, deduplicating by normalized ID. */
@@ -291,17 +233,12 @@ function buildNodeList(objects: ExtractedObject[]): { nodes: LineageNode[]; node
     if (nodeIds.has(id)) continue;
     nodeIds.add(id);
 
-    const bodyScript = obj.bodyScript;
-    let bodyHtml: string | undefined;
-    if (!bodyScript && (obj.type === 'table' || obj.type === 'external') && obj.columns && obj.columns.length > 0) {
-      bodyHtml = buildTableDesignHtml(obj.columns, schema, objectName, obj.type as 'table' | 'external', obj.fks);
-    }
-
     nodes.push({
-      id, schema, name: objectName, fullName: obj.fullName, type: obj.type, bodyScript,
-      ...(bodyHtml && { bodyHtml }),
+      id, schema, name: objectName, fullName: obj.fullName, type: obj.type,
+      ...(obj.bodyScript && { bodyScript: obj.bodyScript }),
       ...(obj.columns && obj.columns.length > 0 && { columns: obj.columns }),
-      ...(obj.externalKind && { externalKind: obj.externalKind }),
+      ...(obj.fks !== undefined && { fks: obj.fks }),
+      ...(obj.externalType && { externalType: obj.externalType }),
     });
   }
 
@@ -335,6 +272,8 @@ interface GroupedDeps {
   unresolvableDepsForNode: Map<string, string[]>;
   /** Cross-schema neighbor pairs discovered from deps with unselected sources. */
   inboundNeighborPairs: Array<{ source: string; target: string }>;
+  /** Deps where target is a 3-part cross-DB name (DMV metadata). sourceId → raw 3-part names. */
+  crossDbMetaDeps: Map<string, string[]>;
 }
 
 /** Classify dependencies into three buckets: in-scope, cross-schema, unresolvable. */
@@ -347,8 +286,20 @@ function groupDependencies(
   const crossSchemaDepsForNode = new Map<string, string[]>();
   const unresolvableDepsForNode = new Map<string, string[]>();
   const inboundNeighborPairs: Array<{ source: string; target: string }> = [];
+  const crossDbMetaDeps = new Map<string, string[]>();
 
   for (const dep of deps) {
+    // Detect 3-part cross-DB targets before normalization (normalizeName strips DB prefix)
+    const targetParts = splitSqlName(dep.targetName);
+    if (targetParts.length >= 3) {
+      const sourceId = normalizeName(dep.sourceName);
+      if (nodeIds.has(sourceId) || (allNodeIds.size > 0 && allNodeIds.has(sourceId))) {
+        if (!crossDbMetaDeps.has(sourceId)) crossDbMetaDeps.set(sourceId, []);
+        crossDbMetaDeps.get(sourceId)!.push(dep.targetName);
+      }
+      continue;
+    }
+
     const sourceId = normalizeName(dep.sourceName);
     const targetId = normalizeName(dep.targetName);
 
@@ -375,7 +326,7 @@ function groupDependencies(
     }
   }
 
-  return { depsPerSource, crossSchemaDepsForNode, unresolvableDepsForNode, inboundNeighborPairs };
+  return { depsPerSource, crossSchemaDepsForNode, unresolvableDepsForNode, inboundNeighborPairs, crossDbMetaDeps };
 }
 
 /** Shared context passed to per-node edge processors. */
@@ -389,6 +340,8 @@ interface EdgeContext {
   stats: ParseStats;
   neighborPairs: Array<{ source: string; target: string }>;
   grouped: GroupedDeps;
+  /** Cross-DB refs from regex parser, collected during SP/view processing. nodeId → {sources, targets} */
+  crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>;
 }
 
 /** Process regex-parsed refs (sources, targets, or exec calls) for a single SP/view/function. */
@@ -453,6 +406,16 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   // Views and functions: parser supplement — MS metadata is primary source.
   if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
     const parsed = parseSqlBody(node.bodyScript);
+    // Collect cross-DB refs from regex parser for virtual node creation
+    if (parsed.crossDbSources.length > 0 || parsed.crossDbTargets.length > 0) {
+      const existing = ctx.crossDbRegexRefs.get(sourceId);
+      if (existing) {
+        existing.sources.push(...parsed.crossDbSources);
+        existing.targets.push(...parsed.crossDbTargets);
+      } else {
+        ctx.crossDbRegexRefs.set(sourceId, { sources: parsed.crossDbSources, targets: parsed.crossDbTargets });
+      }
+    }
     const xmlDepIds = new Set(xmlDeps);
     const spLabel = `${node.schema}.${node.name}`;
     const spParserAdded: string[] = [];
@@ -506,6 +469,11 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
   const spOutRefs: string[] = [];
   const spUnrelated: string[] = [];
   const spSkipped: string[] = [];
+
+  // Collect cross-DB refs from regex parser for virtual node creation
+  if (parsed.crossDbSources.length > 0 || parsed.crossDbTargets.length > 0) {
+    ctx.crossDbRegexRefs.set(sourceId, { sources: parsed.crossDbSources, targets: parsed.crossDbTargets });
+  }
 
   // Collect target/exec IDs to exclude from dep fallback
   const outboundIds = new Set<string>();
@@ -576,6 +544,7 @@ function buildNodesAndEdges(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
   allObjects?: ExtractedObject[],
+  currentDatabase?: string,
 ): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
   const { nodes, nodeIds } = buildNodeList(objects);
   const { allNodeIds, allObjectMeta } = buildFullCatalog(allObjects);
@@ -586,8 +555,9 @@ function buildNodesAndEdges(
   const stats: ParseStats = { parsedRefs: 0, resolvedEdges: 0, droppedRefs: [], spDetails: [] };
   const neighborPairs: Array<{ source: string; target: string }> = [...grouped.inboundNeighborPairs];
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const crossDbRegexRefs = new Map<string, { sources: string[]; targets: string[] }>();
 
-  const ctx: EdgeContext = { nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped };
+  const ctx: EdgeContext = { nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs };
 
   for (const node of nodes) {
     const xmlDeps = grouped.depsPerSource.get(node.id) ?? [];
@@ -598,5 +568,134 @@ function buildNodesAndEdges(
     }
   }
 
+  // Create virtual nodes for external refs (file URLs + cross-DB 3-part names)
+  createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase);
+
   return { nodes, edges, stats, neighborPairs };
+}
+
+// ─── Virtual Node Helpers ───────────────────────────────────────────────────
+
+/** Deterministic hash of a URL string → 8-char hex for stable virtual node IDs. */
+function hashUrl(url: string): string {
+  let hash = 0;
+  for (let i = 0; i < url.length; i++) {
+    hash = ((hash << 5) - hash) + url.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
+}
+
+/** Extract last path segment from a URL (before query/fragment), max length. */
+function lastUrlSegment(url: string, maxLen = 40): string {
+  const cleaned = url.replace(/[?#].*$/, '');
+  const segments = cleaned.split('/');
+  const last = segments.pop() || segments.pop() || url;
+  return last.length > maxLen ? last.slice(-maxLen) : last;
+}
+
+/**
+ * Create virtual external nodes for file refs (OPENROWSET, COPY FROM, BULK FROM)
+ * and cross-database 3-part name references.
+ *
+ * Context-aware 3-part resolution:
+ * - DMV path: if db === currentDatabase → treat as local (same-DB self-reference)
+ * - Dacpac path: if 2-part [schema].[object] exists in nodeIds → treat as local
+ */
+function createVirtualNodes(
+  nodes: LineageNode[],
+  nodeIds: Set<string>,
+  edges: LineageEdge[],
+  edgeKeys: Set<string>,
+  crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>,
+  crossDbMetaDeps: Map<string, string[]>,
+  currentDatabase?: string,
+): void {
+  // A. File virtual nodes — OPENROWSET, COPY FROM, BULK FROM
+  const fileNodeMap = new Map<string, string>(); // url → virtualNodeId
+  const nodeSnapshot = [...nodes]; // iterate copy since we push new nodes
+  for (const node of nodeSnapshot) {
+    if (!node.bodyScript) continue;
+    const refs = extractExternalRefs(node.bodyScript);
+    for (const ref of refs) {
+      let virtualId = fileNodeMap.get(ref.url);
+      if (!virtualId) {
+        const hash = hashUrl(ref.url);
+        virtualId = `[__ext__].[${hash}]`;
+        fileNodeMap.set(ref.url, virtualId);
+        if (!nodeIds.has(virtualId)) {
+          nodeIds.add(virtualId);
+          nodes.push({
+            id: virtualId, schema: '', name: lastUrlSegment(ref.url),
+            fullName: virtualId, type: 'external', externalType: 'file',
+            externalUrl: ref.url,
+          });
+        }
+      }
+      addEdge(edges, edgeKeys, virtualId, node.id, 'body'); // file → node (data source)
+    }
+  }
+
+  // B. Cross-DB virtual nodes — context-aware resolution
+  const isLocalRef = (db: string, localId: string): boolean => {
+    if (currentDatabase && db.toLowerCase() === currentDatabase.toLowerCase()) return true;
+    if (!currentDatabase && nodeIds.has(localId)) return true;
+    return false;
+  };
+
+  const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string) => {
+    if (!nodeIds.has(crossDbId)) {
+      nodeIds.add(crossDbId);
+      nodes.push({
+        id: crossDbId, schema: '', name: `${schema}.${object}`,
+        fullName: crossDbId, type: 'external', externalType: 'db',
+        externalDatabase: db,
+      });
+    }
+  };
+
+  // B1. From regex parser (dot-separated "db.schema.object" strings)
+  for (const [nodeId, { sources, targets }] of crossDbRegexRefs) {
+    for (const ref of sources) {
+      const parts = ref.split('.');
+      if (parts.length !== 3) continue;
+      const [db, schema, object] = parts;
+      const localId = `[${schema}].[${object}]`;
+      const crossDbId = `[${db}].[${schema}].[${object}]`;
+      if (isLocalRef(db, localId)) continue;
+      ensureCrossDbNode(db, schema, object, crossDbId);
+      addEdge(edges, edgeKeys, crossDbId, nodeId, 'body'); // cross-DB source → local node
+    }
+    for (const ref of targets) {
+      const parts = ref.split('.');
+      if (parts.length !== 3) continue;
+      const [db, schema, object] = parts;
+      const localId = `[${schema}].[${object}]`;
+      const crossDbId = `[${db}].[${schema}].[${object}]`;
+      if (isLocalRef(db, localId)) continue;
+      ensureCrossDbNode(db, schema, object, crossDbId);
+      addEdge(edges, edgeKeys, nodeId, crossDbId, 'body'); // local node → cross-DB target
+    }
+  }
+
+  // B2. From DMV metadata (bracketed 3-part "[db].[schema].[object]" strings)
+  for (const [sourceId, rawTargets] of crossDbMetaDeps) {
+    for (const rawTarget of rawTargets) {
+      const parts = splitSqlName(rawTarget).map(p => stripBrackets(p));
+      if (parts.length < 3) continue;
+      const relevant = parts.length >= 4 ? parts.slice(-3) : parts;
+      const [db, schema, object] = relevant;
+      const localId = `[${schema}].[${object}]`.toLowerCase();
+      const crossDbId = `[${db}].[${schema}].[${object}]`.toLowerCase();
+      if (isLocalRef(db, localId)) {
+        // Same-DB ref → add as local edge if node exists
+        if (nodeIds.has(localId)) {
+          addEdge(edges, edgeKeys, sourceId, localId, 'body');
+        }
+        continue;
+      }
+      ensureCrossDbNode(db, schema, object, crossDbId);
+      addEdge(edges, edgeKeys, sourceId, crossDbId, 'body');
+    }
+  }
 }

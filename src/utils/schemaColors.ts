@@ -14,7 +14,7 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
   view: 'View',
   procedure: 'Stored Procedure',
   function: 'Function',
-  external: 'External',
+  external: 'External Table',
 };
 
 // ─── Tableau 10 color palette (official colors) ─────────────────────────────
@@ -63,6 +63,18 @@ export function getSchemaColor(schema: string, forceLight?: boolean): string {
   const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
   const idx = Math.abs(hashString(schemaKey(schema))) % colors.length;
   return colors[idx];
+}
+
+// ─── Virtual External Node Colors ────────────────────────────────────────────
+// Fixed colors for virtual nodes (file, cross-DB) — deliberately NOT from Tableau 10.
+// Steel gray signals "external, unverified" and is visually distinct from all 10 schema colors.
+
+export const VIRTUAL_EXT_COLOR_LIGHT = '#6B7A8D';
+export const VIRTUAL_EXT_COLOR_DARK  = '#94A3B8';
+
+/** Get the fixed color for virtual external nodes (file/cross-DB), theme-aware. */
+export function getVirtualExtColor(): string {
+  return isDarkTheme() ? VIRTUAL_EXT_COLOR_DARK : VIRTUAL_EXT_COLOR_LIGHT;
 }
 
 /** Detect if VS Code is running a dark theme */

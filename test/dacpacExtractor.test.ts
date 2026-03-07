@@ -450,32 +450,27 @@ async function testConstraints() {
   // and CK_Employee_BirthDate on the BirthDate column
   const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
   assert(!!employee, 'HumanResources.Employee node found');
-  const empDdl = employee?.bodyHtml ?? '';
-  assert(empDdl.includes('FOREIGN KEYS'), 'Employee table design has FK section');
-  assert(empDdl.includes('FK_Employee_Person_BusinessEntityID'), 'Employee has FK_Employee_Person_BusinessEntityID');
-  assert(empDdl.includes('Person'), 'FK references Person table');
-  assert(empDdl.includes('badge-ck'), 'Employee table design has CK badge');
-  assert(empDdl.includes('CK_Employee_BirthDate') || empDdl.includes('CK'), 'BirthDate column has CK flag');
+  assert((employee?.fks?.length ?? 0) > 0, 'Employee has FK constraints');
+  assert(employee!.fks!.some(fk => fk.name === 'FK_Employee_Person_BusinessEntityID'), 'Employee has FK_Employee_Person_BusinessEntityID');
+  assert(employee!.fks!.some(fk => fk.refTable === 'Person'), 'FK references Person table');
+  assert(employee!.columns!.some(c => c.check !== undefined && c.check !== ''), 'Employee has CK flag on a column');
 
   // [Production].[Document] has a UQ constraint on rowguid
   const document = model.nodes.find(n => n.schema === 'Production' && n.name === 'Document');
   assert(!!document, 'Production.Document node found');
-  const docDdl = document?.bodyHtml ?? '';
-  assert(docDdl.includes('badge-uq'), 'Document table design has UQ badge');
-  assert(docDdl.includes('UQ'), 'Document rowguid column shows UQ flag');
+  assert(document!.columns!.some(c => c.unique !== undefined && c.unique !== ''), 'Document has UQ flag on a column');
 
-  // A table without FKs still shows the FK section with "(none)"
-  const noFkTable = model.nodes.find(n => n.type === 'table' && n.bodyHtml?.includes('FOREIGN KEYS') && n.bodyHtml?.includes('(none)'));
-  assert(!!noFkTable, 'Table with no FKs still shows FK section with "(none)"');
+  // A table without FKs has empty fks array (not undefined)
+  const noFkTable = model.nodes.find(n => n.type === 'table' && n.fks !== undefined && n.fks.length === 0);
+  assert(!!noFkTable, 'Table with no FKs has empty fks array');
 
-  // SDK-style dacpac: no constraints, but FK section should still appear (fks = [] not undefined)
+  // SDK-style dacpac: no constraints extracted (Fabric DW has no FK/UQ/CK)
   const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
   const fabricBuf = readFileSync(fabricPath);
   const fabricModel = await extractDacpac(fabricBuf.buffer as ArrayBuffer);
   const fabricTable = fabricModel.nodes.find(n => n.type === 'table');
   assert(!!fabricTable, 'SDK-style dacpac has at least one table');
-  assert(fabricTable?.bodyHtml?.includes('FOREIGN KEYS') ?? false, 'SDK-style table still shows FK section');
-  assert(fabricTable?.bodyHtml?.includes('(none)') ?? false, 'SDK-style table FK section shows "(none)"');
+  assert(fabricTable?.columns !== undefined, 'SDK-style table has columns');
 }
 
 // ─── Run all tests ──────────────────────────────────────────────────────────

@@ -51,14 +51,15 @@ function NeighborHoverList({
         {sortedSchemas.map(([schema, items]) => (
           <div key={schema}>
             <div className="text-[10px] uppercase tracking-wide ln-text pt-1.5 pb-0.5 first:pt-0 border-b ln-border">
-              {schema}
+              {schema || 'External'}
             </div>
             {items.map(({ id, entry }) => {
               const icon = TYPE_COLORS[entry.type]?.icon ?? '?';
               const hidden = !visibleNodeIds.has(id);
+              const extSuffix = entry.externalType === 'file' ? '?' : entry.externalType === 'db' ? '~' : '';
               return (
                 <div key={id} className={`py-0.5 flex items-center gap-1 whitespace-nowrap ${hidden ? 'ln-text-dim' : 'ln-text'}`}>
-                  <span className="opacity-60 select-none">{icon}</span>
+                  <span className="opacity-60 select-none">{icon}{extSuffix}</span>
                   <span className={`flex-1${hidden ? ' opacity-50' : ''}`}>{entry.name}</span>
                   {hidden && (
                     <span className="ml-2 opacity-50 text-[10px] select-none" title="Not visible in current graph view">⊘</span>
@@ -115,7 +116,7 @@ export const NodeInfoBar = memo(function NodeInfoBar({
   return (
     <div className="flex items-center gap-4 px-3 py-1.5 text-xs ln-infobar">
       <span className="font-medium ln-text truncate">
-        {icon} {entry.schema}.{entry.name}
+        {icon} {entry.schema ? `${entry.schema}.${entry.name}` : entry.name}
       </span>
       <span className="ln-text-dim">|</span>
       <NeighborHoverList

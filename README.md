@@ -28,7 +28,8 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 **Data Sources**
 - Import from SSDT and SDK-style `.dacpac` files
 - Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
-- External tables (PolyBase / data virtualization) surfaced as ⬡ nodes in database import
+- External tables (PolyBase / data virtualization) surfaced as ⬡ nodes
+- Virtual external references: OPENROWSET file paths, cross-database 3-part names, and CETAS targets
 - Quick reconnect to your last data source
 
 **Visualization**

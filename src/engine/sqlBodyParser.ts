@@ -6,6 +6,8 @@ export interface ParsedDependencies {
   sources: string[];
   targets: string[];
   execCalls: string[];
+  crossDbSources: string[];  // full 3-part "db.schema.object" (lowercase, brackets stripped)
+  crossDbTargets: string[];
 }
 
 export interface ParseRule {
@@ -247,6 +249,8 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   const sources = new Set<string>();
   const targets = new Set<string>();
   const execCalls = new Set<string>();
+  const crossDbSources = new Set<string>();
+  const crossDbTargets = new Set<string>();
 
   // Step 2: Extraction rules
   // UDF matches collected separately to filter false positives from INSERT INTO table(cols).
@@ -255,13 +259,23 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing') continue;
 
+    const regex = new RegExp(rule.pattern, rule.flags);
+
     const dest =
       rule.name === 'extract_udf_calls' ? udfSources :
       rule.category === 'source' ? sources :
       rule.category === 'target' ? targets :
       execCalls;
 
-    collectMatches(clean, new RegExp(rule.pattern, rule.flags), dest);
+    collectMatches(clean, regex, dest);
+
+    // Also collect 3-part+ names (cross-DB refs) that normalizeCaptured rejects.
+    // exec calls are not cross-DB targets — they reference SPs in the same DB.
+    if (rule.category === 'source' || rule.name === 'extract_udf_calls') {
+      collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbSources);
+    } else if (rule.category === 'target') {
+      collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbTargets);
+    }
   }
 
   // Add UDF sources that aren't already targets (a function can't be an INSERT/UPDATE target).
@@ -274,6 +288,8 @@ export function parseSqlBody(sql: string): ParsedDependencies {
     sources: Array.from(sources),
     targets: Array.from(targets),
     execCalls: Array.from(execCalls),
+    crossDbSources: Array.from(crossDbSources),
+    crossDbTargets: Array.from(crossDbTargets),
   };
 }
 
@@ -320,8 +336,8 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
  * - @tableVariable / #TempTable → rejected (never in catalog)
  * - Unqualified names (no dot) → rejected (require schema.object minimum)
  * - CTE aliases → also rejected here (CTEs are unqualified, caught by the line above)
- * - 3-part names db.schema.object → takes last 2 parts (schema.object)
- * - 4-part+ names server.db.schema.object → rejected (linked server refs)
+ * - 3-part+ names (db.schema.object, server.db.schema.object) → rejected for local lookup
+ *   (handled separately by collectCrossDbMatches for cross-DB virtual nodes)
  * - Lowercased for case-insensitive catalog lookup
  */
 function normalizeCaptured(raw: string): string | null {
@@ -331,9 +347,78 @@ function normalizeCaptured(raw: string): string | null {
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;  // vars, temp tables
   if (parts.length < 2) return null;                  // require schema.object minimum
-  if (parts.length >= 4) return null;                 // reject linked-server 4-part names
-  const schema = parts[parts.length - 2];
-  const obj    = parts[parts.length - 1];
+  if (parts.length >= 3) return null;                 // cross-DB / linked-server → collectCrossDbMatches
+  const schema = parts[0];
+  const obj    = parts[1];
   if (!schema || !obj) return null;
   return `[${schema}].[${obj}]`.toLowerCase();
+}
+
+/**
+ * Normalize a 3+ part name to cross-DB format: "db.schema.object" (lowercase).
+ * 4-part server.db.schema.object → strips server, keeps last 3 parts.
+ * Returns null for 1-2 part names, @vars, #temp tables.
+ */
+function normalizeCrossDb(raw: string): string | null {
+  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const first = parts[0] ?? '';
+  if (first.startsWith('@') || first.startsWith('#')) return null;
+  if (parts.length < 3) return null;
+  // 4-part: strip server, take last 3
+  const relevant = parts.length >= 4 ? parts.slice(-3) : parts;
+  return relevant.map(p => p.toLowerCase()).join('.');
+}
+
+/**
+ * Run the same YAML rules but collect 3+ part names (cross-DB references).
+ * These are separated from local refs because normalizeCaptured rejects them.
+ */
+function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>) {
+  regex.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let iterations = 0;
+
+  while ((match = regex.exec(sql)) !== null) {
+    if (match[0].length === 0) { regex.lastIndex++; continue; }
+    if (++iterations > MAX_MATCHES_PER_RULE) break;
+    const raw = match[1];
+    if (!raw) continue;
+    const normalized = normalizeCrossDb(raw);
+    if (normalized !== null) out.add(normalized);
+  }
+}
+
+// ─── External file/URL reference extraction (pre-cleansing pass) ────────────
+
+import type { ExternalRef } from './types';
+
+const EXTERNAL_REF_PATTERNS: Array<{ regex: RegExp; kind: ExternalRef['kind'] }> = [
+  { regex: /\bOPENROWSET\s*\(\s*BULK\s+['"]([^'"]+)['"]/gi, kind: 'openrowset' },
+  { regex: /\bCOPY\s+INTO\s+\S+\s+FROM\s+['"]([^'"]+)['"]/gi, kind: 'copy_from' },
+  { regex: /\bBULK\s+INSERT\s+\S+\s+FROM\s+['"]([^'"]+)['"]/gi, kind: 'bulk_from' },
+];
+
+/**
+ * Extract external file/URL references from RAW SQL (before cleansing).
+ * Must run before the cleansing pipeline which neutralizes string literals.
+ * Deduplicates by URL — same URL returns only once.
+ */
+export function extractExternalRefs(rawSql: string): ExternalRef[] {
+  const seen = new Set<string>();
+  const results: ExternalRef[] = [];
+
+  for (const { regex, kind } of EXTERNAL_REF_PATTERNS) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(rawSql)) !== null) {
+      if (match[0].length === 0) { regex.lastIndex++; continue; }
+      const url = match[1];
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        results.push({ url, kind });
+      }
+    }
+  }
+
+  return results;
 }

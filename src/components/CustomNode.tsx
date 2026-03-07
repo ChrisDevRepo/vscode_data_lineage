@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { TYPE_COLORS, TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
+import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import type { ObjectType } from '../engine/types';
 
 export type CustomNodeData = {
@@ -12,22 +12,32 @@ export type CustomNodeData = {
   outDegree: number;
   dimmed?: boolean;
   highlighted?: boolean | 'yellow';
+  externalType?: 'et' | 'file' | 'db';
+  externalUrl?: string;
+  externalDatabase?: string;
 };
 
 function CustomNodeComponent({ data }: { data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
-  const schemaColor = getSchemaColor(data.schema);
+  const isVirtual = data.externalType === 'file' || data.externalType === 'db';
+  const schemaColor = isVirtual ? getVirtualExtColor() : getSchemaColor(data.schema);
   const dimmed = data.dimmed === true;
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
   const isYellowHighlight = data.highlighted === 'yellow';
 
   const highlightColor = isYellowHighlight ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
 
-  const tooltipText = [
-    `${data.schema}.${data.label}`,
-    `Object Type: ${TYPE_LABELS[data.objectType]}`,
-    `In: ${data.inDegree} | Out: ${data.outDegree}`,
-  ].join('\n');
+  const tooltipLines = [];
+  if (data.externalType === 'file' && data.externalUrl) {
+    tooltipLines.push(data.externalUrl);
+  } else if (data.externalType === 'db' && data.externalDatabase) {
+    tooltipLines.push(`${data.externalDatabase}.${data.label}`);
+  } else {
+    tooltipLines.push(`${data.schema}.${data.label}`);
+  }
+  tooltipLines.push(`Object Type: ${TYPE_LABELS[data.objectType]}${isVirtual ? (data.externalType === 'file' ? ' (File Source)' : ' (Cross-Database)') : ''}`);
+  tooltipLines.push(`In: ${data.inDegree} | Out: ${data.outDegree}`);
+  const tooltipText = tooltipLines.join('\n');
 
   return (
     <div
@@ -81,7 +91,7 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
           className="text-[9px] overflow-hidden text-ellipsis whitespace-nowrap"
           style={{ color: 'var(--ln-fg-muted)', lineHeight: 1.1 }}
         >
-          {data.schema}
+          {data.externalType === 'file' ? 'File Source' : data.externalType === 'db' ? `↗ ${data.externalDatabase || 'Cross-DB'}` : data.schema}
         </div>
       </div>
 

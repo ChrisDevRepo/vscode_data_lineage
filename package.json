@@ -223,6 +223,17 @@
         }
       },
       {
+        "title": "External References",
+        "properties": {
+          "dataLineageViz.externalRefs.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Detect external references (OPENROWSET file paths, cross-database 3-part names). When disabled, no virtual external nodes are created. External Tables are unaffected.",
+            "scope": "resource"
+          }
+        }
+      },
+      {
         "title": "Layout",
         "properties": {
           "dataLineageViz.layout.direction": {

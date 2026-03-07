@@ -30,7 +30,7 @@ import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
-import { getSchemaColor } from '../utils/schemaColors';
+import { getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
@@ -59,6 +59,8 @@ interface GraphCanvasProps {
   onToggleIsolated: () => void;
   onToggleFocusSchema: (schema: string) => void;
   onToggleSchema?: (schema: string) => void;
+  onToggleExternalRefs?: () => void;
+  onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   availableSchemas?: string[];
   onRefresh: () => void;
   onRebuild?: () => void;
@@ -100,6 +102,8 @@ export function GraphCanvas({
   onToggleIsolated,
   onToggleFocusSchema,
   onToggleSchema,
+  onToggleExternalRefs,
+  onToggleExternalRefType,
   availableSchemas,
   onRefresh,
   onRebuild,
@@ -135,7 +139,11 @@ export function GraphCanvas({
   }, [fitView]);
 
   const minimapNodeColor = useCallback(
-    (node: FlowNode<CustomNodeData>) => getSchemaColor(String(node.data.schema)),
+    (node: FlowNode<CustomNodeData>) => {
+      const ext = node.data.externalType;
+      if (ext === 'file' || ext === 'db') return getVirtualExtColor();
+      return getSchemaColor(String(node.data.schema));
+    },
     []
   );
 
@@ -311,6 +319,10 @@ export function GraphCanvas({
         isAnalysisActive={!!analysisMode}
         analysisType={analysisMode?.type ?? null}
         onOpenAnalysis={onOpenAnalysis}
+        showExternalRefs={filter.showExternalRefs}
+        externalRefTypes={filter.externalRefTypes}
+        onToggleExternalRefs={onToggleExternalRefs}
+        onToggleExternalRefType={onToggleExternalRefType}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}
