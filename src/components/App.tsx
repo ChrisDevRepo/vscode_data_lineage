@@ -3,12 +3,14 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { ProjectSelector } from './ProjectSelector';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeContextMenu } from './NodeContextMenu';
+import { TableDetailPanel, type TableStatsState } from './TableDetailPanel';
 import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
+import type { DacpacModel, LineageNode, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
+import type { StatsMode } from '../engine/profilingEngine';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
@@ -159,11 +161,15 @@ export function App() {
     dacpacLoader.resetToStart();
     setView('selector');
     clearTrace();
+    setTableDetailNode(null);
+    setTableStatsState({ phase: 'idle' });
   }, [dacpacLoader.resetToStart, clearTrace]);
 
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
+  const [tableDetailNode, setTableDetailNode] = useState<LineageNode | null>(null);
+  const [tableStatsState, setTableStatsState] = useState<TableStatsState>({ phase: 'idle' });
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
   const prevHideIsolatedRef = useRef<boolean | null>(null);
@@ -177,9 +183,18 @@ export function App() {
         return toggled;
       });
 
-      // Update DDL viewer if already open (don't open on left-click)
       const node = model?.nodes.find(n => n.id === nodeId);
-      if (node) {
+      if (!node) return;
+
+      if (node.type === 'table' || node.type === 'external') {
+        // Toggle table detail panel: same node closes, different node switches
+        setTableDetailNode(prev => {
+          if (prev?.id === nodeId) return null;
+          setTableStatsState({ phase: 'idle' });
+          return node;
+        });
+      } else {
+        // Update DDL text editor if already open (don't open on left-click)
         vscodeApi.postMessage({
           type: 'update-ddl',
           objectName: node.name,
@@ -217,7 +232,14 @@ export function App() {
   const handleViewDdl = useCallback(
     (nodeId: string) => {
       const node = model?.nodes.find(n => n.id === nodeId);
-      if (node) {
+      if (!node) return;
+
+      if (node.type === 'table' || node.type === 'external') {
+        // Open the table detail sidebar
+        setTableDetailNode(node);
+        setTableStatsState({ phase: 'idle' });
+      } else {
+        // Open DDL text editor (SP/View/Function)
         vscodeApi.postMessage({
           type: 'show-ddl',
           objectName: node.name,
@@ -438,6 +460,20 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
 
+  // Handle stats results from extension host
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const msg = e.data;
+      if (msg?.type === 'table-stats-result') {
+        setTableStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
+      } else if (msg?.type === 'table-stats-error') {
+        setTableStatsState({ phase: 'error', message: msg.message });
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
   if (view === 'loading') {
     return null;
   }
@@ -445,6 +481,35 @@ export function App() {
   if (view === 'selector') {
     return <ProjectSelector config={config} loader={dacpacLoader} />;
   }
+
+  const isDbMode = dacpacLoader.lastSource?.type === 'database';
+  const statsEnabled = config.tableStatistics?.enabled ?? true;
+
+  const handleRequestStats = (mode: StatsMode) => {
+    if (!tableDetailNode) return;
+    setTableStatsState({ phase: 'loading', mode });
+    vscodeApi.postMessage({
+      type: 'table-stats-request',
+      schema: tableDetailNode.schema,
+      objectName: tableDetailNode.name,
+      mode,
+      columns: tableDetailNode.columns,
+    });
+  };
+
+  const tableDetailPanelElement = tableDetailNode ? (
+    <TableDetailPanel
+      schema={tableDetailNode.schema}
+      objectName={tableDetailNode.name}
+      objectType={tableDetailNode.type as 'table' | 'external'}
+      columns={tableDetailNode.columns ?? []}
+      statsState={tableStatsState}
+      onClose={() => { setTableDetailNode(null); setTableStatsState({ phase: 'idle' }); }}
+      onRequestStats={handleRequestStats}
+      isDbMode={isDbMode}
+      statsEnabled={statsEnabled}
+    />
+  ) : null;
 
   return (
     <ReactFlowProvider>
@@ -484,6 +549,8 @@ export function App() {
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}
+        tableDetailPanel={tableDetailPanelElement}
+        isPanelOpen={tableDetailNode !== null}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);

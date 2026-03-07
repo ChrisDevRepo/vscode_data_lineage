@@ -272,6 +272,7 @@ export interface LayoutConfig {
   edgeAnimation: boolean;
   highlightAnimation: boolean;
   minimapEnabled: boolean;
+  edgeStyle: EdgeStyle;
 }
 
 export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
@@ -301,7 +302,6 @@ export interface ExtensionConfig {
   excludePatterns: string[];
   maxNodes: number;
   layout: LayoutConfig;
-  edgeStyle: EdgeStyle;
   trace: TraceConfig;
   analysis: AnalysisConfig;
   tableStatistics: TableStatsConfig;
@@ -313,8 +313,7 @@ export const ENGINE_EDITION_FABRIC = 11;
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
   maxNodes: 750,
-  layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true },
-  edgeStyle: 'default' as const,
+  layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
   analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
   tableStatistics: { enabled: true, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
@@ -376,4 +375,6 @@ export type ExtensionMessage =
   | { type: 'db-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string; lastDeselectedSchemas?: string[] }
   | { type: 'db-model'; model: DacpacModel; config: ExtensionConfig; sourceName: string; lastDeselectedSchemas?: string[] }
   | { type: 'db-error'; message: string; phase: string }
-  | { type: 'db-cancelled' };
+  | { type: 'db-cancelled' }
+  | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
+  | { type: 'table-stats-error'; message: string };

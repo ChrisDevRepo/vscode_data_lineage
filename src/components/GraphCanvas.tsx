@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ReactFlow,
   Background,
@@ -76,6 +76,8 @@ interface GraphCanvasProps {
   onClearAnalysisGroup?: () => void;
   onApplyPath?: (targetNodeId: string) => boolean;
   isRebuilding?: boolean;
+  tableDetailPanel?: ReactNode;
+  isPanelOpen?: boolean;
 }
 
 export function GraphCanvas({
@@ -115,6 +117,8 @@ export function GraphCanvas({
   onClearAnalysisGroup,
   onApplyPath,
   isRebuilding = false,
+  tableDetailPanel,
+  isPanelOpen,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -186,6 +190,15 @@ export function GraphCanvas({
     }, AUTO_FIT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [flowNodes, fitView]);
+
+  // Re-fit when the table detail panel opens/closes (canvas width changes)
+  useEffect(() => {
+    if (isPanelOpen === undefined) return;
+    const timer = setTimeout(() => {
+      fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [isPanelOpen, fitView]);
 
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
@@ -355,7 +368,8 @@ export function GraphCanvas({
         />
       )}
 
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 flex flex-row overflow-hidden min-h-0">
+        <div className="flex-1 relative overflow-hidden min-w-0">
         {isRebuilding && (
           <div className="absolute inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--ln-bg)', opacity: 0.85 }}>
             <svg className="animate-spin h-8 w-8" style={{ color: 'var(--ln-fg-muted)' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -449,6 +463,8 @@ export function GraphCanvas({
         )}
 
         <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        </div>
+        {tableDetailPanel}
       </div>
 
       {infoBarNodeId && model && (
