@@ -267,7 +267,7 @@ function extractObjects(elements: XmlElement[]): ExtractedObject[] {
   return objects;
 }
 
-export function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
+function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   const deps: ExtractedDependency[] = [];
 
   for (const el of elements) {

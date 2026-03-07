@@ -293,7 +293,10 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
       continue;
     }
     // Safety limit: abort runaway regex (ReDoS or overly broad user patterns)
-    if (++iterations > MAX_MATCHES_PER_RULE) break;
+    if (++iterations > MAX_MATCHES_PER_RULE) {
+      console.warn(`[Parser] Regex iteration limit (${MAX_MATCHES_PER_RULE}) exceeded — possible ReDoS or overly broad pattern`);
+      break;
+    }
 
     const raw = match[1];
     if (!raw) continue;

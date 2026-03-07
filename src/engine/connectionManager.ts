@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
-import { wrapWithSchemaFilter, SCHEMA_FILTER_COLUMNS } from '../utils/sql';
+import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
@@ -13,6 +13,7 @@ export interface DmvQuery {
   name: string;
   description: string;
   sql: string;
+  phase?: number;  // 1 = Phase 1 (unfiltered), 2 = Phase 2 ({{SCHEMAS}} expanded)
 }
 
 export interface DmvQueriesConfig {
@@ -188,8 +189,8 @@ export async function executeDmvQueries(
 // ─── Schema-Filtered Query Execution (Phase 2) ─────────────────────────────
 
 /**
- * Execute Phase 2 DMV queries with schema filtering.
- * Wraps each query (except schema-preview) as a subquery with WHERE schema filter.
+ * Execute Phase 2 DMV queries with {{SCHEMAS}} placeholder expansion.
+ * Skips Phase 1 queries (phase === 1). Expands {{SCHEMAS}} in remaining queries.
  */
 export async function executeDmvQueriesFiltered(
   connectionUri: string,
@@ -200,18 +201,21 @@ export async function executeDmvQueriesFiltered(
 ): Promise<Map<string, SimpleExecuteResult>> {
   const sharing = await getConnectionSharingApi(outputChannel);
 
-  const phase2Queries = queries.filter(q => q.name !== 'schema-preview');
+  const phase2Queries = queries.filter(q => (q.phase ?? 2) !== 1);
+
+  // Validate: warn if any Phase 2 query is missing {{SCHEMAS}}
+  for (const q of phase2Queries) {
+    const warning = validateSchemaPlaceholder(q.name, q.sql, q.phase ?? 2);
+    if (warning) outputChannel.warn(`[DB] ${warning}`);
+  }
+
   const results = new Map<string, SimpleExecuteResult>();
   const total = phase2Queries.length;
 
   for (let i = 0; i < phase2Queries.length; i++) {
     const query = phase2Queries[i];
     const step = i + 1;
-    const schemaCol = SCHEMA_FILTER_COLUMNS[query.name];
-
-    const sql = schemaCol
-      ? wrapWithSchemaFilter(query.sql, schemaCol, schemas)
-      : query.sql;
+    const sql = expandSchemaPlaceholder(query.sql, schemas);
 
     onProgress?.(step, total, query.name);
     outputChannel.info(`[DB] Executing filtered query: ${query.name} (${step}/${total})...`);

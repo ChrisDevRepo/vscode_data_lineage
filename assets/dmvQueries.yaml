@@ -4,21 +4,23 @@ required_permission: "VIEW DEFINITION"
 platforms: [SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool]
 
 # Two-phase loading:
-#   Phase 1 — schema-preview + all-objects run first.
+#   Phase 1 — schema-preview + all-objects run first (unfiltered).
 #     schema-preview  : counts per schema for the schema-selection wizard.
 #     all-objects     : lightweight full object catalog (no DDL, no columns) used in
 #                       Phase 2 to classify SP dependencies as "cross-schema known" vs
 #                       "truly unresolved" and to display correct schema.name pairs in
 #                       the dependency details panel.
-#   Phase 2 — nodes/columns/dependencies run after the user selects schemas.
-#             Each Phase 2 query is wrapped as a subquery with a WHERE filter
-#             on the selected schemas, so only matching rows are returned.
+#   Phase 2 — nodes/columns/constraints/dependencies run after the user selects schemas.
+#             Each Phase 2 query uses {{SCHEMAS}} placeholders that expand to the
+#             selected schema list (e.g. 'dbo', 'Sales'). The SQL author controls
+#             where filtering happens — no SQL manipulation in TypeScript.
 #             DDL bodies (nodes) and column metadata are fetched for selected schemas
 #             only — keeping Phase 2 fast even in large warehouses.
 
 queries:
   # ── Phase 1: Schema Preview ────────────────────────────────────────────────
   - name: schema-preview
+    phase: 1
     description: "Phase 1: schema names with per-type object counts (runs first for schema selection wizard)"
     sql: |
       SELECT
@@ -41,6 +43,7 @@ queries:
 
   # ── Phase 1: Full Object Catalog ────────────────────────────────────────────
   - name: all-objects
+    phase: 1
     description: >
       Phase 1: complete object catalog across ALL schemas (no DDL, no columns).
       Runs alongside schema-preview to enable cross-schema reference resolution in Phase 2.
@@ -68,6 +71,7 @@ queries:
 
   # ── Phase 2: Full Extraction (filtered by selected schemas) ─────────────────
   - name: nodes
+    phase: 2
     description: "Phase 2: DDL definitions for selected schemas (combined via LEFT JOIN)"
     sql: |
       SELECT
@@ -81,7 +85,7 @@ queries:
       LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
       WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
-        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+        AND s.name IN ({{SCHEMAS}})
         AND NOT EXISTS (
           SELECT 1 FROM sys.extended_properties ep
           WHERE ep.major_id = o.object_id AND ep.class = 1
@@ -90,6 +94,7 @@ queries:
       ORDER BY s.name, o.name
 
   - name: columns
+    phase: 2
     description: "Phase 2: column metadata for table DDL preview (selected schemas)"
     sql: |
       SELECT
@@ -110,7 +115,7 @@ queries:
       INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
       WHERE o.type = 'U'
         AND o.is_ms_shipped = 0
-        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+        AND s.name IN ({{SCHEMAS}})
         AND NOT EXISTS (
           SELECT 1 FROM sys.extended_properties ep
           WHERE ep.major_id = o.object_id AND ep.class = 1
@@ -119,11 +124,12 @@ queries:
       ORDER BY s.name, o.name, c.column_id
 
   - name: constraints
+    phase: 2
     description: >
       Phase 2: table constraint metadata for FK, UQ, and CK annotations in the table design view.
       Returns one result set combining three constraint types via UNION ALL, distinguished by
-      constraint_type ('FK' | 'UQ' | 'CK'). Schema-filtered the same way as the columns query
-      (wrapWithSchemaFilter on schema_name = parent table's schema).
+      constraint_type ('FK' | 'UQ' | 'CK'). Schema filter ({{SCHEMAS}}) is applied inside
+      each CTE for early filtering.
 
       FK (foreign key): one row per FK column pair.
         sys.foreign_keys + sys.foreign_key_columns + sys.columns (parent + ref) + sys.objects/schemas.
@@ -147,11 +153,6 @@ queries:
       Required permission: VIEW DEFINITION (same as all other queries in this file).
     sql: |
       WITH fk_cols AS (
-        -- FK constraints: one row per FK column pair.
-        -- sys.foreign_keys:          constraint metadata (name, referential actions)
-        -- sys.foreign_key_columns:   per-column pair (parent + referenced column IDs)
-        -- sys.columns (c, rc):       resolve column IDs to names
-        -- sys.objects / sys.schemas: resolve object IDs to qualified schema.table names
         SELECT
           s.name   AS schema_name,
           t.name   AS table_name,
@@ -174,12 +175,9 @@ queries:
         INNER JOIN sys.schemas rs  ON rt.schema_id            = rs.schema_id
         INNER JOIN sys.columns rc  ON fkc.referenced_object_id = rc.object_id
                                   AND fkc.referenced_column_id = rc.column_id
+        WHERE s.name IN ({{SCHEMAS}})
       ),
       uq_cols AS (
-        -- Unique constraints (sys.key_constraints WHERE type = 'UQ').
-        -- Primary keys (type = 'PK') are intentionally excluded.
-        -- unique_index_id links to sys.index_columns for this specific constraint's index.
-        -- Composite UQ: multiple rows share constraint_name; column_ordinal = key position.
         SELECT
           s.name  AS schema_name,
           t.name  AS table_name,
@@ -200,13 +198,9 @@ queries:
         INNER JOIN sys.columns c   ON ic.object_id        = c.object_id
                                   AND ic.column_id        = c.column_id
         WHERE kc.type = 'UQ'
+          AND s.name IN ({{SCHEMAS}})
       ),
       ck_cols AS (
-        -- Column-level check constraints only (parent_column_id != 0).
-        -- SQL Server note: most CHECK constraints are TABLE-LEVEL (parent_column_id = 0),
-        -- even when they only reference a single column. Table-level checks are excluded here
-        -- because they cannot be attributed to a specific column in the design view.
-        -- Column-level checks arise when CHECK is written inline in a column definition.
         SELECT
           s.name  AS schema_name,
           t.name  AS table_name,
@@ -224,6 +218,7 @@ queries:
         INNER JOIN sys.columns c ON cc.parent_object_id = c.object_id
                                 AND cc.parent_column_id = c.column_id
         WHERE cc.parent_column_id != 0
+          AND s.name IN ({{SCHEMAS}})
       )
       SELECT * FROM fk_cols
       UNION ALL SELECT * FROM uq_cols
@@ -231,6 +226,7 @@ queries:
       ORDER BY schema_name, table_name, constraint_type, constraint_name, column_ordinal
 
   - name: dependencies
+    phase: 2
     description: >
       Phase 2: object-level SQL expression dependencies (referencing → referenced).
       Filters to referenced_schema_name IS NOT NULL — only rows where SQL Server
@@ -239,6 +235,8 @@ queries:
       referenced_schema_name = NULL and are excluded: SQL Server cannot guarantee
       which schema would be used at runtime (the default schema is caller-configurable).
       Only schema-qualified names (schema.object) are supported by this tool.
+      Uses {{SCHEMAS}} with OR to capture both outbound deps (referencing schema selected)
+      and inbound cross-schema deps (referenced schema selected).
     sql: |
       SELECT
         s1.name AS referencing_schema,
@@ -251,5 +249,5 @@ queries:
       WHERE d.referenced_schema_name IS NOT NULL
         AND d.referenced_entity_name IS NOT NULL
         AND o1.is_ms_shipped = 0
-        AND s1.name NOT IN ('sys','INFORMATION_SCHEMA')
+        AND (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))
       ORDER BY referencing_schema, referencing_name

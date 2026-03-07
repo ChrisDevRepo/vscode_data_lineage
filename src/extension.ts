@@ -852,12 +852,10 @@ async function runDbPhase1(
     return;
   }
 
-  // Find schema-preview query; fall back to full extraction if missing
+  // schema-preview is required — no silent fallback
   const previewQuery = queries.find(q => q.name === 'schema-preview');
   if (!previewQuery) {
-    outputChannel.warn('[DB] No schema-preview query found — falling back to full extraction');
-    await runDbFullExtraction(panel, context, connectionUri, connectionInfo, queries, progress, token);
-    return;
+    throw new Error('YAML is missing required "schema-preview" query. Add a query with name: schema-preview and phase: 1.');
   }
 
   progress.report({ message: 'Querying schema overview...' });
@@ -991,66 +989,6 @@ async function runDbPhase2(
     model,
     config,
     sourceName,
-  });
-}
-
-/**
- * Fallback: full extraction in one shot (used when schema-preview query is missing
- * from custom YAML).
- */
-async function runDbFullExtraction(
-  panel: vscode.WebviewPanel,
-  context: vscode.ExtensionContext,
-  connectionUri: string,
-  connectionInfo: IConnectionInfo,
-  queries: import('./engine/connectionManager').DmvQuery[],
-  progress: vscode.Progress<{ message?: string; increment?: number }>,
-  token: vscode.CancellationToken,
-): Promise<void> {
-  const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
-  const dataQueries = queries.filter(q => q.name !== 'schema-preview');
-
-  const resultMap = await executeDmvQueries(
-    connectionUri,
-    dataQueries,
-    outputChannel,
-    (step, total, label) => {
-      progress.report({ message: `Query ${step}/${total}: ${label}`, increment: Math.round(100 / total) });
-      panel.webview.postMessage({ type: 'db-progress', step, total, label });
-    },
-  );
-
-  if (token.isCancellationRequested) {
-    panel.webview.postMessage({ type: 'db-cancelled' });
-    return;
-  }
-
-  for (const [name, queryResult] of resultMap) {
-    const missing = validateQueryResult(name, queryResult);
-    if (missing.length > 0) {
-      throw new Error(`Query '${name}' is missing required columns: ${missing.join(', ')}.`);
-    }
-  }
-
-  const dmvResults: DmvResults = {
-    nodes: resultMap.get('nodes')!,
-    columns: resultMap.get('columns')!,
-    dependencies: resultMap.get('dependencies')!,
-    constraints: resultMap.get('constraints'),
-  };
-
-  progress.report({ message: 'Building model...' });
-  const model = buildModelFromDmv(dmvResults);
-
-  await persistDbSourceState(context, sourceName, connectionInfo);
-  const config = await readExtensionConfig();
-  const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
-  panel.webview.postMessage({
-    type: 'db-model',
-    model,
-    config,
-    sourceName,
-    lastDeselectedSchemas,
   });
 }
 

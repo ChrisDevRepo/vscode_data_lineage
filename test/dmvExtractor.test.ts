@@ -13,7 +13,7 @@ import type { DmvResults } from '../src/engine/dmvExtractor';
 import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../src/types/mssql';
 import { loadRules } from '../src/engine/sqlBodyParser';
 import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
-import { wrapWithSchemaFilter } from '../src/utils/sql';
+import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../src/utils/sql';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -714,51 +714,117 @@ testConstraintMapsEnrichColumns();
 testConstraintsMissingResultGraceful();
 testValidateQueryResultConstraints();
 
-// ─── wrapWithSchemaFilter ─────────────────────────────────────────────────────
+// ─── expandSchemaPlaceholder ──────────────────────────────────────────────────
 
-function testWrapWithSchemaFilter() {
-  console.log('\n── wrapWithSchemaFilter ──');
+function testExpandSchemaPlaceholder() {
+  console.log('\n── expandSchemaPlaceholder ──');
 
-  // Simple query (no CTE)
-  const simpleSql = `SELECT s.name, o.name FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nORDER BY s.name`;
-  const wrapped = wrapWithSchemaFilter(simpleSql, 'schema_name', ['dbo', 'Sales']);
-  assert(wrapped.includes('SELECT * FROM ('), 'Simple: wraps as subquery');
-  assert(wrapped.includes("WHERE _sub.schema_name IN ('dbo', 'Sales')"), 'Simple: has WHERE filter');
-  assert(!wrapped.includes('ORDER BY s.name'), 'Simple: ORDER BY stripped');
+  // Basic expansion
+  const sql = `SELECT * FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nWHERE s.name IN ({{SCHEMAS}})`;
+  const expanded = expandSchemaPlaceholder(sql, ['dbo', 'Sales']);
+  assert(expanded.includes("s.name IN ('dbo', 'Sales')"), 'Basic: schema list expanded');
+  assert(!expanded.includes('{{SCHEMAS}}'), 'Basic: no placeholder remnants');
 
-  // CTE query (constraints-style)
-  const cteSql = `WITH fk AS (\n  SELECT s.name AS schema_name, t.name\n  FROM sys.foreign_keys fk\n  INNER JOIN sys.objects t ON fk.parent_object_id = t.object_id\n  INNER JOIN sys.schemas s ON t.schema_id = s.schema_id\n)\nSELECT * FROM fk\nORDER BY schema_name`;
-  const wrappedCte = wrapWithSchemaFilter(cteSql, 'schema_name', ['HumanResources']);
-  assert(wrappedCte.startsWith('WITH fk AS'), 'CTE: keeps WITH prefix outside subquery');
-  assert(wrappedCte.includes('SELECT * FROM (\nSELECT * FROM fk\n) AS _sub'), 'CTE: wraps final SELECT as subquery');
-  assert(wrappedCte.includes("WHERE _sub.schema_name IN ('HumanResources')"), 'CTE: has WHERE filter');
-  assert(!wrappedCte.includes('ORDER BY schema_name'), 'CTE: ORDER BY stripped');
+  // Multiple placeholders (dependencies-style OR)
+  const depsSql = `SELECT * FROM sys.sql_expression_dependencies d\nWHERE (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))`;
+  const expandedDeps = expandSchemaPlaceholder(depsSql, ['dbo']);
+  assert(expandedDeps.includes("s1.name IN ('dbo')"), 'Multi: first placeholder expanded');
+  assert(expandedDeps.includes("d.referenced_schema_name IN ('dbo')"), 'Multi: second placeholder expanded');
+  assert(!expandedDeps.includes('{{SCHEMAS}}'), 'Multi: no placeholder remnants');
 
-  // CTE must NOT be inside a subquery (the old broken pattern)
-  const afterFromParen = wrappedCte.indexOf('SELECT * FROM (');
-  const withinSubquery = wrappedCte.indexOf('WITH', afterFromParen);
-  assert(withinSubquery === -1 || withinSubquery < afterFromParen, 'CTE: no WITH inside subquery parens');
-
-  // Multi-CTE with UNION ALL (real constraints query pattern)
-  const multiCteSql = `WITH fk AS (\n  SELECT s.name AS schema_name FROM sys.foreign_keys fk\n  INNER JOIN sys.schemas s ON s.schema_id = fk.schema_id\n),\nuq AS (\n  SELECT s.name AS schema_name FROM sys.key_constraints kc\n  INNER JOIN sys.schemas s ON s.schema_id = kc.schema_id\n)\nSELECT * FROM fk\nUNION ALL SELECT * FROM uq\nORDER BY schema_name`;
-  const wrappedMulti = wrapWithSchemaFilter(multiCteSql, 'schema_name', ['dbo']);
-  assert(wrappedMulti.startsWith('WITH fk AS'), 'Multi-CTE: WITH prefix preserved');
-  assert(wrappedMulti.includes('SELECT * FROM (\nSELECT * FROM fk\nUNION ALL SELECT * FROM uq\n) AS _sub'), 'Multi-CTE: entire UNION ALL wrapped as subquery');
-  assert(wrappedMulti.includes("WHERE _sub.schema_name IN ('dbo')"), 'Multi-CTE: WHERE filter applied');
-  assert(!wrappedMulti.includes('ORDER BY schema_name'), 'Multi-CTE: ORDER BY stripped');
-
-  // Dependencies query (OR filter)
-  const depsSql = `SELECT s1.name AS referencing_schema, d.referenced_schema_name AS referenced_schema\nFROM sys.sql_expression_dependencies d\nORDER BY referencing_schema`;
-  const wrappedDeps = wrapWithSchemaFilter(depsSql, 'referencing_schema', ['dbo']);
-  assert(wrappedDeps.includes('_sub.referencing_schema IN'), 'Deps: OR filter — referencing_schema');
-  assert(wrappedDeps.includes('_sub.referenced_schema  IN'), 'Deps: OR filter — referenced_schema');
+  // No placeholder — returns SQL unchanged
+  const noPlaceholder = `SELECT * FROM sys.objects`;
+  const unchanged = expandSchemaPlaceholder(noPlaceholder, ['dbo']);
+  assert(unchanged === noPlaceholder, 'No placeholder: SQL unchanged');
 
   // SQL injection: single quote in schema name
-  const injected = wrapWithSchemaFilter(simpleSql, 'schema_name', ["O'Brien"]);
+  const injected = expandSchemaPlaceholder(sql, ["O'Brien"]);
   assert(injected.includes("'O''Brien'"), 'SQL injection: single quote escaped');
+
+  // Empty schema list
+  const empty = expandSchemaPlaceholder(sql, []);
+  assert(empty.includes('s.name IN ()'), 'Empty: produces IN ()');
 }
 
-testWrapWithSchemaFilter();
+function testValidateSchemaPlaceholder() {
+  console.log('\n── validateSchemaPlaceholder ──');
+
+  // Phase 2 without placeholder → warning
+  const warn = validateSchemaPlaceholder('test-query', 'SELECT 1', 2);
+  assert(warn !== undefined, 'Phase 2 without placeholder: returns warning');
+  assert(warn!.includes('test-query'), 'Warning includes query name');
+
+  // Phase 2 with placeholder → no warning
+  const ok = validateSchemaPlaceholder('test-query', 'WHERE s.name IN ({{SCHEMAS}})', 2);
+  assert(ok === undefined, 'Phase 2 with placeholder: no warning');
+
+  // Phase 1 without placeholder → no warning (expected)
+  const phase1 = validateSchemaPlaceholder('schema-preview', 'SELECT 1', 1);
+  assert(phase1 === undefined, 'Phase 1 without placeholder: no warning');
+}
+
+function testYamlQueriesHavePlaceholder() {
+  console.log('\n── YAML queries: Phase 2 placeholder validation ──');
+
+  // Load the ACTUAL dmvQueries.yaml and validate all Phase 2 queries have {{SCHEMAS}}
+  const yamlContent = readFileSync(resolve(__dirname, '../assets/dmvQueries.yaml'), 'utf-8');
+  const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
+
+  const phase2 = config.queries.filter(q => (q.phase ?? 2) !== 1);
+  assert(phase2.length >= 4, `At least 4 Phase 2 queries (got ${phase2.length})`);
+
+  for (const q of phase2) {
+    assert(q.sql.includes('{{SCHEMAS}}'), `YAML Phase 2 query '${q.name}' has {{SCHEMAS}} placeholder`);
+
+    // Expand and verify no remnants
+    const expanded = expandSchemaPlaceholder(q.sql, ['dbo', 'Sales']);
+    assert(!expanded.includes('{{SCHEMAS}}'), `YAML '${q.name}': no placeholder remnants after expansion`);
+  }
+
+  // Phase 1 queries should NOT have placeholder
+  const phase1 = config.queries.filter(q => q.phase === 1);
+  assert(phase1.length >= 2, `At least 2 Phase 1 queries (got ${phase1.length})`);
+  for (const q of phase1) {
+    assert(!q.sql.includes('{{SCHEMAS}}'), `YAML Phase 1 query '${q.name}' has no placeholder`);
+  }
+}
+
+function testExpandedSqlStructure() {
+  console.log('\n── Expanded SQL structural validation ──');
+
+  const yamlContent = readFileSync(resolve(__dirname, '../assets/dmvQueries.yaml'), 'utf-8');
+  const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
+  const phase2 = config.queries.filter(q => (q.phase ?? 2) !== 1);
+
+  for (const q of phase2) {
+    const expanded = expandSchemaPlaceholder(q.sql, ['dbo', 'Sales']);
+
+    // No literal {{ or }} remnants (catches partial expansion bugs)
+    assert(!expanded.includes('{{'), `'${q.name}': no {{ remnants`);
+    assert(!expanded.includes('}}'), `'${q.name}': no }} remnants`);
+
+    // Balanced parentheses
+    let depth = 0;
+    let balanced = true;
+    for (const ch of expanded) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (depth < 0) { balanced = false; break; }
+    }
+    assert(balanced && depth === 0, `'${q.name}': balanced parentheses (depth=${depth})`);
+
+    // CTE queries must start with WITH and end with a SELECT
+    if (/^\s*WITH\s+/i.test(q.sql)) {
+      assert(/^\s*WITH\s+/i.test(expanded), `'${q.name}': CTE structure preserved after expansion`);
+      assert(/\bSELECT\b/i.test(expanded), `'${q.name}': CTE has final SELECT`);
+    }
+  }
+}
+
+testExpandSchemaPlaceholder();
+testValidateSchemaPlaceholder();
+testYamlQueriesHavePlaceholder();
+testExpandedSqlStructure();
 
 console.log(`\n═══ DMV Extractor: ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);
