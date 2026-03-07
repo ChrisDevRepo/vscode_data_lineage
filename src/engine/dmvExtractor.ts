@@ -161,7 +161,7 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
       const refSchema = cellValue(row, colIdx, 'ref_schema');
       const refTable  = cellValue(row, colIdx, 'ref_table');
       const refCol    = cellValue(row, colIdx, 'ref_column');
-      const onDelete  = cellValue(row, colIdx, 'on_delete');
+      const onDelete  = cellValue(row, colIdx, 'on_delete').replace(/_/g, ' ');
 
       const fkKey = `${tableKey}.${cname}`.toLowerCase();
       let fk = fkPartial.get(fkKey);

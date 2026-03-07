@@ -140,7 +140,7 @@ export interface ColumnDef {
   check?: string;   // CK constraint name for column-level check; display shows "CK" flag
 }
 
-/** Foreign key constraint metadata — attached to table ExtractedObject (DMV path). */
+/** Foreign key constraint metadata — attached to table ExtractedObject (dacpac + DMV paths). */
 export interface ForeignKeyInfo {
   name: string;          // constraint name (display casing)
   columns: string[];     // parent column names (multi-col FK in column_ordinal order)
@@ -212,7 +212,7 @@ export interface ExtractedObject {
   type: ObjectType;
   bodyScript?: string;
   columns?: ColumnDef[];          // table column metadata (for table design view)
-  fks?: ForeignKeyInfo[];         // FK constraints (DMV path only; undefined on dacpac path)
+  fks?: ForeignKeyInfo[];         // FK constraints (dacpac + DMV paths; undefined only when not extracted)
   externalKind?: 'et' | 'openrowset' | 'cross_db'; // set when type === 'external'
 }
 

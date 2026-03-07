@@ -389,9 +389,12 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       const tableKey = normalizeName(tableRef);
       const constraintName = parseName(el['@_Name'] ?? '').objectName;
       if (!constraintName) continue;
-      // Columns from CheckExpressionDependencies refs (3-part: [schema].[table].[col])
-      for (const ref of getRelRefs(el, 'CheckExpressionDependencies')) {
-        const colName = stripBrackets(ref.split('.').pop() ?? '');
+      // Only flag single-column CKs — matches DMV path (parent_column_id != 0).
+      // Multi-column CKs (e.g. DueDate >= OrderDate) list >1 column ref; table-level,
+      // so we don't flag any column (same as DB import which excludes parent_column_id=0).
+      const ckColRefs = getRelRefs(el, 'CheckExpressionDependencies');
+      if (ckColRefs.length === 1) {
+        const colName = stripBrackets(ckColRefs[0].split('.').pop() ?? '');
         if (colName) ckColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
       }
 

@@ -3,8 +3,8 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all tests (374 unit + 54 tsql-complex)
-npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (49 tests)
+npm test                                       # Run all tests (423 unit + 54 tsql-complex)
+npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (62 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (51 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (142 tests)
 npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (59 tests)
@@ -17,7 +17,7 @@ npm run test:integration                       # VS Code webview integration tes
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `dacpacExtractor.test.ts` | 49 | Dacpac extraction, filtering, edge integrity, Fabric SDK, type-aware direction, CVE security, error handling |
+| `dacpacExtractor.test.ts` | 62 | Dacpac extraction, filtering, edge integrity, Fabric SDK, type-aware direction, CVE security, error handling, constraint extraction (UQ/CK/FK) |
 | `graphBuilder.test.ts` | 51 | Graph construction, dagre layout, BFS trace, cross-connection exclusion, co-writer filter |
 | `parser-edge-cases.test.ts` | 142 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
@@ -40,6 +40,7 @@ Tests the dacpac import pipeline end-to-end, covering both classic (Azure SQL) a
 | Type-Aware Direction | XML object type matches regex direction for all overlap deps (both dacpacs) |
 | Security: CVE-2026-25128 | Out-of-range numeric entity handling in fast-xml-parser v5 |
 | Import Error Handling | Non-ZIP, empty file, missing model.xml, empty dacpac warnings |
+| Constraints | UQ/CK column flags and FK section in table design view; SDK-style dacpac shows "(none)" |
 
 ## Graph Builder Tests (`graphBuilder.test.ts`)
 
