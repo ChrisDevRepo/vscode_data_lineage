@@ -15,6 +15,7 @@ import {
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
+  ForeignKeyInfo,
   buildColumnDef,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
@@ -224,6 +225,7 @@ function parseElements(xml: string): XmlElement[] {
 function extractObjects(elements: XmlElement[]): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
   const seen = new Set<string>();
+  const constraintMaps = extractConstraintMaps(elements);
 
   for (const el of elements) {
     const type = el['@_Type'];
@@ -238,13 +240,30 @@ function extractObjects(elements: XmlElement[]): ExtractedObject[] {
     const { schema, objectName } = parseName(name);
     const bodyScript = getBodyScript(el, type, schema, objectName);
 
-    // For tables without bodyScript: extract column metadata
+    // For tables (and external tables) without bodyScript: extract column metadata + constraints
     let columns: ColumnDef[] | undefined;
-    if (!bodyScript && type === 'SqlTable') {
+    let fks: ForeignKeyInfo[] | undefined;
+    if (!bodyScript && (type === 'SqlTable' || type === 'SqlExternalTable')) {
       columns = extractColumnsFromXml(el);
+      if (columns) {
+        const tableKey = normalizeName(name);
+        for (const col of columns) {
+          const ck = `${tableKey}.${col.name.toLowerCase()}`;
+          col.unique = constraintMaps.uqColMap.get(ck) ?? '';
+          col.check  = constraintMaps.ckColMap.get(ck) ?? '';
+        }
+        fks = constraintMaps.fkMap.get(tableKey) ?? [];
+      }
     }
 
-    objects.push({ fullName: name, type: objType, bodyScript, columns });
+    objects.push({
+      fullName: name,
+      type: objType,
+      bodyScript,
+      columns,
+      fks,
+      ...(type === 'SqlExternalTable' && { externalKind: 'et' as const }),
+    });
   }
 
   return objects;
@@ -317,6 +336,87 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
   }
 
   return cols;
+}
+
+// ─── XML Constraint Extraction ──────────────────────────────────────────────
+
+type ConstraintMaps = {
+  uqColMap: Map<string, string>;       // normalizeName(table).colname → UQ constraint short name
+  ckColMap: Map<string, string>;       // normalizeName(table).colname → CK constraint short name
+  fkMap:    Map<string, ForeignKeyInfo[]>; // normalizeName(table) → FK list
+};
+
+/** Get all @_Name values from a named Relationship's Entry.References. */
+function getRelRefs(el: XmlElement, relName: string): string[] {
+  const rel = asArray(el.Relationship).find(r => r['@_Name'] === relName);
+  if (!rel) return [];
+  return asArray(rel.Entry).flatMap(e =>
+    asArray(e.References as XmlReference | XmlReference[] | undefined).map(r => r['@_Name'] ?? '').filter(Boolean)
+  );
+}
+
+const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NULL', '3': 'SET DEFAULT' };
+
+function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
+  const uqColMap = new Map<string, string>();
+  const ckColMap = new Map<string, string>();
+  const fkMap    = new Map<string, ForeignKeyInfo[]>();
+
+  for (const el of elements) {
+    const type = el['@_Type'];
+
+    if (type === 'SqlUniqueConstraint') {
+      const tableRef = getRelRefs(el, 'DefiningTable')[0];
+      if (!tableRef) continue;
+      const tableKey = normalizeName(tableRef);
+      // Constraint name lives in the SqlInlineConstraintAnnotation
+      const ann = asArray(el.Annotation).find(a => a['@_Type'] === 'SqlInlineConstraintAnnotation');
+      const constraintName = ann ? parseName(ann['@_Name'] ?? '').objectName : 'UQ';
+      // Columns: ColumnSpecifications → SqlIndexedColumnSpecification → Column ref
+      const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
+      for (const entry of asArray(colSpecRel?.Entry)) {
+        for (const specEl of asArray(entry.Element)) {
+          const colRef = getRelRefs(specEl as XmlElement, 'Column')[0];
+          if (!colRef) continue;
+          const colName = stripBrackets(colRef.split('.').pop() ?? '');
+          uqColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
+        }
+      }
+
+    } else if (type === 'SqlCheckConstraint') {
+      const tableRef = getRelRefs(el, 'DefiningTable')[0];
+      if (!tableRef) continue;
+      const tableKey = normalizeName(tableRef);
+      const constraintName = parseName(el['@_Name'] ?? '').objectName;
+      if (!constraintName) continue;
+      // Columns from CheckExpressionDependencies refs (3-part: [schema].[table].[col])
+      for (const ref of getRelRefs(el, 'CheckExpressionDependencies')) {
+        const colName = stripBrackets(ref.split('.').pop() ?? '');
+        if (colName) ckColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
+      }
+
+    } else if (type === 'SqlForeignKeyConstraint') {
+      const tableRef = getRelRefs(el, 'DefiningTable')[0];
+      if (!tableRef) continue;
+      const tableKey = normalizeName(tableRef);
+      const constraintName = parseName(el['@_Name'] ?? '').objectName;
+      if (!constraintName) continue;
+      const foreignTableRef = getRelRefs(el, 'ForeignTable')[0];
+      if (!foreignTableRef) continue;
+      const { schema: refSchema, objectName: refTable } = parseName(foreignTableRef);
+      // Parent and referenced columns — refs are 3-part [schema].[table].[col]
+      const parentCols  = getRelRefs(el, 'Columns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
+      const refColsList = getRelRefs(el, 'ForeignColumns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
+      if (parentCols.length === 0) continue;
+      const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'DeleteAction')?.['@_Value'] ?? '';
+      const onDelete = FK_DELETE_ACTION[deleteVal] ?? 'NO ACTION';
+      const list = fkMap.get(tableKey) ?? [];
+      list.push({ name: constraintName, columns: parentCols, refSchema, refTable, refColumns: refColsList, onDelete });
+      fkMap.set(tableKey, list);
+    }
+  }
+
+  return { uqColMap, ckColMap, fkMap };
 }
 
 // ─── XML Body Dependencies ──────────────────────────────────────────────────

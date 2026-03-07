@@ -324,9 +324,9 @@ function buildNodesAndEdges(
     if (nodeIds.has(id)) continue;
     nodeIds.add(id);
 
-    // For tables without bodyScript: render design view from column metadata
+    // For tables (and external tables) without bodyScript: render design view from column metadata
     let bodyScript = obj.bodyScript;
-    if (!bodyScript && obj.type === 'table' && obj.columns && obj.columns.length > 0) {
+    if (!bodyScript && (obj.type === 'table' || obj.type === 'external') && obj.columns && obj.columns.length > 0) {
       bodyScript = buildTableDesignAscii(obj.columns, schema, objectName, obj.fks);
     }
 

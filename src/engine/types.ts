@@ -89,6 +89,7 @@ export interface XmlElement {
 
 export interface XmlAnnotation {
   '@_Type': string;
+  '@_Name'?: string;
   Property?: XmlProperty | XmlProperty[];
 }
 
@@ -123,7 +124,7 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
   SqlInlineTableValuedFunction: 'function',
   SqlMultiStatementTableValuedFunction: 'function',
   SqlTableValuedFunction: 'function',
-  // 'SqlExternalTable': 'external',  // dacpac v2 — element name TBC, needs test dacpac with ET
+  SqlExternalTable: 'external',  // PolyBase / data virtualization ET in dacpac XML
 };
 
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));

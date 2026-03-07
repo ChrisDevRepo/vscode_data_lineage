@@ -228,10 +228,10 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     if (seen.has(id)) continue;
     seen.add(id);
 
-    // For tables without body: attach column metadata (+ UQ/CK enrichment) for design view
+    // For tables (and external tables) without body: attach column metadata for design view
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
-    if (!bodyScript && objType === 'table') {
+    if (!bodyScript && (objType === 'table' || objType === 'external')) {
       const tableKey = `${schemaName}.${objectName}`.toLowerCase();
       columns = tableColumns.get(tableKey);
 

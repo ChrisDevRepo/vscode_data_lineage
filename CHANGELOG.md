@@ -7,7 +7,7 @@
 
 ### Added
 - **Table constraint info** — Table design view (DB import) shows UQ/CK and FK.
-- **External Table nodes** — External tables in DB import.
+- **External Table nodes** — External tables shown as hexagon nodes (⬡) with column design view.
 - **View/function parser supplement** — body parser runs as fallback for views and functions; dependencies found beyond MS metadata are added to the graph.
 - **Schema-grouped neighbor details** — In/Out neighbor list groups by schema, sorted alphabetically; ⊘ marks objects not visible in the current view.
 
