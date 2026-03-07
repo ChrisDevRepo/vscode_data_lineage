@@ -215,6 +215,27 @@ export function wrapWithSchemaFilter(
   // Escape single quotes in schema names for SQL injection safety
   const schemaList = schemas.map(s => `'${s.replace(/'/g, "''")}'`).join(', ');
 
+  // CTE queries (WITH ... AS) cannot be wrapped in a subquery.
+  // Instead, wrap the final SELECT inside the CTE as a subquery.
+  const hasCte = /^\s*;?\s*WITH\s+/i.test(stripped);
+
+  if (hasCte) {
+    // Find the final SELECT (after all CTEs) and wrap it
+    const lastSelectIdx = stripped.lastIndexOf('SELECT');
+    if (lastSelectIdx < 0) return stripped; // safety: shouldn't happen
+    const ctePart = stripped.slice(0, lastSelectIdx);
+    const selectPart = stripped.slice(lastSelectIdx);
+
+    if (schemaColumn === 'referencing_schema') {
+      return (
+        `${ctePart}SELECT * FROM (\n${selectPart}\n) AS _sub\n` +
+        `WHERE _sub.referencing_schema IN (${schemaList})\n` +
+        `   OR _sub.referenced_schema  IN (${schemaList})`
+      );
+    }
+    return `${ctePart}SELECT * FROM (\n${selectPart}\n) AS _sub\nWHERE _sub.${schemaColumn} IN (${schemaList})`;
+  }
+
   if (schemaColumn === 'referencing_schema') {
     // dependencies query: include rows where EITHER the referencing OR the referenced
     // object belongs to a selected schema so no cross-schema inbound edge is missed.

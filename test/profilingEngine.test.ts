@@ -242,6 +242,119 @@ test('bracket quoting special characters', () => {
   assert(sql.includes('[My Table]'), 'Bracket-quoted space in table name');
 });
 
+test('sampleThreshold boundary: rowCount = threshold → no sampling', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 100000, 100000, 10000);
+  assert(!sql.includes('TABLESAMPLE'), 'No TABLESAMPLE when rowCount = threshold');
+  assert(!sql.includes('TOP'), 'No TOP when rowCount = threshold');
+});
+
+test('sampleThreshold boundary: rowCount = threshold+1 → sampling', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 100001, 100000, 10000);
+  assert(sql.includes('TABLESAMPLE'), 'TABLESAMPLE when rowCount > threshold');
+});
+
+test('sampleThreshold = 0 → always sample (any row count)', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 10, 0, 5);
+  assert(sql.includes('TABLESAMPLE'), 'TABLESAMPLE even for 10 rows when threshold=0');
+});
+
+test('sampleThreshold negative → never sample', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 10000000, -1, 10000);
+  assert(!sql.includes('TABLESAMPLE'), 'No TABLESAMPLE when threshold < 0');
+  assert(!sql.includes('TOP'), 'No TOP when threshold < 0');
+});
+
+test('TABLESAMPLE percentage: sampleSize=10000, rowCount=1M → 1%', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 1000000, 100000, 10000);
+  assert(sql.includes('TABLESAMPLE(1 PERCENT)'), `Expected 1%, got: ${sql}`);
+});
+
+test('TABLESAMPLE percentage: sampleSize=500000, rowCount=1M → 50%', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 1000000, 100000, 500000);
+  assert(sql.includes('TABLESAMPLE(50 PERCENT)'), `Expected 50%, got: ${sql}`);
+});
+
+test('TABLESAMPLE percentage: sampleSize > rowCount → capped at 100%', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 200000, 100000, 500000);
+  assert(sql.includes('TABLESAMPLE(100 PERCENT)'), `Expected 100% cap, got: ${sql}`);
+});
+
+test('TABLESAMPLE percentage: ceil rounds up fractional (sampleSize=10001, rowCount=1M → 2%)', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 2, 1000000, 100000, 10001);
+  assert(sql.includes('TABLESAMPLE(2 PERCENT)'), `Expected ceil to 2%, got: ${sql}`);
+});
+
+test('Fabric TOP N: sampleSize respected exactly', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  const sql = buildProfilingQuery('dbo', 'T', aggs, 11, 1000000, 100000, 50000);
+  assert(sql.includes('TOP 50000'), `Expected TOP 50000, got: ${sql}`);
+});
+
+test('settings simulation: useApproxDistinct=false → COUNT(DISTINCT)', () => {
+  const cols = [col('Name', 'nvarchar(50)', 'NULL'), col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, false, 'quick');
+  for (const agg of aggs) {
+    assert(agg.fragments[0].includes('COUNT(DISTINCT'), `${agg.colName} should use COUNT(DISTINCT)`);
+    assert(!agg.fragments[0].includes('APPROX_COUNT_DISTINCT'), `${agg.colName} should NOT use APPROX`);
+  }
+});
+
+test('settings simulation: useApproxDistinct=true → APPROX_COUNT_DISTINCT', () => {
+  const cols = [col('Name', 'nvarchar(50)', 'NULL'), col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  for (const agg of aggs) {
+    assert(agg.fragments[0].includes('APPROX_COUNT_DISTINCT'), `${agg.colName} should use APPROX`);
+    assert(!agg.fragments[0].includes('COUNT(DISTINCT'), `${agg.colName} should NOT use COUNT(DISTINCT)`);
+  }
+});
+
+test('settings simulation: full pipeline with custom settings', () => {
+  // Simulate: sampleThreshold=50000, sampleSize=25000, useApprox=false, detail mode
+  const cols = [
+    col('OrderID', 'int', 'NOT NULL'),
+    col('Amount', 'decimal(12,2)', 'NULL'),
+    col('Region', 'varchar(50)', 'NULL'),
+    col('Created', 'date', 'NOT NULL'),
+    col('Geo', 'geography', 'NULL'),
+  ];
+  const aggs = buildColumnAggregations(cols, false, 'detail');
+  assert.equal(aggs.length, 4, '4 profilable columns (Geo skipped)');
+
+  // OrderID: int NOT NULL → distinct + min + max = 3 fragments
+  assert.equal(aggs[0].fragments.length, 3, 'OrderID: distinct + min + max');
+  // Amount: decimal NULL → distinct + null + min + max = 4 fragments
+  assert.equal(aggs[1].fragments.length, 4, 'Amount: distinct + null + min + max');
+  // Region: varchar NULL → distinct + null + minlen + maxlen = 4 fragments
+  assert.equal(aggs[2].fragments.length, 4, 'Region: distinct + null + minlen + maxlen');
+  // Created: date NOT NULL → distinct + min + max = 3 fragments
+  assert.equal(aggs[3].fragments.length, 3, 'Created: distinct + min + max');
+
+  const sql = buildProfilingQuery('dbo', 'Orders', aggs, 2, 200000, 50000, 25000);
+  assert(sql.includes('TABLESAMPLE'), 'Sampling triggered (200k > 50k threshold)');
+  assert(sql.includes('13 PERCENT'), 'ceil(25000/200000*100) = 13%');
+  assert(sql.includes('COUNT(DISTINCT'), 'useApprox=false');
+  assert(!sql.includes('APPROX_COUNT_DISTINCT'), 'No APPROX when useApprox=false');
+  assert(sql.includes('MIN(LEN'), 'String length in detail mode');
+  assert(sql.includes('MIN([Created])'), 'Date min in detail mode');
+});
+
 // ─── buildRowCountQuery ─────────────────────────────────────────────────────
 
 console.log('\n── buildRowCountQuery ──');
