@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.3] - 2026-03-08
+
+### Fixed
+- False-positive external cross-DB nodes from SQL Server CLR type method calls.
+  HierarchyID methods (`GetAncestor`, `GetDescendant`, `GetLevel`, `ToString`, `Parse`, etc.),
+  XML data type methods (`.nodes()`, `.value()`, `.query()`, `.exist()`, `.modify()`), and
+  Geometry/Geography spatial methods (`STDistance`, `STArea`, `STIntersects`, etc.) no longer
+  appear as virtual external nodes in the lineage graph.
+
 ## [0.9.2] - 2026-03-07
 
 ### Fixed

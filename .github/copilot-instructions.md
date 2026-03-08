@@ -51,12 +51,12 @@ Press F5 to launch Extension Development Host.
 | File | Tests | Purpose |
 |------|-------|---------|
 | `test/dacpacExtractor.test.ts` | 63 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
-| `test/graphBuilder.test.ts` | 98 | Graph construction, layout, BFS trace, co-writer filter |
-| `test/parser-edge-cases.test.ts` | 179 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
+| `test/graphBuilder.test.ts` | 109 | Graph construction, layout, BFS trace, co-writer filter, virtual external nodes, CLR method suppression |
+| `test/parser-edge-cases.test.ts` | 192 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 62 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/profilingEngine.test.ts` | 64 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
+| `test/profilingEngine.test.ts` | 75 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
@@ -172,6 +172,12 @@ After each YAML rule captures a name, `normalizeCaptured()` in `sqlBodyParser.ts
 - Result is lowercased for case-insensitive catalog lookup
 
 Rule authors write patterns that capture the raw SQL name — normalization is handled automatically.
+
+### Known Limitations
+
+**Cross-DB virtual nodes from CLR type method calls (suppressed):** SQL Server CLR type method calls (HierarchyID: `GetAncestor`, `GetLevel`, `ToString`; XML: `.value()`, `.nodes()`, `.query()`; Geometry/Geography: all `ST*` methods) look identical to cross-database 3-part references (`alias.column.Method`) to the regex parser. These are filtered at `normalizeCrossDb()` in `sqlBodyParser.ts` using a `CLR_TYPE_METHODS` set, and at the DMV metadata path in `modelBuilder.ts`. Side effect: a real cross-DB table/view whose name exactly matches a CLR method name (e.g. `OtherDB.dbo.nodes`) will not create a virtual external node — this is an acceptable trade-off.
+
+**Cross-DB inline scalar UDF calls not tracked:** `OtherDB.dbo.fn_calc(x)` captured by `extract_udf_calls` could in principle create a cross-DB virtual node, but any cross-DB TVF call via CROSS APPLY and table references via FROM/JOIN do create virtual nodes correctly.
 
 ### Modifying Parse Rules
 
