@@ -10,6 +10,9 @@ import { DacpacModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './type
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 60;
 
+/** Typed tuple for React Flow edge label background padding. */
+const LABEL_BG_PAD: [number, number] = [4, 4];
+
 /** Collect edges that flow between depth levels in the BFS direction.
  *  Upstream edges: A→B where A.depth > B.depth (further → closer to origin).
  *  Downstream edges: A→B where B.depth > A.depth (closer → further from origin).
@@ -80,6 +83,9 @@ export function buildGraph(model: DacpacModel, config: ExtensionConfig = DEFAULT
       objectType: node.type,
       inDegree: graph.hasNode(node.id) ? graph.inDegree(node.id) : 0,
       outDegree: graph.hasNode(node.id) ? graph.outDegree(node.id) : 0,
+      ...(node.externalType && { externalType: node.externalType }),
+      ...(node.externalUrl && { externalUrl: node.externalUrl }),
+      ...(node.externalDatabase && { externalDatabase: node.externalDatabase }),
     },
   }));
 
@@ -319,7 +325,26 @@ interface LayoutInput {
   ranker?: string;
 }
 
+// LRU layout cache — avoids recomputing dagre for identical node/edge/config sets
+const LAYOUT_CACHE_SIZE = 3;
+const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
+
+function layoutCacheKey(nodeIds: string[], edges: Array<{ source: string; target: string }>, config: ExtensionConfig, ranker?: string): string {
+  const sortedNodes = [...nodeIds].sort();
+  const sortedEdges = edges.map(e => `${e.source}→${e.target}`).sort();
+  return `${config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}`;
+}
+
 function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<string, { x: number; y: number }> {
+  const key = layoutCacheKey(nodeIds, edges, config, ranker);
+  const cached = layoutCache.find(e => e.key === key);
+  if (cached) {
+    // Move to front (most recently used)
+    layoutCache.splice(layoutCache.indexOf(cached), 1);
+    layoutCache.unshift(cached);
+    return cached.positions;
+  }
+
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: config.layout.direction,
@@ -341,6 +366,11 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
     const n = g.node(id);
     if (n) positions.set(id, { x: n.x - NODE_WIDTH / 2, y: n.y - NODE_HEIGHT / 2 });
   }
+
+  // Store in cache (evict oldest if full)
+  layoutCache.unshift({ key, positions });
+  if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
+
   return positions;
 }
 
@@ -405,11 +435,11 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         id: `${canonSource}↔${canonTarget}`,
         source: canonSource,
         target: canonTarget,
-        type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
+        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
         label: '⇄',
         labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
         labelBgStyle: { fill: 'transparent' },
-        labelBgPadding: [4, 4] as [number, number],
+        labelBgPadding: LABEL_BG_PAD,
         style: {
           stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,
@@ -424,7 +454,7 @@ function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfi
         id: fwd,
         source: edge.source,
         target: edge.target,
-        type: config.edgeStyle === 'default' ? undefined : config.edgeStyle,
+        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
         style: {
           stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,

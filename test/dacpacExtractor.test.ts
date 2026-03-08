@@ -4,32 +4,12 @@
  */
 
 import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
-import { extractDacpac, filterBySchemas } from '../src/engine/dacpacExtractor';
-import { parseSqlBody, loadRules } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas } from '../src/engine/dacpacExtractor';
+import { parseSqlBody } from '../src/engine/sqlBodyParser';
+import { assert, loadParseRules, testPath, printSummary } from './testUtils';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DACPAC_PATH = resolve(__dirname, './AdventureWorks.dacpac');
-
-// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
-const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
-loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
+const DACPAC_PATH = testPath('AdventureWorks.dacpac');
+loadParseRules();
 
 // ─── Extraction ─────────────────────────────────────────────────────────────
 
@@ -55,8 +35,13 @@ async function testExtraction() {
 
   // Check schemas match expected
   const schemaNames = model.schemas.map(s => s.name);
-  assert(schemaNames.includes('DBO'), 'Schema "dbo" found');
-  assert(schemaNames.includes('SALES'), 'Schema "SALES" found');
+  assert(schemaNames.includes('dbo'), 'Schema "dbo" found');
+  assert(schemaNames.includes('Sales'), 'Schema "Sales" found (catalog-original casing)');
+
+  // Catalog and neighborIndex populated
+  assert(model.catalog !== undefined, 'Catalog present');
+  assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node');
+  assert(model.neighborIndex !== undefined, 'NeighborIndex present');
 
   // Check specific known objects
   const nodeNames = model.nodes.map(n => n.fullName);
@@ -72,17 +57,24 @@ async function testExtraction() {
 async function testFiltering(model: Awaited<ReturnType<typeof extractDacpac>>) {
   console.log('\n── Schema Filtering ──');
 
-  const salesLT = filterBySchemas(model, new Set(['SALES']));
-  assert(salesLT.nodes.every(n => n.schema === 'SALES'), 'All filtered nodes are SALES schema');
-  assert(salesLT.nodes.length > 0, `SALES has ${salesLT.nodes.length} nodes`);
+  const salesLT = filterBySchemas(model, new Set(['Sales']));
+  const isVirtual = (n: { externalType?: string }) => n.externalType === 'file' || n.externalType === 'db';
+  assert(salesLT.nodes.every(n => n.schema === 'Sales' || isVirtual(n)), 'All filtered nodes are Sales schema (or connected virtual)');
+  assert(salesLT.nodes.length > 0, `Sales has ${salesLT.nodes.length} nodes`);
   assert(salesLT.nodes.length < model.nodes.length, 'Filtered set is smaller than full set');
 
-  const dbo = filterBySchemas(model, new Set(['DBO']));
-  assert(dbo.nodes.every(n => n.schema === 'DBO'), 'All filtered nodes are dbo schema');
+  const dbo = filterBySchemas(model, new Set(['dbo']));
+  assert(dbo.nodes.every(n => n.schema === 'dbo' || isVirtual(n)), 'All filtered nodes are dbo schema (or connected virtual)');
 
   // Max nodes cap
-  const capped = filterBySchemas(model, new Set(['DBO', 'SALES']), 5);
+  const capped = filterBySchemas(model, new Set(['dbo', 'Sales']), 5);
   assert(capped.nodes.length <= 5, `Capped at ${capped.nodes.length} nodes (max 5)`);
+
+  // filterBySchemas preserves catalog and neighborIndex
+  assert(salesLT.catalog !== undefined, 'filterBySchemas preserves catalog');
+  assert(salesLT.neighborIndex !== undefined, 'filterBySchemas preserves neighborIndex');
+  assert(Object.keys(salesLT.catalog).length >= Object.keys(model.catalog).length,
+    'filterBySchemas catalog is not smaller than full model catalog');
 }
 
 // ─── Edge Integrity ─────────────────────────────────────────────────────────
@@ -110,7 +102,7 @@ async function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>
 
 async function testFabricDacpac() {
   console.log('\n── Fabric SDK Dacpac ──');
-  const fabricPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
+  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
   const buffer = readFileSync(fabricPath);
   const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
@@ -192,8 +184,8 @@ async function testTypeAwareDirection() {
   }
 
   const dacpacs = [
-    { label: 'Classic', path: resolve(__dirname, './AdventureWorks.dacpac') },
-    { label: 'SDK-style', path: resolve(__dirname, './AdventureWorks_sdk-style.dacpac') },
+    { label: 'Classic', path: testPath('AdventureWorks.dacpac') },
+    { label: 'SDK-style', path: testPath('AdventureWorks_sdk-style.dacpac') },
   ];
 
   for (const { label, path } of dacpacs) {
@@ -448,6 +440,53 @@ async function testImportErrorHandling() {
   assert(model.warnings === undefined, 'Successful extraction has no warnings');
 }
 
+// ─── Constraint extraction (UQ / CK / FK) ───────────────────────────────────
+
+async function testConstraints() {
+  console.log('\n── Table Design Constraints (dacpac) ──');
+  const buffer = readFileSync(DACPAC_PATH);
+  const model = await extractDacpac(buffer.buffer as ArrayBuffer);
+
+  // [HumanResources].[Employee] has FK_Employee_Person_BusinessEntityID (→ Person.Person)
+  // and CK_Employee_BirthDate on the BirthDate column
+  const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
+  assert(!!employee, 'HumanResources.Employee node found');
+  assert((employee?.fks?.length ?? 0) > 0, 'Employee has FK constraints');
+  assert(employee!.fks!.some(fk => fk.name === 'FK_Employee_Person_BusinessEntityID'), 'Employee has FK_Employee_Person_BusinessEntityID');
+  assert(employee!.fks!.some(fk => fk.refTable === 'Person'), 'FK references Person table');
+  assert(employee!.columns!.some(c => c.check !== undefined && c.check !== ''), 'Employee has CK flag on a column');
+
+  // [Production].[Document] has a UQ constraint on rowguid
+  const document = model.nodes.find(n => n.schema === 'Production' && n.name === 'Document');
+  assert(!!document, 'Production.Document node found');
+  assert(document!.columns!.some(c => c.unique !== undefined && c.unique !== ''), 'Document has UQ flag on a column');
+
+  // A table without FKs has empty fks array (not undefined)
+  const noFkTable = model.nodes.find(n => n.type === 'table' && n.fks !== undefined && n.fks.length === 0);
+  assert(!!noFkTable, 'Table with no FKs has empty fks array');
+
+  // Phase 2 (extractDacpacFiltered): FK constraints must survive schema filtering.
+  // Regression: FK elements (SqlForeignKeyConstraint) were excluded from TRACKED_ELEMENT_TYPES
+  // so the filtered element list passed to extractObjects had no FK data → fkMap always empty.
+  const buffer2 = readFileSync(DACPAC_PATH);
+  const { elements } = await extractSchemaPreview(buffer2.buffer as ArrayBuffer);
+  const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']));
+  const empFiltered = filteredModel.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
+  assert(!!empFiltered, 'Phase 2: HumanResources.Employee found after schema filter');
+  assert((empFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Employee has FK constraints (not dropped by filter)');
+  const addrFiltered = filteredModel.nodes.find(n => n.schema === 'Person' && n.name === 'Address');
+  assert(!!addrFiltered, 'Phase 2: Person.Address found after schema filter');
+  assert((addrFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Person.Address has FK constraints (not dropped by filter)');
+
+  // SDK-style dacpac: no constraints extracted (Fabric DW has no FK/UQ/CK)
+  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
+  const fabricBuf = readFileSync(fabricPath);
+  const fabricModel = await extractDacpac(fabricBuf.buffer as ArrayBuffer);
+  const fabricTable = fabricModel.nodes.find(n => n.type === 'table');
+  assert(!!fabricTable, 'SDK-style dacpac has at least one table');
+  assert(fabricTable?.columns !== undefined, 'SDK-style table has columns');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -461,13 +500,12 @@ async function main() {
     await testTypeAwareDirection();
     await testNumericEntitySecurity();
     await testImportErrorHandling();
+    await testConstraints();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
-    failed++;
   }
 
-  console.log(`\n═══ Results: ${passed} passed, ${failed} failed ═══`);
-  process.exit(failed > 0 ? 1 : 0);
+  printSummary('DACPAC Extractor');
 }
 
 main();

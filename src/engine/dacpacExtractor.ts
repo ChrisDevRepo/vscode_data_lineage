@@ -15,10 +15,15 @@ import {
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
+  ForeignKeyInfo,
+  ConstraintMaps,
   buildColumnDef,
+  enrichColumnsWithConstraints,
+  createEmptySchemaInfo,
+  DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
-import { stripBrackets } from '../utils/sql';
+import { stripBrackets, schemaKey } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -27,10 +32,11 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
   const elements = parseElements(xml);
 
   const objects = extractObjects(elements);
+  const allObjects = extractObjectsLightweight(elements);
   const deps = extractDependencies(elements);
-  const model = buildModel(objects, deps);
+  const model = buildModel(objects, deps, allObjects);
 
-  // Override warnings for dacpac-specific messages
+  // Dacpac-specific warning messages
   const warnings: string[] = [];
   if (elements.length === 0) {
     warnings.push('This dacpac appears to be empty.');
@@ -64,18 +70,21 @@ export function extractDacpacFiltered(
   elements: XmlElement[],
   selectedSchemas: Set<string>,
 ): DacpacModel {
-  // Pre-filter elements by schema (uppercased for consistent matching)
-  const upperSchemas = new Set(Array.from(selectedSchemas).map(s => s.toUpperCase()));
+  // Pre-filter elements by schema — case-insensitive comparison so that
+  // e.g. 'SalesLT' selected from the UI matches 'SalesLT' from parseName.
+  const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
   const filtered = elements.filter(el => {
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(el['@_Type'])) return false;
     const { schema } = parseName(name);
-    return upperSchemas.has(schema);
+    return lowerSchemas.has(schema.toLowerCase());
   });
 
-  const objects = extractObjects(filtered);
+  // Full lightweight catalog for cross-schema resolution
+  const allObjects = extractObjectsLightweight(elements);
+  const objects = extractObjects(filtered, elements); // pass full elements so FK/UQ/CK constraints (not in TRACKED_ELEMENT_TYPES) are found
   const deps = extractDependencies(filtered);
-  const model = buildModel(objects, deps);
+  const model = buildModel(objects, deps, allObjects);
 
   const warnings: string[] = [];
   if (model.nodes.length === 0) {
@@ -94,7 +103,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
 
-    // Deduplicate by normalized ID (same as extractObjects)
+    // Deduplicate by normalized ID
     const id = normalizeName(name);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -102,10 +111,11 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     const { schema } = parseName(name);
     const objType = ELEMENT_TYPE_MAP[type];
 
-    let info = schemaMap.get(schema);
+    const key = schemaKey(schema);
+    let info = schemaMap.get(key);
     if (!info) {
-      info = { name: schema, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0 } };
-      schemaMap.set(schema, info);
+      info = createEmptySchemaInfo(schema);
+      schemaMap.set(key, info);
     }
     info.nodeCount++;
     info.types[objType]++;
@@ -126,9 +136,24 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
 export function filterBySchemas(
   model: DacpacModel,
   selectedSchemas: Set<string>,
-  maxNodes = 150
+  maxNodes = DEFAULT_CONFIG.maxNodes
 ): DacpacModel {
-  const filtered = model.nodes.filter((n) => selectedSchemas.has(n.schema));
+  // Case-insensitive comparison so UI-provided schema names match model.schemas
+  // Virtual nodes (schema='') are included only if connected to a selected-schema node (via edges).
+  // The ExternalRefsDropdown handles visibility independently.
+  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
+  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(n.schema.toLowerCase()));
+  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
+  // Collect virtual node IDs that have at least one edge connecting to a selected-schema node
+  const connectedVirtualIds = new Set<string>();
+  for (const e of model.edges) {
+    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
+    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
+  }
+  const virtualNodes = model.nodes.filter((n) =>
+    (n.externalType === 'file' || n.externalType === 'db') && connectedVirtualIds.has(n.id)
+  );
+  const filtered = [...schemaNodes, ...virtualNodes];
   const limited = filtered.slice(0, maxNodes);
   const nodeIds = new Set(limited.map((n) => n.id));
 
@@ -139,10 +164,36 @@ export function filterBySchemas(
   return {
     nodes: limited,
     edges,
-    schemas: model.schemas.filter((s) => selectedSchemas.has(s.name)),
+    schemas: model.schemas.filter((s) => lowerSelected.has(s.name.toLowerCase())),
+    // Catalog and neighborIndex are preserved from the full model — they cover allObjects
+    // and all edges, which NodeInfoBar needs for correct cross-schema neighbor display.
+    catalog: model.catalog,
+    neighborIndex: model.neighborIndex,
     parseStats: model.parseStats,
     warnings: model.warnings,
   };
+}
+
+// ─── Lightweight Object Extractor (for catalog / allObjects) ────────────────
+
+/**
+ * Extract all tracked objects as lightweight stubs (no body scripts, no columns).
+ * Used to build the full cross-schema catalog for neighbor display and reference
+ * classification (cross-schema-known vs truly-unresolved).
+ */
+function extractObjectsLightweight(elements: XmlElement[]): ExtractedObject[] {
+  const seen = new Set<string>();
+  const objects: ExtractedObject[] = [];
+  for (const el of elements) {
+    const type = el['@_Type'];
+    const name = el['@_Name'];
+    if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
+    const id = normalizeName(name);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    objects.push({ fullName: name, type: ELEMENT_TYPE_MAP[type] });
+  }
+  return objects;
 }
 
 // ─── ZIP + XML ──────────────────────────────────────────────────────────────
@@ -188,9 +239,10 @@ function parseElements(xml: string): XmlElement[] {
 
 // ─── Extract: XML → Intermediate Format ─────────────────────────────────────
 
-function extractObjects(elements: XmlElement[]): ExtractedObject[] {
+function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[]): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
   const seen = new Set<string>();
+  const constraintMaps = extractConstraintMaps(constraintElements ?? elements);
 
   for (const el of elements) {
     const type = el['@_Type'];
@@ -205,13 +257,24 @@ function extractObjects(elements: XmlElement[]): ExtractedObject[] {
     const { schema, objectName } = parseName(name);
     const bodyScript = getBodyScript(el, type, schema, objectName);
 
-    // For tables without bodyScript: extract column metadata
+    // For tables (and external tables) without bodyScript: extract column metadata + constraints
     let columns: ColumnDef[] | undefined;
-    if (!bodyScript && type === 'SqlTable') {
+    let fks: ForeignKeyInfo[] | undefined;
+    if (!bodyScript && (type === 'SqlTable' || type === 'SqlExternalTable')) {
       columns = extractColumnsFromXml(el);
+      if (columns) {
+        fks = enrichColumnsWithConstraints(columns, normalizeName(name), constraintMaps);
+      }
     }
 
-    objects.push({ fullName: name, type: objType, bodyScript, columns });
+    objects.push({
+      fullName: name,
+      type: objType,
+      bodyScript,
+      columns,
+      fks,
+      ...(type === 'SqlExternalTable' && { externalType: 'et' as const }),
+    });
   }
 
   return objects;
@@ -286,28 +349,129 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
   return cols;
 }
 
+// ─── XML Constraint Extraction ──────────────────────────────────────────────
+
+/** Get all @_Name values from a named Relationship's Entry.References. */
+function getRelRefs(el: XmlElement, relName: string): string[] {
+  const rel = asArray(el.Relationship).find(r => r['@_Name'] === relName);
+  if (!rel) return [];
+  return asArray(rel.Entry).flatMap(e =>
+    asArray(e.References as XmlReference | XmlReference[] | undefined).map(r => r['@_Name'] ?? '').filter(Boolean)
+  );
+}
+
+const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NULL', '3': 'SET DEFAULT' };
+
+function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
+  const uqColMap = new Map<string, string>();
+  const ckColMap = new Map<string, string>();
+  const fkMap    = new Map<string, ForeignKeyInfo[]>();
+
+  for (const el of elements) {
+    const type = el['@_Type'];
+
+    if (type === 'SqlUniqueConstraint') {
+      const tableRef = getRelRefs(el, 'DefiningTable')[0];
+      if (!tableRef) continue;
+      const tableKey = normalizeName(tableRef);
+      // Constraint name lives in the SqlInlineConstraintAnnotation
+      const ann = asArray(el.Annotation).find(a => a['@_Type'] === 'SqlInlineConstraintAnnotation');
+      const constraintName = ann ? parseName(ann['@_Name'] ?? '').objectName : 'UQ';
+      // Columns: ColumnSpecifications → SqlIndexedColumnSpecification → Column ref
+      const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
+      for (const entry of asArray(colSpecRel?.Entry)) {
+        for (const specEl of asArray(entry.Element)) {
+          const colRef = getRelRefs(specEl as XmlElement, 'Column')[0];
+          if (!colRef) continue;
+          const colName = stripBrackets(colRef.split('.').pop() ?? '');
+          uqColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
+        }
+      }
+
+    } else if (type === 'SqlCheckConstraint') {
+      const tableRef = getRelRefs(el, 'DefiningTable')[0];
+      if (!tableRef) continue;
+      const tableKey = normalizeName(tableRef);
+      const constraintName = parseName(el['@_Name'] ?? '').objectName;
+      if (!constraintName) continue;
+      // Only flag single-column CKs — matches DMV path (parent_column_id != 0).
+      // Multi-column CKs (e.g. DueDate >= OrderDate) list >1 column ref; table-level,
+      // so we don't flag any column (same as DB import which excludes parent_column_id=0).
+      const ckColRefs = getRelRefs(el, 'CheckExpressionDependencies');
+      if (ckColRefs.length === 1) {
+        const colName = stripBrackets(ckColRefs[0].split('.').pop() ?? '');
+        if (colName) ckColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
+      }
+
+    } else if (type === 'SqlForeignKeyConstraint') {
+      const tableRef = getRelRefs(el, 'DefiningTable')[0];
+      if (!tableRef) continue;
+      const tableKey = normalizeName(tableRef);
+      const constraintName = parseName(el['@_Name'] ?? '').objectName;
+      if (!constraintName) continue;
+      const foreignTableRef = getRelRefs(el, 'ForeignTable')[0];
+      if (!foreignTableRef) continue;
+      const { schema: refSchema, objectName: refTable } = parseName(foreignTableRef);
+      // Parent and referenced columns — refs are 3-part [schema].[table].[col]
+      const parentCols  = getRelRefs(el, 'Columns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
+      const refColsList = getRelRefs(el, 'ForeignColumns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
+      if (parentCols.length === 0 || parentCols.length !== refColsList.length) continue;
+      const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'DeleteAction')?.['@_Value'] ?? '';
+      const onDelete = FK_DELETE_ACTION[deleteVal] ?? 'NO ACTION';
+      const list = fkMap.get(tableKey) ?? [];
+      list.push({ name: constraintName, columns: parentCols, refSchema, refTable, refColumns: refColsList, onDelete });
+      fkMap.set(tableKey, list);
+    }
+  }
+
+  return { uqColMap, ckColMap, fkMap };
+}
+
 // ─── XML Body Dependencies ──────────────────────────────────────────────────
+
+// Relationship names that carry object-level dependencies.
+// ExpressionDependencies: computed column expressions in SqlTable (nested inside SqlComputedColumn).
+// CheckExpressionDependencies: CHECK constraint expressions calling UDFs.
+const DEPENDENCY_RELATIONSHIPS = new Set([
+  'BodyDependencies',
+  'QueryDependencies',
+  'ExpressionDependencies',
+  'CheckExpressionDependencies',
+]);
 
 function extractBodyDependencies(el: XmlElement): string[] {
   const deps: string[] = [];
-  const rels = asArray(el.Relationship);
+  collectDeps(el, deps);
+  return deps;
+}
 
+// Recursively collects object-level dependency references from all known
+// dependency relationship types, including those nested inside child elements
+// (e.g. SqlComputedColumn inside a table's Columns relationship).
+function collectDeps(el: XmlElement, deps: string[]): void {
+  const rels = asArray(el.Relationship);
   for (const rel of rels) {
-    if (rel['@_Name'] !== 'BodyDependencies' && rel['@_Name'] !== 'QueryDependencies') continue;
     const entries = asArray(rel.Entry);
-    for (const entry of entries) {
-      const refs = asArray(entry.References as XmlReference | XmlReference[] | undefined);
-      for (const ref of refs) {
-        if (ref['@_ExternalSource']) continue;
-        const refName = ref['@_Name'];
-        if (!refName) continue;
-        if (isObjectLevelRef(refName)) {
-          deps.push(refName);
+    if (DEPENDENCY_RELATIONSHIPS.has(rel['@_Name'])) {
+      for (const entry of entries) {
+        const refs = asArray(entry.References as XmlReference | XmlReference[] | undefined);
+        for (const ref of refs) {
+          if (ref['@_ExternalSource']) continue;
+          const refName = ref['@_Name'];
+          if (!refName) continue;
+          if (isObjectLevelRef(refName)) {
+            deps.push(refName);
+          }
         }
       }
     }
+    // Recurse into nested Element children (e.g. SqlComputedColumn inside Columns)
+    for (const entry of entries) {
+      for (const child of asArray(entry.Element as XmlElement | XmlElement[] | undefined)) {
+        collectDeps(child, deps);
+      }
+    }
   }
-  return deps;
 }
 
 // ─── XML Body Script Extraction ─────────────────────────────────────────────
@@ -447,16 +611,38 @@ export function applyExclusionPatterns(model: DacpacModel, patterns: string[], o
   let parseStats = model.parseStats;
   if (parseStats && excludedIds.size > 0) {
     const allEdges = model.edges;
+
+    // Pre-build O(1) lookup maps (avoids O(n²) .find() inside .map())
+    const nameToIdMap = new Map<string, string>();
+    for (const n of nodes) nameToIdMap.set(`${n.schema}.${n.name}`.toLowerCase(), n.id);
+    for (const n of excludedNodes) {
+      const key = `${n.schema}.${n.name}`.toLowerCase();
+      if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
+    }
+
+    // Pre-build adjacency map (avoids O(edges) scan per SP)
+    const adjacency = new Map<string, string[]>();
+    for (const e of allEdges) {
+      if (excludedIds.has(e.target)) {
+        let arr = adjacency.get(e.source);
+        if (!arr) { arr = []; adjacency.set(e.source, arr); }
+        arr.push(e.target);
+      }
+      if (excludedIds.has(e.source)) {
+        let arr = adjacency.get(e.target);
+        if (!arr) { arr = []; adjacency.set(e.target, arr); }
+        arr.push(e.source);
+      }
+    }
+
     parseStats = {
       ...parseStats,
       spDetails: parseStats.spDetails.map((sp) => {
-        const spId = nodes.find(n => `${n.schema}.${n.name}`.toLowerCase() === sp.name.toLowerCase())?.id
-          ?? excludedNodes.find(n => `${n.schema}.${n.name}`.toLowerCase() === sp.name.toLowerCase())?.id;
+        const spId = nameToIdMap.get(sp.name.toLowerCase());
         if (!spId) return sp;
-        const lost = allEdges
-          .filter((e) => (e.source === spId && excludedIds.has(e.target)) || (e.target === spId && excludedIds.has(e.source)))
-          .map((e) => excludedNameById.get(e.source === spId ? e.target : e.source)!)
-          .filter(Boolean);
+        const neighbors = adjacency.get(spId);
+        if (!neighbors) return sp;
+        const lost = neighbors.map(id => excludedNameById.get(id)!).filter(Boolean);
         return lost.length > 0 ? { ...sp, excluded: lost } : sp;
       }),
     };

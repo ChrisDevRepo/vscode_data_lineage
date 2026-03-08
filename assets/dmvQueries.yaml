@@ -4,54 +4,105 @@ required_permission: "VIEW DEFINITION"
 platforms: [SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool]
 
 # Two-phase loading:
-#   Phase 1 — schema-preview runs first to show available schemas with counts.
-#   Phase 2 — nodes/columns/dependencies run after the user selects schemas.
-#             Each Phase 2 query is wrapped as a subquery with a WHERE filter
-#             on the selected schemas, so only matching rows are returned.
+#   Phase 1 — schema-preview + all-objects run first (unfiltered).
+#     schema-preview  : counts per schema for the schema-selection wizard.
+#     all-objects     : lightweight full object catalog (no DDL, no columns) used in
+#                       Phase 2 to classify SP dependencies as "cross-schema known" vs
+#                       "truly unresolved" and to display correct schema.name pairs in
+#                       the dependency details panel.
+#   Phase 2 — nodes/columns/constraints/dependencies run after the user selects schemas.
+#             Each Phase 2 query uses {{SCHEMAS}} placeholders that expand to the
+#             selected schema list (e.g. 'dbo', 'Sales'). The SQL author controls
+#             where filtering happens — no SQL manipulation in TypeScript.
+#             DDL bodies (nodes) and column metadata are fetched for selected schemas
+#             only — keeping Phase 2 fast even in large warehouses.
 
 queries:
   # ── Phase 1: Schema Preview ────────────────────────────────────────────────
   - name: schema-preview
-    description: "Phase 1: schema names with per-type object counts (runs first for schema selection)"
+    phase: 1
+    description: "Phase 1: schema names with per-type object counts (runs first for schema selection wizard)"
     sql: |
       SELECT
         s.name AS schema_name,
-        o.type AS type_code,
+        CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END AS type_code,
         COUNT(*) AS object_count
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-      WHERE o.type IN ('U','V','P','FN','IF','TF')
+      LEFT JOIN sys.tables st ON o.object_id = st.object_id
+      WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
         AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
-      GROUP BY s.name, o.type
-      ORDER BY s.name, o.type
+        AND NOT EXISTS (
+          SELECT 1 FROM sys.extended_properties ep
+          WHERE ep.major_id = o.object_id AND ep.class = 1
+            AND ep.name = 'microsoft_database_tools_support'
+        )
+      GROUP BY s.name, CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END
+      ORDER BY s.name, CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END
 
-  # ── Phase 2: Full Extraction (filtered by selected schemas) ─────────────────
-  - name: nodes
-    description: "All user objects + DDL definitions (combined via LEFT JOIN)"
+  # ── Phase 1: Full Object Catalog ────────────────────────────────────────────
+  - name: all-objects
+    phase: 1
+    description: >
+      Phase 1: complete object catalog across ALL schemas (no DDL, no columns).
+      Runs alongside schema-preview to enable cross-schema reference resolution in Phase 2.
+      When a stored procedure in schema A references a table in schema B (not selected),
+      this catalog classifies that reference as "cross-schema known" rather than
+      "unresolved". Also provides catalog-original schema casing for display in the
+      dependency details panel (In / Out counts and neighbor tooltips).
     sql: |
       SELECT
         s.name AS schema_name,
         o.name AS object_name,
-        o.type AS type_code,
+        CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END AS type_code
+      FROM sys.objects o
+      INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      LEFT JOIN sys.tables st ON o.object_id = st.object_id
+      WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
+        AND o.is_ms_shipped = 0
+        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+        AND NOT EXISTS (
+          SELECT 1 FROM sys.extended_properties ep
+          WHERE ep.major_id = o.object_id AND ep.class = 1
+            AND ep.name = 'microsoft_database_tools_support'
+        )
+      ORDER BY s.name, o.name
+
+  # ── Phase 2: Full Extraction (filtered by selected schemas) ─────────────────
+  - name: nodes
+    phase: 2
+    description: "Phase 2: DDL definitions for selected schemas (combined via LEFT JOIN)"
+    sql: |
+      SELECT
+        s.name AS schema_name,
+        o.name AS object_name,
+        CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END AS type_code,
         m.definition AS body_script
       FROM sys.objects o
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      LEFT JOIN sys.tables st ON o.object_id = st.object_id
       LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
-      WHERE o.type IN ('U','V','P','FN','IF','TF')
+      WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
         AND o.is_ms_shipped = 0
-        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+        AND s.name IN ({{SCHEMAS}})
+        AND NOT EXISTS (
+          SELECT 1 FROM sys.extended_properties ep
+          WHERE ep.major_id = o.object_id AND ep.class = 1
+            AND ep.name = 'microsoft_database_tools_support'
+        )
       ORDER BY s.name, o.name
 
   - name: columns
-    description: "Column metadata for table DDL preview"
+    phase: 2
+    description: "Phase 2: column metadata for table DDL preview (selected schemas)"
     sql: |
       SELECT
         s.name AS schema_name,
         o.name AS table_name,
         c.column_id AS ordinal,
         c.name AS column_name,
-        t.name AS type_name,
+        TYPE_NAME(c.system_type_id) AS type_name,
         c.max_length,
         c.precision,
         c.scale,
@@ -61,24 +112,142 @@ queries:
       FROM sys.columns c
       INNER JOIN sys.objects o ON c.object_id = o.object_id
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-      INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
-      WHERE o.type = 'U'
+      WHERE o.type IN ('U', 'ET')
         AND o.is_ms_shipped = 0
-        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
+        AND s.name IN ({{SCHEMAS}})
+        AND NOT EXISTS (
+          SELECT 1 FROM sys.extended_properties ep
+          WHERE ep.major_id = o.object_id AND ep.class = 1
+            AND ep.name = 'microsoft_database_tools_support'
+        )
       ORDER BY s.name, o.name, c.column_id
 
+  - name: constraints
+    phase: 2
+    description: >
+      Phase 2: table constraint metadata for FK, UQ, and CK annotations in the table design view.
+      Returns one result set combining three constraint types via UNION ALL, distinguished by
+      constraint_type ('FK' | 'UQ' | 'CK'). Schema filter ({{SCHEMAS}}) is applied inside
+      each CTE for early filtering.
+
+      FK (foreign key): one row per FK column pair.
+        sys.foreign_keys + sys.foreign_key_columns + sys.columns (parent + ref) + sys.objects/schemas.
+        ref_schema/ref_table/ref_column identify the referenced object (may be in an unselected schema —
+        the filter applies only to the parent table's schema so cross-schema FK targets are shown).
+        on_delete = referential action: NO ACTION | CASCADE | SET NULL | SET DEFAULT.
+
+      UQ (unique constraint): one row per column. Uses sys.key_constraints WHERE type='UQ' joined
+        via unique_index_id to sys.index_columns. Primary keys (type='PK') are excluded.
+        Composite UQ constraints appear as multiple rows sharing the same constraint_name.
+        column_ordinal (key_ordinal) preserves the index key order.
+
+      CK (check constraint, column-level only): sys.check_constraints WHERE parent_column_id != 0.
+        IMPORTANT — in SQL Server most CHECK constraints are TABLE-LEVEL (parent_column_id = 0),
+        even when they only reference a single column. Column-level checks occur only when CHECK
+        is written inline in a column definition (e.g. [Price] MONEY CHECK ([Price] >= 0)).
+        Table-level CK support (parent_column_id = 0) is a future addition.
+
+      This query is fully user-customizable. Override it by setting
+      dataLineageViz.dmvQueriesFile to a YAML file with a 'constraints' entry.
+      Required permission: VIEW DEFINITION (same as all other queries in this file).
+    sql: |
+      WITH fk_cols AS (
+        SELECT
+          s.name   AS schema_name,
+          t.name   AS table_name,
+          'FK'     AS constraint_type,
+          fk.name  AS constraint_name,
+          c.name   AS column_name,
+          fkc.constraint_column_id AS column_ordinal,
+          rs.name  AS ref_schema,
+          rt.name  AS ref_table,
+          rc.name  AS ref_column,
+          fk.delete_referential_action_desc AS on_delete
+        FROM sys.foreign_keys fk
+        INNER JOIN sys.objects t   ON fk.parent_object_id     = t.object_id
+        INNER JOIN sys.schemas s   ON t.schema_id             = s.schema_id
+        INNER JOIN sys.foreign_key_columns fkc
+                                   ON fk.object_id            = fkc.constraint_object_id
+        INNER JOIN sys.columns c   ON fkc.parent_object_id    = c.object_id
+                                  AND fkc.parent_column_id    = c.column_id
+        INNER JOIN sys.objects rt  ON fk.referenced_object_id = rt.object_id
+        INNER JOIN sys.schemas rs  ON rt.schema_id            = rs.schema_id
+        INNER JOIN sys.columns rc  ON fkc.referenced_object_id = rc.object_id
+                                  AND fkc.referenced_column_id = rc.column_id
+        WHERE s.name IN ({{SCHEMAS}})
+      ),
+      uq_cols AS (
+        SELECT
+          s.name  AS schema_name,
+          t.name  AS table_name,
+          'UQ'    AS constraint_type,
+          kc.name AS constraint_name,
+          c.name  AS column_name,
+          ic.key_ordinal AS column_ordinal,
+          NULL AS ref_schema,
+          NULL AS ref_table,
+          NULL AS ref_column,
+          NULL AS on_delete
+        FROM sys.key_constraints kc
+        INNER JOIN sys.objects t   ON kc.parent_object_id = t.object_id
+        INNER JOIN sys.schemas s   ON t.schema_id         = s.schema_id
+        INNER JOIN sys.index_columns ic
+                                   ON ic.object_id        = t.object_id
+                                  AND ic.index_id         = kc.unique_index_id
+        INNER JOIN sys.columns c   ON ic.object_id        = c.object_id
+                                  AND ic.column_id        = c.column_id
+        WHERE kc.type = 'UQ'
+          AND s.name IN ({{SCHEMAS}})
+      ),
+      ck_cols AS (
+        SELECT
+          s.name  AS schema_name,
+          t.name  AS table_name,
+          'CK'    AS constraint_type,
+          cc.name AS constraint_name,
+          c.name  AS column_name,
+          NULL    AS column_ordinal,
+          NULL AS ref_schema,
+          NULL AS ref_table,
+          NULL AS ref_column,
+          NULL AS on_delete
+        FROM sys.check_constraints cc
+        INNER JOIN sys.objects t ON cc.parent_object_id = t.object_id
+        INNER JOIN sys.schemas s ON t.schema_id         = s.schema_id
+        INNER JOIN sys.columns c ON cc.parent_object_id = c.object_id
+                                AND cc.parent_column_id = c.column_id
+        WHERE cc.parent_column_id != 0
+          AND s.name IN ({{SCHEMAS}})
+      )
+      SELECT * FROM fk_cols
+      UNION ALL SELECT * FROM uq_cols
+      UNION ALL SELECT * FROM ck_cols
+      ORDER BY schema_name, table_name, constraint_type, constraint_name, column_ordinal
+
   - name: dependencies
-    description: "Object-level dependencies"
+    phase: 2
+    description: >
+      Phase 2: object-level SQL expression dependencies (referencing → referenced).
+      Filters to referenced_schema_name IS NOT NULL — only rows where SQL Server
+      resolved the reference to a concrete schema at SP/view creation time are returned.
+      Unqualified references (EXEC SomeProc without schema prefix) have
+      referenced_schema_name = NULL and are excluded: SQL Server cannot guarantee
+      which schema would be used at runtime (the default schema is caller-configurable).
+      Only schema-qualified names (schema.object) are supported by this tool.
+      Uses {{SCHEMAS}} with OR to capture both outbound deps (referencing schema selected)
+      and inbound cross-schema deps (referenced schema selected).
     sql: |
       SELECT
         s1.name AS referencing_schema,
         o1.name AS referencing_name,
-        COALESCE(d.referenced_schema_name, s1.name) AS referenced_schema,
-        d.referenced_entity_name AS referenced_name
+        d.referenced_schema_name AS referenced_schema,
+        d.referenced_entity_name AS referenced_name,
+        d.referenced_database_name AS referenced_database
       FROM sys.sql_expression_dependencies d
       INNER JOIN sys.objects o1 ON d.referencing_id = o1.object_id
       INNER JOIN sys.schemas s1 ON o1.schema_id = s1.schema_id
-      WHERE d.referenced_entity_name IS NOT NULL
+      WHERE d.referenced_schema_name IS NOT NULL
+        AND d.referenced_entity_name IS NOT NULL
         AND o1.is_ms_shipped = 0
-        AND s1.name NOT IN ('sys','INFORMATION_SCHEMA')
+        AND (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))
       ORDER BY referencing_schema, referencing_name

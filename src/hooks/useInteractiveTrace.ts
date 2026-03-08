@@ -53,8 +53,12 @@ export function useInteractiveTrace(
 
   // Immediate trace: apply with defaults without showing config UI
   const startTraceImmediate = useCallback((nodeId: string) => {
-    if (!graph) return;
+    if (!graph) {
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Immediate skipped — graph not ready` });
+      return;
+    }
 
+    const t0 = performance.now();
     const { nodeIds, edgeIds } = traceNodeWithLevels(
       graph,
       nodeId,
@@ -62,6 +66,10 @@ export function useInteractiveTrace(
       config.trace.defaultDownstreamLevels,
       config.trace.hideCoWriters
     );
+    const ms = (performance.now() - t0).toFixed(1);
+    window.vscode?.postMessage({ type: 'log', text:
+      `[Trace] Immediate: "${nodeId}" up=${config.trace.defaultUpstreamLevels} down=${config.trace.defaultDownstreamLevels} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
+    });
 
     setTrace({
       mode: 'filtered',
@@ -77,8 +85,12 @@ export function useInteractiveTrace(
   // Phase 2: Apply trace with levels (filter graph, keep controls visible briefly)
   const applyTrace = useCallback(
     (upstreamLevels: number, downstreamLevels: number) => {
-      if (!graph || !trace.selectedNodeId) return;
+      if (!graph || !trace.selectedNodeId) {
+        window.vscode?.postMessage({ type: 'log', text: `[Trace] Apply skipped — graph=${!!graph} selectedNode=${trace.selectedNodeId}` });
+        return;
+      }
 
+      const t0 = performance.now();
       const { nodeIds, edgeIds } = traceNodeWithLevels(
         graph,
         trace.selectedNodeId,
@@ -86,6 +98,10 @@ export function useInteractiveTrace(
         downstreamLevels,
         config.trace.hideCoWriters
       );
+      const ms = (performance.now() - t0).toFixed(1);
+      window.vscode?.postMessage({ type: 'log', text:
+        `[Trace] Apply: "${trace.selectedNodeId}" up=${upstreamLevels} down=${downstreamLevels} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
+      });
 
       setTrace({
         mode: 'applied',
@@ -115,10 +131,23 @@ export function useInteractiveTrace(
 
   // Compute and apply shortest path — returns true if path found
   const applyPath = useCallback((targetNodeId: string): boolean => {
-    if (!graph || !trace.selectedNodeId) return false;
+    if (!graph || !trace.selectedNodeId) {
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Path skipped — graph=${!!graph} selectedNode=${trace.selectedNodeId}` });
+      return false;
+    }
 
+    const t0 = performance.now();
     const result = computeShortestPath(graph, trace.selectedNodeId, targetNodeId);
-    if (!result) return false;
+    const ms = (performance.now() - t0).toFixed(1);
+    if (!result) {
+      window.vscode?.postMessage({ type: 'log', text:
+        `[Trace] Path: "${trace.selectedNodeId}" → "${targetNodeId}" not found (${ms}ms)`
+      });
+      return false;
+    }
+    window.vscode?.postMessage({ type: 'log', text:
+      `[Trace] Path: "${trace.selectedNodeId}" → "${targetNodeId}" found, ${result.nodeIds.size} nodes (${ms}ms)`
+    });
 
     setTrace({
       mode: 'path-applied',
@@ -139,6 +168,9 @@ export function useInteractiveTrace(
     originId?: string,
     analysisType?: AnalysisType
   ) => {
+    window.vscode?.postMessage({ type: 'log', text:
+      `[Trace] Analysis subset: ${analysisType ?? 'unknown'} — ${nodeIds.size} nodes, ${edgeIds.size} edges`
+    });
     setTrace({
       mode: 'analysis',
       analysisType,

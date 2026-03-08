@@ -16,6 +16,13 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 - `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources)
 - `src/extension.ts` — VS Code API, webview lifecycle, message routing
 
+### Extraction Pipeline (DRY principle)
+
+Both dacpac and database import produce `ExtractedObject[]` + `ExtractedDependency[]` + `ConstraintMaps`.
+Post-extraction logic (schema aggregation, constraint enrichment, catalog building) lives exclusively
+in `modelBuilder.ts` and `types.ts`. The extractors are thin format adapters — they translate their
+source format into the shared intermediate types and nothing more.
+
 ### Key Files
 
 | File | Purpose |
@@ -23,14 +30,18 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 | `src/engine/connectionManager.ts` | MSSQL extension API wrapper, connection management |
 | `src/engine/dmvExtractor.ts` | Build DacpacModel from database import via DMV queries |
 | `src/types/mssql.d.ts` | Type declarations for MSSQL extension API |
-| `assets/dmvQueries.yaml` | Built-in DMV queries for database import |
+| `assets/defaultParseRules.yaml` | Built-in parse rules (17 rules, 5 categories) |
+| `assets/dmvQueries.yaml` | Built-in DMV queries (6 queries) |
+| `docs/PARSE_RULES.md` | Custom parse rules guide |
+| `docs/DMV_QUERIES.md` | Custom DMV queries guide |
+| `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
 
 ## Build & Test
 
 ```bash
 npm run build    # Build extension + webview
 npm run watch    # Watch extension only
-npm test         # All tests (344 unit + 54 tsql-complex)
+npm test         # All unit tests
 ```
 
 Press F5 to launch Extension Development Host.
@@ -39,22 +50,24 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 43 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security |
-| `test/graphBuilder.test.ts` | 47 | Graph construction, layout, BFS trace, co-writer filter |
-| `test/parser-edge-cases.test.ts` | 142 | Syntactic parser tests: all 12 rules + edge cases + cleansing pipeline + regression guards |
-| `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `test/dmvExtractor.test.ts` | 53 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction |
+| `test/dacpacExtractor.test.ts` | 63 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
+| `test/graphBuilder.test.ts` | 98 | Graph construction, layout, BFS trace, co-writer filter |
+| `test/parser-edge-cases.test.ts` | 179 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
+| `test/graphAnalysis.test.ts` | 62 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
+| `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/webview.integration.test.ts` | — | VS Code integration tests |
+| `test/profilingEngine.test.ts` | 64 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test              # Run all tests (344 unit + 54 tsql-complex)
-npm run test:integration  # Run VS Code tests
+npm test                  # Run all unit tests
 ```
 
-Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data goes in `customer-data/` (gitignored).
+Shared test helpers in `test/testUtils.ts` — `assert()`, `assertEq()`, `test()`, `loadParseRules()`, `testPath()`, `printSummary()`, `makeGraph()`. Import from `./testUtils` in new test files.
+
+Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers must never appear in public source code, test files, or comments. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
+
 
 ## Code Rules
 
@@ -73,18 +86,37 @@ Key messages: `ready`, `config-only`, `dacpac-data`, `show-ddl`, `update-ddl`, `
 
 Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-reconnect`, `db-visualize`, `db-progress`, `db-schema-preview`, `db-model`, `db-error`, `db-cancelled`
 
-Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `save-schemas`, `parse-rules-result`, `parse-stats`
+Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `save-schemas`, `parse-rules-result`, `parse-stats`, `reload`, `export-file`
+
+Table statistics: `table-stats-request` (Webview → Extension), `table-stats-result`, `table-stats-error` (Extension → Webview)
+
+## YAML Loading & Failsafe Chain
+
+Both YAML files (`defaultParseRules.yaml`, `dmvQueries.yaml`) support user overrides via VS Code settings. The loading chain is: **custom file → validate → use custom; on any failure → warn user (outputChannel + VS Code dialog) → fall back to built-in**.
+
+| YAML | Setting | Loaded when | Fallback |
+|------|---------|-------------|----------|
+| `assets/defaultParseRules.yaml` | `dataLineageViz.parseRulesFile` | Extension startup (`readExtensionConfig`) | Built-in; if both fail: no regex edges, user warned |
+| `assets/dmvQueries.yaml` | `dataLineageViz.dmvQueriesFile` | DB import initiated (`loadDmvQueries`) | Built-in; if both fail: `db-error` to user |
+
+**Parse rules validation** (two-phase): extension host validates YAML structure (`rules` array); webview validates each rule individually (name, pattern, category, flags, regex compile, empty-match check). Invalid rules are skipped — valid rules still load. Results posted back via `parse-rules-result`.
+
+**DMV queries validation**: checks `name` + `sql` fields per query. Required query names (`schema-preview`, `all-objects`, `nodes`, `columns`, `dependencies`) are validated at load time (early warning) and at execution time (hard guard — throws descriptive error if missing).
+
+Scaffold commands: `dataLineageViz.createParseRules`, `dataLineageViz.createDmvQueries` — copy built-in YAML to workspace root for customization.
 
 ## SQL Parse Rules
 
-Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 12 rules across 4 categories: preprocessing, source, target, exec). Views/functions use dacpac XML dependencies directly.
+Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 17 rules across 5 categories: preprocessing, source, target, exec, external_ref).
+
+Views/functions use MS metadata as the primary source (dacpac XML `BodyDependencies` / `sys.sql_expression_dependencies`). As a supplement, `modelBuilder.ts` also runs the parser on their body scripts to catch any gaps in MS metadata — only the **delta** (parser findings beyond what metadata already captured) is recorded in `spDetails` (as `inRefs`) and surfaced in the NodeInfoBar detail panel. SQL Server XML type method calls (`nodes`, `value`, `exist`, `query`, `modify`) are recognized by the supplement and skipped — they look like `[alias].[method]` to the parser but are never real catalog references.
 
 When regex misses a dep that MS metadata (XML/DMV) knows about, a fallback in `modelBuilder.ts` applies:
 - Procedure dep → EXEC outbound edge
 - Table dep → `inferBodyDirection()` scans the raw body for the table name after a write keyword (UPDATE/INSERT/MERGE/TRUNCATE TABLE); WRITE if found, READ otherwise
 - View/function dep → READ inbound (read-only by SQL design)
 
-The DMV `dependencies` query uses `referenced_entity_name IS NOT NULL` (not `referenced_id IS NOT NULL`) to also include caller-dependent deps (schema-less `EXEC SomeProc`) that SQL Server resolves by caller schema.
+The DMV `dependencies` query filters to `referenced_schema_name IS NOT NULL AND referenced_entity_name IS NOT NULL` — unqualified (schema-less) refs where SQL Server cannot determine the target schema are excluded at the SQL Server level.
 
 ### Cleansing Pipeline (runs before any YAML rule)
 
@@ -146,9 +178,7 @@ Rule authors write patterns that capture the raw SQL name — normalization is h
 When modifying `assets/defaultParseRules.yaml` or `sqlBodyParser.ts`: run full 3-dacpac baseline comparison (301 SPs). `npm test` alone is not sufficient.
 
 ```bash
-npx tsx tmp/snapshot-deps.ts 2>/dev/null > tmp/baseline.tsv   # before
-# apply change
-npx tsx tmp/snapshot-deps.ts 2>/dev/null > tmp/after.tsv      # after
-diff tmp/baseline.tsv tmp/after.tsv                            # must be empty or positive only
-npm test                                                        # all suites must pass
+# run full 3-dacpac baseline comparison before and after changes
+diff tmp/baseline.tsv tmp/after.tsv   # must be empty or positive only
+npm test                               # all suites must pass
 ```

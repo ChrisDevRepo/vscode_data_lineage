@@ -21,22 +21,23 @@ export function useGraphology(): UseGraphologyReturn {
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
 
   const buildFromModel = useCallback((model: DacpacModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
-    // Apply schema filter (with configurable maxNodes)
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
-    // Apply type filter
-    const typeFilteredNodes = filtered.nodes.filter((n) => filter.types.has(n.type));
-    const typeNodeIds = new Set(typeFilteredNodes.map((n) => n.id));
-    const typeFiltered: DacpacModel = {
-      ...filtered,
-      nodes: typeFilteredNodes,
-      edges: filtered.edges.filter((e) => typeNodeIds.has(e.source) && typeNodeIds.has(e.target)),
-    };
+    // Fused type + ext refs filter (single node pass)
+    const isVirtual = (n: { externalType?: string }) =>
+      n.externalType === 'file' || n.externalType === 'db';
+    const allExtRefsVisible = filter.showExternalRefs && filter.externalRefTypes.has('file') && filter.externalRefTypes.has('db');
 
-    // Apply focus schema filter (exclusion patterns applied earlier in handleVisualize)
-    const focusFiltered = applyFocusSchemaFilter(typeFiltered, filter.focusSchemas);
+    const fusedNodes = filtered.nodes.filter((n) => {
+      if (!filter.types.has(n.type)) return false;
+      if (allExtRefsVisible || !isVirtual(n)) return true;
+      if (!filter.showExternalRefs) return false;
+      return filter.externalRefTypes.has(n.externalType as 'file' | 'db');
+    });
+    const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
+    const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 
-    // Apply isolation filter (hide orphan nodes with no edges)
+    const focusFiltered = applyFocusSchemaFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.focusSchemas);
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
 
     const result = buildGraph(isolationFiltered, config);
@@ -49,7 +50,7 @@ export function useGraphology(): UseGraphologyReturn {
   return { flowNodes, flowEdges, graph, metrics, buildFromModel };
 }
 
-// ─── Isolation Filter (hide orphan / degree-0 nodes) ─────────────────────────
+// ─── Isolation Filter ────────────────────────────────────────────────────────
 
 function applyIsolationFilter(model: DacpacModel, hideIsolated: boolean): DacpacModel {
   if (!hideIsolated) return model;
@@ -67,7 +68,7 @@ function applyIsolationFilter(model: DacpacModel, hideIsolated: boolean): Dacpac
   return { ...model, nodes, edges };
 }
 
-// ─── Focus Schema Filter (1-hop neighbors) ──────────────────────────────────
+// ─── Focus Schema Filter ─────────────────────────────────────────────────────
 
 function applyFocusSchemaFilter(
   model: DacpacModel,
@@ -75,7 +76,6 @@ function applyFocusSchemaFilter(
 ): DacpacModel {
   if (focusSchemas.size === 0) return model;
 
-  // Keep nodes in focus schemas + their direct 1-hop neighbors via edges
   const focusNodeIds = new Set(
     model.nodes.filter((n) => focusSchemas.has(n.schema)).map((n) => n.id)
   );

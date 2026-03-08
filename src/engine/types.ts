@@ -1,14 +1,19 @@
 // ─── Core Types ──────────────────────────────────────────────────────────────
 
-export type ObjectType = 'table' | 'view' | 'procedure' | 'function';
+export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
 
 export interface LineageNode {
-  id: string;            // "[schema].[name]"
-  schema: string;        // "dbo", "SalesLT", etc.
+  id: string;            // "[schema].[name]" (2-part local), "[db].[schema].[name]" (3-part cross-DB), "[__ext__].[hash]" (file)
+  schema: string;        // "dbo", "SalesLT", etc. — empty string for virtual nodes (file/db)
   name: string;          // object name without brackets/schema
   fullName: string;      // "[schema].[name]" as in dacpac
   type: ObjectType;
   bodyScript?: string;   // SQL body for SPs/Views/UDFs
+  columns?: ColumnDef[]; // column metadata (tables/externals only, for profiling)
+  fks?: ForeignKeyInfo[];// FK constraints (tables/externals only)
+  externalType?: 'et' | 'file' | 'db'; // set for type === 'external'
+  externalUrl?: string;       // full URL for file virtual nodes (tooltip)
+  externalDatabase?: string;  // DB name for cross-DB virtual nodes (tooltip)
 }
 
 export interface LineageEdge {
@@ -41,10 +46,29 @@ export interface ParseStats {
   spDetails: SpParseDetail[];  // per-SP breakdown
 }
 
+/** Per-object display entry — covers ALL known objects including cross-schema ones. */
+export type CatalogEntry = { schema: string; name: string; type: ObjectType; externalType?: 'et' | 'file' | 'db' };
+
+/**
+ * O(1) neighbor lookup keyed by node ID.
+ * Built once in buildModel() from model.edges.
+ * Plain Record (not Map) so it survives JSON serialization across postMessage.
+ * `in`  = upstream   nodes (data flows INTO this node)
+ * `out` = downstream nodes (data flows OUT of this node)
+ */
+export type NeighborIndex = Record<string, { in: string[]; out: string[] }>;
+
 export interface DacpacModel {
   nodes: LineageNode[];
   edges: LineageEdge[];
   schemas: SchemaInfo[];
+  /**
+   * Display catalog covering all known objects (including cross-schema ones not
+   * visible in the current graph). Keyed by normalized node ID "[schema].[name]".
+   */
+  catalog: Record<string, CatalogEntry>;
+  /** O(1) in/out neighbor lookup derived from model.edges. */
+  neighborIndex: NeighborIndex;
   parseStats?: ParseStats;
   warnings?: string[];
 }
@@ -69,6 +93,7 @@ export interface XmlElement {
 
 export interface XmlAnnotation {
   '@_Type': string;
+  '@_Name'?: string;
   Property?: XmlProperty | XmlProperty[];
 }
 
@@ -103,6 +128,7 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
   SqlInlineTableValuedFunction: 'function',
   SqlMultiStatementTableValuedFunction: 'function',
   SqlTableValuedFunction: 'function',
+  SqlExternalTable: 'external',  // PolyBase / data virtualization ET in dacpac XML
 };
 
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
@@ -114,6 +140,18 @@ export interface ColumnDef {
   type: string;
   nullable: string;
   extra: string;
+  unique?: string;  // UQ constraint name when column participates; display shows "UQ" flag
+  check?: string;   // CK constraint name for column-level check; display shows "CK" flag
+}
+
+/** Foreign key constraint metadata — attached to table ExtractedObject (dacpac + DMV paths). */
+export interface ForeignKeyInfo {
+  name: string;          // constraint name (display casing)
+  columns: string[];     // parent column names (multi-col FK in column_ordinal order)
+  refSchema: string;     // referenced schema
+  refTable: string;      // referenced table
+  refColumns: string[];  // referenced column names (same order as columns[])
+  onDelete: string;      // referential action: NO ACTION | CASCADE | SET NULL | SET DEFAULT
 }
 
 // ─── Shared Column Helpers (used by both dacpac + DMV extractors) ────────────
@@ -173,16 +211,52 @@ export function buildColumnDef(
   };
 }
 
+// ─── Constraint Maps (shared by dacpac + DMV extractors) ─────────────────────
+
+export interface ConstraintMaps {
+  /** Key: "schema.table.column" (lowercase) → UQ constraint name */
+  uqColMap: Map<string, string>;
+  /** Key: "schema.table.column" (lowercase) → CK constraint name */
+  ckColMap: Map<string, string>;
+  /** Key: "schema.table" (lowercase) → FK list */
+  fkMap: Map<string, ForeignKeyInfo[]>;
+}
+
+/** Enrich columns with UQ/CK flags and return FK list for a table. */
+export function enrichColumnsWithConstraints(
+  columns: ColumnDef[], tableKey: string, maps: ConstraintMaps
+): ForeignKeyInfo[] {
+  for (const col of columns) {
+    const ck = `${tableKey}.${col.name}`.toLowerCase();
+    col.unique = maps.uqColMap.get(ck) ?? '';
+    col.check  = maps.ckColMap.get(ck) ?? '';
+  }
+  return maps.fkMap.get(tableKey) ?? [];
+}
+
+/** Factory for empty SchemaInfo — single source of truth for the zero-count init. */
+export function createEmptySchemaInfo(name: string): SchemaInfo {
+  return { name, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
+}
+
 export interface ExtractedObject {
   fullName: string;       // "[Schema].[Name]"
   type: ObjectType;
   bodyScript?: string;
-  columns?: ColumnDef[];  // table column metadata (for table design view)
+  columns?: ColumnDef[];          // table column metadata (for table design view)
+  fks?: ForeignKeyInfo[];         // FK constraints (dacpac + DMV paths; undefined only when not extracted)
+  externalType?: 'et' | 'file' | 'db'; // set when type === 'external'
 }
 
 export interface ExtractedDependency {
   sourceName: string;     // "[Schema].[Name]" of referencing object
-  targetName: string;     // "[Schema].[Name]" of referenced object
+  targetName: string;     // "[Schema].[Name]" of referenced object — 3-part "[DB].[Schema].[Name]" for cross-DB
+}
+
+/** External file/URL reference detected by pre-cleansing regex pass. */
+export interface ExternalRef {
+  url: string;
+  kind: string;
 }
 
 // ─── DMV type mapping (sys.objects.type codes → ObjectType) ─────────────────
@@ -194,6 +268,7 @@ export const DMV_TYPE_MAP: Record<string, ObjectType> = {
   'FN': 'function',
   'IF': 'function',
   'TF': 'function',
+  'ET': 'external',  // External Table (PolyBase / data virtualization)
 };
 
 // ─── Extension Config (from VS Code settings) ──────────────────────────────
@@ -205,6 +280,7 @@ export interface LayoutConfig {
   edgeAnimation: boolean;
   highlightAnimation: boolean;
   minimapEnabled: boolean;
+  edgeStyle: EdgeStyle;
 }
 
 export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
@@ -221,23 +297,45 @@ export interface AnalysisConfig {
   longestPathMinNodes: number;
 }
 
+export interface TableStatsConfig {
+  enabled: boolean;
+  standardModeEnabled: boolean;
+  excludeExternalTables: boolean;
+  maxColumns: number;
+  sampleThreshold: number;
+  sampleSize: number;
+  useApproxDistinct: boolean;
+  queryTimeout: number;
+}
+
+export interface ExternalRefsConfig {
+  enabled: boolean;
+}
+
 export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   excludePatterns: string[];
   maxNodes: number;
+  dmvQueryTimeout: number;
   layout: LayoutConfig;
-  edgeStyle: EdgeStyle;
   trace: TraceConfig;
   analysis: AnalysisConfig;
+  tableStatistics: TableStatsConfig;
+  externalRefs: ExternalRefsConfig;
 }
+
+/** Fabric Data Warehouse engineEditionId — used for platform-specific query branching. */
+export const ENGINE_EDITION_FABRIC = 11;
 
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
-  maxNodes: 500,
-  layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true },
-  edgeStyle: 'default' as const,
+  maxNodes: 750,
+  layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
-  analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
+  analysis: { hubMinDegree: 8, islandMaxSize: 500, longestPathMinNodes: 5 },
+  tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
+  dmvQueryTimeout: 120,
+  externalRefs: { enabled: true },
 } satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────
@@ -248,6 +346,8 @@ export interface FilterState {
   searchTerm: string;
   hideIsolated: boolean;
   focusSchemas: Set<string>;
+  showExternalRefs: boolean;
+  externalRefTypes: Set<'file' | 'db'>;
 }
 
 export interface TraceState {
@@ -263,7 +363,7 @@ export interface TraceState {
 
 // ─── Graph Analysis Types ────────────────────────────────────────────────────
 
-export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles';
+export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles' | 'external-refs';
 
 export interface AnalysisGroup {
   id: string;
@@ -296,4 +396,6 @@ export type ExtensionMessage =
   | { type: 'db-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string; lastDeselectedSchemas?: string[] }
   | { type: 'db-model'; model: DacpacModel; config: ExtensionConfig; sourceName: string; lastDeselectedSchemas?: string[] }
   | { type: 'db-error'; message: string; phase: string }
-  | { type: 'db-cancelled' };
+  | { type: 'db-cancelled' }
+  | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
+  | { type: 'table-stats-error'; message: string };

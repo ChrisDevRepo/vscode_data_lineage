@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
+import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
@@ -12,6 +13,7 @@ export interface DmvQuery {
   name: string;
   description: string;
   sql: string;
+  phase?: number;  // 1 = Phase 1 (unfiltered), 2 = Phase 2 ({{SCHEMAS}} expanded)
 }
 
 export interface DmvQueriesConfig {
@@ -38,17 +40,27 @@ export async function loadDmvQueries(
         if (parsed?.queries && Array.isArray(parsed.queries)) {
           const valid = parsed.queries.filter(q => q.name && q.sql);
           if (valid.length > 0) {
+            const KNOWN_NAMES = ['schema-preview', 'all-objects', 'nodes', 'columns', 'dependencies'];
+            const loadedNames = new Set(valid.map(q => q.name));
+            const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
+            if (missingNames.length > 0) {
+              outputChannel.warn(`[DB] Custom DMV queries missing: ${missingNames.join(', ')} — DB import may fail`);
+              vscode.window.showWarningMessage(`Custom DMV queries missing: ${missingNames.join(', ')}. DB import may fail.`);
+            }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
             outputChannel.info(`[DB] Loaded ${valid.length} DMV queries from ${path.basename(customPath)}`);
             return valid;
           }
         }
         outputChannel.warn(`[DB] Invalid custom DMV queries in ${customPath} — falling back to built-in`);
+        vscode.window.showWarningMessage('Custom DMV queries invalid — using built-in defaults.');
       } catch (err) {
         outputChannel.warn(`[DB] Failed to load custom DMV queries: ${err instanceof Error ? err.message : String(err)} — falling back to built-in`);
+        vscode.window.showWarningMessage('Failed to load custom DMV queries — using built-in defaults. Check Output channel.');
       }
     } else {
       outputChannel.warn(`[DB] Cannot resolve DMV queries path "${customPath}" — falling back to built-in`);
+      vscode.window.showWarningMessage(`Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`);
     }
   }
 
@@ -127,8 +139,7 @@ export async function promptForConnection(
 
 /** Strip password and connectionString before persisting to workspaceState */
 export function stripSensitiveFields(info: IConnectionInfo): Omit<IConnectionInfo, 'password' | 'connectionString'> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { password, connectionString, ...safe } = info;
+  const { password: _pw, connectionString: _cs, ...safe } = info;
   return safe;
 }
 
@@ -153,6 +164,16 @@ export async function connectDirect(
   }
 }
 
+function dmvTimeout<T>(promise: Promise<T>, ms: number, queryName: string): Promise<T> {
+  let handle: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise.finally(() => clearTimeout(handle)),
+    new Promise<never>((_, reject) => {
+      handle = setTimeout(() => reject(new Error(`DMV query "${queryName}" timed out after ${ms / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)), ms);
+    }),
+  ]);
+}
+
 /**
  * Execute DMV queries against a connected database.
  */
@@ -161,6 +182,7 @@ export async function executeDmvQueries(
   queries: DmvQuery[],
   outputChannel: vscode.LogOutputChannel,
   onProgress?: (step: number, total: number, label: string) => void,
+  queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
   const sharing = await getConnectionSharingApi(outputChannel);
 
@@ -175,7 +197,8 @@ export async function executeDmvQueries(
     outputChannel.info(`[DB] Executing query: ${query.name} (${step}/${total})...`);
 
     const start = Date.now();
-    const result = await sharing.executeSimpleQuery(connectionUri, query.sql);
+    const queryPromise = sharing.executeSimpleQuery(connectionUri, query.sql);
+    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     outputChannel.info(`[DB] Query '${query.name}' returned ${result.rowCount} rows (${elapsed}s)`);
@@ -187,33 +210,9 @@ export async function executeDmvQueries(
 
 // ─── Schema-Filtered Query Execution (Phase 2) ─────────────────────────────
 
-/** Column to filter on for each Phase 2 query */
-const SCHEMA_FILTER_COLUMNS: Record<string, string> = {
-  nodes: 'schema_name',
-  columns: 'schema_name',
-  dependencies: 'referencing_schema',
-};
-
 /**
- * Wrap a DMV query as a subquery with a WHERE schema filter.
- * Strips trailing ORDER BY (SQL Server disallows ORDER BY in subqueries
- * without TOP/OFFSET), then wraps as `SELECT * FROM (inner) AS _sub WHERE ...`.
- */
-export function wrapWithSchemaFilter(
-  sql: string,
-  schemaColumn: string,
-  schemas: string[],
-): string {
-  // Strip trailing ORDER BY clause (anchored to end-of-string)
-  const stripped = sql.replace(/\s+ORDER\s+BY\s+[\s\S]*$/i, '');
-  // Escape single quotes in schema names for SQL injection safety
-  const schemaList = schemas.map(s => `'${s.replace(/'/g, "''")}'`).join(', ');
-  return `SELECT * FROM (\n${stripped}\n) AS _sub\nWHERE _sub.${schemaColumn} IN (${schemaList})`;
-}
-
-/**
- * Execute Phase 2 DMV queries with schema filtering.
- * Wraps each query (except schema-preview) as a subquery with WHERE schema filter.
+ * Execute Phase 2 DMV queries with {{SCHEMAS}} placeholder expansion.
+ * Skips Phase 1 queries (phase === 1). Expands {{SCHEMAS}} in remaining queries.
  */
 export async function executeDmvQueriesFiltered(
   connectionUri: string,
@@ -221,28 +220,33 @@ export async function executeDmvQueriesFiltered(
   schemas: string[],
   outputChannel: vscode.LogOutputChannel,
   onProgress?: (step: number, total: number, label: string) => void,
+  queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
   const sharing = await getConnectionSharingApi(outputChannel);
 
-  const phase2Queries = queries.filter(q => q.name !== 'schema-preview');
+  const phase2Queries = queries.filter(q => (q.phase ?? 2) !== 1);
+
+  // Validate: warn if any Phase 2 query is missing {{SCHEMAS}}
+  for (const q of phase2Queries) {
+    const warning = validateSchemaPlaceholder(q.name, q.sql, q.phase ?? 2);
+    if (warning) outputChannel.warn(`[DB] ${warning}`);
+  }
+
   const results = new Map<string, SimpleExecuteResult>();
   const total = phase2Queries.length;
 
   for (let i = 0; i < phase2Queries.length; i++) {
     const query = phase2Queries[i];
     const step = i + 1;
-    const schemaCol = SCHEMA_FILTER_COLUMNS[query.name];
-
-    const sql = schemaCol
-      ? wrapWithSchemaFilter(query.sql, schemaCol, schemas)
-      : query.sql;
+    const sql = expandSchemaPlaceholder(query.sql, schemas);
 
     onProgress?.(step, total, query.name);
     outputChannel.info(`[DB] Executing filtered query: ${query.name} (${step}/${total})...`);
     outputChannel.debug(`[DB] SQL:\n${sql}`);
 
     const start = Date.now();
-    const result = await sharing.executeSimpleQuery(connectionUri, sql);
+    const queryPromise = sharing.executeSimpleQuery(connectionUri, sql);
+    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     outputChannel.info(`[DB] Query '${query.name}' returned ${result.rowCount} rows (${elapsed}s)`);
@@ -250,6 +254,25 @@ export async function executeDmvQueriesFiltered(
   }
 
   return results;
+}
+
+/** Get server info (version, edition) for a connected database. */
+export async function getServerInfo(
+  connectionUri: string,
+  outputChannel: vscode.LogOutputChannel,
+): Promise<import('../types/mssql').IServerInfo> {
+  const sharing = await getConnectionSharingApi(outputChannel);
+  return sharing.getServerInfo(connectionUri);
+}
+
+/** Execute a single SQL query against a connected database. */
+export async function executeSimpleQuery(
+  connectionUri: string,
+  sql: string,
+  outputChannel: vscode.LogOutputChannel,
+): Promise<SimpleExecuteResult> {
+  const sharing = await getConnectionSharingApi(outputChannel);
+  return sharing.executeSimpleQuery(connectionUri, sql);
 }
 
 export async function disconnectDatabase(

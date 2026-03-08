@@ -11,42 +11,7 @@ import {
   analyzeLongestPath,
   analyzeCycles,
 } from '../src/engine/graphAnalysis';
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
-
-// ─── Helper: build a directed graph from nodes + edges ────────────────────────
-
-function makeGraph(
-  nodes: Array<{ id: string; schema?: string; name?: string; type?: string }>,
-  edges: Array<[string, string]>
-): Graph {
-  const g = new Graph({ type: 'directed', multi: false });
-  for (const n of nodes) {
-    g.addNode(n.id, {
-      schema: n.schema || 'dbo',
-      name: n.name || n.id,
-      type: n.type || 'table',
-    });
-  }
-  for (const [s, t] of edges) {
-    const key = `${s}→${t}`;
-    if (!g.hasEdge(key)) {
-      g.addEdgeWithKey(key, s, t, { type: 'body' });
-    }
-  }
-  return g;
-}
+import { assert, makeGraph, printSummary } from './testUtils';
 
 // ─── analyzeIslands ──────────────────────────────────────────────────────────
 
@@ -390,6 +355,55 @@ function testSubsetEdgeFiltering() {
   );
 }
 
+// ─── Virtual Nodes in Hub Analysis ───────────────────────────────────────────
+
+function testHubsWithVirtualNodes() {
+  console.log('\n── analyzeHubs with virtual nodes ──');
+
+  // File virtual node connects to 3 SPs (degree=3) → detected as hub
+  const g = makeGraph([
+    { id: 'file1', type: 'external' },
+    { id: 'sp1', type: 'procedure' },
+    { id: 'sp2', type: 'procedure' },
+    { id: 'sp3', type: 'procedure' },
+    { id: 't1', type: 'table' },
+    { id: 't2', type: 'table' },
+    { id: 't3', type: 'table' },
+  ], [
+    ['file1', 'sp1'], ['file1', 'sp2'], ['file1', 'sp3'],
+    ['sp1', 't1'], ['sp2', 't2'], ['sp3', 't3'],
+  ]);
+
+  const result = analyzeHubs(g, 3); // minDegree=3
+  assert(result.groups.length >= 1, 'VN-Hub: at least 1 hub detected');
+  assert(result.groups.some(grp => grp.nodeIds.includes('file1')),
+    'VN-Hub: file virtual node detected as hub (degree=3)');
+}
+
+// ─── Virtual Node as Bridge (Island Detection) ──────────────────────────────
+
+function testIslandWithVirtualBridge() {
+  console.log('\n── analyzeIslands with virtual bridge ──');
+
+  // Without file1: sp1+t1 and sp2+t2 would be two 2-node islands
+  // With file1 connecting both SPs: single 5-node component
+  const g = makeGraph([
+    { id: 'file1', type: 'external' },
+    { id: 'sp1', type: 'procedure' },
+    { id: 'sp2', type: 'procedure' },
+    { id: 't1', type: 'table' },
+    { id: 't2', type: 'table' },
+  ], [
+    ['file1', 'sp1'], ['file1', 'sp2'],
+    ['sp1', 't1'], ['sp2', 't2'],
+  ]);
+
+  const result = analyzeIslands(g, 2); // maxSize=2
+  // All 5 nodes connected via file1 → no small islands
+  assert(result.groups.length === 0,
+    `VN-Island: virtual node bridges components, no size-2 islands (got ${result.groups.length})`);
+}
+
 // ─── Run all tests ───────────────────────────────────────────────────────────
 
 testIslands();
@@ -399,6 +413,7 @@ testLongestPath();
 testLongestPathChainEdges();
 testCycles();
 testSubsetEdgeFiltering();
+testHubsWithVirtualNodes();
+testIslandWithVirtualBridge();
 
-console.log(`\n── Results: ${passed} passed, ${failed} failed ──`);
-if (failed > 0) process.exit(1);
+printSummary('Graph Analysis');

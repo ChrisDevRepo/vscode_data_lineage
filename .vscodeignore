@@ -4,6 +4,7 @@ test/**
 customer-data/**
 temp-old-design/**
 tmp/**
+tmp_*
 
 # Config files
 .gitignore
@@ -22,6 +23,19 @@ node_modules/**
 # Documentation (not needed in extension package)
 docs/**
 CONTRIBUTING.md
+
+# Integration test infrastructure (internal only — never in VSIX)
+scripts/**
+
+# Internal test infrastructure (gitignored, must not leak into VSIX)
+test-internal/**
+
+# Environment files (must never be packaged)
+.env
+.env.*
+
+# Claude Code session temp files (created by Claude CLI — must not leak into VSIX)
+tmpclaude-*
 
 # Misc
 PLAN*.md

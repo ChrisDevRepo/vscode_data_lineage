@@ -99,6 +99,11 @@
 
   /* Toolbar active */
   --ln-toolbar-active-bg: var(--vscode-toolbar-activeBackground, rgba(0, 0, 0, 0.1));
+
+  /* Minimap mask (viewport highlight) */
+  --ln-minimap-mask: rgba(0, 0, 0, 0.15);
+  --ln-minimap-mask-stroke: transparent;
+  --ln-minimap-mask-stroke-width: 0;
 }
 
 /* Dark Theme Overrides */
@@ -115,6 +120,7 @@ body[data-vscode-theme-kind="vscode-dark"] {
   --ln-highlight-blue: #60a5fa;
   --ln-highlight-blue-glow: rgba(96, 165, 250, 0.5);
   --ln-highlight-blue-shadow: rgba(96, 165, 250, 0.35);
+  --ln-minimap-mask: rgba(255, 255, 255, 0.12);
 }
 
 /* High Contrast Theme Overrides */
@@ -131,6 +137,9 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-highlight-blue: #93c5fd;
   --ln-highlight-blue-glow: rgba(147, 197, 253, 0.6);
   --ln-highlight-blue-shadow: rgba(147, 197, 253, 0.4);
+  --ln-minimap-mask: rgba(255, 255, 255, 0.2);
+  --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
+  --ln-minimap-mask-stroke-width: 2;
 }
 body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
@@ -145,6 +154,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-highlight-blue: #1d4ed8;
   --ln-highlight-blue-glow: rgba(29, 78, 216, 0.5);
   --ln-highlight-blue-shadow: rgba(29, 78, 216, 0.35);
+  --ln-minimap-mask: rgba(0, 0, 0, 0.2);
+  --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
+  --ln-minimap-mask-stroke-width: 2;
 }
 
 /* #endregion */
@@ -243,9 +255,10 @@ body {
   background: color-mix(in srgb, var(--ln-bg-secondary) 75%, transparent);
 }
 
-body[data-vscode-theme-kind="vscode-dark"] .react-flow__minimap-mask,
-body[data-vscode-theme-kind="vscode-high-contrast"] .react-flow__minimap-mask {
-  fill: rgba(0, 0, 0, 0.5) !important;
+.react-flow__minimap-mask {
+  fill: var(--ln-minimap-mask) !important;
+  stroke: var(--ln-minimap-mask-stroke) !important;
+  stroke-width: var(--ln-minimap-mask-stroke-width) !important;
 }
 
 body[data-vscode-theme-kind="vscode-high-contrast"] .react-flow__minimap,
@@ -563,9 +576,11 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 }
 .ln-start-screen .ln-panel .ln-text-muted {
   color: var(--ln-wizard-fg);
+  opacity: 0.6;
 }
 .ln-start-screen .ln-panel .ln-text-placeholder {
   color: var(--ln-wizard-fg);
+  opacity: 0.45;
 }
 .ln-start-screen .ln-panel .ln-text-warning {
   color: var(--ln-warning-fg);
@@ -612,13 +627,22 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   color: var(--ln-wizard-fg);
 }
 .ln-start-screen .ln-panel .ln-text-link {
-  color: var(--ln-wizard-fg);
+  color: var(--ln-wizard-link);
 }
 .ln-start-screen .ln-panel svg {
   color: var(--ln-wizard-fg);
 }
 .ln-start-screen .ln-panel .ln-list-item:hover {
   background: var(--ln-wizard-hover-bg);
+}
+/* Status message boxes inside wizard panel — force dark background so colored
+   text (green/yellow/red) has sufficient contrast regardless of VS Code theme */
+.ln-start-screen .ln-panel .ln-status-success,
+.ln-start-screen .ln-panel .ln-status-warning,
+.ln-start-screen .ln-panel .ln-status-error,
+.ln-start-screen .ln-panel .ln-status-info {
+  background: var(--ln-wizard-input-bg);
+  border-color: var(--ln-wizard-border);
 }
 .ln-file-picker {
   background: var(--ln-input-bg);

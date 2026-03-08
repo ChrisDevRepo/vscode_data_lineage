@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.2] - 2026-03-07
+
+### Fixed
+- Updated dependencies to address security vulnerabilities reported by GitHub
+
+### Added
+- **Table design viewer** — Tables and external tables open in a styled HTML view with column details, constraints, and foreign keys.
+- **Table statistics** — Quick Stats (distinct counts, null%) and Detail Stats (+ min/max, string lengths) for database-imported tables, with platform-aware sampling.
+- **Table constraint info** — Table design view shows UQ/CK columns and FK section.
+- **External Table nodes** — External tables support
+- **Virtual external references** — OPENROWSET file paths, cross-database 3-part names
+- **External Refs analysis** — New analysis mode listing all file sources and cross-database references grouped by kind and database, with direct neighbors shown per entry
+- **Analysis quick-switch** — Icon strip at the top of the analysis sidebar lets you jump between all analysis modes without closing and reopening
+- **View/function parser supplement** — body parser runs as fallback for views and functions
+- **Schema-grouped neighbor details** — In/Out neighbor list groups by schema; ⊘ marks objects not visible in the current view.
+
+### Changed
+- **Catalog-original casing** — Schema and object names displayed exactly as defined in the database.
+
 ## [0.9.1] - 2026-02-25
 
 ### Changed

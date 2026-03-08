@@ -5,6 +5,7 @@ import { Button } from './ui/Button';
 import { HelpModal } from './HelpModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
 import { TypeFilterDropdown } from './TypeFilterDropdown';
+import { ExternalRefsDropdown } from './ExternalRefsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 
 interface ToolbarProps {
@@ -18,6 +19,8 @@ interface ToolbarProps {
   onToggleFocusSchema: (schema: string) => void;
   selectedSchemas?: Set<string>;
   onToggleSchema?: (schema: string) => void;
+  onSelectAllSchemas?: (schemas: string[]) => void;
+  onSelectNoneSchemas?: (schemas: string[]) => void;
   availableSchemas?: string[];
   onRefresh: () => void;
   onRebuild?: () => void;
@@ -32,6 +35,10 @@ interface ToolbarProps {
   isAnalysisActive?: boolean;
   analysisType?: AnalysisType | null;
   onOpenAnalysis?: (type: AnalysisType) => void;
+  showExternalRefs?: boolean;
+  externalRefTypes?: Set<'file' | 'db'>;
+  onToggleExternalRefs?: () => void;
+  onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -52,6 +59,8 @@ export const Toolbar = memo(function Toolbar({
   onToggleFocusSchema,
   selectedSchemas: propSelectedSchemas,
   onToggleSchema,
+  onSelectAllSchemas,
+  onSelectNoneSchemas,
   availableSchemas,
   onRefresh,
   onRebuild,
@@ -66,6 +75,10 @@ export const Toolbar = memo(function Toolbar({
   isAnalysisActive = false,
   analysisType = null,
   onOpenAnalysis,
+  showExternalRefs = true,
+  externalRefTypes = new Set<'file' | 'db'>(['file', 'db']),
+  onToggleExternalRefs,
+  onToggleExternalRefType,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
@@ -105,8 +118,16 @@ export const Toolbar = memo(function Toolbar({
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 8.25v3m0 0v3m0-3h3m-3 0h-3" />
           </svg>
         </Button>
-        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onToggleFocusSchema={onToggleFocusSchema} />
+        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} />
         <TypeFilterDropdown types={types} onToggleType={onToggleType} />
+        {onToggleExternalRefs && onToggleExternalRefType && (
+          <ExternalRefsDropdown
+            showExternalRefs={showExternalRefs}
+            externalRefTypes={externalRefTypes}
+            onToggleMaster={onToggleExternalRefs}
+            onToggleSubType={onToggleExternalRefType}
+          />
+        )}
 
         <div className="w-px h-6 ln-divider" />
 
@@ -153,6 +174,10 @@ export const Toolbar = memo(function Toolbar({
                 <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { setIsAnalysisDropdownOpen(false); onOpenAnalysis?.('cycles'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
                   Cycles
+                </button>
+                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { setIsAnalysisDropdownOpen(false); onOpenAnalysis?.('external-refs'); }}>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                  External Refs
                 </button>
               </div>
             </div>

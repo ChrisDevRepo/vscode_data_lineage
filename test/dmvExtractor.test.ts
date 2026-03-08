@@ -4,38 +4,15 @@
  */
 
 import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import { buildModelFromDmv, validateQueryResult } from '../src/engine/dmvExtractor';
 import { formatColumnType } from '../src/engine/types';
 import type { DmvResults } from '../src/engine/dmvExtractor';
 import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../src/types/mssql';
-import { loadRules } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../src/utils/sql';
+import { assert, assertEq, loadParseRules, rootPath, printSummary } from './testUtils';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Load built-in rules from single source of truth (assets/defaultParseRules.yaml)
-const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
-loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
-
-function assertEq<T>(actual: T, expected: T, msg: string) {
-  assert(actual === expected, `${msg} (expected ${expected}, got ${actual})`);
-}
+loadParseRules();
 
 // ─── Test Data Helpers ──────────────────────────────────────────────────────
 
@@ -118,17 +95,28 @@ function testBuildModelFromDmv() {
 
   // Schema computation
   assertEq(model.schemas.length, 2, 'Should have 2 schemas');
-  const dboSchema = model.schemas.find(s => s.name === 'DBO');
-  const salesSchema = model.schemas.find(s => s.name === 'SALES');
-  assert(dboSchema !== undefined, 'DBO schema found');
-  assert(salesSchema !== undefined, 'SALES schema found');
-  assertEq(dboSchema!.nodeCount, 4, 'DBO has 4 nodes');
-  assertEq(salesSchema!.nodeCount, 2, 'SALES has 2 nodes');
+  const dboSchema = model.schemas.find(s => s.name === 'dbo');
+  const salesSchema = model.schemas.find(s => s.name === 'sales');
+  assert(dboSchema !== undefined, 'dbo schema found');
+  assert(salesSchema !== undefined, 'sales schema found');
+  assertEq(dboSchema!.nodeCount, 4, 'dbo has 4 nodes');
+  assertEq(salesSchema!.nodeCount, 2, 'sales has 2 nodes');
 
   // Node IDs are normalized
   const customerNode = model.nodes.find(n => n.name === 'Customers');
   assertEq(customerNode?.id, '[dbo].[customers]', 'Customer ID normalized to lowercase');
-  assertEq(customerNode?.schema, 'DBO', 'Customer schema uppercased');
+  assertEq(customerNode?.schema, 'dbo', 'Customer schema preserved in catalog-original casing');
+
+  // Catalog and neighborIndex are present and populated
+  assert(model.catalog !== undefined, 'Catalog present');
+  assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node');
+  assert(model.neighborIndex !== undefined, 'NeighborIndex present');
+
+  // neighborIndex: vActiveCustomers should have Customers as inbound neighbor
+  const viewId = '[dbo].[vactivecustomers]';
+  assert(model.neighborIndex[viewId]?.in.includes('[dbo].[customers]'), 'neighborIndex: Customers → vActiveCustomers');
+  // catalog: Customers entry should have original casing
+  assert(model.catalog['[dbo].[customers]']?.schema === 'dbo', 'catalog: Customers schema is dbo');
 
   // Edges
   assert(model.edges.length > 0, `Has ${model.edges.length} edges`);
@@ -170,10 +158,10 @@ function testBuildModelFromDmv() {
   assert(model.parseStats !== undefined, 'Parse stats present');
   assertEq(model.parseStats!.spDetails.length, 2, '2 SPs in parse details');
 
-  // Table body scripts (design view from columns)
+  // Table columns available on node
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
-  assert(ordersNode?.bodyScript?.includes('OrderId'), 'Orders table has column design view');
-  assert(ordersNode?.bodyScript?.includes('int'), 'Orders table design shows int type');
+  assert(ordersNode?.columns?.some(c => c.name === 'OrderId'), 'Orders table has OrderId column');
+  assert(ordersNode?.columns?.some(c => c.type.includes('int')), 'Orders table has int type column');
 
   // No warnings for valid data
   assert(model.warnings === undefined, 'No warnings for valid data');
@@ -343,6 +331,474 @@ function testFallbackBodyDirection() {
   assert(readEdge !== undefined, 'Fallback: unqualified FROM → READ edge (table → SP)');
 }
 
+// ─── Test: Cross-schema EXEC appears in Out with ⊘ when dbo is excluded ─────
+
+function testCrossSchemaNeighborIndex() {
+  console.log('\n── DMV: Cross-Schema Out (EXEC [dbo].[uspLogError] from HumanResources SP) ──');
+
+  // Scenario: user selected HumanResources only — dbo is excluded from the schema filter.
+  // Phase 1 allObjects contains the full catalog including dbo objects.
+  // SP uspUpdateEmployeePersonalInfo:
+  //   UPDATE [HumanResources].[Employee]  → intra-schema write edge
+  //   EXECUTE [dbo].[uspLogError]         → cross-schema exec → Out with ⊘
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const SP_BODY = [
+    'CREATE PROCEDURE [HumanResources].[uspUpdateEmployeePersonalInfo]',
+    '    @BusinessEntityID [int], @NationalIDNumber [nvarchar](15)',
+    'WITH EXECUTE AS CALLER AS BEGIN',
+    '    BEGIN TRY',
+    '        UPDATE [HumanResources].[Employee]',
+    '        SET [NationalIDNumber] = @NationalIDNumber',
+    '        WHERE [BusinessEntityID] = @BusinessEntityID;',
+    '    END TRY',
+    '    BEGIN CATCH',
+    '        EXECUTE [dbo].[uspLogError];',
+    '    END CATCH;',
+    'END;',
+  ].join('\n');
+
+  const nodesRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('Employee'), cell('U '), nullCell()],
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P '), cell(SP_BODY)],
+  ];
+
+  // Phase 2 deps — referencing_schema = HumanResources so both rows pass the schema filter
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('HumanResources'), cell('Employee')],
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('dbo'), cell('uspLogError')],
+  ];
+
+  // Phase 1 allObjects — full catalog incl. dbo (dbo was not selected, but Phase 1 sees everything)
+  const allObjCols = cols('schema_name', 'object_name', 'type_code');
+  const allObjRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('Employee'), cell('U ')],
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P ')],
+    [cell('dbo'), cell('uspLogError'), cell('P ')],
+    [cell('dbo'), cell('ErrorLog'), cell('U ')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+    allObjects: makeResult(allObjCols, allObjRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  const spId = '[humanresources].[uspupdateemployeepersonalinfo]';
+  const empId = '[humanresources].[employee]';
+  const logErrId = '[dbo].[usplogerror]';
+
+  // Only HumanResources nodes rendered
+  assertEq(model.nodes.length, 2, 'Only HumanResources nodes rendered (dbo excluded)');
+  assert(!model.nodes.some(n => n.schema === 'dbo'), 'No dbo node in graph');
+
+  // No graph edge to dbo — it is outside the filter
+  assert(!model.edges.some(e => e.source === logErrId || e.target === logErrId),
+    'No graph edge to [dbo].[uspLogError]');
+
+  // Intra-schema write edge must exist
+  assert(model.edges.some(e => e.source === spId && e.target === empId),
+    'Intra-schema write edge SP → Employee exists');
+
+  // Key: cross-schema exec must appear in neighborIndex.out with ⊘
+  const spN = model.neighborIndex[spId];
+  assert(spN !== undefined, 'neighborIndex entry exists for SP');
+  assert(spN?.out.includes(logErrId),
+    `SP.out includes [dbo].[uspLogError] (got: ${JSON.stringify(spN?.out)})`);
+
+  // Reverse: dbo.uspLogError.in points back to SP
+  const logErrN = model.neighborIndex[logErrId];
+  assert(logErrN !== undefined, 'neighborIndex entry exists for [dbo].[uspLogError]');
+  assert(logErrN?.in.includes(spId),
+    `[dbo].[uspLogError].in includes SP (got: ${JSON.stringify(logErrN?.in)})`);
+
+  // catalog must contain dbo objects for display name resolution
+  const logErrC = model.catalog[logErrId];
+  assert(logErrC !== undefined, 'catalog contains [dbo].[uspLogError]');
+  assertEq(logErrC?.schema, 'dbo', 'catalog[dbo.uspLogError].schema');
+  assertEq(logErrC?.name, 'uspLogError', 'catalog[dbo.uspLogError].name');
+  assertEq(logErrC?.type, 'procedure', 'catalog[dbo.uspLogError].type');
+}
+
+// ─── Test: Cross-schema dep in Unresolved when allObjects absent ─────────────
+
+function testCrossSchemaUnresolvedWhenNoAllObjects() {
+  console.log('\n── DMV: Cross-schema dep → Unresolved when allObjects absent ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P '),
+      cell('CREATE PROCEDURE [HumanResources].[uspUpdateEmployeePersonalInfo] AS BEGIN EXECUTE [dbo].[uspLogError]; END')],
+  ];
+
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('dbo'), cell('uspLogError')],
+  ];
+
+  // allObjects intentionally absent — simulates Phase 1 not having all-objects query
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+  const spId = '[humanresources].[uspupdateemployeepersonalinfo]';
+
+  // Metadata dep must surface in Unresolved — never silently dropped
+  const detail = model.parseStats?.spDetails.find(d => d.name.toLowerCase() === 'humanresources.uspupdateemployeepersonalinfo');
+  assert(detail !== undefined, 'spDetails entry found for SP');
+  const hasUnresolved = detail?.unrelated.some(r => r.toLowerCase().includes('usplogerror'));
+  assert(hasUnresolved === true,
+    `spDetails.unrelated contains uspLogError (got: ${JSON.stringify(detail?.unrelated)})`);
+
+  // No neighborIndex entry for dbo.uspLogError (cannot create one without catalog)
+  const logErrId = '[dbo].[usplogerror]';
+  assert(model.neighborIndex[logErrId] === undefined,
+    'No neighborIndex entry for unknown dbo.uspLogError when allObjects absent');
+}
+
+// ─── Test: External Table (ET) nodes ─────────────────────────────────────────
+
+function testExternalTableNodes() {
+  console.log('\n── DMV Extractor: External Table (ET) Nodes ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    // Regular table
+    [cell('dbo'), cell('LocalOrders'), cell('U '), nullCell()],
+    // External table — type_code 'ET' (char(2) padded)
+    [cell('ext'), cell('ExternalSales'), cell('ET'), nullCell()],
+    // SP that reads from external table
+    [cell('dbo'), cell('uspLoadSales'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[uspLoadSales] AS\nINSERT INTO [dbo].[LocalOrders]\nSELECT * FROM [ext].[ExternalSales]')],
+  ];
+
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('uspLoadSales'), cell('dbo'), cell('LocalOrders')],
+    [cell('dbo'), cell('uspLoadSales'), cell('ext'), cell('ExternalSales')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  // Node count and types
+  assertEq(model.nodes.length, 3, 'Should have 3 nodes (1 table, 1 external, 1 SP)');
+  const extNodes = model.nodes.filter(n => n.type === 'external');
+  assertEq(extNodes.length, 1, 'Should have 1 external node');
+
+  // External node properties
+  const extNode = extNodes[0];
+  assert(extNode !== undefined, 'External node exists');
+  assertEq(extNode?.schema, 'ext', 'External node has correct schema');
+  assertEq(extNode?.name, 'ExternalSales', 'External node has correct name (original casing)');
+  assertEq(extNode?.id, '[ext].[externalsales]', 'External node ID is lowercase-normalized');
+  assertEq(extNode?.externalType, 'et', 'External node has externalType=et');
+  assert(extNode?.bodyScript === undefined || extNode?.bodyScript === null,
+    'External node has no bodyScript (ET has no SQL body)');
+
+  // Schema info includes external type count
+  const extSchema = model.schemas.find(s => s.name === 'ext');
+  assert(extSchema !== undefined, 'ext schema present in schemas');
+  assertEq(extSchema?.types?.external ?? 0, 1, 'ext schema counts 1 external node');
+
+  // External node in catalog
+  const extId = '[ext].[externalsales]';
+  const catEntry = model.catalog[extId];
+  assert(catEntry !== undefined, 'External node in catalog');
+  assertEq(catEntry?.type, 'external', 'catalog entry type=external');
+
+  // Edge: SP reads from external table (FROM clause → external is source/upstream)
+  const readEdge = model.edges.find(e =>
+    e.source === extId && e.target === '[dbo].[uspLoadsales]'.toLowerCase()
+  );
+  assert(readEdge !== undefined,
+    `Read edge external → SP exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`);
+
+  // Edge: SP writes to local table
+  const writeEdge = model.edges.find(e =>
+    e.source === '[dbo].[uspLoadsales]'.toLowerCase() && e.target === '[dbo].[localorders]'
+  );
+  assert(writeEdge !== undefined, 'Write edge SP → LocalOrders exists');
+
+  // NeighborIndex: external table has SP in its out neighbors
+  const spId = '[dbo].[uspLoadsales]'.toLowerCase();
+  const extNeighbors = model.neighborIndex[extId];
+  assert(extNeighbors !== undefined, 'neighborIndex entry for external node');
+  assert(extNeighbors?.out.includes(spId),
+    `External node out-neighbors include SP (got: ${JSON.stringify(extNeighbors?.out)})`);
+}
+
+function testExternalTableWriteDirection() {
+  console.log('\n── DMV Extractor: External Table Write Direction (CETAS) ──');
+
+  // CETAS pattern: SP writes INTO external table (Synapse/Fabric CETAS)
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('SourceData'), cell('U '), nullCell()],
+    [cell('ext'), cell('ExportTarget'), cell('ET'), nullCell()],
+    [cell('dbo'), cell('uspExportData'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[uspExportData] AS\nINSERT INTO [ext].[ExportTarget]\nSELECT * FROM [dbo].[SourceData]')],
+  ];
+
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('uspExportData'), cell('dbo'), cell('SourceData')],
+    [cell('dbo'), cell('uspExportData'), cell('ext'), cell('ExportTarget')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  const extId = '[ext].[exporttarget]';
+  const spId = '[dbo].[uspexportdata]';
+  const srcId = '[dbo].[sourcedata]';
+
+  // WRITE edge: SP → external target (INSERT INTO)
+  const writeEdge = model.edges.find(e => e.source === spId && e.target === extId);
+  assert(writeEdge !== undefined,
+    `Write edge SP → ExportTarget exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`);
+
+  // READ edge: SourceData → SP
+  const readEdge = model.edges.find(e => e.source === srcId && e.target === spId);
+  assert(readEdge !== undefined, 'Read edge SourceData → SP exists');
+}
+
+// ─── Constraint Tests ────────────────────────────────────────────────────────
+
+function buildConstraintsResult(): SimpleExecuteResult {
+  const constraintCols = cols(
+    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
+    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
+  );
+  const rows: DbCellValue[][] = [
+    // FK: Orders.CustomerId → Customers.Id
+    [cell('dbo'), cell('Orders'), cell('FK'), cell('FK_Orders_Customers'),
+      cell('CustomerId'), cell('1'), cell('dbo'), cell('Customers'), cell('Id'), cell('NO ACTION')],
+    // FK: Orders.ProductId → Products.Id
+    [cell('dbo'), cell('Orders'), cell('FK'), cell('FK_Orders_Products'),
+      cell('ProductId'), cell('1'), cell('dbo'), cell('Products'), cell('Id'), cell('CASCADE')],
+    // UQ: Customers.Name
+    [cell('dbo'), cell('Customers'), cell('UQ'), cell('UQ_Customers_Name'),
+      cell('Name'), cell('1'), nullCell(), nullCell(), nullCell(), nullCell()],
+    // CK: Products.Id (column-level)
+    [cell('dbo'), cell('Products'), cell('CK'), cell('CK_Products_Id'),
+      cell('Id'), nullCell(), nullCell(), nullCell(), nullCell(), nullCell()],
+  ];
+  return makeResult(constraintCols, rows);
+}
+
+function testConstraintMapsEnrichColumns() {
+  console.log('\n── DMV Extractor: constraint enrichment ──');
+
+  const baseResults = buildSyntheticResults();
+  const resultsWithConstraints: DmvResults = {
+    ...baseResults,
+    constraints: buildConstraintsResult(),
+  };
+  const model = buildModelFromDmv(resultsWithConstraints);
+
+  // Customers.Name should have UQ flag
+  const customersNode = model.nodes.find(n => n.name === 'Customers');
+  assert(customersNode !== undefined, 'Customers node found');
+  assert(customersNode?.columns?.some(c => c.unique !== undefined && c.unique !== ''), 'Customers has UQ flag on column');
+  // Customers has no FKs → fks should be empty array
+  assert(customersNode?.fks !== undefined && customersNode.fks.length === 0, 'Customers has empty fks array (no FKs)');
+
+  // Orders should have FK data on node
+  const ordersNode = model.nodes.find(n => n.name === 'Orders');
+  assert(ordersNode !== undefined, 'Orders node found');
+  assert((ordersNode?.fks?.length ?? 0) > 0, 'Orders has FK constraints');
+  assert(ordersNode!.fks!.some(fk => fk.name === 'FK_Orders_Customers'), 'Orders has FK_Orders_Customers');
+  assert(ordersNode!.fks!.some(fk => fk.name === 'FK_Orders_Products'), 'Orders has FK_Orders_Products');
+  assert(ordersNode!.fks!.some(fk => fk.onDelete === 'CASCADE'), 'Orders FK has CASCADE on delete');
+  assert(ordersNode!.fks!.some(fk => fk.refTable === 'Customers'), 'Orders FK references Customers');
+
+  // Products.Id should have CK flag
+  const productsNode = model.nodes.find(n => n.name === 'Products');
+  assert(productsNode !== undefined, 'Products node found');
+  assert(productsNode?.columns?.some(c => c.check !== undefined && c.check !== ''), 'Products has CK flag on column');
+}
+
+function testConstraintsMissingResultGraceful() {
+  console.log('\n── DMV Extractor: no constraints result (dacpac-path compat) ──');
+
+  const results = buildSyntheticResults();  // no constraints field
+  const model = buildModelFromDmv(results);
+
+  const ordersNode = model.nodes.find(n => n.name === 'Orders');
+  assert(ordersNode !== undefined, 'Orders node found without constraints');
+  assert(ordersNode?.fks === undefined || ordersNode.fks.length === 0, 'No FKs when constraints absent');
+  assert(!ordersNode?.columns?.some(c => c.unique !== undefined && c.unique !== ''), 'No UQ flags when constraints absent');
+
+  // Columns still present
+  assert(ordersNode?.columns?.some(c => c.name === 'OrderId'), 'Columns still present without constraints');
+}
+
+function testValidateQueryResultConstraints() {
+  console.log('\n── DMV Extractor: validateQueryResult — constraints ──');
+
+  const constraintCols = cols(
+    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
+    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
+  );
+  const result = makeResult(constraintCols, []);
+  const missing = validateQueryResult('constraints', result);
+  assertEq(missing.length, 0, 'No missing columns for valid constraints result');
+
+  const incomplete = makeResult(cols('schema_name', 'table_name'), []);
+  const missingCols = validateQueryResult('constraints', incomplete);
+  assert(missingCols.length > 0, 'Missing columns detected for incomplete constraints result');
+}
+
+// ─── Test: Cross-DB Dependencies via referenced_database ─────────────────────
+
+function testCrossDbDepsFromDmv() {
+  console.log('\n── DMV Extractor: Cross-DB Dependencies (referenced_database) ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
+    [cell('dbo'), cell('spLoadFromArchive'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[spLoadFromArchive] AS\nINSERT INTO [dbo].[Sales]\nSELECT * FROM [ArchiveDB].[dbo].[ArchivedSales]')],
+  ];
+
+  // 5-column deps — includes referenced_database
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
+  const depsRows: DbCellValue[][] = [
+    // Local dep: SP → Sales (no database)
+    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('Sales'), nullCell()],
+    // Cross-DB dep: SP → ArchiveDB.dbo.ArchivedSales
+    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('ArchivedSales'), cell('ArchiveDB')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  const model = buildModelFromDmv(results);
+
+  // Cross-DB virtual node should be created
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(crossDbNode !== undefined, 'CrossDB-DMV: virtual db node created from referenced_database');
+  // DMV metadata path lowercases all parts (modelBuilder.ts L705)
+  assertEq(crossDbNode?.externalDatabase?.toLowerCase(), 'archivedb', 'CrossDB-DMV: externalDatabase set correctly');
+  assertEq(crossDbNode?.schema, '', 'CrossDB-DMV: virtual node has empty schema');
+  assert(crossDbNode!.name.toLowerCase().includes('archivedsales'), 'CrossDB-DMV: virtual node name includes object name');
+
+  // Edge: SP → cross-DB node (cross-DB is a source in the SP body, so cross-DB → SP)
+  const crossDbEdge = model.edges.find(e =>
+    e.target === '[dbo].[sploadfromarchive]' && e.source === crossDbNode!.id
+  );
+  assert(crossDbEdge !== undefined,
+    `CrossDB-DMV: cross-DB → SP edge exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`);
+
+  // Local edge still works: SP writes to Sales
+  const localEdge = model.edges.find(e =>
+    e.source === '[dbo].[sploadfromarchive]' && e.target === '[dbo].[sales]'
+  );
+  assert(localEdge !== undefined, 'CrossDB-DMV: local SP → Sales write edge exists');
+
+  // Total: 2 real + 1 virtual = 3 nodes
+  assertEq(model.nodes.length, 3, 'CrossDB-DMV: 2 real + 1 virtual = 3 nodes');
+}
+
+function testCrossDbSameDbSuppression() {
+  console.log('\n── DMV Extractor: Cross-DB same-DB suppression via currentDatabase ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
+    [cell('dbo'), cell('ArchivedSales'), cell('U '), nullCell()],
+    [cell('dbo'), cell('spLoad'), cell('P '),
+      cell('CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM [dbo].[ArchivedSales]')],
+  ];
+
+  // Cross-DB dep where database = currentDatabase → should resolve locally
+  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
+  const depsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('ArchivedSales'), cell('MyDB')],
+    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('Sales'), nullCell()],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(depsCols, depsRows),
+  };
+
+  // Pass currentDatabase = 'MyDB' — same as referenced_database
+  const model = buildModelFromDmv(results, 'MyDB');
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(crossDbNode === undefined, 'CrossDB-SameDB: no virtual node when referenced_database = currentDatabase');
+  assertEq(model.nodes.length, 3, 'CrossDB-SameDB: only 3 real nodes');
+}
+
+function testETInAllObjectsCatalog() {
+  console.log('\n── DMV Extractor: ET in allObjects catalog ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('ext'), cell('S3Data'), cell('ET'), nullCell()],
+  ];
+
+  const allObjCols = cols('schema_name', 'object_name', 'type_code');
+  const allObjRows: DbCellValue[][] = [
+    [cell('ext'), cell('S3Data'), cell('ET')],
+    [cell('dbo'), cell('Orders'), cell('U ')],
+  ];
+
+  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(emptyCols, []),
+    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []),
+    allObjects: makeResult(allObjCols, allObjRows),
+  };
+
+  const model = buildModelFromDmv(results);
+  assertEq(model.nodes.length, 1, 'ET-AllObj: 1 rendered node');
+  assertEq(model.nodes[0].type, 'external', 'ET-AllObj: type=external');
+  assertEq(model.nodes[0].externalType, 'et', 'ET-AllObj: externalType=et');
+
+  // Catalog from allObjects should map ET + regular table
+  const etCat = model.catalog['[ext].[s3data]'];
+  assert(etCat !== undefined, 'ET-AllObj: catalog entry for ET from allObjects');
+  assertEq(etCat?.type, 'external', 'ET-AllObj: catalog type=external');
+
+  const ordersCat = model.catalog['[dbo].[orders]'];
+  assert(ordersCat !== undefined, 'ET-AllObj: catalog entry for dbo.Orders from allObjects');
+}
+
 // ─── Run ────────────────────────────────────────────────────────────────────
 
 testBuildModelFromDmv();
@@ -352,6 +808,127 @@ testFormatColumnType();
 testDuplicateNodes();
 testSelfReferenceExcluded();
 testFallbackBodyDirection();
+testCrossSchemaNeighborIndex();
+testCrossSchemaUnresolvedWhenNoAllObjects();
+testExternalTableNodes();
+testExternalTableWriteDirection();
+testCrossDbDepsFromDmv();
+testCrossDbSameDbSuppression();
+testETInAllObjectsCatalog();
+testConstraintMapsEnrichColumns();
+testConstraintsMissingResultGraceful();
+testValidateQueryResultConstraints();
 
-console.log(`\n═══ DMV Extractor: ${passed} passed, ${failed} failed ═══\n`);
-if (failed > 0) process.exit(1);
+// ─── expandSchemaPlaceholder ──────────────────────────────────────────────────
+
+function testExpandSchemaPlaceholder() {
+  console.log('\n── expandSchemaPlaceholder ──');
+
+  // Basic expansion
+  const sql = `SELECT * FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nWHERE s.name IN ({{SCHEMAS}})`;
+  const expanded = expandSchemaPlaceholder(sql, ['dbo', 'Sales']);
+  assert(expanded.includes("s.name IN ('dbo', 'Sales')"), 'Basic: schema list expanded');
+  assert(!expanded.includes('{{SCHEMAS}}'), 'Basic: no placeholder remnants');
+
+  // Multiple placeholders (dependencies-style OR)
+  const depsSql = `SELECT * FROM sys.sql_expression_dependencies d\nWHERE (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))`;
+  const expandedDeps = expandSchemaPlaceholder(depsSql, ['dbo']);
+  assert(expandedDeps.includes("s1.name IN ('dbo')"), 'Multi: first placeholder expanded');
+  assert(expandedDeps.includes("d.referenced_schema_name IN ('dbo')"), 'Multi: second placeholder expanded');
+  assert(!expandedDeps.includes('{{SCHEMAS}}'), 'Multi: no placeholder remnants');
+
+  // No placeholder — returns SQL unchanged
+  const noPlaceholder = `SELECT * FROM sys.objects`;
+  const unchanged = expandSchemaPlaceholder(noPlaceholder, ['dbo']);
+  assert(unchanged === noPlaceholder, 'No placeholder: SQL unchanged');
+
+  // SQL injection: single quote in schema name
+  const injected = expandSchemaPlaceholder(sql, ["O'Brien"]);
+  assert(injected.includes("'O''Brien'"), 'SQL injection: single quote escaped');
+
+  // Empty schema list
+  const empty = expandSchemaPlaceholder(sql, []);
+  assert(empty.includes('s.name IN ()'), 'Empty: produces IN ()');
+}
+
+function testValidateSchemaPlaceholder() {
+  console.log('\n── validateSchemaPlaceholder ──');
+
+  // Phase 2 without placeholder → warning
+  const warn = validateSchemaPlaceholder('test-query', 'SELECT 1', 2);
+  assert(warn !== undefined, 'Phase 2 without placeholder: returns warning');
+  assert(warn!.includes('test-query'), 'Warning includes query name');
+
+  // Phase 2 with placeholder → no warning
+  const ok = validateSchemaPlaceholder('test-query', 'WHERE s.name IN ({{SCHEMAS}})', 2);
+  assert(ok === undefined, 'Phase 2 with placeholder: no warning');
+
+  // Phase 1 without placeholder → no warning (expected)
+  const phase1 = validateSchemaPlaceholder('schema-preview', 'SELECT 1', 1);
+  assert(phase1 === undefined, 'Phase 1 without placeholder: no warning');
+}
+
+function testYamlQueriesHavePlaceholder() {
+  console.log('\n── YAML queries: Phase 2 placeholder validation ──');
+
+  // Load the ACTUAL dmvQueries.yaml and validate all Phase 2 queries have {{SCHEMAS}}
+  const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
+  const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
+
+  const phase2 = config.queries.filter(q => (q.phase ?? 2) !== 1);
+  assert(phase2.length >= 4, `At least 4 Phase 2 queries (got ${phase2.length})`);
+
+  for (const q of phase2) {
+    assert(q.sql.includes('{{SCHEMAS}}'), `YAML Phase 2 query '${q.name}' has {{SCHEMAS}} placeholder`);
+
+    // Expand and verify no remnants
+    const expanded = expandSchemaPlaceholder(q.sql, ['dbo', 'Sales']);
+    assert(!expanded.includes('{{SCHEMAS}}'), `YAML '${q.name}': no placeholder remnants after expansion`);
+  }
+
+  // Phase 1 queries should NOT have placeholder
+  const phase1 = config.queries.filter(q => q.phase === 1);
+  assert(phase1.length >= 2, `At least 2 Phase 1 queries (got ${phase1.length})`);
+  for (const q of phase1) {
+    assert(!q.sql.includes('{{SCHEMAS}}'), `YAML Phase 1 query '${q.name}' has no placeholder`);
+  }
+}
+
+function testExpandedSqlStructure() {
+  console.log('\n── Expanded SQL structural validation ──');
+
+  const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
+  const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
+  const phase2 = config.queries.filter(q => (q.phase ?? 2) !== 1);
+
+  for (const q of phase2) {
+    const expanded = expandSchemaPlaceholder(q.sql, ['dbo', 'Sales']);
+
+    // No literal {{ or }} remnants (catches partial expansion bugs)
+    assert(!expanded.includes('{{'), `'${q.name}': no {{ remnants`);
+    assert(!expanded.includes('}}'), `'${q.name}': no }} remnants`);
+
+    // Balanced parentheses
+    let depth = 0;
+    let balanced = true;
+    for (const ch of expanded) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (depth < 0) { balanced = false; break; }
+    }
+    assert(balanced && depth === 0, `'${q.name}': balanced parentheses (depth=${depth})`);
+
+    // CTE queries must start with WITH and end with a SELECT
+    if (/^\s*WITH\s+/i.test(q.sql)) {
+      assert(/^\s*WITH\s+/i.test(expanded), `'${q.name}': CTE structure preserved after expansion`);
+      assert(/\bSELECT\b/i.test(expanded), `'${q.name}': CTE has final SELECT`);
+    }
+  }
+}
+
+testExpandSchemaPlaceholder();
+testValidateSchemaPlaceholder();
+testYamlQueriesHavePlaceholder();
+testExpandedSqlStructure();
+
+printSummary('DMV Extractor');

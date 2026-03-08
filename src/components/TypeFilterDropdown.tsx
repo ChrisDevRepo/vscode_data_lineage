@@ -8,7 +8,7 @@ interface TypeFilterDropdownProps {
   onToggleType: (type: ObjectType) => void;
 }
 
-const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function'];
+const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function', 'external'];
 
 export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,

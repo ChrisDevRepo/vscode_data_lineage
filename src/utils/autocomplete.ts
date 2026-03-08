@@ -15,14 +15,15 @@ export function filterSuggestions(
 ): AutocompleteNode[] {
   if (term.length < 2) return [];
   const lower = term.toLowerCase();
-  return nodes
-    .filter(n => n.name.toLowerCase().includes(lower))
-    .sort((a, b) => {
-      const aStarts = a.name.toLowerCase().startsWith(lower);
-      const bStarts = b.name.toLowerCase().startsWith(lower);
-      if (aStarts && !bStarts) return -1;
-      if (!aStarts && bStarts) return 1;
-      return a.name.localeCompare(b.name);
-    })
-    .slice(0, limit);
+  const matches = nodes
+    .map(n => ({ node: n, lower: n.name.toLowerCase() }))
+    .filter(m => m.lower.includes(lower));
+  matches.sort((a, b) => {
+    const aStarts = a.lower.startsWith(lower);
+    const bStarts = b.lower.startsWith(lower);
+    if (aStarts && !bStarts) return -1;
+    if (!aStarts && bStarts) return 1;
+    return a.node.name.localeCompare(b.node.name);
+  });
+  return matches.slice(0, limit).map(m => m.node);
 }

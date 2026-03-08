@@ -1,14 +1,16 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useTransition } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { ProjectSelector } from './ProjectSelector';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeContextMenu } from './NodeContextMenu';
+import { TableDetailPanel, type TableStatsState } from './TableDetailPanel';
 import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
+import type { DacpacModel, LineageNode, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
+import type { StatsMode } from '../engine/profilingEngine';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
@@ -24,6 +26,9 @@ interface ContextMenuState {
   nodeId: string;
   nodeName: string;
   schema: string;
+  externalType?: 'et' | 'file' | 'db';
+  externalUrl?: string;
+  fullName?: string;
   objectType: ObjectType;
 }
 
@@ -37,10 +42,12 @@ export function App() {
 
   const [filter, setFilter] = useState<FilterState>({
     schemas: new Set(),
-    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
+    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
     searchTerm: '',
     hideIsolated: true,
     focusSchemas: new Set(),
+    showExternalRefs: true,
+    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
@@ -59,14 +66,24 @@ export function App() {
         usedDefaults: result.usedDefaults,
         categoryCounts: result.categoryCounts,
       });
+    } else {
+      vscodeApi.postMessage({
+        type: 'parse-rules-result',
+        loaded: 0,
+        skipped: [],
+        errors: ['No parse rules received from extension host'],
+        usedDefaults: true,
+        categoryCounts: {},
+      });
     }
   }, [vscodeApi]);
 
   const dacpacLoader = useDacpacLoader(applyConfig);
+  const [, startTransition] = useTransition();
 
   const rebuild = useCallback(
     (m: DacpacModel, f: FilterState, cfg?: ExtensionConfig) => {
-      buildFromModel(m, f, cfg || config);
+      startTransition(() => buildFromModel(m, f, cfg || config));
     },
     [buildFromModel, config]
   );
@@ -81,12 +98,12 @@ export function App() {
       trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
 
       setModel(trimmed);
-      const f = { ...filter, schemas: new Set(trimmed.schemas.map(s => s.name)) };
+      const f = getResetFilter(trimmed);
       setFilter(f);
       rebuild(trimmed, f, config);
       setView('graph');
     },
-    [filter, rebuild, config]
+    [rebuild, config]
   );
 
   useEffect(() => {
@@ -107,10 +124,12 @@ export function App() {
 
   const getResetFilter = (m: DacpacModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
-    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function']),
+    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
     searchTerm: '',
     hideIsolated: true,
     focusSchemas: new Set(),
+    showExternalRefs: true,
+    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
   });
 
   const handleRefresh = useCallback(() => {
@@ -159,14 +178,19 @@ export function App() {
     dacpacLoader.resetToStart();
     setView('selector');
     clearTrace();
+    setTableDetailNode(null);
+    setTableStatsState({ phase: 'idle' });
   }, [dacpacLoader.resetToStart, clearTrace]);
 
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
+  const [tableDetailNode, setTableDetailNode] = useState<LineageNode | null>(null);
+  const [tableStatsState, setTableStatsState] = useState<TableStatsState>({ phase: 'idle' });
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
   const prevHideIsolatedRef = useRef<boolean | null>(null);
+  const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
@@ -177,15 +201,26 @@ export function App() {
         return toggled;
       });
 
-      // Update DDL viewer if already open (don't open on left-click)
       const node = model?.nodes.find(n => n.id === nodeId);
-      if (node) {
+      if (!node) return;
+
+      if (node.type === 'table' || node.type === 'external') {
+        // If panel is already open, refresh to show the clicked table (don't open from scratch)
+        setTableDetailNode(prev => {
+          if (!prev) return null;           // panel closed — stay closed
+          if (prev.id === nodeId) return prev; // same node — no change
+          setTableStatsState({ phase: 'idle' });
+          return node;                      // different table — refresh panel
+        });
+      } else {
+        // Update DDL text editor if already open (don't open on left-click)
         vscodeApi.postMessage({
           type: 'update-ddl',
           objectName: node.name,
           schema: node.schema,
           objectType: node.type,
           sqlBody: node.bodyScript,
+          columns: node.columns,
         });
       }
     },
@@ -207,6 +242,9 @@ export function App() {
         nodeName: String(node.data.label),
         schema: String(node.data.schema),
         objectType: node.data.objectType as ObjectType,
+        externalType: node.data.externalType,
+        externalUrl: node.data.externalUrl,
+        fullName: String(node.data.fullName),
       });
     },
     [flowNodes]
@@ -215,13 +253,21 @@ export function App() {
   const handleViewDdl = useCallback(
     (nodeId: string) => {
       const node = model?.nodes.find(n => n.id === nodeId);
-      if (node) {
+      if (!node) return;
+
+      if (node.type === 'table' || node.type === 'external') {
+        // Open the table detail sidebar
+        setTableDetailNode(node);
+        setTableStatsState({ phase: 'idle' });
+      } else {
+        // Open DDL text editor (SP/View/Function)
         vscodeApi.postMessage({
           type: 'show-ddl',
           objectName: node.name,
           schema: node.schema,
           objectType: node.type,
           sqlBody: node.bodyScript,
+          columns: node.columns,
         });
       }
     },
@@ -276,14 +322,15 @@ export function App() {
         const focusNodeIds = new Set(
           model.nodes.filter(n => n.schema === schema).map(n => n.id)
         );
+        const nodeById = new Map(model.nodes.map(n => [n.id, n]));
         const neighborSchemas = new Set<string>([schema]);
         for (const e of model.edges) {
           if (focusNodeIds.has(e.source)) {
-            const target = model.nodes.find(n => n.id === e.target);
+            const target = nodeById.get(e.target);
             if (target) neighborSchemas.add(target.schema);
           }
           if (focusNodeIds.has(e.target)) {
-            const source = model.nodes.find(n => n.id === e.source);
+            const source = nodeById.get(e.source);
             if (source) neighborSchemas.add(source.schema);
           }
         }
@@ -293,6 +340,25 @@ export function App() {
       }
 
       const next = { ...prev, focusSchemas, schemas };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleToggleExternalRefs = useCallback(() => {
+    setFilter((prev) => {
+      const next = { ...prev, showExternalRefs: !prev.showExternalRefs };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleToggleExternalRefType = useCallback((subType: 'file' | 'db') => {
+    setFilter((prev) => {
+      const externalRefTypes = new Set(prev.externalRefTypes);
+      if (externalRefTypes.has(subType)) externalRefTypes.delete(subType);
+      else externalRefTypes.add(subType);
+      const next = { ...prev, externalRefTypes };
       if (model) rebuild(model, next, config);
       return next;
     });
@@ -319,6 +385,28 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  const handleSelectAllSchemas = useCallback((schemas: string[]) => {
+    setFilter((prev) => {
+      const next = { ...prev, schemas: new Set([...prev.schemas, ...schemas]) };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleSelectNoneSchemas = useCallback((schemas: string[]) => {
+    setFilter((prev) => {
+      const nextSchemas = new Set(prev.schemas);
+      const focusSchemas = new Set(prev.focusSchemas);
+      for (const s of schemas) {
+        nextSchemas.delete(s);
+        focusSchemas.delete(s);
+      }
+      const next = { ...prev, schemas: nextSchemas, focusSchemas };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
   const openAnalysis = useCallback((type: AnalysisType) => {
     // End any active trace / close detail search
     endTrace();
@@ -331,12 +419,14 @@ export function App() {
       prevHideIsolatedRef.current = true;
       const nextFilter = { ...filter, hideIsolated: false };
       setFilter(nextFilter);
+      setAnalysisMode(null);
+      // Set pending flag — useEffect will run analysis once graph rebuilds
+      pendingAnalysisRef.current = 'orphans';
       if (model) {
-        // Rebuild with orphans visible, then run analysis on the new graph
         buildFromModel(model, nextFilter, config);
       }
     } else {
-      // For islands/hubs, run analysis on current graph
+      // For islands/hubs/longest-path/cycles, run analysis on current graph
       if (graph) {
         const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
         setAnalysisMode({ type, result, activeGroupId: null });
@@ -344,12 +434,15 @@ export function App() {
     }
   }, [endTrace, filter, model, graph, config, buildFromModel]);
 
+  // Run pending orphan analysis after graph rebuild completes
   useEffect(() => {
-    if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
-      const result = runAnalysis(graph, 'orphans', config.analysis, config.maxNodes);
-      setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
+    if (pendingAnalysisRef.current && graph) {
+      const type = pendingAnalysisRef.current;
+      pendingAnalysisRef.current = null;
+      const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+      setAnalysisMode({ type, result, activeGroupId: null });
     }
-  }, [graph, analysisMode, config.analysis, config.maxNodes]);
+  }, [graph, config.analysis, config.maxNodes]);
 
   const closeAnalysis = useCallback(() => {
     // Clear analysis overlay — same restore as leaving trace mode
@@ -434,6 +527,20 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
 
+  // Handle stats results from extension host
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const msg = e.data;
+      if (msg?.type === 'table-stats-result') {
+        setTableStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
+      } else if (msg?.type === 'table-stats-error') {
+        setTableStatsState({ phase: 'error', message: msg.message });
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
   if (view === 'loading') {
     return null;
   }
@@ -441,6 +548,41 @@ export function App() {
   if (view === 'selector') {
     return <ProjectSelector config={config} loader={dacpacLoader} />;
   }
+
+  const isDbMode = dacpacLoader.lastSource?.type === 'database';
+  const statsEnabled = config.tableStatistics?.enabled ?? true;
+  const excludeExternalTables = config.tableStatistics?.excludeExternalTables ?? true;
+  const standardModeEnabled = config.tableStatistics?.standardModeEnabled ?? true;
+
+  const handleRequestStats = (mode: StatsMode) => {
+    if (!tableDetailNode) return;
+    setTableStatsState({ phase: 'loading', mode });
+    vscodeApi.postMessage({
+      type: 'table-stats-request',
+      schema: tableDetailNode.schema,
+      objectName: tableDetailNode.name,
+      mode,
+      columns: tableDetailNode.columns,
+    });
+  };
+
+  const tableDetailPanelElement = tableDetailNode ? (
+    <TableDetailPanel
+      schema={tableDetailNode.schema}
+      objectName={tableDetailNode.name}
+      objectType={tableDetailNode.type as 'table' | 'external'}
+      externalType={tableDetailNode.externalType}
+      columns={tableDetailNode.columns ?? []}
+      fks={tableDetailNode.fks ?? []}
+      statsState={tableStatsState}
+      onClose={() => { setTableDetailNode(null); setTableStatsState({ phase: 'idle' }); }}
+      onRequestStats={handleRequestStats}
+      isDbMode={isDbMode}
+      statsEnabled={statsEnabled}
+      excludeExternalTables={excludeExternalTables}
+      standardModeEnabled={standardModeEnabled}
+    />
+  ) : null;
 
   return (
     <ReactFlowProvider>
@@ -469,6 +611,10 @@ export function App() {
         onToggleIsolated={handleToggleIsolated}
         onToggleFocusSchema={handleToggleFocusSchema}
         onToggleSchema={handleToggleSchema}
+        onSelectAllSchemas={handleSelectAllSchemas}
+        onSelectNoneSchemas={handleSelectNoneSchemas}
+        onToggleExternalRefs={handleToggleExternalRefs}
+        onToggleExternalRefType={handleToggleExternalRefType}
         availableSchemas={model?.schemas.map(s => s.name) || []}
         analysisMode={analysisMode}
         onOpenAnalysis={openAnalysis}
@@ -480,6 +626,9 @@ export function App() {
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}
+        tableDetailPanel={tableDetailPanelElement}
+        isPanelOpen={tableDetailNode !== null}
+        sourceName={dacpacLoader.lastSource?.name}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
@@ -502,6 +651,9 @@ export function App() {
           nodeName={contextMenu.nodeName}
           schema={contextMenu.schema}
           objectType={contextMenu.objectType}
+          externalType={contextMenu.externalType}
+          externalUrl={contextMenu.externalUrl}
+          fullName={contextMenu.fullName}
           isTracing={trace.mode !== 'none' || !!analysisMode}
           onClose={() => setContextMenu(null)}
           onTrace={(nodeId) => startTraceConfig(nodeId)}

@@ -4,27 +4,12 @@
  */
 
 import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 import { extractDacpac } from '../src/engine/dacpacExtractor';
 import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics } from '../src/engine/graphBuilder';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    console.log(`  ✓ ${msg}`);
-    passed++;
-  } else {
-    console.error(`  ✗ ${msg}`);
-    failed++;
-  }
-}
+import { buildModel } from '../src/engine/modelBuilder';
+import { assert, makeGraph, testPath, loadParseRules, printSummary } from './testUtils';
 
 // ─── Graph Builder ──────────────────────────────────────────────────────────
 
@@ -179,7 +164,7 @@ function testCoWriterFilter() {
 
 async function testSynapseTrace() {
   console.log('\n── Synapse Dacpac: Trace No Siblings ──');
-  const dacpacPath = resolve(__dirname, './AdventureWorks_sdk-style.dacpac');
+  const dacpacPath = testPath('AdventureWorks_sdk-style.dacpac');
   const buffer = readFileSync(dacpacPath);
   const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
@@ -237,6 +222,366 @@ async function testSynapseTrace() {
   }
 }
 
+// ─── Virtual External Nodes: Model Building ─────────────────────────────────
+
+function testVirtualNodeBuilding() {
+  console.log('\n── Virtual External Nodes: Model Building ──');
+  loadParseRules();
+
+  // SP reads from OPENROWSET and references a cross-DB table
+  const objects = [
+    {
+      fullName: '[dbo].[spLoadSales]',
+      type: 'procedure' as const,
+      bodyScript: `
+        CREATE PROCEDURE [dbo].[spLoadSales] AS
+        INSERT INTO dbo.Sales
+        SELECT * FROM OPENROWSET(BULK 'https://storage.blob.core.windows.net/data/sales_2024.parquet',
+          FORMAT = 'PARQUET') AS src
+        UNION ALL
+        SELECT * FROM Staging.dbo.Orders
+      `,
+    },
+    { fullName: '[dbo].[Sales]', type: 'table' as const },
+  ];
+  const deps = [{ sourceName: '[dbo].[spLoadSales]', targetName: '[dbo].[Sales]' }];
+
+  const model = buildModel(objects, deps);
+
+  // File virtual node created for OPENROWSET URL
+  const fileNode = model.nodes.find(n => n.externalType === 'file');
+  assert(!!fileNode, 'VN: OPENROWSET creates file virtual node');
+  assert(fileNode!.schema === '', 'VN: File virtual node has empty schema');
+  assert(fileNode!.externalUrl === 'https://storage.blob.core.windows.net/data/sales_2024.parquet', 'VN: File node stores full URL');
+  assert(fileNode!.name === 'sales_2024.parquet', 'VN: File node name is last URL segment');
+  assert(fileNode!.id.startsWith('[__ext__].'), 'VN: File node ID starts with [__ext__]');
+
+  // Edge from file node → SP (data source)
+  const fileEdge = model.edges.find(e => e.source === fileNode!.id && e.target === '[dbo].[sploadsales]');
+  assert(!!fileEdge, 'VN: File → SP edge exists (data source)');
+
+  // Cross-DB virtual node created for Staging.dbo.Orders
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(!!crossDbNode, 'VN: 3-part name creates cross-DB virtual node');
+  assert(crossDbNode!.schema === '', 'VN: Cross-DB node has empty schema');
+  assert(crossDbNode!.externalDatabase === 'staging', 'VN: Cross-DB node stores database name');
+  assert(crossDbNode!.name === 'dbo.orders', 'VN: Cross-DB node name is schema.object');
+
+  // Edge from cross-DB → SP (data source)
+  const crossDbEdge = model.edges.find(e => e.source === crossDbNode!.id);
+  assert(!!crossDbEdge, 'VN: Cross-DB → SP edge exists (data source)');
+
+  // Catalog includes virtual nodes
+  assert(!!model.catalog[fileNode!.id], 'VN: File node in catalog');
+  assert(!!model.catalog[crossDbNode!.id], 'VN: Cross-DB node in catalog');
+  assert(model.catalog[fileNode!.id].externalType === 'file', 'VN: Catalog entry has externalType=file');
+  assert(model.catalog[crossDbNode!.id].externalType === 'db', 'VN: Catalog entry has externalType=db');
+}
+
+// ─── Virtual Nodes: BFS Trace Traversal ──────────────────────────────────────
+
+function testVirtualNodeTrace() {
+  console.log('\n── Virtual Nodes: BFS Trace Traversal ──');
+
+  // Build a graph with a virtual file node: FileNode → SP → Table
+  const graph = new Graph({ type: 'directed', multi: false });
+  for (const id of ['FileNode', 'SP1', 'Table1']) {
+    graph.addNode(id, { type: id === 'FileNode' ? 'external' : id.startsWith('SP') ? 'procedure' : 'table' });
+  }
+  graph.addEdgeWithKey('FileNode→SP1', 'FileNode', 'SP1', { type: 'body' });
+  graph.addEdgeWithKey('SP1→Table1', 'SP1', 'Table1', { type: 'body' });
+
+  // Trace from SP1 should include FileNode (upstream) and Table1 (downstream)
+  const traced = traceNode(graph, 'SP1', 'both');
+  assert(traced.nodeIds.has('FileNode'), 'VN-BFS: FileNode reachable upstream from SP1');
+  assert(traced.nodeIds.has('Table1'), 'VN-BFS: Table1 reachable downstream from SP1');
+  assert(traced.edgeIds.has('FileNode→SP1'), 'VN-BFS: FileNode→SP1 edge in trace');
+  assert(traced.edgeIds.has('SP1→Table1'), 'VN-BFS: SP1→Table1 edge in trace');
+
+  // Trace with levels: upstream=1 from Table1 should reach SP1 but not FileNode
+  const leveled = traceNodeWithLevels(graph, 'Table1', 1, 0);
+  assert(leveled.nodeIds.has('SP1'), 'VN-BFS-L1: SP1 reachable at depth 1');
+  assert(!leveled.nodeIds.has('FileNode'), 'VN-BFS-L1: FileNode not reachable at depth 1');
+
+  // Trace with levels: upstream=2 from Table1 should reach FileNode
+  const leveled2 = traceNodeWithLevels(graph, 'Table1', 2, 0);
+  assert(leveled2.nodeIds.has('FileNode'), 'VN-BFS-L2: FileNode reachable at depth 2');
+  assert(leveled2.edgeIds.has('FileNode→SP1'), 'VN-BFS-L2: FileNode→SP1 edge in trace');
+}
+
+// ─── Virtual Nodes: Same-DB 3-Part Ref → Local ──────────────────────────────
+
+function testSameDbResolution() {
+  console.log('\n── Virtual Nodes: Same-DB 3-Part Resolution ──');
+
+  // SP references MyDB.dbo.Sales — same DB, should resolve locally
+  const objects = [
+    {
+      fullName: '[dbo].[spLoad]',
+      type: 'procedure' as const,
+      bodyScript: `
+        CREATE PROCEDURE [dbo].[spLoad] AS
+        SELECT * FROM MyDB.dbo.Sales
+      `,
+    },
+    { fullName: '[dbo].[Sales]', type: 'table' as const },
+  ];
+  const deps = [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }];
+
+  // DMV path: currentDatabase = 'MyDB' → same-DB ref treated as local
+  const model = buildModel(objects, deps, undefined, 'MyDB');
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(!crossDbNode, 'VN-SameDB-DMV: No cross-DB node created for same-DB ref');
+
+  // Dacpac path: no currentDatabase but [dbo].[sales] exists → treated as local
+  const model2 = buildModel(objects, deps);
+  const crossDbNode2 = model2.nodes.find(n => n.externalType === 'db');
+  assert(!crossDbNode2, 'VN-SameDB-Dacpac: No cross-DB node when local node exists');
+}
+
+// ─── Virtual Nodes: OPENROWSET Dedup ─────────────────────────────────────────
+
+function testOpenrowsetDedup() {
+  console.log('\n── Virtual Nodes: OPENROWSET Dedup ──');
+
+  // Two SPs reference the same OPENROWSET URL → should create only 1 virtual node
+  const url = 'https://storage.blob.core.windows.net/data/shared.csv';
+  const objects = [
+    {
+      fullName: '[dbo].[spA]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spA] AS SELECT * FROM OPENROWSET(BULK '${url}', FORMAT = 'CSV') AS r`,
+    },
+    {
+      fullName: '[dbo].[spB]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spB] AS SELECT * FROM OPENROWSET(BULK '${url}', FORMAT = 'CSV') AS r`,
+    },
+  ];
+
+  const model = buildModel(objects, []);
+  const fileNodes = model.nodes.filter(n => n.externalType === 'file');
+  assert(fileNodes.length === 1, `VN-Dedup: Same URL creates 1 virtual node (got ${fileNodes.length})`);
+
+  // Both SPs should have edges from the same file node
+  const fileId = fileNodes[0].id;
+  const fileEdges = model.edges.filter(e => e.source === fileId);
+  assert(fileEdges.length === 2, `VN-Dedup: File node has 2 edges to both SPs (got ${fileEdges.length})`);
+}
+
+// ─── Virtual Nodes: COPY INTO + BULK INSERT ──────────────────────────────────
+
+function testCopyIntoBulkInsert() {
+  console.log('\n── Virtual Nodes: COPY INTO + BULK INSERT ──');
+
+  const objects = [
+    {
+      fullName: '[dbo].[spCopy]',
+      type: 'procedure' as const,
+      bodyScript: `
+        CREATE PROCEDURE [dbo].[spCopy] AS
+        COPY INTO dbo.FactSales
+        FROM 'https://datalake.dfs.core.windows.net/raw/fact_sales/*.parquet'
+        WITH (FILE_TYPE = 'PARQUET')
+      `,
+    },
+    {
+      fullName: '[dbo].[spBulk]',
+      type: 'procedure' as const,
+      bodyScript: `
+        CREATE PROCEDURE [dbo].[spBulk] AS
+        BULK INSERT dbo.DimProduct
+        FROM '\\\\fileserver\\share\\products.csv'
+        WITH (FIELDTERMINATOR = ',')
+      `,
+    },
+    { fullName: '[dbo].[FactSales]', type: 'table' as const },
+    { fullName: '[dbo].[DimProduct]', type: 'table' as const },
+  ];
+
+  const model = buildModel(objects, []);
+  const fileNodes = model.nodes.filter(n => n.externalType === 'file');
+  assert(fileNodes.length === 2, `VN-CopyBulk: 2 file nodes for COPY INTO + BULK INSERT (got ${fileNodes.length})`);
+
+  const copyNode = fileNodes.find(n => n.externalUrl?.includes('fact_sales'));
+  assert(!!copyNode, 'VN-CopyBulk: COPY INTO file node created');
+
+  const bulkNode = fileNodes.find(n => n.externalUrl?.includes('products.csv'));
+  assert(!!bulkNode, 'VN-CopyBulk: BULK INSERT file node created');
+}
+
+// ─── Virtual Nodes: CETAS Target ─────────────────────────────────────────────
+
+function testCetasTarget() {
+  console.log('\n── Virtual Nodes: CETAS Target ──');
+
+  // CETAS: CREATE EXTERNAL TABLE AS SELECT → target should be extracted
+  const objects = [
+    {
+      fullName: '[dbo].[spExport]',
+      type: 'procedure' as const,
+      bodyScript: `
+        CREATE PROCEDURE [dbo].[spExport] AS
+        CREATE EXTERNAL TABLE ext.SalesExport
+        WITH (LOCATION = '/export/sales/', DATA_SOURCE = MyDataSource)
+        AS SELECT * FROM dbo.Sales
+      `,
+    },
+    { fullName: '[dbo].[Sales]', type: 'table' as const },
+    { fullName: '[ext].[SalesExport]', type: 'external' as const, externalType: 'et' as const },
+  ];
+  const deps = [
+    { sourceName: '[dbo].[spExport]', targetName: '[dbo].[Sales]' },
+  ];
+
+  const model = buildModel(objects, deps);
+  // The CETAS regex should detect ext.SalesExport as a target
+  const spNode = model.nodes.find(n => n.id === '[dbo].[spexport]');
+  const etNode = model.nodes.find(n => n.id === '[ext].[salesexport]');
+  assert(!!spNode, 'CETAS: SP node exists');
+  assert(!!etNode, 'CETAS: External table node exists');
+
+  // Check edge: SP → ET (write target)
+  const cetasEdge = model.edges.find(e =>
+    e.source === '[dbo].[spexport]' && e.target === '[ext].[salesexport]'
+  );
+  assert(!!cetasEdge, 'CETAS: SP → External Table edge exists (write target)');
+}
+
+// ─── Virtual Nodes: Budget Exhaustion (maxNodes cap) ─────────────────────────
+
+function testVirtualNodeBudgetExhaustion() {
+  console.log('\n── Virtual Nodes: Budget Exhaustion (maxNodes cap) ──');
+
+  // 3 real nodes + maxNodes=3 → budget=0 → no virtual nodes created
+  const objects = [
+    { fullName: '[dbo].[Sales]', type: 'table' as const },
+    { fullName: '[dbo].[Products]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spLoad]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spLoad] AS
+        SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT='PARQUET') AS r
+        UNION ALL SELECT * FROM OtherDB.dbo.Remote`,
+    },
+  ];
+  const deps = [
+    { sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' },
+  ];
+
+  const model = buildModel(objects, deps, undefined, undefined, true, 3); // maxNodes=3
+  const virtualNodes = model.nodes.filter(n => n.externalType === 'file' || n.externalType === 'db');
+  assert(virtualNodes.length === 0, 'Budget: no virtual nodes when maxNodes=realNodes');
+  assert(model.nodes.length === 3, 'Budget: only real nodes present');
+}
+
+// ─── Virtual Nodes: Mixed OPENROWSET + Cross-DB + Local ──────────────────────
+
+function testMixedExternalRefs() {
+  console.log('\n── Virtual Nodes: Mixed OPENROWSET + Cross-DB + Local ──');
+
+  const objects = [
+    { fullName: '[dbo].[FactSales]', type: 'table' as const },
+    { fullName: '[dim].[Product]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spETL]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spETL] AS
+        INSERT INTO [dbo].[FactSales]
+        SELECT p.*, r.* FROM [dim].[Product] p
+        CROSS JOIN OPENROWSET(BULK 'https://lake/raw.parquet', FORMAT='PARQUET') AS r
+        UNION ALL
+        SELECT * FROM Staging.dbo.Orders`,
+    },
+  ];
+  const deps = [
+    { sourceName: '[dbo].[spETL]', targetName: '[dbo].[FactSales]' },
+    { sourceName: '[dbo].[spETL]', targetName: '[dim].[Product]' },
+  ];
+
+  const model = buildModel(objects, deps);
+
+  // Local edges
+  const writeEdge = model.edges.find(e => e.source === '[dbo].[spetl]' && e.target === '[dbo].[factsales]');
+  assert(!!writeEdge, 'Mixed: SP → FactSales (write) edge');
+  const readEdge = model.edges.find(e => e.source === '[dim].[product]' && e.target === '[dbo].[spetl]');
+  assert(!!readEdge, 'Mixed: Product → SP (read) edge');
+
+  // File virtual node
+  const fileNode = model.nodes.find(n => n.externalType === 'file');
+  assert(!!fileNode, 'Mixed: file virtual node created');
+  const fileEdge = model.edges.find(e => e.source === fileNode!.id && e.target === '[dbo].[spetl]');
+  assert(!!fileEdge, 'Mixed: file → SP edge');
+
+  // Cross-DB virtual node
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(!!crossDbNode, 'Mixed: cross-DB virtual node created');
+  const crossDbEdge = model.edges.find(e => e.source === crossDbNode!.id && e.target === '[dbo].[spetl]');
+  assert(!!crossDbEdge, 'Mixed: cross-DB → SP edge (source)');
+
+  // Total: 3 real + 2 virtual = 5
+  assert(model.nodes.length === 5, `Mixed: 3 real + 2 virtual = 5 total (got ${model.nodes.length})`);
+}
+
+// ─── Virtual Nodes: Cross-DB Write Direction ─────────────────────────────────
+
+function testCrossDbWriteDirection() {
+  console.log('\n── Virtual Nodes: Cross-DB Write Direction ──');
+
+  const objects = [
+    { fullName: '[dbo].[LocalData]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spArchive]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spArchive] AS
+        INSERT INTO ArchiveDB.dbo.ArchivedSales
+        SELECT * FROM [dbo].[LocalData]`,
+    },
+  ];
+  const deps = [
+    { sourceName: '[dbo].[spArchive]', targetName: '[dbo].[LocalData]' },
+  ];
+
+  const model = buildModel(objects, deps);
+  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
+  assert(!!crossDbNode, 'CrossDB-Write: virtual node created for target');
+
+  // Edge should be SP → cross-DB (write direction)
+  const writeEdge = model.edges.find(e =>
+    e.source === '[dbo].[sparchive]' && e.target === crossDbNode!.id
+  );
+  assert(!!writeEdge, 'CrossDB-Write: SP → cross-DB edge (outbound write)');
+
+  // Read edge from LocalData → SP should also exist
+  const readEdge = model.edges.find(e =>
+    e.source === '[dbo].[localdata]' && e.target === '[dbo].[sparchive]'
+  );
+  assert(!!readEdge, 'CrossDB-Write: LocalData → SP read edge exists');
+}
+
+// ─── Virtual Nodes: externalRefsEnabled=false ────────────────────────────────
+
+function testExternalRefsDisabled() {
+  console.log('\n── Virtual Nodes: externalRefsEnabled=false ──');
+
+  const objects = [
+    { fullName: '[dbo].[Sales]', type: 'table' as const },
+    {
+      fullName: '[dbo].[spLoad]',
+      type: 'procedure' as const,
+      bodyScript: `CREATE PROCEDURE [dbo].[spLoad] AS
+        SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT='PARQUET') AS r
+        UNION ALL SELECT * FROM OtherDB.dbo.Remote`,
+    },
+  ];
+  const deps = [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }];
+
+  const model = buildModel(objects, deps, undefined, undefined, false); // disabled
+  const virtualNodes = model.nodes.filter(n => n.externalType === 'file' || n.externalType === 'db');
+  assert(virtualNodes.length === 0, 'Disabled: no virtual nodes when externalRefsEnabled=false');
+  assert(model.nodes.length === 2, 'Disabled: only 2 real nodes');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -244,20 +589,28 @@ async function main() {
 
   try {
     // Load dacpac for integration tests
-    const buffer = readFileSync(resolve(__dirname, './AdventureWorks.dacpac'));
+    const buffer = readFileSync(testPath('AdventureWorks.dacpac'));
     const model = await extractDacpac(buffer.buffer as ArrayBuffer);
 
     await testGraphBuilder(model);
     testTraceNoSiblings();
     testCoWriterFilter();
     await testSynapseTrace();
+    testVirtualNodeBuilding();
+    testVirtualNodeTrace();
+    testSameDbResolution();
+    testOpenrowsetDedup();
+    testCopyIntoBulkInsert();
+    testCetasTarget();
+    testVirtualNodeBudgetExhaustion();
+    testMixedExternalRefs();
+    testCrossDbWriteDirection();
+    testExternalRefsDisabled();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
-    failed++;
   }
 
-  console.log(`\n═══ Results: ${passed} passed, ${failed} failed ═══`);
-  process.exit(failed > 0 ? 1 : 0);
+  printSummary('Graph Builder');
 }
 
 main();

@@ -6,16 +6,19 @@ export interface ParsedDependencies {
   sources: string[];
   targets: string[];
   execCalls: string[];
+  crossDbSources: string[];  // full 3-part "db.schema.object" (lowercase, brackets stripped)
+  crossDbTargets: string[];
 }
 
 export interface ParseRule {
   name: string;
   enabled: boolean;
   priority: number;
-  category: 'preprocessing' | 'source' | 'target' | 'exec';
+  category: 'preprocessing' | 'source' | 'target' | 'exec' | 'external_ref';
   pattern: string;
   flags: string;
   replacement?: string;
+  kind?: string;         // required for external_ref category (maps to ExternalRef.kind)
   description: string;
 }
 
@@ -38,6 +41,9 @@ export interface ParseRulesConfig {
 //   • 'string literals'    → neutralized to ''  (content can't trigger false matches)
 //   • -- line comments     → replaced with space (already removed by pass 0 for block)
 //   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
+
+/** Max chars to scan after `CTE AS (` for the first FROM clause — limits scan on huge SQL bodies */
+const CTE_BODY_WINDOW_CHARS = 3000;
 
 /**
  * Preprocessing: Replace CTE aliases in UPDATE statements with the CTE's base table.
@@ -66,8 +72,8 @@ function substituteCteUpdateAliases(sql: string): string {
     const cteName = m[1];
     if (KEYWORDS.test(cteName)) continue;
     const bodyStart = m.index + m[0].length;
-    // Find first schema-qualified FROM reference within 3000 chars of CTE body start
-    const window = sql.slice(bodyStart, bodyStart + 3000);
+    // Find first schema-qualified FROM reference within CTE_BODY_WINDOW_CHARS of CTE body start
+    const window = sql.slice(bodyStart, bodyStart + CTE_BODY_WINDOW_CHARS);
     const fromMatch = window.match(/\bFROM\s+((?:(?:\[[^\]]+\]|\w+)\.)+(?:\[[^\]]+\]|\w+))(?![\w\.])/i);
     if (fromMatch) {
       cteMap.set(cteName.toLowerCase(), fromMatch[1]);
@@ -105,16 +111,24 @@ function normalizeAnsiCommaJoins(sql: string): string {
 
 /** Pass 0: counter-scan removes block comments including nested ones correctly. O(n), no regex. */
 function removeBlockComments(sql: string): string {
-  let out = '';
+  const parts: string[] = [];
   let i = 0;
   let depth = 0;
+  let start = 0; // start of current non-comment range
   while (i < sql.length) {
-    if (sql[i] === '/' && sql[i + 1] === '*') { depth++; i += 2; continue; }
-    if (sql[i] === '*' && sql[i + 1] === '/' && depth > 0) { depth--; i += 2; continue; }
-    if (depth === 0) out += sql[i];
+    if (sql[i] === '/' && sql[i + 1] === '*') {
+      if (depth === 0) parts.push(sql.substring(start, i));
+      depth++; i += 2; continue;
+    }
+    if (sql[i] === '*' && sql[i + 1] === '/' && depth > 0) {
+      depth--; i += 2;
+      if (depth === 0) start = i;
+      continue;
+    }
     i++;
   }
-  return out;
+  if (depth === 0) parts.push(sql.substring(start, i));
+  return parts.join('');
 }
 
 // ─── Active config ──────────────────────────────────────────────────────────
@@ -130,9 +144,9 @@ export interface LoadRulesResult {
   categoryCounts: Record<string, number>;  // e.g. { preprocessing: 1, source: 4, target: 3, exec: 1 }
 }
 
-const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec']);
+const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec', 'external_ref']);
 
-function validateRule(rule: unknown, index: number): { valid: boolean; name: string; error?: string } {
+function validateRule(rule: unknown, index: number): { valid: true; name: string } | { valid: false; name: string; error: string } {
   const r = rule as Record<string, unknown>;
   const name = typeof r?.name === 'string' ? r.name : `rule[${index}]`;
 
@@ -140,7 +154,10 @@ function validateRule(rule: unknown, index: number): { valid: boolean; name: str
   if (typeof r.name !== 'string' || !r.name) return { valid: false, name, error: `${name}: missing 'name'` };
   if (typeof r.pattern !== 'string' || !r.pattern) return { valid: false, name, error: `${name}: missing 'pattern'` };
   if (typeof r.category !== 'string' || !VALID_CATEGORIES.has(r.category)) {
-    return { valid: false, name, error: `${name}: invalid category '${r.category}' (must be: preprocessing, source, target, exec)` };
+    return { valid: false, name, error: `${name}: invalid category '${r.category}' (must be: preprocessing, source, target, exec, external_ref)` };
+  }
+  if (r.category === 'external_ref' && (typeof r.kind !== 'string' || !r.kind)) {
+    return { valid: false, name, error: `${name}: external_ref rules require a non-empty 'kind' field` };
   }
   if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
   if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
@@ -180,7 +197,7 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
       validRules.push(raw as ParseRule);
     } else {
       result.skipped.push(check.name);
-      result.errors.push(check.error!);
+      result.errors.push(check.error);
     }
   }
 
@@ -244,6 +261,8 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   const sources = new Set<string>();
   const targets = new Set<string>();
   const execCalls = new Set<string>();
+  const crossDbSources = new Set<string>();
+  const crossDbTargets = new Set<string>();
 
   // Step 2: Extraction rules
   // UDF matches collected separately to filter false positives from INSERT INTO table(cols).
@@ -252,13 +271,23 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing') continue;
 
+    const regex = new RegExp(rule.pattern, rule.flags);
+
     const dest =
       rule.name === 'extract_udf_calls' ? udfSources :
       rule.category === 'source' ? sources :
       rule.category === 'target' ? targets :
       execCalls;
 
-    collectMatches(clean, new RegExp(rule.pattern, rule.flags), dest);
+    collectMatches(clean, regex, dest);
+
+    // Also collect 3-part+ names (cross-DB refs) that normalizeCaptured rejects.
+    // exec calls are not cross-DB targets — they reference SPs in the same DB.
+    if (rule.category === 'source' || rule.name === 'extract_udf_calls') {
+      collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbSources);
+    } else if (rule.category === 'target') {
+      collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbTargets);
+    }
   }
 
   // Add UDF sources that aren't already targets (a function can't be an INSERT/UPDATE target).
@@ -271,6 +300,8 @@ export function parseSqlBody(sql: string): ParsedDependencies {
     sources: Array.from(sources),
     targets: Array.from(targets),
     execCalls: Array.from(execCalls),
+    crossDbSources: Array.from(crossDbSources),
+    crossDbTargets: Array.from(crossDbTargets),
   };
 }
 
@@ -290,7 +321,10 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
       continue;
     }
     // Safety limit: abort runaway regex (ReDoS or overly broad user patterns)
-    if (++iterations > MAX_MATCHES_PER_RULE) break;
+    if (++iterations > MAX_MATCHES_PER_RULE) {
+      console.warn(`[Parser] Regex iteration limit (${MAX_MATCHES_PER_RULE}) exceeded — possible ReDoS or overly broad pattern`);
+      break;
+    }
 
     const raw = match[1];
     if (!raw) continue;
@@ -314,20 +348,87 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
  * - @tableVariable / #TempTable → rejected (never in catalog)
  * - Unqualified names (no dot) → rejected (require schema.object minimum)
  * - CTE aliases → also rejected here (CTEs are unqualified, caught by the line above)
- * - 3-part names db.schema.object → takes last 2 parts (schema.object)
- * - 4-part+ names server.db.schema.object → rejected (linked server refs)
+ * - 3-part+ names (db.schema.object, server.db.schema.object) → rejected for local lookup
+ *   (handled separately by collectCrossDbMatches for cross-DB virtual nodes)
  * - Lowercased for case-insensitive catalog lookup
  */
 function normalizeCaptured(raw: string): string | null {
   // Split bracket-aware: dots INSIDE [bracket identifiers] are part of the name, not separators.
-  // Example: [STAGING_CADENCE].[spLoadReconciliation_Case4.5] → 2 parts, not 3.
+  // Example: [MySchema].[spWithDots_v1.0] → 2 parts, not 3.
   const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;  // vars, temp tables
   if (parts.length < 2) return null;                  // require schema.object minimum
-  if (parts.length >= 4) return null;                 // reject linked-server 4-part names
-  const schema = parts[parts.length - 2];
-  const obj    = parts[parts.length - 1];
+  if (parts.length >= 3) return null;                 // cross-DB / linked-server → collectCrossDbMatches
+  const schema = parts[0];
+  const obj    = parts[1];
   if (!schema || !obj) return null;
   return `[${schema}].[${obj}]`.toLowerCase();
+}
+
+/**
+ * Normalize a 3+ part name to cross-DB format: "db.schema.object" (lowercase).
+ * 4-part server.db.schema.object → strips server, keeps last 3 parts.
+ * Returns null for 1-2 part names, @vars, #temp tables.
+ */
+function normalizeCrossDb(raw: string): string | null {
+  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const first = parts[0] ?? '';
+  if (first.startsWith('@') || first.startsWith('#')) return null;
+  if (parts.length < 3) return null;
+  // 4-part: strip server, take last 3
+  const relevant = parts.length >= 4 ? parts.slice(-3) : parts;
+  return relevant.map(p => p.toLowerCase()).join('.');
+}
+
+/**
+ * Run the same YAML rules but collect 3+ part names (cross-DB references).
+ * These are separated from local refs because normalizeCaptured rejects them.
+ */
+function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>) {
+  regex.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let iterations = 0;
+
+  while ((match = regex.exec(sql)) !== null) {
+    if (match[0].length === 0) { regex.lastIndex++; continue; }
+    if (++iterations > MAX_MATCHES_PER_RULE) break;
+    const raw = match[1];
+    if (!raw) continue;
+    const normalized = normalizeCrossDb(raw);
+    if (normalized !== null) out.add(normalized);
+  }
+}
+
+// ─── External file/URL reference extraction (pre-cleansing pass) ────────────
+// Rules come from YAML (category: external_ref) — runs on RAW SQL before the
+// cleansing pipeline neutralizes string literals. Each rule needs a 'kind' field
+// that maps to ExternalRef.kind (e.g. 'openrowset', 'copy_from', 'bulk_from').
+
+import type { ExternalRef } from './types';
+
+/**
+ * Extract external file/URL references from RAW SQL (before cleansing).
+ * Uses external_ref rules from activeRules (loaded from YAML).
+ * Deduplicates by URL — same URL returns only once.
+ */
+export function extractExternalRefs(rawSql: string): ExternalRef[] {
+  const seen = new Set<string>();
+  const results: ExternalRef[] = [];
+  const extRules = activeRules.filter(r => r.category === 'external_ref');
+
+  for (const rule of extRules) {
+    const regex = new RegExp(rule.pattern, rule.flags);
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(rawSql)) !== null) {
+      if (match[0].length === 0) { regex.lastIndex++; continue; }
+      const url = match[1];
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        results.push({ url, kind: rule.kind! });
+      }
+    }
+  }
+
+  return results;
 }

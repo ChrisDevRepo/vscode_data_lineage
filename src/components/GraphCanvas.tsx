@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ReactFlow,
   Background,
@@ -30,7 +30,7 @@ import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
-import { getSchemaColor } from '../utils/schemaColors';
+import { getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
@@ -59,6 +59,10 @@ interface GraphCanvasProps {
   onToggleIsolated: () => void;
   onToggleFocusSchema: (schema: string) => void;
   onToggleSchema?: (schema: string) => void;
+  onSelectAllSchemas?: (schemas: string[]) => void;
+  onSelectNoneSchemas?: (schemas: string[]) => void;
+  onToggleExternalRefs?: () => void;
+  onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   availableSchemas?: string[];
   onRefresh: () => void;
   onRebuild?: () => void;
@@ -76,6 +80,9 @@ interface GraphCanvasProps {
   onClearAnalysisGroup?: () => void;
   onApplyPath?: (targetNodeId: string) => boolean;
   isRebuilding?: boolean;
+  tableDetailPanel?: ReactNode;
+  isPanelOpen?: boolean;
+  sourceName?: string;
 }
 
 export function GraphCanvas({
@@ -98,6 +105,10 @@ export function GraphCanvas({
   onToggleIsolated,
   onToggleFocusSchema,
   onToggleSchema,
+  onSelectAllSchemas,
+  onSelectNoneSchemas,
+  onToggleExternalRefs,
+  onToggleExternalRefType,
   availableSchemas,
   onRefresh,
   onRebuild,
@@ -115,6 +126,9 @@ export function GraphCanvas({
   onClearAnalysisGroup,
   onApplyPath,
   isRebuilding = false,
+  tableDetailPanel,
+  isPanelOpen,
+  sourceName,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -131,7 +145,11 @@ export function GraphCanvas({
   }, [fitView]);
 
   const minimapNodeColor = useCallback(
-    (node: FlowNode<CustomNodeData>) => getSchemaColor(String(node.data.schema)),
+    (node: FlowNode<CustomNodeData>) => {
+      const ext = node.data.externalType;
+      if (ext === 'file' || ext === 'db') return getVirtualExtColor();
+      return getSchemaColor(String(node.data.schema));
+    },
     []
   );
 
@@ -166,17 +184,12 @@ export function GraphCanvas({
     import('../export/drawioExporter').then(({ exportToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
       const xml = exportToDrawio(flowNodes, flowEdges, schemas);
-      const blob = new Blob([xml], { type: 'application/xml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'lineage.drawio';
-      a.click();
-      URL.revokeObjectURL(url);
+      const base = sourceName?.replace(/\.dacpac$/i, '') || 'lineage';
+      vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, vscodeApi]);
+  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
@@ -186,6 +199,15 @@ export function GraphCanvas({
     }, AUTO_FIT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [flowNodes, fitView]);
+
+  // Re-fit when the table detail panel opens/closes (canvas width changes)
+  useEffect(() => {
+    if (isPanelOpen === undefined) return;
+    const timer = setTimeout(() => {
+      fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [isPanelOpen, fitView]);
 
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
@@ -209,6 +231,14 @@ export function GraphCanvas({
     []
   );
 
+  // ── O(1) model node lookup (avoids O(n²) .find() in DetailSearchSidebar) ──
+  const modelNodeMap = useMemo(() => {
+    if (!model) return new Map<string, DacpacModel['nodes'][number]>();
+    const map = new Map<string, DacpacModel['nodes'][number]>();
+    for (const n of model.nodes) map.set(n.id, n);
+    return map;
+  }, [model]);
+
   // ── Display layer: highlight/dim applied on top of local positions ──
 
   const level1Neighbors = useMemo(() => {
@@ -223,17 +253,14 @@ export function GraphCanvas({
   const displayNodes = useMemo(() => {
     return localNodes.map(node => {
       const isHighlighted = highlightedNodeId === node.id;
-      const shouldBeDimmed = highlightedNodeId &&
-        !isHighlighted &&
-        !level1Neighbors.has(node.id);
-
+      const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
       return {
         ...node,
         data: {
           ...node.data,
           highlighted: isHighlighted ? 'yellow' : node.data.highlighted,
           dimmed: !!shouldBeDimmed,
-        }
+        },
       };
     });
   }, [localNodes, highlightedNodeId, level1Neighbors]);
@@ -266,6 +293,13 @@ export function GraphCanvas({
     [displayNodes],
   );
 
+  // IDs of nodes currently rendered in the graph (after all filters: type, focus-schema,
+  // search, maxNodes cap). Used by NodeInfoBar to show ⊘ on neighbors not in view.
+  const visibleNodeIds = useMemo(
+    () => new Set(localNodes.map(n => n.id)),
+    [localNodes],
+  );
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <Toolbar
@@ -279,6 +313,8 @@ export function GraphCanvas({
         onToggleFocusSchema={onToggleFocusSchema}
         selectedSchemas={filter.schemas}
         onToggleSchema={onToggleSchema}
+        onSelectAllSchemas={onSelectAllSchemas}
+        onSelectNoneSchemas={onSelectNoneSchemas}
         availableSchemas={availableSchemas}
         onRefresh={onRefresh}
         onRebuild={onRebuild}
@@ -291,6 +327,10 @@ export function GraphCanvas({
         isAnalysisActive={!!analysisMode}
         analysisType={analysisMode?.type ?? null}
         onOpenAnalysis={onOpenAnalysis}
+        showExternalRefs={filter.showExternalRefs}
+        externalRefTypes={filter.externalRefTypes}
+        onToggleExternalRefs={onToggleExternalRefs}
+        onToggleExternalRefType={onToggleExternalRefType}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}
@@ -348,7 +388,8 @@ export function GraphCanvas({
         />
       )}
 
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 flex flex-row overflow-hidden min-h-0">
+        <div className="flex-1 relative overflow-hidden min-w-0">
         {isRebuilding && (
           <div className="absolute inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--ln-bg)', opacity: 0.85 }}>
             <svg className="animate-spin h-8 w-8" style={{ color: 'var(--ln-fg-muted)' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -415,20 +456,18 @@ export function GraphCanvas({
                       onSelectGroup={onSelectAnalysisGroup}
                       onClearGroup={onClearAnalysisGroup}
                       onClose={onCloseAnalysis}
+                      onSwitchAnalysis={onOpenAnalysis}
                     />
                   ) : onToggleDetailSearch ? (
                     <DetailSearchSidebar
                       onClose={onToggleDetailSearch}
-                      allNodes={displayNodes.map(n => {
-                        const modelNode = model?.nodes.find(mn => mn.id === n.id);
-                        return {
-                          id: n.id,
-                          name: String(n.data.label),
-                          schema: String(n.data.schema),
-                          type: n.data.objectType as ObjectType,
-                          bodyScript: modelNode?.bodyScript,
-                        };
-                      })}
+                      allNodes={displayNodes.map(n => ({
+                        id: n.id,
+                        name: String(n.data.label),
+                        schema: String(n.data.schema),
+                        type: n.data.objectType as ObjectType,
+                        bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                      }))}
                       onResultClick={(nodeId) => {
                         onNodeClick(nodeId);
                         zoomToNode(nodeId);
@@ -442,13 +481,17 @@ export function GraphCanvas({
         )}
 
         <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        </div>
+        {tableDetailPanel}
       </div>
 
-      {infoBarNodeId && model && graph && (
+      {infoBarNodeId && model && (
         <NodeInfoBar
           nodeId={infoBarNodeId}
-          model={model}
-          graph={graph}
+          catalog={model.catalog}
+          neighborIndex={model.neighborIndex}
+          visibleNodeIds={visibleNodeIds}
+          parseStats={model.parseStats}
           onClose={onCloseInfoBar || (() => {})}
         />
       )}

@@ -59,7 +59,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             </details>
           )}
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => window.vscode?.postMessage({ type: 'reload' })}
             className="ln-btn-primary"
             style={{
               marginTop: '15px',

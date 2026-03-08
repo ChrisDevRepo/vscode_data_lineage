@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -130,26 +130,14 @@
     },
     "configuration": [
       {
-        "title": "General",
+        "title": "Import",
         "properties": {
           "dataLineageViz.maxNodes": {
             "type": "number",
-            "default": 500,
+            "default": 750,
             "minimum": 10,
             "maximum": 1000,
-            "description": "Maximum objects to import (10–1000).",
-            "scope": "resource"
-          }
-        }
-      },
-      {
-        "title": "Import",
-        "properties": {
-          "dataLineageViz.parseRulesFile": {
-            "type": "string",
-            "default": "",
-            "editPresentation": "multilineText",
-            "markdownDescription": "Path to custom `parseRules.yaml`. Leave empty for built-in defaults.",
+            "markdownDescription": "Maximum number of database objects to load. Lower values improve performance on large databases.",
             "scope": "resource"
           },
           "dataLineageViz.excludePatterns": {
@@ -158,7 +146,19 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Regex patterns to exclude objects (e.g. `_TEST$`, `^staging\\\\.`).",
+            "markdownDescription": "Regex patterns to exclude objects by name (e.g. `_TEST$`, `^staging\\\\.`). Matched against `schema.object`.",
+            "scope": "resource"
+          },
+          "dataLineageViz.externalRefs.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Detect external references (OPENROWSET file paths, cross-database 3-part names). When disabled, no virtual external nodes are created. External Tables are unaffected.",
+            "scope": "resource"
+          },
+          "dataLineageViz.parseRulesFile": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Path to a custom parse rules YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md)",
             "scope": "resource"
           }
         }
@@ -166,11 +166,79 @@
       {
         "title": "Database Connection",
         "properties": {
+          "dataLineageViz.dmvQueryTimeout": {
+            "type": "number",
+            "default": 120,
+            "minimum": 10,
+            "maximum": 600,
+            "markdownDescription": "Timeout (seconds) per DMV query. Increase for large databases.",
+            "scope": "resource"
+          },
           "dataLineageViz.dmvQueriesFile": {
             "type": "string",
             "default": "",
-            "editPresentation": "multilineText",
-            "markdownDescription": "Path to custom DMV queries YAML file. Leave empty to use built-in queries. See [dmvQueries.yaml](assets/dmvQueries.yaml) for format.",
+            "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
+            "scope": "resource"
+          }
+        }
+      },
+      {
+        "title": "Table Statistics",
+        "properties": {
+          "dataLineageViz.tableStatistics.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show column statistics and row counts in the table design viewer (database import only).",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.standardModeEnabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Allow **Standard** profiling mode (adds AVG, STDEV, zero/empty counts). When `false`, only Quick mode is available — lighter queries.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.excludeExternalTables": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Skip profiling for external tables. External tables query remote data sources (S3, Blob, other databases) — profiling can be slow and expensive.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.queryTimeout": {
+            "type": "number",
+            "default": 60,
+            "minimum": 10,
+            "maximum": 600,
+            "markdownDescription": "Timeout (seconds) per profiling query.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.sampleThreshold": {
+            "type": "number",
+            "default": 100000,
+            "minimum": 0,
+            "maximum": 999999999,
+            "markdownDescription": "Advanced: Tables above this row count use sampling instead of a full scan. Set to `0` to always sample.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.sampleSize": {
+            "type": "number",
+            "default": 10000,
+            "minimum": 100,
+            "maximum": 1000000,
+            "markdownDescription": "Advanced: Number of rows to sample when profiling large tables.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.useApproxDistinct": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Advanced: Use `APPROX_COUNT_DISTINCT` instead of exact `COUNT(DISTINCT)`. Much faster with ~2% margin. Requires SQL Server 2019+.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.maxColumns": {
+            "type": "number",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 500,
+            "markdownDescription": "Advanced: Maximum number of columns to profile per table. Columns beyond this cap are skipped. Prevents massive queries on wide tables.",
             "scope": "resource"
           }
         }
@@ -186,29 +254,13 @@
             ],
             "default": "LR",
             "enumDescriptions": [
-              "Top to Bottom (hierarchical)",
-              "Left to Right (horizontal flow, default)"
+              "Top to Bottom",
+              "Left to Right (default)"
             ],
-            "markdownDescription": "Graph direction.",
+            "markdownDescription": "Direction of the dependency graph layout.",
             "scope": "resource"
           },
-          "dataLineageViz.layout.rankSeparation": {
-            "type": "number",
-            "default": 120,
-            "minimum": 20,
-            "maximum": 300,
-            "markdownDescription": "Space between layers.",
-            "scope": "resource"
-          },
-          "dataLineageViz.layout.nodeSeparation": {
-            "type": "number",
-            "default": 30,
-            "minimum": 10,
-            "maximum": 200,
-            "markdownDescription": "Space between nodes in the same layer.",
-            "scope": "resource"
-          },
-          "dataLineageViz.edgeStyle": {
+          "dataLineageViz.layout.edgeStyle": {
             "type": "string",
             "enum": [
               "default",
@@ -218,30 +270,46 @@
             ],
             "default": "default",
             "enumDescriptions": [
-              "Smooth bezier curves (default)",
+              "Smooth bezier curves",
               "Smooth step edges with rounded corners",
               "Step edges with sharp corners",
               "Straight lines"
             ],
-            "markdownDescription": "Edge/connection style.",
+            "markdownDescription": "Visual style for dependency edges.",
             "scope": "resource"
           },
           "dataLineageViz.layout.edgeAnimation": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Animate edges during trace.",
+            "markdownDescription": "Animate edges when running a trace.",
             "scope": "resource"
           },
           "dataLineageViz.layout.highlightAnimation": {
             "type": "boolean",
             "default": false,
-            "markdownDescription": "Animate edges on node click.",
+            "markdownDescription": "Animate edges when clicking a node.",
             "scope": "resource"
           },
           "dataLineageViz.layout.minimapEnabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Show minimap.",
+            "markdownDescription": "Show the graph minimap for navigation.",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.rankSeparation": {
+            "type": "number",
+            "default": 120,
+            "minimum": 20,
+            "maximum": 300,
+            "markdownDescription": "Advanced: Horizontal spacing between dependency layers (pixels).",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.nodeSeparation": {
+            "type": "number",
+            "default": 30,
+            "minimum": 10,
+            "maximum": 200,
+            "markdownDescription": "Advanced: Vertical spacing between nodes in the same layer (pixels).",
             "scope": "resource"
           }
         }
@@ -254,7 +322,7 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "markdownDescription": "Default upstream trace depth.",
+            "markdownDescription": "How many levels upstream (inputs) to trace by default.",
             "scope": "resource"
           },
           "dataLineageViz.trace.defaultDownstreamLevels": {
@@ -262,13 +330,13 @@
             "default": 3,
             "minimum": 0,
             "maximum": 99,
-            "markdownDescription": "Default downstream trace depth.",
+            "markdownDescription": "How many levels downstream (outputs) to trace by default.",
             "scope": "resource"
           },
           "dataLineageViz.trace.hideCoWriters": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Hide sibling writers in trace results. Siblings are procedures that write to the same output table but aren't part of the traced data flow.",
+            "markdownDescription": "Hide procedures that write to the same table but are not part of the traced path. Reduces noise in trace results.",
             "scope": "resource"
           }
         }
@@ -281,15 +349,15 @@
             "default": 8,
             "minimum": 1,
             "maximum": 50,
-            "markdownDescription": "Min connections to qualify as a hub.",
+            "markdownDescription": "Minimum number of connections for an object to appear in the hub list.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.islandMaxSize": {
             "type": "number",
-            "default": 2,
+            "default": 500,
             "minimum": 2,
-            "maximum": 500,
-            "markdownDescription": "Max size of disconnected subgraphs to show.",
+            "maximum": 1000,
+            "markdownDescription": "Max connected component size to qualify as an island. Default (500) matches `maxNodes` — shows all disconnected subgraphs. Set lower (e.g. 5) to focus on small isolated pairs/groups only.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {
@@ -297,7 +365,7 @@
             "default": 5,
             "minimum": 2,
             "maximum": 50,
-            "markdownDescription": "Min chain length for Longest Path analysis.",
+            "markdownDescription": "Minimum number of objects in a dependency chain for longest-path analysis.",
             "scope": "resource"
           }
         }
@@ -312,13 +380,20 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts",
-    "test:integration": "npm run build && tsx --tsconfig test/tsconfig.json test/runTest.ts"
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/profilingEngine.test.ts",
+    "test:dacpac": "tsx test/dacpacExtractor.test.ts",
+    "test:graph": "tsx test/graphBuilder.test.ts",
+    "test:parser": "tsx test/parser-edge-cases.test.ts",
+    "test:analysis": "tsx test/graphAnalysis.test.ts",
+    "test:dmv": "tsx test/dmvExtractor.test.ts",
+    "test:sql": "tsx test/tsql-complex.test.ts",
+    "test:profiling": "tsx test/profilingEngine.test.ts",
+    "test:db": "tsx test-internal/integration-db.test.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@xyflow/react": "^12.4.0",
-    "fast-xml-parser": "^5.3.6",
+    "fast-xml-parser": "^5.3.8",
     "graphology": "^0.25.4",
     "graphology-components": "^1.5.4",
     "graphology-shortest-path": "^2.1.0",
@@ -331,17 +406,17 @@
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
-    "@types/mocha": "^10.0.10",
+    "@types/mssql": "^9",
+    "dotenv": "^16",
+    "mssql": "^11",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.85.0",
     "@vitejs/plugin-react": "^4.3.0",
-    "@vscode/test-electron": "^2.5.2",
     "autoprefixer": "^10.4.20",
     "esbuild": "^0.25.0",
-    "glob": "^13.0.0",
-    "mocha": "^11.7.5",
+
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",

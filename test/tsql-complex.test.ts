@@ -19,21 +19,11 @@
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
-import { resolve, dirname, basename } from 'path';
-import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
-import { parseSqlBody, loadRules } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+import { basename } from 'path';
+import { parseSqlBody } from '../src/engine/sqlBodyParser';
+import { assert, loadParseRules, testPath, printSummary } from './testUtils';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// ─── Load rules ──────────────────────────────────────────────────────────────
-const rulesYaml = readFileSync(resolve(__dirname, '../assets/defaultParseRules.yaml'), 'utf-8');
-loadRules(yaml.load(rulesYaml) as ParseRulesConfig);
-
-// ─── Counters ─────────────────────────────────────────────────────────────────
-let passed = 0;
-let failed = 0;
+loadParseRules();
 
 // ─── EXPECT annotation parser ─────────────────────────────────────────────────
 interface Expectation {
@@ -85,21 +75,18 @@ function runFile(filePath: string): boolean {
   try {
     result = parseSqlBody(sql);
   } catch (e) {
-    console.error(`  ✗ [CRASH] ${fileName}: ${e}`);
-    failed++;
+    assert(false, `[CRASH] ${fileName}: ${e}`);
     return false;
   }
 
   if (result.sources.length >= 500 || result.targets.length >= 200) {
-    console.error(`  ✗ [RUNAWAY] ${fileName}: src=${result.sources.length} tgt=${result.targets.length}`);
-    failed++;
+    assert(false, `[RUNAWAY] ${fileName}: src=${result.sources.length} tgt=${result.targets.length}`);
     return false;
   }
 
   const expect = parseExpectation(sql);
   if (!expect) {
-    console.log(`  ✓ [STABLE] ${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
-    passed++;
+    assert(true, `[STABLE] ${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
     return true;
   }
 
@@ -120,17 +107,15 @@ function runFile(filePath: string): boolean {
   }
 
   if (errors.length > 0) {
-    console.error(`  ✗ ${fileName}:`);
     for (const err of errors) console.error(`        → ${err}`);
     console.error(`        actual src=[${result.sources.join(', ')}]`);
     console.error(`        actual tgt=[${result.targets.join(', ')}]`);
     console.error(`        actual exec=[${result.execCalls.join(', ')}]`);
-    failed++;
+    assert(false, fileName);
     return false;
   }
 
-  console.log(`  ✓ ${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
-  passed++;
+  assert(true, `${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
   return true;
 }
 
@@ -138,7 +123,7 @@ function runFile(filePath: string): boolean {
 function main(): void {
   console.log('═══ SQL Pattern Tests ═══\n');
 
-  const targetedDir = resolve(__dirname, 'sql/targeted');
+  const targetedDir = testPath('sql/targeted');
   if (!existsSync(targetedDir)) {
     console.error('test/sql/targeted/ not found');
     process.exit(1);
@@ -146,19 +131,10 @@ function main(): void {
 
   const files = readdirSync(targetedDir).filter(f => f.endsWith('.sql')).sort();
   for (const file of files) {
-    runFile(resolve(targetedDir, file));
+    runFile(testPath('sql/targeted', file));
   }
 
-  const total = passed + failed;
-  const pct = total > 0 ? Math.round((passed / total) * 100) : 0;
-  console.log('\n═══════════════════════════════════════════════════');
-  console.log(`Results: ${passed}/${total} passed  (${pct}%)`);
-  if (failed > 0) {
-    console.log(`Failures: ${failed} — see details above`);
-  }
-  console.log('═══════════════════════════════════════════════════');
-
-  process.exit(failed > 0 ? 1 : 0);
+  printSummary('SQL Pattern Tests');
 }
 
 main();

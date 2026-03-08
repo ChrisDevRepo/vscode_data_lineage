@@ -1,13 +1,12 @@
 import type { ObjectType } from '../engine/types';
+import { schemaKey } from './sql';
 
-export const TYPE_COLORS: Record<ObjectType, {
-  border: string;   // Border + badge color (same in both modes)
-  icon: string;
-}> = {
-  table:     { border: '#3b82f6', icon: '■' },
-  view:      { border: '#22c55e', icon: '●' },
-  procedure: { border: '#eab308', icon: '▲' },
-  function:  { border: '#f97316', icon: '◆' },
+export const TYPE_COLORS: Record<ObjectType, { icon: string }> = {
+  table:     { icon: '■' },
+  view:      { icon: '●' },
+  procedure: { icon: '▲' },
+  function:  { icon: '◆' },
+  external:  { icon: '⬡' },
 };
 
 export const TYPE_LABELS: Record<ObjectType, string> = {
@@ -15,6 +14,7 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
   view: 'View',
   procedure: 'Stored Procedure',
   function: 'Function',
+  external: 'External Table',
 };
 
 // ─── Tableau 10 color palette (official colors) ─────────────────────────────
@@ -23,7 +23,7 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
 
 export const SCHEMA_COLORS_LIGHT = [
   '#4E79A7', // Tableau Blue
-  '#F28E2B', // Tableau Orange  
+  '#F28E2B', // Tableau Orange
   '#E15759', // Tableau Red
   '#76B7B2', // Tableau Teal
   '#59A14F', // Tableau Green
@@ -38,7 +38,7 @@ export const SCHEMA_COLORS_LIGHT = [
 const SCHEMA_COLORS_DARK = [
   '#8AB8E6', // Lighter Blue (more visible on dark)
   '#FFAD5C', // Lighter Orange
-  '#FF8A8C', // Lighter Red  
+  '#FF8A8C', // Lighter Red
   '#A1D6D1', // Lighter Teal
   '#88C580', // Lighter Green
   '#F7E589', // Lighter Yellow
@@ -54,15 +54,27 @@ export function hashString(str: string): number {
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // 32-bit integer
+    hash |= 0;
   }
   return hash;
 }
 
-export function getSchemaColor(schema: string): string {
-  const colors = isDarkTheme() ? SCHEMA_COLORS_DARK : SCHEMA_COLORS_LIGHT;
-  const idx = Math.abs(hashString(schema)) % colors.length;
+export function getSchemaColor(schema: string, forceLight?: boolean): string {
+  const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
+  const idx = Math.abs(hashString(schemaKey(schema))) % colors.length;
   return colors[idx];
+}
+
+// ─── Virtual External Node Colors ────────────────────────────────────────────
+// Fixed colors for virtual nodes (file, cross-DB) — deliberately NOT from Tableau 10.
+// Steel gray signals "external, unverified" and is visually distinct from all 10 schema colors.
+
+export const VIRTUAL_EXT_COLOR_LIGHT = '#6B7A8D';
+export const VIRTUAL_EXT_COLOR_DARK  = '#94A3B8';
+
+/** Get the fixed color for virtual external nodes (file/cross-DB), theme-aware. */
+export function getVirtualExtColor(): string {
+  return isDarkTheme() ? VIRTUAL_EXT_COLOR_DARK : VIRTUAL_EXT_COLOR_LIGHT;
 }
 
 /** Detect if VS Code is running a dark theme */
