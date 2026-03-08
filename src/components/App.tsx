@@ -396,6 +396,7 @@ export function App() {
       prevHideIsolatedRef.current = true;
       const nextFilter = { ...filter, hideIsolated: false };
       setFilter(nextFilter);
+      setAnalysisMode(null); // clear previous analysis so useEffect can fire after graph rebuild
       if (model) {
         // Rebuild with orphans visible, then run analysis on the new graph
         buildFromModel(model, nextFilter, config);

@@ -60,14 +60,28 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
         <>
           <div className="fixed inset-0 z-20" onMouseDown={() => setIsOpen(false)} />
           <div className="absolute top-full mt-2 w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown">
-            <div className="mb-2">
+            <div className="mb-2 flex items-center gap-2">
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search schemas..."
-                className="w-full h-8 px-2 text-sm rounded ln-input"
+                className="flex-1 h-8 px-2 text-sm rounded ln-input"
               />
+              {onToggleSchema && (
+                <>
+                  <button
+                    onClick={() => filteredSchemas.forEach(s => !selectedSchemas.has(s) && onToggleSchema(s))}
+                    className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
+                    title="Select all visible schemas"
+                  >All</button>
+                  <button
+                    onClick={() => filteredSchemas.forEach(s => selectedSchemas.has(s) && onToggleSchema(s))}
+                    className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
+                    title="Deselect all visible schemas"
+                  >None</button>
+                </>
+              )}
             </div>
 
             <div className="overflow-y-auto flex-1">

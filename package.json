@@ -354,10 +354,10 @@
           },
           "dataLineageViz.analysis.islandMaxSize": {
             "type": "number",
-            "default": 2,
+            "default": 500,
             "minimum": 2,
             "maximum": 1000,
-            "markdownDescription": "Maximum group size for the isolated groups analysis.",
+            "markdownDescription": "Max connected component size to qualify as an island. Default (500) matches `maxNodes` — shows all disconnected subgraphs. Set lower (e.g. 5) to focus on small isolated pairs/groups only.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {

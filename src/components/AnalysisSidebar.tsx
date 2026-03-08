@@ -47,8 +47,21 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
       </div>
 
       {/* Summary */}
-      <div className="px-3 py-1.5 text-xs font-medium" style={{ color: 'var(--ln-fg)' }}>
-        {result.summary}
+      <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
+        {analysis.type === 'orphans' && result.groups.length > 0 ? (
+          <>
+            <div className="text-sm font-semibold" style={{ color: 'var(--ln-fg)' }}>
+              {result.groups.reduce((s, g) => s + g.nodeIds.length, 0)} orphan nodes
+            </div>
+            <div className="text-[11px] mt-0.5" style={{ color: 'var(--ln-fg-muted)' }}>
+              in {result.groups.length} group{result.groups.length !== 1 ? 's' : ''} by schema / type
+            </div>
+          </>
+        ) : (
+          <div className="text-xs font-medium" style={{ color: 'var(--ln-fg)' }}>
+            {result.summary}
+          </div>
+        )}
       </div>
 
       {/* Groups list */}

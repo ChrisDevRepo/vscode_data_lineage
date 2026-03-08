@@ -332,7 +332,7 @@ export const DEFAULT_CONFIG = {
   maxNodes: 750,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
-  analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
+  analysis: { hubMinDegree: 8, islandMaxSize: 500, longestPathMinNodes: 5 },
   tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
   dmvQueryTimeout: 120,
   externalRefs: { enabled: true },

@@ -4,6 +4,7 @@ test/**
 customer-data/**
 temp-old-design/**
 tmp/**
+tmp_*
 
 # Config files
 .gitignore
