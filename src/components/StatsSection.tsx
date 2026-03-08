@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { Fragment, useState, useCallback, useMemo } from 'react';
 import type { TableStats, ColumnStats, StatsMode } from '../engine/profilingEngine';
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
@@ -32,68 +32,110 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
-// ─── Type-Adaptive Detail ────────────────────────────────────────────────────
+// ─── Formatting Helpers ─────────────────────────────────────────────────────
 
-function DetailCell({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
-  const segments: React.ReactNode[] = [];
-
-  // Numeric: Range: min … max  |  μ mean  σ stddev  |  N zeros
-  if (col.min !== undefined && col.mean !== undefined) {
-    segments.push(<span key="range">{col.min} … {col.max}</span>);
-    const stats = [`μ${compactNumber(col.mean)}`];
-    if (col.stdDev !== undefined) stats.push(`σ${compactNumber(col.stdDev)}`);
-    segments.push(<span key="stats">{stats.join('  ')}</span>);
-    if (col.zeroCount !== undefined && col.zeroCount > 0) {
-      segments.push(<span key="zeros">{col.zeroCount.toLocaleString()} zeros</span>);
-    }
-  }
-  // DateTime: min … max
-  else if (col.min !== undefined) {
-    segments.push(<span key="range">{col.min} … {col.max}</span>);
-  }
-
-  // String: len N–M  |  N empty (P%)
-  if (col.minLength !== undefined) {
-    const lenStr = col.minLength === col.maxLength ? `len ${col.minLength}` : `len ${col.minLength}–${col.maxLength}`;
-    segments.push(<span key="len">{lenStr}</span>);
-    if (col.emptyCount !== undefined && col.emptyCount > 0) {
-      const pct = rowCount > 0 ? ` (${((col.emptyCount / rowCount) * 100).toFixed(1)}%)` : '';
-      segments.push(<span key="empty">{col.emptyCount.toLocaleString()} empty{pct}</span>);
-    }
-  }
-
-  if (segments.length === 0) return null;
-
-  const sep = <span style={{ color: 'var(--ln-fg-dim)', margin: '0 6px' }}>|</span>;
-
-  return (
-    <span className="font-mono" style={{ color: 'var(--ln-fg-muted)', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
-      {segments.map((seg, i) => (
-        <span key={i}>{i > 0 && sep}{seg}</span>
-      ))}
-    </span>
-  );
+/** Format a number with thousands separators and 1 decimal place. */
+function formatDecimal(n: number): string {
+  if (Number.isInteger(n)) return n.toLocaleString();
+  return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
+
+/** Format a raw min/max string — if numeric, add thousands separators. */
+function formatValue(raw: string | undefined): string {
+  if (!raw) return '–';
+  const n = Number(raw);
+  if (!isNaN(n)) return formatDecimal(n);
+  return raw;
+}
+
+/** Format a count with percentage of total rows. */
+function formatCount(count: number, rowCount: number): string {
+  const formatted = count.toLocaleString();
+  if (rowCount > 0) return `${formatted} (${((count / rowCount) * 100).toFixed(1)}%)`;
+  return formatted;
+}
+
+/** Color for Null% text — only highlight problematic values. */
+function nullQualityColor(pct: number): string {
+  if (pct > 20) return 'var(--ln-validation-error-border)';
+  if (pct >= 5) return 'var(--ln-warning-fg)';
+  return 'var(--ln-fg)';
+}
+
+// ─── Labeled Detail Grid (Standard mode) ────────────────────────────────────
 
 /** Check whether a column has any standard-mode detail to show. */
 function hasDetail(col: ColumnStats): boolean {
   return col.min !== undefined || col.minLength !== undefined;
 }
 
-function compactNumber(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (abs >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
-  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  if (Number.isInteger(n)) return n.toLocaleString();
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+/**
+ * Labeled key-value grid for expanded column detail.
+ * Every metric has a plain English label — no abbreviations.
+ */
+function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
+  const pairs: Array<{ label: string; value: string }> = [];
+
+  if (col.min !== undefined && col.mean !== undefined) {
+    // Numeric: Range, Mean, Std Dev, Zeros
+    pairs.push({ label: 'Range', value: `${formatValue(col.min)} – ${formatValue(col.max)}` });
+    pairs.push({ label: 'Mean', value: formatDecimal(col.mean) });
+    if (col.stdDev !== undefined) pairs.push({ label: 'Std Dev', value: formatDecimal(col.stdDev) });
+    if (col.zeroCount !== undefined && col.zeroCount > 0) {
+      pairs.push({ label: 'Zeros', value: formatCount(col.zeroCount, rowCount) });
+    }
+  } else if (col.min !== undefined) {
+    // DateTime: Earliest, Latest
+    pairs.push({ label: 'Earliest', value: col.min });
+    pairs.push({ label: 'Latest', value: col.max ?? '' });
+  }
+
+  if (col.minLength !== undefined) {
+    // String: Length, Empty
+    const lenVal = col.minLength === col.maxLength
+      ? `${col.minLength}` : `${col.minLength} – ${col.maxLength}`;
+    pairs.push({ label: 'Length', value: lenVal });
+    if (col.emptyCount !== undefined && col.emptyCount > 0) {
+      pairs.push({ label: 'Empty', value: formatCount(col.emptyCount, rowCount) });
+    }
+  }
+
+  if (pairs.length === 0) return null;
+
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: pairs.length <= 1 ? 'auto 1fr' : 'auto 1fr auto 1fr',
+      gap: '1px 10px',
+      padding: '2px 0 4px 14px',
+    }}>
+      {pairs.map((p, i) => (
+        <Fragment key={i}>
+          <span className="text-xs"
+            style={{ color: 'var(--ln-fg-dim)', whiteSpace: 'nowrap' }}>
+            {p.label}
+          </span>
+          <span className="font-mono text-xs" style={{
+            color: 'var(--ln-fg)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }} title={p.value}>
+            {p.value}
+          </span>
+        </Fragment>
+      ))}
+    </div>
+  );
 }
 
 // ─── Sort Logic ──────────────────────────────────────────────────────────────
 
-type SortKey = 'name' | 'null' | 'distinct';
+type SortKey = 'ordinal' | 'name' | 'null' | 'distinct';
 
-function sortColumns(cols: ColumnStats[], key: SortKey, dir: 'asc' | 'desc'): ColumnStats[] {
+/** Attach original index so we can restore ordinal sort. */
+type IndexedCol = ColumnStats & { _idx: number };
+
+function sortColumns(cols: IndexedCol[], key: SortKey, dir: 'asc' | 'desc'): IndexedCol[] {
+  if (key === 'ordinal') return dir === 'asc' ? cols : [...cols].reverse();
   const sorted = [...cols];
   const mult = dir === 'asc' ? 1 : -1;
   sorted.sort((a, b) => {
@@ -113,11 +155,6 @@ function sortColumns(cols: ColumnStats[], key: SortKey, dir: 'asc' | 'desc'): Co
 
 // ─── Grid Layout ─────────────────────────────────────────────────────────────
 
-/**
- * 4-column grid: Name | Type | Null% | Distinct — always visible (Quick baseline).
- * Standard detail renders as a collapsible full-width row below each column,
- * toggled per-row or all-at-once via "Expand All".
- */
 const GRID_COLS = 'minmax(60px, 1fr) 38px 46px minmax(70px, auto)';
 
 const cellClip: React.CSSProperties = {
@@ -132,14 +169,14 @@ function StatsResults({ stats, mode }: {
   stats: TableStats;
   mode: StatsMode;
 }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'ordinal', dir: 'asc' });
   const [expandedAll, setExpandedAll] = useState(false);
   const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set());
 
   const toggleSort = useCallback((key: SortKey) => {
     setSort(prev => prev.key === key
       ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-      : { key, dir: key === 'name' ? 'asc' : 'desc' }
+      : { key, dir: (key === 'name' || key === 'ordinal') ? 'asc' : 'desc' }
     );
   }, []);
 
@@ -153,18 +190,18 @@ function StatsResults({ stats, mode }: {
 
   const toggleAll = useCallback(() => {
     setExpandedAll(prev => {
-      if (!prev) setExpandedCols(new Set()); // clear individual overrides when expanding all
+      if (!prev) setExpandedCols(new Set());
       return !prev;
     });
   }, []);
 
   const { profiled, skipped } = useMemo(() => {
-    const p: ColumnStats[] = [];
+    const p: IndexedCol[] = [];
     const s: ColumnStats[] = [];
-    for (const col of stats.columns) {
+    stats.columns.forEach((col, i) => {
       if (col.skipped) s.push(col);
-      else p.push(col);
-    }
+      else p.push({ ...col, _idx: i });
+    });
     return { profiled: p, skipped: s };
   }, [stats.columns]);
 
@@ -172,10 +209,9 @@ function StatsResults({ stats, mode }: {
   const isStandard = mode === 'standard';
   const hdrStyle: React.CSSProperties = { color: 'var(--ln-fg-muted)', cursor: 'pointer', userSelect: 'none' };
 
-  // Determine if a column's detail is visible
   const isDetailVisible = (colName: string) => {
-    if (expandedAll) return !expandedCols.has(colName); // expanded all, individual toggle collapses
-    return expandedCols.has(colName); // collapsed all, individual toggle expands
+    if (expandedAll) return !expandedCols.has(colName);
+    return expandedCols.has(colName);
   };
 
   return (
@@ -195,7 +231,6 @@ function StatsResults({ stats, mode }: {
         ) : (
           <span>Full scan</span>
         )}
-        {/* Expand/Collapse All toggle — standard mode only */}
         {isStandard && (
           <>
             <span>·</span>
@@ -217,8 +252,13 @@ function StatsResults({ stats, mode }: {
         className="font-medium pb-1"
         style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px', borderBottom: '1px solid var(--ln-border)' }}
       >
-        <div style={hdrStyle} onClick={() => toggleSort('name')}>
+        <div style={hdrStyle} onClick={() => {
+          if (sort.key === 'ordinal') toggleSort('name');
+          else if (sort.key === 'name') toggleSort('ordinal');
+          else toggleSort('ordinal');
+        }}>
           Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
+          {sort.key === 'ordinal' && <span style={{ fontSize: '0.55rem', marginLeft: 2, opacity: 0.7 }}>#</span>}
         </div>
         <div style={{ color: 'var(--ln-fg-muted)' }}>Type</div>
         <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('null')}>
@@ -259,11 +299,13 @@ function StatsResults({ stats, mode }: {
                 <span style={cellClip}>{col.name}</span>
               </div>
               <div style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></div>
-              <div className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
-                {col.nullPercent === null
-                  ? <span style={{ color: 'var(--ln-fg-dim)', fontSize: '0.65rem' }}>NN</span>
-                  : `${col.nullPercent.toFixed(1)}%`
-                }
+              <div className="font-mono" style={{
+                ...cellClip,
+                textAlign: 'right',
+                color: col.nullPercent !== null ? nullQualityColor(col.nullPercent) : 'var(--ln-fg-dim)',
+                fontSize: col.nullPercent === null ? '0.65rem' : undefined,
+              }}>
+                {col.nullPercent === null ? 'NN' : `${col.nullPercent.toFixed(1)}%`}
               </div>
               <div className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
                 {col.distinctCount.toLocaleString()}
@@ -271,14 +313,10 @@ function StatsResults({ stats, mode }: {
               </div>
             </div>
 
-            {/* Detail row — standard mode, collapsible */}
-            {showDetail && (
-              <div style={{ paddingLeft: 14, paddingBottom: 1 }}>
-                <DetailCell col={col} rowCount={stats.rowCount} />
-              </div>
-            )}
+            {/* Detail — labeled key-value grid (standard mode, collapsible) */}
+            {showDetail && <DetailGrid col={col} rowCount={stats.rowCount} />}
 
-            {/* Completeness bar — always visible */}
+            {/* Completeness bar */}
             <div className="flex items-center" style={{ paddingBottom: 3 }}>
               <div style={{ flex: 1 }}>
                 <CompletenessBar value={col.completeness} />
@@ -291,7 +329,7 @@ function StatsResults({ stats, mode }: {
         );
       })}
 
-      {/* Skipped columns section */}
+      {/* Skipped columns */}
       {skipped.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <div className="text-xs" style={{
@@ -330,15 +368,12 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
 
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
-      {/* Header: STATISTICS label + mode buttons */}
       <div className="flex items-center justify-between mb-2">
         <div className="text-xs font-semibold tracking-wider flex items-center gap-2"
           style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
           <span>STATISTICS</span>
           {isLoading && <Spinner />}
         </div>
-
-        {/* Mode buttons */}
         <div className="flex gap-1">
           <Button
             variant={statsState.phase === 'result' && statsState.mode === 'quick' ? 'primary' : 'ghost'}
@@ -361,7 +396,6 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
         </div>
       </div>
 
-      {/* Stats state */}
       {statsState.phase === 'loading' && (
         <div className="text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
           Running {statsState.mode} profiling…
