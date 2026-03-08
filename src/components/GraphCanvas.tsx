@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ReactFlow,
   Background,
@@ -59,6 +59,8 @@ interface GraphCanvasProps {
   onToggleIsolated: () => void;
   onToggleFocusSchema: (schema: string) => void;
   onToggleSchema?: (schema: string) => void;
+  onSelectAllSchemas?: (schemas: string[]) => void;
+  onSelectNoneSchemas?: (schemas: string[]) => void;
   onToggleExternalRefs?: () => void;
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   availableSchemas?: string[];
@@ -83,7 +85,7 @@ interface GraphCanvasProps {
   sourceName?: string;
 }
 
-export const GraphCanvas = memo(function GraphCanvas({
+export function GraphCanvas({
   flowNodes,
   flowEdges,
   trace,
@@ -103,6 +105,8 @@ export const GraphCanvas = memo(function GraphCanvas({
   onToggleIsolated,
   onToggleFocusSchema,
   onToggleSchema,
+  onSelectAllSchemas,
+  onSelectNoneSchemas,
   onToggleExternalRefs,
   onToggleExternalRefType,
   availableSchemas,
@@ -246,51 +250,19 @@ export const GraphCanvas = memo(function GraphCanvas({
     return neighbors;
   }, [highlightedNodeId, graph]);
 
-  const prevHighlightRef = useRef<string | null | undefined>(null);
-  const prevDisplayNodesRef = useRef<FlowNode<CustomNodeData>[]>([]);
-  const prevLevel1Ref = useRef<Set<string>>(new Set());
-
   const displayNodes = useMemo(() => {
-    const prevHighlight = prevHighlightRef.current;
-    const prevNodes = prevDisplayNodesRef.current;
-    const prevLevel1 = prevLevel1Ref.current;
-
-    // Full rebuild if localNodes changed (new graph data)
-    const canPatch = prevNodes.length === localNodes.length && prevHighlight !== undefined;
-
-    let result: FlowNode<CustomNodeData>[];
-
-    if (canPatch && prevNodes.length > 0) {
-      // Diff-based: only clone nodes whose highlight/dim state changed
-      const changedIds = new Set<string>();
-      if (prevHighlight) { changedIds.add(prevHighlight); prevLevel1.forEach(id => changedIds.add(id)); }
-      if (highlightedNodeId) { changedIds.add(highlightedNodeId); level1Neighbors.forEach(id => changedIds.add(id)); }
-
-      if (changedIds.size === 0 && !highlightedNodeId && !prevHighlight) {
-        result = prevNodes;
-      } else {
-        result = localNodes.map((node, i) => {
-          if (!changedIds.has(node.id) && prevNodes[i] && prevNodes[i].id === node.id) {
-            return prevNodes[i];
-          }
-          const isHighlighted = highlightedNodeId === node.id;
-          const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
-          return { ...node, data: { ...node.data, highlighted: isHighlighted ? 'yellow' : node.data.highlighted, dimmed: !!shouldBeDimmed } };
-        });
-      }
-    } else {
-      // Full rebuild
-      result = localNodes.map(node => {
-        const isHighlighted = highlightedNodeId === node.id;
-        const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
-        return { ...node, data: { ...node.data, highlighted: isHighlighted ? 'yellow' : node.data.highlighted, dimmed: !!shouldBeDimmed } };
-      });
-    }
-
-    prevHighlightRef.current = highlightedNodeId;
-    prevDisplayNodesRef.current = result;
-    prevLevel1Ref.current = level1Neighbors;
-    return result;
+    return localNodes.map(node => {
+      const isHighlighted = highlightedNodeId === node.id;
+      const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          highlighted: isHighlighted ? 'yellow' : node.data.highlighted,
+          dimmed: !!shouldBeDimmed,
+        },
+      };
+    });
   }, [localNodes, highlightedNodeId, level1Neighbors]);
 
   const displayEdges = useMemo(() => {
@@ -341,6 +313,8 @@ export const GraphCanvas = memo(function GraphCanvas({
         onToggleFocusSchema={onToggleFocusSchema}
         selectedSchemas={filter.schemas}
         onToggleSchema={onToggleSchema}
+        onSelectAllSchemas={onSelectAllSchemas}
+        onSelectNoneSchemas={onSelectNoneSchemas}
         availableSchemas={availableSchemas}
         onRefresh={onRefresh}
         onRebuild={onRebuild}
@@ -459,7 +433,6 @@ export const GraphCanvas = memo(function GraphCanvas({
               zoomOnDoubleClick={true}
               preventScrolling={true}
               nodeOrigin={[0, 0] as [number, number]}
-              onlyRenderVisibleElements
               proOptions={{ hideAttribution: true }}
             >
               <Background gap={16} />
@@ -483,6 +456,7 @@ export const GraphCanvas = memo(function GraphCanvas({
                       onSelectGroup={onSelectAnalysisGroup}
                       onClearGroup={onClearAnalysisGroup}
                       onClose={onCloseAnalysis}
+                      onSwitchAnalysis={onOpenAnalysis}
                     />
                   ) : onToggleDetailSearch ? (
                     <DetailSearchSidebar
@@ -523,4 +497,4 @@ export const GraphCanvas = memo(function GraphCanvas({
       )}
     </div>
   );
-});
+}

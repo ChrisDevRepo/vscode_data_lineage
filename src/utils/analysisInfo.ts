@@ -32,6 +32,11 @@ export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
     icon: 'M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182',
     description: 'Circular dependencies where data flows back to its origin.',
   },
+  'external-refs': {
+    title: 'External Refs',
+    icon: 'M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25',
+    description: 'File sources and cross-database references — virtual nodes with no local metadata.',
+  },
 };
 
 export const ANALYSIS_TYPE_LABELS: Record<AnalysisType, string> = {
@@ -40,4 +45,7 @@ export const ANALYSIS_TYPE_LABELS: Record<AnalysisType, string> = {
   orphans: 'Orphan Nodes Analysis',
   'longest-path': 'Longest Path Analysis',
   cycles: 'Cycle Detection',
+  'external-refs': 'External Refs',
 };
+
+export const ALL_ANALYSIS_TYPES: AnalysisType[] = ['islands', 'hubs', 'orphans', 'longest-path', 'cycles', 'external-refs'];

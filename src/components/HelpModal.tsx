@@ -44,7 +44,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             )}
             <div>
               <p className="text-base ln-text-muted">
-                SQL Server Database Project Dependency Viewer
+                MS Database Dependency Viewer
               </p>
             </div>
           </div>
@@ -154,7 +154,11 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span>Click a group in the sidebar to zoom into that subset</span>
+                <span><strong>External Refs:</strong> list all file sources (OPENROWSET, COPY INTO) and cross-database references, grouped by kind and database — each entry shows the virtual node and all local objects that reference it</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Click a group in the sidebar to zoom into that subset — use the icon strip at the top to switch analysis modes without closing the sidebar</span>
               </div>
             </div>
           </section>
@@ -266,7 +270,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <div className="flex items-center justify-between">
           <div className="text-xs ln-text-muted">
             <p className="mb-1">Data Lineage Viz v{__APP_VERSION__}</p>
-            <p>SQL Server Database Project Dependency Viewer</p>
+            <p>MS Database Dependency Viewer</p>
           </div>
           <div className="flex items-center gap-2">
             <button

@@ -54,12 +54,14 @@ function NeighborHoverList({
               {schema || 'External'}
             </div>
             {items.map(({ id, entry }) => {
-              const icon = TYPE_COLORS[entry.type]?.icon ?? '?';
+              const icon = (entry.externalType === 'file' || entry.externalType === 'db')
+                ? '⬡'
+                : entry.externalType === 'et' ? '⬢'
+                : (TYPE_COLORS[entry.type]?.icon ?? '?');
               const hidden = !visibleNodeIds.has(id);
-              const extSuffix = entry.externalType === 'file' ? '?' : entry.externalType === 'db' ? '~' : '';
               return (
                 <div key={id} className={`py-0.5 flex items-center gap-1 whitespace-nowrap ${hidden ? 'ln-text-dim' : 'ln-text'}`}>
-                  <span className="opacity-60 select-none">{icon}{extSuffix}</span>
+                  <span className="opacity-60 select-none">{icon}</span>
                   <span className={`flex-1${hidden ? ' opacity-50' : ''}`}>{entry.name}</span>
                   {hidden && (
                     <span className="ml-2 opacity-50 text-[10px] select-none" title="Not visible in current graph view">⊘</span>

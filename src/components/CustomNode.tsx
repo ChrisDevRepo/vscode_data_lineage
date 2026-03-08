@@ -20,6 +20,8 @@ export type CustomNodeData = {
 function CustomNodeComponent({ data }: { data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
   const isVirtual = data.externalType === 'file' || data.externalType === 'db';
+  // ⬢ filled = ET (real catalog object); ⬡ hollow = file/db virtual (no metadata)
+  const displayIcon = isVirtual ? '⬡' : data.externalType === 'et' ? '⬢' : style.icon;
   const schemaColor = isVirtual ? getVirtualExtColor() : getSchemaColor(data.schema);
   const dimmed = data.dimmed === true;
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
@@ -71,7 +73,7 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
             className="text-base font-medium whitespace-nowrap leading-none"
             style={{ color: 'var(--ln-fg-muted)' }}
           >
-            {style.icon}
+            {displayIcon}
           </span>
           <span className="text-[9px] flex-shrink-0 whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)' }}>
             {data.inDegree}↓ {data.outDegree}↑

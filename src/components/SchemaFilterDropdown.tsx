@@ -6,6 +6,8 @@ interface SchemaFilterDropdownProps {
   selectedSchemas: Set<string>;
   focusSchemas: Set<string>;
   onToggleSchema?: (schema: string) => void;
+  onSelectAll?: (schemas: string[]) => void;
+  onSelectNone?: (schemas: string[]) => void;
   onToggleFocusSchema: (schema: string) => void;
 }
 
@@ -14,6 +16,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   selectedSchemas,
   focusSchemas,
   onToggleSchema,
+  onSelectAll,
+  onSelectNone,
   onToggleFocusSchema,
 }: SchemaFilterDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -68,15 +72,15 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                 placeholder="Search schemas..."
                 className="flex-1 h-8 px-2 text-sm rounded ln-input"
               />
-              {onToggleSchema && (
+              {onSelectAll && onSelectNone && (
                 <>
                   <button
-                    onClick={() => filteredSchemas.forEach(s => !selectedSchemas.has(s) && onToggleSchema(s))}
+                    onClick={() => onSelectAll(filteredSchemas)}
                     className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
                     title="Select all visible schemas"
                   >All</button>
                   <button
-                    onClick={() => filteredSchemas.forEach(s => selectedSchemas.has(s) && onToggleSchema(s))}
+                    onClick={() => onSelectNone(filteredSchemas)}
                     className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
                     title="Deselect all visible schemas"
                   >None</button>

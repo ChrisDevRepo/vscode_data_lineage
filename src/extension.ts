@@ -72,10 +72,10 @@ type DdlMessage = { objectName: string; schema: string; objectType?: ObjectType;
 
 let statsConnectionUri: string | undefined;
 
-async function verifyStatsConnection(): Promise<boolean> {
+async function verifyStatsConnection(timeoutMs = DEFAULT_CONFIG.tableStatistics.queryTimeout * 1000): Promise<boolean> {
   if (!statsConnectionUri) return false;
   try {
-    await withTimeout(executeSimpleQuery(statsConnectionUri, 'SELECT 1', outputChannel), DEFAULT_CONFIG.dmvQueryTimeout * 1000);
+    await withTimeout(executeSimpleQuery(statsConnectionUri, 'SELECT 1', outputChannel), timeoutMs);
     return true;
   } catch {
     statsConnectionUri = undefined;
@@ -267,7 +267,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       themeChangeListener.dispose();
       ddlContentMap.delete(ddlUri.toString());
       if (statsConnectionUri) {
-        disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
+        disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
+          outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
+        });
         statsConnectionUri = undefined;
       }
     });
@@ -681,8 +683,10 @@ async function handleTableStatsRequest(
   const queryTimeout = clamp(cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout), 10, 600, DEFAULT_CONFIG.tableStatistics.queryTimeout) * 1000;
 
   try {
+    outputChannel.info(`[Stats] Profiling [${schema}].[${objectName}] (mode=${mode}, timeout=${queryTimeout / 1000}s, cols=${cols.length})`);
+
     // Reuse existing stats connection if alive; otherwise connect (stored creds → picker)
-    const isAlive = await verifyStatsConnection();
+    const isAlive = await verifyStatsConnection(queryTimeout);
     if (!isAlive) {
       // Same reconnect pattern as db-reconnect: stored creds first, fall back to picker
       const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
@@ -699,7 +703,8 @@ async function handleTableStatsRequest(
     const connectionUri = statsConnectionUri!;
 
     // Get server info for platform detection
-    const serverInfo = await getServerInfo(connectionUri, outputChannel);
+    outputChannel.info(`[Stats] Getting server info (timeout=${queryTimeout / 1000}s)...`);
+    const serverInfo = await withTimeout(getServerInfo(connectionUri, outputChannel), queryTimeout);
     const engineEdition = serverInfo.engineEditionId;
     outputChannel.info(`[Stats] Platform: engineEditionId=${engineEdition}, server=${serverInfo.serverVersion}`);
 
@@ -768,7 +773,9 @@ async function handleTableStatsRequest(
     outputChannel.error(`[Stats] Failed: ${errorMsg}`);
     // Invalidate stale connection on error
     if (statsConnectionUri) {
-      disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
+      disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
+          outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
+        });
       statsConnectionUri = undefined;
     }
     panel.webview.postMessage({ type: 'table-stats-error', message: errorMsg });
@@ -1141,7 +1148,9 @@ function sidebarItem(label: string, commandId: string, icon: string): vscode.Tre
 export function deactivate() {
   ddlContentMap.clear();
   if (statsConnectionUri) {
-    disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
+    disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
+          outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
+        });
     statsConnectionUri = undefined;
   }
 }

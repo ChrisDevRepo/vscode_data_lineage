@@ -363,7 +363,7 @@ export interface TraceState {
 
 // ─── Graph Analysis Types ────────────────────────────────────────────────────
 
-export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles';
+export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles' | 'external-refs';
 
 export interface AnalysisGroup {
   id: string;

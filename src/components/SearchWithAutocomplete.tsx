@@ -24,7 +24,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   types,
 }: SearchWithAutocompleteProps) {
   const filteredNodes = useMemo(
-    () => allNodes.filter(n => selectedSchemas.has(n.schema) && types.has(n.type)),
+    () => allNodes.filter(n => (n.schema === '' || selectedSchemas.has(n.schema)) && types.has(n.type)),
     [allNodes, selectedSchemas, types],
   );
   const suggestions = useMemo(

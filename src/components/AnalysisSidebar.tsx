@@ -2,7 +2,7 @@ import { memo, useCallback } from 'react';
 import type Graph from 'graphology';
 import type { AnalysisMode, AnalysisType, AnalysisGroup } from '../engine/types';
 import { SidePanel } from './SidePanel';
-import { ANALYSIS_TYPE_INFO } from '../utils/analysisInfo';
+import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';
 
 interface AnalysisSidebarProps {
   analysis: AnalysisMode;
@@ -10,6 +10,7 @@ interface AnalysisSidebarProps {
   onSelectGroup: (groupId: string) => void;
   onClearGroup: () => void;
   onClose: () => void;
+  onSwitchAnalysis?: (type: AnalysisType) => void;
 }
 
 export const AnalysisSidebar = memo(function AnalysisSidebar({
@@ -18,6 +19,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
   onSelectGroup,
   onClearGroup,
   onClose,
+  onSwitchAnalysis,
 }: AnalysisSidebarProps) {
   const info = ANALYSIS_TYPE_INFO[analysis.type];
   const { result, activeGroupId } = analysis;
@@ -39,8 +41,74 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
     </svg>
   );
 
+  // Build groups list with section headers for external-refs
+  const groupElements: React.ReactNode[] = [];
+  if (analysis.type === 'external-refs' && result.groups.length > 0) {
+    let lastKind: string | undefined;
+    for (const group of result.groups) {
+      const kind = String(group.meta?.kind ?? '');
+      if (kind !== lastKind) {
+        lastKind = kind;
+        const sectionCount = result.groups.filter(g => g.meta?.kind === kind).length;
+        const sectionLabel = kind === 'file'
+          ? `File Sources (${sectionCount})`
+          : `Cross-Database (${sectionCount})`;
+        groupElements.push(
+          <div key={`section-${kind}`} className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)', background: 'var(--ln-bg-secondary)' }}>
+            {sectionLabel}
+          </div>
+        );
+      }
+      groupElements.push(
+        <AnalysisGroupItem
+          key={group.id}
+          group={group}
+          analysisType={analysis.type}
+          isActive={activeGroupId === group.id}
+          onClick={() => handleGroupClick(group.id)}
+          graph={graph}
+        />
+      );
+    }
+  } else {
+    for (const group of result.groups) {
+      groupElements.push(
+        <AnalysisGroupItem
+          key={group.id}
+          group={group}
+          analysisType={analysis.type}
+          isActive={activeGroupId === group.id}
+          onClick={() => handleGroupClick(group.id)}
+          graph={graph}
+        />
+      );
+    }
+  }
+
   return (
     <SidePanel title={info.title} icon={icon} onClose={onClose}>
+      {/* Mode-switcher strip */}
+      {onSwitchAnalysis && (
+        <div className="flex items-center gap-0.5 px-2 py-1.5" style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
+          {ALL_ANALYSIS_TYPES.map(type => {
+            const typeInfo = ANALYSIS_TYPE_INFO[type];
+            const isActive = analysis.type === type;
+            return (
+              <button
+                key={type}
+                title={typeInfo.title}
+                onClick={() => onSwitchAnalysis(type)}
+                className={`w-7 h-7 flex items-center justify-center rounded ln-btn-icon${isActive ? ' ln-btn-icon-active' : ''}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
+                </svg>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Description */}
       <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}>
         {info.description}
@@ -71,16 +139,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
             None found.
           </div>
         ) : (
-          result.groups.map((group) => (
-            <AnalysisGroupItem
-              key={group.id}
-              group={group}
-              analysisType={analysis.type}
-              isActive={activeGroupId === group.id}
-              onClick={() => handleGroupClick(group.id)}
-              graph={graph}
-            />
-          ))
+          groupElements
         )}
       </div>
 
@@ -163,6 +222,8 @@ function renderMeta(
       return `${meta.from} → ${meta.to}`;
     case 'cycles':
       return `${meta.count} node${Number(meta.count) !== 1 ? 's' : ''}`;
+    case 'external-refs':
+      return `referenced by ${meta.neighborCount} object${Number(meta.neighborCount) !== 1 ? 's' : ''}`;
     default: {
       const _exhaustive: never = type;
       return String(_exhaustive);

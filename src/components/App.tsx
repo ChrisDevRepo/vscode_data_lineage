@@ -190,6 +190,7 @@ export function App() {
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
   const prevHideIsolatedRef = useRef<boolean | null>(null);
+  const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
@@ -384,6 +385,28 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  const handleSelectAllSchemas = useCallback((schemas: string[]) => {
+    setFilter((prev) => {
+      const next = { ...prev, schemas: new Set([...prev.schemas, ...schemas]) };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleSelectNoneSchemas = useCallback((schemas: string[]) => {
+    setFilter((prev) => {
+      const nextSchemas = new Set(prev.schemas);
+      const focusSchemas = new Set(prev.focusSchemas);
+      for (const s of schemas) {
+        nextSchemas.delete(s);
+        focusSchemas.delete(s);
+      }
+      const next = { ...prev, schemas: nextSchemas, focusSchemas };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
   const openAnalysis = useCallback((type: AnalysisType) => {
     // End any active trace / close detail search
     endTrace();
@@ -396,13 +419,14 @@ export function App() {
       prevHideIsolatedRef.current = true;
       const nextFilter = { ...filter, hideIsolated: false };
       setFilter(nextFilter);
-      setAnalysisMode(null); // clear previous analysis so useEffect can fire after graph rebuild
+      setAnalysisMode(null);
+      // Set pending flag — useEffect will run analysis once graph rebuilds
+      pendingAnalysisRef.current = 'orphans';
       if (model) {
-        // Rebuild with orphans visible, then run analysis on the new graph
         buildFromModel(model, nextFilter, config);
       }
     } else {
-      // For islands/hubs, run analysis on current graph
+      // For islands/hubs/longest-path/cycles, run analysis on current graph
       if (graph) {
         const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
         setAnalysisMode({ type, result, activeGroupId: null });
@@ -410,12 +434,15 @@ export function App() {
     }
   }, [endTrace, filter, model, graph, config, buildFromModel]);
 
+  // Run pending orphan analysis after graph rebuild completes
   useEffect(() => {
-    if (prevHideIsolatedRef.current !== null && graph && !analysisMode) {
-      const result = runAnalysis(graph, 'orphans', config.analysis, config.maxNodes);
-      setAnalysisMode({ type: 'orphans', result, activeGroupId: null });
+    if (pendingAnalysisRef.current && graph) {
+      const type = pendingAnalysisRef.current;
+      pendingAnalysisRef.current = null;
+      const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+      setAnalysisMode({ type, result, activeGroupId: null });
     }
-  }, [graph, analysisMode, config.analysis, config.maxNodes]);
+  }, [graph, config.analysis, config.maxNodes]);
 
   const closeAnalysis = useCallback(() => {
     // Clear analysis overlay — same restore as leaving trace mode
@@ -584,6 +611,8 @@ export function App() {
         onToggleIsolated={handleToggleIsolated}
         onToggleFocusSchema={handleToggleFocusSchema}
         onToggleSchema={handleToggleSchema}
+        onSelectAllSchemas={handleSelectAllSchemas}
+        onSelectNoneSchemas={handleSelectNoneSchemas}
         onToggleExternalRefs={handleToggleExternalRefs}
         onToggleExternalRefType={handleToggleExternalRefType}
         availableSchemas={model?.schemas.map(s => s.name) || []}

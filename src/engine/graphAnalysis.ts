@@ -281,6 +281,64 @@ export function analyzeCycles(graph: Graph): AnalysisResult {
   };
 }
 
+// ─── External Refs (File Sources + Cross-DB References) ─────────────────────
+
+export function analyzeExternalRefs(graph: Graph): AnalysisResult {
+  if (graph.order === 0) {
+    return { type: 'external-refs', groups: [], summary: 'No nodes in graph' };
+  }
+
+  const fileGroups: AnalysisGroup[] = [];
+  const dbGroups: AnalysisGroup[] = [];
+
+  graph.forEachNode((id) => {
+    const externalType = graph.getNodeAttribute(id, 'externalType');
+    if (externalType !== 'file' && externalType !== 'db') return;
+
+    const name: string = graph.getNodeAttribute(id, 'name') ?? id;
+    const externalDatabase: string = graph.getNodeAttribute(id, 'externalDatabase') ?? '';
+    const externalUrl: string = graph.getNodeAttribute(id, 'externalUrl') ?? '';
+
+    const neighborIds: string[] = [];
+    graph.forEachNeighbor(id, (neighbor) => neighborIds.push(neighbor));
+
+    const nodeIds = [id, ...neighborIds];
+
+    if (externalType === 'file') {
+      const label = externalUrl ? externalUrl.split('/').filter(Boolean).pop() ?? name : name;
+      fileGroups.push({
+        id: `extref-${id}`,
+        label,
+        nodeIds,
+        meta: { kind: 'file', database: '', neighborCount: neighborIds.length },
+      });
+    } else {
+      // db: name is "schema.object", externalDatabase is the db name
+      const label = externalDatabase ? `${externalDatabase} / ${name}` : name;
+      dbGroups.push({
+        id: `extref-${id}`,
+        label,
+        nodeIds,
+        meta: { kind: 'db', database: externalDatabase, neighborCount: neighborIds.length },
+      });
+    }
+  });
+
+  // Sort file groups alphabetically, db groups by database then label
+  fileGroups.sort((a, b) => a.label.localeCompare(b.label));
+  dbGroups.sort((a, b) => {
+    const dbCmp = String(a.meta!.database).localeCompare(String(b.meta!.database));
+    return dbCmp !== 0 ? dbCmp : a.label.localeCompare(b.label);
+  });
+
+  const groups = [...fileGroups, ...dbGroups];
+  const filePart = fileGroups.length > 0 ? `${fileGroups.length} file source${fileGroups.length !== 1 ? 's' : ''}` : '';
+  const dbPart = dbGroups.length > 0 ? `${dbGroups.length} cross-DB ref${dbGroups.length !== 1 ? 's' : ''}` : '';
+  const summary = [filePart, dbPart].filter(Boolean).join(', ') || 'No external refs found';
+
+  return { type: 'external-refs', groups, summary };
+}
+
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
 export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
@@ -290,5 +348,6 @@ export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: An
     case 'orphans': return analyzeOrphans(graph);
     case 'longest-path': return analyzeLongestPath(graph, analysisConfig.longestPathMinNodes, maxNodes);
     case 'cycles': return analyzeCycles(graph);
+    case 'external-refs': return analyzeExternalRefs(graph);
   }
 }
