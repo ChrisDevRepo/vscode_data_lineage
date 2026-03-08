@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ReactFlow,
   Background,
@@ -83,7 +83,7 @@ interface GraphCanvasProps {
   sourceName?: string;
 }
 
-export function GraphCanvas({
+export const GraphCanvas = memo(function GraphCanvas({
   flowNodes,
   flowEdges,
   trace,
@@ -227,6 +227,14 @@ export function GraphCanvas({
     []
   );
 
+  // ── O(1) model node lookup (avoids O(n²) .find() in DetailSearchSidebar) ──
+  const modelNodeMap = useMemo(() => {
+    if (!model) return new Map<string, DacpacModel['nodes'][number]>();
+    const map = new Map<string, DacpacModel['nodes'][number]>();
+    for (const n of model.nodes) map.set(n.id, n);
+    return map;
+  }, [model]);
+
   // ── Display layer: highlight/dim applied on top of local positions ──
 
   const level1Neighbors = useMemo(() => {
@@ -238,22 +246,51 @@ export function GraphCanvas({
     return neighbors;
   }, [highlightedNodeId, graph]);
 
-  const displayNodes = useMemo(() => {
-    return localNodes.map(node => {
-      const isHighlighted = highlightedNodeId === node.id;
-      const shouldBeDimmed = highlightedNodeId &&
-        !isHighlighted &&
-        !level1Neighbors.has(node.id);
+  const prevHighlightRef = useRef<string | null | undefined>(null);
+  const prevDisplayNodesRef = useRef<FlowNode<CustomNodeData>[]>([]);
+  const prevLevel1Ref = useRef<Set<string>>(new Set());
 
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          highlighted: isHighlighted ? 'yellow' : node.data.highlighted,
-          dimmed: !!shouldBeDimmed,
-        }
-      };
-    });
+  const displayNodes = useMemo(() => {
+    const prevHighlight = prevHighlightRef.current;
+    const prevNodes = prevDisplayNodesRef.current;
+    const prevLevel1 = prevLevel1Ref.current;
+
+    // Full rebuild if localNodes changed (new graph data)
+    const canPatch = prevNodes.length === localNodes.length && prevHighlight !== undefined;
+
+    let result: FlowNode<CustomNodeData>[];
+
+    if (canPatch && prevNodes.length > 0) {
+      // Diff-based: only clone nodes whose highlight/dim state changed
+      const changedIds = new Set<string>();
+      if (prevHighlight) { changedIds.add(prevHighlight); prevLevel1.forEach(id => changedIds.add(id)); }
+      if (highlightedNodeId) { changedIds.add(highlightedNodeId); level1Neighbors.forEach(id => changedIds.add(id)); }
+
+      if (changedIds.size === 0 && !highlightedNodeId && !prevHighlight) {
+        result = prevNodes;
+      } else {
+        result = localNodes.map((node, i) => {
+          if (!changedIds.has(node.id) && prevNodes[i] && prevNodes[i].id === node.id) {
+            return prevNodes[i];
+          }
+          const isHighlighted = highlightedNodeId === node.id;
+          const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
+          return { ...node, data: { ...node.data, highlighted: isHighlighted ? 'yellow' : node.data.highlighted, dimmed: !!shouldBeDimmed } };
+        });
+      }
+    } else {
+      // Full rebuild
+      result = localNodes.map(node => {
+        const isHighlighted = highlightedNodeId === node.id;
+        const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
+        return { ...node, data: { ...node.data, highlighted: isHighlighted ? 'yellow' : node.data.highlighted, dimmed: !!shouldBeDimmed } };
+      });
+    }
+
+    prevHighlightRef.current = highlightedNodeId;
+    prevDisplayNodesRef.current = result;
+    prevLevel1Ref.current = level1Neighbors;
+    return result;
   }, [localNodes, highlightedNodeId, level1Neighbors]);
 
   const displayEdges = useMemo(() => {
@@ -422,6 +459,7 @@ export function GraphCanvas({
               zoomOnDoubleClick={true}
               preventScrolling={true}
               nodeOrigin={[0, 0] as [number, number]}
+              onlyRenderVisibleElements
               proOptions={{ hideAttribution: true }}
             >
               <Background gap={16} />
@@ -449,16 +487,13 @@ export function GraphCanvas({
                   ) : onToggleDetailSearch ? (
                     <DetailSearchSidebar
                       onClose={onToggleDetailSearch}
-                      allNodes={displayNodes.map(n => {
-                        const modelNode = model?.nodes.find(mn => mn.id === n.id);
-                        return {
-                          id: n.id,
-                          name: String(n.data.label),
-                          schema: String(n.data.schema),
-                          type: n.data.objectType as ObjectType,
-                          bodyScript: modelNode?.bodyScript,
-                        };
-                      })}
+                      allNodes={displayNodes.map(n => ({
+                        id: n.id,
+                        name: String(n.data.label),
+                        schema: String(n.data.schema),
+                        type: n.data.objectType as ObjectType,
+                        bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                      }))}
                       onResultClick={(nodeId) => {
                         onNodeClick(nodeId);
                         zoomToNode(nodeId);
@@ -488,4 +523,4 @@ export function GraphCanvas({
       )}
     </div>
   );
-}
+});

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useTransition } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { ProjectSelector } from './ProjectSelector';
 import { GraphCanvas } from './GraphCanvas';
@@ -79,10 +79,11 @@ export function App() {
   }, [vscodeApi]);
 
   const dacpacLoader = useDacpacLoader(applyConfig);
+  const [, startTransition] = useTransition();
 
   const rebuild = useCallback(
     (m: DacpacModel, f: FilterState, cfg?: ExtensionConfig) => {
-      buildFromModel(m, f, cfg || config);
+      startTransition(() => buildFromModel(m, f, cfg || config));
     },
     [buildFromModel, config]
   );

@@ -611,16 +611,38 @@ export function applyExclusionPatterns(model: DacpacModel, patterns: string[], o
   let parseStats = model.parseStats;
   if (parseStats && excludedIds.size > 0) {
     const allEdges = model.edges;
+
+    // Pre-build O(1) lookup maps (avoids O(n²) .find() inside .map())
+    const nameToIdMap = new Map<string, string>();
+    for (const n of nodes) nameToIdMap.set(`${n.schema}.${n.name}`.toLowerCase(), n.id);
+    for (const n of excludedNodes) {
+      const key = `${n.schema}.${n.name}`.toLowerCase();
+      if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
+    }
+
+    // Pre-build adjacency map (avoids O(edges) scan per SP)
+    const adjacency = new Map<string, string[]>();
+    for (const e of allEdges) {
+      if (excludedIds.has(e.target)) {
+        let arr = adjacency.get(e.source);
+        if (!arr) { arr = []; adjacency.set(e.source, arr); }
+        arr.push(e.target);
+      }
+      if (excludedIds.has(e.source)) {
+        let arr = adjacency.get(e.target);
+        if (!arr) { arr = []; adjacency.set(e.target, arr); }
+        arr.push(e.source);
+      }
+    }
+
     parseStats = {
       ...parseStats,
       spDetails: parseStats.spDetails.map((sp) => {
-        const spId = nodes.find(n => `${n.schema}.${n.name}`.toLowerCase() === sp.name.toLowerCase())?.id
-          ?? excludedNodes.find(n => `${n.schema}.${n.name}`.toLowerCase() === sp.name.toLowerCase())?.id;
+        const spId = nameToIdMap.get(sp.name.toLowerCase());
         if (!spId) return sp;
-        const lost = allEdges
-          .filter((e) => (e.source === spId && excludedIds.has(e.target)) || (e.target === spId && excludedIds.has(e.source)))
-          .map((e) => excludedNameById.get(e.source === spId ? e.target : e.source)!)
-          .filter(Boolean);
+        const neighbors = adjacency.get(spId);
+        if (!neighbors) return sp;
+        const lost = neighbors.map(id => excludedNameById.get(id)!).filter(Boolean);
         return lost.length > 0 ? { ...sp, excluded: lost } : sp;
       }),
     };

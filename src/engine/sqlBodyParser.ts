@@ -111,16 +111,24 @@ function normalizeAnsiCommaJoins(sql: string): string {
 
 /** Pass 0: counter-scan removes block comments including nested ones correctly. O(n), no regex. */
 function removeBlockComments(sql: string): string {
-  let out = '';
+  const parts: string[] = [];
   let i = 0;
   let depth = 0;
+  let start = 0; // start of current non-comment range
   while (i < sql.length) {
-    if (sql[i] === '/' && sql[i + 1] === '*') { depth++; i += 2; continue; }
-    if (sql[i] === '*' && sql[i + 1] === '/' && depth > 0) { depth--; i += 2; continue; }
-    if (depth === 0) out += sql[i];
+    if (sql[i] === '/' && sql[i + 1] === '*') {
+      if (depth === 0) parts.push(sql.substring(start, i));
+      depth++; i += 2; continue;
+    }
+    if (sql[i] === '*' && sql[i + 1] === '/' && depth > 0) {
+      depth--; i += 2;
+      if (depth === 0) start = i;
+      continue;
+    }
     i++;
   }
-  return out;
+  if (depth === 0) parts.push(sql.substring(start, i));
+  return parts.join('');
 }
 
 // ─── Active config ──────────────────────────────────────────────────────────

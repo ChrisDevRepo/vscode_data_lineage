@@ -21,25 +21,23 @@ export function useGraphology(): UseGraphologyReturn {
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
 
   const buildFromModel = useCallback((model: DacpacModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
-    // Apply schema filter (with configurable maxNodes)
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
-    // Apply type filter
-    const typeFilteredNodes = filtered.nodes.filter((n) => filter.types.has(n.type));
-    const typeNodeIds = new Set(typeFilteredNodes.map((n) => n.id));
-    const typeFiltered: DacpacModel = {
-      ...filtered,
-      nodes: typeFilteredNodes,
-      edges: filtered.edges.filter((e) => typeNodeIds.has(e.source) && typeNodeIds.has(e.target)),
-    };
+    // Fused type + ext refs filter (single node pass)
+    const isVirtual = (n: { externalType?: string }) =>
+      n.externalType === 'file' || n.externalType === 'db';
+    const allExtRefsVisible = filter.showExternalRefs && filter.externalRefTypes.has('file') && filter.externalRefTypes.has('db');
 
-    // Apply external refs filter (virtual file/db nodes have their own toggle)
-    const extRefsFiltered = applyExternalRefsFilter(typeFiltered, filter.showExternalRefs, filter.externalRefTypes);
+    const fusedNodes = filtered.nodes.filter((n) => {
+      if (!filter.types.has(n.type)) return false;
+      if (allExtRefsVisible || !isVirtual(n)) return true;
+      if (!filter.showExternalRefs) return false;
+      return filter.externalRefTypes.has(n.externalType as 'file' | 'db');
+    });
+    const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
+    const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 
-    // Apply focus schema filter (exclusion patterns applied earlier in handleVisualize)
-    const focusFiltered = applyFocusSchemaFilter(extRefsFiltered, filter.focusSchemas);
-
-    // Apply isolation filter (hide orphan nodes with no edges)
+    const focusFiltered = applyFocusSchemaFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.focusSchemas);
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
 
     const result = buildGraph(isolationFiltered, config);
@@ -52,7 +50,7 @@ export function useGraphology(): UseGraphologyReturn {
   return { flowNodes, flowEdges, graph, metrics, buildFromModel };
 }
 
-// ─── Isolation Filter (hide orphan / degree-0 nodes) ─────────────────────────
+// ─── Isolation Filter ────────────────────────────────────────────────────────
 
 function applyIsolationFilter(model: DacpacModel, hideIsolated: boolean): DacpacModel {
   if (!hideIsolated) return model;
@@ -70,7 +68,7 @@ function applyIsolationFilter(model: DacpacModel, hideIsolated: boolean): Dacpac
   return { ...model, nodes, edges };
 }
 
-// ─── Focus Schema Filter (1-hop neighbors) ──────────────────────────────────
+// ─── Focus Schema Filter ─────────────────────────────────────────────────────
 
 function applyFocusSchemaFilter(
   model: DacpacModel,
@@ -78,7 +76,6 @@ function applyFocusSchemaFilter(
 ): DacpacModel {
   if (focusSchemas.size === 0) return model;
 
-  // Keep nodes in focus schemas + their direct 1-hop neighbors via edges
   const focusNodeIds = new Set(
     model.nodes.filter((n) => focusSchemas.has(n.schema)).map((n) => n.id)
   );
@@ -91,31 +88,6 @@ function applyFocusSchemaFilter(
 
   const keepIds = new Set([...focusNodeIds, ...neighborIds]);
   const nodes = model.nodes.filter((n) => keepIds.has(n.id));
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-
-  return { ...model, nodes, edges };
-}
-
-// ─── External Refs Filter (virtual file/db nodes) ────────────────────────────
-
-function applyExternalRefsFilter(
-  model: DacpacModel,
-  showExternalRefs: boolean,
-  externalRefTypes: Set<'file' | 'db'>
-): DacpacModel {
-  // Virtual nodes: externalType 'file' or 'db'. ET nodes are unaffected.
-  const isVirtual = (n: { externalType?: string }) =>
-    n.externalType === 'file' || n.externalType === 'db';
-
-  // If master toggle is on and both sub-types are on, pass through
-  if (showExternalRefs && externalRefTypes.has('file') && externalRefTypes.has('db')) return model;
-
-  const nodes = model.nodes.filter((n) => {
-    if (!isVirtual(n)) return true;
-    if (!showExternalRefs) return false;
-    return externalRefTypes.has(n.externalType as 'file' | 'db');
-  });
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
