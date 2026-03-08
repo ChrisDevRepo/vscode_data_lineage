@@ -11,7 +11,7 @@ import {
   getServerInfo, executeSimpleQuery,
 } from './engine/connectionManager';
 import type { IConnectionInfo, SimpleExecuteResult } from './types/mssql';
-import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, buildTopNQuery, computeSamplePercent, parseProfilingResult, parseTopNResult } from './engine/profilingEngine';
+import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, computeSamplePercent, parseProfilingResult } from './engine/profilingEngine';
 import type { StatsMode } from './engine/profilingEngine';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './engine/dmvExtractor';
 import { loadRules } from './engine/sqlBodyParser';
@@ -379,9 +379,6 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'table-stats-request': async (msg) => {
         await handleTableStatsRequest(context, panel, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
       },
-      'table-stats-topn-request': async (msg) => {
-        await handleTableStatsTopNRequest(panel, msg.schema, msg.objectName, msg.columnName, msg.rowCount);
-      },
       'check-mssql': () => {
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
       },
@@ -473,7 +470,6 @@ type WebviewMessage =
   | { type: 'reload' }
   | { type: 'db-visualize'; schemas: string[] }
   | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'standard'; columns?: import('./engine/types').ColumnDef[] }
-  | { type: 'table-stats-topn-request'; schema: string; objectName: string; columnName: string; rowCount: number }
   | { type: 'export-file'; data: string; defaultName: string };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
@@ -787,44 +783,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       handle = setTimeout(() => reject(new Error(`Query timed out after ${ms / 1000}s. Increase dataLineageViz.tableStatistics.queryTimeout if needed.`)), ms);
     }),
   ]);
-}
-
-/**
- * Handle on-demand Top-N frequency query for a single column.
- * Reuses the persistent statsConnectionUri.
- */
-async function handleTableStatsTopNRequest(
-  panel: vscode.WebviewPanel,
-  schema: string,
-  objectName: string,
-  columnName: string,
-  rowCount: number,
-): Promise<void> {
-  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
-  const queryTimeout = clamp(cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout), 10, 600, DEFAULT_CONFIG.tableStatistics.queryTimeout) * 1000;
-
-  try {
-    if (!statsConnectionUri) {
-      panel.webview.postMessage({ type: 'table-stats-topn-error', columnName, message: 'No active connection.' });
-      return;
-    }
-
-    const sql = buildTopNQuery(schema, objectName, columnName, 5);
-    outputChannel.info(`[Stats] Top-N query for [${columnName}]:\n${sql}`);
-
-    const result = await withTimeout(executeSimpleQuery(statsConnectionUri, sql, outputChannel), queryTimeout);
-    const rows = result.rows.map(r => ({
-      val: r[0]?.displayValue ?? '',
-      cnt: r[1]?.displayValue ?? '0',
-    }));
-
-    const topValues = parseTopNResult(rows, rowCount);
-    panel.webview.postMessage({ type: 'table-stats-topn-result', columnName, values: topValues });
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    outputChannel.error(`[Stats] Top-N failed for [${columnName}]: ${errorMsg}`);
-    panel.webview.postMessage({ type: 'table-stats-topn-error', columnName, message: errorMsg });
-  }
 }
 
 // ─── Two-Phase DB Extraction ─────────────────────────────────────────────────

@@ -1,9 +1,8 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
-import type { TableStats, ColumnStats, StatsMode, TopValue } from '../engine/profilingEngine';
+import { useState, useCallback, useMemo } from 'react';
+import type { TableStats, ColumnStats, StatsMode } from '../engine/profilingEngine';
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
-import { CompletenessBar, UniquenessIndicator, TopNChart, TypeBadge } from './StatsMicroCharts';
-import { useVsCode } from '../contexts/VsCodeContext';
+import { CompletenessBar, UniquenessIndicator, TypeBadge } from './StatsMicroCharts';
 
 // ─── Spinner ─────────────────────────────────────────────────────────────────
 
@@ -17,59 +16,68 @@ function Spinner() {
   );
 }
 
-// ─── Chevron Icon ─────────────────────────────────────────────────────────────
-
-function ChevronIcon({ expanded }: { expanded: boolean }) {
-  return (
-    <svg width="10" height="10" viewBox="0 0 10 10" style={{ transition: 'transform 0.15s', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-      <path d="M3 1L7 5L3 9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 // ─── Sort Arrow ──────────────────────────────────────────────────────────────
 
 function SortArrow({ dir }: { dir: 'asc' | 'desc' }) {
   return <span style={{ fontSize: '0.6rem', marginLeft: 2 }}>{dir === 'asc' ? '▲' : '▼'}</span>;
 }
 
+// ─── Chevron Icon ────────────────────────────────────────────────────────────
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg width="8" height="8" viewBox="0 0 10 10" style={{ transition: 'transform 0.15s', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+      <path d="M3 1L7 5L3 9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // ─── Type-Adaptive Detail ────────────────────────────────────────────────────
 
 function DetailCell({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
-  const parts: string[] = [];
+  const segments: React.ReactNode[] = [];
 
-  // Numeric: min … max  μ mean σ stddev
+  // Numeric: Range: min … max  |  μ mean  σ stddev  |  N zeros
   if (col.min !== undefined && col.mean !== undefined) {
-    parts.push(`${col.min} … ${col.max}`);
-    const fmtMean = compactNumber(col.mean);
-    parts.push(`μ${fmtMean}`);
-    if (col.stdDev !== undefined) parts.push(`σ${compactNumber(col.stdDev)}`);
+    segments.push(<span key="range">{col.min} … {col.max}</span>);
+    const stats = [`μ${compactNumber(col.mean)}`];
+    if (col.stdDev !== undefined) stats.push(`σ${compactNumber(col.stdDev)}`);
+    segments.push(<span key="stats">{stats.join('  ')}</span>);
     if (col.zeroCount !== undefined && col.zeroCount > 0) {
-      parts.push(`${col.zeroCount.toLocaleString()} zeros`);
+      segments.push(<span key="zeros">{col.zeroCount.toLocaleString()} zeros</span>);
     }
   }
-  // DateTime: min … max (no mean/stddev)
+  // DateTime: min … max
   else if (col.min !== undefined) {
-    parts.push(`${col.min} … ${col.max}`);
+    segments.push(<span key="range">{col.min} … {col.max}</span>);
   }
 
-  // String: length range + empty count
+  // String: len N–M  |  N empty (P%)
   if (col.minLength !== undefined) {
     const lenStr = col.minLength === col.maxLength ? `len ${col.minLength}` : `len ${col.minLength}–${col.maxLength}`;
-    parts.push(lenStr);
+    segments.push(<span key="len">{lenStr}</span>);
     if (col.emptyCount !== undefined && col.emptyCount > 0) {
       const pct = rowCount > 0 ? ` (${((col.emptyCount / rowCount) * 100).toFixed(1)}%)` : '';
-      parts.push(`${col.emptyCount.toLocaleString()} empty${pct}`);
+      segments.push(<span key="empty">{col.emptyCount.toLocaleString()} empty{pct}</span>);
     }
   }
 
-  if (parts.length === 0) return null;
+  if (segments.length === 0) return null;
+
+  const sep = <span style={{ color: 'var(--ln-fg-dim)', margin: '0 6px' }}>|</span>;
 
   return (
-    <span className="font-mono" style={{ color: 'var(--ln-fg-muted)', whiteSpace: 'nowrap' }}>
-      {parts.join('  ')}
+    <span className="font-mono" style={{ color: 'var(--ln-fg-muted)', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
+      {segments.map((seg, i) => (
+        <span key={i}>{i > 0 && sep}{seg}</span>
+      ))}
     </span>
   );
+}
+
+/** Check whether a column has any standard-mode detail to show. */
+function hasDetail(col: ColumnStats): boolean {
+  return col.min !== undefined || col.minLength !== undefined;
 }
 
 function compactNumber(n: number): string {
@@ -103,28 +111,30 @@ function sortColumns(cols: ColumnStats[], key: SortKey, dir: 'asc' | 'desc'): Co
   return sorted;
 }
 
-// ─── Stats Results Table ─────────────────────────────────────────────────────
+// ─── Grid Layout ─────────────────────────────────────────────────────────────
 
-function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, onLoadTopN }: {
+/**
+ * 4-column grid: Name | Type | Null% | Distinct — always visible (Quick baseline).
+ * Standard detail renders as a collapsible full-width row below each column,
+ * toggled per-row or all-at-once via "Expand All".
+ */
+const GRID_COLS = 'minmax(60px, 1fr) 38px 46px minmax(70px, auto)';
+
+const cellClip: React.CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+// ─── Stats Results Grid ─────────────────────────────────────────────────────
+
+function StatsResults({ stats, mode }: {
   stats: TableStats;
   mode: StatsMode;
-  schema: string;
-  objectName: string;
-  topNData: Record<string, TopValue[]>;
-  topNLoading: Set<string>;
-  onLoadTopN: (colName: string) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
-
-  const toggleExpand = useCallback((colName: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(colName)) next.delete(colName);
-      else next.add(colName);
-      return next;
-    });
-  }, []);
+  const [expandedAll, setExpandedAll] = useState(false);
+  const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set());
 
   const toggleSort = useCallback((key: SortKey) => {
     setSort(prev => prev.key === key
@@ -133,7 +143,21 @@ function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, 
     );
   }, []);
 
-  // Partition: profiled vs skipped
+  const toggleCol = useCallback((name: string) => {
+    setExpandedCols(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    setExpandedAll(prev => {
+      if (!prev) setExpandedCols(new Set()); // clear individual overrides when expanding all
+      return !prev;
+    });
+  }, []);
+
   const { profiled, skipped } = useMemo(() => {
     const p: ColumnStats[] = [];
     const s: ColumnStats[] = [];
@@ -144,17 +168,15 @@ function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, 
     return { profiled: p, skipped: s };
   }, [stats.columns]);
 
-  // Sort profiled columns
   const sortedProfiled = useMemo(() => sortColumns(profiled, sort.key, sort.dir), [profiled, sort]);
-
   const isStandard = mode === 'standard';
+  const hdrStyle: React.CSSProperties = { color: 'var(--ln-fg-muted)', cursor: 'pointer', userSelect: 'none' };
 
-  // Header cell style helper
-  const hdr = (clickKey: SortKey): React.CSSProperties => ({
-    color: 'var(--ln-fg-muted)',
-    cursor: 'pointer',
-    userSelect: 'none',
-  });
+  // Determine if a column's detail is visible
+  const isDetailVisible = (colName: string) => {
+    if (expandedAll) return !expandedCols.has(colName); // expanded all, individual toggle collapses
+    return expandedCols.has(colName); // collapsed all, individual toggle expands
+  };
 
   return (
     <div className="text-xs" style={{ color: 'var(--ln-fg)' }}>
@@ -173,117 +195,101 @@ function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, 
         ) : (
           <span>Full scan</span>
         )}
+        {/* Expand/Collapse All toggle — standard mode only */}
+        {isStandard && (
+          <>
+            <span>·</span>
+            <span
+              style={{ color: 'var(--ln-text-link)', cursor: 'pointer', userSelect: 'none' }}
+              onClick={toggleAll}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAll(); } }}
+            >
+              {expandedAll ? 'Collapse all' : 'Expand all'}
+            </span>
+          </>
+        )}
       </div>
 
-      {/* Column grid */}
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-            <th className="text-left pb-1 font-medium" style={{ width: 14 }}></th>
-            <th className="text-left pb-1 font-medium" style={hdr('name')} onClick={() => toggleSort('name')}>
-              Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
-            </th>
-            <th className="text-left pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)', width: 38 }}>Type</th>
-            <th className="text-right pb-1 font-medium" style={{ ...hdr('null'), width: 52 }} onClick={() => toggleSort('null')}>
-              Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
-            </th>
-            <th className="text-right pb-1 font-medium" style={{ ...hdr('distinct'), width: 90 }} onClick={() => toggleSort('distinct')}>
-              Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
-            </th>
-            {isStandard && (
-              <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Detail</th>
+      {/* Header row */}
+      <div
+        className="font-medium pb-1"
+        style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px', borderBottom: '1px solid var(--ln-border)' }}
+      >
+        <div style={hdrStyle} onClick={() => toggleSort('name')}>
+          Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
+        </div>
+        <div style={{ color: 'var(--ln-fg-muted)' }}>Type</div>
+        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('null')}>
+          Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
+        </div>
+        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('distinct')}>
+          Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
+        </div>
+      </div>
+
+      {/* Body rows */}
+      {sortedProfiled.map(col => {
+        const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);
+        const canExpand = isStandard && hasDetail(col);
+        return (
+          <div key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
+            {/* Metrics grid */}
+            <div
+              className="py-1"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: GRID_COLS,
+                gap: '0 6px',
+                alignItems: 'center',
+                cursor: canExpand ? 'pointer' : 'default',
+              }}
+              onClick={canExpand ? () => toggleCol(col.name) : undefined}
+              role={canExpand ? 'button' : undefined}
+              tabIndex={canExpand ? 0 : undefined}
+              onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.name); } } : undefined}
+            >
+              <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }} title={col.name}>
+                {canExpand && (
+                  <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)' }}>
+                    <ChevronIcon expanded={showDetail} />
+                  </span>
+                )}
+                <span style={cellClip}>{col.name}</span>
+              </div>
+              <div style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></div>
+              <div className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
+                {col.nullPercent === null
+                  ? <span style={{ color: 'var(--ln-fg-dim)', fontSize: '0.65rem' }}>NN</span>
+                  : `${col.nullPercent.toFixed(1)}%`
+                }
+              </div>
+              <div className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
+                {col.distinctCount.toLocaleString()}
+                <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
+              </div>
+            </div>
+
+            {/* Detail row — standard mode, collapsible */}
+            {showDetail && (
+              <div style={{ paddingLeft: 14, paddingBottom: 1 }}>
+                <DetailCell col={col} rowCount={stats.rowCount} />
+              </div>
             )}
-          </tr>
-        </thead>
-        <tbody>
-          {sortedProfiled.map(col => {
-            const isExpanded = expanded.has(col.name);
-            return (
-              <tr key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-                <td colSpan={isStandard ? 6 : 5} style={{ padding: 0 }}>
-                  {/* Row 1: metrics */}
-                  <div
-                    className="flex items-center"
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => toggleExpand(col.name)}
-                    role="button"
-                    aria-expanded={isExpanded}
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(col.name); } }}
-                  >
-                    {/* Chevron */}
-                    <div className="py-1" style={{ width: 14, flexShrink: 0, color: 'var(--ln-fg-dim)' }}>
-                      <ChevronIcon expanded={isExpanded} />
-                    </div>
 
-                    {/* Column name */}
-                    <div className="py-1 pr-1 truncate font-mono" style={{ flex: '1 1 30%', minWidth: 0 }} title={col.name}>
-                      {col.name}
-                    </div>
-
-                    {/* Type badge */}
-                    <div className="py-1" style={{ width: 38, flexShrink: 0, textAlign: 'center' }}>
-                      <TypeBadge typeStr={col.type} />
-                    </div>
-
-                    {/* Null% */}
-                    <div className="py-1 text-right font-mono" style={{ width: 52, flexShrink: 0 }}>
-                      {col.nullPercent === null
-                        ? <span style={{ color: 'var(--ln-fg-dim)', fontSize: '0.65rem' }}>NN</span>
-                        : `${col.nullPercent.toFixed(1)}%`
-                      }
-                    </div>
-
-                    {/* Distinct + uniqueness */}
-                    <div className="py-1 text-right font-mono" style={{ width: 90, flexShrink: 0 }}>
-                      {col.distinctCount.toLocaleString()}
-                      <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
-                    </div>
-
-                    {/* Detail (standard only) */}
-                    {isStandard && (
-                      <div className="py-1 text-right" style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        <DetailCell col={col} rowCount={stats.rowCount} />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Row 2: completeness bar */}
-                  <div className="flex items-center" style={{ paddingLeft: 14, paddingRight: 0, paddingBottom: 3 }}>
-                    <div style={{ flex: 1 }}>
-                      <CompletenessBar value={col.completeness} />
-                    </div>
-                    <span className="font-mono" style={{ width: 36, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)' }}>
-                      {Math.round(col.completeness * 100)}%
-                    </span>
-                  </div>
-
-                  {/* Expanded: Top-5 only */}
-                  {isExpanded && (
-                    <div className="text-xs" style={{ padding: '2px 0 4px 14px', color: 'var(--ln-fg-muted)' }}>
-                      {topNData[col.name] ? (
-                        <div>
-                          <div className="mb-1" style={{ color: 'var(--ln-fg-dim)' }}>Top values</div>
-                          <TopNChart values={topNData[col.name]} />
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          className="text-xs px-2 py-0.5"
-                          onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLoadTopN(col.name); }}
-                          disabled={topNLoading.has(col.name)}
-                        >
-                          {topNLoading.has(col.name) ? 'Loading…' : 'Load Top-5'}
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            {/* Completeness bar — always visible */}
+            <div className="flex items-center" style={{ paddingBottom: 3 }}>
+              <div style={{ flex: 1 }}>
+                <CompletenessBar value={col.completeness} />
+              </div>
+              <span className="font-mono" style={{ width: 32, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
+                {Math.round(col.completeness * 100)}%
+              </span>
+            </div>
+          </div>
+        );
+      })}
 
       {/* Skipped columns section */}
       {skipped.length > 0 && (
@@ -316,45 +322,11 @@ function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, 
 interface StatsSectionProps {
   statsState: TableStatsState;
   onRequestStats: (mode: StatsMode) => void;
-  schema: string;
-  objectName: string;
   standardModeEnabled: boolean;
 }
 
-export function StatsSection({ statsState, onRequestStats, schema, objectName, standardModeEnabled }: StatsSectionProps) {
-  const vscodeApi = useVsCode();
+export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';
-
-  const [topNData, setTopNData] = useState<Record<string, TopValue[]>>({});
-  const [topNLoading, setTopNLoading] = useState<Set<string>>(new Set());
-
-  const handleLoadTopN = useCallback((colName: string) => {
-    const rowCount = statsState.phase === 'result' ? statsState.stats.rowCount : 0;
-    setTopNLoading(prev => new Set(prev).add(colName));
-    vscodeApi.postMessage({
-      type: 'table-stats-topn-request',
-      schema,
-      objectName,
-      columnName: colName,
-      rowCount,
-    });
-  }, [vscodeApi, schema, objectName, statsState]);
-
-  // Listen for Top-N results
-  const handleTopNMessage = useCallback((event: MessageEvent) => {
-    const msg = event.data;
-    if (msg.type === 'table-stats-topn-result') {
-      setTopNData(prev => ({ ...prev, [msg.columnName]: msg.values }));
-      setTopNLoading(prev => { const next = new Set(prev); next.delete(msg.columnName); return next; });
-    } else if (msg.type === 'table-stats-topn-error') {
-      setTopNLoading(prev => { const next = new Set(prev); next.delete(msg.columnName); return next; });
-    }
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener('message', handleTopNMessage);
-    return () => window.removeEventListener('message', handleTopNMessage);
-  }, [handleTopNMessage]);
 
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
@@ -406,15 +378,7 @@ export function StatsSection({ statsState, onRequestStats, schema, objectName, s
         </div>
       )}
       {statsState.phase === 'result' && (
-        <StatsResults
-          stats={statsState.stats}
-          mode={statsState.mode}
-          schema={schema}
-          objectName={objectName}
-          topNData={topNData}
-          topNLoading={topNLoading}
-          onLoadTopN={handleLoadTopN}
-        />
+        <StatsResults stats={statsState.stats} mode={statsState.mode} />
       )}
     </div>
   );

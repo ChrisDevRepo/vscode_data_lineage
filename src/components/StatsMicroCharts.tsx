@@ -1,4 +1,3 @@
-import type { TopValue } from '../engine/profilingEngine';
 import { typeBadgeLabel } from '../engine/profilingEngine';
 
 // ─── Type Badge ──────────────────────────────────────────────────────────────
@@ -77,40 +76,5 @@ export function UniquenessIndicator({ value, distinctCount }: { value: number; d
     <span className="text-xs ml-1" style={{ color, fontWeight: 500 }}>
       {label}
     </span>
-  );
-}
-
-// ─── Top-N Micro Bar Chart ───────────────────────────────────────────────────
-
-export function TopNChart({ values }: { values: TopValue[] }) {
-  if (values.length === 0) return null;
-  const maxCount = values[0].count;
-  const barHeight = 14;
-  const gap = 2;
-  const height = values.length * (barHeight + gap);
-
-  return (
-    <svg width="100%" height={height} style={{ display: 'block' }}>
-      {values.map((v, i) => {
-        const barWidth = maxCount > 0 ? (v.count / maxCount) * 100 : 0;
-        return (
-          <g key={i} transform={`translate(0, ${i * (barHeight + gap)})`}>
-            <rect
-              x="0" y="0"
-              width={`${barWidth}%`}
-              height={barHeight} rx="2"
-              fill="var(--ln-analysis-icon)" opacity="0.5"
-            />
-            <text
-              x="4" y={barHeight - 3}
-              fontSize="9" fill="var(--ln-fg)"
-              style={{ fontFamily: 'var(--vscode-editor-font-family, monospace)' }}
-            >
-              {v.value} ({v.percent.toFixed(1)}%)
-            </text>
-          </g>
-        );
-      })}
-    </svg>
   );
 }

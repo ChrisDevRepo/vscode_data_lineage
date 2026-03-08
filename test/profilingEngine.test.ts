@@ -10,9 +10,7 @@ import {
   buildColumnAggregations,
   buildProfilingQuery,
   buildRowCountQuery,
-  buildTopNQuery,
   parseProfilingResult,
-  parseTopNResult,
   compactDate,
   typeBadgeLabel,
 } from '../src/engine/profilingEngine';
@@ -543,48 +541,6 @@ test('uniqueness capped at 1', () => {
   const row: Record<string, string> = { 'Id__d': '110' };
   const stats = parseProfilingResult(row, cols, 100, false);
   assert.equal(stats.columns[0].uniqueness, 1);
-});
-
-// ─── buildTopNQuery ──────────────────────────────────────────────────────────
-
-console.log('\n── buildTopNQuery ──');
-
-test('generates Top-N query', () => {
-  const sql = buildTopNQuery('dbo', 'Users', 'Status', 5);
-  assert(sql.includes('TOP 5'), 'Has TOP 5');
-  assert(sql.includes('CAST([Status] AS nvarchar(200))'), 'Casts to nvarchar');
-  assert(sql.includes('GROUP BY [Status]'), 'Groups by column');
-  assert(sql.includes('ORDER BY cnt DESC'), 'Orders by count desc');
-  assert(sql.includes('[dbo].[Users]'), 'Has table reference');
-});
-
-test('Top-N bracket escaping', () => {
-  const sql = buildTopNQuery('dbo', 'My Table', 'Col]Name', 3);
-  assert(sql.includes('TOP 3'), 'Correct N');
-  assert(sql.includes('[Col]]Name]'), 'Bracket-escaped column');
-});
-
-// ─── parseTopNResult ─────────────────────────────────────────────────────────
-
-console.log('\n── parseTopNResult ──');
-
-test('parses Top-N rows', () => {
-  const rows = [
-    { val: 'Active', cnt: '500' },
-    { val: 'Inactive', cnt: '200' },
-    { val: 'Pending', cnt: '50' },
-  ];
-  const result = parseTopNResult(rows, 1000);
-  assert.equal(result.length, 3);
-  assert.equal(result[0].value, 'Active');
-  assert.equal(result[0].count, 500);
-  assert.equal(result[0].percent, 50);
-  assert.equal(result[2].percent, 5);
-});
-
-test('parseTopNResult handles empty rows', () => {
-  const result = parseTopNResult([], 100);
-  assert.equal(result.length, 0);
 });
 
 // ─── maxColumns cap ──────────────────────────────────────────────────────────

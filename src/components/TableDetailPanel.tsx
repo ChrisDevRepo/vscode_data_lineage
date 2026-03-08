@@ -174,8 +174,6 @@ export const TableDetailPanel = memo(function TableDetailPanel({
             <StatsSection
               statsState={statsState}
               onRequestStats={onRequestStats}
-              schema={schema}
-              objectName={objectName}
               standardModeEnabled={standardModeEnabled}
             />
           )}

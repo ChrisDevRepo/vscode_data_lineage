@@ -162,19 +162,6 @@ One `SELECT` with per-column fragments. Column alias convention: `[ColumnName__s
 
 ---
 
-## Top-N Query (on-demand, per column)
-
-Triggered by user clicking "Load Top-5" in expanded column row:
-
-```sql
-SELECT TOP 5 CAST([col] AS nvarchar(200)) AS val, COUNT(*) AS cnt
-FROM [schema].[table]
-GROUP BY [col]
-ORDER BY cnt DESC
-```
-
----
-
 ## Example: Generated SQL for `[Sales].[Order]` (Standard mode)
 
 Assuming: `OrderID` (int, NOT NULL), `CustomerName` (nvarchar, NULL), `Total` (decimal, NULL), `OrderDate` (datetime, NULL):

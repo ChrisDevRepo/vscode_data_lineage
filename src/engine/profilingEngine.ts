@@ -33,12 +33,6 @@ export interface ColumnStats {
   skipped?: boolean;
 }
 
-export interface TopValue {
-  value: string;
-  count: number;
-  percent: number;
-}
-
 export interface TableStats {
   rowCount: number;
   columns: ColumnStats[];
@@ -359,36 +353,3 @@ export function parseProfilingResult(
   return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-// ─── Top-N Values (on-demand per column) ─────────────────────────────────────
-
-/**
- * Build a Top-N frequency query for a single column.
- * Returns the N most frequent values with counts.
- */
-export function buildTopNQuery(
-  schema: string,
-  tableName: string,
-  colName: string,
-  topN: number,
-): string {
-  const fullTable = `${qi(schema)}.${qi(tableName)}`;
-  const qn = qi(colName);
-  return `SELECT TOP ${topN} CAST(${qn} AS nvarchar(200)) AS val, COUNT(*) AS cnt\nFROM ${fullTable}\nGROUP BY ${qn}\nORDER BY cnt DESC`;
-}
-
-/**
- * Parse Top-N query rows into TopValue array.
- */
-export function parseTopNResult(
-  rows: Array<{ val: string; cnt: string }>,
-  rowCount: number,
-): TopValue[] {
-  return rows.map(r => {
-    const count = parseInt(r.cnt, 10) || 0;
-    return {
-      value: r.val ?? '(NULL)',
-      count,
-      percent: rowCount > 0 ? (count / rowCount) * 100 : 0,
-    };
-  });
-}
