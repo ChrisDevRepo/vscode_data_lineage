@@ -29,6 +29,7 @@ PLAN*.md
 
 # Environment
 .env
+.env.example
 *.log
 
 # OS
