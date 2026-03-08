@@ -30,7 +30,11 @@ source format into the shared intermediate types and nothing more.
 | `src/engine/connectionManager.ts` | MSSQL extension API wrapper, connection management |
 | `src/engine/dmvExtractor.ts` | Build DacpacModel from database import via DMV queries |
 | `src/types/mssql.d.ts` | Type declarations for MSSQL extension API |
-| `assets/dmvQueries.yaml` | Built-in DMV queries for database import |
+| `assets/defaultParseRules.yaml` | Built-in parse rules (17 rules, 5 categories) |
+| `assets/dmvQueries.yaml` | Built-in DMV queries (6 queries) |
+| `docs/PARSE_RULES.md` | Custom parse rules guide |
+| `docs/DMV_QUERIES.md` | Custom DMV queries guide |
+| `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
 
 ## Build & Test
 
@@ -47,12 +51,12 @@ Press F5 to launch Extension Development Host.
 | File | Tests | Purpose |
 |------|-------|---------|
 | `test/dacpacExtractor.test.ts` | 59 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
-| `test/graphBuilder.test.ts` | 84 | Graph construction, layout, BFS trace, co-writer filter |
-| `test/parser-edge-cases.test.ts` | 175 | Syntactic parser tests: all 14 rules + edge cases + cleansing pipeline + regression guards |
-| `test/graphAnalysis.test.ts` | 59 | Graph analysis: islands, hubs, orphans, longest path, cycles |
-| `test/dmvExtractor.test.ts` | 146 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
+| `test/graphBuilder.test.ts` | 98 | Graph construction, layout, BFS trace, co-writer filter |
+| `test/parser-edge-cases.test.ts` | 179 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
+| `test/graphAnalysis.test.ts` | 62 | Graph analysis: islands, hubs, orphans, longest path, cycles |
+| `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/profilingEngine.test.ts` | 45 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
+| `test/profilingEngine.test.ts` | 64 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
@@ -86,9 +90,24 @@ Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open
 
 Table statistics: `table-stats-request` (Webview → Extension), `table-stats-result`, `table-stats-error` (Extension → Webview)
 
+## YAML Loading & Failsafe Chain
+
+Both YAML files (`defaultParseRules.yaml`, `dmvQueries.yaml`) support user overrides via VS Code settings. The loading chain is: **custom file → validate → use custom; on any failure → warn user (outputChannel + VS Code dialog) → fall back to built-in**.
+
+| YAML | Setting | Loaded when | Fallback |
+|------|---------|-------------|----------|
+| `assets/defaultParseRules.yaml` | `dataLineageViz.parseRulesFile` | Extension startup (`readExtensionConfig`) | Built-in; if both fail: no regex edges, user warned |
+| `assets/dmvQueries.yaml` | `dataLineageViz.dmvQueriesFile` | DB import initiated (`loadDmvQueries`) | Built-in; if both fail: `db-error` to user |
+
+**Parse rules validation** (two-phase): extension host validates YAML structure (`rules` array); webview validates each rule individually (name, pattern, category, flags, regex compile, empty-match check). Invalid rules are skipped — valid rules still load. Results posted back via `parse-rules-result`.
+
+**DMV queries validation**: checks `name` + `sql` fields per query. Required query names (`schema-preview`, `all-objects`, `nodes`, `columns`, `dependencies`) are validated at load time (early warning) and at execution time (hard guard — throws descriptive error if missing).
+
+Scaffold commands: `dataLineageViz.createParseRules`, `dataLineageViz.createDmvQueries` — copy built-in YAML to workspace root for customization.
+
 ## SQL Parse Rules
 
-Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 14 rules across 4 categories: preprocessing, source, target, exec).
+Stored procedures use regex-based body parsing (`sqlBodyParser.ts`). Rules defined in `assets/defaultParseRules.yaml` (single source of truth, 17 rules across 5 categories: preprocessing, source, target, exec, external_ref).
 
 Views/functions use MS metadata as the primary source (dacpac XML `BodyDependencies` / `sys.sql_expression_dependencies`). As a supplement, `modelBuilder.ts` also runs the parser on their body scripts to catch any gaps in MS metadata — only the **delta** (parser findings beyond what metadata already captured) is recorded in `spDetails` (as `inRefs`) and surfaced in the NodeInfoBar detail panel. SQL Server XML type method calls (`nodes`, `value`, `exist`, `query`, `modify`) are recognized by the supplement and skipped — they look like `[alias].[method]` to the parser but are never real catalog references.
 

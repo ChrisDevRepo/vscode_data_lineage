@@ -40,17 +40,27 @@ export async function loadDmvQueries(
         if (parsed?.queries && Array.isArray(parsed.queries)) {
           const valid = parsed.queries.filter(q => q.name && q.sql);
           if (valid.length > 0) {
+            const KNOWN_NAMES = ['schema-preview', 'all-objects', 'nodes', 'columns', 'dependencies'];
+            const loadedNames = new Set(valid.map(q => q.name));
+            const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
+            if (missingNames.length > 0) {
+              outputChannel.warn(`[DB] Custom DMV queries missing: ${missingNames.join(', ')} — DB import may fail`);
+              vscode.window.showWarningMessage(`Custom DMV queries missing: ${missingNames.join(', ')}. DB import may fail.`);
+            }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
             outputChannel.info(`[DB] Loaded ${valid.length} DMV queries from ${path.basename(customPath)}`);
             return valid;
           }
         }
         outputChannel.warn(`[DB] Invalid custom DMV queries in ${customPath} — falling back to built-in`);
+        vscode.window.showWarningMessage('Custom DMV queries invalid — using built-in defaults.');
       } catch (err) {
         outputChannel.warn(`[DB] Failed to load custom DMV queries: ${err instanceof Error ? err.message : String(err)} — falling back to built-in`);
+        vscode.window.showWarningMessage('Failed to load custom DMV queries — using built-in defaults. Check Output channel.');
       }
     } else {
       outputChannel.warn(`[DB] Cannot resolve DMV queries path "${customPath}" — falling back to built-in`);
+      vscode.window.showWarningMessage(`Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`);
     }
   }
 

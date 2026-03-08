@@ -28,7 +28,7 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 **Data Sources**
 - Import from SSDT and SDK-style `.dacpac` files
 - Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
-- External tables (PolyBase / data virtualization) surfaced as ⬡ nodes
+- External tables surfaced as ⬡ nodes
 - Virtual external references: OPENROWSET file paths, cross-database 3-part names, and CETAS targets
 - Quick reconnect to your last data source
 
@@ -45,7 +45,7 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 
 **SQL Preview & Export**
 - Click any node to view its DDL with full syntax highlighting
-- Full-text search across all SQL bodies with match highlighting
+- Full-text search across all SQL bodies
 - Export the lineage graph to Draw.io for documentation
 
 ## Limitations
@@ -63,65 +63,28 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 
 ## Configuration
 
-Search `dataLineageViz` in Settings (`Ctrl+,`):
+Search `dataLineageViz` in VS Code Settings (`Ctrl+,`). Settings are grouped into **Import**, **Database Connection**, **Table Statistics**, **Layout**, **Trace**, and **Analysis**.
 
-**General**
+Most settings apply instantly. Import settings (`parseRulesFile`, `excludePatterns`) require reloading the data source.
+
+**Key settings:**
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `maxNodes` | `750` | Maximum nodes to display (10-1000) |
+| `excludePatterns` | `[]` | Regex patterns to exclude objects by name |
+| `layout.direction` | `"LR"` | Graph flow: `LR` (left-to-right) or `TB` (top-to-bottom) |
+| `tableStatistics.enabled` | `true` | Column statistics and row counts (DB import only) |
 
-**Parser**
+**Power user customization:**
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `parseRulesFile` | `""` | Path to custom YAML parsing rules |
-| `excludePatterns` | `[]` | Regex patterns to exclude objects |
+| Guide | What you can customize |
+|-------|------------------------|
+| [Custom Parse Rules](docs/PARSE_RULES.md) | Regex rules for SP dependency extraction |
+| [Custom DMV Queries](docs/DMV_QUERIES.md) | SQL queries for database import |
+| [Profiling Patterns](docs/PROFILING_PATTERNS.md) | Table statistics SQL reference |
 
-**Database Connection**
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `dmvQueriesFile` | `""` | Path to custom DMV queries YAML file (leave empty for built-in) |
-
-**Table Statistics**
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `tableStatistics.enabled` | `true` | Enable table statistics in the table design viewer (DB mode only) |
-| `tableStatistics.sampleThreshold` | `100000` | Row count above which sampling is used; set to `0` to always sample |
-| `tableStatistics.sampleSize` | `10000` | Target sample size in rows (converted to `TABLESAMPLE` or `TOP N` by platform) |
-| `tableStatistics.useApproxDistinct` | `true` | Use `APPROX_COUNT_DISTINCT` (faster, ~2% error) instead of exact `COUNT(DISTINCT)` |
-| `tableStatistics.queryTimeout` | `60` | Profiling query timeout in seconds (10-600) |
-| `tableStatistics.queriesFile` | `""` | Path to custom profiling queries YAML file (leave empty for built-in) |
-
-**Graph Layout**
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `layout.direction` | `"LR"` | Layout direction: `LR` or `TB` |
-| `layout.rankSeparation` | `120` | Spacing between ranks/layers (20-300) |
-| `layout.nodeSeparation` | `30` | Spacing between nodes in same rank (10-200) |
-| `edgeStyle` | `"default"` | Edge style: `default`, `smoothstep`, `step`, `straight` |
-| `layout.edgeAnimation` | `true` | Animate edges during trace mode |
-| `layout.highlightAnimation` | `false` | Animate edges on node click (non-trace) |
-| `layout.minimapEnabled` | `true` | Show interactive minimap for large graphs |
-
-**Trace**
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `trace.defaultUpstreamLevels` | `3` | Default upstream trace depth (0-99) |
-| `trace.defaultDownstreamLevels` | `3` | Default downstream trace depth (0-99) |
-| `trace.hideCoWriters` | `true` | Hide sibling writers (procedures writing to the same output table) |
-
-**Analysis**
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `analysis.hubMinDegree` | `8` | Min connections for Hub analysis (1-50) |
-| `analysis.islandMaxSize` | `2` | Max island size to display (2-500) |
-| `analysis.longestPathMinNodes` | `5` | Min nodes for Longest Path analysis (2-50) |
+Use **Data Lineage: Create Parse Rules** or **Data Lineage: Create DMV Queries** from the Command Palette to scaffold a customization YAML in your workspace.
 
 ## Commands
 

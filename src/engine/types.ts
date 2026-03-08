@@ -299,6 +299,9 @@ export interface AnalysisConfig {
 
 export interface TableStatsConfig {
   enabled: boolean;
+  standardModeEnabled: boolean;
+  excludeExternalTables: boolean;
+  maxColumns: number;
   sampleThreshold: number;
   sampleSize: number;
   useApproxDistinct: boolean;
@@ -330,7 +333,7 @@ export const DEFAULT_CONFIG = {
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
   analysis: { hubMinDegree: 8, islandMaxSize: 2, longestPathMinNodes: 5 },
-  tableStatistics: { enabled: true, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
+  tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
   dmvQueryTimeout: 120,
   externalRefs: { enabled: true },
 } satisfies ExtensionConfig;

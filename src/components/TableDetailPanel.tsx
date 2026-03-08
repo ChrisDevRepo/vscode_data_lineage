@@ -3,6 +3,9 @@ import type { ColumnDef, ForeignKeyInfo, ObjectType } from '../engine/types';
 import type { TableStats, StatsMode } from '../engine/profilingEngine';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { CloseIcon } from './ui/CloseIcon';
+import { ColumnTable } from './ColumnTable';
+import { ForeignKeysSection } from './ForeignKeysSection';
+import { StatsSection } from './StatsSection';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -24,137 +27,13 @@ export interface TableDetailPanelProps {
   onRequestStats: (mode: StatsMode) => void;
   isDbMode: boolean;
   statsEnabled: boolean;
+  excludeExternalTables: boolean;
+  standardModeEnabled: boolean;
 }
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 400;
-
-// ─── Spinner ─────────────────────────────────────────────────────────────────
-
-function Spinner() {
-  return (
-    <svg className="animate-spin h-4 w-4 inline-block" style={{ color: 'var(--ln-fg-muted)' }}
-      xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
-}
-
-// ─── Stats Results ────────────────────────────────────────────────────────────
-
-function StatsResults({ stats, mode }: { stats: TableStats; mode: StatsMode }) {
-  return (
-    <div className="text-xs" style={{ color: 'var(--ln-fg)' }}>
-      {/* Summary badges */}
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        <span className="px-2 py-0.5 rounded text-xs font-mono"
-          style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border-light)', color: 'var(--ln-fg)' }}>
-          {stats.rowCount.toLocaleString()} rows
-        </span>
-        {stats.sampled && stats.samplePercent !== undefined && (
-          <span className="px-2 py-0.5 rounded text-xs"
-            style={{ background: 'var(--ln-warning-bg)', border: '1px solid var(--ln-warning-border)', color: 'var(--ln-warning-fg)' }}>
-            sampled {stats.samplePercent}%
-          </span>
-        )}
-        <span className="px-2 py-0.5 rounded text-xs"
-          style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border-light)', color: 'var(--ln-fg-muted)' }}>
-          {stats.columns.filter(c => !c.skipped).length} profiled
-        </span>
-      </div>
-
-      {/* Per-column stats table */}
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-            <th className="text-left pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)', width: '40%' }}>Column</th>
-            <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Distinct</th>
-            <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Null%</th>
-            {mode === 'standard' && (
-              <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Min / Max</th>
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {stats.columns.map(col => (
-            <tr key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-              <td className="py-0.5 pr-1 truncate font-mono" style={{ color: 'var(--ln-fg)', maxWidth: '0' }}>
-                {col.skipped
-                  ? <span style={{ color: 'var(--ln-fg-dim)' }}>{col.name}</span>
-                  : col.name
-                }
-              </td>
-              <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ln-fg)' }}>
-                {col.skipped ? <span style={{ color: 'var(--ln-fg-dim)' }}>—</span> : col.distinctCount.toLocaleString()}
-              </td>
-              <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ln-fg)' }}>
-                {col.skipped
-                  ? <span style={{ color: 'var(--ln-fg-dim)' }}>—</span>
-                  : col.nullPercent === null
-                    ? 'NOT NULL'
-                    : `${col.nullPercent.toFixed(1)}%`
-                }
-              </td>
-              {mode === 'standard' && (
-                <td className="py-0.5 text-right font-mono text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
-                  {col.skipped ? <span style={{ color: 'var(--ln-fg-dim)' }}>—</span>
-                    : col.min !== undefined ? `${col.min} / ${col.max}`
-                    : col.minLength !== undefined ? `${col.minLength} / ${col.maxLength} len`
-                    : '—'
-                  }
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ─── FK Section ──────────────────────────────────────────────────────────────
-
-function ForeignKeysSection({ fks }: { fks: ForeignKeyInfo[] }) {
-  return (
-    <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
-      <div className="text-xs font-semibold tracking-wider mb-2"
-        style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
-        FOREIGN KEYS
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Constraint</th>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Column(s)</th>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>References</th>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>On Delete</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fks.map(fk => (
-            <tr key={fk.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }} title={fk.name}>
-                {fk.name}
-              </td>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }} title={fk.columns.join(', ')}>
-                {fk.columns.join(', ')}
-              </td>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }}
-                title={`[${fk.refSchema}].[${fk.refTable}](${fk.refColumns.join(', ')})`}>
-                [{fk.refSchema}].[{fk.refTable}]
-              </td>
-              <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
-                {fk.onDelete}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -170,13 +49,14 @@ export const TableDetailPanel = memo(function TableDetailPanel({
   onRequestStats,
   isDbMode,
   statsEnabled,
+  excludeExternalTables,
+  standardModeEnabled,
 }: TableDetailPanelProps) {
   const typeIcon = TYPE_COLORS[objectType as ObjectType]?.icon ?? '■';
   const typeLabel = externalType === 'file' ? 'FILE SOURCE'
     : externalType === 'db' ? 'CROSS-DATABASE'
     : objectType === 'external' ? 'EXTERNAL TABLE' : 'TABLE';
   const isVirtualExt = externalType === 'file' || externalType === 'db';
-  const isLoading = statsState.phase === 'loading';
 
   const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
   const dragging = useRef(false);
@@ -278,119 +158,26 @@ export const TableDetailPanel = memo(function TableDetailPanel({
 
         {/* Scrollable body */}
         <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-
           {/* Type label */}
           <div className="text-xs font-semibold tracking-wider" style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
             {typeLabel}
           </div>
 
           {/* Column table */}
-          {columns.length === 0 ? (
-            <div className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>
-              {isVirtualExt ? 'Virtual reference — column metadata not available.' : 'No column metadata available.'}
-            </div>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-                  <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '38%' }}>Name</th>
-                  <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '30%' }}>Type</th>
-                  <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '18%' }}>Null</th>
-                  <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Flags</th>
-                </tr>
-              </thead>
-              <tbody>
-                {columns.map(col => {
-                  const flags = [
-                    col.extra || '',
-                    col.unique ? 'UQ' : '',
-                    col.check ? 'CK' : '',
-                  ].filter(Boolean).join(' ');
-                  return (
-                    <tr key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-                      <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }} title={col.name}>
-                        {col.name}
-                      </td>
-                      <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }} title={col.type}>
-                        {col.type}
-                      </td>
-                      <td className="py-0.5 text-xs" style={{ color: col.nullable === 'NULL' ? 'var(--ln-fg-dim)' : 'var(--ln-fg-muted)' }}>
-                        {col.nullable === 'NULL' ? 'null' : ''}
-                      </td>
-                      <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
-                        {flags}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} />
 
           {/* Foreign Keys section */}
           {fks.length > 0 && <ForeignKeysSection fks={fks} />}
 
           {/* Statistics section — only shown for DB mode */}
-          {isDbMode && statsEnabled && !isVirtualExt && (
-            <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
-              <div className="text-xs font-semibold tracking-wider mb-2 flex items-center justify-between"
-                style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
-                <span>STATISTICS</span>
-                {isLoading && <Spinner />}
-              </div>
-
-              {/* Quick / Detail buttons */}
-              <div className="flex gap-1.5 mb-3">
-                <button
-                  disabled={isLoading}
-                  onClick={() => onRequestStats('quick')}
-                  className="text-xs px-2.5 py-1 rounded cursor-pointer disabled:opacity-50"
-                  style={{
-                    background: statsState.phase === 'result' && statsState.mode === 'quick'
-                      ? 'var(--ln-button-bg)' : 'var(--ln-button-secondary-bg)',
-                    color: statsState.phase === 'result' && statsState.mode === 'quick'
-                      ? 'var(--ln-button-fg)' : 'var(--ln-button-secondary-fg)',
-                    border: '1px solid var(--ln-border-light)',
-                  }}
-                >
-                  Quick Stats
-                </button>
-                <button
-                  disabled={isLoading}
-                  onClick={() => onRequestStats('standard')}
-                  className="text-xs px-2.5 py-1 rounded cursor-pointer disabled:opacity-50"
-                  style={{
-                    background: statsState.phase === 'result' && statsState.mode === 'standard'
-                      ? 'var(--ln-button-bg)' : 'var(--ln-button-secondary-bg)',
-                    color: statsState.phase === 'result' && statsState.mode === 'standard'
-                      ? 'var(--ln-button-fg)' : 'var(--ln-button-secondary-fg)',
-                    border: '1px solid var(--ln-border-light)',
-                  }}
-                >
-                  Standard Stats
-                </button>
-              </div>
-
-              {/* Stats state */}
-              {statsState.phase === 'loading' && (
-                <div className="text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
-                  Running {statsState.mode} profiling…
-                </div>
-              )}
-              {statsState.phase === 'error' && (
-                <div className="text-xs px-2 py-1.5 rounded"
-                  style={{
-                    background: 'var(--ln-validation-error-bg)',
-                    border: '1px solid var(--ln-validation-error-border)',
-                    color: 'var(--ln-fg)',
-                  }}>
-                  {statsState.message}
-                </div>
-              )}
-              {statsState.phase === 'result' && (
-                <StatsResults stats={statsState.stats} mode={statsState.mode} />
-              )}
-            </div>
+          {isDbMode && statsEnabled && !isVirtualExt && !(excludeExternalTables && objectType === 'external') && (
+            <StatsSection
+              statsState={statsState}
+              onRequestStats={onRequestStats}
+              schema={schema}
+              objectName={objectName}
+              standardModeEnabled={standardModeEnabled}
+            />
           )}
         </div>
       </div>

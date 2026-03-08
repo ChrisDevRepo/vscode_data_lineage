@@ -196,7 +196,21 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-xs mt-0.5">•</span>
-                <span>Customize queries via <code>dataLineageViz.dmvQueriesFile</code> setting — see <code>docs/DMV_QUERIES.md</code> for the YAML specification</span>
+                <span>Customize queries via <code>dmvQueriesFile</code> setting —{' '}
+                  <button
+                    onClick={() => vscodeApi.postMessage({ type: 'open-external', url: 'https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md' })}
+                    className="ln-text-link hover:underline cursor-pointer"
+                  >YAML customization guide</button>
+                </span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Custom parse rules for SP body parsing —{' '}
+                  <button
+                    onClick={() => vscodeApi.postMessage({ type: 'open-external', url: 'https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md' })}
+                    className="ln-text-link hover:underline cursor-pointer"
+                  >Parse rules guide</button>
+                </span>
               </div>
             </div>
           </section>
@@ -210,10 +224,27 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
               <h3 className="text-lg font-semibold">Settings Reference</h3>
             </div>
             <div className="ml-7 space-y-3 text-sm ln-text-muted">
-              <p>All settings use the <code>dataLineageViz.*</code> prefix. Open via <strong>Settings</strong> button below or <kbd className="px-1.5 py-0.5 rounded text-xs ln-kbd">Ctrl+,</kbd> and search "dataLineageViz".</p>
-              <div className="p-2 rounded ln-bg-secondary">
-                <p><strong className="ln-text">Most settings apply automatically</strong> when changed in VS Code Settings.</p>
-                <p className="mt-1"><strong className="ln-text">Import settings</strong> (<code>parseRulesFile</code>, <code>excludePatterns</code>) require reloading the data source — you'll see a notification when these change.</p>
+              <p>Open via <strong>Settings</strong> button below or <kbd className="px-1.5 py-0.5 rounded text-xs ln-kbd">Ctrl+,</kbd> and search "dataLineageViz".</p>
+              <div className="space-y-1.5">
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>maxNodes</code> — cap for large databases (default 750)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>layout.direction</code> — left-to-right or top-to-bottom</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>excludePatterns</code> — filter out test/staging objects by regex</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs mt-0.5">•</span>
+                  <span><code>tableStatistics.enabled</code> — column stats on/off</span>
+                </div>
+              </div>
+              <div className="p-2 rounded ln-bg-secondary mt-2">
+                <p><strong className="ln-text">Most settings apply instantly.</strong> Import settings (<code>parseRulesFile</code>, <code>excludePatterns</code>) require reloading the data source.</p>
               </div>
             </div>
           </section>

@@ -583,6 +583,9 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     },
     tableStatistics: {
       enabled: cfg.get<boolean>('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled),
+      standardModeEnabled: cfg.get<boolean>('tableStatistics.standardModeEnabled', DEFAULT_CONFIG.tableStatistics.standardModeEnabled),
+      excludeExternalTables: cfg.get<boolean>('tableStatistics.excludeExternalTables', DEFAULT_CONFIG.tableStatistics.excludeExternalTables),
+      maxColumns: clamp(cfg.get<number>('tableStatistics.maxColumns', DEFAULT_CONFIG.tableStatistics.maxColumns), 1, 500, DEFAULT_CONFIG.tableStatistics.maxColumns),
       sampleThreshold: clamp(cfg.get<number>('tableStatistics.sampleThreshold', DEFAULT_CONFIG.tableStatistics.sampleThreshold), 0, 999999999, DEFAULT_CONFIG.tableStatistics.sampleThreshold),
       sampleSize: clamp(cfg.get<number>('tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize), 100, 1000000, DEFAULT_CONFIG.tableStatistics.sampleSize),
       useApproxDistinct: cfg.get<boolean>('tableStatistics.useApproxDistinct', DEFAULT_CONFIG.tableStatistics.useApproxDistinct),
@@ -603,6 +606,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
       outputChannel.info(`[ParseRules] Using built-in defaults (${(config.parseRules as Record<string, unknown[]>).rules.length} rules)`);
     } catch (err) {
       outputChannel.error(`[ParseRules] Failed to load built-in rules: ${err instanceof Error ? err.message : String(err)}`);
+      vscode.window.showWarningMessage('Failed to load parse rules — regex-based edge detection disabled. Check Output channel.');
     }
   } else {
     const resolved = resolveWorkspacePath(rulesPath);
@@ -611,7 +615,10 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
       vscode.window.showWarningMessage(
         `Parse rules: cannot resolve "${rulesPath}" — open a workspace folder or use an absolute path.`
       );
-      config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
+      config.parseRules = await loadBuiltInParseRules().catch(fallbackErr => {
+        outputChannel.error(`[ParseRules] Built-in fallback also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
+        return undefined;
+      });
     } else {
       try {
         const fileUri = vscode.Uri.file(resolved);
@@ -623,7 +630,10 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
           vscode.window.showWarningMessage(
             `Parse rules YAML invalid: missing "rules" array. Using built-in defaults.`
           );
-          config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
+          config.parseRules = await loadBuiltInParseRules().catch(fallbackErr => {
+        outputChannel.error(`[ParseRules] Built-in fallback also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
+        return undefined;
+      });
         } else {
           config.parseRules = parsed;
           lastRulesLabel = `${parsed.rules.length} rules from ${path.basename(rulesPath)}`;
@@ -641,7 +651,10 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
             `Failed to load parse rules: ${err instanceof Error ? err.message : String(err)}`
           );
         }
-        config.parseRules = await loadBuiltInParseRules().catch(() => undefined);
+        config.parseRules = await loadBuiltInParseRules().catch(fallbackErr => {
+        outputChannel.error(`[ParseRules] Built-in fallback also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
+        return undefined;
+      });
       }
     }
   }
@@ -674,6 +687,7 @@ async function handleTableStatsRequest(
   const sampleThreshold = clamp(cfg.get<number>('tableStatistics.sampleThreshold', DEFAULT_CONFIG.tableStatistics.sampleThreshold), 0, 999999999, DEFAULT_CONFIG.tableStatistics.sampleThreshold);
   const sampleSize = clamp(cfg.get<number>('tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize), 100, 1000000, DEFAULT_CONFIG.tableStatistics.sampleSize);
   const useApprox = cfg.get<boolean>('tableStatistics.useApproxDistinct', DEFAULT_CONFIG.tableStatistics.useApproxDistinct);
+  const maxColumns = clamp(cfg.get<number>('tableStatistics.maxColumns', DEFAULT_CONFIG.tableStatistics.maxColumns), 1, 500, DEFAULT_CONFIG.tableStatistics.maxColumns);
   const queryTimeout = clamp(cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout), 10, 600, DEFAULT_CONFIG.tableStatistics.queryTimeout) * 1000;
 
   try {
@@ -707,7 +721,7 @@ async function handleTableStatsRequest(
     outputChannel.info(`[Stats] Row count: ${rowCount.toLocaleString()}`);
 
     // Build and run profiling query
-    const aggregations = buildColumnAggregations(cols, useApprox, mode);
+    const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
     const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
 
     if (!profilingSql) {
@@ -963,6 +977,12 @@ async function runDbPhase2(
     if (missing.length > 0) {
       throw new Error(`Query '${name}' is missing required columns: ${missing.join(', ')}.`);
     }
+  }
+
+  const REQUIRED_PHASE2 = ['nodes', 'columns', 'dependencies'] as const;
+  const missingQueries = REQUIRED_PHASE2.filter(name => !resultMap.has(name));
+  if (missingQueries.length > 0) {
+    throw new Error(`DMV YAML is missing required queries: ${missingQueries.join(', ')}. Each must have a matching "name:" field.`);
   }
 
   const dmvResults: DmvResults = {

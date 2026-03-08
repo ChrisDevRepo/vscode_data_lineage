@@ -66,6 +66,15 @@ export function App() {
         usedDefaults: result.usedDefaults,
         categoryCounts: result.categoryCounts,
       });
+    } else {
+      vscodeApi.postMessage({
+        type: 'parse-rules-result',
+        loaded: 0,
+        skipped: [],
+        errors: ['No parse rules received from extension host'],
+        usedDefaults: true,
+        categoryCounts: {},
+      });
     }
   }, [vscodeApi]);
 
@@ -513,6 +522,8 @@ export function App() {
 
   const isDbMode = dacpacLoader.lastSource?.type === 'database';
   const statsEnabled = config.tableStatistics?.enabled ?? true;
+  const excludeExternalTables = config.tableStatistics?.excludeExternalTables ?? true;
+  const standardModeEnabled = config.tableStatistics?.standardModeEnabled ?? true;
 
   const handleRequestStats = (mode: StatsMode) => {
     if (!tableDetailNode) return;
@@ -539,6 +550,8 @@ export function App() {
       onRequestStats={handleRequestStats}
       isDbMode={isDbMode}
       statsEnabled={statsEnabled}
+      excludeExternalTables={excludeExternalTables}
+      standardModeEnabled={standardModeEnabled}
     />
   ) : null;
 

@@ -4,9 +4,10 @@ The extension extracts stored procedure dependencies using regex rules. Tables, 
 
 ## Setup
 
-1. Run **Data Lineage: Create Parse Rules** to scaffold a `parseRules.yaml` in your workspace
-2. Set `dataLineageViz.parseRulesFile` in VS Code settings to point to your file
+1. Open the **Command Palette** (`Ctrl+Shift+P`) and run **Data Lineage: Create Parse Rules** — this copies the built-in YAML into your workspace as `parseRules.yaml`
+2. Set `dataLineageViz.parseRulesFile` to `parseRules.yaml` in VS Code Settings (`Ctrl+,`, search "dataLineageViz")
 3. Edit the YAML to add, remove, or modify rules
+4. Each rule is validated individually on load (regex compile + empty-match check). Invalid rules are skipped — valid rules still load. Check the Output channel for details
 
 ## Rule Format
 
@@ -15,10 +16,11 @@ rules:
   - name: extract_sources_ansi     # Unique identifier
     enabled: true                   # Toggle on/off
     priority: 5                     # Execution order (lower = earlier)
-    category: source                # preprocessing | source | target | exec
+    category: source                # preprocessing | source | target | exec | external_ref
     pattern: "\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi                       # Regex flags
-    replacement: "..."                 # (preprocessing only) replacement string
+    replacement: "..."              # (preprocessing only) replacement string
+    kind: "file"                    # (external_ref only) "file" | "db"
     description: "FROM/JOIN sources"
 ```
 
@@ -51,10 +53,11 @@ Stage 4 runs in `modelBuilder.ts`:
 | `source` | Tables the SP reads from (FROM, JOIN, APPLY) | table -> SP |
 | `target` | Tables the SP writes to (INSERT, UPDATE, MERGE) | SP -> table |
 | `exec` | Procedures called via EXEC/EXECUTE | SP -> called_SP |
+| `external_ref` | External file/URL references (OPENROWSET, COPY, BULK) | Virtual node (file) |
 
 Extraction rules use capture group 1 as the object reference.
 
-## Built-in Rules (13)
+## Built-in Rules (17)
 
 | Rule | Priority | Category | Captures |
 |------|----------|----------|----------|
@@ -71,6 +74,10 @@ Extraction rules use capture group 1 as the object reference.
 | `extract_bulk_insert` | 16 | target | BULK INSERT (SQL Server) |
 | `extract_update_alias_target` | 17 | target | UPDATE alias SET ... FROM schema.table (alias case) |
 | `extract_output_into` | 18 | target | OUTPUT ... INTO schema.table (audit/staging tables) |
+| `extract_cetas` | 19 | target | CREATE EXTERNAL TABLE ... AS SELECT (Fabric/Synapse) |
+| `extract_openrowset` | 20 | external_ref | OPENROWSET(BULK 'path', ...) file references |
+| `extract_copy_from` | 21 | external_ref | COPY INTO ... FROM 'path' file references |
+| `extract_bulk_from` | 22 | external_ref | BULK INSERT ... FROM 'path' file references |
 
 **Preprocessing**: The `clean_sql` rule uses a single-pass combined regex where brackets, strings, and comments are matched together. The regex engine processes left-to-right — the **leftmost match wins**. A string like `' <--- ETL --->'` is matched as a string first, so `--` inside it is never treated as a comment. Brackets `[...]` are preserved (protecting quoted identifiers like `[column--name]`), strings are neutralized to `''`, comments are replaced with a space. This is the industry-standard "Best Regex Trick" for handling delimiter interactions.
 
@@ -79,8 +86,10 @@ Extraction rules use capture group 1 as the object reference.
 ## Fallback Behavior
 
 - **No YAML configured** — loads built-in rules from `assets/defaultParseRules.yaml` silently
-- **Custom YAML missing or invalid** — falls back to built-in rules + shows a warning
+- **Custom YAML missing or invalid** — falls back to built-in rules + shows VS Code warning dialog + logs to Output channel
 - **Custom YAML loads successfully** — replaces all built-in rules. Any rule not in your file is lost
+- **Individual rule invalid** (bad regex, empty-match, wrong category) — that rule is skipped, remaining valid rules still load. Skipped rules listed in the warning
+- **Both custom and built-in fail** (should never happen) — error logged, regex-based edge detection disabled. Metadata dependencies (XML/DMV) still work
 
 ## XML Fallback Direction
 

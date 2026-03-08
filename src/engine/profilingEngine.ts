@@ -2,7 +2,10 @@
  * Table profiling query generator and result parser.
  *
  * Generates type-aware, single-pass SQL aggregation queries for table statistics.
- * Supports Quick (distinct + null%) and Detail (+ min/max + len) modes.
+ * Supports Quick (distinct + null%) and Standard (+ min/max/avg/stdev/zero/empty) modes.
+ *
+ * SQL patterns are documented in docs/PROFILING_PATTERNS.md.
+ * Generated SQL is logged to the outputChannel for DBA review.
  *
  * Target platforms: SQL Server 2022+, Azure SQL, Synapse Dedicated SQL Pool, Fabric DWH.
  */
@@ -99,12 +102,17 @@ export function buildColumnAggregations(
   cols: ColumnDef[],
   useApprox: boolean,
   mode: StatsMode,
+  maxColumns?: number,
 ): ColumnAggregation[] {
   const result: ColumnAggregation[] = [];
+  let profiled = 0;
 
   for (const col of cols) {
     const cat = classifyColumn(col);
     if (cat === 'skip') continue;
+
+    if (maxColumns !== undefined && profiled >= maxColumns) continue;
+    profiled++;
 
     const qn = qi(col.name);
     const fragments: string[] = [];

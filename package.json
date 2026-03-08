@@ -130,7 +130,7 @@
     },
     "configuration": [
       {
-        "title": "General",
+        "title": "Import",
         "properties": {
           "dataLineageViz.maxNodes": {
             "type": "number",
@@ -138,17 +138,6 @@
             "minimum": 10,
             "maximum": 1000,
             "markdownDescription": "Maximum number of database objects to load. Lower values improve performance on large databases.",
-            "scope": "resource"
-          }
-        }
-      },
-      {
-        "title": "Import",
-        "properties": {
-          "dataLineageViz.parseRulesFile": {
-            "type": "string",
-            "default": "",
-            "markdownDescription": "Path to a custom parse rules YAML file. Leave empty for built-in defaults.",
             "scope": "resource"
           },
           "dataLineageViz.excludePatterns": {
@@ -159,24 +148,36 @@
             "default": [],
             "markdownDescription": "Regex patterns to exclude objects by name (e.g. `_TEST$`, `^staging\\\\.`). Matched against `schema.object`.",
             "scope": "resource"
+          },
+          "dataLineageViz.externalRefs.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Detect external references (OPENROWSET file paths, cross-database 3-part names). When disabled, no virtual external nodes are created. External Tables are unaffected.",
+            "scope": "resource"
+          },
+          "dataLineageViz.parseRulesFile": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Path to a custom parse rules YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md)",
+            "scope": "resource"
           }
         }
       },
       {
         "title": "Database Connection",
         "properties": {
-          "dataLineageViz.dmvQueriesFile": {
-            "type": "string",
-            "default": "",
-            "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults.",
-            "scope": "resource"
-          },
           "dataLineageViz.dmvQueryTimeout": {
             "type": "number",
             "default": 120,
             "minimum": 10,
             "maximum": 600,
             "markdownDescription": "Timeout (seconds) per DMV query. Increase for large databases.",
+            "scope": "resource"
+          },
+          "dataLineageViz.dmvQueriesFile": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
             "scope": "resource"
           }
         }
@@ -190,26 +191,16 @@
             "markdownDescription": "Show column statistics and row counts in the table design viewer (database import only).",
             "scope": "resource"
           },
-          "dataLineageViz.tableStatistics.sampleThreshold": {
-            "type": "number",
-            "default": 100000,
-            "minimum": 0,
-            "maximum": 999999999,
-            "markdownDescription": "Tables above this row count use sampling instead of a full scan. Set to `0` to always sample.",
-            "scope": "resource"
-          },
-          "dataLineageViz.tableStatistics.sampleSize": {
-            "type": "number",
-            "default": 10000,
-            "minimum": 100,
-            "maximum": 1000000,
-            "markdownDescription": "Number of rows to sample when profiling large tables.",
-            "scope": "resource"
-          },
-          "dataLineageViz.tableStatistics.useApproxDistinct": {
+          "dataLineageViz.tableStatistics.standardModeEnabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Use `APPROX_COUNT_DISTINCT` instead of exact `COUNT(DISTINCT)`. Much faster with ~2% margin. Requires SQL Server 2019+.",
+            "markdownDescription": "Allow **Standard** profiling mode (adds AVG, STDEV, zero/empty counts). When `false`, only Quick mode is available — lighter queries.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.excludeExternalTables": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Skip profiling for external tables. External tables query remote data sources (S3, Blob, other databases) — profiling can be slow and expensive.",
             "scope": "resource"
           },
           "dataLineageViz.tableStatistics.queryTimeout": {
@@ -219,16 +210,35 @@
             "maximum": 600,
             "markdownDescription": "Timeout (seconds) per profiling query.",
             "scope": "resource"
-          }
-        }
-      },
-      {
-        "title": "External References",
-        "properties": {
-          "dataLineageViz.externalRefs.enabled": {
+          },
+          "dataLineageViz.tableStatistics.sampleThreshold": {
+            "type": "number",
+            "default": 100000,
+            "minimum": 0,
+            "maximum": 999999999,
+            "markdownDescription": "Advanced: Tables above this row count use sampling instead of a full scan. Set to `0` to always sample.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.sampleSize": {
+            "type": "number",
+            "default": 10000,
+            "minimum": 100,
+            "maximum": 1000000,
+            "markdownDescription": "Advanced: Number of rows to sample when profiling large tables.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.useApproxDistinct": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Detect external references (OPENROWSET file paths, cross-database 3-part names). When disabled, no virtual external nodes are created. External Tables are unaffected.",
+            "markdownDescription": "Advanced: Use `APPROX_COUNT_DISTINCT` instead of exact `COUNT(DISTINCT)`. Much faster with ~2% margin. Requires SQL Server 2019+.",
+            "scope": "resource"
+          },
+          "dataLineageViz.tableStatistics.maxColumns": {
+            "type": "number",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 500,
+            "markdownDescription": "Advanced: Maximum number of columns to profile per table. Columns beyond this cap are skipped. Prevents massive queries on wide tables.",
             "scope": "resource"
           }
         }
@@ -248,22 +258,6 @@
               "Left to Right (default)"
             ],
             "markdownDescription": "Direction of the dependency graph layout.",
-            "scope": "resource"
-          },
-          "dataLineageViz.layout.rankSeparation": {
-            "type": "number",
-            "default": 120,
-            "minimum": 20,
-            "maximum": 300,
-            "markdownDescription": "Horizontal spacing between dependency layers (pixels).",
-            "scope": "resource"
-          },
-          "dataLineageViz.layout.nodeSeparation": {
-            "type": "number",
-            "default": 30,
-            "minimum": 10,
-            "maximum": 200,
-            "markdownDescription": "Vertical spacing between nodes in the same layer (pixels).",
             "scope": "resource"
           },
           "dataLineageViz.layout.edgeStyle": {
@@ -300,6 +294,22 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show the graph minimap for navigation.",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.rankSeparation": {
+            "type": "number",
+            "default": 120,
+            "minimum": 20,
+            "maximum": 300,
+            "markdownDescription": "Advanced: Horizontal spacing between dependency layers (pixels).",
+            "scope": "resource"
+          },
+          "dataLineageViz.layout.nodeSeparation": {
+            "type": "number",
+            "default": 30,
+            "minimum": 10,
+            "maximum": 200,
+            "markdownDescription": "Advanced: Vertical spacing between nodes in the same layer (pixels).",
             "scope": "resource"
           }
         }

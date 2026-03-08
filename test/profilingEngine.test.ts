@@ -10,7 +10,9 @@ import {
   buildColumnAggregations,
   buildProfilingQuery,
   buildRowCountQuery,
+  buildTopNQuery,
   parseProfilingResult,
+  parseTopNResult,
 } from '../src/engine/profilingEngine';
 import type { StatsMode } from '../src/engine/profilingEngine';
 import { test, printSummary } from './testUtils';
@@ -433,6 +435,188 @@ test('computed columns marked as skipped', () => {
   const stats = parseProfilingResult(row, cols, 100, false);
   assert.equal(stats.columns[0].skipped, true);
   assert.equal(stats.columns[0].name, 'Calc');
+});
+
+// ─── standard mode: new aggregations ────────────────────────────────────────
+
+console.log('\n── standard mode: new aggregations ──');
+
+test('standard mode: nullable int adds avg/sd/zero', () => {
+  const cols = [col('Amount', 'int', 'NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  // distinct + null + min + max + avg + sd + zero = 7
+  assert.equal(aggs[0].fragments.length, 7);
+  assert(aggs[0].fragments.some(f => f.includes('AVG(CAST')), 'Has AVG');
+  assert(aggs[0].fragments.some(f => f.includes('STDEV(CAST')), 'Has STDEV');
+  assert(aggs[0].fragments.some(f => f.includes('= 0')), 'Has zero count');
+});
+
+test('standard mode: NOT NULL int has no zero count', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  // distinct + min + max + avg + sd = 5 (no null, no zero for NOT NULL)
+  assert.equal(aggs[0].fragments.length, 5);
+  assert(!aggs[0].fragments.some(f => f.includes('= 0')), 'No zero count for NOT NULL');
+});
+
+test('standard mode: nullable decimal adds zero count', () => {
+  const cols = [col('Price', 'decimal(10,2)', 'NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  assert(aggs[0].fragments.some(f => f.includes('= 0')), 'Has zero count for nullable decimal');
+});
+
+test('standard mode: string adds empty count', () => {
+  const cols = [col('Email', 'varchar(100)', 'NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  assert(aggs[0].fragments.some(f => f.includes("= ''")), 'Has empty string count');
+});
+
+test('standard mode: string NOT NULL also gets empty count', () => {
+  const cols = [col('Code', 'nvarchar(10)', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  assert(aggs[0].fragments.some(f => f.includes("= ''")), 'Empty count for NOT NULL string too');
+});
+
+test('standard mode: datetime has no avg/sd/zero', () => {
+  const cols = [col('Created', 'datetime2', 'NOT NULL')];
+  const aggs = buildColumnAggregations(cols, true, 'standard');
+  assert(!aggs[0].fragments.some(f => f.includes('AVG')), 'No AVG for datetime');
+  assert(!aggs[0].fragments.some(f => f.includes('STDEV')), 'No STDEV for datetime');
+});
+
+// ─── parseProfilingResult: new fields ──────────────────────────────────────
+
+console.log('\n── parseProfilingResult: new fields ──');
+
+test('parses mean and stdDev from standard mode', () => {
+  const cols = [col('Amount', 'decimal(10,2)', 'NULL')];
+  const row: Record<string, string> = {
+    'Amount__d': '50',
+    'Amount__n': '5',
+    'Amount__min': '1.00',
+    'Amount__max': '999.99',
+    'Amount__avg': '123.45',
+    'Amount__sd': '67.89',
+    'Amount__z': '3',
+  };
+  const stats = parseProfilingResult(row, cols, 200, false);
+  assert.equal(stats.columns[0].mean, 123.45);
+  assert.equal(stats.columns[0].stdDev, 67.89);
+  assert.equal(stats.columns[0].zeroCount, 3);
+});
+
+test('parses emptyCount from standard string mode', () => {
+  const cols = [col('Name', 'varchar(50)', 'NULL')];
+  const row: Record<string, string> = {
+    'Name__d': '40',
+    'Name__n': '2',
+    'Name__minl': '1',
+    'Name__maxl': '48',
+    'Name__e': '7',
+  };
+  const stats = parseProfilingResult(row, cols, 100, false);
+  assert.equal(stats.columns[0].emptyCount, 7);
+  assert.equal(stats.columns[0].minLength, 1);
+});
+
+test('completeness computed correctly', () => {
+  const cols = [col('X', 'int', 'NULL')];
+  const row: Record<string, string> = { 'X__d': '80', 'X__n': '20' };
+  const stats = parseProfilingResult(row, cols, 100, false);
+  assert.equal(stats.columns[0].completeness, 0.8);
+  assert.equal(stats.columns[0].uniqueness, 0.8);
+});
+
+test('completeness is 1 for NOT NULL columns', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  const row: Record<string, string> = { 'Id__d': '100' };
+  const stats = parseProfilingResult(row, cols, 100, false);
+  assert.equal(stats.columns[0].completeness, 1);
+  assert.equal(stats.columns[0].uniqueness, 1);
+});
+
+test('uniqueness capped at 1', () => {
+  const cols = [col('Id', 'int', 'NOT NULL')];
+  // APPROX_COUNT_DISTINCT can overestimate
+  const row: Record<string, string> = { 'Id__d': '110' };
+  const stats = parseProfilingResult(row, cols, 100, false);
+  assert.equal(stats.columns[0].uniqueness, 1);
+});
+
+// ─── buildTopNQuery ──────────────────────────────────────────────────────────
+
+console.log('\n── buildTopNQuery ──');
+
+test('generates Top-N query', () => {
+  const sql = buildTopNQuery('dbo', 'Users', 'Status', 5);
+  assert(sql.includes('TOP 5'), 'Has TOP 5');
+  assert(sql.includes('CAST([Status] AS nvarchar(200))'), 'Casts to nvarchar');
+  assert(sql.includes('GROUP BY [Status]'), 'Groups by column');
+  assert(sql.includes('ORDER BY cnt DESC'), 'Orders by count desc');
+  assert(sql.includes('[dbo].[Users]'), 'Has table reference');
+});
+
+test('Top-N bracket escaping', () => {
+  const sql = buildTopNQuery('dbo', 'My Table', 'Col]Name', 3);
+  assert(sql.includes('TOP 3'), 'Correct N');
+  assert(sql.includes('[Col]]Name]'), 'Bracket-escaped column');
+});
+
+// ─── parseTopNResult ─────────────────────────────────────────────────────────
+
+console.log('\n── parseTopNResult ──');
+
+test('parses Top-N rows', () => {
+  const rows = [
+    { val: 'Active', cnt: '500' },
+    { val: 'Inactive', cnt: '200' },
+    { val: 'Pending', cnt: '50' },
+  ];
+  const result = parseTopNResult(rows, 1000);
+  assert.equal(result.length, 3);
+  assert.equal(result[0].value, 'Active');
+  assert.equal(result[0].count, 500);
+  assert.equal(result[0].percent, 50);
+  assert.equal(result[2].percent, 5);
+});
+
+test('parseTopNResult handles empty rows', () => {
+  const result = parseTopNResult([], 100);
+  assert.equal(result.length, 0);
+});
+
+// ─── maxColumns cap ──────────────────────────────────────────────────────────
+
+console.log('\n── maxColumns cap ──');
+
+test('maxColumns caps profiled columns', () => {
+  const cols = [col('A', 'int'), col('B', 'int'), col('C', 'int'), col('D', 'int')];
+  const aggs = buildColumnAggregations(cols, true, 'quick', 2);
+  assert.equal(aggs.length, 2);
+  assert.equal(aggs[0].colName, 'A');
+  assert.equal(aggs[1].colName, 'B');
+});
+
+test('maxColumns=1 profiles only first column', () => {
+  const cols = [col('X', 'varchar'), col('Y', 'varchar')];
+  const aggs = buildColumnAggregations(cols, true, 'quick', 1);
+  assert.equal(aggs.length, 1);
+  assert.equal(aggs[0].colName, 'X');
+});
+
+test('maxColumns undefined means no cap', () => {
+  const cols = [col('A', 'int'), col('B', 'int'), col('C', 'int'), col('D', 'int'), col('E', 'int')];
+  const aggs = buildColumnAggregations(cols, true, 'quick');
+  assert.equal(aggs.length, 5);
+});
+
+test('maxColumns skips only count non-skip columns', () => {
+  // binary is skipped, should not count toward maxColumns cap
+  const cols = [col('A', 'int'), col('B', 'binary'), col('C', 'int'), col('D', 'int')];
+  const aggs = buildColumnAggregations(cols, true, 'quick', 2);
+  assert.equal(aggs.length, 2);
+  assert.equal(aggs[0].colName, 'A');
+  assert.equal(aggs[1].colName, 'C');
 });
 
 // ─── Summary ────────────────────────────────────────────────────────────────
