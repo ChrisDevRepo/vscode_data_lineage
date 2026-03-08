@@ -174,6 +174,39 @@ const SYSTEM_SCHEMAS = new Set(['sys', 'information_schema', 'msdb', 'tempdb', '
  *  e.g. [ref].[value], [resume].[nodes] — never real catalog references. */
 const XML_METHODS = new Set(['nodes', 'value', 'exist', 'query', 'modify']);
 
+/**
+ * SQL Server CLR built-in type methods that appear as the last part of a 3-part name
+ * but are NOT database catalog objects. SQL Server's sys.sql_expression_dependencies
+ * can report these as cross-DB refs when a table/CTE alias is mistaken for a DB name.
+ *
+ * Examples: EMP_cte.OrganizationNode.GetAncestor(1), jc.Resume.nodes(...)
+ *
+ * Sources: HierarchyID / XML / Geometry / Geography method references on MS Learn.
+ */
+const CLR_TYPE_METHODS = new Set([
+  // HierarchyID
+  'getancestor', 'getdescendant', 'getlevel', 'getroot', 'getreparentedvalue',
+  'isdescendantof', 'reparent', 'tostring', 'parse',
+  // XML data type (superset of XML_METHODS — also filtered above for 2-part case)
+  'value', 'query', 'exist', 'modify', 'nodes',
+  // Geometry / Geography OGC instance methods (all prefixed 'st')
+  'starea', 'stasbinary', 'stastext', 'stboundary', 'stbuffer', 'stcentroid',
+  'stcontains', 'stconvexhull', 'stcrosses', 'stdifference', 'stdimension',
+  'stdisjoint', 'stdistance', 'stendpoint', 'stenvelope', 'stequals',
+  'stexteriorring', 'stgeometryn', 'stgeometrytype', 'stinteriorringn',
+  'stintersection', 'stintersects', 'stisclosed', 'stisempty', 'stisring',
+  'stissimple', 'stisvalid', 'stlength', 'stnumcurves', 'stnumgeometries',
+  'stnuminteriorring', 'stnumpoints', 'stoverlaps', 'stpointn', 'strelate',
+  'stsrid', 'ststartpoint', 'stsymdifference', 'sttouches', 'stunion',
+  'stwithin', 'stx', 'sty',
+  // Geometry/Geography static constructors
+  'stgeomfromtext', 'stgeomfromwkb', 'stpointfromtext', 'stpointfromwkb',
+  'stlinefromtext', 'stlinefromwkb', 'stpolyfromtext', 'stpolyfromwkb',
+  'stgeomcollfromtext', 'stgeomcollfromwkb',
+  // SQL Server-specific spatial helpers
+  'makevalid', 'reduce', 'bufferwithtolerance',
+]);
+
 /** True when the schema prefix of a schema-qualified name is a system schema. */
 function isSystemRef(name: string): boolean {
   const schema = stripBrackets(name).split('.')[0].toLowerCase();
@@ -670,7 +703,9 @@ function createVirtualNodes(
     return true;
   };
 
-  // B1. From regex parser (dot-separated "db.schema.object" strings)
+  // B1. From regex parser (dot-separated "db.schema.object" strings, already lowercase).
+  // CLR method false positives are filtered upstream in normalizeCrossDb() before
+  // reaching this set — no additional filter needed here.
   for (const [nodeId, { sources, targets }] of crossDbRegexRefs) {
     for (const ref of sources) {
       const parts = ref.split('.');
@@ -695,12 +730,17 @@ function createVirtualNodes(
   }
 
   // B2. From DMV metadata (bracketed 3-part "[db].[schema].[object]" strings)
+  // sys.sql_expression_dependencies can report CLR type method calls (HierarchyID,
+  // XML, geometry/geography) as cross-DB refs when a table/CTE alias is mistaken for
+  // a database name (e.g. EMP_cte.OrganizationNode.GetAncestor, jc.Resume.nodes).
+  // Filter: if the object part (3rd) is a known CLR built-in method → skip.
   for (const [sourceId, rawTargets] of crossDbMetaDeps) {
     for (const rawTarget of rawTargets) {
       const parts = splitSqlName(rawTarget).map(p => stripBrackets(p));
       if (parts.length < 3) continue;
       const relevant = parts.length >= 4 ? parts.slice(-3) : parts;
       const [db, schema, object] = relevant;
+      if (CLR_TYPE_METHODS.has(object.toLowerCase())) continue;
       const localId = `[${schema}].[${object}]`.toLowerCase();
       const crossDbId = `[${db}].[${schema}].[${object}]`.toLowerCase();
       if (isLocalRef(db, localId)) {

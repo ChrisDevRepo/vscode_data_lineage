@@ -582,6 +582,90 @@ function testExternalRefsDisabled() {
   assert(model.nodes.length === 2, 'Disabled: only 2 real nodes');
 }
 
+// ─── CLR Method Virtual Node Suppression ─────────────────────────────────────
+
+function testClrMethodVirtualNodeSuppression() {
+  console.log('\n── CLR Method Virtual Node Suppression ──');
+
+  // ── B2 path: DMV-reported 3-part bracketed CLR method names ──────────────
+  // sys.sql_expression_dependencies can report HierarchyID/XML/geometry method
+  // calls as cross-DB refs: [EMP_cte].[OrganizationNode].[GetAncestor] looks
+  // identical to [db].[schema].[object] — must be suppressed.
+
+  function noCrossDbNode(targetName: string, label: string) {
+    const objects = [
+      { fullName: '[dbo].[spTest]', type: 'procedure' as const,
+        bodyScript: 'CREATE PROCEDURE [dbo].[spTest] AS SELECT 1' },
+    ];
+    const deps = [{ sourceName: '[dbo].[spTest]', targetName }];
+    const model = buildModel(objects, deps);
+    const dbNode = model.nodes.find(n => n.externalType === 'db');
+    assert(!dbNode, `CLR-B2: ${label} → no virtual node`);
+  }
+
+  noCrossDbNode('[EMP_cte].[OrganizationNode].[GetAncestor]', 'HierarchyID GetAncestor');
+  noCrossDbNode('[EMP_cte].[OrganizationNode].[ToString]', 'HierarchyID ToString');
+  noCrossDbNode('[EMP_cte].[OrganizationNode].[GetLevel]', 'HierarchyID GetLevel');
+  noCrossDbNode('[jc].[Resume].[nodes]', 'XML nodes');
+  noCrossDbNode('[ref].[col].[value]', 'XML value');
+  noCrossDbNode('[loc].[point].[STDistance]', 'Geometry STDistance');
+
+  // ── B1 path: regex-captured 3-part CLR method calls (via normalizeCrossDb) ─
+  // extract_udf_calls captures `alias.column.GetAncestor(` as 3-part name.
+  // normalizeCrossDb must reject these before they become virtual nodes.
+
+  const spWithClrMethods = {
+    fullName: '[dbo].[spHierarchy]',
+    type: 'procedure' as const,
+    bodyScript: `
+      CREATE PROCEDURE [dbo].[spHierarchy] AS
+      SELECT EMP_cte.OrganizationNode.GetAncestor(1),
+             EMP_cte.OrganizationNode.ToString(),
+             jc.Resume.nodes('/n:n/@id', 'varchar(max)'),
+             loc.point.STDistance(geography::Point(0,0,4326))
+      FROM dbo.Employees
+    `,
+  };
+  const modelRegex = buildModel(
+    [spWithClrMethods, { fullName: '[dbo].[Employees]', type: 'table' as const }],
+    [{ sourceName: '[dbo].[spHierarchy]', targetName: '[dbo].[Employees]' }],
+  );
+  const dbNodesRegex = modelRegex.nodes.filter(n => n.externalType === 'db');
+  assert(dbNodesRegex.length === 0, `CLR-B1: no virtual DB nodes from CLR method captures (got ${dbNodesRegex.length})`);
+
+  // ── Sanity: real 3-part cross-DB ref still creates virtual node ───────────
+  const spWithCrossDb = {
+    fullName: '[dbo].[spArchive]',
+    type: 'procedure' as const,
+    bodyScript: `
+      CREATE PROCEDURE [dbo].[spArchive] AS
+      INSERT INTO ArchiveDB.dbo.ArchivedSales
+      SELECT * FROM dbo.Source
+    `,
+  };
+  const modelCrossDb = buildModel(
+    [spWithCrossDb, { fullName: '[dbo].[Source]', type: 'table' as const }],
+    [{ sourceName: '[dbo].[spArchive]', targetName: '[dbo].[Source]' }],
+  );
+  const dbNodesCrossDb = modelCrossDb.nodes.filter(n => n.externalType === 'db');
+  assert(dbNodesCrossDb.length === 1, `CLR-Sanity: real cross-DB INSERT INTO creates 1 virtual node (got ${dbNodesCrossDb.length})`);
+  assert(dbNodesCrossDb[0].externalDatabase === 'archivedb', 'CLR-Sanity: cross-DB node stores database name');
+
+  // Non-CLR cross-DB ref in SQL body: real table name not in CLR list → creates node.
+  // This verifies the filter is name-based, not blanket-blocking all 3-part names.
+  const objectsReal = [
+    {
+      fullName: '[dbo].[spCrossDb]',
+      type: 'procedure' as const,
+      bodyScript: 'CREATE PROCEDURE [dbo].[spCrossDb] AS SELECT * FROM [OtherDB].[dbo].[FactSales]',
+    },
+  ];
+  const modelReal = buildModel(objectsReal, []);
+  const dbNodesReal = modelReal.nodes.filter(n => n.externalType === 'db');
+  assert(dbNodesReal.length === 1, 'CLR-NonCLR: [OtherDB].[dbo].[FactSales] → virtual node created (real table name)');
+  assert(dbNodesReal[0].externalDatabase === 'otherdb', 'CLR-NonCLR: correct database name stored');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -606,6 +690,7 @@ async function main() {
     testMixedExternalRefs();
     testCrossDbWriteDirection();
     testExternalRefsDisabled();
+    testClrMethodVirtualNodeSuppression();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

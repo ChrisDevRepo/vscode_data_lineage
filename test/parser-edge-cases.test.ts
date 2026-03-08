@@ -1016,6 +1016,109 @@ function testRealWorldExternalRefs() {
   }
 }
 
+function testClrMethodFalsePositives() {
+  // CLR type methods (HierarchyID, XML, geometry/geography) are called on column values
+  // with the syntax alias.column.Method(args). They look like 3-part names to the regex
+  // parser but are NOT cross-DB catalog references.
+  // extract_udf_calls is excluded from collectCrossDbMatches, so these must produce
+  // zero cross-DB sources/targets.
+
+  // HierarchyID — AdventureWorks uspGetEmployeeManagers pattern
+  {
+    const r = parseSqlBody(`
+      WITH EMP_cte (EmployeeID, OrganizationNode) AS (
+        SELECT e.BusinessEntityID, e.OrganizationNode FROM HumanResources.Employee e
+        UNION ALL
+        SELECT e.BusinessEntityID, e.OrganizationNode
+        FROM HumanResources.Employee e
+        INNER JOIN EMP_cte ON EMP_cte.OrganizationNode.GetAncestor(1) = e.OrganizationNode
+      )
+      SELECT * FROM EMP_cte WHERE EmployeeID = @BusinessEntityID
+    `);
+    assert(!r.crossDbSources.some(s => s.includes('getancestor')),
+      'CLR1: HierarchyID GetAncestor not a cross-DB source');
+    assert(!r.crossDbSources.some(s => s.includes('organizationnode')),
+      'CLR1: HierarchyID column not a cross-DB source');
+    assert(r.sources.some(s => s.toLowerCase().includes('employee')),
+      'CLR1: Real source HumanResources.Employee still captured');
+  }
+
+  // HierarchyID GetLevel
+  {
+    const r = parseSqlBody(`
+      SELECT e.BusinessEntityID, e.OrganizationNode.GetLevel() AS [Level]
+      FROM HumanResources.Employee e
+    `);
+    assert(!r.crossDbSources.some(s => s.includes('getlevel')),
+      'CLR2: HierarchyID GetLevel not a cross-DB source');
+  }
+
+  // Mixed-bracket form: [EMP_cte].[OrganizationNode].GetAncestor (last part unbracketed)
+  {
+    const r = parseSqlBody(`
+      INNER JOIN [EMP_cte] ON [EMP_cte].[OrganizationNode].GetAncestor(1) = e.OrganizationNode
+    `);
+    assert(!r.crossDbSources.some(s => s.includes('getancestor')),
+      'CLR3: Mixed-bracket HierarchyID GetAncestor not a cross-DB source');
+  }
+
+  // Geometry/Geography STDistance
+  {
+    const r = parseSqlBody(`
+      SELECT s.StoreID, s.Location.STDistance(@pt) AS Dist
+      FROM Sales.Store s
+      WHERE s.Location.STDistance(@pt) < 50000
+    `);
+    assert(!r.crossDbSources.some(s => s.includes('stdistance')),
+      'CLR4: Geography STDistance not a cross-DB source');
+    assert(!r.crossDbSources.some(s => s.includes('location')),
+      'CLR4: Location column not misidentified as cross-DB schema');
+  }
+
+  // Geometry STArea
+  {
+    const r = parseSqlBody(`
+      SELECT g.Name, g.SpatialLocation.STArea() AS Area FROM dbo.GeoObjects g
+    `);
+    assert(!r.crossDbSources.some(s => s.includes('starea')),
+      'CLR5: Geometry STArea not a cross-DB source');
+  }
+
+  // XML data type .value() in 3-part form (nodes() + value() pattern)
+  {
+    const r = parseSqlBody(`
+      SELECT x.n.value('text()[1]', 'nvarchar(100)') AS Val
+      FROM dbo.XmlTable CROSS APPLY xmlcol.nodes('/root/item') x(n)
+    `);
+    assert(!r.crossDbSources.some(s => s.includes('value')),
+      'CLR6: XML .value() method not a cross-DB source');
+    assert(!r.crossDbSources.some(s => s.includes('nodes')),
+      'CLR6: XML .nodes() method not a cross-DB source');
+  }
+
+  // Sanity check: legitimate 3-part FROM/JOIN refs still captured (not affected by fix)
+  {
+    const r = parseSqlBody(`
+      SELECT * FROM OtherDB.dbo.RemoteTable t
+      INNER JOIN OtherDB.dbo.Lookup l ON t.id = l.id
+    `);
+    assert(r.crossDbSources.some(s => s.includes('otherdb') && s.includes('remotetable')),
+      'CLR7: Legitimate 3-part FROM ref still captured');
+    assert(r.crossDbSources.some(s => s.includes('otherdb') && s.includes('lookup')),
+      'CLR7: Legitimate 3-part JOIN ref still captured');
+  }
+
+  // Sanity check: cross-DB TVF via APPLY still captured (uses extract_sources_tsql_apply)
+  {
+    const r = parseSqlBody(`
+      SELECT * FROM dbo.FactSales s
+      CROSS APPLY OtherDB.dbo.fn_tvf(s.key) t
+    `);
+    assert(r.crossDbSources.some(s => s.includes('otherdb') && s.includes('fn_tvf')),
+      'CLR8: Cross-DB TVF via CROSS APPLY still captured');
+  }
+}
+
 function main() {
   console.log('═══ SQL Body Parser Edge Case Tests ═══');
 
@@ -1033,6 +1136,7 @@ function main() {
   testExternalRefExtraction();
   testCetasExtraction();
   testRealWorldExternalRefs();
+  testClrMethodFalsePositives();
 
   printSummary('SQL Body Parser Edge Cases');
 }
