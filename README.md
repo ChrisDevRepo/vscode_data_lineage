@@ -28,7 +28,7 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 **Data Sources**
 - Import from SSDT and SDK-style `.dacpac` files
 - Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
-- External tables surfaced as ⬡ nodes
+- External table support
 - Virtual external references: OPENROWSET file paths, cross-database 3-part names, and CETAS targets
 - Quick reconnect to your last data source
 
@@ -45,7 +45,7 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 
 **SQL Preview & Export**
 - Click any node to view its DDL with full syntax highlighting
-- Full-text search across all SQL bodies
+- Search SQL bodies of stored procedures and views
 - Export the lineage graph to Draw.io for documentation
 
 ## Limitations
@@ -103,9 +103,6 @@ No — you can also import directly from a database using the MSSQL extension. I
 
 **Why are some dependencies missing?**
 Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) cannot be analyzed statically. Only compile-time dependencies are detected.
-
-**Why do unresolved references not show objects like CTEs or table aliases?**
-The parser only tracks **fully-qualified two-part names** (`[schema].[object]`). Unqualified references — CTE names, table aliases, built-in rowset functions like `FREETEXTTABLE` — are intentionally excluded before catalog lookup and never shown as unresolved. This is by design: the default SQL Server schema is a per-connection setting, so the extension cannot reliably infer which schema an unqualified name belongs to.
 
 ## Contributing
 

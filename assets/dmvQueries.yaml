@@ -102,7 +102,7 @@ queries:
         o.name AS table_name,
         c.column_id AS ordinal,
         c.name AS column_name,
-        t.name AS type_name,
+        TYPE_NAME(c.system_type_id) AS type_name,
         c.max_length,
         c.precision,
         c.scale,
@@ -112,7 +112,6 @@ queries:
       FROM sys.columns c
       INNER JOIN sys.objects o ON c.object_id = o.object_id
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-      INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
       WHERE o.type IN ('U', 'ET')
         AND o.is_ms_shipped = 0
         AND s.name IN ({{SCHEMAS}})

@@ -563,9 +563,11 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 }
 .ln-start-screen .ln-panel .ln-text-muted {
   color: var(--ln-wizard-fg);
+  opacity: 0.6;
 }
 .ln-start-screen .ln-panel .ln-text-placeholder {
   color: var(--ln-wizard-fg);
+  opacity: 0.45;
 }
 .ln-start-screen .ln-panel .ln-text-warning {
   color: var(--ln-warning-fg);
@@ -612,13 +614,22 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   color: var(--ln-wizard-fg);
 }
 .ln-start-screen .ln-panel .ln-text-link {
-  color: var(--ln-wizard-fg);
+  color: var(--ln-wizard-link);
 }
 .ln-start-screen .ln-panel svg {
   color: var(--ln-wizard-fg);
 }
 .ln-start-screen .ln-panel .ln-list-item:hover {
   background: var(--ln-wizard-hover-bg);
+}
+/* Status message boxes inside wizard panel — force dark background so colored
+   text (green/yellow/red) has sufficient contrast regardless of VS Code theme */
+.ln-start-screen .ln-panel .ln-status-success,
+.ln-start-screen .ln-panel .ln-status-warning,
+.ln-start-screen .ln-panel .ln-status-error,
+.ln-start-screen .ln-panel .ln-status-info {
+  background: var(--ln-wizard-input-bg);
+  border-color: var(--ln-wizard-border);
 }
 .ln-file-picker {
   background: var(--ln-input-bg);

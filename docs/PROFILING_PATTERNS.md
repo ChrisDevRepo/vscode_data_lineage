@@ -9,6 +9,66 @@
 
 ---
 
+## How It Works
+
+1. **User clicks Quick or Standard** in the table detail panel (DB mode only)
+2. Extension builds a **single SELECT** with all column aggregations combined
+3. Query executes against the live database, returns **1 row**
+4. Result is parsed into per-column statistics and displayed in a flat grid
+
+**No automatic queries** — profiling runs only on explicit user click.
+When `tableStatistics.enabled = false`, the statistics UI is not rendered and zero DB interaction occurs.
+
+### Connection Lifecycle
+
+- Opens on first profiling click (reuses stored credentials or prompts)
+- Stays alive for subsequent clicks on other tables
+- Closes on: panel dispose, extension deactivation, or query error
+- All SQL logged to outputChannel with `[Stats]` prefix
+
+---
+
+## Display
+
+### Grid Layout (two rows per column)
+
+- **Row 1**: Column name, type badge (INT/STR/DATE/BIT/UUID/DEC), Null%, distinct count + uniqueness, type-adaptive detail
+- **Row 2**: Full-width completeness bar with percentage
+
+### Type Badges
+
+| Badge | SQL Types |
+|-------|-----------|
+| `INT` | int, bigint, smallint, tinyint |
+| `DEC` | decimal, numeric, float, real, money, smallmoney |
+| `STR` | varchar, nvarchar, char, nchar |
+| `DATE` | date, datetime, datetime2, smalldatetime, datetimeoffset |
+| `TIME` | time |
+| `BIT` | bit |
+| `UUID` | uniqueidentifier |
+| `XML` | xml |
+| `BIN` | binary, varbinary, image |
+| `TXT` | text, ntext |
+
+### Type-Adaptive Detail Column (Standard mode)
+
+| Type | Detail shown |
+|------|-------------|
+| Integer/Decimal | `1 … 20,777  μ10K σ6K` (+ zero count if nullable) |
+| String | `len 2–17  3 empty` |
+| DateTime | `2015-04-15 … 2025-06-29` (compact: date-only if midnight) |
+| Boolean/UUID | — (distinct count is sufficient) |
+
+### Sortable Headers
+
+Click Column, Null%, or Distinct headers to sort. Useful for data quality triage (sort by Null% descending to find sparse columns).
+
+### Skipped Columns
+
+Columns with non-profilable types (xml, binary, geography, computed) are grouped at the bottom under "Not profiled (N)" with dimmed styling.
+
+---
+
 ## VS Code Settings
 
 All settings under `dataLineageViz.tableStatistics.*`. Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
@@ -91,7 +151,7 @@ One `SELECT` with per-column fragments. Column alias convention: `[ColumnName__s
 
 | Platform | Method |
 |----------|--------|
-| SQL Server 2022+ | `TABLESAMPLE(P PERCENT)` |
+| SQL Server (2016+) | `TABLESAMPLE(P PERCENT)` |
 | Azure SQL Database | `TABLESAMPLE(P PERCENT)` |
 | Synapse Dedicated SQL Pool | `TABLESAMPLE(P PERCENT)` |
 | Fabric Data Warehouse | `TOP N` (TABLESAMPLE not supported) |
@@ -146,3 +206,29 @@ FROM [Sales].[Order] TABLESAMPLE(10 PERCENT)
 ```
 
 Note: `OrderID` (NOT NULL) has no `__n` fragment and no `__z` fragment. `Total` (NULL, decimal) has both.
+
+---
+
+## Date Formatting
+
+DateTime min/max values are compacted for display:
+
+| SQL Server returns | Displayed as |
+|-------------------|-------------|
+| `2015-04-15 00:00:00.000` | `2015-04-15` (midnight → date only) |
+| `2025-06-29 14:30:00.000` | `2025-06-29 14:30` (non-midnight → date + HH:mm) |
+| `2020-01-01` | `2020-01-01` (already date-only) |
+
+---
+
+## User-Defined Types (UDTs)
+
+The columns query uses `TYPE_NAME(c.system_type_id)` to resolve UDT aliases to their base system types. For example, in AdventureWorks:
+
+| UDT Name | Resolves to | Badge |
+|----------|-------------|-------|
+| `dbo.Flag` | `bit` | BIT |
+| `dbo.Name` | `nvarchar` | STR |
+| `dbo.Phone` | `nvarchar` | STR |
+
+This ensures all columns with profilable base types are correctly classified, regardless of whether they use UDT aliases. The dacpac path already resolves to system types natively.

@@ -13,6 +13,8 @@ import {
   buildTopNQuery,
   parseProfilingResult,
   parseTopNResult,
+  compactDate,
+  typeBadgeLabel,
 } from '../src/engine/profilingEngine';
 import type { StatsMode } from '../src/engine/profilingEngine';
 import { test, printSummary } from './testUtils';
@@ -617,6 +619,88 @@ test('maxColumns skips only count non-skip columns', () => {
   assert.equal(aggs.length, 2);
   assert.equal(aggs[0].colName, 'A');
   assert.equal(aggs[1].colName, 'C');
+});
+
+// ─── compactDate ──────────────────────────────────────────────────────────────
+
+console.log('\n── compactDate ──');
+
+test('date-only string unchanged', () => {
+  assert.equal(compactDate('2015-04-15'), '2015-04-15');
+});
+
+test('midnight datetime → date only', () => {
+  assert.equal(compactDate('2015-04-15 00:00:00.000'), '2015-04-15');
+});
+
+test('midnight no milliseconds → date only', () => {
+  assert.equal(compactDate('2015-04-15 00:00:00'), '2015-04-15');
+});
+
+test('non-midnight → date + HH:mm', () => {
+  assert.equal(compactDate('2015-04-15 16:33:33.060'), '2015-04-15 16:33');
+});
+
+test('non-midnight without ms → date + HH:mm', () => {
+  assert.equal(compactDate('2025-06-29 09:15:00'), '2025-06-29 09:15');
+});
+
+test('empty string passthrough', () => {
+  assert.equal(compactDate(''), '');
+});
+
+test('NULL string passthrough', () => {
+  assert.equal(compactDate('NULL'), 'NULL');
+});
+
+test('unparseable string passthrough', () => {
+  assert.equal(compactDate('not-a-date'), 'not-a-date');
+});
+
+// ─── typeBadgeLabel ──────────────────────────────────────────────────────────
+
+console.log('\n── typeBadgeLabel ──');
+
+test('nvarchar(50) → STR', () => {
+  assert.equal(typeBadgeLabel('nvarchar(50)'), 'STR');
+});
+
+test('int → INT', () => {
+  assert.equal(typeBadgeLabel('int'), 'INT');
+});
+
+test('datetime2(7) → DATE', () => {
+  assert.equal(typeBadgeLabel('datetime2(7)'), 'DATE');
+});
+
+test('uniqueidentifier → UUID', () => {
+  assert.equal(typeBadgeLabel('uniqueidentifier'), 'UUID');
+});
+
+test('xml → XML', () => {
+  assert.equal(typeBadgeLabel('xml'), 'XML');
+});
+
+test('unknown type → truncated uppercase', () => {
+  assert.equal(typeBadgeLabel('customtype'), 'CUST');
+});
+
+// ─── compactDate in parseProfilingResult ─────────────────────────────────────
+
+console.log('\n── compactDate integration ──');
+
+test('datetime min/max are compacted in parseProfilingResult', () => {
+  const cols = [col('Created', 'datetime2(7)', 'NULL')];
+  const row: Record<string, string> = {
+    'Created__d': '500',
+    'Created__n': '10',
+    'Created__min': '2020-01-01 00:00:00.000',
+    'Created__max': '2025-12-31 14:30:00.000',
+  };
+  const stats = parseProfilingResult(row, cols, 1000, false);
+  const c = stats.columns[0];
+  assert.equal(c.min, '2020-01-01');
+  assert.equal(c.max, '2025-12-31 14:30');
 });
 
 // ─── Summary ────────────────────────────────────────────────────────────────

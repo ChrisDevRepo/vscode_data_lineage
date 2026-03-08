@@ -20,7 +20,7 @@ rules:
     pattern: "\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi                       # Regex flags
     replacement: "..."              # (preprocessing only) replacement string
-    kind: "file"                    # (external_ref only) "file" | "db"
+    kind: "openrowset"              # (external_ref only) arbitrary label — e.g. "openrowset", "copy_from", "bulk_from"
     description: "FROM/JOIN sources"
 ```
 
@@ -75,9 +75,9 @@ Extraction rules use capture group 1 as the object reference.
 | `extract_update_alias_target` | 17 | target | UPDATE alias SET ... FROM schema.table (alias case) |
 | `extract_output_into` | 18 | target | OUTPUT ... INTO schema.table (audit/staging tables) |
 | `extract_cetas` | 19 | target | CREATE EXTERNAL TABLE ... AS SELECT (Fabric/Synapse) |
-| `extract_openrowset` | 20 | external_ref | OPENROWSET(BULK 'path', ...) file references |
-| `extract_copy_from` | 21 | external_ref | COPY INTO ... FROM 'path' file references |
-| `extract_bulk_from` | 22 | external_ref | BULK INSERT ... FROM 'path' file references |
+| `extract_openrowset` | 50 | external_ref | OPENROWSET(BULK 'path', ...) file references |
+| `extract_copy_from` | 51 | external_ref | COPY INTO ... FROM 'path' file references |
+| `extract_bulk_from` | 52 | external_ref | BULK INSERT ... FROM 'path' file references |
 
 **Preprocessing**: The `clean_sql` rule uses a single-pass combined regex where brackets, strings, and comments are matched together. The regex engine processes left-to-right — the **leftmost match wins**. A string like `' <--- ETL --->'` is matched as a string first, so `--` inside it is never treated as a comment. Brackets `[...]` are preserved (protecting quoted identifiers like `[column--name]`), strings are neutralized to `''`, comments are replaced with a space. This is the industry-standard "Best Regex Trick" for handling delimiter interactions.
 

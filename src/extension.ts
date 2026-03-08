@@ -372,13 +372,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         if (!uri) return;
         await vscode.workspace.fs.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
         outputChannel.info(`Exported: ${uri.fsPath}`);
-        const result = await vscode.window.showInformationMessage(
-          `Exported to ${vscode.workspace.asRelativePath(uri)}`,
-          'Open File',
-        );
-        if (result === 'Open File') {
-          await vscode.commands.executeCommand('vscode.open', uri);
-        }
+        await vscode.commands.executeCommand('revealFileInOS', uri);
       },
       'show-ddl': async (msg) => { await showDdlTextEditor(ddlUri, msg as DdlMessage); },
       'update-ddl': async (msg) => { updateDdlTextEditor(ddlUri, msg as DdlMessage); },

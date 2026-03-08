@@ -82,7 +82,7 @@ export function extractDacpacFiltered(
 
   // Full lightweight catalog for cross-schema resolution
   const allObjects = extractObjectsLightweight(elements);
-  const objects = extractObjects(filtered);
+  const objects = extractObjects(filtered, elements); // pass full elements so FK/UQ/CK constraints (not in TRACKED_ELEMENT_TYPES) are found
   const deps = extractDependencies(filtered);
   const model = buildModel(objects, deps, allObjects);
 
@@ -239,10 +239,10 @@ function parseElements(xml: string): XmlElement[] {
 
 // ─── Extract: XML → Intermediate Format ─────────────────────────────────────
 
-function extractObjects(elements: XmlElement[]): ExtractedObject[] {
+function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[]): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
   const seen = new Set<string>();
-  const constraintMaps = extractConstraintMaps(elements);
+  const constraintMaps = extractConstraintMaps(constraintElements ?? elements);
 
   for (const el of elements) {
     const type = el['@_Type'];

@@ -4,7 +4,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { extractDacpac, filterBySchemas } from '../src/engine/dacpacExtractor';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas } from '../src/engine/dacpacExtractor';
 import { parseSqlBody } from '../src/engine/sqlBodyParser';
 import { assert, loadParseRules, testPath, printSummary } from './testUtils';
 
@@ -464,6 +464,19 @@ async function testConstraints() {
   // A table without FKs has empty fks array (not undefined)
   const noFkTable = model.nodes.find(n => n.type === 'table' && n.fks !== undefined && n.fks.length === 0);
   assert(!!noFkTable, 'Table with no FKs has empty fks array');
+
+  // Phase 2 (extractDacpacFiltered): FK constraints must survive schema filtering.
+  // Regression: FK elements (SqlForeignKeyConstraint) were excluded from TRACKED_ELEMENT_TYPES
+  // so the filtered element list passed to extractObjects had no FK data → fkMap always empty.
+  const buffer2 = readFileSync(DACPAC_PATH);
+  const { elements } = await extractSchemaPreview(buffer2.buffer as ArrayBuffer);
+  const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']));
+  const empFiltered = filteredModel.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
+  assert(!!empFiltered, 'Phase 2: HumanResources.Employee found after schema filter');
+  assert((empFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Employee has FK constraints (not dropped by filter)');
+  const addrFiltered = filteredModel.nodes.find(n => n.schema === 'Person' && n.name === 'Address');
+  assert(!!addrFiltered, 'Phase 2: Person.Address found after schema filter');
+  assert((addrFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Person.Address has FK constraints (not dropped by filter)');
 
   // SDK-style dacpac: no constraints extracted (Fabric DW has no FK/UQ/CK)
   const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');

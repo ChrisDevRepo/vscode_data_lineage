@@ -219,6 +219,58 @@ export function computeSamplePercent(_engineEdition: number, sampleSize: number,
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }
 
+// ─── Compact Date Formatting ────────────────────────────────────────────────
+
+/**
+ * Truncate a datetime string for display in the stats grid.
+ * - Midnight or date-only → `YYYY-MM-DD`
+ * - Otherwise → `YYYY-MM-DD HH:mm`
+ * Never shows seconds/milliseconds.
+ */
+export function compactDate(raw: string): string {
+  if (!raw || raw === 'NULL') return raw;
+  const trimmed = raw.trim();
+
+  // Already date-only (YYYY-MM-DD)?
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+  // Try to parse as date+time
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?/);
+  if (!match) return trimmed; // unparseable — return as-is
+
+  const [, datePart, hh, mm, ss, ms] = match;
+  // If time is midnight (00:00:00.000), show date only
+  if (hh === '00' && mm === '00' && (!ss || ss === '00') && (!ms || /^0+$/.test(ms))) {
+    return datePart;
+  }
+  return `${datePart} ${hh}:${mm}`;
+}
+
+// ─── Type Badge Labels ──────────────────────────────────────────────────────
+
+/** Short label for column type display in the stats grid. */
+const TYPE_BADGE_LABELS: Record<string, string> = {
+  int: 'INT', bigint: 'INT', smallint: 'INT', tinyint: 'INT',
+  decimal: 'DEC', numeric: 'DEC', float: 'DEC', real: 'DEC',
+  money: 'DEC', smallmoney: 'DEC',
+  varchar: 'STR', nvarchar: 'STR', char: 'STR', nchar: 'STR',
+  date: 'DATE', datetime: 'DATE', datetime2: 'DATE',
+  smalldatetime: 'DATE', datetimeoffset: 'DATE', time: 'TIME',
+  bit: 'BIT',
+  uniqueidentifier: 'UUID',
+  binary: 'BIN', varbinary: 'BIN', image: 'BIN',
+  text: 'TXT', ntext: 'TXT',
+  xml: 'XML',
+  geography: 'GEO', geometry: 'GEO', hierarchyid: 'HIER',
+  sql_variant: 'VAR', timestamp: 'TS', rowversion: 'TS', sysname: 'STR',
+};
+
+/** Get the short badge label for a SQL type string. */
+export function typeBadgeLabel(typeStr: string): string {
+  const base = extractBaseType(typeStr);
+  return TYPE_BADGE_LABELS[base] ?? base.toUpperCase().slice(0, 4);
+}
+
 // ─── Result Parsing ─────────────────────────────────────────────────────────
 
 /**
@@ -281,8 +333,9 @@ export function parseProfilingResult(
     // Standard-mode fields
     const minRaw = row[`${col.name}__min`];
     const maxRaw = row[`${col.name}__max`];
-    if (minRaw !== undefined) entry.min = minRaw;
-    if (maxRaw !== undefined) entry.max = maxRaw;
+    const isDatetime = cat === 'datetime';
+    if (minRaw !== undefined) entry.min = isDatetime ? compactDate(minRaw) : minRaw;
+    if (maxRaw !== undefined) entry.max = isDatetime ? compactDate(maxRaw) : maxRaw;
 
     const avgRaw = row[`${col.name}__avg`];
     const sdRaw = row[`${col.name}__sd`];

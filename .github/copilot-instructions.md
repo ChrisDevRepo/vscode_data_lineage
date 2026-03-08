@@ -50,7 +50,7 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 59 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
+| `test/dacpacExtractor.test.ts` | 63 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
 | `test/graphBuilder.test.ts` | 98 | Graph construction, layout, BFS trace, co-writer filter |
 | `test/parser-edge-cases.test.ts` | 179 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 62 | Graph analysis: islands, hubs, orphans, longest path, cycles |

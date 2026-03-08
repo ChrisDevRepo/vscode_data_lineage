@@ -1,8 +1,8 @@
-import { useState, useCallback, useEffect } from 'react';
-import type { TableStats, StatsMode, TopValue } from '../engine/profilingEngine';
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import type { TableStats, ColumnStats, StatsMode, TopValue } from '../engine/profilingEngine';
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
-import { CompletenessBar, UniquenessIndicator, TopNChart } from './StatsMicroCharts';
+import { CompletenessBar, UniquenessIndicator, TopNChart, TypeBadge } from './StatsMicroCharts';
 import { useVsCode } from '../contexts/VsCodeContext';
 
 // ─── Spinner ─────────────────────────────────────────────────────────────────
@@ -27,102 +27,80 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
-// ─── Expanded Column Detail ──────────────────────────────────────────────────
+// ─── Sort Arrow ──────────────────────────────────────────────────────────────
 
-interface ExpandedDetailProps {
-  col: TableStats['columns'][0];
-  schema: string;
-  objectName: string;
-  rowCount: number;
-  topValues?: TopValue[];
-  topNLoading?: boolean;
-  onLoadTopN: () => void;
+function SortArrow({ dir }: { dir: 'asc' | 'desc' }) {
+  return <span style={{ fontSize: '0.6rem', marginLeft: 2 }}>{dir === 'asc' ? '▲' : '▼'}</span>;
 }
 
-function ExpandedDetail({ col, rowCount, topValues, topNLoading, onLoadTopN }: ExpandedDetailProps) {
+// ─── Type-Adaptive Detail ────────────────────────────────────────────────────
+
+function DetailCell({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
+  const parts: string[] = [];
+
+  // Numeric: min … max  μ mean σ stddev
+  if (col.min !== undefined && col.mean !== undefined) {
+    parts.push(`${col.min} … ${col.max}`);
+    const fmtMean = compactNumber(col.mean);
+    parts.push(`μ${fmtMean}`);
+    if (col.stdDev !== undefined) parts.push(`σ${compactNumber(col.stdDev)}`);
+    if (col.zeroCount !== undefined && col.zeroCount > 0) {
+      parts.push(`${col.zeroCount.toLocaleString()} zeros`);
+    }
+  }
+  // DateTime: min … max (no mean/stddev)
+  else if (col.min !== undefined) {
+    parts.push(`${col.min} … ${col.max}`);
+  }
+
+  // String: length range + empty count
+  if (col.minLength !== undefined) {
+    const lenStr = col.minLength === col.maxLength ? `len ${col.minLength}` : `len ${col.minLength}–${col.maxLength}`;
+    parts.push(lenStr);
+    if (col.emptyCount !== undefined && col.emptyCount > 0) {
+      const pct = rowCount > 0 ? ` (${((col.emptyCount / rowCount) * 100).toFixed(1)}%)` : '';
+      parts.push(`${col.emptyCount.toLocaleString()} empty${pct}`);
+    }
+  }
+
+  if (parts.length === 0) return null;
+
   return (
-    <div className="text-xs" style={{ padding: '4px 0 4px 16px', color: 'var(--ln-fg-muted)' }}>
-      {/* Completeness bar */}
-      <div className="flex items-center gap-2 mb-1">
-        <span style={{ width: 70 }}>Complete</span>
-        <div style={{ flex: 1 }}><CompletenessBar value={col.completeness} /></div>
-        <span className="font-mono" style={{ width: 36, textAlign: 'right' }}>{Math.round(col.completeness * 100)}%</span>
-      </div>
-
-      {/* Uniqueness */}
-      <div className="flex items-center gap-2 mb-1">
-        <span style={{ width: 70 }}>Unique</span>
-        <span className="font-mono">{(col.uniqueness * 100).toFixed(1)}%</span>
-        <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
-      </div>
-
-      {/* Mean / StdDev (numeric) */}
-      {col.mean !== undefined && (
-        <div className="flex items-center gap-2 mb-1">
-          <span style={{ width: 70 }}>Mean</span>
-          <span className="font-mono">{col.mean.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-          {col.stdDev !== undefined && (
-            <span className="font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
-              ± {col.stdDev.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Min / Max */}
-      {col.min !== undefined && (
-        <div className="flex items-center gap-2 mb-1">
-          <span style={{ width: 70 }}>Range</span>
-          <span className="font-mono">{col.min} … {col.max}</span>
-        </div>
-      )}
-
-      {/* String length */}
-      {col.minLength !== undefined && (
-        <div className="flex items-center gap-2 mb-1">
-          <span style={{ width: 70 }}>Length</span>
-          <span className="font-mono">{col.minLength} – {col.maxLength}</span>
-        </div>
-      )}
-
-      {/* Zero count (nullable numeric) */}
-      {col.zeroCount !== undefined && (
-        <div className="flex items-center gap-2 mb-1">
-          <span style={{ width: 70 }}>Zeros</span>
-          <span className="font-mono">{col.zeroCount.toLocaleString()}</span>
-          {rowCount > 0 && <span className="font-mono" style={{ color: 'var(--ln-fg-dim)' }}>({((col.zeroCount / rowCount) * 100).toFixed(1)}%)</span>}
-        </div>
-      )}
-
-      {/* Empty string count */}
-      {col.emptyCount !== undefined && (
-        <div className="flex items-center gap-2 mb-1">
-          <span style={{ width: 70 }}>Empty</span>
-          <span className="font-mono">{col.emptyCount.toLocaleString()}</span>
-          {rowCount > 0 && <span className="font-mono" style={{ color: 'var(--ln-fg-dim)' }}>({((col.emptyCount / rowCount) * 100).toFixed(1)}%)</span>}
-        </div>
-      )}
-
-      {/* Top-N values */}
-      {topValues ? (
-        <div className="mt-1">
-          <div className="mb-1" style={{ color: 'var(--ln-fg-dim)' }}>Top values</div>
-          <TopNChart values={topValues} />
-        </div>
-      ) : (
-        <div className="mt-1">
-          <Button
-            variant="ghost"
-            className="text-xs px-2 py-0.5"
-            onClick={onLoadTopN}
-            disabled={topNLoading}
-          >
-            {topNLoading ? 'Loading…' : 'Load Top-5'}
-          </Button>
-        </div>
-      )}
-    </div>
+    <span className="font-mono" style={{ color: 'var(--ln-fg-muted)', whiteSpace: 'nowrap' }}>
+      {parts.join('  ')}
+    </span>
   );
+}
+
+function compactNumber(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  if (Number.isInteger(n)) return n.toLocaleString();
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+// ─── Sort Logic ──────────────────────────────────────────────────────────────
+
+type SortKey = 'name' | 'null' | 'distinct';
+
+function sortColumns(cols: ColumnStats[], key: SortKey, dir: 'asc' | 'desc'): ColumnStats[] {
+  const sorted = [...cols];
+  const mult = dir === 'asc' ? 1 : -1;
+  sorted.sort((a, b) => {
+    switch (key) {
+      case 'name': return mult * a.name.localeCompare(b.name);
+      case 'null': {
+        const aN = a.nullPercent ?? -1;
+        const bN = b.nullPercent ?? -1;
+        return mult * (aN - bN);
+      }
+      case 'distinct': return mult * (a.distinctCount - b.distinctCount);
+      default: return 0;
+    }
+  });
+  return sorted;
 }
 
 // ─── Stats Results Table ─────────────────────────────────────────────────────
@@ -137,6 +115,7 @@ function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, 
   onLoadTopN: (colName: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
 
   const toggleExpand = useCallback((colName: string) => {
     setExpanded(prev => {
@@ -147,112 +126,157 @@ function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, 
     });
   }, []);
 
+  const toggleSort = useCallback((key: SortKey) => {
+    setSort(prev => prev.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: key === 'name' ? 'asc' : 'desc' }
+    );
+  }, []);
+
+  // Partition: profiled vs skipped
+  const { profiled, skipped } = useMemo(() => {
+    const p: ColumnStats[] = [];
+    const s: ColumnStats[] = [];
+    for (const col of stats.columns) {
+      if (col.skipped) s.push(col);
+      else p.push(col);
+    }
+    return { profiled: p, skipped: s };
+  }, [stats.columns]);
+
+  // Sort profiled columns
+  const sortedProfiled = useMemo(() => sortColumns(profiled, sort.key, sort.dir), [profiled, sort]);
+
+  const isStandard = mode === 'standard';
+
+  // Header cell style helper
+  const hdr = (clickKey: SortKey): React.CSSProperties => ({
+    color: 'var(--ln-fg-muted)',
+    cursor: 'pointer',
+    userSelect: 'none',
+  });
+
   return (
     <div className="text-xs" style={{ color: 'var(--ln-fg)' }}>
-      {/* Summary badges */}
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        <span className="px-2 py-0.5 rounded text-xs font-mono"
-          style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border-light)', color: 'var(--ln-fg)' }}>
+      {/* Summary line */}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2" style={{ color: 'var(--ln-fg-muted)' }}>
+        <span className="font-mono" style={{ color: 'var(--ln-fg)', fontWeight: 600, fontSize: '0.8rem' }}>
           {stats.rowCount.toLocaleString()} rows
         </span>
-        {stats.sampled && stats.samplePercent !== undefined && (
-          <span className="px-2 py-0.5 rounded text-xs"
-            style={{ background: 'var(--ln-warning-bg)', border: '1px solid var(--ln-warning-border)', color: 'var(--ln-warning-fg)' }}>
-            sampled {stats.samplePercent}%
+        <span>·</span>
+        <span>{profiled.length} of {stats.columns.length} profiled</span>
+        <span>·</span>
+        {stats.sampled && stats.samplePercent !== undefined ? (
+          <span style={{ color: 'var(--ln-warning-fg)', fontWeight: 500 }}>
+            Sampled {stats.samplePercent}%
           </span>
+        ) : (
+          <span>Full scan</span>
         )}
-        <span className="px-2 py-0.5 rounded text-xs"
-          style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border-light)', color: 'var(--ln-fg-muted)' }}>
-          {stats.columns.filter(c => !c.skipped).length} profiled
-        </span>
       </div>
 
-      {/* Per-column stats table */}
+      {/* Column grid */}
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-            <th className="text-left pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)', width: '6%' }}></th>
-            <th className="text-left pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)', width: '34%' }}>Column</th>
-            <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Distinct</th>
-            <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Null%</th>
-            {mode === 'standard' && (
-              <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Range</th>
+            <th className="text-left pb-1 font-medium" style={{ width: 14 }}></th>
+            <th className="text-left pb-1 font-medium" style={hdr('name')} onClick={() => toggleSort('name')}>
+              Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
+            </th>
+            <th className="text-left pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)', width: 38 }}>Type</th>
+            <th className="text-right pb-1 font-medium" style={{ ...hdr('null'), width: 52 }} onClick={() => toggleSort('null')}>
+              Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
+            </th>
+            <th className="text-right pb-1 font-medium" style={{ ...hdr('distinct'), width: 90 }} onClick={() => toggleSort('distinct')}>
+              Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
+            </th>
+            {isStandard && (
+              <th className="text-right pb-1 font-medium" style={{ color: 'var(--ln-fg-muted)' }}>Detail</th>
             )}
           </tr>
         </thead>
         <tbody>
-          {stats.columns.map(col => {
+          {sortedProfiled.map(col => {
             const isExpanded = expanded.has(col.name);
-            const canExpand = !col.skipped;
             return (
               <tr key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-                <td colSpan={mode === 'standard' ? 5 : 4} style={{ padding: 0 }}>
-                  {/* Main row */}
+                <td colSpan={isStandard ? 6 : 5} style={{ padding: 0 }}>
+                  {/* Row 1: metrics */}
                   <div
                     className="flex items-center"
-                    style={{ cursor: canExpand ? 'pointer' : 'default' }}
-                    onClick={() => canExpand && toggleExpand(col.name)}
-                    role={canExpand ? 'button' : undefined}
-                    aria-expanded={canExpand ? isExpanded : undefined}
-                    tabIndex={canExpand ? 0 : undefined}
-                    onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(col.name); } } : undefined}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => toggleExpand(col.name)}
+                    role="button"
+                    aria-expanded={isExpanded}
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(col.name); } }}
                   >
                     {/* Chevron */}
-                    <div className="py-0.5" style={{ width: '6%', color: 'var(--ln-fg-dim)', visibility: canExpand ? 'visible' : 'hidden' }}>
+                    <div className="py-1" style={{ width: 14, flexShrink: 0, color: 'var(--ln-fg-dim)' }}>
                       <ChevronIcon expanded={isExpanded} />
                     </div>
 
-                    {/* Column name + completeness bar */}
-                    <div className="py-0.5 pr-1" style={{ width: '34%', minWidth: 0 }}>
-                      <div className="truncate font-mono" style={{ color: col.skipped ? 'var(--ln-fg-dim)' : 'var(--ln-fg)' }} title={col.name}>
-                        {col.name}
-                      </div>
-                      {!col.skipped && <CompletenessBar value={col.completeness} />}
+                    {/* Column name */}
+                    <div className="py-1 pr-1 truncate font-mono" style={{ flex: '1 1 30%', minWidth: 0 }} title={col.name}>
+                      {col.name}
                     </div>
 
-                    {/* Distinct + uniqueness */}
-                    <div className="py-0.5 text-right font-mono" style={{ flex: 1, color: 'var(--ln-fg)' }}>
-                      {col.skipped ? <span style={{ color: 'var(--ln-fg-dim)' }}>—</span> : (
-                        <>
-                          {col.distinctCount.toLocaleString()}
-                          <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
-                        </>
-                      )}
+                    {/* Type badge */}
+                    <div className="py-1" style={{ width: 38, flexShrink: 0, textAlign: 'center' }}>
+                      <TypeBadge typeStr={col.type} />
                     </div>
 
                     {/* Null% */}
-                    <div className="py-0.5 text-right font-mono" style={{ flex: 1, color: 'var(--ln-fg)' }}>
-                      {col.skipped
-                        ? <span style={{ color: 'var(--ln-fg-dim)' }}>—</span>
-                        : col.nullPercent === null
-                          ? <span style={{ color: 'var(--ln-fg-dim)' }}>NOT NULL</span>
-                          : `${col.nullPercent.toFixed(1)}%`
+                    <div className="py-1 text-right font-mono" style={{ width: 52, flexShrink: 0 }}>
+                      {col.nullPercent === null
+                        ? <span style={{ color: 'var(--ln-fg-dim)', fontSize: '0.65rem' }}>NN</span>
+                        : `${col.nullPercent.toFixed(1)}%`
                       }
                     </div>
 
-                    {/* Range (standard mode) */}
-                    {mode === 'standard' && (
-                      <div className="py-0.5 text-right font-mono text-xs" style={{ flex: 1, color: 'var(--ln-fg-muted)' }}>
-                        {col.skipped ? <span style={{ color: 'var(--ln-fg-dim)' }}>—</span>
-                          : col.min !== undefined ? `${col.min} … ${col.max}`
-                          : col.minLength !== undefined ? `${col.minLength}–${col.maxLength} len`
-                          : '—'
-                        }
+                    {/* Distinct + uniqueness */}
+                    <div className="py-1 text-right font-mono" style={{ width: 90, flexShrink: 0 }}>
+                      {col.distinctCount.toLocaleString()}
+                      <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
+                    </div>
+
+                    {/* Detail (standard only) */}
+                    {isStandard && (
+                      <div className="py-1 text-right" style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <DetailCell col={col} rowCount={stats.rowCount} />
                       </div>
                     )}
                   </div>
 
-                  {/* Expanded detail */}
-                  {isExpanded && !col.skipped && (
-                    <ExpandedDetail
-                      col={col}
-                      schema={schema}
-                      objectName={objectName}
-                      rowCount={stats.rowCount}
-                      topValues={topNData[col.name]}
-                      topNLoading={topNLoading.has(col.name)}
-                      onLoadTopN={() => onLoadTopN(col.name)}
-                    />
+                  {/* Row 2: completeness bar */}
+                  <div className="flex items-center" style={{ paddingLeft: 14, paddingRight: 0, paddingBottom: 3 }}>
+                    <div style={{ flex: 1 }}>
+                      <CompletenessBar value={col.completeness} />
+                    </div>
+                    <span className="font-mono" style={{ width: 36, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)' }}>
+                      {Math.round(col.completeness * 100)}%
+                    </span>
+                  </div>
+
+                  {/* Expanded: Top-5 only */}
+                  {isExpanded && (
+                    <div className="text-xs" style={{ padding: '2px 0 4px 14px', color: 'var(--ln-fg-muted)' }}>
+                      {topNData[col.name] ? (
+                        <div>
+                          <div className="mb-1" style={{ color: 'var(--ln-fg-dim)' }}>Top values</div>
+                          <TopNChart values={topNData[col.name]} />
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          className="text-xs px-2 py-0.5"
+                          onClick={(e: React.MouseEvent) => { e.stopPropagation(); onLoadTopN(col.name); }}
+                          disabled={topNLoading.has(col.name)}
+                        >
+                          {topNLoading.has(col.name) ? 'Loading…' : 'Load Top-5'}
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </td>
               </tr>
@@ -260,6 +284,29 @@ function StatsResults({ stats, mode, schema, objectName, topNData, topNLoading, 
           })}
         </tbody>
       </table>
+
+      {/* Skipped columns section */}
+      {skipped.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div className="text-xs" style={{
+            color: 'var(--ln-fg-dim)',
+            borderBottom: '1px solid var(--ln-border-light)',
+            paddingBottom: 2,
+            marginBottom: 4,
+            letterSpacing: '0.05em',
+          }}>
+            Not profiled ({skipped.length})
+          </div>
+          {skipped.map(col => (
+            <div key={col.name} className="flex items-center gap-2 py-0.5" style={{ color: 'var(--ln-fg-dim)' }}>
+              <span className="font-mono truncate" style={{ flex: 1, minWidth: 0 }} title={col.name}>
+                {col.name}
+              </span>
+              <TypeBadge typeStr={col.type} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -311,32 +358,35 @@ export function StatsSection({ statsState, onRequestStats, schema, objectName, s
 
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
-      <div className="text-xs font-semibold tracking-wider mb-2 flex items-center justify-between"
-        style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
-        <span>STATISTICS</span>
-        {isLoading && <Spinner />}
-      </div>
+      {/* Header: STATISTICS label + mode buttons */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-semibold tracking-wider flex items-center gap-2"
+          style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
+          <span>STATISTICS</span>
+          {isLoading && <Spinner />}
+        </div>
 
-      {/* Mode buttons */}
-      <div className="flex gap-1.5 mb-3">
-        <Button
-          variant={statsState.phase === 'result' && statsState.mode === 'quick' ? 'primary' : 'ghost'}
-          className="text-xs px-2.5 py-1"
-          disabled={isLoading}
-          onClick={() => onRequestStats('quick')}
-        >
-          Quick
-        </Button>
-        {standardModeEnabled && (
+        {/* Mode buttons */}
+        <div className="flex gap-1">
           <Button
-            variant={statsState.phase === 'result' && statsState.mode === 'standard' ? 'primary' : 'ghost'}
-            className="text-xs px-2.5 py-1"
+            variant={statsState.phase === 'result' && statsState.mode === 'quick' ? 'primary' : 'ghost'}
+            className="text-xs px-2 py-0.5"
             disabled={isLoading}
-            onClick={() => onRequestStats('standard')}
+            onClick={() => onRequestStats('quick')}
           >
-            Standard
+            Quick
           </Button>
-        )}
+          {standardModeEnabled && (
+            <Button
+              variant={statsState.phase === 'result' && statsState.mode === 'standard' ? 'primary' : 'ghost'}
+              className="text-xs px-2 py-0.5"
+              disabled={isLoading}
+              onClick={() => onRequestStats('standard')}
+            >
+              Standard
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Stats state */}

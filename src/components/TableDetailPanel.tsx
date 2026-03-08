@@ -31,9 +31,9 @@ export interface TableDetailPanelProps {
   standardModeEnabled: boolean;
 }
 
-const MIN_WIDTH = 280;
-const MAX_WIDTH = 600;
-const DEFAULT_WIDTH = 400;
+const MIN_WIDTH = 320;
+const MAX_WIDTH = 900;
+const DEFAULT_WIDTH = 560;
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 

@@ -1,4 +1,39 @@
 import type { TopValue } from '../engine/profilingEngine';
+import { typeBadgeLabel } from '../engine/profilingEngine';
+
+// ─── Type Badge ──────────────────────────────────────────────────────────────
+
+const BADGE_COLORS: Record<string, string> = {
+  INT: 'var(--ln-analysis-icon)',      // blue
+  DEC: 'var(--ln-analysis-icon)',      // blue
+  STR: '#22c55e',                       // green
+  DATE: '#a78bfa',                      // purple
+  TIME: '#a78bfa',                      // purple
+  BIT: 'var(--ln-fg-muted)',           // gray
+  UUID: '#2dd4bf',                      // teal
+  XML: 'var(--ln-fg-dim)',             // dim
+  BIN: 'var(--ln-fg-dim)',             // dim
+  TXT: 'var(--ln-fg-dim)',             // dim
+};
+
+export function TypeBadge({ typeStr }: { typeStr: string }) {
+  const label = typeBadgeLabel(typeStr);
+  const color = BADGE_COLORS[label] ?? 'var(--ln-fg-muted)';
+  return (
+    <span
+      className="font-mono text-xs"
+      style={{
+        color,
+        fontWeight: 600,
+        fontSize: '0.65rem',
+        letterSpacing: '0.03em',
+      }}
+      title={typeStr}
+    >
+      {label}
+    </span>
+  );
+}
 
 // ─── Completeness Bar ─────────────────────────────────────────────────────────
 
