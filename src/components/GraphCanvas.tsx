@@ -63,6 +63,13 @@ interface GraphCanvasProps {
   onSelectNoneSchemas?: (schemas: string[]) => void;
   onToggleExternalRefs?: () => void;
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
+  onAddFilterOut?: (pattern: string) => void;
+  onRemoveFilterOut?: (index: number) => void;
+  onClearFilterOut?: () => void;
+  savedSessions?: import('../engine/types').SavedSession[];
+  onSaveSession?: (name: string) => void;
+  onLoadSession?: (sessionId: string) => void;
+  onDeleteSession?: (sessionId: string) => void;
   availableSchemas?: string[];
   onRefresh: () => void;
   onRebuild?: () => void;
@@ -109,6 +116,13 @@ export function GraphCanvas({
   onSelectNoneSchemas,
   onToggleExternalRefs,
   onToggleExternalRefType,
+  onAddFilterOut,
+  onRemoveFilterOut,
+  onClearFilterOut,
+  savedSessions,
+  onSaveSession,
+  onLoadSession,
+  onDeleteSession,
   availableSchemas,
   onRefresh,
   onRebuild,
@@ -331,6 +345,14 @@ export function GraphCanvas({
         externalRefTypes={filter.externalRefTypes}
         onToggleExternalRefs={onToggleExternalRefs}
         onToggleExternalRefType={onToggleExternalRefType}
+        filteredOutObjects={filter.filteredOutObjects}
+        onAddFilterOut={onAddFilterOut}
+        onRemoveFilterOut={onRemoveFilterOut}
+        onClearFilterOut={onClearFilterOut}
+        savedSessions={savedSessions}
+        onSaveSession={onSaveSession}
+        onLoadSession={onLoadSession}
+        onDeleteSession={onDeleteSession}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}

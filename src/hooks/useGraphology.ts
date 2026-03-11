@@ -4,7 +4,7 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
 import { DacpacModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
 import { buildGraph, getGraphMetrics } from '../engine/graphBuilder';
-import { filterBySchemas } from '../engine/dacpacExtractor';
+import { filterBySchemas, applyObjectFilterOut } from '../engine/dacpacExtractor';
 
 interface UseGraphologyReturn {
   flowNodes: FlowNode<CustomNodeData>[];
@@ -21,7 +21,12 @@ export function useGraphology(): UseGraphologyReturn {
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
 
   const buildFromModel = useCallback((model: DacpacModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
-    const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
+    let filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
+
+    // Session-level object filter-out (exact names + /regex/ patterns)
+    if (filter.filteredOutObjects.length > 0) {
+      filtered = applyObjectFilterOut(filtered, filter.filteredOutObjects);
+    }
 
     // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>

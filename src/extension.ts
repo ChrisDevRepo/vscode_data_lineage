@@ -289,6 +289,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           const config = await readExtensionConfig();
           const lastSource = getLastSource(context);
           panel.webview.postMessage({ type: 'config-only', config, lastSource });
+          // Also send saved sessions list
+          const sessions = context.workspaceState.get<import('./engine/types').SavedSession[]>('savedSessions', []);
+          if (sessions.length > 0) {
+            panel.webview.postMessage({ type: 'sessions-list', sessions });
+          }
         }
       },
       'open-dacpac': async () => {
@@ -423,6 +428,70 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         panel.dispose();
         openPanel(context, title, loadDemo);
       },
+
+      // ─── Session CRUD ──────────────────────────────────────────────────
+      'get-sessions': async () => {
+        const sessions = context.workspaceState.get<import('./engine/types').SavedSession[]>('savedSessions', []);
+        panel.webview.postMessage({ type: 'sessions-list', sessions });
+      },
+      'save-session': async (msg) => {
+        const sessions = context.workspaceState.get<import('./engine/types').SavedSession[]>('savedSessions', []);
+        const idx = sessions.findIndex(s => s.id === msg.session.id);
+        if (idx >= 0) {
+          sessions[idx] = msg.session;
+        } else {
+          sessions.push(msg.session);
+        }
+        await context.workspaceState.update('savedSessions', sessions);
+        panel.webview.postMessage({ type: 'sessions-list', sessions });
+        outputChannel.info(`[Session] Saved "${msg.session.name}"`);
+      },
+      'delete-session': async (msg) => {
+        const sessions = context.workspaceState.get<import('./engine/types').SavedSession[]>('savedSessions', []);
+        const filtered = sessions.filter(s => s.id !== msg.sessionId);
+        await context.workspaceState.update('savedSessions', filtered);
+        panel.webview.postMessage({ type: 'sessions-list', sessions: filtered });
+        outputChannel.info(`[Session] Deleted session ${msg.sessionId}`);
+      },
+      'load-session': async (msg) => {
+        const sessions = context.workspaceState.get<import('./engine/types').SavedSession[]>('savedSessions', []);
+        const session = sessions.find(s => s.id === msg.sessionId);
+        if (!session) {
+          panel.webview.postMessage({ type: 'db-error', message: 'Session not found.', phase: 'load-session' });
+          return;
+        }
+        // Send session data to webview — it will handle source loading
+        panel.webview.postMessage({ type: 'session-loaded', session });
+
+        // Trigger source reload
+        if (session.source.type === 'dacpac' && session.source.dacpacPath) {
+          try {
+            const fileUri = vscode.Uri.file(session.source.dacpacPath);
+            const data = await vscode.workspace.fs.readFile(fileUri);
+            if (isDacpacTooLarge(data.byteLength)) return;
+            const extensionConfig = await readExtensionConfig();
+            panel.webview.postMessage({
+              type: 'dacpac-data',
+              data: Array.from(data),
+              fileName: session.source.name,
+              config: extensionConfig,
+              lastDeselectedSchemas: session.deselectedSchemas,
+            });
+            outputChannel.info(`[Session] Loading dacpac for session "${session.name}"`);
+          } catch {
+            panel.webview.postMessage({ type: 'db-error', message: `DACPAC file not found: ${session.source.dacpacPath}`, phase: 'load-session' });
+          }
+        } else if (session.source.type === 'database') {
+          // Trigger DB reconnect — the webview will apply session filters after model loads
+          const storedInfo = session.source.dbConnectionInfo as IConnectionInfo | undefined;
+          if (storedInfo) {
+            await context.workspaceState.update('lastDbConnectionInfo', storedInfo);
+          }
+          // Re-use db-reconnect flow
+          const reconnectHandler = handlers['db-reconnect'];
+          if (reconnectHandler) await reconnectHandler({ type: 'db-reconnect' });
+        }
+      },
     };
 
     panel.webview.onDidReceiveMessage(
@@ -472,7 +541,11 @@ type WebviewMessage =
   | { type: 'reload' }
   | { type: 'db-visualize'; schemas: string[] }
   | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'standard'; columns?: import('./engine/types').ColumnDef[] }
-  | { type: 'export-file'; data: string; defaultName: string };
+  | { type: 'export-file'; data: string; defaultName: string }
+  | { type: 'save-session'; session: import('./engine/types').SavedSession }
+  | { type: 'delete-session'; sessionId: string }
+  | { type: 'load-session'; sessionId: string }
+  | { type: 'get-sessions' };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ExtensionConfig } from '../engine/types';
+import type { ExtensionConfig, SavedSession } from '../engine/types';
 import type { StatusMessage, DacpacLoaderState } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { SchemaSelector } from './SchemaSelector';
@@ -8,6 +8,8 @@ import { Button } from './ui/Button';
 interface ProjectSelectorProps {
   config: ExtensionConfig;
   loader: DacpacLoaderState;
+  savedSessions?: SavedSession[];
+  onLoadSession?: (sessionId: string) => void;
 }
 
 const STATUS_CLASSES: Record<StatusMessage['type'], string> = {
@@ -53,7 +55,7 @@ function StatusIcon({ type }: { type: StatusMessage['type'] }) {
   );
 }
 
-export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
+export function ProjectSelector({ config, loader, savedSessions = [], onLoadSession }: ProjectSelectorProps) {
   const vscodeApi = useVsCode();
   const [logoFailed, setLogoFailed] = useState(false);
   const {
@@ -252,6 +254,35 @@ export function ProjectSelector({ config, loader }: ProjectSelectorProps) {
           >
             Visualize
           </Button>
+
+          {/* Saved Sessions */}
+          {!hasSource && !isLoading && savedSessions.length > 0 && onLoadSession && (
+            <>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 ln-border-top" />
+                <span className="text-xs ln-text-muted">saved sessions</span>
+                <div className="flex-1 ln-border-top" />
+              </div>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {savedSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    onClick={() => onLoadSession(session.id)}
+                    className="w-full text-left px-3 py-2 rounded text-xs transition-colors ln-list-item flex items-center gap-2"
+                    title={`Load session: ${session.name} (${session.source.name})`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 flex-shrink-0 ln-text-muted">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+                    </svg>
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium ln-text truncate block">{session.name}</span>
+                      <span className="ln-text-muted">{session.source.type === 'database' ? 'DB' : 'DACPAC'}: {session.source.name}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Demo link — subtle footer */}
           {!hasSource && !isLoading && (

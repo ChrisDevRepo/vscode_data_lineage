@@ -348,6 +348,30 @@ export interface FilterState {
   focusSchemas: Set<string>;
   showExternalRefs: boolean;
   externalRefTypes: Set<'file' | 'db'>;
+  filteredOutObjects: string[];
+}
+
+// ─── Saved Session Types ──────────────────────────────────────────────────────
+
+export interface SavedSession {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  source: {
+    type: 'dacpac' | 'database';
+    name: string;
+    dacpacPath?: string;
+    dbConnectionInfo?: Record<string, unknown>;
+  };
+  deselectedSchemas: string[];
+  filteredOutObjects: string[];
+  filterState: {
+    types: string[];
+    hideIsolated: boolean;
+    showExternalRefs: boolean;
+    externalRefTypes: string[];
+  };
 }
 
 export interface TraceState {
@@ -398,4 +422,6 @@ export type ExtensionMessage =
   | { type: 'db-error'; message: string; phase: string }
   | { type: 'db-cancelled' }
   | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
-  | { type: 'table-stats-error'; message: string };
+  | { type: 'table-stats-error'; message: string }
+  | { type: 'sessions-list'; sessions: SavedSession[] }
+  | { type: 'session-loaded'; session: SavedSession };

@@ -582,37 +582,30 @@ function asArray<T>(val: T | T[] | undefined | null): T[] {
 
 // ─── Exclusion Patterns ─────────────────────────────────────────────────────
 
-export function applyExclusionPatterns(model: DacpacModel, patterns: string[], onWarning?: (msg: string) => void): DacpacModel {
-  if (!patterns || patterns.length === 0) return model;
-
-  const regexes = patterns.map((p) => {
-    try {
-      return new RegExp(p, 'i');
-    } catch (e) {
-      onWarning?.(`Invalid exclude pattern "${p}": ${e instanceof Error ? e.message : e}`);
-      return null;
-    }
-  }).filter(Boolean) as RegExp[];
-
-  if (regexes.length === 0) return model;
-
+/**
+ * Shared core: filter nodes from a model by regex patterns and prune orphaned edges.
+ * Used by both load-time exclusion (applyExclusionPatterns) and session filter-out (applyObjectFilterOut).
+ */
+function filterModelByPatterns(
+  model: DacpacModel,
+  matchNode: (qualifiedName: string, fullName: string) => boolean,
+): DacpacModel {
   const nodes = model.nodes.filter((n) => {
     const name = `${n.schema}.${n.name}`;
-    return !regexes.some((r) => r.test(name) || r.test(n.fullName));
+    return !matchNode(name, n.fullName);
   });
 
   const nodeIds = new Set(nodes.map((n) => n.id));
   const excludedNodes = model.nodes.filter((n) => !nodeIds.has(n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
-  // Tag spDetails with which neighbors were removed by exclusion
+  // Tag spDetails with which neighbors were removed
   const excludedIds = new Set(excludedNodes.map((n) => n.id));
   const excludedNameById = new Map(excludedNodes.map((n) => [n.id, `${n.schema}.${n.name}`]));
   let parseStats = model.parseStats;
   if (parseStats && excludedIds.size > 0) {
     const allEdges = model.edges;
 
-    // Pre-build O(1) lookup maps (avoids O(n²) .find() inside .map())
     const nameToIdMap = new Map<string, string>();
     for (const n of nodes) nameToIdMap.set(`${n.schema}.${n.name}`.toLowerCase(), n.id);
     for (const n of excludedNodes) {
@@ -620,7 +613,6 @@ export function applyExclusionPatterns(model: DacpacModel, patterns: string[], o
       if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
     }
 
-    // Pre-build adjacency map (avoids O(edges) scan per SP)
     const adjacency = new Map<string, string[]>();
     for (const e of allEdges) {
       if (excludedIds.has(e.target)) {
@@ -649,4 +641,59 @@ export function applyExclusionPatterns(model: DacpacModel, patterns: string[], o
   }
 
   return { ...model, nodes, edges, parseStats };
+}
+
+/** Load-time exclusion: removes nodes matching regex patterns from the model permanently. */
+export function applyExclusionPatterns(model: DacpacModel, patterns: string[], onWarning?: (msg: string) => void): DacpacModel {
+  if (!patterns || patterns.length === 0) return model;
+
+  const regexes = patterns.map((p) => {
+    try {
+      return new RegExp(p, 'i');
+    } catch (e) {
+      onWarning?.(`Invalid exclude pattern "${p}": ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  }).filter(Boolean) as RegExp[];
+
+  if (regexes.length === 0) return model;
+
+  return filterModelByPatterns(model, (name, fullName) =>
+    regexes.some((r) => r.test(name) || r.test(fullName))
+  );
+}
+
+/**
+ * Session-level filter-out: hides nodes matching exact names or /regex/ patterns.
+ * Entries wrapped in /…/ are treated as regex; all others are exact (case-insensitive) matches.
+ * Uses Set<string> for O(1) exact-name lookups — optimized for 1000+ node graphs.
+ */
+export function applyObjectFilterOut(model: DacpacModel, patterns: string[], onWarning?: (msg: string) => void): DacpacModel {
+  if (!patterns || patterns.length === 0) return model;
+
+  const exactNames = new Set<string>();
+  const regexes: RegExp[] = [];
+
+  for (const p of patterns) {
+    const trimmed = p.trim();
+    if (!trimmed) continue;
+    // /…/ or /…/flags → regex
+    const rxMatch = trimmed.match(/^\/(.+)\/([gimsuy]*)$/);
+    if (rxMatch) {
+      try {
+        regexes.push(new RegExp(rxMatch[1], rxMatch[2] || 'i'));
+      } catch (e) {
+        onWarning?.(`Invalid filter pattern "${trimmed}": ${e instanceof Error ? e.message : e}`);
+      }
+    } else {
+      exactNames.add(trimmed.toLowerCase());
+    }
+  }
+
+  if (exactNames.size === 0 && regexes.length === 0) return model;
+
+  return filterModelByPatterns(model, (name, fullName) => {
+    if (exactNames.has(name.toLowerCase()) || exactNames.has(fullName.toLowerCase())) return true;
+    return regexes.some((r) => r.test(name) || r.test(fullName));
+  });
 }

@@ -3,10 +3,13 @@ import { useClickOutside } from '../hooks/useClickOutside';
 import { ObjectType, AnalysisType } from '../engine/types';
 import { Button } from './ui/Button';
 import { HelpModal } from './HelpModal';
+import { ObjectFilterModal } from './ObjectFilterModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
 import { TypeFilterDropdown } from './TypeFilterDropdown';
 import { ExternalRefsDropdown } from './ExternalRefsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
+import { SessionDropdown } from './SessionDropdown';
+import type { SavedSession } from '../engine/types';
 
 interface ToolbarProps {
   types: Set<ObjectType>;
@@ -39,6 +42,14 @@ interface ToolbarProps {
   externalRefTypes?: Set<'file' | 'db'>;
   onToggleExternalRefs?: () => void;
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
+  filteredOutObjects?: string[];
+  onAddFilterOut?: (pattern: string) => void;
+  onRemoveFilterOut?: (index: number) => void;
+  onClearFilterOut?: () => void;
+  savedSessions?: SavedSession[];
+  onSaveSession?: (name: string) => void;
+  onLoadSession?: (sessionId: string) => void;
+  onDeleteSession?: (sessionId: string) => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -79,10 +90,19 @@ export const Toolbar = memo(function Toolbar({
   externalRefTypes = new Set<'file' | 'db'>(['file', 'db']),
   onToggleExternalRefs,
   onToggleExternalRefType,
+  filteredOutObjects = [],
+  onAddFilterOut,
+  onRemoveFilterOut,
+  onClearFilterOut,
+  savedSessions = [],
+  onSaveSession,
+  onLoadSession,
+  onDeleteSession,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [isAnalysisDropdownOpen, setIsAnalysisDropdownOpen] = useState(false);
   const analysisDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -127,6 +147,23 @@ export const Toolbar = memo(function Toolbar({
             onToggleMaster={onToggleExternalRefs}
             onToggleSubType={onToggleExternalRefType}
           />
+        )}
+
+        {/* Object Filter-Out */}
+        {onAddFilterOut && (
+          <Button
+            onClick={() => setIsFilterModalOpen(true)}
+            variant="icon"
+            className={filteredOutObjects.length > 0 ? 'ln-btn-icon-active' : ''}
+            title={filteredOutObjects.length > 0 ? `Object Filters (${filteredOutObjects.length} active)` : 'Object Filters'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
+              {filteredOutObjects.length > 0 && (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6" strokeWidth={2.5} />
+              )}
+            </svg>
+          </Button>
         )}
 
         <div className="w-px h-6 ln-divider" />
@@ -209,6 +246,14 @@ export const Toolbar = memo(function Toolbar({
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
           </svg>
         </Button>
+        {onSaveSession && onLoadSession && onDeleteSession && (
+          <SessionDropdown
+            sessions={savedSessions}
+            onSave={onSaveSession}
+            onLoad={onLoadSession}
+            onDelete={onDeleteSession}
+          />
+        )}
         <Button onClick={() => setIsHelpOpen(true)} variant="icon" title="Help">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
@@ -247,6 +292,16 @@ export const Toolbar = memo(function Toolbar({
       </div>
 
       <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+      {onAddFilterOut && onRemoveFilterOut && onClearFilterOut && (
+        <ObjectFilterModal
+          isOpen={isFilterModalOpen}
+          onClose={() => setIsFilterModalOpen(false)}
+          patterns={filteredOutObjects}
+          onAdd={onAddFilterOut}
+          onRemove={onRemoveFilterOut}
+          onClearAll={onClearFilterOut}
+        />
+      )}
     </>
   );
 });

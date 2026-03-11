@@ -8,7 +8,7 @@ import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, LineageNode, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
+import type { DacpacModel, LineageNode, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, SavedSession } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import type { StatsMode } from '../engine/profilingEngine';
 import { runAnalysis } from '../engine/graphAnalysis';
@@ -48,6 +48,7 @@ export function App() {
     focusSchemas: new Set(),
     showExternalRefs: true,
     externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
+    filteredOutObjects: [],
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
@@ -98,9 +99,28 @@ export function App() {
       trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
 
       setModel(trimmed);
-      const f = getResetFilter(trimmed);
-      setFilter(f);
-      rebuild(trimmed, f, config);
+
+      // Apply pending session filter state if loading from a saved session
+      const pending = pendingSessionRef.current;
+      if (pending) {
+        pendingSessionRef.current = null;
+        const f: FilterState = {
+          schemas: new Set(trimmed.schemas.map(s => s.name)),
+          types: new Set(pending.filterState.types as ObjectType[]),
+          searchTerm: '',
+          hideIsolated: pending.filterState.hideIsolated,
+          focusSchemas: new Set(),
+          showExternalRefs: pending.filterState.showExternalRefs,
+          externalRefTypes: new Set(pending.filterState.externalRefTypes as ('file' | 'db')[]),
+          filteredOutObjects: pending.filteredOutObjects,
+        };
+        setFilter(f);
+        rebuild(trimmed, f, config);
+      } else {
+        const f = getResetFilter(trimmed);
+        setFilter(f);
+        rebuild(trimmed, f, config);
+      }
       setView('graph');
     },
     [rebuild, config]
@@ -122,7 +142,7 @@ export function App() {
     handleVisualize, dacpacLoader.clearAutoVisualize, dacpacLoader.clearPendingVisualize,
   ]);
 
-  const getResetFilter = (m: DacpacModel): FilterState => ({
+  const getResetFilter = (m: DacpacModel, preserveFilterOut = false): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
     types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
     searchTerm: '',
@@ -130,6 +150,7 @@ export function App() {
     focusSchemas: new Set(),
     showExternalRefs: true,
     externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
+    filteredOutObjects: preserveFilterOut ? filter.filteredOutObjects : [],
   });
 
   const handleRefresh = useCallback(() => {
@@ -181,6 +202,24 @@ export function App() {
     setTableDetailNode(null);
     setTableStatsState({ phase: 'idle' });
   }, [dacpacLoader.resetToStart, clearTrace]);
+
+  const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
+  const pendingSessionRef = useRef<SavedSession | null>(null);
+
+  // Listen for session messages from extension host
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const msg = e.data;
+      if (msg?.type === 'sessions-list') {
+        setSavedSessions(msg.sessions);
+      } else if (msg?.type === 'session-loaded') {
+        // Store pending session — will be applied after model loads
+        pendingSessionRef.current = msg.session;
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
@@ -364,6 +403,68 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  // ─── Object Filter-Out Callbacks ────────────────────────────────────────────
+
+  const handleAddFilterOut = useCallback((pattern: string) => {
+    setFilter((prev) => {
+      if (prev.filteredOutObjects.includes(pattern)) return prev;
+      const next = { ...prev, filteredOutObjects: [...prev.filteredOutObjects, pattern] };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleRemoveFilterOut = useCallback((index: number) => {
+    setFilter((prev) => {
+      const filteredOutObjects = prev.filteredOutObjects.filter((_, i) => i !== index);
+      const next = { ...prev, filteredOutObjects };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleClearFilterOut = useCallback(() => {
+    setFilter((prev) => {
+      const next = { ...prev, filteredOutObjects: [] };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  // ─── Session Callbacks ──────────────────────────────────────────────────────
+
+  const handleSaveSession = useCallback((name: string) => {
+    const session: SavedSession = {
+      id: crypto.randomUUID(),
+      name,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      source: {
+        type: dacpacLoader.lastSource?.type || 'dacpac',
+        name: dacpacLoader.lastSource?.name || '',
+      },
+      deselectedSchemas: model
+        ? model.schemas.map(s => s.name).filter(s => !filter.schemas.has(s))
+        : [],
+      filteredOutObjects: filter.filteredOutObjects,
+      filterState: {
+        types: Array.from(filter.types),
+        hideIsolated: filter.hideIsolated,
+        showExternalRefs: filter.showExternalRefs,
+        externalRefTypes: Array.from(filter.externalRefTypes),
+      },
+    };
+    vscodeApi.postMessage({ type: 'save-session', session });
+  }, [dacpacLoader.lastSource, model, filter, vscodeApi]);
+
+  const handleLoadSession = useCallback((sessionId: string) => {
+    vscodeApi.postMessage({ type: 'load-session', sessionId });
+  }, [vscodeApi]);
+
+  const handleDeleteSession = useCallback((sessionId: string) => {
+    vscodeApi.postMessage({ type: 'delete-session', sessionId });
+  }, [vscodeApi]);
+
   const handleToggleSchema = useCallback((schema: string) => {
     setFilter((prev) => {
       const schemas = new Set(prev.schemas);
@@ -546,7 +647,7 @@ export function App() {
   }
 
   if (view === 'selector') {
-    return <ProjectSelector config={config} loader={dacpacLoader} />;
+    return <ProjectSelector config={config} loader={dacpacLoader} savedSessions={savedSessions} onLoadSession={handleLoadSession} />;
   }
 
   const isDbMode = dacpacLoader.lastSource?.type === 'database';
@@ -615,6 +716,13 @@ export function App() {
         onSelectNoneSchemas={handleSelectNoneSchemas}
         onToggleExternalRefs={handleToggleExternalRefs}
         onToggleExternalRefType={handleToggleExternalRefType}
+        onAddFilterOut={handleAddFilterOut}
+        onRemoveFilterOut={handleRemoveFilterOut}
+        onClearFilterOut={handleClearFilterOut}
+        savedSessions={savedSessions}
+        onSaveSession={handleSaveSession}
+        onLoadSession={handleLoadSession}
+        onDeleteSession={handleDeleteSession}
         availableSchemas={model?.schemas.map(s => s.name) || []}
         analysisMode={analysisMode}
         onOpenAnalysis={openAnalysis}
@@ -660,6 +768,7 @@ export function App() {
           onFindPath={(nodeId) => startPathFinding(nodeId)}
           onViewDdl={handleViewDdl}
           onShowDetails={(nodeId) => setInfoBarNodeId(nodeId)}
+          onFilterOut={handleAddFilterOut}
         />
       )}
 
