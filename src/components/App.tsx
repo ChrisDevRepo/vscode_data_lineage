@@ -106,12 +106,12 @@ export function App() {
         pendingSessionRef.current = null;
         const f: FilterState = {
           schemas: new Set(trimmed.schemas.map(s => s.name)),
-          types: new Set(pending.filterState.types as ObjectType[]),
+          types: new Set(pending.filterState.types),
           searchTerm: '',
           hideIsolated: pending.filterState.hideIsolated,
           focusSchemas: new Set(),
           showExternalRefs: pending.filterState.showExternalRefs,
-          externalRefTypes: new Set(pending.filterState.externalRefTypes as ('file' | 'db')[]),
+          externalRefTypes: new Set(pending.filterState.externalRefTypes),
           filteredOutObjects: pending.filteredOutObjects,
         };
         setFilter(f);

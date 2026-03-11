@@ -42,6 +42,27 @@ function isDacpacTooLarge(bytes: number): boolean {
   vscode.window.showErrorMessage(`Dacpac too large (${mb} MB). Maximum supported size is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`);
   return true;
 }
+
+/** Read and validate a dacpac file, returning data + config, or null if too large. */
+async function readDacpacForPost(
+  filePath: string,
+  outputChannel: vscode.LogOutputChannel,
+): Promise<{ data: Uint8Array; config: ExtensionConfigMessage } | null> {
+  const fileUri = vscode.Uri.file(filePath);
+  const data = await vscode.workspace.fs.readFile(fileUri);
+  if (isDacpacTooLarge(data.byteLength)) return null;
+  const config = await readExtensionConfig();
+  outputChannel.debug(`[Dacpac] Read ${path.basename(filePath)} (${(data.byteLength / 1024).toFixed(0)} KB)`);
+  return { data, config };
+}
+
+/** Type guard for IConnectionInfo stored in session data. */
+function hasConnectionFields(obj: unknown): obj is IConnectionInfo {
+  return typeof obj === 'object' && obj !== null
+    && typeof (obj as Record<string, unknown>).server === 'string'
+    && typeof (obj as Record<string, unknown>).database === 'string';
+}
+
 let panelCounter = 0;
 let activePanel: vscode.WebviewPanel | undefined;
 const DDL_CACHE_MAX = 50;
@@ -306,14 +327,13 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           const fileUri = uris[0];
           const fileName = path.basename(fileUri.fsPath);
           try {
-            const data = await vscode.workspace.fs.readFile(fileUri);
-            if (isDacpacTooLarge(data.byteLength)) return;
+            const result = await readDacpacForPost(fileUri.fsPath, outputChannel);
+            if (!result) return;
             await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
             await context.workspaceState.update('lastDacpacName', fileName);
             await context.workspaceState.update('lastSourceType', 'dacpac');
-            const config = await readExtensionConfig();
             const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
-            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, config, lastDeselectedSchemas });
+            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(result.data), fileName, config: result.config, lastDeselectedSchemas });
             outputChannel.info(`── Opening ${fileName} ──`);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
@@ -329,16 +349,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const lastPath = context.workspaceState.get<string>('lastDacpacPath');
         if (!lastPath) return;
         try {
-          const fileUri = vscode.Uri.file(lastPath);
-          const data = await vscode.workspace.fs.readFile(fileUri);
-          if (isDacpacTooLarge(data.byteLength)) return;
-          const config = await readExtensionConfig();
+          const result = await readDacpacForPost(lastPath, outputChannel);
+          if (!result) return;
           const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
           panel.webview.postMessage({
             type: 'dacpac-data',
-            data: Array.from(data),
+            data: Array.from(result.data),
             fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
-            config,
+            config: result.config,
             lastDeselectedSchemas,
           });
           outputChannel.info(`── Reopening ${path.basename(lastPath)} ──`);
@@ -466,24 +484,24 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         // Trigger source reload
         if (session.source.type === 'dacpac' && session.source.dacpacPath) {
           try {
-            const fileUri = vscode.Uri.file(session.source.dacpacPath);
-            const data = await vscode.workspace.fs.readFile(fileUri);
-            if (isDacpacTooLarge(data.byteLength)) return;
-            const extensionConfig = await readExtensionConfig();
+            const result = await readDacpacForPost(session.source.dacpacPath, outputChannel);
+            if (!result) return;
             panel.webview.postMessage({
               type: 'dacpac-data',
-              data: Array.from(data),
+              data: Array.from(result.data),
               fileName: session.source.name,
-              config: extensionConfig,
+              config: result.config,
               lastDeselectedSchemas: session.deselectedSchemas,
             });
             outputChannel.info(`[Session] Loading dacpac for session "${session.name}"`);
-          } catch {
-            panel.webview.postMessage({ type: 'db-error', message: `DACPAC file not found: ${session.source.dacpacPath}`, phase: 'load-session' });
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            outputChannel.error(`[Session] Failed to load dacpac for "${session.name}": ${errorMsg}`);
+            panel.webview.postMessage({ type: 'db-error', message: `Failed to load dacpac for session: ${errorMsg}`, phase: 'load-session' });
           }
         } else if (session.source.type === 'database') {
           // Trigger DB reconnect — the webview will apply session filters after model loads
-          const storedInfo = session.source.dbConnectionInfo as IConnectionInfo | undefined;
+          const storedInfo = hasConnectionFields(session.source.dbConnectionInfo) ? session.source.dbConnectionInfo : undefined;
           if (storedInfo) {
             await context.workspaceState.update('lastDbConnectionInfo', storedInfo);
           }

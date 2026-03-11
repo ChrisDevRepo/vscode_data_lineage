@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useCallback } from 'react';
+import { memo, useState, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { ObjectType, AnalysisType } from '../engine/types';
 import { Button } from './ui/Button';
@@ -10,6 +10,8 @@ import { ExternalRefsDropdown } from './ExternalRefsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 import { SessionDropdown } from './SessionDropdown';
 import type { SavedSession } from '../engine/types';
+
+const DEFAULT_EXT_REF_TYPES = new Set<'file' | 'db'>(['file', 'db']);
 
 interface ToolbarProps {
   types: Set<ObjectType>;
@@ -87,7 +89,7 @@ export const Toolbar = memo(function Toolbar({
   analysisType = null,
   onOpenAnalysis,
   showExternalRefs = true,
-  externalRefTypes = new Set<'file' | 'db'>(['file', 'db']),
+  externalRefTypes = DEFAULT_EXT_REF_TYPES,
   onToggleExternalRefs,
   onToggleExternalRefType,
   filteredOutObjects = [],
@@ -110,7 +112,7 @@ export const Toolbar = memo(function Toolbar({
   useClickOutside([analysisDropdownRef], isAnalysisDropdownOpen, closeAnalysisDropdown);
   
   const schemas = availableSchemas || [];
-  const selectedSchemas = propSelectedSchemas || new Set(schemas);
+  const selectedSchemas = useMemo(() => propSelectedSchemas || new Set(schemas), [propSelectedSchemas, schemas]);
 
   return (
     <>

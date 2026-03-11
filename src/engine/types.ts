@@ -367,10 +367,10 @@ export interface SavedSession {
   deselectedSchemas: string[];
   filteredOutObjects: string[];
   filterState: {
-    types: string[];
+    types: ObjectType[];
     hideIsolated: boolean;
     showExternalRefs: boolean;
-    externalRefTypes: string[];
+    externalRefTypes: ('file' | 'db')[];
   };
 }
 

@@ -680,8 +680,18 @@ export function applyObjectFilterOut(model: DacpacModel, patterns: string[], onW
     // /…/ or /…/flags → regex
     const rxMatch = trimmed.match(/^\/(.+)\/([gimsuy]*)$/);
     if (rxMatch) {
+      const body = rxMatch[1];
+      if (body.length > 200) {
+        onWarning?.(`Filter pattern too long (max 200 chars): "${trimmed.slice(0, 30)}…"`);
+        continue;
+      }
+      // Reject patterns with nested quantifiers that cause catastrophic backtracking
+      if (/([+*])\s*[+*?]|\{[^}]+\}\s*[+*?]/.test(body)) {
+        onWarning?.(`Filter pattern rejected (nested quantifiers): "${trimmed}"`);
+        continue;
+      }
       try {
-        regexes.push(new RegExp(rxMatch[1], rxMatch[2] || 'i'));
+        regexes.push(new RegExp(body, rxMatch[2] || 'i'));
       } catch (e) {
         onWarning?.(`Invalid filter pattern "${trimmed}": ${e instanceof Error ? e.message : e}`);
       }

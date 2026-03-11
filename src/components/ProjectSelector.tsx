@@ -276,7 +276,7 @@ export function ProjectSelector({ config, loader, savedSessions = [], onLoadSess
                     </svg>
                     <div className="flex-1 min-w-0">
                       <span className="font-medium ln-text truncate block">{session.name}</span>
-                      <span className="ln-text-muted">{session.source.type === 'database' ? 'DB' : 'DACPAC'}: {session.source.name}</span>
+                      <span className="ln-text-muted truncate block">{session.source.type === 'database' ? 'DB' : 'DACPAC'}: {session.source.name}</span>
                     </div>
                   </button>
                 ))}

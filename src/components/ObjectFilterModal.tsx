@@ -27,8 +27,8 @@ export const ObjectFilterModal = memo(function ObjectFilterModal({
 
   useEffect(() => {
     if (isOpen) {
-      // Focus input when modal opens
-      setTimeout(() => inputRef.current?.focus(), 50);
+      // Focus input when modal opens (rAF aligns with next paint, avoids arbitrary timeout)
+      requestAnimationFrame(() => inputRef.current?.focus());
     } else {
       setInput('');
     }
@@ -45,11 +45,11 @@ export const ObjectFilterModal = memo(function ObjectFilterModal({
 
   const handleAdd = useCallback(() => {
     const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmed || patterns.includes(trimmed)) return;
     onAdd(trimmed);
     setInput('');
     inputRef.current?.focus();
-  }, [input, onAdd]);
+  }, [input, onAdd, patterns]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -98,11 +98,12 @@ export const ObjectFilterModal = memo(function ObjectFilterModal({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="dbo.TableName or /regex/i"
+            aria-label="Object filter pattern"
             className="flex-1 text-sm px-2.5 py-1.5 rounded ln-input"
           />
           <button
             onClick={handleAdd}
-            disabled={!input.trim()}
+            disabled={!input.trim() || patterns.includes(input.trim())}
             className="px-3 py-1.5 text-xs font-semibold rounded transition-colors ln-btn-primary disabled:opacity-40"
           >
             Add
