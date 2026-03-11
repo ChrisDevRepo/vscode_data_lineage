@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.4] - 2026-03-11
+
+### Added
+- **Session save/restore** — Save and load named sessions that preserve your data source, schema selection, object filters, and all filter state. Sessions appear in both the toolbar (bookmark icon) and the start screen for quick access.
+- **Object filter-out** — Right-click any node → "Filter Out" to hide it from the graph, or open the filter modal to add exact names or `/regex/i` patterns. Filtered objects are excluded from the graph layout and edge routing.
+- **Filter modal** — Dedicated UI for managing object filter patterns with live regex validation, duplicate detection, and one-click clear all.
+
+### Fixed
+- ReDoS guard: user-provided regex patterns are now validated for nested quantifiers and length limits before compilation.
+- Session load error handling: actual error details are logged and shown instead of generic "file not found" for all failures.
+- Type safety: `SavedSession.filterState` uses proper `ObjectType[]` and `('file' | 'db')[]` types; connection info validated with type guard before use.
+- Modal theming: added missing CSS rules for inputs, buttons, and badges inside dark-themed modals — consistent in both light and dark VS Code themes.
+- Text truncation: long session names and source paths are truncated with ellipsis and show full text on hover.
+
+### Changed
+- Dacpac loading logic extracted into shared helper to eliminate three near-identical code blocks.
+- SessionDropdown uses `useClickOutside` hook instead of blocking full-screen overlay.
+- Focus management uses `requestAnimationFrame` instead of arbitrary `setTimeout(50)`.
+- Toolbar default Set constants moved to module scope to prevent unnecessary re-renders.
+
 ## [0.9.3] - 2026-03-08
 
 ### Fixed

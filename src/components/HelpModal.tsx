@@ -67,6 +67,14 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
                 <span className="text-xs mt-0.5">•</span>
                 <span><strong>Focus Schema:</strong> Star a schema to highlight it and directly connected objects</span>
               </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Filter Out:</strong> Right-click any node → "Filter Out" to hide it, or open the filter modal to add exact names or <code>/regex/i</code> patterns</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Sessions:</strong> Save and restore your current view — filters, schema selection, and data source are preserved per session</span>
+              </div>
             </div>
           </section>
 
