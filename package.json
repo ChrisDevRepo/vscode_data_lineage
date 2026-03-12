@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -331,12 +331,6 @@
             "minimum": 0,
             "maximum": 99,
             "markdownDescription": "How many levels downstream (outputs) to trace by default.",
-            "scope": "resource"
-          },
-          "dataLineageViz.trace.hideCoWriters": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Hide procedures that write to the same table but are not part of the traced path. Reduces noise in trace results.",
             "scope": "resource"
           }
         }
