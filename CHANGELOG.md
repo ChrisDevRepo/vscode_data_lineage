@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.4] - 2026-03-12
+
+### Fixed
+- BFS trace: removed co-writer filter that caused non-deterministic results; added direction-aware edge filtering.
+
 ## [0.9.3] - 2026-03-08
 
 ### Fixed

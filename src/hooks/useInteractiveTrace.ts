@@ -63,8 +63,7 @@ export function useInteractiveTrace(
       graph,
       nodeId,
       config.trace.defaultUpstreamLevels,
-      config.trace.defaultDownstreamLevels,
-      config.trace.hideCoWriters
+      config.trace.defaultDownstreamLevels
     );
     const ms = (performance.now() - t0).toFixed(1);
     window.vscode?.postMessage({ type: 'log', text:
@@ -80,7 +79,7 @@ export function useInteractiveTrace(
       tracedNodeIds: nodeIds,
       tracedEdgeIds: edgeIds,
     });
-  }, [graph, config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels, config.trace.hideCoWriters]);
+  }, [graph, config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels]);
 
   // Phase 2: Apply trace with levels (filter graph, keep controls visible briefly)
   const applyTrace = useCallback(
@@ -95,8 +94,7 @@ export function useInteractiveTrace(
         graph,
         trace.selectedNodeId,
         upstreamLevels,
-        downstreamLevels,
-        config.trace.hideCoWriters
+        downstreamLevels
       );
       const ms = (performance.now() - t0).toFixed(1);
       window.vscode?.postMessage({ type: 'log', text:
@@ -113,7 +111,7 @@ export function useInteractiveTrace(
         tracedEdgeIds: edgeIds,
       });
     },
-    [graph, trace.selectedNodeId, config.trace.hideCoWriters]
+    [graph, trace.selectedNodeId]
   );
 
   // Start path finding mode (from right-click "Find Path")

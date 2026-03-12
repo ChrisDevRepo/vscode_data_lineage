@@ -288,7 +288,6 @@ export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
 export interface TraceConfig {
   defaultUpstreamLevels: number;
   defaultDownstreamLevels: number;
-  hideCoWriters: boolean;
 }
 
 export interface AnalysisConfig {
@@ -331,7 +330,7 @@ export const DEFAULT_CONFIG = {
   excludePatterns: [],
   maxNodes: 750,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
-  trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3, hideCoWriters: true },
+  trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
   analysis: { hubMinDegree: 8, islandMaxSize: 500, longestPathMinNodes: 5 },
   tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
   dmvQueryTimeout: 120,

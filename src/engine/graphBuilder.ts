@@ -13,30 +13,52 @@ export const NODE_HEIGHT = 60;
 /** Typed tuple for React Flow edge label background padding. */
 const LABEL_BG_PAD: [number, number] = [4, 4];
 
-/** Collect edges that flow between depth levels in the BFS direction.
- *  Upstream edges: A→B where A.depth > B.depth (further → closer to origin).
- *  Downstream edges: A→B where B.depth > A.depth (closer → further from origin).
- *  Cross-connections (upstream↔downstream or same-depth siblings) are excluded. */
+/** Collect edges between traced nodes with direction-aware filtering.
+ *  When only one direction is active (the other is 0), edges are filtered
+ *  to only show data flow in the requested direction using BFS depth:
+ *    - Upstream only: include edge A→B if A.upDepth >= B.upDepth (toward origin)
+ *    - Downstream only: include edge A→B if B.downDepth >= A.downDepth (away from origin)
+ *  When both directions are active, ALL edges between traced nodes are shown.
+ *  Uses >= (not >) to include same-depth cross-edges. */
 function collectTraceEdges(
   graph: Graph,
-  upstreamDepths: Map<string, number>,
-  downstreamDepths: Map<string, number>
+  nodeIds: Set<string>,
+  upDepth: Map<string, number>,
+  downDepth: Map<string, number>
 ): Set<string> {
   const edgeIds = new Set<string>();
+  const hasUp = upDepth.size > 1;   // more than just origin
+  const hasDown = downDepth.size > 1;
+
   graph.forEachEdge((edge, _attrs, source, target) => {
-    const srcUp = upstreamDepths.get(source);
-    const tgtUp = upstreamDepths.get(target);
-    if (srcUp !== undefined && tgtUp !== undefined && srcUp > tgtUp) {
+    if (!nodeIds.has(source) || !nodeIds.has(target)) return;
+
+    if (hasUp && hasDown) {
+      // Both directions active: show all edges between traced nodes
       edgeIds.add(edge);
       return;
     }
-    const srcDown = downstreamDepths.get(source);
-    const tgtDown = downstreamDepths.get(target);
-    if (srcDown !== undefined && tgtDown !== undefined && tgtDown > srcDown) {
-      edgeIds.add(edge);
+
+    if (hasUp) {
+      // Upstream only: edge flows toward origin when source is further from origin
+      const sD = upDepth.get(source);
+      const tD = upDepth.get(target);
+      if (sD !== undefined && tD !== undefined && sD >= tD) {
+        edgeIds.add(edge);
+      }
       return;
+    }
+
+    if (hasDown) {
+      // Downstream only: edge flows away from origin when target is further
+      const sD = downDepth.get(source);
+      const tD = downDepth.get(target);
+      if (sD !== undefined && tD !== undefined && tD >= sD) {
+        edgeIds.add(edge);
+      }
     }
   });
+
   return edgeIds;
 }
 
@@ -94,111 +116,62 @@ export function buildGraph(model: DacpacModel, config: ExtensionConfig = DEFAULT
   return { flowNodes, flowEdges, graph };
 }
 
-/** Remove co-writers from BFS results.
- *  A co-writer is a node that writes to a table the origin also writes to,
- *  but does NOT read from that table.  These are siblings, not upstream. */
-function filterCoWriters(
-  graph: Graph,
-  originId: string,
-  nodeIds: Set<string>,
-  edgeIds: Set<string>
-): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  // 1. Find tables the origin writes to (outbound body edges to table/view nodes)
-  const writeTargets = new Set<string>();
-  graph.forEachOutboundEdge(originId, (edge, attrs, _src, target) => {
-    const targetType = graph.getNodeAttribute(target, 'type');
-    if (attrs.type === 'body' && (targetType === 'table' || targetType === 'view')) {
-      writeTargets.add(target);
-    }
-  });
-  if (writeTargets.size === 0) return { nodeIds, edgeIds };
-
-  // 2. Identify co-writers: write to same table but don't read from it
-  const excluded = new Set<string>();
-  for (const nid of nodeIds) {
-    if (nid === originId) continue;
-    for (const table of writeTargets) {
-      if (graph.hasEdge(nid, table) && !graph.hasEdge(table, nid)) {
-        excluded.add(nid);
-        break;
-      }
-    }
-  }
-  if (excluded.size === 0) return { nodeIds, edgeIds };
-
-  // 3. Remove excluded nodes and their edges
-  const filteredNodes = new Set<string>();
-  for (const nid of nodeIds) {
-    if (!excluded.has(nid)) filteredNodes.add(nid);
-  }
-  const filteredEdges = new Set<string>();
-  for (const eid of edgeIds) {
-    const src = graph.source(eid);
-    const tgt = graph.target(eid);
-    if (filteredNodes.has(src) && filteredNodes.has(tgt)) filteredEdges.add(eid);
-  }
-  return { nodeIds: filteredNodes, edgeIds: filteredEdges };
-}
-
 // ─── Trace Logic ────────────────────────────────────────────────────────────
 
 export function traceNode(
   graph: Graph,
   nodeId: string,
-  mode: 'upstream' | 'downstream' | 'both',
-  hideCoWriters = true
+  mode: 'upstream' | 'downstream' | 'both'
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
   const nodeIds = new Set<string>([nodeId]);
-
-  const upstreamDepths = new Map<string, number>();
-  const downstreamDepths = new Map<string, number>();
-  upstreamDepths.set(nodeId, 0);
-  downstreamDepths.set(nodeId, 0);
+  const upDepth = new Map<string, number>();
+  const downDepth = new Map<string, number>();
+  if (mode !== 'downstream') upDepth.set(nodeId, 0);
+  if (mode !== 'upstream') downDepth.set(nodeId, 0);
 
   if (mode === 'upstream' || mode === 'both') {
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       nodeIds.add(node);
-      upstreamDepths.set(node, depth);
+      upDepth.set(node, depth);
     }, { mode: 'inbound' });
   }
   if (mode === 'downstream' || mode === 'both') {
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       nodeIds.add(node);
-      downstreamDepths.set(node, depth);
+      downDepth.set(node, depth);
     }, { mode: 'outbound' });
   }
 
-  const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
-  return hideCoWriters ? filterCoWriters(graph, nodeId, nodeIds, edgeIds) : { nodeIds, edgeIds };
+  const edgeIds = collectTraceEdges(graph, nodeIds, upDepth, downDepth);
+  return { nodeIds, edgeIds };
 }
 
 /**
  * Trace node with level limits using graphology BFS depth callback.
  * Returning true from bfsFromNode stops traversal down that branch.
+ * Depth maps drive direction-aware edge filtering in collectTraceEdges.
  */
 export function traceNodeWithLevels(
   graph: Graph,
   nodeId: string,
   upstreamLevels: number,
-  downstreamLevels: number,
-  hideCoWriters = true
+  downstreamLevels: number
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
   const nodeIds = new Set<string>([nodeId]);
-
-  const upstreamDepths = new Map<string, number>();
-  const downstreamDepths = new Map<string, number>();
-  upstreamDepths.set(nodeId, 0);
-  downstreamDepths.set(nodeId, 0);
+  const upDepth = new Map<string, number>();
+  const downDepth = new Map<string, number>();
+  if (upstreamLevels > 0) upDepth.set(nodeId, 0);
+  if (downstreamLevels > 0) downDepth.set(nodeId, 0);
 
   if (upstreamLevels > 0) {
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       if (depth > upstreamLevels) return true; // stop exploring
       nodeIds.add(node);
-      upstreamDepths.set(node, depth);
+      upDepth.set(node, depth);
     }, { mode: 'inbound' });
   }
 
@@ -206,12 +179,12 @@ export function traceNodeWithLevels(
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       if (depth > downstreamLevels) return true; // stop exploring
       nodeIds.add(node);
-      downstreamDepths.set(node, depth);
+      downDepth.set(node, depth);
     }, { mode: 'outbound' });
   }
 
-  const edgeIds = collectTraceEdges(graph, upstreamDepths, downstreamDepths);
-  return hideCoWriters ? filterCoWriters(graph, nodeId, nodeIds, edgeIds) : { nodeIds, edgeIds };
+  const edgeIds = collectTraceEdges(graph, nodeIds, upDepth, downDepth);
+  return { nodeIds, edgeIds };
 }
 
 /**

@@ -69,7 +69,7 @@ function testTraceNoSiblings() {
   assert(leveled.edgeIds.has('P2→X'), 'Leveled: P2→X edge included');
   assert(leveled.edgeIds.has('X→C1'), 'Leveled: X→C1 edge included');
   assert(leveled.edgeIds.has('X→C2'), 'Leveled: X→C2 edge included');
-  assert(!leveled.edgeIds.has('P1→C1'), 'Leveled: P1→C1 cross-connection EXCLUDED');
+  assert(leveled.edgeIds.has('P1→C1'), 'Leveled: P1→C1 included (all edges between traced nodes)');
   assert(!leveled.edgeIds.has('GP→P1'), 'Leveled: GP→P1 edge excluded (beyond level)');
 
   // Test traceNode (unlimited): upstream + downstream
@@ -78,86 +78,186 @@ function testTraceNoSiblings() {
   assert(unlimited.edgeIds.has('GP→P1'), 'Unlimited: GP→P1 included');
   assert(unlimited.edgeIds.has('P1→X'), 'Unlimited: P1→X included');
   assert(unlimited.edgeIds.has('X→C1'), 'Unlimited: X→C1 included');
-  assert(!unlimited.edgeIds.has('P1→C1'), 'Unlimited: P1→C1 cross-connection EXCLUDED');
+  assert(unlimited.edgeIds.has('P1→C1'), 'Unlimited: P1→C1 included (all edges between traced nodes)');
 
-  // Test upstream-only
+  // Test upstream-only: directional edge filtering
   const upOnly = traceNodeWithLevels(graph, 'X', 2, 0);
   assert(upOnly.nodeIds.has('GP'), 'UpOnly: GP included at level 2');
-  assert(upOnly.edgeIds.has('GP→P1'), 'UpOnly: GP→P1 included');
-  assert(upOnly.edgeIds.has('P1→X'), 'UpOnly: P1→X included');
-  assert(!upOnly.edgeIds.has('X→C1'), 'UpOnly: X→C1 excluded (no downstream)');
+  assert(upOnly.edgeIds.has('GP→P1'), 'UpOnly: GP→P1 included (depth 2→1, toward origin)');
+  assert(upOnly.edgeIds.has('GP→P2'), 'UpOnly: GP→P2 included (depth 2→1, toward origin)');
+  assert(upOnly.edgeIds.has('P1→X'), 'UpOnly: P1→X included (depth 1→0, toward origin)');
+  assert(upOnly.edgeIds.has('P2→X'), 'UpOnly: P2→X included (depth 1→0, toward origin)');
+  assert(!upOnly.edgeIds.has('X→C1'), 'UpOnly: X→C1 excluded (C1 not in upstream set)');
+  assert(!upOnly.edgeIds.has('X→C2'), 'UpOnly: X→C2 excluded (C2 not in upstream set)');
+  assert(!upOnly.edgeIds.has('P1→C1'), 'UpOnly: P1→C1 excluded (C1 not in upstream set)');
+  assert(upOnly.edgeIds.size === 4, `UpOnly: 4 upstream-flowing edges (got ${upOnly.edgeIds.size})`);
+
+  // Test downstream-only: only edges flowing away from origin
+  const downOnly = traceNodeWithLevels(graph, 'X', 0, 1);
+  assert(downOnly.nodeIds.has('C1'), 'DownOnly: C1 included');
+  assert(downOnly.nodeIds.has('C2'), 'DownOnly: C2 included');
+  assert(!downOnly.nodeIds.has('P1'), 'DownOnly: P1 excluded (upstream)');
+  assert(downOnly.edgeIds.has('X→C1'), 'DownOnly: X→C1 included');
+  assert(downOnly.edgeIds.has('X→C2'), 'DownOnly: X→C2 included');
+  assert(downOnly.edgeIds.size === 2, `DownOnly: 2 downstream-flowing edges (got ${downOnly.edgeIds.size})`);
 }
 
-// ─── Trace: Co-Writer Filter ────────────────────────────────────────────────
+// ─── Trace: Bidirectional BFS Correctness ───────────────────────────────────
 
-function testCoWriterFilter() {
-  console.log('\n── Trace: Co-Writer Filter ──');
+function testBidirectionalTrace() {
+  console.log('\n── Trace: Bidirectional BFS Correctness ──');
 
   const graph = new Graph({ type: 'directed', multi: false });
 
-  // Graph models: Case3 reads+writes Final, Case1/Case4 only write Final,
-  //               Case2 reads+writes Final (bidirectional), Case0 reads Final,
-  //               Case3 reads Country, spLoad writes Country
-  for (const id of ['Case3', 'Final', 'Country', 'Case1', 'Case2', 'Case4', 'Case0', 'spLoad']) {
-    graph.addNode(id, { type: id.startsWith('Case') || id === 'spLoad' ? 'procedure' : 'table' });
+  // Graph: Table ← SP1 (bidirectional with TableA) ← TableA ← SP2 ← TableB
+  // SP1 reads+writes TableA, reads Table (origin)
+  for (const id of ['Table', 'SP1', 'TableA', 'SP2', 'TableB', 'SP3', 'TableC']) {
+    graph.addNode(id, { type: id.startsWith('SP') ? 'procedure' : 'table' });
   }
-  // Case3 bidirectional with Final
-  graph.addEdgeWithKey('Final→Case3', 'Final', 'Case3', { type: 'body' });   // read
-  graph.addEdgeWithKey('Case3→Final', 'Case3', 'Final', { type: 'body' });   // write
-  // Case3 reads Country
-  graph.addEdgeWithKey('Country→Case3', 'Country', 'Case3', { type: 'body' });
-  // Case1 only writes Final (pure co-writer)
-  graph.addEdgeWithKey('Case1→Final', 'Case1', 'Final', { type: 'body' });
-  // Case4 only writes Final (pure co-writer)
-  graph.addEdgeWithKey('Case4→Final', 'Case4', 'Final', { type: 'body' });
-  // Case2 bidirectional with Final (reads + writes)
-  graph.addEdgeWithKey('Final→Case2', 'Final', 'Case2', { type: 'body' });
-  graph.addEdgeWithKey('Case2→Final', 'Case2', 'Final', { type: 'body' });
-  // Case0 reads Final (downstream)
-  graph.addEdgeWithKey('Final→Case0', 'Final', 'Case0', { type: 'body' });
-  // spLoad writes Country (upstream)
-  graph.addEdgeWithKey('spLoad→Country', 'spLoad', 'Country', { type: 'body' });
+  graph.addEdgeWithKey('SP1→Table', 'SP1', 'Table', { type: 'body' });     // SP1 writes Table
+  graph.addEdgeWithKey('Table→SP1', 'Table', 'SP1', { type: 'body' });     // SP1 reads Table (bidirectional)
+  graph.addEdgeWithKey('TableA→SP1', 'TableA', 'SP1', { type: 'body' });   // SP1 reads TableA
+  graph.addEdgeWithKey('SP1→TableA', 'SP1', 'TableA', { type: 'body' });   // SP1 writes TableA (bidirectional)
+  graph.addEdgeWithKey('SP2→TableA', 'SP2', 'TableA', { type: 'body' });   // SP2 writes TableA
+  graph.addEdgeWithKey('TableB→SP2', 'TableB', 'SP2', { type: 'body' });   // SP2 reads TableB
+  graph.addEdgeWithKey('SP3→TableB', 'SP3', 'TableB', { type: 'body' });   // SP3 writes TableB
+  graph.addEdgeWithKey('TableC→SP3', 'TableC', 'SP3', { type: 'body' });   // SP3 reads TableC
 
-  // Trace from Case3, 2 levels up and down
-  const result = traceNodeWithLevels(graph, 'Case3', 2, 2);
+  // Upstream trace from Table, 7 levels — should reach ALL nodes
+  const result = traceNodeWithLevels(graph, 'Table', 7, 0);
+  assert(result.nodeIds.has('SP1'), 'Bidir: SP1 reached (depth 1)');
+  assert(result.nodeIds.has('TableA'), 'Bidir: TableA reached (depth 2) — through bidirectional SP1');
+  assert(result.nodeIds.has('SP2'), 'Bidir: SP2 reached (depth 3) — continued past bidirectional');
+  assert(result.nodeIds.has('TableB'), 'Bidir: TableB reached (depth 4)');
+  assert(result.nodeIds.has('SP3'), 'Bidir: SP3 reached (depth 5)');
+  assert(result.nodeIds.has('TableC'), 'Bidir: TableC reached (depth 6)');
+  assert(result.nodeIds.size === 7, `Bidir: All 7 nodes in trace (got ${result.nodeIds.size})`);
 
-  // Co-writers (only write, no read) should be EXCLUDED
-  assert(!result.nodeIds.has('Case1'), 'Co-writer Case1 excluded');
-  assert(!result.nodeIds.has('Case4'), 'Co-writer Case4 excluded');
+  // Upstream-only: only edges flowing TOWARD origin (source.depth >= target.depth)
+  // Excluded: Table→SP1 (depth 0→1, away from origin), SP1→TableA (depth 1→2, away)
+  assert(result.edgeIds.has('SP1→Table'), 'Bidir-E: SP1→Table (depth 1→0, toward origin)');
+  assert(!result.edgeIds.has('Table→SP1'), 'Bidir-E: Table→SP1 excluded (depth 0→1, away from origin)');
+  assert(result.edgeIds.has('TableA→SP1'), 'Bidir-E: TableA→SP1 (depth 2→1, toward origin)');
+  assert(!result.edgeIds.has('SP1→TableA'), 'Bidir-E: SP1→TableA excluded (depth 1→2, away from origin)');
+  assert(result.edgeIds.has('SP2→TableA'), 'Bidir-E: SP2→TableA (depth 3→2, toward origin)');
+  assert(result.edgeIds.has('TableB→SP2'), 'Bidir-E: TableB→SP2 (depth 4→3, toward origin)');
+  assert(result.edgeIds.has('SP3→TableB'), 'Bidir-E: SP3→TableB (depth 5→4, toward origin)');
+  assert(result.edgeIds.has('TableC→SP3'), 'Bidir-E: TableC→SP3 (depth 6→5, toward origin)');
+  assert(result.edgeIds.size === 6, `Bidir-E: 6 upstream-flowing edges (got ${result.edgeIds.size})`);
 
-  // Bidirectional (read+write) should be KEPT
-  assert(result.nodeIds.has('Case2'), 'Bidirectional Case2 kept');
+  // Both directions active: ALL 8 edges shown (no filtering)
+  const bothResult = traceNodeWithLevels(graph, 'Table', 7, 7);
+  assert(bothResult.edgeIds.size === 8, `Bidir-Both: All 8 edges when both directions active (got ${bothResult.edgeIds.size})`);
+  assert(bothResult.edgeIds.has('Table→SP1'), 'Bidir-Both: Table→SP1 included');
+  assert(bothResult.edgeIds.has('SP1→TableA'), 'Bidir-Both: SP1→TableA included');
 
-  // Downstream reader should be KEPT
-  assert(result.nodeIds.has('Case0'), 'Downstream Case0 kept');
+  // Depth-limited: 2 levels up from Table — should stop at TableA
+  const limited = traceNodeWithLevels(graph, 'Table', 2, 0);
+  assert(limited.nodeIds.has('SP1'), 'Bidir-L2: SP1 at depth 1');
+  assert(limited.nodeIds.has('TableA'), 'Bidir-L2: TableA at depth 2');
+  assert(!limited.nodeIds.has('SP2'), 'Bidir-L2: SP2 excluded (depth 3)');
+  assert(limited.nodeIds.size === 3, `Bidir-L2: 3 nodes (got ${limited.nodeIds.size})`);
+  assert(!limited.edgeIds.has('Table→SP1'), 'Bidir-L2: Table→SP1 excluded (away from origin)');
+  assert(!limited.edgeIds.has('SP1→TableA'), 'Bidir-L2: SP1→TableA excluded (away from origin)');
+  assert(limited.edgeIds.size === 2, `Bidir-L2: 2 upstream-flowing edges (got ${limited.edgeIds.size})`);
 
-  // Upstream writer to different table should be KEPT
-  assert(result.nodeIds.has('spLoad'), 'Upstream spLoad kept (writes Country, not a writeTarget)');
+  // Determinism: run 50 times, results must be identical
+  const baseNodes = [...result.nodeIds].sort().join(',');
+  const baseEdges = [...result.edgeIds].sort().join(',');
+  let allMatch = true;
+  for (let i = 0; i < 50; i++) {
+    const r = traceNodeWithLevels(graph, 'Table', 7, 0);
+    if ([...r.nodeIds].sort().join(',') !== baseNodes) allMatch = false;
+    if ([...r.edgeIds].sort().join(',') !== baseEdges) allMatch = false;
+  }
+  assert(allMatch, 'Bidir-Det: 50 runs produce identical results');
 
-  // Tables should be KEPT
-  assert(result.nodeIds.has('Final'), 'Table Final kept');
-  assert(result.nodeIds.has('Country'), 'Table Country kept');
+  // Unlimited upstream trace — same directional filtering
+  const unlimited = traceNode(graph, 'Table', 'upstream');
+  assert(unlimited.nodeIds.size === 7, `Bidir-Unl: All 7 nodes (got ${unlimited.nodeIds.size})`);
+  assert(unlimited.edgeIds.size === 6, `Bidir-Unl: 6 upstream-flowing edges (got ${unlimited.edgeIds.size})`);
+  assert(!unlimited.edgeIds.has('Table→SP1'), 'Bidir-Unl: Table→SP1 excluded (away from origin)');
 
-  // Edges to co-writers should be EXCLUDED
-  assert(!result.edgeIds.has('Case1→Final'), 'Co-writer edge Case1→Final excluded');
-  assert(!result.edgeIds.has('Case4→Final'), 'Co-writer edge Case4→Final excluded');
+  // Unlimited both — all edges
+  const unlBoth = traceNode(graph, 'Table', 'both');
+  assert(unlBoth.edgeIds.size === 8, `Bidir-UnlBoth: All 8 edges (got ${unlBoth.edgeIds.size})`);
+}
 
-  // Test unlimited trace too
-  const unlimited = traceNode(graph, 'Case3', 'both');
-  assert(!unlimited.nodeIds.has('Case1'), 'Unlimited: Co-writer Case1 excluded');
-  assert(!unlimited.nodeIds.has('Case4'), 'Unlimited: Co-writer Case4 excluded');
-  assert(unlimited.nodeIds.has('Case2'), 'Unlimited: Bidirectional Case2 kept');
-  assert(unlimited.nodeIds.has('spLoad'), 'Unlimited: Upstream spLoad kept');
+// ─── Trace: Cycle Direction Filtering ────────────────────────────────────────
 
-  // Test TABLE as origin — filter must be a no-op (tables don't write)
-  const tableTrace = traceNodeWithLevels(graph, 'Final', 2, 2);
-  assert(tableTrace.nodeIds.has('Case1'), 'TableOrigin: Case1 kept (writer)');
-  assert(tableTrace.nodeIds.has('Case2'), 'TableOrigin: Case2 kept (bidirectional)');
-  assert(tableTrace.nodeIds.has('Case3'), 'TableOrigin: Case3 kept (bidirectional)');
-  assert(tableTrace.nodeIds.has('Case4'), 'TableOrigin: Case4 kept (writer)');
-  assert(tableTrace.nodeIds.has('Case0'), 'TableOrigin: Case0 kept (reader)');
-  assert(!tableTrace.nodeIds.has('spLoad'), 'TableOrigin: spLoad excluded (depth 3, beyond level 2)');
-  assert(tableTrace.nodeIds.has('Country'), 'TableOrigin: Country kept');
+function testCycleDirectionalFiltering() {
+  console.log('\n── Trace: Cycle Direction Filtering ──');
+
+  const graph = new Graph({ type: 'directed', multi: false });
+
+  // Cycle: A → B → C → A
+  for (const id of ['A', 'B', 'C']) graph.addNode(id, {});
+  graph.addEdgeWithKey('A→B', 'A', 'B');
+  graph.addEdgeWithKey('B→C', 'B', 'C');
+  graph.addEdgeWithKey('C→A', 'C', 'A');
+
+  // Upstream from A: BFS inbound finds C(depth 1 via C→A), B(depth 2 via B→C)
+  const up = traceNodeWithLevels(graph, 'A', 7, 0);
+  assert(up.nodeIds.size === 3, `Cycle-Up: All 3 cycle nodes (got ${up.nodeIds.size})`);
+  assert(up.edgeIds.has('C→A'), 'Cycle-Up: C→A included (depth 1→0, toward origin)');
+  assert(up.edgeIds.has('B→C'), 'Cycle-Up: B→C included (depth 2→1, toward origin)');
+  assert(!up.edgeIds.has('A→B'), 'Cycle-Up: A→B excluded (depth 0→2, away from origin = back-edge)');
+  assert(up.edgeIds.size === 2, `Cycle-Up: 2 upstream-flowing edges (got ${up.edgeIds.size})`);
+
+  // Downstream from A: BFS outbound finds B(depth 1 via A→B), C(depth 2 via B→C)
+  const down = traceNodeWithLevels(graph, 'A', 0, 7);
+  assert(down.nodeIds.size === 3, `Cycle-Down: All 3 cycle nodes (got ${down.nodeIds.size})`);
+  assert(down.edgeIds.has('A→B'), 'Cycle-Down: A→B included (depth 0→1, away from origin)');
+  assert(down.edgeIds.has('B→C'), 'Cycle-Down: B→C included (depth 1→2, away from origin)');
+  assert(!down.edgeIds.has('C→A'), 'Cycle-Down: C→A excluded (depth 2→0, back toward origin)');
+  assert(down.edgeIds.size === 2, `Cycle-Down: 2 downstream-flowing edges (got ${down.edgeIds.size})`);
+
+  // Both directions: all 3 edges shown
+  const both = traceNodeWithLevels(graph, 'A', 7, 7);
+  assert(both.edgeIds.size === 3, `Cycle-Both: All 3 edges (got ${both.edgeIds.size})`);
+
+  // Unlimited modes
+  const unlUp = traceNode(graph, 'A', 'upstream');
+  assert(unlUp.edgeIds.size === 2, `Cycle-UnlUp: 2 upstream edges (got ${unlUp.edgeIds.size})`);
+  assert(!unlUp.edgeIds.has('A→B'), 'Cycle-UnlUp: A→B excluded');
+
+  const unlDown = traceNode(graph, 'A', 'downstream');
+  assert(unlDown.edgeIds.size === 2, `Cycle-UnlDown: 2 downstream edges (got ${unlDown.edgeIds.size})`);
+  assert(!unlDown.edgeIds.has('C→A'), 'Cycle-UnlDown: C→A excluded');
+
+  const unlBoth = traceNode(graph, 'A', 'both');
+  assert(unlBoth.edgeIds.size === 3, `Cycle-UnlBoth: All 3 edges (got ${unlBoth.edgeIds.size})`);
+}
+
+// ─── Trace: Same-Depth Cross-Edges ──────────────────────────────────────────
+
+function testSameDepthCrossEdges() {
+  console.log('\n── Trace: Same-Depth Cross-Edges ──');
+
+  const graph = new Graph({ type: 'directed', multi: false });
+
+  // Diamond: A → B, A → C, B → D, C → D, plus cross-edge B → C (same depth)
+  for (const id of ['A', 'B', 'C', 'D']) graph.addNode(id, {});
+  graph.addEdgeWithKey('A→B', 'A', 'B');
+  graph.addEdgeWithKey('A→C', 'A', 'C');
+  graph.addEdgeWithKey('B→D', 'B', 'D');
+  graph.addEdgeWithKey('C→D', 'C', 'D');
+  graph.addEdgeWithKey('B→C', 'B', 'C'); // same-depth cross-edge
+
+  // Upstream from D, 2 levels: finds B(1), C(1), A(2) — B and C at same depth
+  const up = traceNodeWithLevels(graph, 'D', 2, 0);
+  assert(up.nodeIds.size === 4, `Diamond-Up: All 4 nodes (got ${up.nodeIds.size})`);
+  assert(up.edgeIds.has('B→D'), 'Diamond-Up: B→D included (depth 1→0)');
+  assert(up.edgeIds.has('C→D'), 'Diamond-Up: C→D included (depth 1→0)');
+  assert(up.edgeIds.has('A→B'), 'Diamond-Up: A→B included (depth 2→1)');
+  assert(up.edgeIds.has('A→C'), 'Diamond-Up: A→C included (depth 2→1)');
+  assert(up.edgeIds.has('B→C'), 'Diamond-Up: B→C included (same depth 1→1, >= passes)');
+  assert(up.edgeIds.size === 5, `Diamond-Up: 5 edges including same-depth (got ${up.edgeIds.size})`);
+
+  // Downstream from A, 2 levels: B(1), C(1), D(2)
+  const down = traceNodeWithLevels(graph, 'A', 0, 2);
+  assert(down.edgeIds.has('B→C'), 'Diamond-Down: B→C included (same depth 1→1)');
+  assert(down.edgeIds.size === 5, `Diamond-Down: 5 edges including same-depth (got ${down.edgeIds.size})`);
 }
 
 // ─── Synapse Dacpac: Trace No Siblings ──────────────────────────────────────
@@ -207,18 +307,18 @@ async function testSynapseTrace() {
       downNodes.add(node);
     }, { mode: 'outbound' });
 
-    // Siblings: upstream nodes that also have outbound edges to downstream nodes (bypassing traced node)
-    let crossEdges = 0;
+    // Verify all traced edges connect traced nodes (no phantom edges)
+    let phantomEdges = 0;
     for (const edgeId of traced.edgeIds) {
-      const [src, tgt] = edgeId.split('→');
-      // Cross-connection: source is upstream-only, target is downstream-only
-      if (upNodes.has(src) && !downNodes.has(src) && downNodes.has(tgt) && !upNodes.has(tgt)) {
-        crossEdges++;
+      const src = graph.source(edgeId);
+      const tgt = graph.target(edgeId);
+      if (!traced.nodeIds.has(src) || !traced.nodeIds.has(tgt)) {
+        phantomEdges++;
       }
     }
 
-    console.log(`  ${proc.id}: in=${inDeg} out=${outDeg} traced=${traced.nodeIds.size} nodes, ${traced.edgeIds.size} edges, cross=${crossEdges}`);
-    assert(crossEdges === 0, `${proc.id}: no cross-connection edges in trace`);
+    console.log(`  ${proc.id}: in=${inDeg} out=${outDeg} traced=${traced.nodeIds.size} nodes, ${traced.edgeIds.size} edges, phantom=${phantomEdges}`);
+    assert(phantomEdges === 0, `${proc.id}: no phantom edges (endpoints outside trace)`);
   }
 }
 
@@ -678,7 +778,9 @@ async function main() {
 
     await testGraphBuilder(model);
     testTraceNoSiblings();
-    testCoWriterFilter();
+    testBidirectionalTrace();
+    testCycleDirectionalFiltering();
+    testSameDepthCrossEdges();
     await testSynapseTrace();
     testVirtualNodeBuilding();
     testVirtualNodeTrace();

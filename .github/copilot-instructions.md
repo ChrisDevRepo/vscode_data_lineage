@@ -51,7 +51,7 @@ Press F5 to launch Extension Development Host.
 | File | Tests | Purpose |
 |------|-------|---------|
 | `test/dacpacExtractor.test.ts` | 63 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
-| `test/graphBuilder.test.ts` | 109 | Graph construction, layout, BFS trace, co-writer filter, virtual external nodes, CLR method suppression |
+| `test/graphBuilder.test.ts` | 156 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression |
 | `test/parser-edge-cases.test.ts` | 192 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 62 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
