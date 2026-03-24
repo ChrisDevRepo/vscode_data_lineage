@@ -1,5 +1,6 @@
 import { memo, useState, useRef, useCallback } from 'react';
 import { useClickOutside } from '../hooks/useClickOutside';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { ObjectType, AnalysisType } from '../engine/types';
 import { Button } from './ui/Button';
 import { HelpModal } from './HelpModal';
@@ -103,6 +104,8 @@ export const Toolbar = memo(function Toolbar({
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isAnalysisDropdownOpen, setIsAnalysisDropdownOpen] = useState(false);
+
+  useKeyboardShortcut('?', () => setIsHelpOpen(true));
   const analysisDropdownRef = useRef<HTMLDivElement>(null);
 
   const closeAnalysisDropdown = useCallback(() => setIsAnalysisDropdownOpen(false), []);
@@ -245,7 +248,7 @@ export const Toolbar = memo(function Toolbar({
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
           </svg>
         </Button>
-        <Button onClick={() => setIsHelpOpen(true)} variant="icon" title="Help">
+        <Button onClick={() => setIsHelpOpen(true)} variant="icon" title="Help ?">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
           </svg>

@@ -146,7 +146,7 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Regex patterns to exclude objects by name (e.g. `_TEST$`, `^staging\\\\.`). Matched against `schema.object`.",
+            "markdownDescription": "Regex patterns to permanently exclude objects by name at load time (e.g. `_TEST$`, `^staging\\\\.`). Matched against `schema.object`. Supports `%` wildcard. Requires reloading the data source to take effect. For interactive ad-hoc filtering without reload, use the Exclusion Rules toolbar button.",
             "scope": "resource"
           },
           "dataLineageViz.externalRefs.enabled": {

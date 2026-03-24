@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
   Background,
@@ -160,6 +161,8 @@ export function GraphCanvas({
   const handleFitView = useCallback(() => {
     fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }, [fitView]);
+
+  useKeyboardShortcut(['f', 'F'], handleFitView);
 
   const minimapNodeColor = useCallback(
     (node: FlowNode<CustomNodeData>) => {

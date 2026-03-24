@@ -17,6 +17,7 @@ import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
+import { escapeRegexLiteral } from '../utils/sql';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection } from '../engine/projectStore';
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 
@@ -627,8 +628,7 @@ export function App() {
       if (!highlightedNodeId) return;
       const node = flowNodes.find((n) => n.id === highlightedNodeId);
       if (!node) return;
-      const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = `^${esc(String(node.data.schema))}\\.${esc(String(node.data.label))}$`;
+      const pattern = `^${escapeRegexLiteral(String(node.data.schema))}\\.${escapeRegexLiteral(String(node.data.label))}$`;
       handleAddExclusionPattern(pattern);
     };
     window.addEventListener('keydown', onKeyDown);

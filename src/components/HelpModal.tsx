@@ -54,6 +54,37 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <section>
             <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3a1.5 1.5 0 0 0-1.5 1.5v1.5H9a1.5 1.5 0 0 0 0 3h1.5V12a1.5 1.5 0 0 0 3 0V9H15a1.5 1.5 0 0 0 0-3h-1.5V4.5A1.5 1.5 0 0 0 12 3ZM3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />
+              </svg>
+              <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>
+            </div>
+            <div className="ml-7 grid grid-cols-2 gap-x-8 gap-y-2 text-sm ln-text-muted">
+              <div className="flex items-center gap-3">
+                <kbd className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd">/</kbd>
+                <span>Focus Quick Search</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <kbd className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd">F</kbd>
+                <span>Fit graph to view</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <kbd className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd">Del</kbd>
+                <span>Exclude highlighted node</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <kbd className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd">Esc</kbd>
+                <span>Close trace or analysis</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <kbd className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd">?</kbd>
+                <span>Open this Help</span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
               </svg>
               <h3 className="text-lg font-semibold">Filters & Visibility</h3>

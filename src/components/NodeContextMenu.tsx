@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import type { ObjectType } from '../engine/types';
+import { escapeRegexLiteral } from '../utils/sql';
 
 interface NodeContextMenuProps {
   x: number;
@@ -117,8 +118,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
             <div className="my-1 ln-border-top" />
             <button
               onClick={() => {
-                const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                onExcludeNode(`^${esc(schema)}\\.${esc(nodeName)}$`);
+                onExcludeNode(`^${escapeRegexLiteral(schema)}\\.${escapeRegexLiteral(nodeName)}$`);
                 onClose();
               }}
               className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"

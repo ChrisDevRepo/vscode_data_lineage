@@ -23,7 +23,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
   // Focus input when dropdown opens
   useEffect(() => {
     if (isOpen) {
-      setTimeout(() => inputRef.current?.focus(), 50);
+      setTimeout(() => inputRef.current?.focus(), 50); // defer past dropdown paint
     } else {
       setInputValue('');
       setInputError(false);

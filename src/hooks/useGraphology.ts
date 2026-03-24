@@ -52,7 +52,11 @@ export function useGraphology(): UseGraphologyReturn {
   return { flowNodes, flowEdges, graph, metrics, buildFromModel };
 }
 
-// ─── Exclusion Filter ────────────────────────────────────────────────────────
+// ─── Exclusion Filter (interactive / render-time) ────────────────────────────
+// Separate from dacpacExtractor.applyExclusionPatterns, which is load-time only
+// (applied once when the data source is loaded, driven by config.excludePatterns).
+// This filter is applied on every graph rebuild driven by filter.exclusionPatterns
+// from the UI ExclusionDropdown — instant effect, no data reload required.
 
 function applyExclusionFilter(model: DacpacModel, patterns: string[]): DacpacModel {
   if (!patterns || patterns.length === 0) return model;

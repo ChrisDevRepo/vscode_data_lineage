@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { ObjectType } from '../engine/types';
 import { filterSuggestions } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { SuggestionList } from './ui/SuggestionList';
 
 interface SearchWithAutocompleteProps {
@@ -41,6 +42,8 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     dropdownRef,
     handleArrowKeys,
   } = useAutocomplete(suggestions, searchTerm);
+
+  useKeyboardShortcut('/', () => inputRef.current?.focus(), true);
 
   return (
     <div className="relative">

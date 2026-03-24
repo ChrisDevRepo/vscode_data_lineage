@@ -91,3 +91,8 @@ export function validateSchemaPlaceholder(name: string, sql: string, phase: numb
 export function compileExclusionPattern(pattern: string): RegExp {
   return new RegExp(pattern.replace(/%/g, '.*'), 'i');
 }
+
+/** Escape a literal string so it is safe to embed in a RegExp. */
+export function escapeRegexLiteral(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
