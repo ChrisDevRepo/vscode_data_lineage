@@ -14,7 +14,7 @@
 ### Changed
 - Removed `db-reconnect` message (replaced by `load-project`); removed `save-schemas` message (replaced by project save flow).
 - File-not-found on project load now shows VS Code error notification in addition to in-screen error.
-- Test suite: 909 tests (↑ from 861; +48 filter profile tests).
+- Test suite: 834 tests (7 suites).
 
 ## [0.9.4] - 2026-03-12
 
