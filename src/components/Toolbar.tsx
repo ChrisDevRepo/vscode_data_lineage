@@ -6,6 +6,7 @@ import { HelpModal } from './HelpModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
 import { TypeFilterDropdown } from './TypeFilterDropdown';
 import { ExternalRefsDropdown } from './ExternalRefsDropdown';
+import { ExclusionDropdown } from './ExclusionDropdown';
 import { SavedViewsDropdown } from './SavedViewsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 import type { FilterProfile } from '../engine/projectStore';
@@ -41,6 +42,9 @@ interface ToolbarProps {
   externalRefTypes?: Set<'file' | 'db'>;
   onToggleExternalRefs?: () => void;
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
+  exclusionPatterns?: string[];
+  onAddExclusionPattern?: (pattern: string) => void;
+  onRemoveExclusionPattern?: (pattern: string) => void;
   filterProfiles?: FilterProfile[];
   activeProjectId?: string | null;
   onSaveView?: (name: string) => void;
@@ -86,6 +90,9 @@ export const Toolbar = memo(function Toolbar({
   externalRefTypes = new Set<'file' | 'db'>(['file', 'db']),
   onToggleExternalRefs,
   onToggleExternalRefType,
+  exclusionPatterns = [],
+  onAddExclusionPattern,
+  onRemoveExclusionPattern,
   filterProfiles = [],
   activeProjectId,
   onSaveView,
@@ -114,6 +121,8 @@ export const Toolbar = memo(function Toolbar({
           </svg>
         </Button>
 
+        <div className="w-px h-6 ln-divider" />
+
         {/* Search & Filters */}
         <SearchWithAutocomplete
           searchTerm={searchTerm}
@@ -140,6 +149,13 @@ export const Toolbar = memo(function Toolbar({
             onToggleSubType={onToggleExternalRefType}
           />
         )}
+        {onAddExclusionPattern && onRemoveExclusionPattern && (
+          <ExclusionDropdown
+            exclusionPatterns={exclusionPatterns}
+            onAddPattern={onAddExclusionPattern}
+            onRemovePattern={onRemoveExclusionPattern}
+          />
+        )}
         {onSaveView && onApplyView && onDeleteView && (
           <SavedViewsDropdown
             filterProfiles={filterProfiles}
@@ -149,7 +165,6 @@ export const Toolbar = memo(function Toolbar({
             onDeleteView={onDeleteView}
           />
         )}
-
         <div className="w-px h-6 ln-divider" />
 
         {/* View Controls */}
@@ -238,31 +253,21 @@ export const Toolbar = memo(function Toolbar({
 
         {/* Metrics — pushed to right */}
         {metrics && (
-          <div className="ml-auto flex items-center gap-2.5 text-xs ln-text-muted whitespace-nowrap">
-            <div className="flex items-center gap-1">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
-              </svg>
-              <span><span className="font-mono inline-block text-right" style={{ minWidth: '3ch', fontVariantNumeric: 'tabular-nums' }}>{metrics.totalNodes}</span> nodes</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
-              </svg>
-              <span><span className="font-mono inline-block text-right" style={{ minWidth: '3ch', fontVariantNumeric: 'tabular-nums' }}>{metrics.totalEdges}</span> edges</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
-                <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
-              </svg>
-              <span><span className="font-mono inline-block text-right" style={{ minWidth: '3ch', fontVariantNumeric: 'tabular-nums' }}>{metrics.rootNodes}</span> roots</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" />
-              </svg>
-              <span><span className="font-mono inline-block text-right" style={{ minWidth: '3ch', fontVariantNumeric: 'tabular-nums' }}>{metrics.leafNodes}</span> leaves</span>
-            </div>
+          <div
+            className="ml-auto text-xs ln-text-muted whitespace-nowrap font-mono tabular-nums"
+            title={`${metrics.totalNodes} nodes · ${metrics.totalEdges} edges · ${metrics.rootNodes} roots · ${metrics.leafNodes} leaves`}
+          >
+            <span>{metrics.totalNodes}</span>
+            <span className="opacity-40 mx-1">N</span>
+            <span className="opacity-30 mx-0.5">·</span>
+            <span>{metrics.totalEdges}</span>
+            <span className="opacity-40 mx-1">E</span>
+            <span className="opacity-30 mx-0.5">·</span>
+            <span>{metrics.rootNodes}</span>
+            <span className="opacity-40 mx-1">R</span>
+            <span className="opacity-30 mx-0.5">·</span>
+            <span>{metrics.leafNodes}</span>
+            <span className="opacity-40 mx-1">L</span>
           </div>
         )}
       </div>

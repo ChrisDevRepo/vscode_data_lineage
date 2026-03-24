@@ -23,7 +23,7 @@ import {
   DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
-import { stripBrackets, schemaKey } from '../utils/sql';
+import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -587,7 +587,7 @@ export function applyExclusionPatterns(model: DacpacModel, patterns: string[], o
 
   const regexes = patterns.map((p) => {
     try {
-      return new RegExp(p, 'i');
+      return compileExclusionPattern(p);
     } catch (e) {
       onWarning?.(`Invalid exclude pattern "${p}": ${e instanceof Error ? e.message : e}`);
       return null;

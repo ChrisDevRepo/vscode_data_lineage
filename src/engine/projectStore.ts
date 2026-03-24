@@ -26,6 +26,7 @@ export interface SerializedFilterState {
   focusSchemas: string[];
   showExternalRefs: boolean;
   externalRefTypes: string[];
+  exclusionPatterns?: string[];  // optional for backward compat with existing saved profiles
 }
 
 export interface FilterProfile {
@@ -236,6 +237,7 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
     focusSchemas: Array.from(filter.focusSchemas),
     showExternalRefs: filter.showExternalRefs,
     externalRefTypes: Array.from(filter.externalRefTypes),
+    exclusionPatterns: filter.exclusionPatterns,
   };
 }
 
@@ -249,5 +251,6 @@ export function deserializeFilter(s: SerializedFilterState): FilterState {
     focusSchemas: new Set(s.focusSchemas),
     showExternalRefs: s.showExternalRefs,
     externalRefTypes: new Set(s.externalRefTypes) as FilterState['externalRefTypes'],
+    exclusionPatterns: s.exclusionPatterns ?? [],
   };
 }

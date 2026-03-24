@@ -64,7 +64,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
 
       {isOpen && (
         <div
-            className="absolute top-full mt-2 w-64 rounded-md shadow-lg z-30 p-2 ln-dropdown"
+            className="absolute top-full mt-2 w-64 rounded-md shadow-lg z-50 p-2 ln-dropdown"
             style={{ boxShadow: 'var(--ln-dropdown-shadow)', right: 0 }}
             role="menu"
             aria-label="Saved views"
@@ -95,10 +95,10 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                   className="w-full h-7 px-2 text-xs rounded ln-input"
                 />
                 <div className="flex gap-1">
-                  <Button variant="primary" style={{ fontSize: 11, height: 24, padding: '0 8px' }} onClick={handleSave} disabled={!newName.trim()}>
+                  <Button variant="primary" className="h-6 px-2 text-xs" onClick={handleSave} disabled={!newName.trim()}>
                     Save
                   </Button>
-                  <Button variant="ghost" style={{ fontSize: 11, height: 24, padding: '0 8px' }} onClick={() => { setIsAdding(false); setNewName(''); }}>
+                  <Button variant="ghost" className="h-6 px-2 text-xs" onClick={() => { setIsAdding(false); setNewName(''); }}>
                     Cancel
                   </Button>
                 </div>
@@ -143,7 +143,6 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                       </span>
                       <button
                         className="text-xs px-1.5 py-0.5 rounded ln-list-item flex-shrink-0"
-                        style={{ fontSize: 11 }}
                         onClick={() => { onApplyView(profile); close(); }}
                         title={`Apply "${profile.name}"`}
                       >

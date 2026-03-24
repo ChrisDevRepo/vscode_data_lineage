@@ -5,10 +5,12 @@ import type { Project } from '../engine/projectStore';
 
 interface StartScreenProps {
   projects: Project[];
+  lastOpenedId: string | null;
   loadingProjectId: string | null;
   startMessage: string | null;
   onCreateNew: () => void;
   onOpenProject: (id: string) => void;
+  onOpenLatest: () => void;
   onDeleteProject: (id: string) => void;
   onDemo: () => void;
 }
@@ -25,16 +27,19 @@ function formatDate(iso: string): string {
 
 export const StartScreen = memo(function StartScreen({
   projects,
+  lastOpenedId,
   loadingProjectId,
   startMessage,
   onCreateNew,
   onOpenProject,
+  onOpenLatest,
   onDeleteProject,
   onDemo,
 }: StartScreenProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const sorted = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const latestProject = lastOpenedId ? sorted.find(p => p.id === lastOpenedId) : undefined;
 
   return (
     <WizardPanel footer={
@@ -49,6 +54,23 @@ export const StartScreen = memo(function StartScreen({
       <Button variant="primary" className="w-full" onClick={onCreateNew}>
         + Create New Project
       </Button>
+
+      {/* Latest quick-action — always visible, grayed when no recent project */}
+      <button
+        className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
+        onClick={onOpenLatest}
+        disabled={!latestProject || !!loadingProjectId}
+        title={latestProject ? `Reopen: ${latestProject.name}` : 'No recent project'}
+        style={{ opacity: latestProject ? 1 : 0.45 }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+        </svg>
+        <span className="truncate flex-1">
+          {latestProject ? latestProject.name : 'No recent project'}
+        </span>
+        {loadingProjectId === latestProject?.id && <Spinner className="w-4 h-4 ml-auto flex-shrink-0" />}
+      </button>
 
       {sorted.length > 0 && (
         <div className="space-y-2">

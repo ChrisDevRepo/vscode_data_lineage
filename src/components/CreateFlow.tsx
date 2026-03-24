@@ -8,12 +8,14 @@ import { generateProjectName } from '../engine/projectStore';
 
 interface CreateFlowProps {
   loader: DacpacLoaderState;
+  maxNodes: number;
   onBack: () => void;
   onVisualize: (projectName: string, project: DacpacConnection | DatabaseConnection | null) => void;
 }
 
 export const CreateFlow = memo(function CreateFlow({
   loader,
+  maxNodes,
   onBack,
   onVisualize,
 }: CreateFlowProps) {
@@ -86,12 +88,28 @@ export const CreateFlow = memo(function CreateFlow({
         Back
       </button>
 
-      {/* Source selection row */}
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          {/* Open Dacpac */}
+      {/* Source selection — locked once source is loaded */}
+      {hasSource && !isPhase1Loading ? (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded text-sm ln-file-picker" style={{ opacity: 0.7, cursor: 'default' }}>
+          {loader.filePath ? (
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+            </svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+            </svg>
+          )}
+          <span className="truncate flex-1">{loader.fileName}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--ln-fg-dim)' }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+          </svg>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Open Dacpac — full width */}
           <button
-            className="flex-1 flex items-center gap-2 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded text-sm text-left ln-file-picker ln-list-item"
             onClick={loader.openFile}
             disabled={loader.isLoading}
           >
@@ -104,29 +122,39 @@ export const CreateFlow = memo(function CreateFlow({
             {isPhase1Loading && loader.loadingContext === 'dacpac' && <InlineSpinner />}
           </button>
 
-          {/* Connect to Database */}
-          {loader.mssqlAvailable && (
-            <button
-              className="flex items-center gap-2 px-3 py-2 rounded text-sm ln-file-picker ln-list-item"
-              onClick={loader.connectToDatabase}
-              disabled={loader.isLoading}
-              title="Connect to database"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-              </svg>
-              {isPhase1Loading && loader.loadingContext === 'database' && <InlineSpinner />}
-            </button>
+          {/* "or" divider */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1 ln-border-top" />
+            <span className="text-xs ln-text-muted">or</span>
+            <div className="flex-1 ln-border-top" />
+          </div>
+
+          {/* Connect to Database — full width, shown-but-disabled when MSSQL unavailable */}
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded text-sm text-left ln-file-picker ln-list-item"
+            onClick={loader.connectToDatabase}
+            disabled={loader.isLoading || loader.mssqlAvailable !== true}
+            title={loader.mssqlAvailable === false
+              ? 'Requires the SQL Server (mssql) extension'
+              : 'Connect to database'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+            </svg>
+            <span className="truncate">
+              {loader.fileName && !loader.filePath ? loader.fileName : 'Connect to database…'}
+            </span>
+            {isPhase1Loading && loader.loadingContext === 'database' && <InlineSpinner />}
+          </button>
+
+          {/* Status / error */}
+          {loader.status && (
+            <div className={`text-xs px-3 py-2 rounded ln-status-${loader.status.type}`}>
+              {loader.status.text}
+            </div>
           )}
         </div>
-
-        {/* Status / error */}
-        {loader.status && (
-          <div className={`text-xs px-3 py-2 rounded ln-status-${loader.status.type}`}>
-            {loader.status.text}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Phase 2: project name + schema selector (shown after Phase 1 completes) */}
       {hasSource && !isPhase1Loading && (
@@ -142,15 +170,32 @@ export const CreateFlow = memo(function CreateFlow({
             />
           </div>
 
-          {(loader.schemaPreview ?? loader.model)?.schemas && (
-            <SchemaSelector
-              schemas={(loader.schemaPreview ?? loader.model)!.schemas}
-              selectedSchemas={loader.selectedSchemas}
-              onToggle={loader.toggleSchema}
-              onSelectAll={loader.selectAllSchemas}
-              onClearAll={loader.clearAllSchemas}
-            />
-          )}
+          {(loader.schemaPreview ?? loader.model)?.schemas && (() => {
+            const schemas = (loader.schemaPreview ?? loader.model)!.schemas;
+            const selectedCount = schemas
+              .filter(s => loader.selectedSchemas.has(s.name))
+              .reduce((sum, s) => sum + s.nodeCount, 0);
+            const overLimit = selectedCount > maxNodes;
+            return (
+              <>
+                <SchemaSelector
+                  schemas={schemas}
+                  selectedSchemas={loader.selectedSchemas}
+                  onToggle={loader.toggleSchema}
+                  onSelectAll={loader.selectAllSchemas}
+                  onClearAll={loader.clearAllSchemas}
+                />
+                <div
+                  className={`text-xs px-1 ${overLimit ? 'ln-status-warning rounded px-2 py-1' : ''}`}
+                  style={{ color: overLimit ? undefined : 'var(--ln-fg-dim)' }}
+                >
+                  {overLimit
+                    ? `⚠ ${selectedCount.toLocaleString()} objects selected — exceeds the ${maxNodes} node limit. Largest schemas will be trimmed.`
+                    : `${selectedCount.toLocaleString()} objects selected`}
+                </div>
+              </>
+            );
+          })()}
         </>
       )}
     </WizardPanel>

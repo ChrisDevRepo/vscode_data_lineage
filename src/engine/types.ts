@@ -347,6 +347,7 @@ export interface FilterState {
   focusSchemas: Set<string>;
   showExternalRefs: boolean;
   externalRefTypes: Set<'file' | 'db'>;
+  exclusionPatterns: string[];
 }
 
 export interface TraceState {

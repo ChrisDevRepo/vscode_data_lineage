@@ -64,6 +64,9 @@ interface GraphCanvasProps {
   onSelectNoneSchemas?: (schemas: string[]) => void;
   onToggleExternalRefs?: () => void;
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
+  exclusionPatterns?: string[];
+  onAddExclusionPattern?: (pattern: string) => void;
+  onRemoveExclusionPattern?: (pattern: string) => void;
   availableSchemas?: string[];
   onRefresh: () => void;
   onRebuild?: () => void;
@@ -115,6 +118,9 @@ export function GraphCanvas({
   onSelectNoneSchemas,
   onToggleExternalRefs,
   onToggleExternalRefType,
+  exclusionPatterns,
+  onAddExclusionPattern,
+  onRemoveExclusionPattern,
   availableSchemas,
   onRefresh,
   onRebuild,
@@ -342,6 +348,9 @@ export function GraphCanvas({
         externalRefTypes={filter.externalRefTypes}
         onToggleExternalRefs={onToggleExternalRefs}
         onToggleExternalRefType={onToggleExternalRefType}
+        exclusionPatterns={exclusionPatterns}
+        onAddExclusionPattern={onAddExclusionPattern}
+        onRemoveExclusionPattern={onRemoveExclusionPattern}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}
@@ -442,6 +451,7 @@ export function GraphCanvas({
               edgesFocusable={true}
               elementsSelectable={true}
               selectNodesOnDrag={false}
+              deleteKeyCode={null}
               panOnDrag={true}
               panOnScroll={false}
               zoomOnScroll={true}

@@ -73,6 +73,47 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <section>
             <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+              </svg>
+              <h3 className="text-lg font-semibold">Exclusion Rules</h3>
+            </div>
+            <div className="ml-7 space-y-2 text-sm ln-text-muted">
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Click the <strong>⊘ ban icon</strong> in the toolbar to open Exclusion Rules. Rules hide nodes in real-time — no reload needed.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span><strong>Three ways to add a rule:</strong> type a pattern and press Enter (or click Add) · right-click a node → <strong>Exclude from view</strong> · select a node and press the <strong>Delete</strong> key</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Remove individual rules with the <strong>×</strong> button next to each rule in the dropdown.</span>
+              </div>
+              <div className="p-2 rounded ln-bg-secondary mt-1 space-y-1 font-mono text-xs">
+                <div className="grid grid-cols-2 gap-x-3">
+                  <span className="ln-text font-medium">%tmp%</span><span>matches any name containing "tmp"</span>
+                  <span className="ln-text font-medium">dbo.%</span><span>all objects in the dbo schema</span>
+                  <span className="ln-text font-medium">%_stg</span><span>any name ending in "_stg"</span>
+                  <span className="ln-text font-medium">^dbo\.tmp_</span><span>regex: starts with dbo.tmp_</span>
+                  <span className="ln-text font-medium">(tmp|stg)</span><span>regex alternation</span>
+                </div>
+                <p className="font-sans pt-0.5" style={{ color: 'var(--ln-fg-dim)' }}>Matched against <em>schema.name</em>. Case-insensitive. <code>%</code> is a wildcard (like SQL LIKE).</p>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Exclusion rules are <strong>saved per view</strong> — use Saved Views to bookmark and restore them.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs mt-0.5">•</span>
+                <span>The VS Code setting <code>excludePatterns</code> also supports <code>%</code> wildcards (applies at load time — requires reloading the data source).</span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
               </svg>
               <h3 className="text-lg font-semibold">Trace Mode</h3>

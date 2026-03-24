@@ -3,18 +3,15 @@
 ## [0.9.5] - 2026-03-24
 
 ### Added
-- **Project sessions** — Connections and schema selections are now saved as named projects in VS Code global state. Projects survive extension updates and VS Code restarts.
-- **Project manager (Start screen)** — New start screen lists saved projects as clickable cards with source type, date, and inline delete confirmation. "Create New" opens the creation flow; "Try with demo data" goes directly to the spinner.
-- **Create New flow** — Streamlined wizard: open dacpac or connect to database → Phase 1 inline spinner → schema selector with project name field → Visualize.
-- **Central loading spinner (VisualizingScreen)** — All load paths (Create New, Open Project, Demo) show a unified Load → Parse → Generate phase view with sub-text progress. Dacpac phases flash through instantly (buffer cached); DB queries show live progress. Error state auto-returns to Start after 3 s with countdown.
-- **Saved Views (Filter Profiles)** — Bookmark icon in the graph toolbar opens a dropdown to save the current filter state (schemas, types, isolated, external refs, search term) as a named view. Saved views are stored per-project and can be applied or deleted. Optimistic UI (no round-trip delay).
-- **Auto-generated project names** — Default `"{source} YYYY-MM-DD HH:mm"`, editable before visualizing.
-- **One-time migration** — Existing last-opened connection auto-migrates to a named project on first use.
+- **Project sessions** — Connections and schema selections saved as named projects in VS Code global state. Start screen lists projects as cards; "Create New" opens the setup wizard; demo goes directly to the graph.
+- **Saved Views** — Save and restore filter states (schemas, types, search, external refs) as named views per project.
+- **Loading screen** — Unified Load → Parse → Generate progress view for all data paths with elapsed timer and 60 s timeout. Demo goes directly to the graph; times out with a clear error if the source does not respond.
+- **Exclusion Rules** — New toolbar filter (⊘ icon) to hide nodes by pattern in real-time without reloading. Supports `%` wildcards (`%tmp%`, `dbo.%`) and full regex. Three entry points: type in dropdown, right-click node → "Exclude from view", or select node and press `Delete`. Rules are saved and restored as part of Saved Views. The VS Code `excludePatterns` setting also gains `%` wildcard support.
 
 ### Changed
-- Removed `db-reconnect` message (replaced by `load-project`); removed `save-schemas` message (replaced by project save flow).
-- File-not-found on project load now shows VS Code error notification in addition to in-screen error.
-- Test suite: 834 tests (7 suites).
+- Wizard layout: dacpac and database source buttons are now full-width stacked with an "or" divider. Database button visible (disabled) when the MSSQL extension is not installed.
+- Removed `db-reconnect` and `save-schemas` messages (replaced by project save flow).
+- Test suite: 864 tests (7 suites).
 
 ## [0.9.4] - 2026-03-12
 

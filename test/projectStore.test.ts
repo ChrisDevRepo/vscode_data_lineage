@@ -361,6 +361,7 @@ const sampleFilter: FilterState = {
   focusSchemas: new Set(['dbo']),
   showExternalRefs: true,
   externalRefTypes: new Set(['file']),
+  exclusionPatterns: ['%tmp%', '^etl\\.'],
 };
 
 test('serializeFilter converts Sets to arrays', () => {
@@ -380,6 +381,7 @@ test('serializeFilter preserves values', () => {
   assertEq(s.focusSchemas.join(','), 'dbo', 'focusSchemas preserved');
   assertEq(s.showExternalRefs, true, 'showExternalRefs preserved');
   assertEq(s.externalRefTypes.join(','), 'file', 'externalRefTypes preserved');
+  assertEq(s.exclusionPatterns?.join(','), '%tmp%,^etl\\.', 'exclusionPatterns preserved');
 });
 
 test('deserializeFilter restores Sets', () => {
@@ -402,6 +404,18 @@ test('roundtrip: serialize then deserialize is identity', () => {
   assertEq(restored.types.has('table'), true, 'table in types');
   assertEq(restored.focusSchemas.has('dbo'), true, 'dbo in focusSchemas');
   assertEq(restored.externalRefTypes.has('file'), true, 'file in externalRefTypes');
+  assertEq(restored.exclusionPatterns[0], '%tmp%', 'first exclusionPattern roundtrip');
+  assertEq(restored.exclusionPatterns.length, 2, 'exclusionPatterns count roundtrip');
+});
+
+test('deserializeFilter defaults exclusionPatterns when absent', () => {
+  const s: SerializedFilterState = {
+    schemas: ['dbo'], types: ['table'], searchTerm: '', hideIsolated: false,
+    focusSchemas: [], showExternalRefs: true, externalRefTypes: [],
+    // No exclusionPatterns field
+  };
+  const restored = deserializeFilter(s);
+  assertEq(restored.exclusionPatterns.length, 0, 'defaults to empty array');
 });
 
 // ─── addFilterProfile ──────────────────────────────────────────────────────────

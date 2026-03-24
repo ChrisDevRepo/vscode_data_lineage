@@ -23,6 +23,9 @@ import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, 
 type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
 const REBUILD_DELAY_MS = 400;
+const DACPAC_TIMEOUT_MS = 20_000;
+const DB_TIMEOUT_MS = 60_000;
+const MIN_SPINNER_MS = 1200;
 
 interface ContextMenuState {
   x: number;
@@ -38,7 +41,8 @@ interface ContextMenuState {
 
 export function App() {
   const vscodeApi = useVsCode();
-  const [view, setView] = useState<AppView>('start');
+  const isAutoVisualize = document.body.dataset.autoVisualize === 'true';
+  const [view, setView] = useState<AppView>(isAutoVisualize ? 'visualizing' : 'start');
   const [model, setModel] = useState<DacpacModel | null>(null);
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -54,7 +58,7 @@ export function App() {
   const [startScreenMessage, setStartScreenMessage] = useState<string | null>(null);
 
   // Graph source name (for toolbar/export)
-  const [sourceName, setSourceName] = useState<string | null>(null);
+  const [sourceName, setSourceName] = useState<string | null>(isAutoVisualize ? 'AdventureWorks (demo)' : null);
 
   // Whether source is from database (for stats panel)
   const [isDbSource, setIsDbSource] = useState(false);
@@ -67,6 +71,7 @@ export function App() {
     focusSchemas: new Set(),
     showExternalRefs: true,
     externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
+    exclusionPatterns: [],
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
@@ -115,6 +120,7 @@ export function App() {
     focusSchemas: new Set(),
     showExternalRefs: true,
     externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
+    exclusionPatterns: [],
   });
 
   // Transition from visualizing → graph
@@ -141,29 +147,40 @@ export function App() {
     if (!dacpacLoader.model || dacpacLoader.isLoading) return;
 
     if (dacpacLoader.pendingAutoVisualize) {
+      // No view guard — auto-visualize fires from any state (sidebar demo, startup, button)
       setIsDbSource(false);
-      setSourceName(dacpacLoader.fileName ? `${dacpacLoader.fileName} (demo)` : 'Demo');
+      setSourceName(dacpacLoader.fileName || 'Demo');
+      setView('visualizing');
       setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
       dacpacLoader.clearAutoVisualize();
     } else if (dacpacLoader.pendingVisualize) {
+      if (view !== 'visualizing') return; // guard: ignore stale responses after cancel
       setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, dacpacLoader.selectedSchemas);
       dacpacLoader.clearPendingVisualize();
     }
   }, [
+    view,
     dacpacLoader.pendingAutoVisualize, dacpacLoader.pendingVisualize,
     dacpacLoader.model, dacpacLoader.isLoading, dacpacLoader.selectedSchemas,
     dacpacLoader.fileName,
     handleVisualize, dacpacLoader.clearAutoVisualize, dacpacLoader.clearPendingVisualize,
   ]);
 
-  // After buildFromModel completes (flowNodes updated) → transition to graph
+  // Record when visualizing starts — used for minimum dwell enforcement
+  const visualizingEnteredAt = useRef<number>(0);
   useEffect(() => {
-    if (view === 'visualizing' && loadingPhase === 'generate' && flowNodes.length > 0) {
-      setView('graph');
-      setLoadingError(null);
-    }
+    if (view === 'visualizing') visualizingEnteredAt.current = Date.now();
+  }, [view]);
+
+  // After buildFromModel completes → delay transition to graph so spinner is readable
+  useEffect(() => {
+    if (view !== 'visualizing' || loadingPhase !== 'generate' || flowNodes.length === 0) return;
+    const remaining = Math.max(0, MIN_SPINNER_MS - (Date.now() - visualizingEnteredAt.current));
+    if (remaining <= 0) { setView('graph'); setLoadingError(null); return; }
+    const t = setTimeout(() => { setView('graph'); setLoadingError(null); }, remaining);
+    return () => clearTimeout(t);
   }, [view, loadingPhase, flowNodes.length]);
 
   // Watch for errors in visualizing phase
@@ -175,6 +192,32 @@ export function App() {
       setLoadingStats(dacpacLoader.status.text);
     }
   }, [view, dacpacLoader.status, dacpacLoader.model]);
+
+  // Timeout protection: if view stays 'visualizing' with no progress, surface an error
+  const visualizingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (view !== 'visualizing' || loadingError) {
+      if (visualizingTimeoutRef.current) {
+        clearTimeout(visualizingTimeoutRef.current);
+        visualizingTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (visualizingTimeoutRef.current) clearTimeout(visualizingTimeoutRef.current);
+
+    const ms = dacpacLoader.loadingContext === 'database' ? DB_TIMEOUT_MS : DACPAC_TIMEOUT_MS;
+    visualizingTimeoutRef.current = setTimeout(() => {
+      const msg = loadingPhase === 'load'
+        ? 'Loading timed out. The file or database did not respond in time.'
+        : 'Processing timed out. The model may be too large.';
+      setLoadingError(msg);
+    }, ms);
+
+    return () => {
+      if (visualizingTimeoutRef.current) clearTimeout(visualizingTimeoutRef.current);
+    };
+  }, [view, loadingPhase, dacpacLoader.status, dacpacLoader.loadingContext, loadingError]);
 
   const prevConfigRef = useRef(config);
   useEffect(() => {
@@ -208,6 +251,11 @@ export function App() {
     dacpacLoader.loadProject(id);
     setView('visualizing');
   }, [projects, dacpacLoader.loadProject]);
+
+  const handleOpenLatest = useCallback(() => {
+    if (!lastOpenedId) return;
+    handleOpenProject(lastOpenedId);
+  }, [lastOpenedId, handleOpenProject]);
 
   const handleDeleteProject = useCallback((id: string) => {
     // Optimistic: update state immediately
@@ -484,6 +532,25 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  const handleAddExclusionPattern = useCallback((pattern: string) => {
+    setFilter((prev) => {
+      if (prev.exclusionPatterns.includes(pattern)) return prev;
+      const exclusionPatterns = [...prev.exclusionPatterns, pattern];
+      const next = { ...prev, exclusionPatterns };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleRemoveExclusionPattern = useCallback((pattern: string) => {
+    setFilter((prev) => {
+      const exclusionPatterns = prev.exclusionPatterns.filter(p => p !== pattern);
+      const next = { ...prev, exclusionPatterns };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
   const handleToggleSchema = useCallback((schema: string) => {
     setFilter((prev) => {
       const schemas = new Set(prev.schemas);
@@ -551,6 +618,22 @@ export function App() {
       setAnalysisMode({ type, result, activeGroupId: null });
     }
   }, [graph, config.analysis, config.maxNodes]);
+
+  // DELETE key on a highlighted node → add exact exclusion rule
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!highlightedNodeId) return;
+      const node = flowNodes.find((n) => n.id === highlightedNodeId);
+      if (!node) return;
+      const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = `^${esc(String(node.data.schema))}\\.${esc(String(node.data.label))}$`;
+      handleAddExclusionPattern(pattern);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [highlightedNodeId, flowNodes, handleAddExclusionPattern]);
 
   const closeAnalysis = useCallback(() => {
     endTrace();
@@ -629,6 +712,13 @@ export function App() {
         setTableStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
       } else if (msg?.type === 'table-stats-error') {
         setTableStatsState({ phase: 'error', message: msg.message });
+      } else if (msg?.type === 'auto-visualize-start') {
+        setSourceName('AdventureWorks (demo)');
+        setLoadingPhase('load');
+        setLoadingStats(null);
+        setLoadingError(null);
+        setActiveProjectId(null);
+        setView('visualizing');
       } else if (msg?.type === 'projects-list') {
         const updatedProjects: Project[] = msg.projects ?? [];
         setProjects(updatedProjects);
@@ -650,7 +740,10 @@ export function App() {
   const filterProfiles = activeProject?.filterProfiles ?? [];
 
   const handleSaveView = useCallback((name: string) => {
-    if (!activeProjectId) return;
+    if (!activeProjectId) {
+      vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
+      return;
+    }
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -687,10 +780,12 @@ export function App() {
     return (
       <StartScreen
         projects={projects}
+        lastOpenedId={lastOpenedId}
         loadingProjectId={loadingProjectId}
         startMessage={startScreenMessage}
         onCreateNew={handleCreateNew}
         onOpenProject={handleOpenProject}
+        onOpenLatest={handleOpenLatest}
         onDeleteProject={handleDeleteProject}
         onDemo={handleDemoClick}
       />
@@ -701,6 +796,7 @@ export function App() {
     return (
       <CreateFlow
         loader={dacpacLoader}
+        maxNodes={config.maxNodes}
         onBack={() => { dacpacLoader.resetToStart(); setView('start'); }}
         onVisualize={handleCreateVisualize}
       />
@@ -787,6 +883,9 @@ export function App() {
         onSelectNoneSchemas={handleSelectNoneSchemas}
         onToggleExternalRefs={handleToggleExternalRefs}
         onToggleExternalRefType={handleToggleExternalRefType}
+        exclusionPatterns={filter.exclusionPatterns}
+        onAddExclusionPattern={handleAddExclusionPattern}
+        onRemoveExclusionPattern={handleRemoveExclusionPattern}
         availableSchemas={model?.schemas.map(s => s.name) || []}
         analysisMode={analysisMode}
         onOpenAnalysis={openAnalysis}
@@ -837,6 +936,7 @@ export function App() {
           onFindPath={(nodeId) => startPathFinding(nodeId)}
           onViewDdl={handleViewDdl}
           onShowDetails={(nodeId) => setInfoBarNodeId(nodeId)}
+          onExcludeNode={handleAddExclusionPattern}
         />
       )}
     </ReactFlowProvider>

@@ -17,6 +17,7 @@ interface NodeContextMenuProps {
   onFindPath: (nodeId: string) => void;
   onViewDdl: (nodeId: string) => void;
   onShowDetails: (nodeId: string) => void;
+  onExcludeNode?: (pattern: string) => void;
 }
 
 export const NodeContextMenu = memo(function NodeContextMenu({
@@ -35,6 +36,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   onFindPath,
   onViewDdl,
   onShowDetails,
+  onExcludeNode,
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
   return (
@@ -109,6 +111,26 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           </svg>
           Show Details
         </button>
+
+        {onExcludeNode && externalType !== 'file' && externalType !== 'db' && (
+          <>
+            <div className="my-1 ln-border-top" />
+            <button
+              onClick={() => {
+                const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                onExcludeNode(`^${esc(schema)}\\.${esc(nodeName)}$`);
+                onClose();
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+              title="Add exact exclusion rule for this node"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+              </svg>
+              Exclude from view
+            </button>
+          </>
+        )}
 
         <div className="my-1 ln-border-top" />
 

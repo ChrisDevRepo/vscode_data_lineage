@@ -280,7 +280,14 @@ async function migrateFromWorkspaceState(context: vscode.ExtensionContext): Prom
 // ─── Open Panel ─────────────────────────────────────────────────────────────
 
 function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = false) {
-  if (activePanel) { activePanel.reveal(); return; }
+  if (activePanel) {
+    activePanel.reveal();
+    if (loadDemo) {
+      activePanel.webview.postMessage({ type: 'auto-visualize-start' });
+      handleLoadDemo(activePanel, context, true).catch(err => outputChannel.error(`Demo: ${err}`));
+    }
+    return;
+  }
   try {
     const panelId = ++panelCounter;
     const ddlUri = vscode.Uri.parse(`${DDL_SCHEME}:panel-${panelId}/DDL`);
@@ -448,6 +455,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const store = loadProjectStore(context);
         const updated = updateProject(store, msg.project);
         await saveProjectStore(context, updated);
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
         outputChannel.debug(`[Project] Saved: "${msg.project.name}"`);
       },
       'delete-project': async (msg) => {
@@ -457,7 +465,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
         outputChannel.debug(`[Project] Deleted: ${msg.id}`);
       },
-      'load-demo': async () => { await handleLoadDemo(panel, context); },
+      'load-demo': async () => { await handleLoadDemo(panel, context, true); },
       'parse-rules-result': (msg) => { handleParseRulesResult(msg); },
       'parse-stats': (msg) => { handleParseStats(msg.stats, msg.objectCount, msg.edgeCount, msg.schemaCount); },
       'log': (msg) => { outputChannel.info(msg.text); },
@@ -542,13 +550,18 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'save-view': async (msg) => {
         const store = loadProjectStore(context);
         const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
+        if (!updated.projects.some(p => p.id === msg.projectId)) {
+          outputChannel.warn(`[Project] save-view: projectId ${msg.projectId} not found in store`);
+        }
         await saveProjectStore(context, updated);
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
         outputChannel.debug(`[Project] View saved: "${(msg.profile as FilterProfile).name}" on project ${msg.projectId}`);
       },
       'delete-view': async (msg) => {
         const store = loadProjectStore(context);
         const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
         await saveProjectStore(context, updated);
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
         outputChannel.debug(`[Project] View deleted: ${msg.profileId}`);
       },
       'reload': () => {

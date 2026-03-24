@@ -1,6 +1,5 @@
 import { memo, useEffect, useState } from 'react';
 import { Button } from './ui/Button';
-import { WizardPanel } from './ui/WizardPanel';
 
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
@@ -70,7 +69,7 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
   );
 }
 
-const AUTO_REDIRECT_MS = 3000;
+const AUTO_REDIRECT_MS = 8000;
 
 export const VisualizingScreen = memo(function VisualizingScreen({
   sourceName,
@@ -81,6 +80,15 @@ export const VisualizingScreen = memo(function VisualizingScreen({
   onCancel,
   onBack,
 }: VisualizingScreenProps) {
+  // Elapsed seconds counter — shown when in 'load' phase with no DB progress text
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (phase !== 'load' || progressText || !!error) { setElapsed(0); return; }
+    setElapsed(0);
+    const interval = setInterval(() => setElapsed(s => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [phase, progressText, error]);
+
   // Countdown for auto-redirect on error — cleared on unmount to avoid loops
   const [countdown, setCountdown] = useState<number | null>(null);
 
@@ -126,75 +134,84 @@ export const VisualizingScreen = memo(function VisualizingScreen({
   );
 
   return (
-    <WizardPanel footer={footer}>
-      {/* Source name */}
-      <div className="text-sm font-medium truncate" title={sourceName}>
-        {sourceName}
-      </div>
+    <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">
+      <div className="w-full max-w-md ln-panel flex flex-col" style={{ borderRadius: 6, minHeight: 280 }}>
+        <div className="px-5 py-6 space-y-4 flex-1 overflow-y-auto">
+          {/* Source name */}
+          <div className="text-sm font-medium truncate" title={sourceName}>
+            {sourceName}
+          </div>
 
-      {/* Phase rows */}
-      <div className="space-y-3">
-        {PHASES.map(({ key, label }) => {
-          const status = phaseStatus(key, phase, hasError);
-          const isActive = status === 'active';
-          const isDone = status === 'done';
-          const isError = status === 'error';
+          {/* Phase rows */}
+          <div className="space-y-3">
+            {PHASES.map(({ key, label }) => {
+              const status = phaseStatus(key, phase, hasError);
+              const isActive = status === 'active';
+              const isDone = status === 'done';
+              const isError = status === 'error';
 
-          const subText = isActive && key === 'load' && progressText
-            ? progressText
-            : isActive && key === 'parse'
-            ? 'Building model…'
-            : isActive && key === 'generate'
-            ? 'Calculating layout…'
-            : isDone && key === 'parse' && stats
-            ? stats
-            : isError && error
-            ? error
-            : null;
+              const subText = isActive && key === 'load' && progressText
+                ? progressText
+                : isActive && key === 'parse'
+                ? 'Building model…'
+                : isActive && key === 'generate'
+                ? 'Calculating layout…'
+                : isDone && key === 'parse' && stats
+                ? stats
+                : isError && error
+                ? error
+                : null;
 
-          return (
-            <div key={key}>
-              <div className="flex items-center gap-3">
-                <PhaseIcon status={status} />
-                <span
-                  className="text-sm"
-                  style={{
-                    color: isError
-                      ? 'var(--vscode-editorError-foreground, #f14c4c)'
-                      : status === 'pending'
-                      ? 'var(--ln-fg-dim)'
-                      : 'inherit',
-                  }}
-                >
-                  {label}
-                </span>
-                {isDone && key === 'parse' && stats && (
-                  <span className="text-xs ml-1" style={{ color: 'var(--ln-fg-dim)' }}>
-                    {stats}
-                  </span>
-                )}
-              </div>
-              {subText && key !== 'parse' && (
-                <div
-                  className="text-xs mt-1 ml-7"
-                  style={{
-                    color: isError
-                      ? 'var(--vscode-editorError-foreground, #f14c4c)'
-                      : 'var(--ln-fg-dim)',
-                  }}
-                >
-                  {subText}
+              return (
+                <div key={key}>
+                  <div className="flex items-center gap-3">
+                    <PhaseIcon status={status} />
+                    <span
+                      className="text-sm"
+                      style={{
+                        color: isError
+                          ? 'var(--vscode-editorError-foreground, #f14c4c)'
+                          : status === 'pending'
+                          ? 'var(--ln-fg-dim)'
+                          : 'inherit',
+                      }}
+                    >
+                      {label}
+                    </span>
+                    {isDone && key === 'parse' && stats && (
+                      <span className="text-xs ml-1" style={{ color: 'var(--ln-fg-dim)' }}>
+                        {stats}
+                      </span>
+                    )}
+                  </div>
+                  {subText && key !== 'parse' && (
+                    <div
+                      className="text-xs mt-1 ml-7"
+                      style={{
+                        color: isError
+                          ? 'var(--vscode-editorError-foreground, #f14c4c)'
+                          : 'var(--ln-fg-dim)',
+                      }}
+                    >
+                      {subText}
+                    </div>
+                  )}
+                  {isActive && key === 'load' && !progressText && (
+                    <div className="text-xs mt-1 ml-7" style={{ color: 'var(--ln-fg-dim)' }}>
+                      Reading file…{elapsed > 2 ? ` (${elapsed}s)` : ''}
+                    </div>
+                  )}
                 </div>
-              )}
-              {isActive && key === 'load' && !progressText && (
-                <div className="text-xs mt-1 ml-7" style={{ color: 'var(--ln-fg-dim)' }}>
-                  Reading file…
-                </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        </div>
+        {footer && (
+          <div className="px-5 pb-5 pt-2 ln-border-top flex-shrink-0">
+            {footer}
+          </div>
+        )}
       </div>
-    </WizardPanel>
+    </div>
   );
 });

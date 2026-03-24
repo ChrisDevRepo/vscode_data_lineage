@@ -77,3 +77,17 @@ export function validateSchemaPlaceholder(name: string, sql: string, phase: numb
   }
   return undefined;
 }
+
+// ─── Exclusion Pattern Compilation ──────────────────────────────────────────
+
+/**
+ * Compile an exclusion pattern to a case-insensitive RegExp.
+ * Supports % wildcard syntax alongside standard regex:
+ *   %tmp%   → .*tmp.*  (matches any name containing "tmp")
+ *   dbo.%   → dbo..*  (matches any object in the dbo schema)
+ * % characters are converted to .* before regex compilation.
+ * All other characters are treated as literal regex syntax.
+ */
+export function compileExclusionPattern(pattern: string): RegExp {
+  return new RegExp(pattern.replace(/%/g, '.*'), 'i');
+}
