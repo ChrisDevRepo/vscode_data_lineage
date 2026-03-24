@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -374,7 +374,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/profilingEngine.test.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/profilingEngine.test.ts && tsx test/projectStore.test.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",
@@ -382,12 +382,13 @@
     "test:dmv": "tsx test/dmvExtractor.test.ts",
     "test:sql": "tsx test/tsql-complex.test.ts",
     "test:profiling": "tsx test/profilingEngine.test.ts",
+    "test:project": "tsx test/projectStore.test.ts",
     "test:db": "tsx test-internal/integration-db.test.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@xyflow/react": "^12.4.0",
-    "fast-xml-parser": "^5.3.8",
+    "fast-xml-parser": "^5.5.9",
     "graphology": "^0.25.4",
     "graphology-components": "^1.5.4",
     "graphology-shortest-path": "^2.1.0",

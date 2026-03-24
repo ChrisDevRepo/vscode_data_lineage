@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.5] - 2026-03-24
+
+### Added
+- **Project sessions** — Connections and schema selections are now saved as named projects in VS Code global state. Projects survive extension updates and VS Code restarts. Stored internally (no file on disk, no sharing needed).
+- **Auto-generated project names** — Default name is `"{source} YYYY-MM-DD HH:mm"` (unique to the minute); can be renamed from the project list once the full project UI ships.
+- **Load project** — Opening a saved dacpac project skips the schema selector and loads the previously selected schemas directly. Database projects reconnect silently using stored credentials.
+- **Reopen Last** — The Reopen button now uses the project store; persists across panel reloads (not just in-session).
+- **One-time migration** — Existing last-opened connection (dacpac path or database credentials) auto-migrates to a named project on first use of v0.9.5.
+
 ## [0.9.4] - 2026-03-12
 
 ### Fixed

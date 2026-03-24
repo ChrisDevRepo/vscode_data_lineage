@@ -17,6 +17,10 @@ import { buildModelFromDmv, buildSchemaPreview, validateQueryResult } from './en
 import { loadRules } from './engine/sqlBodyParser';
 import type { ParseRulesConfig } from './engine/sqlBodyParser';
 import type { DmvResults } from './engine/dmvExtractor';
+import {
+  migrateProjectStore, createProject, updateProject, deleteProject, generateProjectName,
+} from './engine/projectStore';
+import type { Project, ProjectStore } from './engine/projectStore';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -216,17 +220,60 @@ async function createYamlScaffold(
   );
 }
 
-function getLastSource(context: vscode.ExtensionContext): { type: 'dacpac' | 'database'; name: string } | undefined {
+// ─── Project Store Helpers ───────────────────────────────────────────────────
+
+const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
+
+function loadProjectStore(context: vscode.ExtensionContext): ProjectStore {
+  const raw = context.globalState.get(PROJECT_STORE_KEY);
+  return migrateProjectStore(raw);
+}
+
+async function saveProjectStore(context: vscode.ExtensionContext, store: ProjectStore): Promise<void> {
+  await context.globalState.update(PROJECT_STORE_KEY, store);
+}
+
+/**
+ * One-time migration from legacy workspaceState keys into the project store.
+ * Runs only when globalState has no project store yet.
+ */
+async function migrateFromWorkspaceState(context: vscode.ExtensionContext): Promise<void> {
   const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
-  if (sourceType === 'database') {
-    const name = context.workspaceState.get<string>('lastDbSourceName');
-    return name ? { type: 'database', name } : undefined;
-  }
+  if (!sourceType) return;
+
+  let connection: import('./engine/projectStore').DacpacConnection | import('./engine/projectStore').DatabaseConnection | undefined;
+
   if (sourceType === 'dacpac') {
-    const name = context.workspaceState.get<string>('lastDacpacName');
-    return name ? { type: 'dacpac', name } : undefined;
+    const dacpacPath = context.workspaceState.get<string>('lastDacpacPath');
+    const dacpacName = context.workspaceState.get<string>('lastDacpacName');
+    if (dacpacPath && dacpacName) {
+      // schemas stored as empty — migrated project shows schema selector on next load
+      connection = { type: 'dacpac', path: dacpacPath, displayName: dacpacName, schemas: [] };
+    }
+  } else if (sourceType === 'database') {
+    const sourceName = context.workspaceState.get<string>('lastDbSourceName');
+    const connectionInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+    if (sourceName && connectionInfo) {
+      connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
+    }
   }
-  return undefined;
+
+  if (connection) {
+    const name = generateProjectName(connection);
+    const project = createProject(name, connection);
+    const store = loadProjectStore(context);
+    const updated = updateProject(store, project);
+    await saveProjectStore(context, updated);
+    outputChannel.info(`[Project] Migrated legacy connection to project "${name}"`);
+  }
+
+  // Clear old workspaceState keys regardless
+  await context.workspaceState.update('lastSourceType', undefined);
+  await context.workspaceState.update('lastDacpacPath', undefined);
+  await context.workspaceState.update('lastDacpacName', undefined);
+  await context.workspaceState.update('lastDeselectedSchemas', undefined);
+  await context.workspaceState.update('lastDbConnectionInfo', undefined);
+  await context.workspaceState.update('lastDbSourceName', undefined);
 }
 
 // ─── Open Panel ─────────────────────────────────────────────────────────────
@@ -279,17 +326,24 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       [K in WebviewMessage['type']]?: (msg: Extract<WebviewMessage, { type: K }>) => Promise<void> | void;
     };
     // Cache the Phase 1 all-objects result for use in Phase 2 (cross-schema resolution).
-    // Scoped to this panel so multiple panels don’t share state.
+    // Scoped to this panel so multiple panels don't share state.
     let allObjectsCache: SimpleExecuteResult | undefined;
+    // Last successful DB connection info for Phase 2 reconnect and stats connection.
+    let lastConnectionInfo: IConnectionInfo | undefined;
     const handlers: MessageHandlerMap = {
       'ready': async () => {
         if (loadDemo) {
           await handleLoadDemo(panel, context, true);
-        } else {
-          const config = await readExtensionConfig();
-          const lastSource = getLastSource(context);
-          panel.webview.postMessage({ type: 'config-only', config, lastSource });
+          return;
         }
+        // One-time migration from legacy workspaceState keys (runs once, clears old keys)
+        if (context.globalState.get(PROJECT_STORE_KEY) === undefined) {
+          await migrateFromWorkspaceState(context);
+        }
+        const config = await readExtensionConfig();
+        const store = loadProjectStore(context);
+        panel.webview.postMessage({ type: 'config-only', config });
+        panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId });
       },
       'open-dacpac': async () => {
         const uris = await vscode.window.showOpenDialog({
@@ -299,16 +353,12 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         });
         if (uris && uris.length > 0) {
           const fileUri = uris[0];
-          const fileName = path.basename(fileUri.fsPath);
+          const fileName = path.basename(fileUri.fsPath, '.dacpac');
           try {
             const data = await vscode.workspace.fs.readFile(fileUri);
             if (isDacpacTooLarge(data.byteLength)) return;
-            await context.workspaceState.update('lastDacpacPath', fileUri.fsPath);
-            await context.workspaceState.update('lastDacpacName', fileName);
-            await context.workspaceState.update('lastSourceType', 'dacpac');
             const config = await readExtensionConfig();
-            const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
-            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, config, lastDeselectedSchemas });
+            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, filePath: fileUri.fsPath, config });
             outputChannel.info(`── Opening ${fileName} ──`);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
@@ -317,34 +367,84 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           }
         }
       },
-      'save-schemas': async (msg) => {
-        await context.workspaceState.update('lastDeselectedSchemas', msg.deselected);
-      },
-      'load-last-dacpac': async () => {
-        const lastPath = context.workspaceState.get<string>('lastDacpacPath');
-        if (!lastPath) return;
-        try {
-          const fileUri = vscode.Uri.file(lastPath);
-          const data = await vscode.workspace.fs.readFile(fileUri);
-          if (isDacpacTooLarge(data.byteLength)) return;
-          const config = await readExtensionConfig();
-          const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
-          panel.webview.postMessage({
-            type: 'dacpac-data',
-            data: Array.from(data),
-            fileName: context.workspaceState.get<string>('lastDacpacName') || path.basename(lastPath),
-            config,
-            lastDeselectedSchemas,
-          });
-          outputChannel.info(`── Reopening ${path.basename(lastPath)} ──`);
-        } catch {
-          await context.workspaceState.update('lastDacpacPath', undefined);
-          await context.workspaceState.update('lastDacpacName', undefined);
-          await context.workspaceState.update('lastSourceType', undefined);
-          await context.workspaceState.update('lastDeselectedSchemas', undefined);
-          panel.webview.postMessage({ type: 'last-dacpac-gone' });
-          outputChannel.warn(`Last dacpac no longer available: ${lastPath}`);
+      'load-project': async (msg) => {
+        const store = loadProjectStore(context);
+        const project = store.projects.find(p => p.id === msg.id);
+        if (!project) {
+          panel.webview.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
+          return;
         }
+        if (project.connection.type === 'dacpac') {
+          const conn = project.connection;
+          const schemas = conn.schemas.length > 0 ? conn.schemas : undefined;
+          try {
+            const fileUri = vscode.Uri.file(conn.path);
+            const data = await vscode.workspace.fs.readFile(fileUri);
+            if (isDacpacTooLarge(data.byteLength)) return;
+            const config = await readExtensionConfig();
+            panel.webview.postMessage({
+              type: 'dacpac-data',
+              data: Array.from(data),
+              fileName: conn.displayName,
+              filePath: conn.path,
+              config,
+              preselectedSchemas: schemas,
+            });
+            outputChannel.info(`── Loading project "${project.name}" ──`);
+          } catch {
+            outputChannel.warn(`[Project] Dacpac not found: ${conn.path}`);
+            panel.webview.postMessage({ type: 'last-dacpac-gone' });
+          }
+        } else if (project.connection.type === 'database') {
+          const conn = project.connection;
+          await withDbProgress(
+            panel, 'Data Lineage: Loading project',
+            async () => {
+              const result = await connectDirect(conn.connectionInfo as IConnectionInfo, outputChannel);
+              if (result) return result;
+              outputChannel.info('[Project] Direct reconnect failed — falling back to picker');
+              return promptForConnection(outputChannel);
+            },
+            async (dbResult, progress, token) => {
+              lastConnectionInfo = dbResult.connectionInfo;
+              // Silent Phase 1: load all-objects for cross-schema resolution
+              const queries = await loadDmvQueries(outputChannel, extensionUri);
+              const allObjectsQuery = queries.find(q => q.name === 'all-objects');
+              if (allObjectsQuery) {
+                const dmvTimeout = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
+                const ph1Result = await executeDmvQueries(dbResult.connectionUri, [allObjectsQuery], outputChannel, undefined, dmvTimeout);
+                const r = ph1Result.get('all-objects');
+                if (r) {
+                  allObjectsCache = r;
+                  outputChannel.info(`[Project] Catalog: ${r.rowCount} objects loaded`);
+                }
+              }
+              if (token.isCancellationRequested) { panel.webview.postMessage({ type: 'db-cancelled' }); return; }
+              // Phase 2 with stored schemas
+              const schemas = conn.schemas.length > 0 ? conn.schemas : undefined;
+              if (!schemas) {
+                // No schemas stored — run Phase 1 visually (schema selector will appear)
+                await runDbPhase1(panel, dbResult.connectionUri, dbResult.connectionInfo, progress, token, (r) => { allObjectsCache = r; });
+                return;
+              }
+              await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName);
+              outputChannel.info(`── Loading project "${project.name}" ──`);
+            },
+          );
+        }
+      },
+      'save-project': async (msg) => {
+        const store = loadProjectStore(context);
+        const updated = updateProject(store, msg.project);
+        await saveProjectStore(context, updated);
+        outputChannel.debug(`[Project] Saved: "${msg.project.name}"`);
+      },
+      'delete-project': async (msg) => {
+        const store = loadProjectStore(context);
+        const updated = deleteProject(store, msg.id);
+        await saveProjectStore(context, updated);
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
+        outputChannel.debug(`[Project] Deleted: ${msg.id}`);
       },
       'load-demo': async () => { await handleLoadDemo(panel, context); },
       'parse-rules-result': (msg) => { handleParseRulesResult(msg); },
@@ -379,7 +479,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'show-ddl': async (msg) => { await showDdlTextEditor(ddlUri, msg as DdlMessage); },
       'update-ddl': async (msg) => { updateDdlTextEditor(ddlUri, msg as DdlMessage); },
       'table-stats-request': async (msg) => {
-        await handleTableStatsRequest(context, panel, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
+        await handleTableStatsRequest(lastConnectionInfo, panel, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
       },
       'check-mssql': () => {
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
@@ -387,37 +487,45 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'db-connect': () => withDbProgress(
         panel, 'Data Lineage: Connecting to database',
         () => promptForConnection(outputChannel),
-        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token,
-          (result) => { allObjectsCache = result; }),
+        (conn, progress, token) => {
+          lastConnectionInfo = conn.connectionInfo;
+          return runDbPhase1(panel, conn.connectionUri, conn.connectionInfo, progress, token,
+            (result) => { allObjectsCache = result; });
+        },
       ),
       'db-reconnect': () => withDbProgress(
         panel, 'Data Lineage: Reconnecting to database',
         async () => {
-          const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
-          if (storedInfo) {
-            const result = await connectDirect(storedInfo, outputChannel);
+          if (lastConnectionInfo) {
+            const result = await connectDirect(lastConnectionInfo, outputChannel);
             if (result) return result;
             outputChannel.info('[DB] Falling back to connection picker');
           }
           return promptForConnection(outputChannel);
         },
-        (conn, progress, token) => runDbPhase1(panel, context, conn.connectionUri, conn.connectionInfo, progress, token,
-          (result) => { allObjectsCache = result; }),
+        (conn, progress, token) => {
+          lastConnectionInfo = conn.connectionInfo;
+          return runDbPhase1(panel, conn.connectionUri, conn.connectionInfo, progress, token,
+            (result) => { allObjectsCache = result; });
+        },
       ),
       'db-visualize': (msg) => withDbProgress(
         panel, 'Data Lineage: Loading selected schemas',
         async () => {
-          const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
-          if (!storedInfo) {
+          if (!lastConnectionInfo) {
             panel.webview.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
             return undefined;
           }
-          const result = await connectDirect(storedInfo, outputChannel);
+          const result = await connectDirect(lastConnectionInfo, outputChannel);
           if (result) return result;
           outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
           return promptForConnection(outputChannel);
         },
-        (conn, progress, token) => runDbPhase2(panel, context, conn.connectionUri, msg.schemas, progress, token, allObjectsCache),
+        (conn, progress, token) => runDbPhase2(
+          panel, conn.connectionUri, msg.schemas, progress, token, allObjectsCache,
+          conn.connectionInfo.database,
+          `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`,
+        ),
       ),
       'reload': () => {
         panel.dispose();
@@ -455,9 +563,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
 type WebviewMessage =
   | { type: 'ready' }
   | { type: 'open-dacpac' }
-  | { type: 'save-schemas'; deselected: string[] }
-  | { type: 'load-last-dacpac' }
   | { type: 'load-demo' }
+  | { type: 'load-project'; id: string }
+  | { type: 'save-project'; project: import('./engine/projectStore').Project }
+  | { type: 'delete-project'; id: string }
   | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
   | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
   | { type: 'log'; text: string }
@@ -662,7 +771,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
  * Does NOT disconnect after completion — connection stays alive for subsequent clicks.
  */
 async function handleTableStatsRequest(
-  context: vscode.ExtensionContext,
+  storedConnectionInfo: IConnectionInfo | undefined,
   panel: vscode.WebviewPanel,
   schema: string,
   objectName: string,
@@ -688,9 +797,8 @@ async function handleTableStatsRequest(
     const isAlive = await verifyStatsConnection(queryTimeout);
     if (!isAlive) {
       // Same reconnect pattern as db-reconnect: stored creds first, fall back to picker
-      const storedInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
-      const result = storedInfo
-        ? ((await connectDirect(storedInfo, outputChannel)) ?? await promptForConnection(outputChannel))
+      const result = storedConnectionInfo
+        ? ((await connectDirect(storedConnectionInfo, outputChannel)) ?? await promptForConnection(outputChannel))
         : await promptForConnection(outputChannel);
       if (!result) {
         panel.webview.postMessage({ type: 'table-stats-error', message: 'Connection cancelled.' });
@@ -793,12 +901,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 // ─── Two-Phase DB Extraction ─────────────────────────────────────────────────
 
-async function persistDbSourceState(context: vscode.ExtensionContext, sourceName: string, connectionInfo: IConnectionInfo): Promise<void> {
-  await context.workspaceState.update('lastDbSourceName', sourceName);
-  await context.workspaceState.update('lastDbConnectionInfo', stripSensitiveFields(connectionInfo));
-  await context.workspaceState.update('lastSourceType', 'database');
-}
-
 /**
  * Phase 1: Connect, run schema-preview + all-objects queries.
  * Sends SchemaPreview to webview for schema selection.
@@ -807,7 +909,6 @@ async function persistDbSourceState(context: vscode.ExtensionContext, sourceName
  */
 async function runDbPhase1(
   panel: vscode.WebviewPanel,
-  context: vscode.ExtensionContext,
   connectionUri: string,
   connectionInfo: IConnectionInfo,
   progress: vscode.Progress<{ message?: string; increment?: number }>,
@@ -817,7 +918,7 @@ async function runDbPhase1(
   const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
 
   progress.report({ message: 'Loading queries...' });
-  const queries = await loadDmvQueries(outputChannel, context.extensionUri);
+  const queries = await loadDmvQueries(outputChannel, extensionUri);
 
   if (token.isCancellationRequested) {
     panel.webview.postMessage({ type: 'db-cancelled' });
@@ -839,6 +940,7 @@ async function runDbPhase1(
 
   const dmvTimeoutMs = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const previewResult = await executeDmvQueries(connectionUri, phase1Queries, outputChannel, undefined, dmvTimeoutMs);
+
 
   if (token.isCancellationRequested) {
     panel.webview.postMessage({ type: 'db-cancelled' });
@@ -878,16 +980,12 @@ async function runDbPhase1(
     }
   }
 
-  await persistDbSourceState(context, sourceName, connectionInfo);
-
   const config = await readExtensionConfig();
-  const lastDeselectedSchemas = context.workspaceState.get<string[]>('lastDeselectedSchemas');
   panel.webview.postMessage({
     type: 'db-schema-preview',
     preview,
     config,
     sourceName,
-    lastDeselectedSchemas,
   });
 }
 
@@ -897,15 +995,16 @@ async function runDbPhase1(
  */
 async function runDbPhase2(
   panel: vscode.WebviewPanel,
-  context: vscode.ExtensionContext,
   connectionUri: string,
   schemas: string[],
   progress: vscode.Progress<{ message?: string; increment?: number }>,
   token: vscode.CancellationToken,
   allObjects?: SimpleExecuteResult,
+  currentDatabase?: string,
+  sourceName?: string,
 ): Promise<void> {
   progress.report({ message: 'Loading queries...' });
-  const queries = await loadDmvQueries(outputChannel, context.extensionUri);
+  const queries = await loadDmvQueries(outputChannel, extensionUri);
 
   if (token.isCancellationRequested) {
     panel.webview.postMessage({ type: 'db-cancelled' });
@@ -954,7 +1053,6 @@ async function runDbPhase2(
   progress.report({ message: 'Building model...' });
   outputChannel.info('[DB] Building model from DMV results...');
   const start = Date.now();
-  const currentDatabase = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo')?.database;
   const preConfig = await readExtensionConfig();
   if (preConfig.parseRules) {
     const rulesResult = loadRules(preConfig.parseRules as ParseRulesConfig);
@@ -969,12 +1067,11 @@ async function runDbPhase2(
     outputChannel.debug(`[DB] External nodes: ${extNodes.map(n => n.fullName).join(', ')}`);
   }
 
-  const sourceName = context.workspaceState.get<string>('lastDbSourceName') || 'Database';
   panel.webview.postMessage({
     type: 'db-model',
     model,
     config: preConfig,
-    sourceName,
+    sourceName: sourceName ?? 'Database',
   });
 }
 

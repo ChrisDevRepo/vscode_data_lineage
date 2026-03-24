@@ -56,6 +56,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const isDemoRef = useRef(false);
   const loadGenRef = useRef(0);
   const cachedElementsRef = useRef<XmlElement[] | null>(null);
+  const lastOpenedProjectIdRef = useRef<string | null>(null);
 
   // Auto-clear transient info messages after 6s (progress, connecting, loading...).
   // Success messages persist until the next action — they carry meaningful summary information
@@ -145,7 +146,19 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
       if (msg.type === 'config-only') {
         if (msg.config) applyConfig(msg.config);
-        if (msg.lastSource) setLastSource(msg.lastSource);
+        return;
+      }
+
+      if (msg.type === 'projects-list') {
+        // Restore lastSource so the Reopen button appears after panel reload
+        lastOpenedProjectIdRef.current = msg.lastOpenedId ?? null;
+        const lastProject = msg.projects?.find((p: import('../engine/projectStore').Project) => p.id === msg.lastOpenedId);
+        if (lastProject) {
+          const name = lastProject.connection.type === 'dacpac'
+            ? lastProject.connection.displayName
+            : lastProject.connection.sourceName;
+          setLastSource({ type: lastProject.connection.type, name });
+        }
         return;
       }
 
@@ -183,7 +196,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         const name = msg.sourceName || 'Database';
         setLastSource({ type: 'database', name });
         cachedElementsRef.current = null; // DB path doesn't use element cache
-        applySchemaPreview(msg.preview, name, msg.lastDeselectedSchemas);
+        applySchemaPreview(msg.preview, name);
         setIsLoading(false);
         setLoadingContext(null);
         return;
@@ -194,7 +207,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
         setLastSource({ type: 'database', name });
-        applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`, msg.lastDeselectedSchemas);
+        applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`);
         setIsLoading(false);
         setLoadingContext(null);
         // If this was triggered by Phase 2 visualize, signal completion
@@ -223,21 +236,29 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
           const buffer = new Uint8Array(msg.data).buffer;
 
           if (msg.autoVisualize) {
-            // autoVisualize (demo): bypass Phase 1, do full extraction immediately
+            // Demo path: bypass schema selector, full extraction
             const result = await extractDacpac(buffer);
             if (gen !== loadGenRef.current) return;
             cachedElementsRef.current = null;
-            applyModel(result, msg.fileName || 'dacpac', `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`, msg.lastDeselectedSchemas);
+            applyModel(result, name, `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`);
             setPendingAutoVisualize(true);
+          } else if (msg.preselectedSchemas && msg.preselectedSchemas.length > 0) {
+            // Load-project path: skip schema selector, run Phase 2 with stored schemas
+            const { elements } = await extractSchemaPreview(buffer);
+            if (gen !== loadGenRef.current) return;
+            cachedElementsRef.current = null;
+            const result = extractDacpacFiltered(elements, new Set(msg.preselectedSchemas));
+            applyModel(result, name, `Loaded ${result.nodes.length} objects, ${result.edges.length} edges`);
+            setPendingVisualize(true);
           } else {
-            // Phase 1: lightweight schema preview
+            // Create-flow path: Phase 1 — show schema selector
             const { preview, elements } = await extractSchemaPreview(buffer);
             if (gen !== loadGenRef.current) return;
             cachedElementsRef.current = elements;
-            applySchemaPreview(preview, msg.fileName || 'dacpac', msg.lastDeselectedSchemas);
+            applySchemaPreview(preview, name);
           }
         } catch (err) {
-          if (gen !== loadGenRef.current) return; // stale load — discard
+          if (gen !== loadGenRef.current) return;
           vscodeApi.postMessage({ type: 'error', error: err instanceof Error ? err.message : 'Failed to parse file' });
           setStatus({ text: err instanceof Error ? err.message : 'Failed to parse file', type: 'error' });
         } finally {
@@ -321,14 +342,21 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     isDemoRef.current = false;
     setIsLoading(true);
     setStatus(null);
-    if (lastSource.type === 'dacpac') {
-      setLoadingContext('dacpac');
-      vscodeApi.postMessage({ type: 'load-last-dacpac' });
-    } else {
+    const projectId = lastOpenedProjectIdRef.current;
+    if (projectId) {
+      // Project system: load by stored project ID
+      setLoadingContext(lastSource.type);
+      if (lastSource.type === 'database') {
+        setStatus({ text: 'Reconnecting to database...', type: 'info' });
+      }
+      vscodeApi.postMessage({ type: 'load-project', id: projectId });
+    } else if (lastSource.type === 'database') {
+      // Legacy fallback for in-session reconnect (no stored project)
       setLoadingContext('database');
       setStatus({ text: 'Reconnecting to database...', type: 'info' });
       vscodeApi.postMessage({ type: 'db-reconnect' });
     }
+    // dacpac without a project ID: nothing to reopen
   }, [vscodeApi, lastSource]);
 
   const loadDemo = useCallback(() => {

@@ -15,6 +15,7 @@ import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
+import type { Project } from '../engine/projectStore';
 
 type AppView = 'selector' | 'graph' | 'loading';
 
@@ -38,6 +39,8 @@ export function App() {
   const [view, setView] = useState<AppView>(isAutoVisualize ? 'loading' : 'selector');
   const [model, setModel] = useState<DacpacModel | null>(null);
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const [filter, setFilter] = useState<FilterState>({
@@ -527,7 +530,7 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
 
-  // Handle stats results from extension host
+  // Handle stats results and project list from extension host
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       const msg = e.data;
@@ -535,6 +538,9 @@ export function App() {
         setTableStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
       } else if (msg?.type === 'table-stats-error') {
         setTableStatsState({ phase: 'error', message: msg.message });
+      } else if (msg?.type === 'projects-list') {
+        setProjects(msg.projects ?? []);
+        setLastOpenedId(msg.lastOpenedId ?? null);
       }
     };
     window.addEventListener('message', handler);
