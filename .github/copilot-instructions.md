@@ -52,11 +52,11 @@ Press F5 to launch Extension Development Host.
 |------|-------|---------|
 | `test/dacpacExtractor.test.ts` | 63 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
 | `test/graphBuilder.test.ts` | 156 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression |
-| `test/parser-edge-cases.test.ts` | 192 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
-| `test/graphAnalysis.test.ts` | 62 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
+| `test/parser-edge-cases.test.ts` | 197 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
+| `test/graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
-| `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/projectStore.test.ts` | 146 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
+| `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
+| `test/projectStore.test.ts` | 148 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 

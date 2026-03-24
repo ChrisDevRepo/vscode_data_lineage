@@ -338,9 +338,11 @@ test('two calls within same minute produce identical timestamp suffix', () => {
   // Both calls happen within the same second, so same minute
   const n1 = generateProjectName(dacpacConn);
   const n2 = generateProjectName(dacpacConn);
-  const ts1 = n1.slice(-16);  // last 16 chars = "YYYY-MM-DD HH:mm"
-  const ts2 = n2.slice(-16);
-  assertEq(ts1, ts2, 'same-minute calls share timestamp');
+  const tsMatch1 = n1.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/);
+  const tsMatch2 = n2.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/);
+  assert(tsMatch1 !== null, 'n1 ends with YYYY-MM-DD HH:mm timestamp');
+  assert(tsMatch2 !== null, 'n2 ends with YYYY-MM-DD HH:mm timestamp');
+  assertEq(tsMatch1![1], tsMatch2![1], 'same-minute calls share timestamp');
 });
 
 test('does not include seconds in timestamp', () => {
@@ -371,8 +373,8 @@ test('serializeFilter converts Sets to arrays', () => {
 
 test('serializeFilter preserves values', () => {
   const s = serializeFilter(sampleFilter);
-  assertEq(s.schemas.sort().join(','), 'Sales,dbo', 'schemas preserved');
-  assertEq(s.types.sort().join(','), 'table,view', 'types preserved');
+  assertEq([...s.schemas].sort().join(','), 'Sales,dbo', 'schemas preserved');
+  assertEq([...s.types].sort().join(','), 'table,view', 'types preserved');
   assertEq(s.searchTerm, 'Order', 'searchTerm preserved');
   assertEq(s.hideIsolated, false, 'hideIsolated preserved');
   assertEq(s.focusSchemas.join(','), 'dbo', 'focusSchemas preserved');
