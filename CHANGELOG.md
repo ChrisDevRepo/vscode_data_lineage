@@ -3,11 +3,18 @@
 ## [0.9.5] - 2026-03-24
 
 ### Added
-- **Project sessions** — Connections and schema selections are now saved as named projects in VS Code global state. Projects survive extension updates and VS Code restarts. Stored internally (no file on disk, no sharing needed).
-- **Auto-generated project names** — Default name is `"{source} YYYY-MM-DD HH:mm"` (unique to the minute); can be renamed from the project list once the full project UI ships.
-- **Load project** — Opening a saved dacpac project skips the schema selector and loads the previously selected schemas directly. Database projects reconnect silently using stored credentials.
-- **Reopen Last** — The Reopen button now uses the project store; persists across panel reloads (not just in-session).
-- **One-time migration** — Existing last-opened connection (dacpac path or database credentials) auto-migrates to a named project on first use of v0.9.5.
+- **Project sessions** — Connections and schema selections are now saved as named projects in VS Code global state. Projects survive extension updates and VS Code restarts.
+- **Project manager (Start screen)** — New start screen lists saved projects as clickable cards with source type, date, and inline delete confirmation. "Create New" opens the creation flow; "Try with demo data" goes directly to the spinner.
+- **Create New flow** — Streamlined wizard: open dacpac or connect to database → Phase 1 inline spinner → schema selector with project name field → Visualize.
+- **Central loading spinner (VisualizingScreen)** — All load paths (Create New, Open Project, Demo) show a unified Load → Parse → Generate phase view with sub-text progress. Dacpac phases flash through instantly (buffer cached); DB queries show live progress. Error state auto-returns to Start after 3 s with countdown.
+- **Saved Views (Filter Profiles)** — Bookmark icon in the graph toolbar opens a dropdown to save the current filter state (schemas, types, isolated, external refs, search term) as a named view. Saved views are stored per-project and can be applied or deleted. Optimistic UI (no round-trip delay).
+- **Auto-generated project names** — Default `"{source} YYYY-MM-DD HH:mm"`, editable before visualizing.
+- **One-time migration** — Existing last-opened connection auto-migrates to a named project on first use.
+
+### Changed
+- Removed `db-reconnect` message (replaced by `load-project`); removed `save-schemas` message (replaced by project save flow).
+- File-not-found on project load now shows VS Code error notification in addition to in-screen error.
+- Test suite: 909 tests (↑ from 861; +48 filter profile tests).
 
 ## [0.9.4] - 2026-03-12
 

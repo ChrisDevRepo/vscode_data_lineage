@@ -3,7 +3,7 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all unit tests (861 total)
+npm test                                       # Run all unit tests (909 total)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (63 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (156 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (192 tests)
@@ -11,7 +11,7 @@ npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (62 tests)
 npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (161 tests)
 npx tsx test/tsql-complex.test.ts              # SQL pattern tests (54 tests)
 npx tsx test/profilingEngine.test.ts           # Profiling engine tests (75 tests)
-npx tsx test/projectStore.test.ts              # Project store tests (98 tests)
+npx tsx test/projectStore.test.ts              # Project store tests (146 tests)
 ```
 
 ## Test Files
@@ -25,7 +25,7 @@ npx tsx test/projectStore.test.ts              # Project store tests (98 tests)
 | `dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, external tables, schema placeholder expansion |
 | `tsql-complex.test.ts` | 54 | **SQL pattern tests** — targeted SQL files covering each parser pattern; expected results embedded as `-- EXPECT` comments |
 | `profilingEngine.test.ts` | 75 | Table statistics: query generation, column classification, sampling logic, result parsing, date formatting, type badges |
-| `projectStore.test.ts` | 98 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName |
+| `projectStore.test.ts` | 146 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
 
 ## Dacpac Extractor Tests (`dacpacExtractor.test.ts`)
 

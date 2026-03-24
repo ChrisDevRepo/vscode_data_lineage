@@ -1,5 +1,6 @@
-import { memo, useEffect, useState } from 'react';
+import { memo } from 'react';
 import { Button } from './ui/Button';
+import { useDropdown } from '../hooks/useDropdown';
 
 interface ExternalRefsDropdownProps {
   showExternalRefs: boolean;
@@ -14,21 +15,12 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   onToggleMaster,
   onToggleSubType,
 }: ExternalRefsDropdownProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
+  const { isOpen, toggle, containerRef } = useDropdown();
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <Button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggle}
         variant="icon"
         title="External References"
         aria-expanded={isOpen}
@@ -52,9 +44,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
       </Button>
 
       {isOpen && (
-        <>
-          <div className="fixed inset-0 z-20" onMouseDown={() => setIsOpen(false)} />
-          <div className="absolute top-full mt-2 w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown" role="menu" aria-label="External reference filters">
+        <div className="absolute top-full mt-2 w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown" role="menu" aria-label="External reference filters">
             {/* Master toggle */}
             <div className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={showExternalRefs}>
               <input
@@ -94,8 +84,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                 <span className="text-[10px] ml-auto" style={{ color: 'var(--ln-fg-dim)' }}>3-part</span>
               </div>
             </div>
-          </div>
-        </>
+        </div>
       )}
     </div>
   );

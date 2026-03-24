@@ -30,6 +30,7 @@ import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
+import type { FilterProfile } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
@@ -83,6 +84,11 @@ interface GraphCanvasProps {
   tableDetailPanel?: ReactNode;
   isPanelOpen?: boolean;
   sourceName?: string;
+  filterProfiles?: FilterProfile[];
+  activeProjectId?: string | null;
+  onSaveView?: (name: string) => void;
+  onApplyView?: (profile: FilterProfile) => void;
+  onDeleteView?: (profileId: string) => void;
 }
 
 export function GraphCanvas({
@@ -129,6 +135,11 @@ export function GraphCanvas({
   tableDetailPanel,
   isPanelOpen,
   sourceName,
+  filterProfiles,
+  activeProjectId,
+  onSaveView,
+  onApplyView,
+  onDeleteView,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -335,6 +346,11 @@ export function GraphCanvas({
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}
         metrics={metrics}
+        filterProfiles={filterProfiles}
+        activeProjectId={activeProjectId}
+        onSaveView={onSaveView}
+        onApplyView={onApplyView}
+        onDeleteView={onDeleteView}
       />
 
       {/* Inline Trace Controls - shown during configuration phase */}

@@ -1,12 +1,13 @@
 /**
- * Project store — named sessions with connection + schema selection.
+ * Project store — named sessions with connection + schema selection + saved filter views.
  *
  * Pure module: no VS Code imports. Usable in both extension host and tests.
  * Stored in context.globalState under key 'dataLineageViz.projectStore'.
  *
  * Schema versioning: schemaVersion field enables forward-compatible migrations.
- * Future filter profiles: add filterProfiles?: FilterProfile[] to Project when ready.
  */
+
+import type { FilterState } from './types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -16,16 +17,31 @@ export interface ProjectStore {
   lastOpenedId: string | null;
 }
 
+/** Serialized FilterState — Sets become arrays for JSON storage. */
+export interface SerializedFilterState {
+  schemas: string[];
+  types: string[];
+  searchTerm: string;
+  hideIsolated: boolean;
+  focusSchemas: string[];
+  showExternalRefs: boolean;
+  externalRefTypes: string[];
+}
+
+export interface FilterProfile {
+  id: string;
+  name: string;
+  createdAt: string;
+  filter: SerializedFilterState;
+}
+
 export interface Project {
   id: string;         // crypto.randomUUID()
   name: string;       // user-defined; auto-generated as default
   createdAt: string;  // ISO 8601
   updatedAt: string;  // refreshed on every successful open
   connection: DacpacConnection | DatabaseConnection;
-  // FUTURE: filterProfiles?: FilterProfile[];
-  // FilterProfile = named snapshot of FilterState (schemas, types, hideIsolated,
-  // showExternalRefs, externalRefTypes, searchTerm). Multiple per project.
-  // dagre layout always recalculates on load — positions are NOT persisted.
+  filterProfiles?: FilterProfile[];
 }
 
 export interface DacpacConnection {
@@ -184,4 +200,54 @@ export function generateProjectName(connection: DacpacConnection | DatabaseConne
 
 function pad(n: number): string {
   return n.toString().padStart(2, '0');
+}
+
+// ─── Filter Profiles ──────────────────────────────────────────────────────────
+
+/** Add or replace a filter profile on a project (matched by profile.id). */
+export function addFilterProfile(store: ProjectStore, projectId: string, profile: FilterProfile): ProjectStore {
+  const projects = store.projects.map(p => {
+    if (p.id !== projectId) return p;
+    const existing = p.filterProfiles ?? [];
+    const profiles = existing.some(fp => fp.id === profile.id)
+      ? existing.map(fp => (fp.id === profile.id ? profile : fp))
+      : [...existing, profile];
+    return { ...p, filterProfiles: profiles };
+  });
+  return { ...store, projects };
+}
+
+/** Remove a filter profile from a project. */
+export function deleteFilterProfile(store: ProjectStore, projectId: string, profileId: string): ProjectStore {
+  const projects = store.projects.map(p => {
+    if (p.id !== projectId) return p;
+    return { ...p, filterProfiles: (p.filterProfiles ?? []).filter(fp => fp.id !== profileId) };
+  });
+  return { ...store, projects };
+}
+
+/** Convert a live FilterState (with Sets) to a JSON-serializable form. */
+export function serializeFilter(filter: FilterState): SerializedFilterState {
+  return {
+    schemas: Array.from(filter.schemas),
+    types: Array.from(filter.types),
+    searchTerm: filter.searchTerm,
+    hideIsolated: filter.hideIsolated,
+    focusSchemas: Array.from(filter.focusSchemas),
+    showExternalRefs: filter.showExternalRefs,
+    externalRefTypes: Array.from(filter.externalRefTypes),
+  };
+}
+
+/** Restore a SerializedFilterState back to a live FilterState (with Sets). */
+export function deserializeFilter(s: SerializedFilterState): FilterState {
+  return {
+    schemas: new Set(s.schemas),
+    types: new Set(s.types) as FilterState['types'],
+    searchTerm: s.searchTerm,
+    hideIsolated: s.hideIsolated,
+    focusSchemas: new Set(s.focusSchemas),
+    showExternalRefs: s.showExternalRefs,
+    externalRefTypes: new Set(s.externalRefTypes) as FilterState['externalRefTypes'],
+  };
 }

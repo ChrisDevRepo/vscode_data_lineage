@@ -6,7 +6,9 @@ import { HelpModal } from './HelpModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
 import { TypeFilterDropdown } from './TypeFilterDropdown';
 import { ExternalRefsDropdown } from './ExternalRefsDropdown';
+import { SavedViewsDropdown } from './SavedViewsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
+import type { FilterProfile } from '../engine/projectStore';
 
 interface ToolbarProps {
   types: Set<ObjectType>;
@@ -39,6 +41,11 @@ interface ToolbarProps {
   externalRefTypes?: Set<'file' | 'db'>;
   onToggleExternalRefs?: () => void;
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
+  filterProfiles?: FilterProfile[];
+  activeProjectId?: string | null;
+  onSaveView?: (name: string) => void;
+  onApplyView?: (profile: FilterProfile) => void;
+  onDeleteView?: (profileId: string) => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -79,6 +86,11 @@ export const Toolbar = memo(function Toolbar({
   externalRefTypes = new Set<'file' | 'db'>(['file', 'db']),
   onToggleExternalRefs,
   onToggleExternalRefType,
+  filterProfiles = [],
+  activeProjectId,
+  onSaveView,
+  onApplyView,
+  onDeleteView,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
@@ -126,6 +138,15 @@ export const Toolbar = memo(function Toolbar({
             externalRefTypes={externalRefTypes}
             onToggleMaster={onToggleExternalRefs}
             onToggleSubType={onToggleExternalRefType}
+          />
+        )}
+        {onSaveView && onApplyView && onDeleteView && (
+          <SavedViewsDropdown
+            filterProfiles={filterProfiles}
+            isEnabled={!!activeProjectId}
+            onSaveView={onSaveView}
+            onApplyView={onApplyView}
+            onDeleteView={onDeleteView}
           />
         )}
 

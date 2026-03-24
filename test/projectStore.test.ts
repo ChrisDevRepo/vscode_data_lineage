@@ -10,13 +10,20 @@ import {
   deleteProject,
   migrateProjectStore,
   generateProjectName,
+  addFilterProfile,
+  deleteFilterProfile,
+  serializeFilter,
+  deserializeFilter,
 } from '../src/engine/projectStore';
 import type {
   ProjectStore,
   Project,
   DacpacConnection,
   DatabaseConnection,
+  FilterProfile,
+  SerializedFilterState,
 } from '../src/engine/projectStore';
+import type { FilterState } from '../src/engine/types';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -340,6 +347,151 @@ test('does not include seconds in timestamp', () => {
   const name = generateProjectName(dacpacConn);
   // HH:mm:ss would be 19 chars after the date separator; HH:mm is 16
   assert(!/\d{2}:\d{2}:\d{2}/.test(name), 'no seconds in timestamp');
+});
+
+// ─── serializeFilter / deserializeFilter ──────────────────────────────────────
+
+const sampleFilter: FilterState = {
+  schemas: new Set(['dbo', 'Sales']),
+  types: new Set(['table', 'view']),
+  searchTerm: 'Order',
+  hideIsolated: false,
+  focusSchemas: new Set(['dbo']),
+  showExternalRefs: true,
+  externalRefTypes: new Set(['file']),
+};
+
+test('serializeFilter converts Sets to arrays', () => {
+  const s = serializeFilter(sampleFilter);
+  assert(Array.isArray(s.schemas), 'schemas is array');
+  assert(Array.isArray(s.types), 'types is array');
+  assert(Array.isArray(s.focusSchemas), 'focusSchemas is array');
+  assert(Array.isArray(s.externalRefTypes), 'externalRefTypes is array');
+});
+
+test('serializeFilter preserves values', () => {
+  const s = serializeFilter(sampleFilter);
+  assertEq(s.schemas.sort().join(','), 'Sales,dbo', 'schemas preserved');
+  assertEq(s.types.sort().join(','), 'table,view', 'types preserved');
+  assertEq(s.searchTerm, 'Order', 'searchTerm preserved');
+  assertEq(s.hideIsolated, false, 'hideIsolated preserved');
+  assertEq(s.focusSchemas.join(','), 'dbo', 'focusSchemas preserved');
+  assertEq(s.showExternalRefs, true, 'showExternalRefs preserved');
+  assertEq(s.externalRefTypes.join(','), 'file', 'externalRefTypes preserved');
+});
+
+test('deserializeFilter restores Sets', () => {
+  const s = serializeFilter(sampleFilter);
+  const restored = deserializeFilter(s);
+  assert(restored.schemas instanceof Set, 'schemas is Set');
+  assert(restored.types instanceof Set, 'types is Set');
+  assert(restored.focusSchemas instanceof Set, 'focusSchemas is Set');
+  assert(restored.externalRefTypes instanceof Set, 'externalRefTypes is Set');
+});
+
+test('roundtrip: serialize then deserialize is identity', () => {
+  const s = serializeFilter(sampleFilter);
+  const restored = deserializeFilter(s);
+  assertEq(restored.searchTerm, sampleFilter.searchTerm, 'searchTerm roundtrip');
+  assertEq(restored.hideIsolated, sampleFilter.hideIsolated, 'hideIsolated roundtrip');
+  assertEq(restored.showExternalRefs, sampleFilter.showExternalRefs, 'showExternalRefs roundtrip');
+  assertEq(restored.schemas.has('dbo'), true, 'dbo in schemas');
+  assertEq(restored.schemas.has('Sales'), true, 'Sales in schemas');
+  assertEq(restored.types.has('table'), true, 'table in types');
+  assertEq(restored.focusSchemas.has('dbo'), true, 'dbo in focusSchemas');
+  assertEq(restored.externalRefTypes.has('file'), true, 'file in externalRefTypes');
+});
+
+// ─── addFilterProfile ──────────────────────────────────────────────────────────
+
+const storeForViews: ProjectStore = {
+  schemaVersion: 1,
+  projects: [{ ...createProject('Test', dacpacConn), id: 'proj-1' }],
+  lastOpenedId: 'proj-1',
+};
+
+const fp1: FilterProfile = {
+  id: 'fp-1',
+  name: 'Sales Focus',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  filter: serializeFilter(sampleFilter),
+};
+
+const fp2: FilterProfile = {
+  id: 'fp-2',
+  name: 'All Types',
+  createdAt: '2026-01-02T00:00:00.000Z',
+  filter: serializeFilter({ ...sampleFilter, searchTerm: '' }),
+};
+
+test('addFilterProfile adds a profile to the project', () => {
+  const updated = addFilterProfile(storeForViews, 'proj-1', fp1);
+  const profiles = updated.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles.length, 1, 'one profile added');
+  assertEq(profiles[0].id, 'fp-1', 'profile id matches');
+  assertEq(profiles[0].name, 'Sales Focus', 'profile name matches');
+});
+
+test('addFilterProfile appends multiple profiles', () => {
+  const s1 = addFilterProfile(storeForViews, 'proj-1', fp1);
+  const s2 = addFilterProfile(s1, 'proj-1', fp2);
+  const profiles = s2.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles.length, 2, 'two profiles');
+});
+
+test('addFilterProfile replaces existing profile with same id', () => {
+  const s1 = addFilterProfile(storeForViews, 'proj-1', fp1);
+  const updated = { ...fp1, name: 'Renamed' };
+  const s2 = addFilterProfile(s1, 'proj-1', updated);
+  const profiles = s2.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles.length, 1, 'still one profile (replaced)');
+  assertEq(profiles[0].name, 'Renamed', 'name updated');
+});
+
+test('addFilterProfile does not affect other projects', () => {
+  const storeTwo: ProjectStore = {
+    schemaVersion: 1,
+    projects: [
+      { ...createProject('P1', dacpacConn), id: 'proj-1' },
+      { ...createProject('P2', dbConn), id: 'proj-2' },
+    ],
+    lastOpenedId: 'proj-1',
+  };
+  const updated = addFilterProfile(storeTwo, 'proj-1', fp1);
+  const p2Profiles = updated.projects.find(p => p.id === 'proj-2')?.filterProfiles;
+  assert(!p2Profiles || p2Profiles.length === 0, 'other project unaffected');
+});
+
+test('addFilterProfile on unknown projectId is a no-op', () => {
+  const updated = addFilterProfile(storeForViews, 'no-such-id', fp1);
+  assertEq(updated.projects.length, storeForViews.projects.length, 'project count unchanged');
+  const proj = updated.projects[0];
+  assert(!proj.filterProfiles || proj.filterProfiles.length === 0, 'no profiles added');
+});
+
+// ─── deleteFilterProfile ──────────────────────────────────────────────────────
+
+test('deleteFilterProfile removes the profile', () => {
+  const s1 = addFilterProfile(storeForViews, 'proj-1', fp1);
+  const s2 = addFilterProfile(s1, 'proj-1', fp2);
+  const s3 = deleteFilterProfile(s2, 'proj-1', 'fp-1');
+  const profiles = s3.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles.length, 1, 'one profile remaining');
+  assertEq(profiles[0].id, 'fp-2', 'correct profile remains');
+});
+
+test('deleteFilterProfile on unknown profileId is a no-op', () => {
+  const s1 = addFilterProfile(storeForViews, 'proj-1', fp1);
+  const s2 = deleteFilterProfile(s1, 'proj-1', 'no-such-fp');
+  const profiles = s2.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles.length, 1, 'profile count unchanged');
+});
+
+test('deleteFilterProfile leaves empty array when last profile removed', () => {
+  const s1 = addFilterProfile(storeForViews, 'proj-1', fp1);
+  const s2 = deleteFilterProfile(s1, 'proj-1', 'fp-1');
+  const profiles = s2.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles.length, 0, 'empty array after removing last');
 });
 
 // ─── Summary ──────────────────────────────────────────────────────────────────

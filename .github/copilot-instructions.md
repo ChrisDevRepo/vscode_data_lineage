@@ -57,7 +57,7 @@ Press F5 to launch Extension Development Host.
 | `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
 | `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/profilingEngine.test.ts` | 75 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
-| `test/projectStore.test.ts` | 98 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName |
+| `test/projectStore.test.ts` | 146 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 

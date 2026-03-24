@@ -19,8 +19,9 @@ import type { ParseRulesConfig } from './engine/sqlBodyParser';
 import type { DmvResults } from './engine/dmvExtractor';
 import {
   migrateProjectStore, createProject, updateProject, deleteProject, generateProjectName,
+  addFilterProfile, deleteFilterProfile,
 } from './engine/projectStore';
-import type { Project, ProjectStore } from './engine/projectStore';
+import type { Project, ProjectStore, FilterProfile } from './engine/projectStore';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -394,6 +395,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           } catch {
             outputChannel.warn(`[Project] Dacpac not found: ${conn.path}`);
             panel.webview.postMessage({ type: 'last-dacpac-gone' });
+            vscode.window.showErrorMessage('Project file not found. Delete the project and re-add it.');
           }
         } else if (project.connection.type === 'database') {
           const conn = project.connection;
@@ -493,22 +495,6 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             (result) => { allObjectsCache = result; });
         },
       ),
-      'db-reconnect': () => withDbProgress(
-        panel, 'Data Lineage: Reconnecting to database',
-        async () => {
-          if (lastConnectionInfo) {
-            const result = await connectDirect(lastConnectionInfo, outputChannel);
-            if (result) return result;
-            outputChannel.info('[DB] Falling back to connection picker');
-          }
-          return promptForConnection(outputChannel);
-        },
-        (conn, progress, token) => {
-          lastConnectionInfo = conn.connectionInfo;
-          return runDbPhase1(panel, conn.connectionUri, conn.connectionInfo, progress, token,
-            (result) => { allObjectsCache = result; });
-        },
-      ),
       'db-visualize': (msg) => withDbProgress(
         panel, 'Data Lineage: Loading selected schemas',
         async () => {
@@ -521,12 +507,41 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
           return promptForConnection(outputChannel);
         },
-        (conn, progress, token) => runDbPhase2(
-          panel, conn.connectionUri, msg.schemas, progress, token, allObjectsCache,
-          conn.connectionInfo.database,
-          `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`,
-        ),
+        async (conn, progress, token) => {
+          const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
+          await runDbPhase2(
+            panel, conn.connectionUri, msg.schemas, progress, token, allObjectsCache,
+            conn.connectionInfo.database, sourceName,
+          );
+          // Auto-save project if a name was provided (Create New DB flow)
+          if (msg.projectName && !token.isCancellationRequested) {
+            const dbConn = {
+              type: 'database' as const,
+              connectionInfo: stripSensitiveFields(conn.connectionInfo),
+              sourceName,
+              schemas: msg.schemas,
+            };
+            const project = createProject(msg.projectName, dbConn);
+            const store = loadProjectStore(context);
+            const updated = updateProject(store, project);
+            await saveProjectStore(context, updated);
+            panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
+            outputChannel.info(`[Project] Saved: "${msg.projectName}"`);
+          }
+        },
       ),
+      'save-view': async (msg) => {
+        const store = loadProjectStore(context);
+        const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
+        await saveProjectStore(context, updated);
+        outputChannel.debug(`[Project] View saved: "${(msg.profile as FilterProfile).name}" on project ${msg.projectId}`);
+      },
+      'delete-view': async (msg) => {
+        const store = loadProjectStore(context);
+        const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
+        await saveProjectStore(context, updated);
+        outputChannel.debug(`[Project] View deleted: ${msg.profileId}`);
+      },
       'reload': () => {
         panel.dispose();
         openPanel(context, title, loadDemo);
@@ -567,6 +582,8 @@ type WebviewMessage =
   | { type: 'load-project'; id: string }
   | { type: 'save-project'; project: import('./engine/projectStore').Project }
   | { type: 'delete-project'; id: string }
+  | { type: 'save-view'; projectId: string; profile: import('./engine/projectStore').FilterProfile }
+  | { type: 'delete-view'; projectId: string; profileId: string }
   | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
   | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
   | { type: 'log'; text: string }
@@ -577,9 +594,8 @@ type WebviewMessage =
   | { type: 'update-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; columns?: import('./engine/types').ColumnDef[] }
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
-  | { type: 'db-reconnect' }
   | { type: 'reload' }
-  | { type: 'db-visualize'; schemas: string[] }
+  | { type: 'db-visualize'; schemas: string[]; projectName?: string }
   | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'standard'; columns?: import('./engine/types').ColumnDef[] }
   | { type: 'export-file'; data: string; defaultName: string };
 
