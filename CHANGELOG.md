@@ -6,7 +6,7 @@
 - **Project sessions** — Connections and schema selections saved as named projects in VS Code global state. Start screen lists projects as cards; "Create New" opens the setup wizard; demo goes directly to the graph.
 - **Saved Views** — Save and restore filter states (schemas, types, search, external refs) as named views per project.
 - **Loading screen** — Unified Load → Parse → Generate progress view for all data paths with elapsed timer and 60 s timeout. Demo goes directly to the graph; times out with a clear error if the source does not respond.
-- **Exclusion Rules** — New toolbar filter (⊘ icon) to hide nodes by pattern in real-time without reloading. Supports `%` wildcards (`%tmp%`, `dbo.%`) and full regex. Three entry points: type in dropdown, right-click node → "Exclude from view", or select node and press `Delete`. Rules are saved and restored as part of Saved Views. The VS Code `excludePatterns` setting also gains `%` wildcard support.
+- **Exclusion Rules** — Toolbar ⊘ filter to hide nodes by pattern in real-time. Supports `%` wildcards and regex. Add via dropdown input, right-click → "Exclude from view", or `Delete` key. Saved per view. VS Code `excludePatterns` also gains `%` support.
 
 ### Changed
 - Wizard layout: dacpac and database source buttons are now full-width stacked with an "or" divider. Database button visible (disabled) when the MSSQL extension is not installed.
