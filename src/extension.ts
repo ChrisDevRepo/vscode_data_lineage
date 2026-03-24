@@ -19,7 +19,7 @@ import type { ParseRulesConfig } from './engine/sqlBodyParser';
 import type { DmvResults } from './engine/dmvExtractor';
 import {
   migrateProjectStore, createProject, updateProject, deleteProject, generateProjectName,
-  addFilterProfile, deleteFilterProfile,
+  addFilterProfile, deleteFilterProfile, isValidProject,
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile } from './engine/projectStore';
 
@@ -369,6 +369,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         }
       },
       'load-project': async (msg) => {
+        // Clear stale stats connection — prevents dev/prod cross-query on project switch
+        if (statsConnectionUri) {
+          disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
+          statsConnectionUri = undefined;
+        }
         const store = loadProjectStore(context);
         const project = store.projects.find(p => p.id === msg.id);
         if (!project) {
@@ -436,6 +441,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         }
       },
       'save-project': async (msg) => {
+        if (!isValidProject(msg.project)) {
+          outputChannel.warn(`[Project] Rejected malformed save-project payload: ${JSON.stringify(msg.project)}`);
+          return;
+        }
         const store = loadProjectStore(context);
         const updated = updateProject(store, msg.project);
         await saveProjectStore(context, updated);
@@ -956,7 +965,6 @@ async function runDbPhase1(
 
   const dmvTimeoutMs = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const previewResult = await executeDmvQueries(connectionUri, phase1Queries, outputChannel, undefined, dmvTimeoutMs);
-
 
   if (token.isCancellationRequested) {
     panel.webview.postMessage({ type: 'db-cancelled' });

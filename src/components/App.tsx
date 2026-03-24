@@ -18,7 +18,7 @@ import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection } from '../engine/projectStore';
-import { addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
+import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 
 type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
@@ -176,14 +176,6 @@ export function App() {
     }
   }, [view, dacpacLoader.status, dacpacLoader.model]);
 
-  // Watch for last-dacpac-gone while visualizing
-  useEffect(() => {
-    if (view !== 'visualizing') return;
-    if (!dacpacLoader.isLoading && !dacpacLoader.model && loadingPhase === 'load') {
-      // Could be cancelled or error — check status
-    }
-  }, [view, dacpacLoader.isLoading, dacpacLoader.model, loadingPhase]);
-
   const prevConfigRef = useRef(config);
   useEffect(() => {
     if (prevConfigRef.current !== config && model && view === 'graph') {
@@ -196,6 +188,7 @@ export function App() {
 
   const handleCreateNew = useCallback(() => {
     dacpacLoader.resetToStart();
+    setStartScreenMessage(null);
     setView('create');
   }, [dacpacLoader.resetToStart]);
 
@@ -227,6 +220,7 @@ export function App() {
     setLoadingPhase('load');
     setLoadingStats(null);
     setLoadingError(null);
+    setStartScreenMessage(null);
     setActiveProjectId(null);
     setSourceName('AdventureWorks (demo)');
     setIsDbSource(false);
@@ -242,6 +236,7 @@ export function App() {
     setTableStatsState({ phase: 'idle' });
     setLoadingProjectId(null);
     setLoadingError(null);
+    setStartScreenMessage(null);
     setActiveProjectId(null);
   }, [dacpacLoader.resetToStart, clearTrace]);
 
@@ -250,6 +245,7 @@ export function App() {
     setView('start');
     setLoadingProjectId(null);
     setLoadingError(null);
+    setActiveProjectId(null);
   }, [dacpacLoader.cancelLoading]);
 
   const handleBackFromError = useCallback(() => {
@@ -270,13 +266,7 @@ export function App() {
 
     if (conn && conn.type === 'dacpac') {
       // Save project now (dacpac: we have the full connection)
-      const project: Project = {
-        id: crypto.randomUUID(),
-        name: projectName,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        connection: conn,
-      };
+      const project = createProject(projectName, conn);
       setActiveProjectId(project.id);
       setIsDbSource(false);
       vscodeApi.postMessage({ type: 'save-project', project });

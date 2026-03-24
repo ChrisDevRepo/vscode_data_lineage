@@ -3,13 +3,13 @@ import { Button } from './ui/Button';
 import { WizardPanel } from './ui/WizardPanel';
 import { SchemaSelector } from './SchemaSelector';
 import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
-import type { DacpacConnection, DatabaseConnection } from '../engine/projectStore';
+import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
 import { generateProjectName } from '../engine/projectStore';
 
 interface CreateFlowProps {
   loader: DacpacLoaderState;
   onBack: () => void;
-  onVisualize: (projectName: string, project: DacpacConnection | DatabaseConnection) => void;
+  onVisualize: (projectName: string, project: DacpacConnection | DatabaseConnection | null) => void;
 }
 
 export const CreateFlow = memo(function CreateFlow({
@@ -36,10 +36,10 @@ export const CreateFlow = memo(function CreateFlow({
       };
       return generateProjectName(conn);
     }
-    // DB path: sourceName = fileName
+    // DB path: sourceName = fileName; connectionInfo unused by generateProjectName
     const conn: DatabaseConnection = {
       type: 'database',
-      connectionInfo: {} as never, // placeholder — extension builds the real conn
+      connectionInfo: {} as StoredConnectionInfo,
       sourceName: loader.fileName,
       schemas: Array.from(loader.selectedSchemas),
     };
@@ -61,7 +61,7 @@ export const CreateFlow = memo(function CreateFlow({
       onVisualize(name, conn);
     } else {
       // DB path — extension will build the real connection after Phase 2 completes
-      onVisualize(name, null as never);
+      onVisualize(name, null);
     }
   }, [displayName, autoName, loader.filePath, loader.fileName, loader.selectedSchemas, onVisualize]);
 

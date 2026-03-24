@@ -23,7 +23,6 @@ export interface DacpacLoaderState {
   mssqlAvailable: boolean | null;
   pendingAutoVisualize: boolean;
   pendingVisualize: boolean;
-  isDemo: boolean;
   openFile: () => void;
   resetToStart: () => void;
   loadProject: (id: string) => void;
@@ -366,7 +365,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   return {
     model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, filePath, status,
-    mssqlAvailable, pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current,
+    mssqlAvailable, pendingAutoVisualize, pendingVisualize,
     openFile, resetToStart, loadProject, loadDemo, connectToDatabase, cancelLoading,
     clearAutoVisualize, clearPendingVisualize, visualize,
     toggleSchema, selectAllSchemas, clearAllSchemas,

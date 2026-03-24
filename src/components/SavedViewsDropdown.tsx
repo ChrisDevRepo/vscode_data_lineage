@@ -53,7 +53,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
         title={isEnabled ? 'Saved Views' : 'Open a project to save views'}
         disabled={!isEnabled}
         aria-expanded={isOpen}
-        aria-haspopup="true"
+        aria-haspopup="menu"
         style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
       >
         {/* Heroicons bookmark */}

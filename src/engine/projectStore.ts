@@ -110,7 +110,7 @@ export function migrateProjectStore(raw: unknown): ProjectStore {
   };
 }
 
-function isValidProject(p: unknown): p is Project {
+export function isValidProject(p: unknown): p is Project {
   if (!p || typeof p !== 'object') return false;
   const obj = p as Record<string, unknown>;
   return (
