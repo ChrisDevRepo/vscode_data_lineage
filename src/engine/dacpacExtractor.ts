@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 import {
-  DacpacModel,
+  DatabaseModel,
   ObjectType,
   SchemaInfo,
   SchemaPreview,
@@ -27,9 +27,10 @@ import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql'
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
+export async function extractDacpac(buffer: ArrayBuffer): Promise<DatabaseModel> {
   const xml = await extractModelXml(buffer);
-  const elements = parseElements(xml);
+  const { elements, dspName } = parseElements(xml);
+  const dbPlatform = parseDspPlatform(dspName);
 
   const objects = extractObjects(elements);
   const allObjects = extractObjectsLightweight(elements);
@@ -44,7 +45,11 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
     warnings.push('No tables, views, or stored procedures found in this file.');
   }
 
-  return { ...model, warnings: warnings.length > 0 ? warnings : undefined };
+  return {
+    ...model,
+    warnings: warnings.length > 0 ? warnings : undefined,
+    dbPlatform: dbPlatform || undefined,
+  };
 }
 
 /**
@@ -54,11 +59,12 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DacpacModel> {
 export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
   preview: SchemaPreview;
   elements: XmlElement[];
+  dspName: string;
 }> {
   const xml = await extractModelXml(buffer);
-  const elements = parseElements(xml);
+  const { elements, dspName } = parseElements(xml);
   const preview = computeSchemaPreviewFromElements(elements);
-  return { preview, elements };
+  return { preview, elements, dspName };
 }
 
 /**
@@ -69,7 +75,8 @@ export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
 export function extractDacpacFiltered(
   elements: XmlElement[],
   selectedSchemas: Set<string>,
-): DacpacModel {
+  dspName?: string,
+): DatabaseModel {
   // Pre-filter elements by schema — case-insensitive comparison so that
   // e.g. 'SalesLT' selected from the UI matches 'SalesLT' from parseName.
   const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
@@ -85,12 +92,17 @@ export function extractDacpacFiltered(
   const objects = extractObjects(filtered, elements); // pass full elements so FK/UQ/CK constraints (not in TRACKED_ELEMENT_TYPES) are found
   const deps = extractDependencies(filtered);
   const model = buildModel(objects, deps, allObjects);
+  const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
 
   const warnings: string[] = [];
   if (model.nodes.length === 0) {
     warnings.push('No tables, views, or stored procedures found for selected schemas.');
   }
-  return { ...model, warnings: warnings.length > 0 ? warnings : undefined };
+  return {
+    ...model,
+    warnings: warnings.length > 0 ? warnings : undefined,
+    dbPlatform: dbPlatform || undefined,
+  };
 }
 
 function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview {
@@ -134,10 +146,10 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
 }
 
 export function filterBySchemas(
-  model: DacpacModel,
+  model: DatabaseModel,
   selectedSchemas: Set<string>,
   maxNodes = DEFAULT_CONFIG.maxNodes
-): DacpacModel {
+): DatabaseModel {
   // Case-insensitive comparison so UI-provided schema names match model.schemas
   // Virtual nodes (schema='') are included only if connected to a selected-schema node (via edges).
   // The ExternalRefsDropdown handles visibility independently.
@@ -215,7 +227,7 @@ async function extractModelXml(buffer: ArrayBuffer): Promise<string> {
   return modelFile.async('string');
 }
 
-function parseElements(xml: string): XmlElement[] {
+function parseElements(xml: string): { elements: XmlElement[]; dspName: string } {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -234,7 +246,30 @@ function parseElements(xml: string): XmlElement[] {
   const model = doc?.DataSchemaModel?.Model;
   if (!model) throw new Error('Invalid model.xml: missing DataSchemaModel/Model');
 
-  return asArray(model.Element);
+  return { elements: asArray(model.Element), dspName: doc.DataSchemaModel?.['@_DspName'] ?? '' };
+}
+
+/** Map the DspName attribute from a dacpac's DataSchemaModel element to a human-readable platform string. */
+export function parseDspPlatform(dsp: string): string {
+  if (!dsp) return '';
+  if (dsp.includes('SqlDwUnified'))       return 'Fabric Data Warehouse';
+  if (dsp.includes('SqlDbFabric'))        return 'SQL Database in Fabric';
+  if (dsp.includes('SqlDwDatabase'))      return 'Synapse Dedicated Pool';
+  if (dsp.includes('SqlManagedInstance')) return 'Azure SQL Managed Instance';
+  if (dsp.includes('SqlHyperscale'))      return 'Azure SQL Hyperscale';
+  if (dsp.includes('SqlAzureV12'))        return 'Azure SQL Database';
+  // On-prem SQL Server: DspName contains SqlN0 where N = major version (8–17)
+  const verMap: [string, string][] = [
+    ['Sql170', 'SQL Server 2025'], ['Sql160', 'SQL Server 2022'],
+    ['Sql150', 'SQL Server 2019'], ['Sql140', 'SQL Server 2017'],
+    ['Sql130', 'SQL Server 2016'], ['Sql120', 'SQL Server 2014'],
+    ['Sql110', 'SQL Server 2012'], ['Sql100', 'SQL Server 2008'],
+    ['Sql90',  'SQL Server 2005'], ['Sql80',  'SQL Server 2000'],
+  ];
+  for (const [key, label] of verMap) if (dsp.includes(key)) return label;
+  // Unknown provider: extract readable part (e.g. "SqlMyNewProvider" from full namespace)
+  const m = dsp.match(/\.(\w+?)DatabaseSchemaProvider$/);
+  return m ? m[1] : dsp;
 }
 
 // ─── Extract: XML → Intermediate Format ─────────────────────────────────────
@@ -363,9 +398,10 @@ function getRelRefs(el: XmlElement, relName: string): string[] {
 const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NULL', '3': 'SET DEFAULT' };
 
 function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
-  const uqColMap = new Map<string, string>();
-  const ckColMap = new Map<string, string>();
-  const fkMap    = new Map<string, ForeignKeyInfo[]>();
+  const uqColMap      = new Map<string, string>();
+  const ckColMap      = new Map<string, string>();
+  const fkMap         = new Map<string, ForeignKeyInfo[]>();
+  const pkOrdinalMap  = new Map<string, number>();
 
   for (const el of elements) {
     const type = el['@_Type'];
@@ -421,10 +457,26 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       const list = fkMap.get(tableKey) ?? [];
       list.push({ name: constraintName, columns: parentCols, refSchema, refTable, refColumns: refColsList, onDelete });
       fkMap.set(tableKey, list);
+
+    } else if (type === 'SqlPrimaryKeyConstraint') {
+      const tableRef = getRelRefs(el, 'DefiningTable')[0];
+      if (!tableRef) continue;
+      const tableKey = normalizeName(tableRef);
+      // Column order from ColumnSpecifications → SqlIndexedColumnSpecification → Column ref
+      const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
+      let ordinal = 1;
+      for (const entry of asArray(colSpecRel?.Entry)) {
+        for (const specEl of asArray(entry.Element)) {
+          const colRef = getRelRefs(specEl as XmlElement, 'Column')[0];
+          if (!colRef) continue;
+          const colName = stripBrackets(colRef.split('.').pop() ?? '');
+          if (colName) pkOrdinalMap.set(`${tableKey}.${colName.toLowerCase()}`, ordinal++);
+        }
+      }
     }
   }
 
-  return { uqColMap, ckColMap, fkMap };
+  return { uqColMap, ckColMap, fkMap, pkOrdinalMap };
 }
 
 // ─── XML Body Dependencies ──────────────────────────────────────────────────
@@ -582,7 +634,7 @@ function asArray<T>(val: T | T[] | undefined | null): T[] {
 
 // ─── Exclusion Patterns ─────────────────────────────────────────────────────
 
-export function applyExclusionPatterns(model: DacpacModel, patterns: string[], onWarning?: (msg: string) => void): DacpacModel {
+export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
   if (!patterns || patterns.length === 0) return model;
 
   const regexes = patterns.map((p) => {

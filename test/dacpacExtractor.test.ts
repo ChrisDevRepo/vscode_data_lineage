@@ -4,19 +4,17 @@
  */
 
 import { readFileSync } from 'fs';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas } from '../src/engine/dacpacExtractor';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas, parseDspPlatform } from '../src/engine/dacpacExtractor';
 import { parseSqlBody } from '../src/engine/sqlBodyParser';
-import { assert, loadParseRules, testPath, printSummary } from './testUtils';
+import { assert, assertEq, loadParseRules, testPath, printSummary, loadAdventureWorksModel } from './testUtils';
 
-const DACPAC_PATH = testPath('AdventureWorks.dacpac');
 loadParseRules();
 
 // ─── Extraction ─────────────────────────────────────────────────────────────
 
 async function testExtraction() {
   console.log('\n── DACPAC Extraction ──');
-  const buffer = readFileSync(DACPAC_PATH);
-  const model = await extractDacpac(buffer.buffer as ArrayBuffer);
+  const model = await loadAdventureWorksModel();
 
   assert(model.nodes.length > 0, `Extracted ${model.nodes.length} nodes`);
   assert(model.edges.length > 0, `Extracted ${model.edges.length} edges`);
@@ -435,8 +433,7 @@ async function testImportErrorHandling() {
   assert(emptyModel.warnings![0].includes('No tables, views, or stored procedures'), `Warning explains why: "${emptyModel.warnings![0]}"`);
 
   // Successful extraction → no warnings
-  const buffer = readFileSync(DACPAC_PATH);
-  const model = await extractDacpac(buffer.buffer as ArrayBuffer);
+  const model = await loadAdventureWorksModel();
   assert(model.warnings === undefined, 'Successful extraction has no warnings');
 }
 
@@ -444,8 +441,7 @@ async function testImportErrorHandling() {
 
 async function testConstraints() {
   console.log('\n── Table Design Constraints (dacpac) ──');
-  const buffer = readFileSync(DACPAC_PATH);
-  const model = await extractDacpac(buffer.buffer as ArrayBuffer);
+  const model = await loadAdventureWorksModel();
 
   // [HumanResources].[Employee] has FK_Employee_Person_BusinessEntityID (→ Person.Person)
   // and CK_Employee_BirthDate on the BirthDate column
@@ -468,7 +464,7 @@ async function testConstraints() {
   // Phase 2 (extractDacpacFiltered): FK constraints must survive schema filtering.
   // Regression: FK elements (SqlForeignKeyConstraint) were excluded from TRACKED_ELEMENT_TYPES
   // so the filtered element list passed to extractObjects had no FK data → fkMap always empty.
-  const buffer2 = readFileSync(DACPAC_PATH);
+  const buffer2 = readFileSync(testPath('AdventureWorks.dacpac'));
   const { elements } = await extractSchemaPreview(buffer2.buffer as ArrayBuffer);
   const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']));
   const empFiltered = filteredModel.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
@@ -487,6 +483,192 @@ async function testConstraints() {
   assert(fabricTable?.columns !== undefined, 'SDK-style table has columns');
 }
 
+// ─── parseDspPlatform — all known DSP substrings ─────────────────────────────
+
+function testParseDspPlatform() {
+  console.log('\n── parseDspPlatform ──');
+
+  // Empty / falsy inputs
+  assertEq(parseDspPlatform(''), '', 'Empty string returns empty');
+
+  // Cloud platforms — must match before on-prem version strings
+  assertEq(
+    parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDwUnifiedDatabaseSchemaProvider'),
+    'Fabric Data Warehouse', 'SqlDwUnified → Fabric Data Warehouse',
+  );
+  assertEq(
+    parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDbFabricDatabaseSchemaProvider'),
+    'SQL Database in Fabric', 'SqlDbFabric → SQL Database in Fabric',
+  );
+  assertEq(
+    parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDwDatabaseSchemaProvider'),
+    'Synapse Dedicated Pool', 'SqlDwDatabase → Synapse Dedicated Pool',
+  );
+  assertEq(
+    parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlManagedInstanceDatabaseSchemaProvider'),
+    'Azure SQL Managed Instance', 'SqlManagedInstance → Azure SQL Managed Instance',
+  );
+  assertEq(
+    parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlHyperscaleDatabaseSchemaProvider'),
+    'Azure SQL Hyperscale', 'SqlHyperscale → Azure SQL Hyperscale',
+  );
+  assertEq(
+    parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider'),
+    'Azure SQL Database', 'SqlAzureV12 → Azure SQL Database',
+  );
+
+  // On-prem SQL Server — all supported versions
+  const onPremCases: [string, string][] = [
+    ['Microsoft.Data.Tools.Schema.Sql.Sql170DatabaseSchemaProvider', 'SQL Server 2025'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider', 'SQL Server 2022'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql150DatabaseSchemaProvider', 'SQL Server 2019'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql140DatabaseSchemaProvider', 'SQL Server 2017'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql130DatabaseSchemaProvider', 'SQL Server 2016'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql120DatabaseSchemaProvider', 'SQL Server 2014'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql110DatabaseSchemaProvider', 'SQL Server 2012'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql100DatabaseSchemaProvider', 'SQL Server 2008'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql90DatabaseSchemaProvider',  'SQL Server 2005'],
+    ['Microsoft.Data.Tools.Schema.Sql.Sql80DatabaseSchemaProvider',  'SQL Server 2000'],
+  ];
+  for (const [dsp, expected] of onPremCases) {
+    assertEq(parseDspPlatform(dsp), expected, `${dsp.split('.').pop()} → ${expected}`);
+  }
+
+  // Specificity: SqlAzureV12 must not be matched by Sql120 (they share no substring)
+  // (SqlAzureV12 matched before loop, Sql120 loop entry can't interfere — verify)
+  assertEq(
+    parseDspPlatform('SqlAzureV12DatabaseSchemaProvider'),
+    'Azure SQL Database', 'Bare SqlAzureV12 still matches',
+  );
+
+  // Unknown provider: extract Pascal-case name from namespace
+  assertEq(
+    parseDspPlatform('Vendor.MyTool.Schema.SqlFutureDatabaseSchemaProvider'),
+    'SqlFuture', 'Unknown provider: extract readable part before DatabaseSchemaProvider',
+  );
+
+  // Completely unknown — no regex match: return raw DSP
+  assertEq(
+    parseDspPlatform('some-unknown-provider'),
+    'some-unknown-provider', 'Completely unknown: return raw string',
+  );
+}
+
+// ─── Bridge: dbPlatform flows into DatabaseModel ─────────────────────────────
+
+async function testDbPlatformInModel() {
+  console.log('\n── Bridge: dbPlatform in DatabaseModel ──');
+
+  // Azure SQL (classic AdventureWorks) → 'Azure SQL Database'
+  const awModel = await loadAdventureWorksModel();
+  assertEq(awModel.dbPlatform, 'Azure SQL Database', 'AdventureWorks dacpac: dbPlatform = Azure SQL Database');
+
+  // Fabric (SDK-style) → 'Fabric Data Warehouse'
+  const fabricBuf = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));
+  const fabricModel = await extractDacpac(fabricBuf.buffer as ArrayBuffer);
+  assertEq(fabricModel.dbPlatform, 'Fabric Data Warehouse', 'SDK-style dacpac: dbPlatform = Fabric Data Warehouse');
+
+  // Phase 2 (extractDacpacFiltered): dspName passed through → dbPlatform preserved
+  const awBuf = readFileSync(testPath('AdventureWorks.dacpac'));
+  const { elements, dspName } = await extractSchemaPreview(awBuf.buffer as ArrayBuffer);
+  assert(dspName.includes('SqlAzureV12'), `Phase 1 dspName contains SqlAzureV12 (got: "${dspName}")`);
+  const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']), dspName);
+  assertEq(filteredModel.dbPlatform, 'Azure SQL Database', 'Phase 2 filtered model: dbPlatform preserved from dspName');
+
+  // Phase 2 without dspName → dbPlatform undefined (no platform info available)
+  const filteredNoPlat = extractDacpacFiltered(elements, new Set(['HumanResources']));
+  assert(filteredNoPlat.dbPlatform === undefined || filteredNoPlat.dbPlatform === '',
+    'Phase 2 without dspName: dbPlatform absent');
+}
+
+// ─── Bridge: pkOrdinal flows into ColumnDef ──────────────────────────────────
+
+async function testPkOrdinalInModel() {
+  console.log('\n── Bridge: pkOrdinal in ColumnDef ──');
+  const model = await loadAdventureWorksModel();
+
+  // HumanResources.Employee: single-column PK (BusinessEntityID)
+  const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
+  assert(employee !== undefined, 'HumanResources.Employee found');
+  const beid = employee!.columns?.find(c => c.name === 'BusinessEntityID');
+  assert(beid !== undefined, 'BusinessEntityID column found');
+  assertEq(beid!.pkOrdinal, 1, 'BusinessEntityID: pkOrdinal = 1 (single PK)');
+
+  // Non-PK column on the same table has no pkOrdinal
+  const natId = employee!.columns?.find(c => c.name === 'NationalIDNumber');
+  assert(natId !== undefined, 'NationalIDNumber column found');
+  assert(natId!.pkOrdinal === undefined, 'NationalIDNumber: no pkOrdinal (not a PK column)');
+
+  // Composite PK table: find any table with 2+ pkOrdinal columns
+  const compositePkTable = model.nodes.find(n =>
+    n.type === 'table' &&
+    n.columns !== undefined &&
+    n.columns.filter(c => c.pkOrdinal !== undefined).length >= 2,
+  );
+  assert(compositePkTable !== undefined, 'At least one table with composite PK found');
+  const pkCols = compositePkTable!.columns!.filter(c => c.pkOrdinal !== undefined);
+  const ordinals = pkCols.map(c => c.pkOrdinal!).sort((a, b) => a - b);
+  assertEq(ordinals[0], 1, `Composite PK: first ordinal is 1 (table: ${compositePkTable!.name})`);
+  assertEq(ordinals[1], 2, `Composite PK: second ordinal is 2 (table: ${compositePkTable!.name})`);
+  assert(ordinals.every((v, i) => v === i + 1), 'Composite PK: ordinals are 1-based and sequential');
+
+  // Views never have PK constraints — verify no pkOrdinal on any view column
+  const anyView = model.nodes.find(n => n.type === 'view' && n.columns !== undefined);
+  if (anyView) {
+    const viewPkCols = anyView.columns!.filter(c => c.pkOrdinal !== undefined);
+    assertEq(viewPkCols.length, 0, `View ${anyView.name}: no pkOrdinal columns (views have no PK)`);
+  }
+
+  // Procedures have no columns at all — verify columns is absent/empty
+  const anyProc = model.nodes.find(n => n.type === 'procedure');
+  assert(anyProc !== undefined, 'At least one procedure found');
+  const procPkCols = anyProc!.columns?.filter(c => c.pkOrdinal !== undefined) ?? [];
+  assertEq(procPkCols.length, 0, 'Procedure: no pkOrdinal columns');
+}
+
+// ─── Bridge: Phase 1 → Phase 2 sequencing ────────────────────────────────────
+
+async function testPhase1Phase2Bridge() {
+  console.log('\n── Bridge: Phase 1 → Phase 2 data flow ──');
+
+  // Phase 1 returns elements + dspName ready for bridge caching
+  const buf = readFileSync(testPath('AdventureWorks.dacpac'));
+  const { preview, elements, dspName } = await extractSchemaPreview(buf.buffer as ArrayBuffer);
+
+  // preview is well-formed
+  assert(preview.schemas.length > 0, 'Phase 1: schemas list populated');
+  assert(preview.totalObjects > 0, 'Phase 1: totalObjects > 0');
+  assert(typeof dspName === 'string' && dspName.length > 0, 'Phase 1: dspName is non-empty string');
+
+  // elements are cached for Phase 2
+  assert(Array.isArray(elements) && elements.length > 0, 'Phase 1: elements array non-empty (bridge cache)');
+
+  // Phase 2 uses the cached elements — must produce same node/edge count as full extractDacpac
+  const allSchemas = new Set(preview.schemas.map(s => s.name));
+  const phase2Model = extractDacpacFiltered(elements, allSchemas, dspName);
+  const fullModel = await loadAdventureWorksModel();
+
+  assertEq(phase2Model.nodes.length, fullModel.nodes.length,
+    `Phase 2 with all schemas: same node count as full extract (${fullModel.nodes.length})`);
+  assertEq(phase2Model.edges.length, fullModel.edges.length,
+    `Phase 2 with all schemas: same edge count as full extract (${fullModel.edges.length})`);
+  assertEq(phase2Model.dbPlatform, fullModel.dbPlatform,
+    'Phase 2: dbPlatform matches full extract');
+
+  // Schema subset: Phase 2 with one schema produces fewer nodes
+  const hrOnly = extractDacpacFiltered(elements, new Set(['HumanResources']), dspName);
+  assert(hrOnly.nodes.length < fullModel.nodes.length,
+    'Phase 2 schema subset: fewer nodes than full model');
+  assert(hrOnly.nodes.every(n => n.schema === 'HumanResources' || n.externalType !== undefined),
+    'Phase 2 schema subset: only HumanResources nodes (+ virtual externals)');
+  assertEq(hrOnly.dbPlatform, 'Azure SQL Database',
+    'Phase 2 schema subset: dbPlatform still set from dspName');
+
+  // Phase 2 with empty schema set produces empty model (no crash)
+  const emptyModel = extractDacpacFiltered(elements, new Set(), dspName);
+  assertEq(emptyModel.nodes.length, 0, 'Phase 2 empty schema set: 0 nodes (no crash)');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -501,6 +683,10 @@ async function main() {
     await testNumericEntitySecurity();
     await testImportErrorHandling();
     await testConstraints();
+    testParseDspPlatform();
+    await testDbPlatformInModel();
+    await testPkOrdinalInModel();
+    await testPhase1Phase2Bridge();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

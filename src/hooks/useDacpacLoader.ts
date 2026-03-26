@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, SchemaInfo, SchemaPreview, ExtensionConfig, ExtensionMessage, XmlElement } from '../engine/types';
+import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig, ExtensionMessage } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
 
 export type StatusMessage = {
   text: string;
@@ -12,7 +11,7 @@ export type StatusMessage = {
 export type LoadingContext = 'dacpac' | 'database' | null;
 
 export interface DacpacLoaderState {
-  model: DacpacModel | null;
+  model: DatabaseModel | null;
   schemaPreview: SchemaPreview | null;
   selectedSchemas: Set<string>;
   isLoading: boolean;
@@ -39,7 +38,7 @@ export interface DacpacLoaderState {
 
 export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => void): DacpacLoaderState {
   const vscodeApi = useVsCode();
-  const [model, setModel] = useState<DacpacModel | null>(null);
+  const [model, setModel] = useState<DatabaseModel | null>(null);
   const [schemaPreview, setSchemaPreview] = useState<SchemaPreview | null>(null);
   const [selectedSchemas, setSelectedSchemas] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
@@ -52,7 +51,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
   const loadGenRef = useRef(0);
-  const cachedElementsRef = useRef<XmlElement[] | null>(null);
 
   // Auto-clear transient info messages after 6s (progress, connecting, loading...).
   // Success messages persist until the next action — they carry meaningful summary information.
@@ -77,7 +75,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     }
   }, []);
 
-  const applyModel = useCallback((result: DacpacModel, name: string, statusText: string) => {
+  const applyModel = useCallback((result: DatabaseModel, name: string, statusText: string) => {
     setModel(result);
     setSelectedSchemas(new Set(result.schemas.map((s: SchemaInfo) => s.name)));
     setFileName(name);
@@ -159,11 +157,35 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
+      // Dacpac Phase 1: schema preview (extraction now runs in extension host)
+      if (msg.type === 'dacpac-schema-preview') {
+        if (msg.config) applyConfig(msg.config);
+        const name = msg.sourceName || 'dacpac';
+        applySchemaPreview(msg.preview, name);
+        setIsLoading(false);
+        setLoadingContext(null);
+        return;
+      }
+
+      // Dacpac Phase 2 + demo + panel restore: full model from extension host
+      if (msg.type === 'dacpac-model') {
+        if (msg.config) applyConfig(msg.config);
+        const name = msg.sourceName || 'dacpac';
+        applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`);
+        setIsLoading(false);
+        setLoadingContext(null);
+        if (msg.autoVisualize) {
+          setPendingAutoVisualize(true);
+        } else {
+          setPendingVisualize(true);
+        }
+        return;
+      }
+
       // DB Phase 1: schema preview received (Create flow — shows schema selector)
       if (msg.type === 'db-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
-        cachedElementsRef.current = null;
         applySchemaPreview(msg.preview, name);
         setIsLoading(false);
         setLoadingContext(null);
@@ -187,52 +209,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         setLoadingContext(null);
         return;
       }
-
-      if (msg.type === 'dacpac-data') {
-        if (msg.config) applyConfig(msg.config);
-        const gen = ++loadGenRef.current;
-        setIsLoading(true);
-        setLoadingContext('dacpac');
-        setStatus(null);
-        const name = msg.fileName || 'dacpac';
-        setFileName(name);
-        setFilePath(msg.filePath ?? null);
-        try {
-          const buffer = new Uint8Array(msg.data).buffer;
-
-          if (msg.autoVisualize) {
-            // Demo path: full extraction, bypass schema selector
-            const result = await extractDacpac(buffer);
-            if (gen !== loadGenRef.current) return;
-            cachedElementsRef.current = null;
-            applyModel(result, name, `Parsed: ${result.nodes.length} objects, ${result.edges.length} edges across ${result.schemas.length} schemas`);
-            setPendingAutoVisualize(true);
-          } else if (msg.preselectedSchemas && msg.preselectedSchemas.length > 0) {
-            // Load-project path: skip schema selector, run Phase 2 immediately
-            const { elements } = await extractSchemaPreview(buffer);
-            if (gen !== loadGenRef.current) return;
-            cachedElementsRef.current = null;
-            const result = extractDacpacFiltered(elements, new Set(msg.preselectedSchemas));
-            applyModel(result, name, `Loaded ${result.nodes.length} objects, ${result.edges.length} edges`);
-            setPendingVisualize(true);
-          } else {
-            // Create-flow path: Phase 1 — show schema selector
-            const { preview, elements } = await extractSchemaPreview(buffer);
-            if (gen !== loadGenRef.current) return;
-            cachedElementsRef.current = elements;
-            applySchemaPreview(preview, name);
-          }
-        } catch (err) {
-          if (gen !== loadGenRef.current) return;
-          vscodeApi.postMessage({ type: 'error', error: err instanceof Error ? err.message : 'Failed to parse file' });
-          setStatus({ text: err instanceof Error ? err.message : 'Failed to parse file', type: 'error' });
-        } finally {
-          if (gen === loadGenRef.current) {
-            setIsLoading(false);
-            setLoadingContext(null);
-          }
-        }
-      }
     };
 
     window.addEventListener('message', handler);
@@ -243,36 +219,14 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   // Phase 2: trigger full extraction for selected schemas
   const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
-    // Dacpac path: use cached elements from Phase 1
-    if (cachedElementsRef.current) {
+    // Dacpac path: request Phase 2 extraction from extension host
+    // (dacpac-model response handled above — sets model + pendingVisualize)
+    if (schemaPreview !== null && model === null) {
+      const payload: Record<string, unknown> = { type: 'dacpac-visualize', schemas: Array.from(schemas) };
+      if (projectName) payload.projectName = projectName;
+      vscodeApi.postMessage(payload);
       setIsLoading(true);
       setLoadingContext('dacpac');
-      const gen = ++loadGenRef.current;
-      try {
-        const result = extractDacpacFiltered(cachedElementsRef.current, schemas);
-        if (gen !== loadGenRef.current) return;
-        setModel(result);
-        cachedElementsRef.current = null;
-
-        if (result.parseStats) {
-          vscodeApi.postMessage({
-            type: 'parse-stats',
-            stats: result.parseStats,
-            objectCount: result.nodes.length,
-            edgeCount: result.edges.length,
-            schemaCount: result.schemas.length,
-          });
-        }
-
-        setIsLoading(false);
-        setLoadingContext(null);
-        setPendingVisualize(true);
-      } catch (err) {
-        if (gen !== loadGenRef.current) return;
-        setStatus({ text: err instanceof Error ? err.message : 'Phase 2 extraction failed', type: 'error' });
-        setIsLoading(false);
-        setLoadingContext(null);
-      }
       return;
     }
 
@@ -283,7 +237,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Loading selected schemas from database...', type: 'info' });
-  }, [vscodeApi]);
+  }, [vscodeApi, schemaPreview, model]);
 
   const openFile = useCallback(() => {
     isDemoRef.current = false;
@@ -302,7 +256,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setStatus(null);
     setPendingAutoVisualize(false);
     setPendingVisualize(false);
-    cachedElementsRef.current = null;
   }, []);
 
   const loadProject = useCallback((id: string) => {

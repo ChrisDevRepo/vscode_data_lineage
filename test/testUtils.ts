@@ -10,6 +10,8 @@ import * as yaml from 'js-yaml';
 import Graph from 'graphology';
 import { loadRules } from '../src/engine/sqlBodyParser';
 import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
+import { extractDacpac } from '../src/engine/dacpacExtractor';
+import type { DatabaseModel } from '../src/engine/types';
 
 // ─── Test directory resolution ───────────────────────────────────────────────
 
@@ -23,6 +25,19 @@ export function testPath(...segments: string[]): string {
 /** Resolve a path relative to the project root */
 export function rootPath(...segments: string[]): string {
   return resolve(__dirname, '..', ...segments);
+}
+
+// ─── End-to-end dacpac helpers ────────────────────────────────────────────────
+
+/**
+ * Full end-to-end: dacpac → DatabaseModel (Node.js, no VS Code needed).
+ * Used as the foundation for integration-style tests (dacpacExtractor.test.ts,
+ * future ai-tools.test.ts) without any webview mocking.
+ */
+export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
+  loadParseRules();
+  const buffer = readFileSync(testPath('AdventureWorks.dacpac'));
+  return extractDacpac(buffer.buffer as ArrayBuffer);
 }
 
 // ─── Counters & Assertions ──────────────────────────────────────────────────

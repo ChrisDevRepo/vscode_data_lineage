@@ -9,7 +9,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import { extractDacpac } from '../src/engine/dacpacExtractor';
 import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics } from '../src/engine/graphBuilder';
 import { buildModel } from '../src/engine/modelBuilder';
-import { assert, makeGraph, testPath, loadParseRules, printSummary } from './testUtils';
+import { assert, makeGraph, testPath, loadParseRules, printSummary, loadAdventureWorksModel } from './testUtils';
 
 // ─── Graph Builder ──────────────────────────────────────────────────────────
 
@@ -773,8 +773,7 @@ async function main() {
 
   try {
     // Load dacpac for integration tests
-    const buffer = readFileSync(testPath('AdventureWorks.dacpac'));
-    const model = await extractDacpac(buffer.buffer as ArrayBuffer);
+    const model = await loadAdventureWorksModel();
 
     await testGraphBuilder(model);
     testTraceNoSiblings();

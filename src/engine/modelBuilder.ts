@@ -2,11 +2,11 @@
  * Shared model builder — single pipeline for both dacpac and DMV extractors.
  *
  * Both extractors produce ExtractedObject[] + ExtractedDependency[], then
- * this module builds the final DacpacModel (nodes, edges, schemas, stats).
+ * this module builds the final DatabaseModel (nodes, edges, schemas, stats).
  */
 
 import {
-  DacpacModel,
+  DatabaseModel,
   LineageNode,
   LineageEdge,
   SchemaInfo,
@@ -31,7 +31,7 @@ export function buildModel(
   currentDatabase?: string,
   externalRefsEnabled = true,
   maxNodes = DEFAULT_CONFIG.maxNodes,
-): DacpacModel {
+): DatabaseModel {
   const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes);
 
   // CI normalization: unify node.schema to a single canonical display name (first-seen from

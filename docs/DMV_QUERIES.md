@@ -28,6 +28,10 @@ queries:
     description: "..."
     sql: |
       SELECT ...
+  - name: platform-info   # Phase 1 — database platform detection (optional)
+    description: "..."
+    sql: |
+      SELECT ...
   - name: nodes           # Phase 2 — DDL for selected schemas
     description: "..."
     sql: |
@@ -46,12 +50,12 @@ queries:
       SELECT ...
 ```
 
-**Six queries** are defined, identified by `name`. They run in two phases:
+**Seven queries** are defined, identified by `name`. They run in two phases:
 
 | Phase | Queries | When |
 |-------|---------|------|
-| Phase 1 | `schema-preview`, `all-objects` | Always — runs first to populate the schema selection wizard and the full object catalog |
-| Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | After schema selection — filtered to selected schemas only |
+| Phase 1 | `schema-preview`, `all-objects`, `platform-info` (optional) | Always — runs first to populate the schema selection wizard and the full object catalog |
+| Phase 2 | `nodes`, `columns`, `constraints` (optional), `dependencies` | After schema selection — filtered to selected schemas only |
 
 ## Required Columns
 
@@ -96,6 +100,28 @@ Runs alongside `schema-preview`. Returns all objects across **all schemas** (no 
 | `TF` | Multi-Statement Table-Valued Function |
 | `ET` | External Table (PolyBase, Synapse, Fabric) |
 
+### `platform-info` — Database Platform Detection (Phase 1, optional)
+
+Returns a single row identifying the database engine. Used to populate the `dbPlatform` field on the model (displayed in the connection info tooltip). If omitted, `dbPlatform` is left blank.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `engine_edition` | int | `SERVERPROPERTY('EngineEdition')` — identifies the platform family |
+| `major_version` | int | `SERVERPROPERTY('ProductMajorVersion')` — used to resolve on-prem SQL Server year |
+| `edition` | string | `SERVERPROPERTY('Edition')` — fallback label when version is unrecognized |
+
+**`engine_edition` mapping:**
+
+| Value | Platform |
+|-------|---------|
+| 5 | Azure SQL Database |
+| 6 | Synapse Dedicated Pool |
+| 8 | Azure SQL Managed Instance |
+| 9 | Azure SQL Edge |
+| 11 | Fabric Data Warehouse |
+| 12 | SQL Database in Fabric |
+| 1–4 | On-prem SQL Server (resolved via `major_version`) |
+
 ### `columns` — Table Column Metadata
 
 Used for the table design preview in the SQL viewer.
@@ -113,6 +139,7 @@ Used for the table design preview in the SQL viewer.
 | `is_nullable` | bit/bool | Allows NULL |
 | `is_identity` | bit/bool | Identity column |
 | `is_computed` | bit/bool | Computed column |
+| `pk_ordinal` | int/null | Primary key ordinal (1-based). NULL for non-PK columns. Used to show `PK` / `PK1` / `PK2` badges in the table design view. |
 
 ### `constraints` — Table Constraints (Phase 2, optional)
 
@@ -148,7 +175,7 @@ Returns FK, UQ, and CK constraint metadata via `UNION ALL`, distinguished by `co
 
 ## What Must Stay Fixed
 
-- **Query names** — must be exactly `schema-preview`, `all-objects`, `nodes`, `columns`, `dependencies` (required); `constraints` (optional)
+- **Query names** — must be exactly `schema-preview`, `all-objects`, `nodes`, `columns`, `dependencies` (required); `constraints`, `platform-info` (optional)
 - **Required column names** — the columns listed above must be present in the result set
 - **Column semantics** — `type_code` must return standard `sys.objects.type` codes
 

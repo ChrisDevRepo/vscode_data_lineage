@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { DacpacModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
+import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
 import { buildGraph, getGraphMetrics } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
 import { compileExclusionPattern } from '../utils/sql';
@@ -12,7 +12,7 @@ interface UseGraphologyReturn {
   flowEdges: FlowEdge[];
   graph: Graph | null;
   metrics: ReturnType<typeof getGraphMetrics> | null;
-  buildFromModel: (model: DacpacModel, filter: FilterState, config?: ExtensionConfig) => void;
+  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig) => void;
 }
 
 export function useGraphology(): UseGraphologyReturn {
@@ -21,7 +21,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
 
-  const buildFromModel = useCallback((model: DacpacModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
+  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
     // Fused type + ext refs filter (single node pass)
@@ -58,7 +58,7 @@ export function useGraphology(): UseGraphologyReturn {
 // This filter is applied on every graph rebuild driven by filter.exclusionPatterns
 // from the UI ExclusionDropdown — instant effect, no data reload required.
 
-function applyExclusionFilter(model: DacpacModel, patterns: string[]): DacpacModel {
+function applyExclusionFilter(model: DatabaseModel, patterns: string[]): DatabaseModel {
   if (!patterns || patterns.length === 0) return model;
 
   const regexes: RegExp[] = [];
@@ -78,7 +78,7 @@ function applyExclusionFilter(model: DacpacModel, patterns: string[]): DacpacMod
 
 // ─── Isolation Filter ────────────────────────────────────────────────────────
 
-function applyIsolationFilter(model: DacpacModel, hideIsolated: boolean): DacpacModel {
+function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean): DatabaseModel {
   if (!hideIsolated) return model;
 
   const connectedIds = new Set<string>();
@@ -97,9 +97,9 @@ function applyIsolationFilter(model: DacpacModel, hideIsolated: boolean): Dacpac
 // ─── Focus Schema Filter ─────────────────────────────────────────────────────
 
 function applyFocusSchemaFilter(
-  model: DacpacModel,
+  model: DatabaseModel,
   focusSchemas: Set<string>
-): DacpacModel {
+): DatabaseModel {
   if (focusSchemas.size === 0) return model;
 
   const focusNodeIds = new Set(

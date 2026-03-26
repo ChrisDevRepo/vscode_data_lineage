@@ -4,7 +4,8 @@ import * as yaml from 'js-yaml';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
-import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ExternalRefsConfig, type ObjectType } from './engine/types';
+import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ExternalRefsConfig, type ObjectType, type DatabaseModel, type XmlElement } from './engine/types';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from './engine/dacpacExtractor';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
@@ -21,7 +22,7 @@ import {
   migrateProjectStore, createProject, updateProject, deleteProject, generateProjectName,
   addFilterProfile, deleteFilterProfile, isValidProject,
 } from './engine/projectStore';
-import type { Project, ProjectStore, FilterProfile } from './engine/projectStore';
+import type { Project, ProjectStore, FilterProfile, SerializedFilterState } from './engine/projectStore';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -327,6 +328,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         });
         statsConnectionUri = undefined;
       }
+      currentModel = null;
+      cachedElements = null;
+      cachedDspName = '';
+      currentActiveFilter = null;
+      currentSavedViews = [];
+      currentProjectId = null;
+      vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
+      outputChannel.debug('[Bridge] Model cleared (panel disposed)');
     });
 
     // ─── Message Handler Map ──────────────────────────────────────────────
@@ -336,12 +345,24 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     // Cache the Phase 1 all-objects result for use in Phase 2 (cross-schema resolution).
     // Scoped to this panel so multiple panels don't share state.
     let allObjectsCache: SimpleExecuteResult | undefined;
+    // Cache the Phase 1 platform-info result for use in Phase 2 model building.
+    let platformInfoCache: SimpleExecuteResult | undefined;
     // Last successful DB connection info for Phase 2 reconnect and stats connection.
     let lastConnectionInfo: IConnectionInfo | undefined;
+    // ─── State bridge — retained model for AI tools + panel restore ──────────
+    let currentModel: DatabaseModel | null = null;
+    let currentActiveFilter: SerializedFilterState | null = null;
+    let currentSavedViews: FilterProfile[] = [];
+    let currentProjectId: string | null = null;
+    let cachedElements: XmlElement[] | null = null;   // dacpac Phase 1 cache
+    let cachedDspName = '';                            // dacpac DSP name from Phase 1
     const handlers: MessageHandlerMap = {
       'ready': async () => {
         if (loadDemo) {
-          await handleLoadDemo(panel, context, true);
+          await handleLoadDemo(panel, context, true, (m) => {
+            currentModel = m;
+            vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+          });
           return;
         }
         // One-time migration from legacy workspaceState keys (runs once, clears old keys)
@@ -352,6 +373,12 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const store = loadProjectStore(context);
         panel.webview.postMessage({ type: 'config-only', config });
         panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
+        // Re-send retained model for panel restore (<100ms vs re-import)
+        if (currentModel) {
+          const projectName = store.projects.find(p => p.id === currentProjectId)?.name;
+          panel.webview.postMessage({ type: 'dacpac-model', model: currentModel, config, sourceName: projectName ?? 'Project', autoVisualize: true });
+          outputChannel.debug('[Bridge] Panel restored from retained model');
+        }
       },
       'open-dacpac': async () => {
         const uris = await vscode.window.showOpenDialog({
@@ -366,8 +393,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             const data = await vscode.workspace.fs.readFile(fileUri);
             if (isDacpacTooLarge(data.byteLength)) return;
             const config = await readExtensionConfig();
-            panel.webview.postMessage({ type: 'dacpac-data', data: Array.from(data), fileName, filePath: fileUri.fsPath, config });
             outputChannel.info(`── Opening ${fileName} ──`);
+            const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+            cachedElements = elements;
+            cachedDspName = dspName;
+            currentModel = null;
+            currentProjectId = null;
+            vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
+            panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: fileName });
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
             outputChannel.error(`Failed to read file: ${errorMsg}`);
@@ -399,15 +432,28 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             await saveProjectStore(context, updatedStore);
             panel.webview.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
             const config = await readExtensionConfig();
-            panel.webview.postMessage({
-              type: 'dacpac-data',
-              data: Array.from(data),
-              fileName: conn.displayName,
-              filePath: conn.path,
-              config,
-              preselectedSchemas: schemas,
-            });
             outputChannel.info(`── Loading project "${project.name}" ──`);
+            currentProjectId = project.id;
+            if (schemas && schemas.length > 0) {
+              // Phase 2 directly: preselected schemas from saved project
+              if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
+              const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+              const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
+              currentModel = model;
+              cachedElements = null;
+              cachedDspName = '';
+              vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+              outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges`);
+              if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
+              panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: conn.displayName });
+            } else {
+              // Phase 1: no stored schemas — show schema selector
+              const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+              cachedElements = elements;
+              cachedDspName = dspName;
+              currentModel = null;
+              panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: conn.displayName });
+            }
           } catch {
             outputChannel.warn(`[Project] Dacpac not found: ${conn.path}`);
             panel.webview.postMessage({ type: 'last-dacpac-gone' });
@@ -442,10 +488,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               const schemas = conn.schemas.length > 0 ? conn.schemas : undefined;
               if (!schemas) {
                 // No schemas stored — run Phase 1 visually (schema selector will appear)
-                await runDbPhase1(panel, dbResult.connectionUri, dbResult.connectionInfo, progress, token, (r) => { allObjectsCache = r; });
+                await runDbPhase1(panel, dbResult.connectionUri, dbResult.connectionInfo, progress, token, (r) => { allObjectsCache = r; }, (r) => { platformInfoCache = r; });
                 return;
               }
-              await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName);
+              await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName, platformInfoCache);
               if (!token.isCancellationRequested) {
                 const refreshed = { ...project, updatedAt: new Date().toISOString() };
                 const updatedStore = updateProject(store, refreshed);
@@ -475,7 +521,40 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] Deleted: ${msg.id}`);
       },
-      'load-demo': async () => { await handleLoadDemo(panel, context, true); },
+      'load-demo': async () => {
+        await handleLoadDemo(panel, context, true, (m) => {
+          currentModel = m;
+          currentProjectId = null;
+          vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+        });
+      },
+      'dacpac-visualize': async (msg) => {
+        if (!cachedElements) {
+          outputChannel.warn('[Dacpac] Phase 2 requested but no cached elements — aborting');
+          return;
+        }
+        const config = await readExtensionConfig();
+        try {
+          if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
+          const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
+          currentModel = model;
+          cachedElements = null;
+          cachedDspName = '';
+          vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+          outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges`);
+          if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
+          const sourceName = msg.projectName ?? currentProjectId ?? 'dacpac';
+          panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName });
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          outputChannel.error(`[Dacpac] Phase 2 extraction failed: ${errorMsg}`);
+          panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'extract' });
+        }
+      },
+      'filter-changed': (msg) => {
+        currentActiveFilter = msg.filter;
+        currentSavedViews = msg.savedViews;
+      },
       'parse-rules-result': (msg) => { handleParseRulesResult(msg); },
       'parse-stats': (msg) => { handleParseStats(msg.stats, msg.objectCount, msg.edgeCount, msg.schemaCount); },
       'log': (msg) => { outputChannel.info(msg.text); },
@@ -519,7 +598,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         (conn, progress, token) => {
           lastConnectionInfo = conn.connectionInfo;
           return runDbPhase1(panel, conn.connectionUri, conn.connectionInfo, progress, token,
-            (result) => { allObjectsCache = result; });
+            (result) => { allObjectsCache = result; },
+            (result) => { platformInfoCache = result; });
         },
       ),
       'db-visualize': (msg) => withDbProgress(
@@ -538,7 +618,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
           await runDbPhase2(
             panel, conn.connectionUri, msg.schemas, progress, token, allObjectsCache,
-            conn.connectionInfo.database, sourceName,
+            conn.connectionInfo.database, sourceName, platformInfoCache,
           );
           // Auto-save project if a name was provided (Create New DB flow)
           if (msg.projectName && !token.isCancellationRequested) {
@@ -633,7 +713,9 @@ type WebviewMessage =
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
   | { type: 'reload' }
+  | { type: 'dacpac-visualize'; schemas: string[]; projectName?: string }
   | { type: 'db-visualize'; schemas: string[]; projectName?: string }
+  | { type: 'filter-changed'; filter: import('./engine/projectStore').SerializedFilterState; savedViews: import('./engine/projectStore').FilterProfile[] }
   | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'standard'; columns?: import('./engine/types').ColumnDef[] }
   | { type: 'export-file'; data: string; defaultName: string };
 
@@ -968,6 +1050,7 @@ async function runDbPhase1(
   progress: vscode.Progress<{ message?: string; increment?: number }>,
   token: vscode.CancellationToken,
   onCacheAllObjects: (result: SimpleExecuteResult) => void,
+  onCachePlatformInfo?: (result: SimpleExecuteResult) => void,
 ): Promise<void> {
   const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
 
@@ -986,11 +1069,12 @@ async function runDbPhase1(
   }
 
   progress.report({ message: 'Querying schema overview...' });
-  // Run schema-preview (always) and all-objects (if available) in parallel
-  const allObjectsQuery = queries.find(q => q.name === 'all-objects');
+  // Run schema-preview (always) and all-objects + platform-info (if available) in parallel
+  const allObjectsQuery   = queries.find(q => q.name === 'all-objects');
+  const platformInfoQuery = onCachePlatformInfo ? queries.find(q => q.name === 'platform-info') : undefined;
 
   panel.webview.postMessage({ type: 'db-progress', step: 1, total: allObjectsQuery ? 2 : 1, label: 'schema-preview' });
-  const phase1Queries = allObjectsQuery ? [previewQuery, allObjectsQuery] : [previewQuery];
+  const phase1Queries = [previewQuery, ...(allObjectsQuery ? [allObjectsQuery] : []), ...(platformInfoQuery ? [platformInfoQuery] : [])];
 
   const dmvTimeoutMs = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const previewResult = await executeDmvQueries(connectionUri, phase1Queries, outputChannel, undefined, dmvTimeoutMs);
@@ -1019,6 +1103,12 @@ async function runDbPhase1(
     }
   } else {
     outputChannel.warn('[DB] No all-objects query found in YAML — cross-schema resolution disabled');
+  }
+
+  // Cache platform-info for Phase 2 model building (optional — no warning if absent)
+  if (platformInfoQuery && onCachePlatformInfo) {
+    const platformResult = previewResult.get('platform-info');
+    if (platformResult) onCachePlatformInfo(platformResult);
   }
 
   if (!result) {
@@ -1055,6 +1145,7 @@ async function runDbPhase2(
   allObjects?: SimpleExecuteResult,
   currentDatabase?: string,
   sourceName?: string,
+  platformInfo?: SimpleExecuteResult,
 ): Promise<void> {
   progress.report({ message: 'Loading queries...' });
   const queries = await loadDmvQueries(outputChannel, extensionUri);
@@ -1101,6 +1192,7 @@ async function runDbPhase2(
     dependencies: resultMap.get('dependencies')!,
     allObjects,
     constraints: resultMap.get('constraints'),
+    platformInfo,
   };
 
   progress.report({ message: 'Building model...' });
@@ -1137,20 +1229,23 @@ function formatCategoryCounts(counts?: Record<string, number>): string {
   return parts.length > 0 ? ` (${parts.join(', ')})` : '';
 }
 
-async function handleLoadDemo(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, autoVisualize = false) {
+async function handleLoadDemo(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  autoVisualize = false,
+  onModelBuilt?: (model: DatabaseModel) => void,
+) {
   const config = await readExtensionConfig();
   try {
     const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
     const data = await vscode.workspace.fs.readFile(demoUri);
     if (isDacpacTooLarge(data.byteLength)) return;
-    panel.webview.postMessage({
-      type: 'dacpac-data',
-      data: Array.from(data),
-      fileName: 'AdventureWorks (Demo)',
-      config,
-      autoVisualize,
-    });
     outputChannel.info('── Opening AdventureWorks (Demo) ──');
+    if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
+    const model = await extractDacpac(data.buffer as ArrayBuffer);
+    onModelBuilt?.(model);
+    if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
+    panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     outputChannel.error(`Failed to load demo: ${errorMsg}`);

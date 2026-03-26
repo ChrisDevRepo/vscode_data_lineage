@@ -3,7 +3,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import { bidirectional } from 'graphology-shortest-path';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import { DacpacModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './types';
+import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './types';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ export interface GraphResult {
   graph: Graph;
 }
 
-export function buildGraph(model: DacpacModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
+export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
   const graph = new Graph({ type: 'directed', multi: false });
 
   // Add nodes
@@ -383,7 +383,7 @@ function canonicalDirection(graph: Graph, a: string, b: string): [string, string
 
 // ─── Edge Building (bidirectional detection) ────────────────────────────────
 
-function buildFlowEdges(model: DacpacModel, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
+function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
   const valid = model.edges.filter(
     (e) => graph.hasNode(e.source) && graph.hasNode(e.target)
   );

@@ -95,7 +95,7 @@ queries:
 
   - name: columns
     phase: 2
-    description: "Phase 2: column metadata for table DDL preview (selected schemas)"
+    description: "Phase 2: column metadata for table DDL preview (selected schemas). pk_ordinal is 1-based for primary key columns, NULL for non-PK."
     sql: |
       SELECT
         s.name AS schema_name,
@@ -108,10 +108,15 @@ queries:
         c.scale,
         c.is_nullable,
         c.is_identity,
-        c.is_computed
+        c.is_computed,
+        MAX(CASE WHEN i.is_primary_key = 1 THEN ic.key_ordinal ELSE NULL END) AS pk_ordinal
       FROM sys.columns c
       INNER JOIN sys.objects o ON c.object_id = o.object_id
       INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+      LEFT JOIN sys.indexes i ON i.object_id = c.object_id AND i.is_primary_key = 1
+      LEFT JOIN sys.index_columns ic ON ic.object_id = i.object_id
+                                    AND ic.index_id   = i.index_id
+                                    AND ic.column_id  = c.column_id
       WHERE o.type IN ('U', 'ET')
         AND o.is_ms_shipped = 0
         AND s.name IN ({{SCHEMAS}})
@@ -120,6 +125,8 @@ queries:
           WHERE ep.major_id = o.object_id AND ep.class = 1
             AND ep.name = 'microsoft_database_tools_support'
         )
+      GROUP BY s.name, o.name, c.column_id, c.name, TYPE_NAME(c.system_type_id),
+               c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed
       ORDER BY s.name, o.name, c.column_id
 
   - name: constraints
@@ -251,3 +258,17 @@ queries:
         AND o1.is_ms_shipped = 0
         AND (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))
       ORDER BY referencing_schema, referencing_name
+
+  # ── Phase 1 (optional): DB platform detection ────────────────────────────────
+  - name: platform-info
+    phase: 1
+    description: >
+      Optional Phase 1 query: identifies the database platform (SQL Server edition/version,
+      Azure SQL, Synapse, Fabric, etc.) using SERVERPROPERTY. Result is used to populate
+      DatabaseModel.dbPlatform for display in the status bar and project card.
+      major_version maps on-prem SQL Server version numbers to release years.
+    sql: |
+      SELECT
+        CAST(SERVERPROPERTY('EngineEdition')      AS INT)           AS engine_edition,
+        CAST(SERVERPROPERTY('ProductMajorVersion') AS INT)          AS major_version,
+        CAST(SERVERPROPERTY('Edition')             AS NVARCHAR(50)) AS edition

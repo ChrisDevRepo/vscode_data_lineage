@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.6] - 2026-03-26
+
+### Added
+- **PK badge** — Primary key columns now show a "PK" flag in the table design view. Composite PKs show numbered ordinals (PK1, PK2, …).
+- **DB platform detection** — `dbPlatform` field on the model. Dacpac path reads the `DspName` DSP attribute and maps it to a human-readable string (e.g. "Azure SQL Database", "SQL Server 2022", "Fabric Data Warehouse"). DB import path reads `SERVERPROPERTY('EngineEdition')` + `ProductMajorVersion`.
+
+### Changed
+- **State bridge** — Dacpac extraction now runs in the extension host (Node.js) instead of the webview. Panel restore is now <100ms (re-sends retained model on `ready` rather than re-parsing). Enables AI tools in v0.9.7.
+- Renamed internal type `DacpacModel` → `DatabaseModel` (no behavior change).
+- New webview messages: `dacpac-schema-preview`, `dacpac-model`, `dacpac-visualize`, `filter-changed`. Old `dacpac-data` message is deprecated.
+- Added `searchCatalog`, `searchBodyScripts`, and `safeRegex` utilities to `src/utils/modelSearch.ts`. Added `normalizeBodyScript` to `src/utils/sql.ts`. Used internally by `DetailSearchSidebar` and `autocomplete`.
+- `loadAdventureWorksModel()` helper added to `test/testUtils.ts` for end-to-end dacpac→model tests without VS Code.
+
 ## [0.9.5] - 2026-03-24
 
 ### Changed

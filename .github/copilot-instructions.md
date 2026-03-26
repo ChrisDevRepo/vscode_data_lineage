@@ -50,21 +50,21 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 63 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
-| `test/graphBuilder.test.ts` | 156 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression |
+| `test/dacpacExtractor.test.ts` | 110 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
+| `test/graphBuilder.test.ts` | 157 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression |
 | `test/parser-edge-cases.test.ts` | 197 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
-| `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
+| `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/projectStore.test.ts` | 153 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                  # Run all unit tests
+npm test                  # Run all unit tests (946 total)
 ```
 
-Shared test helpers in `test/testUtils.ts` — `assert()`, `assertEq()`, `test()`, `loadParseRules()`, `testPath()`, `printSummary()`, `makeGraph()`. Import from `./testUtils` in new test files.
+Shared test helpers in `test/testUtils.ts` — `assert()`, `assertEq()`, `test()`, `loadParseRules()`, `testPath()`, `rootPath()`, `printSummary()`, `makeGraph()`, `hasName()`, `loadAdventureWorksModel()`. Import from `./testUtils` in new test files.
 
 Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers must never appear in public source code, test files, or comments. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
 

@@ -30,7 +30,7 @@ import { AnalysisSidebar } from './AnalysisSidebar';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
-import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
+import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
@@ -75,7 +75,7 @@ interface GraphCanvasProps {
   onOpenDdlViewer?: () => void;
   isDetailSearchOpen?: boolean;
   onToggleDetailSearch?: () => void;
-  model?: DacpacModel | null;
+  model?: DatabaseModel | null;
   infoBarNodeId?: string | null;
   onCloseInfoBar?: () => void;
   analysisMode?: AnalysisMode | null;
@@ -253,8 +253,8 @@ export function GraphCanvas({
 
   // ── O(1) model node lookup (avoids O(n²) .find() in DetailSearchSidebar) ──
   const modelNodeMap = useMemo(() => {
-    if (!model) return new Map<string, DacpacModel['nodes'][number]>();
-    const map = new Map<string, DacpacModel['nodes'][number]>();
+    if (!model) return new Map<string, DatabaseModel['nodes'][number]>();
+    const map = new Map<string, DatabaseModel['nodes'][number]>();
     for (const n of model.nodes) map.set(n.id, n);
     return map;
   }, [model]);

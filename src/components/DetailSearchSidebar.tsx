@@ -1,6 +1,7 @@
 import { useState, useMemo, useDeferredValue, memo } from 'react';
 import type { ObjectType } from '../engine/types';
 import { SidePanel } from './SidePanel';
+import { searchBodyScripts } from '../utils/modelSearch';
 
 export interface DetailSearchNode {
   id: string;
@@ -28,24 +29,6 @@ const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
 
 const SEARCHABLE_TYPES = new Set<ObjectType>(['procedure', 'view']);
 
-function buildSnippet(body: string, term: string): string {
-  const lower = body.toLowerCase();
-  const idx = lower.indexOf(term.toLowerCase());
-  if (idx < 0) return '';
-
-  const lines = body.split('\n');
-  let charCount = 0;
-  let matchLine = 0;
-  for (let i = 0; i < lines.length; i++) {
-    charCount += lines[i].length + 1;
-    if (charCount > idx) { matchLine = i; break; }
-  }
-
-  const start = Math.max(0, matchLine - 1);
-  const end = Math.min(lines.length, matchLine + 2);
-  return lines.slice(start, end).map(l => l.trimEnd()).join('\n');
-}
-
 export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   onClose,
   allNodes,
@@ -54,18 +37,8 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   const [input, setInput] = useState('');
   const deferredInput = useDeferredValue(input);
 
-  const results = useMemo(() => {
-    const term = deferredInput.trim();
-    if (term.length < 2) return [];
-
-    const matches: SearchResult[] = [];
-    for (const node of allNodes) {
-      if (!SEARCHABLE_TYPES.has(node.type) || !node.bodyScript) continue;
-      if (node.bodyScript.toLowerCase().includes(term.toLowerCase())) {
-        matches.push({ node, snippet: buildSnippet(node.bodyScript, term) });
-      }
-    }
-    return matches;
+  const results = useMemo<SearchResult[]>(() => {
+    return searchBodyScripts(allNodes, deferredInput.trim(), SEARCHABLE_TYPES) as SearchResult[];
   }, [deferredInput, allNodes]);
 
   // Group by display label

@@ -1,5 +1,5 @@
 import {
-  DacpacModel,
+  DatabaseModel,
   SchemaInfo,
   SchemaPreview,
   DMV_TYPE_MAP,
@@ -27,6 +27,8 @@ export interface DmvResults {
   allObjects?: SimpleExecuteResult;
   /** Phase 2 constraints result: FK, UQ, CK metadata for table design view. */
   constraints?: SimpleExecuteResult;
+  /** Optional Phase 1 platform-info result: EngineEdition + ProductMajorVersion for dbPlatform. */
+  platformInfo?: SimpleExecuteResult;
 }
 
 /**
@@ -65,18 +67,46 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-export function buildModelFromDmv(results: DmvResults, currentDatabase?: string, externalRefsEnabled = true, maxNodes = DEFAULT_CONFIG.maxNodes): DacpacModel {
+export function buildModelFromDmv(results: DmvResults, currentDatabase?: string, externalRefsEnabled = true, maxNodes = DEFAULT_CONFIG.maxNodes): DatabaseModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
   const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
   const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes);
+  const dbPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : undefined;
 
   const warnings: string[] = [];
   if (objects.length === 0) {
     warnings.push('No user objects found in database.');
   }
 
-  return { ...model, warnings: warnings.length > 0 ? warnings : undefined };
+  return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform };
+}
+
+/** Map SERVERPROPERTY('EngineEdition') + ProductMajorVersion to a human-readable platform string. */
+function mapEnginePlatform(result: SimpleExecuteResult): string | undefined {
+  if (!result.rows.length) return undefined;
+  const colIdx = buildColumnIndex(result);
+  const row = result.rows[0];
+  const engineEdition = parseInt(cellValue(row, colIdx, 'engine_edition'), 10);
+  const majorVersion  = parseInt(cellValue(row, colIdx, 'major_version'), 10);
+  const edition       = cellValue(row, colIdx, 'edition');
+  switch (engineEdition) {
+    case 5:  return 'Azure SQL Database';
+    case 6:  return 'Synapse Dedicated Pool';
+    case 8:  return 'Azure SQL Managed Instance';
+    case 9:  return 'Azure SQL Edge';
+    case 11: return 'Fabric Data Warehouse';
+    case 12: return 'SQL Database in Fabric';
+    default: {
+      const versionYearMap: Record<number, string> = {
+        8: '2000', 9: '2005', 10: '2008', 11: '2012',
+        12: '2014', 13: '2016', 14: '2017', 15: '2019',
+        16: '2022', 17: '2025',
+      };
+      const year = versionYearMap[majorVersion];
+      return year ? `SQL Server ${year}` : (edition || undefined);
+    }
+  }
 }
 
 // ─── Column Contract Validation ─────────────────────────────────────────────
@@ -178,7 +208,7 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
     if (valid.length !== fks.length) fkMap.set(tableKey, valid);
   }
 
-  return { uqColMap, ckColMap, fkMap };
+  return { uqColMap, ckColMap, fkMap, pkOrdinalMap: new Map() };
 }
 
 // ─── Extract: DMV Rows → Intermediate Format ────────────────────────────────
@@ -200,7 +230,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     const table = cellValue(row, colColIdx, 'table_name');
     const key = `${schema}.${table}`.toLowerCase();
     if (!tableColumns.has(key)) tableColumns.set(key, []);
-    tableColumns.get(key)!.push(buildColumnDef(
+    const col = buildColumnDef(
       cellValue(row, colColIdx, 'column_name'),
       cellValue(row, colColIdx, 'type_name'),
       isTruthy(cellValue(row, colColIdx, 'is_nullable')),
@@ -209,7 +239,13 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       cellValue(row, colColIdx, 'max_length'),
       cellValue(row, colColIdx, 'precision'),
       cellValue(row, colColIdx, 'scale'),
-    ));
+    );
+    const pkOrdinalRaw = cellValue(row, colColIdx, 'pk_ordinal');
+    if (pkOrdinalRaw) {
+      const pk = parseInt(pkOrdinalRaw, 10);
+      if (pk > 0) col.pkOrdinal = pk;
+    }
+    tableColumns.get(key)!.push(col);
   }
 
   const objects: ExtractedObject[] = [];

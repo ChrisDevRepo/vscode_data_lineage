@@ -58,7 +58,7 @@ export type CatalogEntry = { schema: string; name: string; type: ObjectType; ext
  */
 export type NeighborIndex = Record<string, { in: string[]; out: string[] }>;
 
-export interface DacpacModel {
+export interface DatabaseModel {
   nodes: LineageNode[];
   edges: LineageEdge[];
   schemas: SchemaInfo[];
@@ -71,6 +71,8 @@ export interface DacpacModel {
   neighborIndex: NeighborIndex;
   parseStats?: ParseStats;
   warnings?: string[];
+  /** Human-readable database platform string, e.g. "Azure SQL Database" or "SQL Server 2022". */
+  dbPlatform?: string;
 }
 
 export interface SchemaPreview {
@@ -140,8 +142,9 @@ export interface ColumnDef {
   type: string;
   nullable: string;
   extra: string;
-  unique?: string;  // UQ constraint name when column participates; display shows "UQ" flag
-  check?: string;   // CK constraint name for column-level check; display shows "CK" flag
+  unique?: string;     // UQ constraint name when column participates; display shows "UQ" flag
+  check?: string;      // CK constraint name for column-level check; display shows "CK" flag
+  pkOrdinal?: number;  // PK ordinal (1-based); set for every column in the primary key
 }
 
 /** Foreign key constraint metadata — attached to table ExtractedObject (dacpac + DMV paths). */
@@ -220,16 +223,20 @@ export interface ConstraintMaps {
   ckColMap: Map<string, string>;
   /** Key: "schema.table" (lowercase) → FK list */
   fkMap: Map<string, ForeignKeyInfo[]>;
+  /** Key: "schema.table.column" (lowercase) → PK ordinal (1-based) */
+  pkOrdinalMap: Map<string, number>;
 }
 
-/** Enrich columns with UQ/CK flags and return FK list for a table. */
+/** Enrich columns with UQ/CK/PK flags and return FK list for a table. */
 export function enrichColumnsWithConstraints(
   columns: ColumnDef[], tableKey: string, maps: ConstraintMaps
 ): ForeignKeyInfo[] {
   for (const col of columns) {
-    const ck = `${tableKey}.${col.name}`.toLowerCase();
-    col.unique = maps.uqColMap.get(ck) ?? '';
-    col.check  = maps.ckColMap.get(ck) ?? '';
+    const colKey = `${tableKey}.${col.name}`.toLowerCase();
+    col.unique    = maps.uqColMap.get(colKey) ?? '';
+    col.check     = maps.ckColMap.get(colKey) ?? '';
+    const pk      = maps.pkOrdinalMap.get(colKey);
+    if (pk !== undefined) col.pkOrdinal = pk;
   }
   return maps.fkMap.get(tableKey) ?? [];
 }
@@ -389,13 +396,16 @@ export interface AnalysisMode {
 export type ExtensionMessage =
   | { type: 'config-only'; config: ExtensionConfig }
   | { type: 'projects-list'; projects: import('./projectStore').Project[]; lastOpenedId: string | null }
+  /** @deprecated Extension host now sends dacpac-schema-preview / dacpac-model instead. */
   | { type: 'dacpac-data'; data: number[]; fileName: string; filePath?: string; config: ExtensionConfig; autoVisualize?: boolean; preselectedSchemas?: string[] }
+  | { type: 'dacpac-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string }
+  | { type: 'dacpac-model'; model: DatabaseModel; config: ExtensionConfig; sourceName: string; autoVisualize?: boolean }
   | { type: 'last-dacpac-gone' }
   | { type: 'themeChanged'; kind: string }
   | { type: 'mssql-status'; available: boolean }
   | { type: 'db-progress'; step: number; total: number; label: string }
   | { type: 'db-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string }
-  | { type: 'db-model'; model: DacpacModel; config: ExtensionConfig; sourceName: string }
+  | { type: 'db-model'; model: DatabaseModel; config: ExtensionConfig; sourceName: string }
   | { type: 'db-error'; message: string; phase: string }
   | { type: 'db-cancelled' }
   | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }

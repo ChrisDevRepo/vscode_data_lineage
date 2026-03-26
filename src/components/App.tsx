@@ -10,7 +10,7 @@ import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DacpacModel, LineageNode, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
+import type { DatabaseModel, LineageNode, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import type { StatsMode } from '../engine/profilingEngine';
 import { runAnalysis } from '../engine/graphAnalysis';
@@ -44,7 +44,7 @@ export function App() {
   const vscodeApi = useVsCode();
   const isAutoVisualize = document.body.dataset.autoVisualize === 'true';
   const [view, setView] = useState<AppView>(isAutoVisualize ? 'visualizing' : 'start');
-  const [model, setModel] = useState<DacpacModel | null>(null);
+  const [model, setModel] = useState<DatabaseModel | null>(null);
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
@@ -108,13 +108,13 @@ export function App() {
   const [, startTransition] = useTransition();
 
   const rebuild = useCallback(
-    (m: DacpacModel, f: FilterState, cfg?: ExtensionConfig) => {
+    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig) => {
       startTransition(() => buildFromModel(m, f, cfg || config));
     },
     [buildFromModel, config]
   );
 
-  const getResetFilter = (m: DacpacModel): FilterState => ({
+  const getResetFilter = (m: DatabaseModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
     types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
     searchTerm: '',
@@ -127,7 +127,7 @@ export function App() {
 
   // Transition from visualizing → graph
   const handleVisualize = useCallback(
-    (dacpacModel: DacpacModel, selectedSchemas: Set<string>) => {
+    (dacpacModel: DatabaseModel, selectedSchemas: Set<string>) => {
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
       trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, (msg) => {
         vscodeApi.postMessage({ type: 'error', error: msg });
@@ -144,7 +144,7 @@ export function App() {
   );
 
   // pendingVisualize / pendingAutoVisualize → triggers handleVisualize → then view→graph
-  const prevModelRef = useRef<DacpacModel | null>(null);
+  const prevModelRef = useRef<DatabaseModel | null>(null);
   useEffect(() => {
     if (!dacpacLoader.model || dacpacLoader.isLoading) return;
 

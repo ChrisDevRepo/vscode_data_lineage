@@ -96,3 +96,15 @@ export function compileExclusionPattern(pattern: string): RegExp {
 export function escapeRegexLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+/**
+ * Normalize a DDL body script for display: strips blank lines, trims trailing whitespace,
+ * and converts tabs to 2-space indentation.
+ */
+export function normalizeBodyScript(raw: string): string {
+  return raw
+    .split('\n')
+    .filter(line => line.trim().length > 0)
+    .map(line => line.trimEnd().replace(/\t/g, '  '))
+    .join('\n');
+}

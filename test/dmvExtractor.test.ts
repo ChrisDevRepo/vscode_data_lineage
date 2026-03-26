@@ -926,9 +926,178 @@ function testExpandedSqlStructure() {
   }
 }
 
+// ─── Bridge: mapEnginePlatform via buildModelFromDmv ─────────────────────────
+
+function makePlatformInfo(engineEdition: number, majorVersion: number, edition: string): SimpleExecuteResult {
+  return makeResult(
+    cols('engine_edition', 'major_version', 'edition'),
+    [[cell(String(engineEdition)), cell(String(majorVersion)), cell(edition)]],
+  );
+}
+
+function testDbPlatformFromDmv() {
+  console.log('\n── DMV Bridge: dbPlatform via mapEnginePlatform ──');
+
+  const emptyNodes = makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), []);
+  const emptyCols = makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []);
+  const emptyDeps = makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []);
+
+  function modelWithPlatform(platformInfo: SimpleExecuteResult) {
+    return buildModelFromDmv({ nodes: emptyNodes, columns: emptyCols, dependencies: emptyDeps, platformInfo });
+  }
+
+  // Cloud editions
+  assertEq(modelWithPlatform(makePlatformInfo(5,  0, '')).dbPlatform, 'Azure SQL Database',        'EngineEdition 5 → Azure SQL Database');
+  assertEq(modelWithPlatform(makePlatformInfo(6,  0, '')).dbPlatform, 'Synapse Dedicated Pool',     'EngineEdition 6 → Synapse Dedicated Pool');
+  assertEq(modelWithPlatform(makePlatformInfo(8,  0, '')).dbPlatform, 'Azure SQL Managed Instance', 'EngineEdition 8 → Azure SQL Managed Instance');
+  assertEq(modelWithPlatform(makePlatformInfo(9,  0, '')).dbPlatform, 'Azure SQL Edge',              'EngineEdition 9 → Azure SQL Edge');
+  assertEq(modelWithPlatform(makePlatformInfo(11, 0, '')).dbPlatform, 'Fabric Data Warehouse',      'EngineEdition 11 → Fabric Data Warehouse');
+  assertEq(modelWithPlatform(makePlatformInfo(12, 0, '')).dbPlatform, 'SQL Database in Fabric',     'EngineEdition 12 → SQL Database in Fabric');
+
+  // On-prem editions: use default edition (3 = Enterprise) + major version
+  const onPremCases: [number, string][] = [
+    [17, 'SQL Server 2025'],
+    [16, 'SQL Server 2022'],
+    [15, 'SQL Server 2019'],
+    [14, 'SQL Server 2017'],
+    [13, 'SQL Server 2016'],
+    [12, 'SQL Server 2014'],
+    [11, 'SQL Server 2012'],
+    [10, 'SQL Server 2008'],
+    [9,  'SQL Server 2005'],
+    [8,  'SQL Server 2000'],
+  ];
+  for (const [major, expected] of onPremCases) {
+    const model = modelWithPlatform(makePlatformInfo(3, major, 'Enterprise Edition'));
+    assertEq(model.dbPlatform, expected, `EngineEdition 3, major ${major} → ${expected}`);
+  }
+
+  // Unknown major version → fall back to edition string
+  const unknownMajor = modelWithPlatform(makePlatformInfo(3, 99, 'Developer Edition'));
+  assertEq(unknownMajor.dbPlatform, 'Developer Edition',
+    'Unknown major version → edition string fallback');
+
+  // Unknown edition AND unknown major → dbPlatform = undefined (edition is empty)
+  const unknownAll = modelWithPlatform(makePlatformInfo(3, 99, ''));
+  assert(unknownAll.dbPlatform === undefined || unknownAll.dbPlatform === '',
+    'Unknown edition + unknown major → dbPlatform absent');
+
+  // No platformInfo → dbPlatform absent
+  const noPlatform = buildModelFromDmv({ nodes: emptyNodes, columns: emptyCols, dependencies: emptyDeps });
+  assert(noPlatform.dbPlatform === undefined, 'No platformInfo → dbPlatform undefined');
+
+  // Empty rows in platformInfo → dbPlatform absent
+  const emptyRows = makeResult(cols('engine_edition', 'major_version', 'edition'), []);
+  const noRows = modelWithPlatform(emptyRows);
+  assert(noRows.dbPlatform === undefined, 'Empty platformInfo rows → dbPlatform undefined');
+}
+
+// ─── Bridge: pkOrdinal from columns query ────────────────────────────────────
+
+function testPkOrdinalFromDmv() {
+  console.log('\n── DMV Bridge: pkOrdinal in ColumnDef ──');
+
+  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesRows: DbCellValue[][] = [
+    [cell('dbo'), cell('OrderDetail'), cell('U '), nullCell()],
+  ];
+
+  // columns with pk_ordinal column: composite PK on (OrderId, LineId), Name is non-PK
+  const columnsCols = cols(
+    'schema_name', 'table_name', 'ordinal', 'column_name',
+    'type_name', 'max_length', 'precision', 'scale',
+    'is_nullable', 'is_identity', 'is_computed', 'pk_ordinal',
+  );
+  const columnsRows: DbCellValue[][] = [
+    [cell('dbo'), cell('OrderDetail'), cell('1'), cell('OrderId'),
+      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('0'), cell('0'), cell('1')],
+    [cell('dbo'), cell('OrderDetail'), cell('2'), cell('LineId'),
+      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('0'), cell('0'), cell('2')],
+    [cell('dbo'), cell('OrderDetail'), cell('3'), cell('Name'),
+      cell('nvarchar'), cell('200'), cell('0'), cell('0'), cell('1'), cell('0'), cell('0'), nullCell()],
+  ];
+
+  const emptyDeps = makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []);
+
+  const results: DmvResults = {
+    nodes: makeResult(nodesCols, nodesRows),
+    columns: makeResult(columnsCols, columnsRows),
+    dependencies: emptyDeps,
+  };
+
+  const model = buildModelFromDmv(results);
+  const table = model.nodes.find(n => n.name === 'OrderDetail');
+  assert(table !== undefined, 'OrderDetail table found');
+
+  const orderId = table!.columns?.find(c => c.name === 'OrderId');
+  assert(orderId !== undefined, 'OrderId column found');
+  assertEq(orderId!.pkOrdinal, 1, 'OrderId: pkOrdinal = 1');
+
+  const lineId = table!.columns?.find(c => c.name === 'LineId');
+  assert(lineId !== undefined, 'LineId column found');
+  assertEq(lineId!.pkOrdinal, 2, 'LineId: pkOrdinal = 2');
+
+  const name = table!.columns?.find(c => c.name === 'Name');
+  assert(name !== undefined, 'Name column found');
+  assert(name!.pkOrdinal === undefined, 'Name: no pkOrdinal (not a PK column)');
+
+  // Single-column PK: pk_ordinal=1 only
+  const singlePkCols = cols(
+    'schema_name', 'table_name', 'ordinal', 'column_name',
+    'type_name', 'max_length', 'precision', 'scale',
+    'is_nullable', 'is_identity', 'is_computed', 'pk_ordinal',
+  );
+  const singlePkRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Product'), cell('1'), cell('Id'),
+      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('1'), cell('0'), cell('1')],
+    [cell('dbo'), cell('Product'), cell('2'), cell('Name'),
+      cell('nvarchar'), cell('200'), cell('0'), cell('0'), cell('1'), cell('0'), cell('0'), nullCell()],
+  ];
+  const singlePkNodeRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Product'), cell('U '), nullCell()],
+  ];
+  const singleResults: DmvResults = {
+    nodes: makeResult(nodesCols, singlePkNodeRows),
+    columns: makeResult(singlePkCols, singlePkRows),
+    dependencies: emptyDeps,
+  };
+  const singleModel = buildModelFromDmv(singleResults);
+  const product = singleModel.nodes.find(n => n.name === 'Product');
+  const productId = product?.columns?.find(c => c.name === 'Id');
+  assertEq(productId?.pkOrdinal, 1, 'Single PK: Id.pkOrdinal = 1');
+  assert(product?.columns?.find(c => c.name === 'Name')?.pkOrdinal === undefined,
+    'Single PK: Name column has no pkOrdinal');
+
+  // No pk_ordinal column in result (older query version) → no pkOrdinal set, no crash
+  const noPkCols = cols(
+    'schema_name', 'table_name', 'ordinal', 'column_name',
+    'type_name', 'max_length', 'precision', 'scale',
+    'is_nullable', 'is_identity', 'is_computed',
+    // pk_ordinal intentionally absent
+  );
+  const noPkRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Legacy'), cell('1'), cell('Id'),
+      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('1'), cell('0')],
+  ];
+  const legacyNodeRows: DbCellValue[][] = [
+    [cell('dbo'), cell('Legacy'), cell('U '), nullCell()],
+  ];
+  const legacyResults: DmvResults = {
+    nodes: makeResult(nodesCols, legacyNodeRows),
+    columns: makeResult(noPkCols, noPkRows),
+    dependencies: emptyDeps,
+  };
+  const legacyModel = buildModelFromDmv(legacyResults);
+  const legacyId = legacyModel.nodes.find(n => n.name === 'Legacy')?.columns?.find(c => c.name === 'Id');
+  assert(legacyId !== undefined, 'Legacy: Id column found');
+  assert(legacyId!.pkOrdinal === undefined, 'Legacy (no pk_ordinal col): pkOrdinal absent — no crash');
+}
+
 testExpandSchemaPlaceholder();
 testValidateSchemaPlaceholder();
 testYamlQueriesHavePlaceholder();
 testExpandedSqlStructure();
+testDbPlatformFromDmv();
+testPkOrdinalFromDmv();
 
 printSummary('DMV Extractor');

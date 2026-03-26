@@ -27,7 +27,8 @@ No database? Click **Try with demo data** to explore the AdventureWorks sample.
 
 ## Features
 
-**Data Sources**
+### Data Sources
+
 - Import from SSDT and SDK-style `.dacpac` files
 - Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
 - External table support
@@ -35,18 +36,21 @@ No database? Click **Try with demo data** to explore the AdventureWorks sample.
 - Project sessions: saved connections and schema selections reopen with a single click
 - Saved views: bookmark named filter states (schemas, types, search) per project
 
-**Visualization**
+### Visualization
+
 - Search and navigate objects with autocomplete
 - Trace upstream and downstream dependencies with sibling filtering
 - Find the shortest path between any two nodes
 - Schema-based color coding with interactive minimap
 
-**Graph Analysis**
+### Graph Analysis
+
 - Detect islands, hubs, orphans, and circular dependencies
 - Find the longest dependency chains in your project
 - Filter by schema, object type, or regex patterns
 
-**SQL Preview & Export**
+### SQL Preview & Export
+
 - Click any node to view its DDL with full syntax highlighting
 - Search SQL bodies of stored procedures and views
 - Export the lineage graph to Draw.io for documentation
@@ -66,43 +70,41 @@ No database? Click **Try with demo data** to explore the AdventureWorks sample.
 
 ## Configuration
 
-Search `dataLineageViz` in VS Code Settings (`Ctrl+,`). Settings are grouped into **Import**, **Database Connection**, **Table Statistics**, **Layout**, **Trace**, and **Analysis**.
+Search `dataLineageViz` in VS Code Settings (`Ctrl+,`). Settings are grouped into **Import**, **Database Connection**, **Table Statistics**, **Layout**, **Trace**, and **Analysis**. Most settings apply instantly; import settings (`parseRulesFile`, `excludePatterns`) require reloading the data source.
 
-Most settings apply instantly. Import settings (`parseRulesFile`, `excludePatterns`) require reloading the data source.
-
-**Key settings:**
+### Key Settings
 
 | Setting | Default | Description |
-|---------|---------|-------------|
-| `maxNodes` | `750` | Maximum nodes to display (10-1000) |
+| --- | --- | --- |
+| `maxNodes` | `750` | Maximum nodes to display (10–1000) |
 | `excludePatterns` | `[]` | Regex patterns to exclude objects by name |
-| `layout.direction` | `"LR"` | Graph flow: `LR` (left-to-right) or `TB` (top-to-bottom) |
+| `layout.direction` | `"LR"` | Graph flow direction: `LR` left-to-right or `TB` top-to-bottom |
 | `tableStatistics.enabled` | `true` | Column statistics and row counts (DB import only) |
 
-**Power user customization:**
+### Commands
+
+| Command | Description |
+| --- | --- |
+| Data Lineage: Open Wizard | Open the visualization panel |
+| Data Lineage: Open Demo | Load the AdventureWorks demo |
+| Data Lineage: Settings | Open extension settings |
+| Data Lineage: Create Parse Rules | Scaffold a custom parse rules YAML in your workspace |
+| Data Lineage: Create DMV Queries | Scaffold a custom DMV queries YAML in your workspace |
+
+### Customization
+
+Advanced users can override the built-in SQL parsing rules and database import queries:
 
 | Guide | What you can customize |
-|-------|------------------------|
+| --- | --- |
 | [Custom Parse Rules](docs/PARSE_RULES.md) | Regex rules for SP dependency extraction |
 | [Custom DMV Queries](docs/DMV_QUERIES.md) | SQL queries for database import |
 | [Profiling Patterns](docs/PROFILING_PATTERNS.md) | Table statistics SQL reference |
 
-Use **Data Lineage: Create Parse Rules** or **Data Lineage: Create DMV Queries** from the Command Palette to scaffold a customization YAML in your workspace.
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| **Data Lineage: Open Wizard** | Open the visualization panel |
-| **Data Lineage: Open Demo** | Load the AdventureWorks demo |
-| **Data Lineage: Settings** | Open extension settings |
-| **Data Lineage: Create Parse Rules** | Scaffold custom parsing configuration |
-| **Data Lineage: Create DMV Queries** | Scaffold custom DMV query configuration |
-
 ## FAQ
 
 **Do I need a .dacpac file?**
-No — you can also import directly from a database using the MSSQL extension. If you prefer a .dacpac, it can be extracted or built from Visual Studio, VS Code, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications) for details.
+No — you can also import directly from a database using the MSSQL extension. If you prefer a .dacpac, it can be extracted from Visual Studio, VS Code, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications) for details.
 
 **Why are some dependencies missing?**
 Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) cannot be analyzed statically. Only compile-time dependencies are detected.
