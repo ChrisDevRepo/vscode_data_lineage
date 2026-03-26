@@ -14,6 +14,8 @@ export function ColumnTable({ columns, isVirtualExt }: ColumnTableProps) {
     );
   }
 
+  const pkCount = columns.filter(c => c.pkOrdinal !== undefined).length;
+
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
@@ -26,9 +28,7 @@ export function ColumnTable({ columns, isVirtualExt }: ColumnTableProps) {
       </thead>
       <tbody>
         {columns.map(col => {
-          const pkBadge = col.pkOrdinal !== undefined
-            ? (columns.filter(c => c.pkOrdinal !== undefined).length > 1 ? `PK${col.pkOrdinal}` : 'PK')
-            : '';
+          const pkBadge = col.pkOrdinal !== undefined ? (pkCount > 1 ? `PK${col.pkOrdinal}` : 'PK') : '';
           const flags = [
             col.extra || '',
             pkBadge,

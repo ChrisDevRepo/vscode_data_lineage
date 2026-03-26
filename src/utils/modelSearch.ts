@@ -21,11 +21,13 @@ export interface DdlMatch {
 export function safeRegex(pattern: string): RegExp | null {
   try {
     const r = new RegExp(pattern, 'i');
-    // Smoke test: reject patterns that take >1ms on a 200-char string
+    // Heuristic ReDoS guard: reject patterns that take >5ms on a 200-char string.
+    // Uses performance.now() (sub-ms precision) instead of Date.now() (1ms / 15ms on Windows).
+    // Not a complete defense — structural analysis would be needed for full coverage.
     const sample = 'a'.repeat(200);
-    const start = Date.now();
+    const start = performance.now();
     r.test(sample);
-    if (Date.now() - start > 1) return null;
+    if (performance.now() - start > 5) return null;
     return r;
   } catch {
     return null;

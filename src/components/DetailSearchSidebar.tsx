@@ -38,7 +38,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   const deferredInput = useDeferredValue(input);
 
   const results = useMemo<SearchResult[]>(() => {
-    return searchBodyScripts(allNodes, deferredInput.trim(), SEARCHABLE_TYPES) as SearchResult[];
+    return searchBodyScripts(allNodes, deferredInput.trim(), SEARCHABLE_TYPES);
   }, [deferredInput, allNodes]);
 
   // Group by display label

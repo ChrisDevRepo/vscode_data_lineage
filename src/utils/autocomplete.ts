@@ -15,5 +15,5 @@ export function filterSuggestions(
   limit: number = 10,
 ): AutocompleteNode[] {
   if (term.length < 2) return [];
-  return searchCatalog(nodes, term, undefined, undefined, limit) as AutocompleteNode[];
+  return searchCatalog(nodes, term, undefined, undefined, limit);
 }

@@ -208,6 +208,8 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
     if (valid.length !== fks.length) fkMap.set(tableKey, valid);
   }
 
+  // pkOrdinalMap is intentionally empty: PK ordinals come from the columns query (pk_ordinal column),
+  // not the constraints result set. col.pkOrdinal is set directly in the columns loop in extractObjects.
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap: new Map() };
 }
 

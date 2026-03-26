@@ -102,7 +102,6 @@ async function showDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
     if (doc.languageId !== 'dacpac-sql') {
       await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
     }
-    ddlCacheSet(key, content);
     await vscode.window.showTextDocument(doc, {
       viewColumn: vscode.ViewColumn.Beside,
       preserveFocus: true,
@@ -315,8 +314,6 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       if (panelDisposed) return;
       panel.webview.postMessage({ type: 'themeChanged', kind: getThemeClass(theme.kind) });
     });
-    context.subscriptions.push(themeChangeListener);
-
     panel.onDidDispose(() => {
       panelDisposed = true;
       activePanel = undefined;
@@ -454,10 +451,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               currentModel = null;
               panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: conn.displayName });
             }
-          } catch {
-            outputChannel.warn(`[Project] Dacpac not found: ${conn.path}`);
-            panel.webview.postMessage({ type: 'last-dacpac-gone' });
-            vscode.window.showErrorMessage('Project file not found. Delete the project and re-add it.');
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            outputChannel.error(`[Project] Failed to load "${conn.path}": ${errorMsg}`);
+            if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
+              panel.webview.postMessage({ type: 'last-dacpac-gone' });
+            } else {
+              panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'extract' });
+            }
           }
         } else if (project.connection.type === 'database') {
           const conn = project.connection;
@@ -639,10 +640,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       ),
       'save-view': async (msg) => {
         const store = loadProjectStore(context);
-        const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
-        if (!updated.projects.some(p => p.id === msg.projectId)) {
+        if (!store.projects.some(p => p.id === msg.projectId)) {
           outputChannel.warn(`[Project] save-view: projectId ${msg.projectId} not found in store`);
+          return;
         }
+        const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
         await saveProjectStore(context, updated);
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] View saved: "${(msg.profile as FilterProfile).name}" on project ${msg.projectId}`);
