@@ -5,6 +5,7 @@ import type { CustomNodeData } from '../components/CustomNode';
 import { DacpacModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
 import { buildGraph, getGraphMetrics } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
+import { compileExclusionPattern } from '../utils/sql';
 
 interface UseGraphologyReturn {
   flowNodes: FlowNode<CustomNodeData>[];
@@ -37,7 +38,8 @@ export function useGraphology(): UseGraphologyReturn {
     const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
     const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 
-    const focusFiltered = applyFocusSchemaFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.focusSchemas);
+    const exclusionFiltered = applyExclusionFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.exclusionPatterns);
+    const focusFiltered = applyFocusSchemaFilter(exclusionFiltered, filter.focusSchemas);
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
 
     const result = buildGraph(isolationFiltered, config);
@@ -48,6 +50,30 @@ export function useGraphology(): UseGraphologyReturn {
   }, []);
 
   return { flowNodes, flowEdges, graph, metrics, buildFromModel };
+}
+
+// ─── Exclusion Filter (interactive / render-time) ────────────────────────────
+// Separate from dacpacExtractor.applyExclusionPatterns, which is load-time only
+// (applied once when the data source is loaded, driven by config.excludePatterns).
+// This filter is applied on every graph rebuild driven by filter.exclusionPatterns
+// from the UI ExclusionDropdown — instant effect, no data reload required.
+
+function applyExclusionFilter(model: DacpacModel, patterns: string[]): DacpacModel {
+  if (!patterns || patterns.length === 0) return model;
+
+  const regexes: RegExp[] = [];
+  for (const p of patterns) {
+    try { regexes.push(compileExclusionPattern(p)); } catch { /* skip invalid — UI validates before add */ }
+  }
+  if (regexes.length === 0) return model;
+
+  const nodes = model.nodes.filter((n) => {
+    const name = `${n.schema}.${n.name}`;
+    return !regexes.some((r) => r.test(name) || r.test(n.fullName));
+  });
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
+  return { ...model, nodes, edges };
 }
 
 // ─── Isolation Filter ────────────────────────────────────────────────────────

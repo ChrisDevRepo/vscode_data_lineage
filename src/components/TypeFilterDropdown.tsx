@@ -1,7 +1,9 @@
-import { memo, useEffect, useState } from 'react';
+import { memo } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import { ObjectType } from '../engine/types';
 import { TYPE_LABELS, TYPE_COLORS } from '../utils/schemaColors';
 import { Button } from './ui/Button';
+import { useDropdown } from '../hooks/useDropdown';
 
 interface TypeFilterDropdownProps {
   types: Set<ObjectType>;
@@ -14,21 +16,13 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,
   onToggleType,
 }: TypeFilterDropdownProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
+  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
 
   return (
-    <div className="relative">
+    <>
       <Button
-        onClick={() => setIsOpen(!isOpen)}
+        ref={refs.setReference}
+        onClick={toggle}
         variant="icon"
         title="Filter Types"
         style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
@@ -54,10 +48,14 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
         </svg>
       </Button>
 
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-20" onMouseDown={() => setIsOpen(false)} />
-          <div className="absolute top-full mt-2 w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown">
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown"
+            {...getFloatingProps()}
+          >
             {ALL_TYPES.map((type) => (
               <div
                 key={type}
@@ -74,8 +72,8 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
               </div>
             ))}
           </div>
-        </>
-      )}
-    </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 });

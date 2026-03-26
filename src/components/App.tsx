@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect, useTransition } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
-import { ProjectSelector } from './ProjectSelector';
+import { StartScreen } from './StartScreen';
+import { CreateFlow } from './CreateFlow';
+import { VisualizingScreen, type LoadingPhase } from './VisualizingScreen';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeContextMenu } from './NodeContextMenu';
 import { TableDetailPanel, type TableStatsState } from './TableDetailPanel';
@@ -15,10 +17,16 @@ import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
+import { escapeRegexLiteral } from '../utils/sql';
+import type { Project, FilterProfile, DacpacConnection, DatabaseConnection } from '../engine/projectStore';
+import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 
-type AppView = 'selector' | 'graph' | 'loading';
+type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
 const REBUILD_DELAY_MS = 400;
+const DACPAC_TIMEOUT_MS = 20_000;
+const DB_TIMEOUT_MS = 60_000;
+const MIN_SPINNER_MS = 1200;
 
 interface ContextMenuState {
   x: number;
@@ -35,10 +43,27 @@ interface ContextMenuState {
 export function App() {
   const vscodeApi = useVsCode();
   const isAutoVisualize = document.body.dataset.autoVisualize === 'true';
-  const [view, setView] = useState<AppView>(isAutoVisualize ? 'loading' : 'selector');
+  const [view, setView] = useState<AppView>(isAutoVisualize ? 'visualizing' : 'start');
   const [model, setModel] = useState<DacpacModel | null>(null);
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
+  const [lastWizardView, setLastWizardView] = useState<'main' | 'projects'>('main');
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+  // VisualizingScreen state
+  const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>('load');
+  const [loadingStats, setLoadingStats] = useState<string | null>(null);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
+  const [startScreenMessage, setStartScreenMessage] = useState<string | null>(null);
+
+  // Graph source name (for toolbar/export)
+  const [sourceName, setSourceName] = useState<string | null>(isAutoVisualize ? 'AdventureWorks (demo)' : null);
+
+  // Whether source is from database (for stats panel)
+  const [isDbSource, setIsDbSource] = useState(false);
 
   const [filter, setFilter] = useState<FilterState>({
     schemas: new Set(),
@@ -48,6 +73,7 @@ export function App() {
     focusSchemas: new Set(),
     showExternalRefs: true,
     externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
+    exclusionPatterns: [],
   });
 
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
@@ -88,9 +114,20 @@ export function App() {
     [buildFromModel, config]
   );
 
+  const getResetFilter = (m: DacpacModel): FilterState => ({
+    schemas: new Set(m.schemas.map(s => s.name)),
+    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
+    searchTerm: '',
+    hideIsolated: true,
+    focusSchemas: new Set(),
+    showExternalRefs: true,
+    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
+    exclusionPatterns: [],
+  });
+
+  // Transition from visualizing → graph
   const handleVisualize = useCallback(
     (dacpacModel: DacpacModel, selectedSchemas: Set<string>) => {
-      // Create trimmed model: only selected schemas with exclusions applied
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
       trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, (msg) => {
         vscodeApi.postMessage({ type: 'error', error: msg });
@@ -101,36 +138,211 @@ export function App() {
       const f = getResetFilter(trimmed);
       setFilter(f);
       rebuild(trimmed, f, config);
-      setView('graph');
+      setLoadingPhase('generate');
     },
-    [rebuild, config]
+    [rebuild, config, vscodeApi]
   );
 
+  // pendingVisualize / pendingAutoVisualize → triggers handleVisualize → then view→graph
+  const prevModelRef = useRef<DacpacModel | null>(null);
   useEffect(() => {
     if (!dacpacLoader.model || dacpacLoader.isLoading) return;
 
     if (dacpacLoader.pendingAutoVisualize) {
+      // No view guard — auto-visualize fires from any state (sidebar demo, startup, button)
+      setIsDbSource(false);
+      setSourceName(dacpacLoader.fileName || 'Demo');
+      setView('visualizing');
+      setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
       dacpacLoader.clearAutoVisualize();
     } else if (dacpacLoader.pendingVisualize) {
+      if (view !== 'visualizing') return; // guard: ignore stale responses after cancel
+      setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, dacpacLoader.selectedSchemas);
       dacpacLoader.clearPendingVisualize();
     }
   }, [
+    view,
     dacpacLoader.pendingAutoVisualize, dacpacLoader.pendingVisualize,
     dacpacLoader.model, dacpacLoader.isLoading, dacpacLoader.selectedSchemas,
+    dacpacLoader.fileName,
     handleVisualize, dacpacLoader.clearAutoVisualize, dacpacLoader.clearPendingVisualize,
   ]);
 
-  const getResetFilter = (m: DacpacModel): FilterState => ({
-    schemas: new Set(m.schemas.map(s => s.name)),
-    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
-    searchTerm: '',
-    hideIsolated: true,
-    focusSchemas: new Set(),
-    showExternalRefs: true,
-    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
-  });
+  // Record when visualizing starts — used for minimum dwell enforcement
+  const visualizingEnteredAt = useRef<number>(0);
+  useEffect(() => {
+    if (view === 'visualizing') visualizingEnteredAt.current = Date.now();
+  }, [view]);
+
+  // After buildFromModel completes → delay transition to graph so spinner is readable
+  useEffect(() => {
+    if (view !== 'visualizing' || loadingPhase !== 'generate' || flowNodes.length === 0) return;
+    const remaining = Math.max(0, MIN_SPINNER_MS - (Date.now() - visualizingEnteredAt.current));
+    if (remaining <= 0) { setView('graph'); setLoadingError(null); return; }
+    const t = setTimeout(() => { setView('graph'); setLoadingError(null); }, remaining);
+    return () => clearTimeout(t);
+  }, [view, loadingPhase, flowNodes.length]);
+
+  // Watch for errors in visualizing phase
+  useEffect(() => {
+    if (view !== 'visualizing') return;
+    if (dacpacLoader.status?.type === 'error') {
+      setLoadingError(dacpacLoader.status.text);
+    } else if (dacpacLoader.status?.type === 'success' && dacpacLoader.model) {
+      setLoadingStats(dacpacLoader.status.text);
+    }
+  }, [view, dacpacLoader.status, dacpacLoader.model]);
+
+  // Timeout protection: if view stays 'visualizing' with no progress, surface an error
+  const visualizingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (view !== 'visualizing' || loadingError) {
+      if (visualizingTimeoutRef.current) {
+        clearTimeout(visualizingTimeoutRef.current);
+        visualizingTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (visualizingTimeoutRef.current) clearTimeout(visualizingTimeoutRef.current);
+
+    const ms = dacpacLoader.loadingContext === 'database' ? DB_TIMEOUT_MS : DACPAC_TIMEOUT_MS;
+    visualizingTimeoutRef.current = setTimeout(() => {
+      const msg = loadingPhase === 'load'
+        ? 'Loading timed out. The file or database did not respond in time.'
+        : 'Processing timed out. The model may be too large.';
+      setLoadingError(msg);
+    }, ms);
+
+    return () => {
+      if (visualizingTimeoutRef.current) clearTimeout(visualizingTimeoutRef.current);
+    };
+  }, [view, loadingPhase, dacpacLoader.status, dacpacLoader.loadingContext, loadingError]);
+
+  const prevConfigRef = useRef(config);
+  useEffect(() => {
+    if (prevConfigRef.current !== config && model && view === 'graph') {
+      prevConfigRef.current = config;
+      rebuild(model, filter, config);
+    }
+  }, [config, model, view, filter, rebuild]);
+
+  // ── Navigation handlers ─────────────────────────────────────────────────────
+
+  const handleCreateNew = useCallback(() => {
+    dacpacLoader.resetToStart();
+    setStartScreenMessage(null);
+    setView('create');
+  }, [dacpacLoader.resetToStart]);
+
+  const handleOpenProject = useCallback((id: string) => {
+    setLoadingProjectId(id);
+    setLoadingPhase('load');
+    setLoadingStats(null);
+    setLoadingError(null);
+    setActiveProjectId(id);
+    setLastOpenedId(id);
+
+    const project = projects.find(p => p.id === id);
+    if (project) {
+      setSourceName(project.name);
+      setIsDbSource(project.connection.type === 'database');
+    }
+
+    vscodeApi.postMessage({ type: 'save-wizard-view', view: 'projects' });
+    dacpacLoader.loadProject(id);
+    setView('visualizing');
+  }, [projects, dacpacLoader.loadProject, vscodeApi]);
+
+  const handleOpenLatest = useCallback(() => {
+    if (!lastOpenedId) return;
+    handleOpenProject(lastOpenedId);
+  }, [lastOpenedId, handleOpenProject]);
+
+  const handleDeleteProject = useCallback((id: string) => {
+    // Optimistic: update state immediately
+    setProjects(prev => prev.filter(p => p.id !== id));
+    if (activeProjectId === id) setActiveProjectId(null);
+    vscodeApi.postMessage({ type: 'delete-project', id });
+  }, [activeProjectId, vscodeApi]);
+
+  const handleDemoClick = useCallback(() => {
+    setLoadingPhase('load');
+    setLoadingStats(null);
+    setLoadingError(null);
+    setStartScreenMessage(null);
+    setActiveProjectId(null);
+    setSourceName('AdventureWorks (demo)');
+    setIsDbSource(false);
+    dacpacLoader.loadDemo();
+    setView('visualizing');
+  }, [dacpacLoader.loadDemo]);
+
+  const handleBack = useCallback(() => {
+    dacpacLoader.resetToStart();
+    setView('start');
+    clearTrace();
+    setTableDetailNode(null);
+    setTableStatsState({ phase: 'idle' });
+    setLoadingProjectId(null);
+    setLoadingError(null);
+    setStartScreenMessage(null);
+    setActiveProjectId(null);
+  }, [dacpacLoader.resetToStart, clearTrace]);
+
+  const handleCancelVisualizing = useCallback(() => {
+    dacpacLoader.cancelLoading();
+    setView('start');
+    setLoadingProjectId(null);
+    setLoadingError(null);
+    setActiveProjectId(null);
+  }, [dacpacLoader.cancelLoading]);
+
+  const handleBackFromError = useCallback(() => {
+    setStartScreenMessage(loadingError);
+    dacpacLoader.resetToStart();
+    setView('start');
+    setLoadingProjectId(null);
+    setLoadingError(null);
+    setActiveProjectId(null);
+  }, [loadingError, dacpacLoader.resetToStart]);
+
+  // CreateFlow → Visualize clicked
+  const handleCreateVisualize = useCallback((projectName: string, conn: DacpacConnection | DatabaseConnection | null) => {
+    setLoadingPhase('load');
+    setLoadingStats(null);
+    setLoadingError(null);
+    setSourceName(projectName);
+
+    if (conn && conn.type === 'dacpac') {
+      // Save project now (dacpac: we have the full connection)
+      const project = createProject(projectName, conn);
+      setActiveProjectId(project.id);
+      setIsDbSource(false);
+      vscodeApi.postMessage({ type: 'save-project', project });
+      dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
+    } else {
+      // DB path: extension saves project after Phase 2 succeeds, sends back projects-list
+      setIsDbSource(true);
+      dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
+    }
+
+    setView('visualizing');
+  }, [dacpacLoader.visualize, dacpacLoader.selectedSchemas, vscodeApi]);
+
+  // ── Graph state ─────────────────────────────────────────────────────────────
+
+  const [isRebuilding, setIsRebuilding] = useState(false);
+  const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
+  const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
+  const [tableDetailNode, setTableDetailNode] = useState<LineageNode | null>(null);
+  const [tableStatsState, setTableStatsState] = useState<TableStatsState>({ phase: 'idle' });
+  const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
+  const prevHideIsolatedRef = useRef<boolean | null>(null);
+  const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
   const handleRefresh = useCallback(() => {
     if (model) {
@@ -152,18 +364,7 @@ export function App() {
     }
   }, [model, config, rebuild, clearTrace]);
 
-  const prevConfigRef = useRef(config);
-
-  // Rebuild graph when config changes (after a refresh)
-  useEffect(() => {
-    if (prevConfigRef.current !== config && model && view === 'graph') {
-      prevConfigRef.current = config;
-      rebuild(model, filter, config);
-    }
-  }, [config, model, view, filter, rebuild]);
-
   const handleRebuild = useCallback(() => {
-    // Re-read settings from extension host (picks up any changed VS Code settings)
     vscodeApi.postMessage({ type: 'ready' });
     if (model) {
       setIsRebuilding(true);
@@ -174,29 +375,10 @@ export function App() {
     }
   }, [vscodeApi, model, filter, config, rebuild]);
 
-  const handleBack = useCallback(() => {
-    dacpacLoader.resetToStart();
-    setView('selector');
-    clearTrace();
-    setTableDetailNode(null);
-    setTableStatsState({ phase: 'idle' });
-  }, [dacpacLoader.resetToStart, clearTrace]);
-
-  const [isRebuilding, setIsRebuilding] = useState(false);
-  const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
-  const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
-  const [tableDetailNode, setTableDetailNode] = useState<LineageNode | null>(null);
-  const [tableStatsState, setTableStatsState] = useState<TableStatsState>({ phase: 'idle' });
-  const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
-  const prevHideIsolatedRef = useRef<boolean | null>(null);
-  const pendingAnalysisRef = useRef<AnalysisType | null>(null);
-
   const handleNodeClick = useCallback(
     (nodeId: string) => {
       setHighlightedNodeId(prev => {
         const toggled = prev === nodeId ? null : nodeId;
-        // Update info bar if already open (uses nested updater to avoid dep)
         setInfoBarNodeId(cur => cur !== null ? toggled : null);
         return toggled;
       });
@@ -205,15 +387,13 @@ export function App() {
       if (!node) return;
 
       if (node.type === 'table' || node.type === 'external') {
-        // If panel is already open, refresh to show the clicked table (don't open from scratch)
         setTableDetailNode(prev => {
-          if (!prev) return null;           // panel closed — stay closed
-          if (prev.id === nodeId) return prev; // same node — no change
+          if (!prev) return null;
+          if (prev.id === nodeId) return prev;
           setTableStatsState({ phase: 'idle' });
-          return node;                      // different table — refresh panel
+          return node;
         });
       } else {
-        // Update DDL text editor if already open (don't open on left-click)
         vscodeApi.postMessage({
           type: 'update-ddl',
           objectName: node.name,
@@ -256,11 +436,9 @@ export function App() {
       if (!node) return;
 
       if (node.type === 'table' || node.type === 'external') {
-        // Open the table detail sidebar
         setTableDetailNode(node);
         setTableStatsState({ phase: 'idle' });
       } else {
-        // Open DDL text editor (SP/View/Function)
         vscodeApi.postMessage({
           type: 'show-ddl',
           objectName: node.name,
@@ -288,12 +466,9 @@ export function App() {
     [model, config, rebuild]
   );
 
-  const handleSearchChange = useCallback(
-    (term: string) => {
-      setFilter((prev) => ({ ...prev, searchTerm: term }));
-    },
-    []
-  );
+  const handleSearchChange = useCallback((term: string) => {
+    setFilter((prev) => ({ ...prev, searchTerm: term }));
+  }, []);
 
   const handleToggleIsolated = useCallback(() => {
     setFilter((prev) => {
@@ -312,13 +487,10 @@ export function App() {
         focusSchemas.add(schema);
       }
 
-      // Update schema checkboxes to match what's visible
       let schemas: Set<string>;
       if (isUnfocusing) {
-        // Restore all schemas when un-starring
         schemas = new Set(model?.schemas.map(s => s.name) || []);
       } else if (model) {
-        // Check only the focused schema + schemas of its 1-hop neighbors
         const focusNodeIds = new Set(
           model.nodes.filter(n => n.schema === schema).map(n => n.id)
         );
@@ -364,21 +536,35 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  const handleAddExclusionPattern = useCallback((pattern: string) => {
+    setFilter((prev) => {
+      if (prev.exclusionPatterns.includes(pattern)) return prev;
+      const exclusionPatterns = [...prev.exclusionPatterns, pattern];
+      const next = { ...prev, exclusionPatterns };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleRemoveExclusionPattern = useCallback((pattern: string) => {
+    setFilter((prev) => {
+      const exclusionPatterns = prev.exclusionPatterns.filter(p => p !== pattern);
+      const next = { ...prev, exclusionPatterns };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
   const handleToggleSchema = useCallback((schema: string) => {
     setFilter((prev) => {
       const schemas = new Set(prev.schemas);
       const focusSchemas = new Set(prev.focusSchemas);
-      
       if (schemas.has(schema)) {
         schemas.delete(schema);
-        // If unchecking a focused schema, unfocus it
-        if (focusSchemas.has(schema)) {
-          focusSchemas.delete(schema);
-        }
+        if (focusSchemas.has(schema)) focusSchemas.delete(schema);
       } else {
         schemas.add(schema);
       }
-      
       const next = { ...prev, schemas, focusSchemas };
       if (model) rebuild(model, next, config);
       return next;
@@ -408,25 +594,19 @@ export function App() {
   }, [model, config, rebuild]);
 
   const openAnalysis = useCallback((type: AnalysisType) => {
-    // End any active trace / close detail search
     endTrace();
     setIsDetailSearchOpen(false);
     setHighlightedNodeId(null);
     setInfoBarNodeId(null);
 
     if (type === 'orphans' && filter.hideIsolated) {
-      // Save current hideIsolated state and disable it so orphans become visible
       prevHideIsolatedRef.current = true;
       const nextFilter = { ...filter, hideIsolated: false };
       setFilter(nextFilter);
       setAnalysisMode(null);
-      // Set pending flag — useEffect will run analysis once graph rebuilds
       pendingAnalysisRef.current = 'orphans';
-      if (model) {
-        buildFromModel(model, nextFilter, config);
-      }
+      if (model) buildFromModel(model, nextFilter, config);
     } else {
-      // For islands/hubs/longest-path/cycles, run analysis on current graph
       if (graph) {
         const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
         setAnalysisMode({ type, result, activeGroupId: null });
@@ -434,7 +614,6 @@ export function App() {
     }
   }, [endTrace, filter, model, graph, config, buildFromModel]);
 
-  // Run pending orphan analysis after graph rebuild completes
   useEffect(() => {
     if (pendingAnalysisRef.current && graph) {
       const type = pendingAnalysisRef.current;
@@ -444,18 +623,29 @@ export function App() {
     }
   }, [graph, config.analysis, config.maxNodes]);
 
-  const closeAnalysis = useCallback(() => {
-    // Clear analysis overlay — same restore as leaving trace mode
-    endTrace();
+  // DELETE key on a highlighted node → add exact exclusion rule
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!highlightedNodeId) return;
+      const node = flowNodes.find((n) => n.id === highlightedNodeId);
+      if (!node) return;
+      const pattern = `^${escapeRegexLiteral(String(node.data.schema))}\\.${escapeRegexLiteral(String(node.data.label))}$`;
+      handleAddExclusionPattern(pattern);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [highlightedNodeId, flowNodes, handleAddExclusionPattern]);
 
-    // Undo orphans' hideIsolated change if needed
+  const closeAnalysis = useCallback(() => {
+    endTrace();
     if (prevHideIsolatedRef.current !== null) {
       const nextFilter = { ...filter, hideIsolated: true };
       setFilter(nextFilter);
       if (model) rebuild(model, nextFilter, config);
       prevHideIsolatedRef.current = null;
     }
-
     setAnalysisMode(null);
   }, [endTrace, filter, model, config, rebuild]);
 
@@ -466,7 +656,6 @@ export function App() {
 
     setAnalysisMode(prev => prev ? { ...prev, activeGroupId: groupId } : null);
 
-    // Compute subset node IDs
     const nodeIdSet = new Set(group.nodeIds);
     if (analysisMode.type === 'hubs') {
       for (const hubId of group.nodeIds) {
@@ -476,16 +665,13 @@ export function App() {
       }
     }
 
-    // Compute subset edge IDs from the live graph
     const edgeIds = new Set<string>();
     if (analysisMode.type === 'longest-path') {
-      // Consecutive-pair edges only — same concept as computeShortestPath
       for (let i = 0; i < group.nodeIds.length - 1; i++) {
         const edge = graph.edge(group.nodeIds[i], group.nodeIds[i + 1]);
         if (edge) edgeIds.add(edge);
       }
     } else {
-      // All edges between subset nodes that exist in current graph
       graph.forEachEdge((edge, _attrs, source, target) => {
         if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
           edgeIds.add(edge);
@@ -493,31 +679,25 @@ export function App() {
       });
     }
 
-    // Determine origin node for highlighting
     const originId = analysisMode.type === 'hubs' ? group.nodeIds[0]
       : analysisMode.type === 'longest-path' ? group.nodeIds[0]
       : undefined;
 
-    // Reuse trace pipeline for rendering (same as Find Path / Trace Levels)
     applyAnalysisSubset(nodeIdSet, edgeIds, originId, analysisMode.type);
   }, [analysisMode, graph, applyAnalysisSubset]);
 
   const clearAnalysisGroup = useCallback(() => {
     if (!analysisMode) return;
     setAnalysisMode(prev => prev ? { ...prev, activeGroupId: null } : null);
-    endTrace();  // Clear subset overlay — full graph visible again
+    endTrace();
   }, [analysisMode, endTrace]);
 
-  // Escape key: end trace or close analysis
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (analysisMode) {
-          if (analysisMode.activeGroupId) {
-            clearAnalysisGroup();
-          } else {
-            closeAnalysis();
-          }
+          if (analysisMode.activeGroupId) clearAnalysisGroup();
+          else closeAnalysis();
         } else if (trace.mode !== 'none') {
           endTrace();
         }
@@ -527,7 +707,7 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
 
-  // Handle stats results from extension host
+  // ── Message handler (stats + projects-list) ─────────────────────────────────
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       const msg = e.data;
@@ -535,21 +715,119 @@ export function App() {
         setTableStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
       } else if (msg?.type === 'table-stats-error') {
         setTableStatsState({ phase: 'error', message: msg.message });
+      } else if (msg?.type === 'auto-visualize-start') {
+        setSourceName('AdventureWorks (demo)');
+        setLoadingPhase('load');
+        setLoadingStats(null);
+        setLoadingError(null);
+        setActiveProjectId(null);
+        setView('visualizing');
+      } else if (msg?.type === 'projects-list') {
+        const updatedProjects: Project[] = msg.projects ?? [];
+        setProjects(updatedProjects);
+        setLastOpenedId(msg.lastOpenedId ?? null);
+        if (msg.lastWizardView) setLastWizardView(msg.lastWizardView);
+        setLoadingProjectId(null);
+        // When extension saves a DB project after Phase 2, set activeProjectId
+        if (view === 'visualizing' && msg.lastOpenedId) {
+          setActiveProjectId(msg.lastOpenedId);
+        }
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, [view]);
 
-  if (view === 'loading') {
-    return null;
+  // ── Saved Views ─────────────────────────────────────────────────────────────
+
+  const activeProject = projects.find(p => p.id === activeProjectId);
+  const filterProfiles = activeProject?.filterProfiles ?? [];
+
+  const handleSaveView = useCallback((name: string) => {
+    if (!activeProjectId) {
+      vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
+      return;
+    }
+    const profile: FilterProfile = {
+      id: crypto.randomUUID(),
+      name,
+      createdAt: new Date().toISOString(),
+      filter: serializeFilter(filter),
+    };
+    // Optimistic update
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+
+  const handleApplyView = useCallback((profile: FilterProfile) => {
+    const restored = deserializeFilter(profile.filter);
+    setFilter(restored);
+    if (model) rebuild(model, restored, config);
+  }, [model, config, rebuild]);
+
+  const handleDeleteView = useCallback((profileId: string) => {
+    if (!activeProjectId) return;
+    // Optimistic update
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return deleteFilterProfile(store, activeProjectId, profileId).projects;
+    });
+    vscodeApi.postMessage({ type: 'delete-view', projectId: activeProjectId, profileId });
+  }, [activeProjectId, lastOpenedId, vscodeApi]);
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
+    vscodeApi.postMessage({ type: 'save-wizard-view', view: v });
+  }, [vscodeApi]);
+
+  if (view === 'start') {
+    return (
+      <StartScreen
+        projects={projects}
+        lastOpenedId={lastOpenedId}
+        initialShowProjects={lastWizardView === 'projects'}
+        loadingProjectId={loadingProjectId}
+        startMessage={startScreenMessage}
+        onCreateNew={handleCreateNew}
+        onOpenProject={handleOpenProject}
+        onOpenLatest={handleOpenLatest}
+        onDeleteProject={handleDeleteProject}
+        onDemo={handleDemoClick}
+        onWizardViewChange={handleWizardViewChange}
+      />
+    );
   }
 
-  if (view === 'selector') {
-    return <ProjectSelector config={config} loader={dacpacLoader} />;
+  if (view === 'create') {
+    return (
+      <CreateFlow
+        loader={dacpacLoader}
+        maxNodes={config.maxNodes}
+        onBack={() => { dacpacLoader.resetToStart(); setView('start'); }}
+        onVisualize={handleCreateVisualize}
+      />
+    );
   }
 
-  const isDbMode = dacpacLoader.lastSource?.type === 'database';
+  if (view === 'visualizing') {
+    return (
+      <VisualizingScreen
+        sourceName={sourceName ?? '…'}
+        phase={loadingPhase}
+        progressText={dacpacLoader.status?.type === 'info' ? dacpacLoader.status.text : null}
+        stats={loadingStats}
+        error={loadingError}
+        onCancel={handleCancelVisualizing}
+        onBack={handleBackFromError}
+      />
+    );
+  }
+
+  // view === 'graph'
   const statsEnabled = config.tableStatistics?.enabled ?? true;
   const excludeExternalTables = config.tableStatistics?.excludeExternalTables ?? true;
   const standardModeEnabled = config.tableStatistics?.standardModeEnabled ?? true;
@@ -577,7 +855,7 @@ export function App() {
       statsState={tableStatsState}
       onClose={() => { setTableDetailNode(null); setTableStatsState({ phase: 'idle' }); }}
       onRequestStats={handleRequestStats}
-      isDbMode={isDbMode}
+      isDbMode={isDbSource}
       statsEnabled={statsEnabled}
       excludeExternalTables={excludeExternalTables}
       standardModeEnabled={standardModeEnabled}
@@ -615,6 +893,9 @@ export function App() {
         onSelectNoneSchemas={handleSelectNoneSchemas}
         onToggleExternalRefs={handleToggleExternalRefs}
         onToggleExternalRefType={handleToggleExternalRefType}
+        exclusionPatterns={filter.exclusionPatterns}
+        onAddExclusionPattern={handleAddExclusionPattern}
+        onRemoveExclusionPattern={handleRemoveExclusionPattern}
         availableSchemas={model?.schemas.map(s => s.name) || []}
         analysisMode={analysisMode}
         onOpenAnalysis={openAnalysis}
@@ -628,7 +909,12 @@ export function App() {
         onBack={handleBack}
         tableDetailPanel={tableDetailPanelElement}
         isPanelOpen={tableDetailNode !== null}
-        sourceName={dacpacLoader.lastSource?.name}
+        sourceName={sourceName ?? dacpacLoader.fileName ?? undefined}
+        filterProfiles={filterProfiles}
+        activeProjectId={activeProjectId}
+        onSaveView={handleSaveView}
+        onApplyView={handleApplyView}
+        onDeleteView={handleDeleteView}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
@@ -660,9 +946,9 @@ export function App() {
           onFindPath={(nodeId) => startPathFinding(nodeId)}
           onViewDdl={handleViewDdl}
           onShowDetails={(nodeId) => setInfoBarNodeId(nodeId)}
+          onExcludeNode={handleAddExclusionPattern}
         />
       )}
-
     </ReactFlowProvider>
   );
 }

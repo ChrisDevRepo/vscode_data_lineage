@@ -1,5 +1,7 @@
-import { memo, useEffect, useState } from 'react';
+import { memo } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
+import { useDropdown } from '../hooks/useDropdown';
 
 interface ExternalRefsDropdownProps {
   showExternalRefs: boolean;
@@ -14,21 +16,13 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   onToggleMaster,
   onToggleSubType,
 }: ExternalRefsDropdownProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
+  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
 
   return (
-    <div className="relative">
+    <>
       <Button
-        onClick={() => setIsOpen(!isOpen)}
+        ref={refs.setReference}
+        onClick={toggle}
         variant="icon"
         title="External References"
         aria-expanded={isOpen}
@@ -51,10 +45,16 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
         </svg>
       </Button>
 
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-20" onMouseDown={() => setIsOpen(false)} />
-          <div className="absolute top-full mt-2 w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown" role="menu" aria-label="External reference filters">
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown"
+            role="menu"
+            aria-label="External reference filters"
+            {...getFloatingProps()}
+          >
             {/* Master toggle */}
             <div className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={showExternalRefs}>
               <input
@@ -95,8 +95,8 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
               </div>
             </div>
           </div>
-        </>
-      )}
-    </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 });

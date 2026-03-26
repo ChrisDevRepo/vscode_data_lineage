@@ -1,5 +1,15 @@
-import { memo, useState } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
+import {
+  useFloating,
+  useInteractions,
+  useDismiss,
+  flip,
+  shift,
+  offset,
+} from '@floating-ui/react';
+import { FloatingPortal } from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
+import { escapeRegexLiteral } from '../utils/sql';
 
 interface NodeContextMenuProps {
   x: number;
@@ -17,6 +27,7 @@ interface NodeContextMenuProps {
   onFindPath: (nodeId: string) => void;
   onViewDdl: (nodeId: string) => void;
   onShowDetails: (nodeId: string) => void;
+  onExcludeNode?: (pattern: string) => void;
 }
 
 export const NodeContextMenu = memo(function NodeContextMenu({
@@ -35,16 +46,49 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   onFindPath,
   onViewDdl,
   onShowDetails,
+  onExcludeNode,
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
-  return (
-    <>
-      {/* Fullscreen backdrop — click anywhere to close */}
-      <div className="fixed inset-0 z-40" onMouseDown={onClose} />
 
+  // Virtual reference element at the cursor position
+  const virtualRef = useRef({
+    getBoundingClientRect() {
+      return { x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x };
+    },
+  });
+
+  // Update virtual position when x/y change
+  useEffect(() => {
+    virtualRef.current.getBoundingClientRect = () => ({
+      x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x,
+    });
+  }, [x, y]);
+
+  const { refs, floatingStyles, context } = useFloating({
+    open: true,
+    onOpenChange: (open) => { if (!open) onClose(); },
+    middleware: [
+      offset(2),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+    ],
+  });
+
+  // Set virtual element as reference
+  useEffect(() => {
+    refs.setReference(virtualRef.current);
+  }, [refs]);
+
+  const dismiss = useDismiss(context, { referencePress: true });
+  const { getFloatingProps } = useInteractions([dismiss]);
+
+  return (
+    <FloatingPortal>
       <div
-        className="fixed rounded-lg shadow-xl py-1 z-50 min-w-[180px] ln-modal"
-        style={{ left: x, top: y }}
+        ref={refs.setFloating}
+        style={{ ...floatingStyles, zIndex: 50 }}
+        className="rounded-lg shadow-xl py-1 min-w-[180px] ln-modal"
+        {...getFloatingProps()}
       >
         <div className="px-3 py-1.5 text-xs truncate ln-text-dim ln-border-bottom">
           {schema}.{nodeName}
@@ -110,6 +154,25 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           Show Details
         </button>
 
+        {onExcludeNode && externalType !== 'file' && externalType !== 'db' && (
+          <>
+            <div className="my-1 ln-border-top" />
+            <button
+              onClick={() => {
+                onExcludeNode(`^${escapeRegexLiteral(schema)}\\.${escapeRegexLiteral(nodeName)}$`);
+                onClose();
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+              title="Add exact exclusion rule for this node"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+              </svg>
+              Exclude from view
+            </button>
+          </>
+        )}
+
         <div className="my-1 ln-border-top" />
 
         <button
@@ -130,6 +193,6 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           {copyFailed ? 'Copy failed' : 'Copy Qualified Name'}
         </button>
       </div>
-    </>
+    </FloatingPortal>
   );
 });

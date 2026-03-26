@@ -347,6 +347,7 @@ export interface FilterState {
   focusSchemas: Set<string>;
   showExternalRefs: boolean;
   externalRefTypes: Set<'file' | 'db'>;
+  exclusionPatterns: string[];
 }
 
 export interface TraceState {
@@ -386,14 +387,15 @@ export interface AnalysisMode {
 // ─── Extension → Webview Messages ───────────────────────────────────────────
 
 export type ExtensionMessage =
-  | { type: 'config-only'; config: ExtensionConfig; lastSource?: { type: 'dacpac' | 'database'; name: string } }
-  | { type: 'dacpac-data'; data: number[]; fileName: string; config: ExtensionConfig; lastDeselectedSchemas?: string[]; autoVisualize?: boolean }
+  | { type: 'config-only'; config: ExtensionConfig }
+  | { type: 'projects-list'; projects: import('./projectStore').Project[]; lastOpenedId: string | null }
+  | { type: 'dacpac-data'; data: number[]; fileName: string; filePath?: string; config: ExtensionConfig; autoVisualize?: boolean; preselectedSchemas?: string[] }
   | { type: 'last-dacpac-gone' }
   | { type: 'themeChanged'; kind: string }
   | { type: 'mssql-status'; available: boolean }
   | { type: 'db-progress'; step: number; total: number; label: string }
-  | { type: 'db-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string; lastDeselectedSchemas?: string[] }
-  | { type: 'db-model'; model: DacpacModel; config: ExtensionConfig; sourceName: string; lastDeselectedSchemas?: string[] }
+  | { type: 'db-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string }
+  | { type: 'db-model'; model: DacpacModel; config: ExtensionConfig; sourceName: string }
   | { type: 'db-error'; message: string; phase: string }
   | { type: 'db-cancelled' }
   | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }

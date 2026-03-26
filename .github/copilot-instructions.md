@@ -13,7 +13,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 
 - `src/engine/` — dacpac extraction, database import, SQL parsing, graph building
 - `src/components/` — React UI (ReactFlow canvas, toolbar, filters, modals)
-- `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources)
+- `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources), dropdown state (`useDropdown` — shared open/close + outside-click)
 - `src/extension.ts` — VS Code API, webview lifecycle, message routing
 
 ### Extraction Pipeline (DRY principle)
@@ -52,11 +52,11 @@ Press F5 to launch Extension Development Host.
 |------|-------|---------|
 | `test/dacpacExtractor.test.ts` | 63 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints |
 | `test/graphBuilder.test.ts` | 156 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression |
-| `test/parser-edge-cases.test.ts` | 192 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
-| `test/graphAnalysis.test.ts` | 62 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
+| `test/parser-edge-cases.test.ts` | 197 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
+| `test/graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `test/dmvExtractor.test.ts` | 161 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion |
-| `test/tsql-complex.test.ts` | 54 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/profilingEngine.test.ts` | 75 | Table statistics: query generation, column classification, aggregation building, sampling logic, result parsing |
+| `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
+| `test/projectStore.test.ts` | 153 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
@@ -77,16 +77,17 @@ Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers 
 - Layout uses shared `dagreLayout()` helper
 - BFS must be pure — callbacks use only edges, nodes, and direction. No business logic or semantic filtering inside BFS callbacks. Depth limits control trace scope.
 - Bidirectional connections = two antiparallel directed edges (Table→SP for read, SP→Table for write). React Flow merges them into ⇄ display via `buildFlowEdges()`.
-- **Co-writer post-filter** (`trace.hideCoWriters`, default: true): When a SP both reads and writes the same table, BFS upstream finds all other writers to that table. These are co-writers — parallel writers, not true upstream producers. `filterCoWriters()` runs as post-processing on the BFS result subset — if the origin writes to a table, nodes that only write (no read) to that same table are excluded. Bidirectional nodes (read+write) are kept. Controlled by `dataLineageViz.trace.hideCoWriters` setting. This follows the input/output separation pattern used by Apache Atlas and OpenMetadata.
 - Settings prefix: `dataLineageViz`
 
 ## Message Passing (Extension <-> Webview)
 
 Key messages: `ready`, `config-only`, `dacpac-data`, `show-ddl`, `update-ddl`, `log`, `error`, `themeChanged`
 
-Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-reconnect`, `db-visualize`, `db-progress`, `db-schema-preview`, `db-model`, `db-error`, `db-cancelled`
+Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-visualize`, `db-progress`, `db-schema-preview`, `db-model`, `db-error`, `db-cancelled`
 
-Other: `open-dacpac`, `load-last-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `save-schemas`, `parse-rules-result`, `parse-stats`, `reload`, `export-file`
+Project messages: `save-project`, `load-project`, `delete-project`, `save-view`, `delete-view`, `projects-list` (Extension → Webview)
+
+Other: `open-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `parse-rules-result`, `parse-stats`, `reload`, `export-file`
 
 Table statistics: `table-stats-request` (Webview → Extension), `table-stats-result`, `table-stats-error` (Extension → Webview)
 

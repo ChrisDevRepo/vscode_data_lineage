@@ -14,14 +14,16 @@ Visualize object-level dependencies from `.dacpac` files or by importing directl
 
 **From a .dacpac file:**
 1. Run **Data Lineage: Open Wizard** (`Ctrl+Shift+P`)
-2. Select a `.dacpac` file, pick schemas, and click **Visualize**
+2. Click **Create New Project**, select a `.dacpac` file, pick schemas, and click **Visualize**
 
 **From a database:**
 1. Install the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql)
-2. Run **Data Lineage: Open Wizard** and click **Connect to Database**
+2. Run **Data Lineage: Open Wizard**, click **Create New Project**, then **Connect to Database**
 3. Pick a connection, select schemas, and click **Visualize**
 
-No database? Click **Load Demo** to explore the AdventureWorks sample.
+Saved projects appear on the start screen — click any card to reopen instantly.
+
+No database? Click **Try with demo data** to explore the AdventureWorks sample.
 
 ## Features
 
@@ -30,7 +32,8 @@ No database? Click **Load Demo** to explore the AdventureWorks sample.
 - Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
 - External table support
 - Virtual external references: OPENROWSET file paths, cross-database 3-part names, and CETAS targets
-- Quick reconnect to your last data source
+- Project sessions: saved connections and schema selections reopen with a single click
+- Saved views: bookmark named filter states (schemas, types, search) per project
 
 **Visualization**
 - Search and navigate objects with autocomplete

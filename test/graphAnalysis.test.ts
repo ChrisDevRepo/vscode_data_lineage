@@ -10,8 +10,9 @@ import {
   analyzeOrphans,
   analyzeLongestPath,
   analyzeCycles,
+  analyzeExternalRefs,
 } from '../src/engine/graphAnalysis';
-import { assert, makeGraph, printSummary } from './testUtils';
+import { assert, assertEq, makeGraph, printSummary } from './testUtils';
 
 // ─── analyzeIslands ──────────────────────────────────────────────────────────
 
@@ -404,6 +405,72 @@ function testIslandWithVirtualBridge() {
     `VN-Island: virtual node bridges components, no size-2 islands (got ${result.groups.length})`);
 }
 
+// ─── analyzeExternalRefs ──────────────────────────────────────────────────────
+
+function testExternalRefs() {
+  console.log('\n── analyzeExternalRefs ──');
+
+  // Empty graph
+  {
+    const g = makeGraph([], []);
+    const r = analyzeExternalRefs(g);
+    assert(r.type === 'external-refs', 'ER1: type is external-refs');
+    assert(r.groups.length === 0, 'ER1: empty graph → 0 groups');
+    assert(r.summary === 'No nodes in graph', 'ER1: empty graph summary');
+  }
+
+  // File source — label extracted from URL basename
+  {
+    const g = new Graph({ type: 'directed', multi: false });
+    g.addNode('file1', { schema: '', name: 'report.csv', type: 'external', externalType: 'file', externalUrl: 'https://host/path/report.csv', externalDatabase: '' });
+    const r = analyzeExternalRefs(g);
+    assertEq(r.groups.length, 1, 'ER2: file source → 1 group');
+    assertEq(r.groups[0].label, 'report.csv', 'ER2: label extracted from URL basename');
+    assertEq(String(r.groups[0].meta?.kind), 'file', 'ER2: meta.kind = file');
+  }
+
+  // DB cross-ref — label uses "database / name" format
+  {
+    const g = new Graph({ type: 'directed', multi: false });
+    g.addNode('db1', { schema: 'dbo', name: 'dbo.Sales', type: 'external', externalType: 'db', externalUrl: '', externalDatabase: 'OtherDB' });
+    const r = analyzeExternalRefs(g);
+    assertEq(r.groups.length, 1, 'ER3: db cross-ref → 1 group');
+    assertEq(r.groups[0].label, 'OtherDB / dbo.Sales', 'ER3: db label = database / name');
+    assertEq(String(r.groups[0].meta?.database), 'OtherDB', 'ER3: meta.database preserved');
+  }
+
+  // Sort order: file groups before db groups; alphabetical within each type
+  {
+    const g = new Graph({ type: 'directed', multi: false });
+    g.addNode('db1',  { schema: '', name: 'schema.T1', type: 'external', externalType: 'db',   externalUrl: '',                       externalDatabase: 'BDB' });
+    g.addNode('file2',{ schema: '', name: 'zz.csv',   type: 'external', externalType: 'file', externalUrl: 'https://host/zz.csv',    externalDatabase: '' });
+    g.addNode('file1',{ schema: '', name: 'aa.csv',   type: 'external', externalType: 'file', externalUrl: 'https://host/aa.csv',    externalDatabase: '' });
+    g.addNode('db2',  { schema: '', name: 'schema.T2', type: 'external', externalType: 'db',   externalUrl: '',                       externalDatabase: 'ADB' });
+    const r = analyzeExternalRefs(g);
+    assertEq(r.groups.length, 4, 'ER4: 4 groups total');
+    assert(r.groups[0].label === 'aa.csv',          'ER4: file aa.csv first');
+    assert(r.groups[1].label === 'zz.csv',          'ER4: file zz.csv second');
+    assert(r.groups[2].label === 'ADB / schema.T2', 'ER4: db ADB first');
+    assert(r.groups[3].label === 'BDB / schema.T1', 'ER4: db BDB last');
+  }
+
+  // Neighbor nodeIds included: file node + connected SPs
+  {
+    const g = new Graph({ type: 'directed', multi: false });
+    g.addNode('file1', { schema: '', name: 'data.csv', type: 'external', externalType: 'file', externalUrl: 'https://host/data.csv', externalDatabase: '' });
+    g.addNode('sp1',   { schema: 'dbo', name: 'sp1', type: 'procedure', externalType: undefined });
+    g.addNode('sp2',   { schema: 'dbo', name: 'sp2', type: 'procedure', externalType: undefined });
+    g.addEdgeWithKey('file1→sp1', 'file1', 'sp1', { type: 'body' });
+    g.addEdgeWithKey('file1→sp2', 'file1', 'sp2', { type: 'body' });
+    const r = analyzeExternalRefs(g);
+    assertEq(r.groups.length, 1, 'ER5: 1 file group');
+    assert(r.groups[0].nodeIds.includes('file1'), 'ER5: file node in nodeIds');
+    assert(r.groups[0].nodeIds.includes('sp1'),   'ER5: sp1 in nodeIds');
+    assert(r.groups[0].nodeIds.includes('sp2'),   'ER5: sp2 in nodeIds');
+    assertEq(r.groups[0].nodeIds.length, 3,       'ER5: exactly 3 nodeIds');
+  }
+}
+
 // ─── Run all tests ───────────────────────────────────────────────────────────
 
 testIslands();
@@ -415,5 +482,6 @@ testCycles();
 testSubsetEdgeFiltering();
 testHubsWithVirtualNodes();
 testIslandWithVirtualBridge();
+testExternalRefs();
 
 printSummary('Graph Analysis');

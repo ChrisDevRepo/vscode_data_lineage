@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
   Background,
@@ -30,6 +31,7 @@ import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DacpacModel, AnalysisMode, AnalysisType } from '../engine/types';
+import type { FilterProfile } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
@@ -63,6 +65,9 @@ interface GraphCanvasProps {
   onSelectNoneSchemas?: (schemas: string[]) => void;
   onToggleExternalRefs?: () => void;
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
+  exclusionPatterns?: string[];
+  onAddExclusionPattern?: (pattern: string) => void;
+  onRemoveExclusionPattern?: (pattern: string) => void;
   availableSchemas?: string[];
   onRefresh: () => void;
   onRebuild?: () => void;
@@ -83,6 +88,11 @@ interface GraphCanvasProps {
   tableDetailPanel?: ReactNode;
   isPanelOpen?: boolean;
   sourceName?: string;
+  filterProfiles?: FilterProfile[];
+  activeProjectId?: string | null;
+  onSaveView?: (name: string) => void;
+  onApplyView?: (profile: FilterProfile) => void;
+  onDeleteView?: (profileId: string) => void;
 }
 
 export function GraphCanvas({
@@ -109,6 +119,9 @@ export function GraphCanvas({
   onSelectNoneSchemas,
   onToggleExternalRefs,
   onToggleExternalRefType,
+  exclusionPatterns,
+  onAddExclusionPattern,
+  onRemoveExclusionPattern,
   availableSchemas,
   onRefresh,
   onRebuild,
@@ -129,6 +142,11 @@ export function GraphCanvas({
   tableDetailPanel,
   isPanelOpen,
   sourceName,
+  filterProfiles,
+  activeProjectId,
+  onSaveView,
+  onApplyView,
+  onDeleteView,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -143,6 +161,8 @@ export function GraphCanvas({
   const handleFitView = useCallback(() => {
     fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }, [fitView]);
+
+  useKeyboardShortcut(['f', 'F'], handleFitView);
 
   const minimapNodeColor = useCallback(
     (node: FlowNode<CustomNodeData>) => {
@@ -301,7 +321,7 @@ export function GraphCanvas({
   );
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-screen">
       <Toolbar
         types={filter.types}
         onToggleType={onToggleType}
@@ -331,10 +351,18 @@ export function GraphCanvas({
         externalRefTypes={filter.externalRefTypes}
         onToggleExternalRefs={onToggleExternalRefs}
         onToggleExternalRefType={onToggleExternalRefType}
+        exclusionPatterns={exclusionPatterns}
+        onAddExclusionPattern={onAddExclusionPattern}
+        onRemoveExclusionPattern={onRemoveExclusionPattern}
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}
         metrics={metrics}
+        filterProfiles={filterProfiles}
+        activeProjectId={activeProjectId}
+        onSaveView={onSaveView}
+        onApplyView={onApplyView}
+        onDeleteView={onDeleteView}
       />
 
       {/* Inline Trace Controls - shown during configuration phase */}
@@ -426,6 +454,7 @@ export function GraphCanvas({
               edgesFocusable={true}
               elementsSelectable={true}
               selectNodesOnDrag={false}
+              deleteKeyCode={null}
               panOnDrag={true}
               panOnScroll={false}
               zoomOnScroll={true}

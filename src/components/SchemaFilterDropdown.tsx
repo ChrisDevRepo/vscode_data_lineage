@@ -1,5 +1,7 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useState } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
+import { useDropdown } from '../hooks/useDropdown';
 
 interface SchemaFilterDropdownProps {
   schemas: string[];
@@ -20,26 +22,18 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectNone,
   onToggleFocusSchema,
 }: SchemaFilterDropdownProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [searchTerm, setSearchTerm] = useState('');
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
 
   const filteredSchemas = schemas.filter(s =>
     s.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="relative">
+    <>
       <Button
-        onClick={() => setIsOpen(!isOpen)}
+        ref={refs.setReference}
+        onClick={toggle}
         variant="icon"
         title="Filter Schemas"
         style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
@@ -60,10 +54,14 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
         </svg>
       </Button>
 
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-20" onMouseDown={() => setIsOpen(false)} />
-          <div className="absolute top-full mt-2 w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown">
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown"
+            {...getFloatingProps()}
+          >
             <div className="mb-2 flex items-center gap-2">
               <input
                 type="text"
@@ -119,8 +117,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
               ))}
             </div>
           </div>
-        </>
-      )}
-    </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 });

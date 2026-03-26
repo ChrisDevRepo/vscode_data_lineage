@@ -383,6 +383,22 @@ function testCteExclusion() {
     assert(!r.sources.some(s => s.replace(/\[|\]/g, '').toLowerCase() === 'a'), 'Multiple CTEs: A NOT in sources');
     assert(!r.sources.some(s => s.replace(/\[|\]/g, '').toLowerCase() === 'b'), 'Multiple CTEs: B NOT in sources');
   }
+
+  // CTE UPDATE alias substitution (substituteCteUpdateAliases preprocessing pass)
+  // The alias is rewritten to the real base table before YAML rules run
+  {
+    const r = parseSqlBody(`WITH Alias AS (SELECT * FROM [dbo].[Orders]) UPDATE Alias SET Amount = 0`);
+    assert(hasName(r.targets, 'Orders'),  'CTE UPDATE alias: base table in targets');
+    assert(!hasName(r.targets, 'Alias'),  'CTE UPDATE alias: alias NOT in targets');
+    assert(hasName(r.sources, 'Orders'),  'CTE UPDATE alias: base table also in sources (from CTE FROM)');
+  }
+
+  // CTE UPDATE alias with WHERE clause
+  {
+    const r = parseSqlBody(`WITH Upd AS (SELECT Id, Val FROM [sales].[Prices]) UPDATE Upd SET Val = Val * 2 WHERE Id > 0`);
+    assert(hasName(r.targets, 'Prices'), 'CTE UPDATE alias WHERE: base table in targets');
+    assert(!hasName(r.targets, 'Upd'),   'CTE UPDATE alias WHERE: CTE name NOT in targets');
+  }
 }
 
 
@@ -1009,10 +1025,8 @@ function testRealWorldExternalRefs() {
       FROM dbo.FactSales
       GROUP BY OrderDate
     `);
-    assert(r.targets.some(t => t.toLowerCase().includes('dailyreport')),
-      'RW8: CETAS with multi-line WITH clause detected');
-    assert(r.sources.some(s => s.toLowerCase().includes('factsales')),
-      'RW8: FROM source in CETAS SELECT also captured');
+    assert(hasName(r.targets, 'DailyReport'), 'RW8: CETAS target detected');
+    assert(hasName(r.sources, 'FactSales'),   'RW8: FROM source in CETAS SELECT captured');
   }
 }
 

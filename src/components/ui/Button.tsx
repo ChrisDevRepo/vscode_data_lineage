@@ -1,4 +1,4 @@
-import { memo, ButtonHTMLAttributes } from 'react';
+import { memo, forwardRef, ButtonHTMLAttributes } from 'react';
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'icon' | 'default';
 
@@ -15,18 +15,19 @@ const variantClasses: Record<ButtonVariant, string> = {
   default: '',
 };
 
-export const Button = memo(function Button({
+export const Button = memo(forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'secondary',
   children,
   className = '',
   disabled = false,
   style,
   ...props
-}: ButtonProps) {
+}, ref) {
   const combinedStyles = `inline-flex items-center justify-center font-semibold rounded transition-colors focus:outline-none disabled:cursor-not-allowed ln-btn-disabled ${variantClasses[variant]} ${className}`;
 
   return (
     <button
+      ref={ref}
       className={combinedStyles}
       disabled={disabled}
       style={style}
@@ -35,4 +36,4 @@ export const Button = memo(function Button({
       {children}
     </button>
   );
-});
+}));

@@ -1,0 +1,230 @@
+import { memo, useState } from 'react';
+import { Button } from './ui/Button';
+import { WizardPanel } from './ui/WizardPanel';
+import type { Project } from '../engine/projectStore';
+
+interface StartScreenProps {
+  projects: Project[];
+  lastOpenedId: string | null;
+  initialShowProjects?: boolean;
+  loadingProjectId: string | null;
+  startMessage: string | null;
+  onCreateNew: () => void;
+  onOpenProject: (id: string) => void;
+  onOpenLatest: () => void;
+  onDeleteProject: (id: string) => void;
+  onDemo: () => void;
+  onWizardViewChange?: (view: 'main' | 'projects') => void;
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) +
+      ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return iso;
+  }
+}
+
+function projectDetail(project: Project): string {
+  if (project.connection.type === 'dacpac') return project.connection.path;
+  const ci = project.connection.connectionInfo;
+  return `${ci.server} · ${ci.database}`;
+}
+
+function schemaLine(schemas: string[]): string {
+  if (schemas.length === 0) return '';
+  if (schemas.length <= 3) return `Schemas: ${schemas.join(', ')}`;
+  return `Schemas: ${schemas.slice(0, 3).join(', ')} +${schemas.length - 3} more`;
+}
+
+export const StartScreen = memo(function StartScreen({
+  projects,
+  lastOpenedId,
+  initialShowProjects = false,
+  loadingProjectId,
+  startMessage,
+  onCreateNew,
+  onOpenProject,
+  onOpenLatest,
+  onDeleteProject,
+  onDemo,
+  onWizardViewChange,
+}: StartScreenProps) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showProjects, setShowProjects] = useState(initialShowProjects);
+
+  const switchView = (to: 'main' | 'projects') => {
+    setShowProjects(to === 'projects');
+    onWizardViewChange?.(to);
+  };
+
+  const sorted = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const latestProject = lastOpenedId ? sorted.find(p => p.id === lastOpenedId) : undefined;
+
+  const footer = (
+    <div className="text-center">
+      <button
+        className="text-xs ln-text-link"
+        style={{ opacity: 0.55, fontWeight: 'normal' }}
+        onClick={onDemo}
+      >
+        Try with demo data
+      </button>
+    </div>
+  );
+
+  if (showProjects) {
+    return (
+      <WizardPanel footer={footer}>
+        {/* Header */}
+        <div className="flex items-center gap-2">
+          <button
+            className="ln-list-item rounded p-1 flex-shrink-0"
+            onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
+            title="Back"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+          <span className="text-sm font-medium flex-1">Saved Projects</span>
+          <span className="text-xs" style={{ opacity: 0.45 }}>{sorted.length}</span>
+        </div>
+
+        {/* Scrollable project list */}
+        <div className="space-y-2 overflow-y-auto" style={{ maxHeight: '18rem' }}>
+          {sorted.map((project) => {
+            const isLoading = loadingProjectId === project.id;
+            const isConfirming = confirmDeleteId === project.id;
+            const icon = project.connection.type === 'dacpac' ? '📄' : '🗄';
+            const detail = projectDetail(project);
+            const schemas = schemaLine(project.connection.schemas);
+
+            if (isConfirming) {
+              return (
+                <div key={project.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded ln-file-picker">
+                  <span className="text-sm truncate">Delete &ldquo;{project.name}&rdquo;?</span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      className="text-xs px-2 py-1 rounded ln-list-item"
+                      style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}
+                      onClick={(e) => { e.stopPropagation(); onDeleteProject(project.id); setConfirmDeleteId(null); }}
+                    >Delete</button>
+                    <button
+                      className="text-xs px-2 py-1 rounded ln-list-item"
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                    >Cancel</button>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div
+                key={project.id}
+                className="flex items-center gap-3 px-3 py-2 rounded cursor-pointer ln-file-picker ln-list-item"
+                onClick={() => !isLoading && onOpenProject(project.id)}
+                role="button"
+                tabIndex={0}
+                title={[project.name, detail, schemas].filter(Boolean).join('\n')}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenProject(project.id); }}
+              >
+                <span className="text-base flex-shrink-0" aria-hidden="true">
+                  {isLoading ? <Spinner className="w-4 h-4" /> : icon}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{project.name}</div>
+                  <div className="text-xs truncate" style={{ opacity: 0.55 }}>{detail}</div>
+                  {schemas && (
+                    <div className="text-xs truncate" style={{ opacity: 0.40 }}>{schemas}</div>
+                  )}
+                </div>
+                {!isLoading && (
+                  <Button
+                    variant="icon"
+                    title={`Delete "${project.name}"`}
+                    style={{ width: 28, height: 28 }}
+                    onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(project.id); }}
+                  >
+                    <IconClose />
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </WizardPanel>
+    );
+  }
+
+  return (
+    <WizardPanel footer={footer}>
+      {startMessage && (
+        <div className="text-xs px-3 py-2 rounded ln-status-error">{startMessage}</div>
+      )}
+
+      <Button variant="primary" className="w-full" onClick={onCreateNew}>
+        + Create New Project
+      </Button>
+
+      {/* Latest quick-action — always visible, grayed when no recent project */}
+      <button
+        className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
+        onClick={onOpenLatest}
+        disabled={!latestProject || !!loadingProjectId}
+        title={latestProject
+          ? [latestProject.name, projectDetail(latestProject), schemaLine(latestProject.connection.schemas)].filter(Boolean).join('\n')
+          : 'No recent project'}
+        style={{ opacity: latestProject ? 1 : 0.45 }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+        </svg>
+        <span className="truncate flex-1">
+          {latestProject ? latestProject.name : 'No recent project'}
+        </span>
+        {loadingProjectId === latestProject?.id && <Spinner className="w-4 h-4 ml-auto flex-shrink-0" />}
+      </button>
+
+      {/* Load Projects button — only shown when projects exist */}
+      {sorted.length > 0 && (
+        <button
+          className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
+          onClick={() => switchView('projects')}
+        >
+          <div className="flex items-center gap-3">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0A2.25 2.25 0 0 1 19.5 16.5h-15a2.25 2.25 0 0 1-2.25-2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 16.91a2.25 2.25 0 0 1-1.07-1.916V14.25" />
+            </svg>
+            <span>Load Projects</span>
+          </div>
+          <span
+            className="text-xs px-1.5 py-0.5 rounded flex-shrink-0"
+            style={{ background: 'var(--ln-wizard-btn-bg)', opacity: 0.8 }}
+          >
+            {sorted.length}
+          </span>
+        </button>
+      )}
+    </WizardPanel>
+  );
+});
+
+function Spinner({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+}
+
+function IconClose() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+    </svg>
+  );
+}

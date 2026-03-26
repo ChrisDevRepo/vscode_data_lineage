@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { AutocompleteNode } from '../utils/autocomplete';
-import { useClickOutside } from './useClickOutside';
 
 export function useAutocomplete(suggestions: AutocompleteNode[], inputValue: string) {
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -14,7 +13,18 @@ export function useAutocomplete(suggestions: AutocompleteNode[], inputValue: str
   }, [inputValue, suggestions.length]);
 
   const close = useCallback(() => setIsOpen(false), []);
-  useClickOutside([dropdownRef, inputRef], isOpen, close);
+
+  // Capture phase: fires before ReactFlow's pane stopPropagation
+  useEffect(() => {
+    if (!isOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inside = dropdownRef.current?.contains(target) || inputRef.current?.contains(target);
+      if (!inside) close();
+    };
+    document.addEventListener('mousedown', onMouseDown, { capture: true });
+    return () => document.removeEventListener('mousedown', onMouseDown, { capture: true });
+  }, [isOpen, close]);
 
   /** Handles ArrowDown/ArrowUp keys. Consumers compose this with their own Enter/Escape logic. */
   const handleArrowKeys = useCallback(
