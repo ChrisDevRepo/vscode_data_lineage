@@ -161,6 +161,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       if (msg.type === 'dacpac-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
+        setModel(null);  // clear stale model so visualize() routes to dacpac path
         applySchemaPreview(msg.preview, name);
         setIsLoading(false);
         setLoadingContext(null);
@@ -171,6 +172,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       if (msg.type === 'dacpac-model') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
+        setSchemaPreview(null);  // clear Phase 1 state once Phase 2 model arrives
         applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`);
         setIsLoading(false);
         setLoadingContext(null);
@@ -324,3 +326,4 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     toggleSchema, selectAllSchemas, clearAllSchemas,
   };
 }
+

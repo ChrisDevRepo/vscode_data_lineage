@@ -396,8 +396,6 @@ export interface AnalysisMode {
 export type ExtensionMessage =
   | { type: 'config-only'; config: ExtensionConfig }
   | { type: 'projects-list'; projects: import('./projectStore').Project[]; lastOpenedId: string | null }
-  /** @deprecated Extension host now sends dacpac-schema-preview / dacpac-model instead. */
-  | { type: 'dacpac-data'; data: number[]; fileName: string; filePath?: string; config: ExtensionConfig; autoVisualize?: boolean; preselectedSchemas?: string[] }
   | { type: 'dacpac-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string }
   | { type: 'dacpac-model'; model: DatabaseModel; config: ExtensionConfig; sourceName: string; autoVisualize?: boolean }
   | { type: 'last-dacpac-gone' }
