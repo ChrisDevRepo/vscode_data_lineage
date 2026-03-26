@@ -4,12 +4,14 @@
 
 ### Changed
 - Updated dependencies: picomatch 4.0.3 → 4.0.4, picomatch 2.3.1 → 2.3.2
+- **Start screen** — Most recent project shown upfront; "Load Projects" button to browse all saved projects.
+- **Dropdowns and tooltips** — Dropdowns no longer clip behind other UI elements. Toolbar buttons show themed tooltips on hover.
 
 ### Added
-- **Project sessions** — Connections and schema selections saved as named projects in VS Code global state. Start screen lists projects as cards; "Create New" opens the setup wizard; demo goes directly to the graph.
-- **Saved Views** — Save and restore filter states (schemas, types, search, external refs) as named views per project.
-- **Loading screen** — Unified Load → Parse → Generate progress view for all data paths with elapsed timer and 60 s timeout. Demo goes directly to the graph; times out with a clear error if the source does not respond.
-- **Exclusion Rules** — Toolbar ⊘ filter to hide nodes by pattern in real-time. Supports `%` wildcards and regex. Add via dropdown input, right-click → "Exclude from view", or `Delete` key. Saved per view. VS Code `excludePatterns` also gains `%` support.
+- **Project sessions** — Save connections and schema selections as named projects. Start screen shows project cards; "Create New" opens the setup wizard.
+- **Saved Views** — Save and restore filter states (schemas, types, search, exclusions) per project.
+- **Loading screen** — Progress view for all data paths with elapsed timer and 60 s timeout.
+- **Exclusion Rules** — ⊘ toolbar filter to hide nodes by pattern in real-time. Supports `%` wildcards and regex. Add via dropdown, right-click → "Exclude from view", or `Delete` key.
 
 
 ## [0.9.4] - 2026-03-12

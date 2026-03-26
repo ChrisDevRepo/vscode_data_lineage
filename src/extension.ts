@@ -620,6 +620,7 @@ type WebviewMessage =
   | { type: 'save-project'; project: import('./engine/projectStore').Project }
   | { type: 'delete-project'; id: string }
   | { type: 'save-view'; projectId: string; profile: import('./engine/projectStore').FilterProfile }
+  | { type: 'save-wizard-view'; view: 'main' | 'projects' }
   | { type: 'delete-view'; projectId: string; profileId: string }
   | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
   | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
