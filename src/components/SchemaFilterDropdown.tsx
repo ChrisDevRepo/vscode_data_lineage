@@ -1,4 +1,5 @@
 import { memo, useState } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { useDropdown } from '../hooks/useDropdown';
 
@@ -21,7 +22,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectNone,
   onToggleFocusSchema,
 }: SchemaFilterDropdownProps) {
-  const { isOpen, toggle, containerRef } = useDropdown();
+  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredSchemas = schemas.filter(s =>
@@ -29,8 +30,9 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   );
 
   return (
-    <div className="relative" ref={containerRef}>
+    <>
       <Button
+        ref={refs.setReference}
         onClick={toggle}
         variant="icon"
         title="Filter Schemas"
@@ -52,8 +54,14 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
         </svg>
       </Button>
 
-      {isOpen && (
-        <div className="absolute top-full mt-2 w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown">
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown"
+            {...getFloatingProps()}
+          >
             <div className="mb-2 flex items-center gap-2">
               <input
                 type="text"
@@ -108,8 +116,9 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                 </div>
               ))}
             </div>
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 });

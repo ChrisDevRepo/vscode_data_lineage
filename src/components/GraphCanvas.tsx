@@ -321,7 +321,7 @@ export function GraphCanvas({
   );
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-screen">
       <Toolbar
         types={filter.types}
         onToggleType={onToggleType}

@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import { ObjectType } from '../engine/types';
 import { TYPE_LABELS, TYPE_COLORS } from '../utils/schemaColors';
 import { Button } from './ui/Button';
@@ -15,11 +16,12 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,
   onToggleType,
 }: TypeFilterDropdownProps) {
-  const { isOpen, toggle, containerRef } = useDropdown();
+  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
 
   return (
-    <div className="relative" ref={containerRef}>
+    <>
       <Button
+        ref={refs.setReference}
         onClick={toggle}
         variant="icon"
         title="Filter Types"
@@ -46,8 +48,14 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
         </svg>
       </Button>
 
-      {isOpen && (
-        <div className="absolute top-full mt-2 w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown">
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown"
+            {...getFloatingProps()}
+          >
             {ALL_TYPES.map((type) => (
               <div
                 key={type}
@@ -63,8 +71,9 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
                 <span className="text-sm">{TYPE_LABELS[type]}</span>
               </div>
             ))}
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 });

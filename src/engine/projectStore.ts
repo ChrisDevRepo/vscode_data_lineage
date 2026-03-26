@@ -15,6 +15,7 @@ export interface ProjectStore {
   schemaVersion: 1;
   projects: Project[];
   lastOpenedId: string | null;
+  lastWizardView?: 'main' | 'projects';
 }
 
 /** Serialized FilterState — Sets become arrays for JSON storage. */

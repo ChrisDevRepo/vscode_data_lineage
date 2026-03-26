@@ -48,6 +48,7 @@ export function App() {
   const [config, setConfig] = useState<ExtensionConfig>(DEFAULT_CONFIG);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
+  const [lastWizardView, setLastWizardView] = useState<'main' | 'projects'>('main');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -242,6 +243,7 @@ export function App() {
     setLoadingStats(null);
     setLoadingError(null);
     setActiveProjectId(id);
+    setLastOpenedId(id);
 
     const project = projects.find(p => p.id === id);
     if (project) {
@@ -249,9 +251,10 @@ export function App() {
       setIsDbSource(project.connection.type === 'database');
     }
 
+    vscodeApi.postMessage({ type: 'save-wizard-view', view: 'projects' });
     dacpacLoader.loadProject(id);
     setView('visualizing');
-  }, [projects, dacpacLoader.loadProject]);
+  }, [projects, dacpacLoader.loadProject, vscodeApi]);
 
   const handleOpenLatest = useCallback(() => {
     if (!lastOpenedId) return;
@@ -723,6 +726,7 @@ export function App() {
         const updatedProjects: Project[] = msg.projects ?? [];
         setProjects(updatedProjects);
         setLastOpenedId(msg.lastOpenedId ?? null);
+        if (msg.lastWizardView) setLastWizardView(msg.lastWizardView);
         setLoadingProjectId(null);
         // When extension saves a DB project after Phase 2, set activeProjectId
         if (view === 'visualizing' && msg.lastOpenedId) {
@@ -776,11 +780,16 @@ export function App() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
+  const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
+    vscodeApi.postMessage({ type: 'save-wizard-view', view: v });
+  }, [vscodeApi]);
+
   if (view === 'start') {
     return (
       <StartScreen
         projects={projects}
         lastOpenedId={lastOpenedId}
+        initialShowProjects={lastWizardView === 'projects'}
         loadingProjectId={loadingProjectId}
         startMessage={startScreenMessage}
         onCreateNew={handleCreateNew}
@@ -788,6 +797,7 @@ export function App() {
         onOpenLatest={handleOpenLatest}
         onDeleteProject={handleDeleteProject}
         onDemo={handleDemoClick}
+        onWizardViewChange={handleWizardViewChange}
       />
     );
   }

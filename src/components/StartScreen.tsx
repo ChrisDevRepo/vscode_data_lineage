@@ -6,6 +6,7 @@ import type { Project } from '../engine/projectStore';
 interface StartScreenProps {
   projects: Project[];
   lastOpenedId: string | null;
+  initialShowProjects?: boolean;
   loadingProjectId: string | null;
   startMessage: string | null;
   onCreateNew: () => void;
@@ -13,6 +14,7 @@ interface StartScreenProps {
   onOpenLatest: () => void;
   onDeleteProject: (id: string) => void;
   onDemo: () => void;
+  onWizardViewChange?: (view: 'main' | 'projects') => void;
 }
 
 function formatDate(iso: string): string {
@@ -40,6 +42,7 @@ function schemaLine(schemas: string[]): string {
 export const StartScreen = memo(function StartScreen({
   projects,
   lastOpenedId,
+  initialShowProjects = false,
   loadingProjectId,
   startMessage,
   onCreateNew,
@@ -47,9 +50,15 @@ export const StartScreen = memo(function StartScreen({
   onOpenLatest,
   onDeleteProject,
   onDemo,
+  onWizardViewChange,
 }: StartScreenProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [showProjects, setShowProjects] = useState(false);
+  const [showProjects, setShowProjects] = useState(initialShowProjects);
+
+  const switchView = (to: 'main' | 'projects') => {
+    setShowProjects(to === 'projects');
+    onWizardViewChange?.(to);
+  };
 
   const sorted = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const latestProject = lastOpenedId ? sorted.find(p => p.id === lastOpenedId) : undefined;
@@ -73,7 +82,7 @@ export const StartScreen = memo(function StartScreen({
         <div className="flex items-center gap-2">
           <button
             className="ln-list-item rounded p-1 flex-shrink-0"
-            onClick={() => { setShowProjects(false); setConfirmDeleteId(null); }}
+            onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
             title="Back"
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -119,6 +128,7 @@ export const StartScreen = memo(function StartScreen({
                 onClick={() => !isLoading && onOpenProject(project.id)}
                 role="button"
                 tabIndex={0}
+                title={[project.name, detail, schemas].filter(Boolean).join('\n')}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenProject(project.id); }}
               >
                 <span className="text-base flex-shrink-0" aria-hidden="true">
@@ -164,7 +174,9 @@ export const StartScreen = memo(function StartScreen({
         className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
         onClick={onOpenLatest}
         disabled={!latestProject || !!loadingProjectId}
-        title={latestProject ? `Reopen: ${latestProject.name}` : 'No recent project'}
+        title={latestProject
+          ? [latestProject.name, projectDetail(latestProject), schemaLine(latestProject.connection.schemas)].filter(Boolean).join('\n')
+          : 'No recent project'}
         style={{ opacity: latestProject ? 1 : 0.45 }}
       >
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
@@ -180,7 +192,7 @@ export const StartScreen = memo(function StartScreen({
       {sorted.length > 0 && (
         <button
           className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
-          onClick={() => setShowProjects(true)}
+          onClick={() => switchView('projects')}
         >
           <div className="flex items-center gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">

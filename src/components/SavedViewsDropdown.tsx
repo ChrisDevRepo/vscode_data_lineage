@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import type { FilterProfile } from '../engine/projectStore';
 import { useDropdown } from '../hooks/useDropdown';
@@ -18,7 +19,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   onApplyView,
   onDeleteView,
 }: SavedViewsDropdownProps) {
-  const { isOpen, toggle, close, containerRef } = useDropdown();
+  const { isOpen, toggle, close, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -46,11 +47,12 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   };
 
   return (
-    <div className="relative" ref={containerRef}>
+    <>
       <Button
+        ref={refs.setReference}
         onClick={() => isEnabled && toggle()}
         variant="icon"
-        title={isEnabled ? 'Saved Views' : 'Open a project to save views'}
+        title={isEnabled ? 'Bookmarks' : 'Open a project to use bookmarks'}
         disabled={!isEnabled}
         aria-expanded={isOpen}
         aria-haspopup="menu"
@@ -62,12 +64,15 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
         </svg>
       </Button>
 
-      {isOpen && (
-        <div
-            className="absolute top-full mt-2 w-64 rounded-md shadow-lg z-50 p-2 ln-dropdown"
-            style={{ boxShadow: 'var(--ln-dropdown-shadow)', right: 0 }}
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+            className="w-64 rounded-md shadow-lg z-[200] p-2 ln-dropdown"
             role="menu"
-            aria-label="Saved views"
+            aria-label="Bookmarks"
+            {...getFloatingProps()}
           >
             {/* Save new view */}
             {!isAdding ? (
@@ -116,19 +121,21 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                         <span className="flex-1 truncate" style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}>
                           Delete &ldquo;{profile.name}&rdquo;?
                         </span>
-                        <button
-                          className="px-1.5 py-0.5 rounded ln-list-item text-xs"
+                        <Button
+                          variant="ghost"
+                          className="h-6 px-1.5 text-xs"
                           style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}
                           onClick={() => { onDeleteView(profile.id); setConfirmDeleteId(null); }}
                         >
                           Delete
-                        </button>
-                        <button
-                          className="px-1.5 py-0.5 rounded ln-list-item text-xs"
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="h-6 px-1.5 text-xs"
                           onClick={() => setConfirmDeleteId(null)}
                         >
                           Cancel
-                        </button>
+                        </Button>
                       </div>
                     );
                   }
@@ -141,13 +148,14 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                       <span className="flex-1 text-sm truncate" title={profile.name}>
                         {profile.name}
                       </span>
-                      <button
-                        className="text-xs px-1.5 py-0.5 rounded ln-list-item flex-shrink-0"
+                      <Button
+                        variant="primary"
+                        className="h-6 px-2 text-xs flex-shrink-0"
                         onClick={() => { onApplyView(profile); close(); }}
                         title={`Apply "${profile.name}"`}
                       >
                         Apply
-                      </button>
+                      </Button>
                       <button
                         className="flex-shrink-0 p-0.5 rounded ln-list-item"
                         onClick={() => setConfirmDeleteId(profile.id)}
@@ -163,8 +171,9 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                 })}
               </>
             )}
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 });

@@ -1,4 +1,13 @@
-import { memo, useState } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
+import {
+  useFloating,
+  useInteractions,
+  useDismiss,
+  flip,
+  shift,
+  offset,
+} from '@floating-ui/react';
+import { FloatingPortal } from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
 import { escapeRegexLiteral } from '../utils/sql';
 
@@ -40,14 +49,46 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   onExcludeNode,
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
-  return (
-    <>
-      {/* Fullscreen backdrop — click anywhere to close */}
-      <div className="fixed inset-0 z-40" onMouseDown={onClose} />
 
+  // Virtual reference element at the cursor position
+  const virtualRef = useRef({
+    getBoundingClientRect() {
+      return { x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x };
+    },
+  });
+
+  // Update virtual position when x/y change
+  useEffect(() => {
+    virtualRef.current.getBoundingClientRect = () => ({
+      x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x,
+    });
+  }, [x, y]);
+
+  const { refs, floatingStyles, context } = useFloating({
+    open: true,
+    onOpenChange: (open) => { if (!open) onClose(); },
+    middleware: [
+      offset(2),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+    ],
+  });
+
+  // Set virtual element as reference
+  useEffect(() => {
+    refs.setReference(virtualRef.current);
+  }, [refs]);
+
+  const dismiss = useDismiss(context, { referencePress: true });
+  const { getFloatingProps } = useInteractions([dismiss]);
+
+  return (
+    <FloatingPortal>
       <div
-        className="fixed rounded-lg shadow-xl py-1 z-50 min-w-[180px] ln-modal"
-        style={{ left: x, top: y }}
+        ref={refs.setFloating}
+        style={{ ...floatingStyles, zIndex: 50 }}
+        className="rounded-lg shadow-xl py-1 min-w-[180px] ln-modal"
+        {...getFloatingProps()}
       >
         <div className="px-3 py-1.5 text-xs truncate ln-text-dim ln-border-bottom">
           {schema}.{nodeName}
@@ -152,6 +193,6 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           {copyFailed ? 'Copy failed' : 'Copy Qualified Name'}
         </button>
       </div>
-    </>
+    </FloatingPortal>
   );
 });

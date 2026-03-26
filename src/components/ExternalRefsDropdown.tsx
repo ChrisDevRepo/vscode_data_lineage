@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { useDropdown } from '../hooks/useDropdown';
 
@@ -15,11 +16,12 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   onToggleMaster,
   onToggleSubType,
 }: ExternalRefsDropdownProps) {
-  const { isOpen, toggle, containerRef } = useDropdown();
+  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
 
   return (
-    <div className="relative" ref={containerRef}>
+    <>
       <Button
+        ref={refs.setReference}
         onClick={toggle}
         variant="icon"
         title="External References"
@@ -43,8 +45,16 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
         </svg>
       </Button>
 
-      {isOpen && (
-        <div className="absolute top-full mt-2 w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown" role="menu" aria-label="External reference filters">
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown"
+            role="menu"
+            aria-label="External reference filters"
+            {...getFloatingProps()}
+          >
             {/* Master toggle */}
             <div className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={showExternalRefs}>
               <input
@@ -84,8 +94,9 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                 <span className="text-[10px] ml-auto" style={{ color: 'var(--ln-fg-dim)' }}>3-part</span>
               </div>
             </div>
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 });

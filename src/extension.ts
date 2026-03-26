@@ -351,7 +351,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const config = await readExtensionConfig();
         const store = loadProjectStore(context);
         panel.webview.postMessage({ type: 'config-only', config });
-        panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId });
+        panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
       },
       'open-dacpac': async () => {
         const uris = await vscode.window.showOpenDialog({
@@ -394,6 +394,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             const fileUri = vscode.Uri.file(conn.path);
             const data = await vscode.workspace.fs.readFile(fileUri);
             if (isDacpacTooLarge(data.byteLength)) return;
+            const refreshed = { ...project, updatedAt: new Date().toISOString() };
+            const updatedStore = updateProject(store, refreshed);
+            await saveProjectStore(context, updatedStore);
+            panel.webview.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
             const config = await readExtensionConfig();
             panel.webview.postMessage({
               type: 'dacpac-data',
@@ -442,6 +446,12 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                 return;
               }
               await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName);
+              if (!token.isCancellationRequested) {
+                const refreshed = { ...project, updatedAt: new Date().toISOString() };
+                const updatedStore = updateProject(store, refreshed);
+                await saveProjectStore(context, updatedStore);
+                panel.webview.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
+              }
               outputChannel.info(`── Loading project "${project.name}" ──`);
             },
           );
@@ -455,14 +465,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const store = loadProjectStore(context);
         const updated = updateProject(store, msg.project);
         await saveProjectStore(context, updated);
-        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] Saved: "${msg.project.name}"`);
       },
       'delete-project': async (msg) => {
         const store = loadProjectStore(context);
         const updated = deleteProject(store, msg.id);
         await saveProjectStore(context, updated);
-        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] Deleted: ${msg.id}`);
       },
       'load-demo': async () => { await handleLoadDemo(panel, context, true); },
@@ -542,7 +552,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             const store = loadProjectStore(context);
             const updated = updateProject(store, project);
             await saveProjectStore(context, updated);
-            panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
+            panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
             outputChannel.info(`[Project] Saved: "${msg.projectName}"`);
           }
         },
@@ -554,14 +564,19 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           outputChannel.warn(`[Project] save-view: projectId ${msg.projectId} not found in store`);
         }
         await saveProjectStore(context, updated);
-        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] View saved: "${(msg.profile as FilterProfile).name}" on project ${msg.projectId}`);
+      },
+      'save-wizard-view': async (msg) => {
+        const store = loadProjectStore(context);
+        await saveProjectStore(context, { ...store, lastWizardView: msg.view as 'main' | 'projects' });
+        outputChannel.debug(`[Project] Wizard view saved: ${msg.view}`);
       },
       'delete-view': async (msg) => {
         const store = loadProjectStore(context);
         const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
         await saveProjectStore(context, updated);
-        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId });
+        panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] View deleted: ${msg.profileId}`);
       },
       'reload': () => {

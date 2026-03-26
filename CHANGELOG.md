@@ -2,16 +2,15 @@
 
 ## [0.9.5] - 2026-03-24
 
+### Changed
+- Updated dependencies: picomatch 4.0.3 → 4.0.4, picomatch 2.3.1 → 2.3.2
+
 ### Added
 - **Project sessions** — Connections and schema selections saved as named projects in VS Code global state. Start screen lists projects as cards; "Create New" opens the setup wizard; demo goes directly to the graph.
 - **Saved Views** — Save and restore filter states (schemas, types, search, external refs) as named views per project.
 - **Loading screen** — Unified Load → Parse → Generate progress view for all data paths with elapsed timer and 60 s timeout. Demo goes directly to the graph; times out with a clear error if the source does not respond.
 - **Exclusion Rules** — Toolbar ⊘ filter to hide nodes by pattern in real-time. Supports `%` wildcards and regex. Add via dropdown input, right-click → "Exclude from view", or `Delete` key. Saved per view. VS Code `excludePatterns` also gains `%` support.
 
-### Changed
-- Wizard layout: dacpac and database source buttons are now full-width stacked with an "or" divider. Database button visible (disabled) when the MSSQL extension is not installed.
-- Removed `db-reconnect` and `save-schemas` messages (replaced by project save flow).
-- Test suite: 864 tests (7 suites).
 
 ## [0.9.4] - 2026-03-12
 

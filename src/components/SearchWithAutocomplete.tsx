@@ -70,7 +70,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
           }
         }}
         placeholder="Quick Jump..."
-        className="h-9 w-64 pl-3 pr-9 text-sm rounded transition-colors focus:outline-none ln-input"
+        className="h-9 w-full pl-3 pr-9 text-sm rounded transition-colors focus:outline-none ln-input"
       />
       <div className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center pointer-events-none ln-text-placeholder">
         <svg
