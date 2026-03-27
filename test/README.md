@@ -3,9 +3,9 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all unit tests (1025 total)
+npm test                                       # Run all unit tests (1086 total)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (110 tests)
-npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (157 tests)
+npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (218 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (197 tests)
 npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (81 tests)
 npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (193 tests)
@@ -19,7 +19,7 @@ npx tsx test/ai-tools.test.ts                  # AI tool function tests (79 test
 | File | Tests | Purpose |
 |------|-------|---------|
 | `dacpacExtractor.test.ts` | 110 | Dacpac extraction, filtering, edge integrity, Fabric SDK, type-aware direction, CVE security, error handling, constraint extraction (UQ/CK/FK), `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
-| `graphBuilder.test.ts` | 157 | Graph construction, dagre layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression |
+| `graphBuilder.test.ts` | 218 | Graph construction, dagre layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
 | `parser-edge-cases.test.ts` | 197 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |

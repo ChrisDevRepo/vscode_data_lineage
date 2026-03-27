@@ -21,6 +21,8 @@ import Graph from 'graphology';
 import { useVsCode } from '../contexts/VsCodeContext';
 
 import { CustomNode, type CustomNodeData } from './CustomNode';
+import { SchemaNode } from './SchemaNode';
+import type { SchemaNodeData, GraphMode } from '../engine/types';
 import { Legend } from './Legend';
 import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner } from './TracedFilterBanner';
@@ -35,14 +37,16 @@ import type { FilterProfile } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
-const nodeTypes = { lineageNode: CustomNode } satisfies NodeTypes;
+// IMPORTANT: nodeTypes must be defined at module level — not inside the component.
+// If defined inside, React Flow remounts all nodes on every render.
+const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode } satisfies NodeTypes;
 
 const FIT_VIEW_PADDING = 0.15;
 const FIT_VIEW_DURATION = 800;
 const AUTO_FIT_DELAY_MS = 100;
 
 interface GraphCanvasProps {
-  flowNodes: FlowNode<CustomNodeData>[];
+  flowNodes: FlowNode[];
   flowEdges: FlowEdge[];
   trace: TraceState;
   filter: FilterState;
@@ -91,6 +95,8 @@ interface GraphCanvasProps {
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
   onDeleteView?: (profileId: string) => void;
+  graphMode?: GraphMode;
+  onSchemaNodeDoubleClick?: (schemaName: string) => void;
 }
 
 export function GraphCanvas({
@@ -143,6 +149,8 @@ export function GraphCanvas({
   onSaveView,
   onApplyView,
   onDeleteView,
+  graphMode = 'full',
+  onSchemaNodeDoubleClick,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -161,12 +169,25 @@ export function GraphCanvas({
   useKeyboardShortcut(['f', 'F'], handleFitView);
 
   const minimapNodeColor = useCallback(
-    (node: FlowNode<CustomNodeData>) => {
-      const ext = node.data.externalType;
+    (node: FlowNode) => {
+      // Schema nodes (overview mode) carry SchemaNodeData with a pre-computed color
+      if (node.type === 'schemaNode') return (node.data as SchemaNodeData).color;
+      const d = node.data as CustomNodeData;
+      const ext = d.externalType;
       if (ext === 'file' || ext === 'db') return getVirtualExtColor();
-      return getSchemaColor(String(node.data.schema));
+      return getSchemaColor(String(d.schema));
     },
     []
+  );
+
+  const handleNodeDoubleClick: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      if (graphMode === 'overview' && node.type === 'schemaNode') {
+        const schemaName = (node.data as SchemaNodeData).schemaName;
+        onSchemaNodeDoubleClick?.(schemaName);
+      }
+    },
+    [graphMode, onSchemaNodeDoubleClick]
   );
 
   // Zoom and center on a specific node
@@ -195,17 +216,18 @@ export function GraphCanvas({
     }
   }, [flowNodes, zoomToNode, onNodeClick]);
 
-  // Export current graph to Draw.io format
+  // Export current graph to Draw.io format (disabled in overview mode)
   const handleExportDrawio = useCallback(() => {
+    if (graphMode === 'overview') return;
     import('../export/drawioExporter').then(({ exportToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
-      const xml = exportToDrawio(flowNodes, flowEdges, schemas);
+      const xml = exportToDrawio(flowNodes as FlowNode<CustomNodeData>[], flowEdges, schemas);
       const base = sourceName?.replace(/\.dacpac$/i, '') || 'lineage';
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi, graphMode]);
 
   // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
   // flowNodes reference only changes on rebuild — not on highlight
@@ -217,7 +239,7 @@ export function GraphCanvas({
   }, [flowNodes, fitView]);
 
   // Local state preserves drag positions across highlight changes
-  const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
+  const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
 
   useEffect(() => {
@@ -228,8 +250,8 @@ export function GraphCanvas({
     setLocalEdges(flowEdges);
   }, [flowEdges]);
 
-  const onNodesChange: OnNodesChange<FlowNode<CustomNodeData>> = useCallback(
-    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds)),
+  const onNodesChange: OnNodesChange = useCallback(
+    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
     []
   );
 
@@ -257,7 +279,7 @@ export function GraphCanvas({
     return neighbors;
   }, [highlightedNodeId, graph]);
 
-  const displayNodes = useMemo(() => {
+  const displayNodes = useMemo((): FlowNode[] => {
     return localNodes.map(node => {
       const isHighlighted = highlightedNodeId === node.id;
       const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
@@ -265,7 +287,7 @@ export function GraphCanvas({
         ...node,
         data: {
           ...node.data,
-          highlighted: isHighlighted ? 'yellow' : node.data.highlighted,
+          highlighted: isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
           dimmed: !!shouldBeDimmed,
         },
       };
@@ -294,9 +316,14 @@ export function GraphCanvas({
     });
   }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
 
-  // Stable allNodes list for autocomplete/search (only changes when displayNodes changes)
+  // Stable allNodes list for autocomplete/search — only lineageNode nodes (not schema overview nodes)
   const allNodes = useMemo(
-    () => displayNodes.map(n => ({ id: n.id, name: n.data.label, schema: n.data.schema, type: n.data.objectType })),
+    () => displayNodes
+      .filter(n => n.type === 'lineageNode')
+      .map(n => {
+        const d = n.data as CustomNodeData;
+        return { id: n.id, name: d.label, schema: d.schema, type: d.objectType };
+      }),
     [displayNodes],
   );
 
@@ -356,7 +383,7 @@ export function GraphCanvas({
       {trace.mode === 'configuring' && trace.selectedNodeId && (
         <InlineTraceControls
           startNodeId={trace.selectedNodeId}
-          startNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
+          startNodeName={(displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId}
           defaultUpstream={config.trace.defaultUpstreamLevels}
           defaultDownstream={config.trace.defaultDownstreamLevels}
           onApply={(traceConfig) => {
@@ -369,7 +396,7 @@ export function GraphCanvas({
       {/* Traced Filter Banner - shown during applied or filtered (immediate) mode */}
       {(trace.mode === 'applied' || trace.mode === 'filtered') && trace.selectedNodeId && (
         <TracedFilterBanner
-          startNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
+          startNodeName={(displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId}
           upstreamLevels={trace.upstreamLevels}
           downstreamLevels={trace.downstreamLevels}
           totalNodes={trace.tracedNodeIds.size}
@@ -383,7 +410,7 @@ export function GraphCanvas({
       {/* Path Finder Bar — shown during pathfinding modes */}
       {(trace.mode === 'pathfinding' || trace.mode === 'path-applied') && trace.selectedNodeId && onApplyPath && (
         <PathFinderBar
-          sourceNodeName={displayNodes.find(n => n.id === trace.selectedNodeId)?.data.label || trace.selectedNodeId}
+          sourceNodeName={(displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId}
           allNodes={allNodes}
           pathResult={trace.mode === 'path-applied' ? {
             found: true,
@@ -426,6 +453,7 @@ export function GraphCanvas({
               onEdgesChange={onEdgesChange}
               nodeTypes={nodeTypes}
               onNodeClick={handleNodeClick}
+              onNodeDoubleClick={handleNodeDoubleClick}
               onNodeContextMenu={(event, node) => {
                 event.preventDefault();
                 onNodeContextMenu(node.id, event.clientX, event.clientY);
@@ -477,14 +505,19 @@ export function GraphCanvas({
                   ) : onToggleDetailSearch ? (
                     <DetailSearchSidebar
                       onClose={onToggleDetailSearch}
-                      allNodes={displayNodes.map(n => ({
-                        id: n.id,
-                        name: String(n.data.label),
-                        schema: String(n.data.schema),
-                        type: n.data.objectType as ObjectType,
-                        bodyScript: modelNodeMap.get(n.id)?.bodyScript,
-                        columns: modelNodeMap.get(n.id)?.columns,
-                      }))}
+                      allNodes={displayNodes
+                        .filter(n => n.type === 'lineageNode')
+                        .map(n => {
+                          const d = n.data as CustomNodeData;
+                          return {
+                            id: n.id,
+                            name: String(d.label),
+                            schema: String(d.schema),
+                            type: d.objectType as ObjectType,
+                            bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                            columns: modelNodeMap.get(n.id)?.columns,
+                          };
+                        })}
                       onResultClick={(nodeId, searchTerm) => {
                         onNodeClick(nodeId, searchTerm);
                         zoomToNode(nodeId);

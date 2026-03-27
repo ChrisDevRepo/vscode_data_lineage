@@ -3,6 +3,7 @@
 ## [0.9.6] - 2026-03-26
 
 ### Added
+- **Schema overview mode** — When a graph exceeds the node threshold (default 150), an automatic schema-level summary activates on load: one bubble per schema showing object count and type breakdown (■ tables, ● views, ▲ procedures, ◆ functions, ⬡ external tables) with aggregated, bidirectional edge counts between schemas. Double-click any bubble to drill into that schema and its neighbors (equivalent to clicking the star in the schema dropdown). Search, clear filters, or apply a saved view automatically returns to the appropriate view. Toggle via the status bar or disable entirely via `dataLineageViz.overview.enabled`. Threshold configurable via `dataLineageViz.overview.threshold`.
 - **`@lineage` chat participant** — Ask questions about your loaded graph directly in GitHub Copilot Chat. Type `@lineage` followed by a question and the assistant answers using 9 dedicated lineage tools — it never guesses from general knowledge. Requires GitHub Copilot and VS Code 1.95+.
   - *Example questions:* `@lineage what schemas are loaded?` · `@lineage find tables with Employee in the name` · `@lineage what does HumanResources.Employee depend on?` · `@lineage trace 3 levels upstream from Sales.SalesOrderDetail` · `@lineage which objects are hubs with more than 10 connections?`
   - Tools available: context overview, schema summary, object search, object detail (columns + FKs + DDL), neighbor lookup, BFS trace, graph analysis, DDL search, save view.

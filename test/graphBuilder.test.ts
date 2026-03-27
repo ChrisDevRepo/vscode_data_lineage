@@ -7,8 +7,9 @@ import { readFileSync } from 'fs';
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 import { extractDacpac } from '../src/engine/dacpacExtractor';
-import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics } from '../src/engine/graphBuilder';
+import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics, buildSchemaEdges, buildSchemaGraph } from '../src/engine/graphBuilder';
 import { buildModel } from '../src/engine/modelBuilder';
+import type { DatabaseModel } from '../src/engine/types';
 import { assert, makeGraph, testPath, loadParseRules, printSummary, loadAdventureWorksModel } from './testUtils';
 
 // ─── Graph Builder ──────────────────────────────────────────────────────────
@@ -766,6 +767,106 @@ function testClrMethodVirtualNodeSuppression() {
   assert(dbNodesReal[0].externalDatabase === 'otherdb', 'CLR-NonCLR: correct database name stored');
 }
 
+// ─── buildSchemaEdges ────────────────────────────────────────────────────────
+
+function testBuildSchemaEdges() {
+  console.log('\n── buildSchemaEdges ──');
+
+  // Model: dbo.ProcA (procedure) writes to sales.TableB, sales.ProcC reads from dbo.TableD
+  const nodes: DatabaseModel['nodes'] = [
+    { id: '[dbo].[proca]', name: 'ProcA', schema: 'dbo', type: 'procedure', label: 'ProcA', objectType: 'P' } as DatabaseModel['nodes'][number],
+    { id: '[dbo].[tabled]', name: 'TableD', schema: 'dbo', type: 'table', label: 'TableD', objectType: 'U' } as DatabaseModel['nodes'][number],
+    { id: '[sales].[tableb]', name: 'TableB', schema: 'sales', type: 'table', label: 'TableB', objectType: 'U' } as DatabaseModel['nodes'][number],
+    { id: '[sales].[procc]', name: 'ProcC', schema: 'sales', type: 'procedure', label: 'ProcC', objectType: 'P' } as DatabaseModel['nodes'][number],
+  ];
+  const edges: DatabaseModel['edges'] = [
+    { source: '[dbo].[proca]', target: '[sales].[tableb]', edgeType: 'write' },
+    { source: '[sales].[procc]', target: '[dbo].[tabled]', edgeType: 'read' },
+  ];
+  const model = { nodes, edges, schemas: [], catalog: new Map(), neighborIndex: new Map() } as unknown as DatabaseModel;
+  const allSchemas = new Set(['dbo', 'sales']);
+
+  const result = buildSchemaEdges(model, allSchemas);
+
+  // Two cross-schema edges between dbo and sales → bidirectional, merged into one canonical entry
+  let totalEntries = 0;
+  for (const targets of result.values()) totalEntries += targets.size;
+  assert(totalEntries === 1, `Bidirectional dbo↔sales edges collapse to 1 canonical entry (got ${totalEntries})`);
+
+  // The merged count should be 2 (1 dbo→sales + 1 sales→dbo)
+  let foundCount = false;
+  for (const targets of result.values()) {
+    for (const count of targets.values()) {
+      if (count === 2) foundCount = true;
+    }
+  }
+  assert(foundCount, 'Merged bidirectional edge count = 2');
+
+  // visibleSchemas filter: only 'dbo' visible — no cross-schema edges at all
+  const dboOnly = new Set(['dbo']);
+  const filtered = buildSchemaEdges(model, dboOnly);
+  let filteredEntries = 0;
+  for (const targets of filtered.values()) filteredEntries += targets.size;
+  // sales is not in visibleSchemas, edges referencing sales schema are still counted
+  // (edges where at least one side is visible — dbo side IS visible)
+  // Actually the filter keeps edges where at least one side is in visibleSchemas.
+  // Re-check the implementation: it skips only if BOTH sides are not in visibleSchemas.
+  // dbo→sales: dbo is visible → kept. sales→dbo: dbo is visible → kept.
+  // But only 'dbo' in result nodes means sales nodes may still appear as targets.
+  // The key test: same-schema edges are dropped (srcSchema === tgtSchema).
+  const dboOnlySameSchema: DatabaseModel['nodes'] = [
+    { id: '[dbo].[proca]', name: 'ProcA', schema: 'dbo', type: 'procedure', label: 'ProcA', objectType: 'P' } as DatabaseModel['nodes'][number],
+    { id: '[dbo].[tabled]', name: 'TableD', schema: 'dbo', type: 'table', label: 'TableD', objectType: 'U' } as DatabaseModel['nodes'][number],
+  ];
+  const sameSchemaEdges: DatabaseModel['edges'] = [
+    { source: '[dbo].[proca]', target: '[dbo].[tabled]', edgeType: 'read' },
+  ];
+  const sameSchemaModel = { nodes: dboOnlySameSchema, edges: sameSchemaEdges, schemas: [], catalog: new Map(), neighborIndex: new Map() } as unknown as DatabaseModel;
+  const sameResult = buildSchemaEdges(sameSchemaModel, new Set(['dbo']));
+  let sameEntries = 0;
+  for (const targets of sameResult.values()) sameEntries += targets.size;
+  assert(sameEntries === 0, `Same-schema edges are not included in schema edge map (got ${sameEntries})`);
+}
+
+// ─── buildSchemaGraph ────────────────────────────────────────────────────────
+
+function testBuildSchemaGraph(model: DatabaseModel) {
+  console.log('\n── buildSchemaGraph ──');
+
+  // AdventureWorks has 6 schemas
+  const visibleSchemas = new Set(model.schemas.map(s => s.name));
+  const { nodes, edges } = buildSchemaGraph(model, visibleSchemas);
+
+  assert(nodes.length === model.schemas.length, `Schema node count matches schema count: ${nodes.length}`);
+
+  // Every node has the right type and data fields
+  for (const n of nodes) {
+    assert(n.type === 'schemaNode', `Node ${n.id} has type 'schemaNode'`);
+    assert(typeof n.data.schemaName === 'string' && n.data.schemaName.length > 0, `Node ${n.id} has schemaName`);
+    assert(typeof n.data.objectCount === 'number' && n.data.objectCount > 0, `Node ${n.id} has objectCount > 0`);
+    assert(typeof n.data.color === 'string' && n.data.color.startsWith('#'), `Node ${n.id} has schema color`);
+    assert(n.id.startsWith('__schema__'), `Node ${n.id} has __schema__ prefix`);
+    assert(typeof n.position.x === 'number' && typeof n.position.y === 'number', `Node ${n.id} has position`);
+  }
+
+  // Total object count across all schema nodes must match model node count
+  const totalObjects = nodes.reduce((sum, n) => sum + n.data.objectCount, 0);
+  assert(totalObjects === model.nodes.length, `Total object count across schema nodes matches model: ${totalObjects} === ${model.nodes.length}`);
+
+  // visibleSchemas filter: only one schema
+  const firstSchema = model.schemas[0].name;
+  const { nodes: singleNodes } = buildSchemaGraph(model, new Set([firstSchema]));
+  assert(singleNodes.length === 1, `Single-schema filter produces 1 node (got ${singleNodes.length})`);
+  assert(singleNodes[0].data.schemaName === firstSchema, `Single node has correct schemaName`);
+
+  // Edges must have source/target that reference real schema node ids
+  const nodeIds = new Set(nodes.map(n => n.id));
+  for (const e of edges) {
+    assert(nodeIds.has(e.source), `Edge source ${e.source} is a valid schema node`);
+    assert(nodeIds.has(e.target), `Edge target ${e.target} is a valid schema node`);
+  }
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -776,6 +877,8 @@ async function main() {
     const model = await loadAdventureWorksModel();
 
     await testGraphBuilder(model);
+    testBuildSchemaEdges();
+    testBuildSchemaGraph(model);
     testTraceNoSiblings();
     testBidirectionalTrace();
     testCycleDirectionalFiltering();

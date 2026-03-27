@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useTransition } from 'react';
+import { useState, useCallback, useRef, useEffect, useTransition, useMemo } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { StartScreen } from './StartScreen';
 import { CreateFlow } from './CreateFlow';
@@ -6,6 +6,8 @@ import { VisualizingScreen, type LoadingPhase } from './VisualizingScreen';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeContextMenu } from './NodeContextMenu';
 import { useGraphology } from '../hooks/useGraphology';
+import { useOverviewMode } from '../hooks/useOverviewMode';
+import { buildSchemaGraph } from '../engine/graphBuilder';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
@@ -77,6 +79,11 @@ export function App() {
   const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
   const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
+
+  // Allows callbacks defined before useOverviewMode to reset the auto-trigger guard.
+  const overviewActionsRef = useRef<{ resetUserChoice: () => void }>({
+    resetUserChoice: () => {},
+  });
 
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
     setConfig(cfg);
@@ -339,6 +346,7 @@ export function App() {
 
   const handleRefresh = useCallback(() => {
     if (model) {
+      overviewActionsRef.current.resetUserChoice();
       clearTrace(() => {
         const f = getResetFilter(model);
         setFilter(f);
@@ -349,6 +357,7 @@ export function App() {
 
   const handleResetAll = useCallback(() => {
     if (model) {
+      overviewActionsRef.current.resetUserChoice();
       const f = getResetFilter(model);
       setFilter(f);
       clearTrace(() => {
@@ -487,6 +496,52 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Called on schema bubble double-click — same as clicking the star button in the
+   *  schema dropdown. Sets focusSchemas + selects the schema + its neighbors. Always-set
+   *  (never toggles off, even if schema was already focused). */
+  const handleSetFocusSchema = useCallback((schema: string) => {
+    if (!model) return;
+    setFilter((prev) => {
+      const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
+      const nodeById = new Map(model.nodes.map(n => [n.id, n]));
+      const neighborSchemas = new Set<string>([schema]);
+      for (const e of model.edges) {
+        if (focusNodeIds.has(e.source)) {
+          const target = nodeById.get(e.target);
+          if (target) neighborSchemas.add(target.schema);
+        }
+        if (focusNodeIds.has(e.target)) {
+          const source = nodeById.get(e.source);
+          if (source) neighborSchemas.add(source.schema);
+        }
+      }
+      const next = { ...prev, focusSchemas: new Set([schema]), schemas: neighborSchemas };
+      rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  // ── Overview mode (schema-level view) ───────────────────────────────────────
+
+  const { graphMode, enteredFocusFromOverview, toggleMode, enterFocusFromOverview, resetUserChoice } = useOverviewMode({
+    model,
+    flowNodes,
+    config,
+    searchTerm: filter.searchTerm,
+    onSetFocusSchema: handleSetFocusSchema,
+  });
+
+  // Populate ref so handleRefresh/handleResetAll (defined earlier) can reset the guard.
+  overviewActionsRef.current.resetUserChoice = resetUserChoice;
+
+  // Schema-level nodes/edges — computed once when model/filter.schemas change
+  const { schemaNodes, schemaEdges } = useMemo(() => {
+    if (!model) return { schemaNodes: [], schemaEdges: [] };
+    const visibleSchemas = filter.schemas.size > 0 ? filter.schemas : new Set(model.schemas.map(s => s.name));
+    const { nodes, edges } = buildSchemaGraph(model, visibleSchemas);
+    return { schemaNodes: nodes, schemaEdges: edges };
+  }, [model, filter.schemas]);
+
   const handleToggleExternalRefs = useCallback(() => {
     setFilter((prev) => {
       const next = { ...prev, showExternalRefs: !prev.showExternalRefs };
@@ -528,14 +583,14 @@ export function App() {
   const handleToggleSchema = useCallback((schema: string) => {
     setFilter((prev) => {
       const schemas = new Set(prev.schemas);
-      const focusSchemas = new Set(prev.focusSchemas);
       if (schemas.has(schema)) {
         schemas.delete(schema);
-        if (focusSchemas.has(schema)) focusSchemas.delete(schema);
       } else {
         schemas.add(schema);
       }
-      const next = { ...prev, schemas, focusSchemas };
+      // User is manually managing schemas — clear the star focus lock so all
+      // selected schemas show. Star button can still be used independently.
+      const next = { ...prev, schemas, focusSchemas: new Set<string>() };
       if (model) rebuild(model, next, config);
       return next;
     });
@@ -543,7 +598,7 @@ export function App() {
 
   const handleSelectAllSchemas = useCallback((schemas: string[]) => {
     setFilter((prev) => {
-      const next = { ...prev, schemas: new Set([...prev.schemas, ...schemas]) };
+      const next = { ...prev, schemas: new Set([...prev.schemas, ...schemas]), focusSchemas: new Set<string>() };
       if (model) rebuild(model, next, config);
       return next;
     });
@@ -552,12 +607,8 @@ export function App() {
   const handleSelectNoneSchemas = useCallback((schemas: string[]) => {
     setFilter((prev) => {
       const nextSchemas = new Set(prev.schemas);
-      const focusSchemas = new Set(prev.focusSchemas);
-      for (const s of schemas) {
-        nextSchemas.delete(s);
-        focusSchemas.delete(s);
-      }
-      const next = { ...prev, schemas: nextSchemas, focusSchemas };
+      for (const s of schemas) nextSchemas.delete(s);
+      const next = { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
       if (model) rebuild(model, next, config);
       return next;
     });
@@ -690,6 +741,8 @@ export function App() {
         setLoadingError(null);
         setActiveProjectId(null);
         setView('visualizing');
+      } else if (msg?.type === 'toggle-overview') {
+        toggleMode();
       } else if (msg?.type === 'projects-list') {
         const updatedProjects: Project[] = msg.projects ?? [];
         setProjects(updatedProjects);
@@ -704,7 +757,14 @@ export function App() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [view]);
+  }, [view, toggleMode]);
+
+  // Notify extension when graphMode changes so it can update the status bar
+  useEffect(() => {
+    if (view === 'graph') {
+      vscodeApi.postMessage({ type: 'overview-mode-changed', mode: graphMode, enteredFocusFromOverview });
+    }
+  }, [graphMode, enteredFocusFromOverview, view, vscodeApi]);
 
   // ── Saved Views ─────────────────────────────────────────────────────────────
 
@@ -731,6 +791,7 @@ export function App() {
   }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
 
   const handleApplyView = useCallback((profile: FilterProfile) => {
+    overviewActionsRef.current.resetUserChoice();
     const restored = deserializeFilter(profile.filter);
     setFilter(restored);
     if (model) rebuild(model, restored, config);
@@ -798,8 +859,10 @@ export function App() {
   return (
     <ReactFlowProvider>
       <GraphCanvas
-        flowNodes={tracedNodes}
-        flowEdges={tracedEdges}
+        flowNodes={graphMode === 'overview' ? schemaNodes : tracedNodes}
+        flowEdges={graphMode === 'overview' ? schemaEdges : tracedEdges}
+        graphMode={graphMode}
+        onSchemaNodeDoubleClick={enterFocusFromOverview}
         trace={trace}
         filter={filter}
         metrics={metrics}

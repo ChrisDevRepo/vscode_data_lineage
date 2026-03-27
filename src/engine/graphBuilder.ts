@@ -3,12 +3,15 @@ import { bfsFromNode } from 'graphology-traversal';
 import { bidirectional } from 'graphology-shortest-path';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG } from './types';
+import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';
+import { getSchemaColor } from '../utils/schemaColors';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 60;
+export const SCHEMA_NODE_WIDTH = 160;
+export const SCHEMA_NODE_HEIGHT = 80;
 
 /** Typed tuple for React Flow edge label background padding. */
 const LABEL_BG_PAD: [number, number] = [4, 4];
@@ -438,6 +441,163 @@ function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionCon
   }
 
   return result;
+}
+
+// ─── Schema Overview (flat super-nodes) ──────────────────────────────────────
+
+/**
+ * Aggregate object-level edges to schema-level edge counts.
+ * Bidirectional schema pairs are merged using the same canonical-direction
+ * logic as buildFlowEdges — procedure/function schema on the "source" side.
+ * Returns: Map<canonSourceSchema, Map<canonTargetSchema, totalCount>>
+ */
+export function buildSchemaEdges(
+  model: DatabaseModel,
+  visibleSchemas: Set<string>
+): Map<string, Map<string, number>> {
+  // First pass: count raw directed schema→schema edge occurrences
+  const raw = new Map<string, Map<string, number>>();
+  const nodeSchemaMap = new Map<string, string>();
+  const nodeTypeMap = new Map<string, string>();
+  for (const n of model.nodes) {
+    nodeSchemaMap.set(n.id, n.schema);
+    nodeTypeMap.set(n.id, n.type);
+  }
+
+  for (const e of model.edges) {
+    const srcSchema = nodeSchemaMap.get(e.source);
+    const tgtSchema = nodeSchemaMap.get(e.target);
+    if (!srcSchema || !tgtSchema) continue;
+    if (!visibleSchemas.has(srcSchema) && !visibleSchemas.has(tgtSchema)) continue;
+    if (srcSchema === tgtSchema) continue; // same-schema edges not shown in overview
+
+    if (!raw.has(srcSchema)) raw.set(srcSchema, new Map());
+    raw.get(srcSchema)!.set(tgtSchema, (raw.get(srcSchema)!.get(tgtSchema) ?? 0) + 1);
+  }
+
+  // Second pass: merge bidirectional pairs into canonical direction
+  const result = new Map<string, Map<string, number>>();
+  const consumed = new Set<string>();
+
+  for (const [src, targets] of raw) {
+    for (const [tgt, count] of targets) {
+      const key = `${src}→${tgt}`;
+      if (consumed.has(key)) continue;
+
+      const revCount = raw.get(tgt)?.get(src) ?? 0;
+      if (revCount > 0) {
+        // Bidirectional — pick canonical direction: procedure/function schema on source side
+        const srcHasProc = model.nodes.some(n => n.schema === src && (n.type === 'procedure' || n.type === 'function'));
+        const tgtHasProc = model.nodes.some(n => n.schema === tgt && (n.type === 'procedure' || n.type === 'function'));
+        let canonSrc = src;
+        let canonTgt = tgt;
+        if (tgtHasProc && !srcHasProc) { canonSrc = tgt; canonTgt = src; }
+        else if (!srcHasProc && !tgtHasProc && src > tgt) { canonSrc = tgt; canonTgt = src; }
+
+        consumed.add(key);
+        consumed.add(`${tgt}→${src}`);
+        if (!result.has(canonSrc)) result.set(canonSrc, new Map());
+        result.get(canonSrc)!.set(canonTgt, count + revCount);
+      } else {
+        consumed.add(key);
+        if (!result.has(src)) result.set(src, new Map());
+        result.get(src)!.set(tgt, count);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Build React Flow schema super-nodes + aggregated edges for overview mode.
+ * Only includes schemas present in visibleSchemas.
+ * Uses dedicated dagre spacing (larger than object graph).
+ */
+export function buildSchemaGraph(
+  model: DatabaseModel,
+  visibleSchemas: Set<string>
+): { nodes: FlowNode<SchemaNodeData>[]; edges: FlowEdge[] } {
+  const schemaEdgeCounts = buildSchemaEdges(model, visibleSchemas);
+
+  // Build schema → object count + type breakdown
+  const schemaMeta = new Map<string, { count: number; types: Partial<Record<string, number>> }>();
+  for (const n of model.nodes) {
+    if (!visibleSchemas.has(n.schema)) continue;
+    if (!schemaMeta.has(n.schema)) schemaMeta.set(n.schema, { count: 0, types: {} });
+    const meta = schemaMeta.get(n.schema)!;
+    meta.count++;
+    meta.types[n.type] = (meta.types[n.type] ?? 0) + 1;
+  }
+
+  // Dagre layout for schema nodes — wider spacing than object graph
+  const schemaIds = [...visibleSchemas].filter(s => schemaMeta.has(s));
+  const edgesForLayout: Array<{ source: string; target: string }> = [];
+  for (const [src, targets] of schemaEdgeCounts) {
+    for (const tgt of targets.keys()) {
+      edgesForLayout.push({ source: src, target: tgt });
+    }
+  }
+
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: 'LR', ranksep: 160, nodesep: 80, marginx: 30, marginy: 30 });
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const id of schemaIds) g.setNode(id, { width: SCHEMA_NODE_WIDTH, height: SCHEMA_NODE_HEIGHT });
+  for (const { source, target } of edgesForLayout) {
+    if (g.hasNode(source) && g.hasNode(target)) g.setEdge(source, target);
+  }
+  dagre.layout(g);
+
+  const nodes: FlowNode<SchemaNodeData>[] = schemaIds.map((schema) => {
+    const pos = g.node(schema);
+    const meta = schemaMeta.get(schema)!;
+    return {
+      id: `__schema__${schema}`,
+      type: 'schemaNode',
+      position: pos
+        ? { x: pos.x - SCHEMA_NODE_WIDTH / 2, y: pos.y - SCHEMA_NODE_HEIGHT / 2 }
+        : { x: 0, y: 0 },
+      draggable: true,
+      selectable: true,
+      data: {
+        schemaName: schema,
+        objectCount: meta.count,
+        typeBreakdown: meta.types as Partial<Record<string, number>>,
+        color: getSchemaColor(schema),
+      },
+    };
+  });
+
+  const LABEL_BG_PAD: [number, number] = [4, 4];
+  const edges: FlowEdge[] = [];
+  for (const [src, targets] of schemaEdgeCounts) {
+    for (const [tgt, count] of targets) {
+      const srcId = `__schema__${src}`;
+      const tgtId = `__schema__${tgt}`;
+      if (!schemaIds.includes(src) || !schemaIds.includes(tgt)) continue;
+
+      const revCount = schemaEdgeCounts.get(tgt)?.get(src);
+      const isBidi = revCount !== undefined;
+
+      edges.push({
+        id: isBidi ? `__schema__${src}↔${tgt}` : `__schema__${src}→${tgt}`,
+        source: srcId,
+        target: tgtId,
+        label: `${count}`,
+        labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
+        labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
+        labelBgPadding: LABEL_BG_PAD,
+        style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.2 },
+        markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
+        ...(isBidi && {
+          label: `⇄ ${count}`,
+          markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },
+        }),
+      });
+    }
+  }
+
+  return { nodes, edges };
 }
 
 // ─── Dagre Layout (full graph) ──────────────────────────────────────────────

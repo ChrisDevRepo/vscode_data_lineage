@@ -52,6 +52,7 @@ Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=Gi
 
 ### Visualization
 
+- **Schema overview** — On large graphs (configurable threshold), shows a schema-level summary with object counts and type icons. Double-click any schema bubble to drill into its objects and connected neighbors. Toggle with the status bar item. Disable via `dataLineageViz.overview.enabled`.
 - Search and navigate objects with autocomplete
 - Trace upstream and downstream dependencies with sibling filtering
 - Find the shortest path between any two nodes
@@ -94,6 +95,8 @@ Search `dataLineageViz` in VS Code Settings (`Ctrl+,`). Settings are grouped int
 | `excludePatterns` | `[]` | Regex patterns to exclude objects by name |
 | `layout.direction` | `"LR"` | Graph flow direction: `LR` left-to-right or `TB` top-to-bottom |
 | `tableStatistics.enabled` | `true` | Column statistics and row counts (DB import only) |
+| `overview.enabled` | `true` | Enable schema overview mode for large graphs |
+| `overview.threshold` | `150` | Node count above which schema overview activates automatically |
 
 ### Commands
 

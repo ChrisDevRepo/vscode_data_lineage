@@ -318,6 +318,13 @@ export interface ExternalRefsConfig {
   enabled: boolean;
 }
 
+export interface OverviewConfig {
+  /** When false, schema overview mode is completely disabled — graph always shows full object view. */
+  enabled: boolean;
+  /** Node count above which overview auto-activates on initial load (post-filter). */
+  threshold: number;
+}
+
 export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   excludePatterns: string[];
@@ -328,6 +335,7 @@ export interface ExtensionConfig {
   analysis: AnalysisConfig;
   tableStatistics: TableStatsConfig;
   externalRefs: ExternalRefsConfig;
+  overview: OverviewConfig;
 }
 
 /** Fabric Data Warehouse engineEditionId — used for platform-specific query branching. */
@@ -342,9 +350,20 @@ export const DEFAULT_CONFIG = {
   tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
   dmvQueryTimeout: 120,
   externalRefs: { enabled: true },
+  overview: { enabled: true, threshold: 150 },
 } satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────
+
+export type GraphMode = 'full' | 'overview';
+
+/** Data for a schema-level super-node rendered in overview mode. */
+export interface SchemaNodeData extends Record<string, unknown> {
+  schemaName: string;
+  objectCount: number;
+  typeBreakdown: Partial<Record<ObjectType, number>>;
+  color: string;
+}
 
 export interface FilterState {
   schemas: Set<string>;
@@ -407,4 +426,5 @@ export type ExtensionMessage =
   | { type: 'db-error'; message: string; phase: string }
   | { type: 'db-cancelled' }
   | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
-  | { type: 'table-stats-error'; message: string };
+  | { type: 'table-stats-error'; message: string }
+  | { type: 'toggle-overview' };

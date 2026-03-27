@@ -117,8 +117,14 @@
         "command": "dataLineageViz.createDmvQueries",
         "title": "Data Lineage: Create DMV Queries",
         "icon": "$(database)"
+      },
+      {
+        "command": "dataLineageViz.toggleOverviewMode",
+        "title": "Data Lineage: Toggle Schema Overview Mode",
+        "icon": "$(graph)"
       }
     ],
+    "keybindings": [],
     "menus": {
       "view/title": [
         {
@@ -153,6 +159,20 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Detect external references (OPENROWSET file paths, cross-database 3-part names). When disabled, no virtual external nodes are created. External Tables are unaffected.",
+            "scope": "resource"
+          },
+          "dataLineageViz.overview.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Enable schema overview mode. When enabled and the graph exceeds `overview.threshold` nodes, the initial view shows schema-level bubbles instead of all objects. Set to `false` to always show the full object graph.",
+            "scope": "resource"
+          },
+          "dataLineageViz.overview.threshold": {
+            "type": "number",
+            "default": 150,
+            "minimum": 10,
+            "maximum": 1000,
+            "markdownDescription": "Node count above which schema overview mode auto-activates on initial load. Only applies when `overview.enabled` is `true`.",
             "scope": "resource"
           },
           "dataLineageViz.parseRulesFile": {

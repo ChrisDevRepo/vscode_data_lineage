@@ -12,7 +12,7 @@ import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
-import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ExternalRefsConfig, type ObjectType, type DatabaseModel, type XmlElement } from './engine/types';
+import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ExternalRefsConfig, type OverviewConfig, type ObjectType, type DatabaseModel, type XmlElement } from './engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from './engine/dacpacExtractor';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
@@ -102,6 +102,7 @@ function isDacpacTooLarge(bytes: number): boolean {
 }
 let panelCounter = 0;
 let activePanel: vscode.WebviewPanel | undefined;
+let overviewStatusBar: vscode.StatusBarItem | undefined;
 
 // ─── Stats Connection Reuse ──────────────────────────────────────────────────
 
@@ -177,6 +178,20 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dataLineageViz.createDmvQueries', () =>
       createYamlScaffold(context, 'dmvQueries.yaml', 'dmvQueries.yaml', 'dmvQueriesFile')
     ),
+  );
+
+  // ─── Schema overview mode: status bar + toggle command ─────────────────────
+  overviewStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  overviewStatusBar.command = 'dataLineageViz.toggleOverviewMode';
+  overviewStatusBar.tooltip = 'Toggle schema overview / full object view (Ctrl+Alt+O)';
+  context.subscriptions.push(overviewStatusBar);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dataLineageViz.toggleOverviewMode', () => {
+      if (activePanel) {
+        activePanel.webview.postMessage({ type: 'toggle-overview' });
+      }
+    })
   );
 
   // ─── QuickPick object search command ───────────────────────────────────────
@@ -582,6 +597,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     panel.onDidDispose(() => {
       panelDisposed = true;
       activePanel = undefined;
+      overviewStatusBar?.hide();
       themeChangeListener.dispose();
       detailPanel?.dispose();
       if (statsConnectionUri) {
@@ -953,6 +969,17 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         }
       },
       'open-settings': () => { vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz'); },
+      'overview-mode-changed': (msg) => {
+        if (!overviewStatusBar) return;
+        if (msg.mode === 'overview') {
+          overviewStatusBar.text = '$(graph) Lineage: Overview';
+        } else if (msg.enteredFocusFromOverview) {
+          overviewStatusBar.text = '$(graph) Lineage: Full View · ← Overview';
+        } else {
+          overviewStatusBar.text = '$(graph) Lineage: Full View';
+        }
+        overviewStatusBar.show();
+      },
       'export-file': async (msg) => {
         const defaultUri = vscode.workspace.workspaceFolders?.[0]?.uri
           ? vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, msg.defaultName)
@@ -1112,7 +1139,8 @@ type WebviewMessage =
   | { type: 'dacpac-visualize'; schemas: string[]; projectName?: string }
   | { type: 'db-visualize'; schemas: string[]; projectName?: string }
   | { type: 'filter-changed'; filter: import('./engine/projectStore').SerializedFilterState; savedViews: import('./engine/projectStore').FilterProfile[] }
-  | { type: 'export-file'; data: string; defaultName: string };
+  | { type: 'export-file'; data: string; defaultName: string }
+  | { type: 'overview-mode-changed'; mode: 'full' | 'overview'; enteredFocusFromOverview: boolean };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
 
@@ -1163,6 +1191,7 @@ interface ExtensionConfigMessage {
   analysis: AnalysisConfig;
   tableStatistics: TableStatsConfig;
   externalRefs: ExternalRefsConfig;
+  overview: OverviewConfig;
 }
 
 function clamp(val: number, min: number, max: number, fallback: number): number {
@@ -1224,6 +1253,10 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     },
     externalRefs: {
       enabled: cfg.get<boolean>('externalRefs.enabled', DEFAULT_CONFIG.externalRefs.enabled),
+    },
+    overview: {
+      enabled: cfg.get<boolean>('overview.enabled', DEFAULT_CONFIG.overview.enabled),
+      threshold: clamp(cfg.get<number>('overview.threshold', DEFAULT_CONFIG.overview.threshold), 10, 1000, DEFAULT_CONFIG.overview.threshold),
     },
   };
 

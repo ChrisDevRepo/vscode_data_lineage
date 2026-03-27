@@ -13,7 +13,7 @@ VS Code extension for visualizing SQL database object dependencies from .dacpac 
 
 - `src/engine/` — dacpac extraction, database import, SQL parsing, graph building
 - `src/components/` — React UI (ReactFlow canvas, toolbar, filters, modals)
-- `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources), dropdown state (`useDropdown` — shared open/close + outside-click)
+- `src/hooks/` — Graph state (`useGraphology`), trace state (`useInteractiveTrace`), loader (`useDacpacLoader` — handles both dacpac and DB sources), dropdown state (`useDropdown` — shared open/close + outside-click), overview mode (`useOverviewMode` — schema-level view state machine, auto-trigger guard, `resetUserChoice`)
 - `src/extension.ts` — VS Code API, webview lifecycle, message routing
 
 ### Extraction Pipeline (DRY principle)
@@ -51,7 +51,7 @@ Press F5 to launch Extension Development Host.
 | File | Tests | Purpose |
 |------|-------|---------|
 | `test/dacpacExtractor.test.ts` | 110 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
-| `test/graphBuilder.test.ts` | 157 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression |
+| `test/graphBuilder.test.ts` | 218 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
 | `test/parser-edge-cases.test.ts` | 197 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
@@ -62,7 +62,7 @@ Press F5 to launch Extension Development Host.
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                  # Run all unit tests (1025 total)
+npm test                  # Run all unit tests (1086 total)
 ```
 
 Shared test helpers in `test/testUtils.ts` — `assert()`, `assertEq()`, `test()`, `loadParseRules()`, `testPath()`, `rootPath()`, `printSummary()`, `makeGraph()`, `hasName()`, `loadAdventureWorksModel()`. Import from `./testUtils` in new test files.
