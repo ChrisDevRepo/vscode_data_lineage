@@ -10,13 +10,19 @@ interface HelpModalProps {
 type HelpTab = 'overview' | 'analysis' | 'database' | 'ai';
 
 const TABS: Array<{ id: HelpTab; label: string }> = [
-  { id: 'overview',  label: 'Overview'   },
-  { id: 'analysis',  label: 'Analysis'   },
-  { id: 'database',  label: 'Database'   },
-  { id: 'ai',        label: '@lineage AI' },
+  { id: 'overview', label: 'Overview'    },
+  { id: 'analysis', label: 'Analysis'    },
+  { id: 'database', label: 'Database'    },
+  { id: 'ai',       label: '@lineage AI' },
 ];
 
-// ─── Section header ───────────────────────────────────────────────────────────
+function IconPath({ d, size = 4 }: { d: string; size?: number }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-${size} h-${size} flex-shrink-0 ln-text-muted`}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
 
 function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
@@ -27,11 +33,24 @@ function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }
   );
 }
 
-function IconPath({ d }: { d: string }) {
+function Bullet({ children }: { children: React.ReactNode }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
-      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
-    </svg>
+    <div className="flex items-start gap-2">
+      <span className="text-xs mt-0.5 flex-shrink-0">•</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function ExtLink({ url, openExternal, children }: {
+  url: string;
+  openExternal: (url: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button onClick={() => openExternal(url)} className="ln-text-link hover:underline cursor-pointer">
+      {children}
+    </button>
   );
 }
 
@@ -40,7 +59,6 @@ function IconPath({ d }: { d: string }) {
 function TabOverview({ openExternal }: { openExternal: (url: string) => void }) {
   return (
     <div className="space-y-6">
-      {/* Keyboard Shortcuts */}
       <section>
         <SectionHeader
           icon={<IconPath d="M12 3a1.5 1.5 0 0 0-1.5 1.5v1.5H9a1.5 1.5 0 0 0 0 3h1.5V12a1.5 1.5 0 0 0 3 0V9H15a1.5 1.5 0 0 0 0-3h-1.5V4.5A1.5 1.5 0 0 0 12 3ZM3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />}
@@ -48,11 +66,11 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
         />
         <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm ln-text-muted">
           {[
-            { key: '/', label: 'Focus Quick Search' },
-            { key: 'F', label: 'Fit graph to view' },
+            { key: '/',   label: 'Focus Quick Search'       },
+            { key: 'F',   label: 'Fit graph to view'        },
             { key: 'Del', label: 'Exclude highlighted node' },
-            { key: 'Esc', label: 'Close trace or analysis' },
-            { key: '?', label: 'Open this Help' },
+            { key: 'Esc', label: 'Close trace or analysis'  },
+            { key: '?',   label: 'Open this Help'           },
           ].map(({ key, label }) => (
             <div key={key} className="flex items-center gap-3">
               <kbd className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd flex-shrink-0">{key}</kbd>
@@ -62,118 +80,77 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
         </div>
       </section>
 
-      {/* Filters & Visibility */}
       <section>
         <SectionHeader
           icon={<IconPath d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />}
           title="Filters & Visibility"
         />
         <div className="space-y-1.5 text-sm ln-text-muted">
-          {[
-            { strong: 'Schema Filter:', text: 'Show only selected schemas — use the grid icon in the toolbar' },
-            { strong: 'Type Filter:', text: 'Show/hide tables, views, procedures, functions, external tables' },
-            { strong: 'Hide Isolated:', text: 'Hide nodes with no dependencies in the current view' },
-            { strong: 'Focus Schema:', text: 'Star (☆) a schema to highlight it and its directly connected objects' },
-          ].map(({ strong, text }) => (
-            <div key={strong} className="flex items-start gap-2">
-              <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-              <span><strong>{strong}</strong> {text}</span>
-            </div>
-          ))}
+          <Bullet><strong>Schema Filter:</strong> Show only selected schemas — use the grid icon in the toolbar</Bullet>
+          <Bullet><strong>Type Filter:</strong> Show/hide tables, views, procedures, functions, external tables</Bullet>
+          <Bullet><strong>Hide Isolated:</strong> Hide nodes with no dependencies in the current view</Bullet>
+          <Bullet><strong>Focus Schema:</strong> Star (☆) a schema to highlight it and its directly connected objects</Bullet>
         </div>
       </section>
 
-      {/* Exclusion Rules */}
       <section>
         <SectionHeader
           icon={<IconPath d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />}
           title="Exclusion Rules"
         />
         <div className="space-y-1.5 text-sm ln-text-muted">
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span>Click the <strong>⊘ ban icon</strong> in the toolbar. Rules hide nodes in real-time — no reload needed.</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Three ways to add:</strong> type a pattern + Enter · right-click a node → <strong>Exclude from view</strong> · select a node + <kbd className="px-1 py-0.5 text-xs font-mono rounded border ln-kbd">Del</kbd></span>
-          </div>
+          <Bullet>Click the <strong>⊘ ban icon</strong> in the toolbar. Rules hide nodes in real-time — no reload needed.</Bullet>
+          <Bullet><strong>Three ways to add:</strong> type a pattern + Enter · right-click a node → <strong>Exclude from view</strong> · select a node + <kbd className="px-1 py-0.5 text-xs font-mono rounded border ln-kbd">Del</kbd></Bullet>
         </div>
-        <div className="mt-2 p-2 rounded text-xs font-mono" style={{ background: 'var(--ln-bg-secondary)', border: '1px solid var(--ln-border)' }}>
+        <div className="mt-2 p-2 rounded text-xs font-mono ln-help-code-block">
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
             <span className="ln-text font-medium">%tmp%</span><span className="ln-text-muted">matches any name containing "tmp"</span>
             <span className="ln-text font-medium">dbo.%</span><span className="ln-text-muted">all objects in the dbo schema</span>
             <span className="ln-text font-medium">%_stg</span><span className="ln-text-muted">any name ending in "_stg"</span>
             <span className="ln-text font-medium">^dbo\.tmp_</span><span className="ln-text-muted">regex: starts with dbo.tmp_</span>
           </div>
-          <p className="font-sans mt-1.5" style={{ color: 'var(--ln-fg-dim)' }}>Matched against <em>schema.name</em>. Case-insensitive. <code>%</code> is a wildcard (like SQL LIKE).</p>
+          <p className="font-sans mt-1.5 ln-text-dim">Matched against <em>schema.name</em>. Case-insensitive. <code>%</code> is a wildcard (like SQL LIKE).</p>
         </div>
-        <div className="mt-2 text-xs ln-text-muted">
+        <p className="mt-2 text-xs ln-text-muted">
           Exclusion rules are <strong>saved per bookmark</strong> — use{' '}
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 inline-block align-text-bottom mx-0.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
-          Bookmarks to save and restore views.{' '}
-          <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/README.md')} className="ln-text-link hover:underline cursor-pointer">
-            Full reference ↗
-          </button>
-        </div>
+          {' '}Bookmarks to save and restore views.{' '}
+          <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/README.md" openExternal={openExternal}>Full reference ↗</ExtLink>
+        </p>
       </section>
 
-      {/* Trace Mode */}
       <section>
         <SectionHeader
           icon={<IconPath d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />}
           title="Trace Mode"
         />
         <div className="space-y-1.5 text-sm ln-text-muted">
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Trace Levels:</strong> right-click a node → "Trace Levels" to explore upstream/downstream dependencies with configurable depth</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Find Path:</strong> right-click → "Find Path" to discover the shortest connection between two nodes</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span>Both modes filter the graph to show only relevant connections — press <kbd className="px-1 py-0.5 text-xs font-mono rounded border ln-kbd">Esc</kbd> to exit</span>
-          </div>
+          <Bullet><strong>Trace Levels:</strong> right-click a node → "Trace Levels" to explore upstream/downstream dependencies with configurable depth</Bullet>
+          <Bullet><strong>Find Path:</strong> right-click → "Find Path" to discover the shortest connection between two nodes</Bullet>
+          <Bullet>Both modes filter the graph to show only relevant connections — press <kbd className="px-1 py-0.5 text-xs font-mono rounded border ln-kbd">Esc</kbd> to exit</Bullet>
         </div>
       </section>
 
-      {/* Export */}
       <section>
         <SectionHeader
           icon={<IconPath d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />}
           title="Export"
         />
-        <div className="text-sm ln-text-muted">
+        <p className="text-sm ln-text-muted">
           <strong>Draw.io:</strong> exports an editable <code>.drawio</code> file with colored nodes, edges, and schema legend. Opens directly in diagrams.net or Draw.io Desktop.
-        </div>
+        </p>
       </section>
 
-      {/* Node Details Bar */}
       <section>
         <SectionHeader
           icon={<IconPath d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />}
           title="Node Details Bar"
         />
         <div className="space-y-1.5 text-sm ln-text-muted">
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Right-click</strong> any node → "Show Details" to open the bottom info bar</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>In / Out</strong> — count of connected input and output nodes (hover for full list)</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Unresolved</strong> — SQL references not found in the data source (e.g. dynamic SQL, cross-server refs)</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Excluded</strong> — nodes hidden by your exclusion patterns</span>
-          </div>
+          <Bullet><strong>Right-click</strong> any node → "Show Details" to open the bottom info bar</Bullet>
+          <Bullet><strong>In / Out</strong> — count of connected input and output nodes (hover for full list)</Bullet>
+          <Bullet><strong>Unresolved</strong> — SQL references not found in the data source (e.g. dynamic SQL, cross-server refs)</Bullet>
+          <Bullet><strong>Excluded</strong> — nodes hidden by your exclusion patterns</Bullet>
         </div>
       </section>
     </div>
@@ -225,17 +202,13 @@ function TabAnalysis() {
   return (
     <div className="space-y-3">
       {analyses.map(({ icon, title, desc, tip }) => (
-        <div key={title} className="rounded-lg p-3" style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border)' }}>
+        <div key={title} className="rounded-lg p-3 ln-help-analysis-card">
           <div className="flex items-center gap-2 mb-1.5">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
-              <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
-            </svg>
+            <IconPath d={icon} />
             <span className="text-sm font-semibold ln-text">{title}</span>
           </div>
           <p className="text-xs ln-text-muted">{desc}</p>
-          <p className="text-xs ln-text-muted mt-1">
-            <span className="font-medium ln-text">Tip:</span> {tip}
-          </p>
+          <p className="text-xs ln-text-muted mt-1"><span className="font-medium ln-text">Tip:</span> {tip}</p>
         </div>
       ))}
       <p className="text-xs ln-text-muted pt-1">
@@ -247,6 +220,8 @@ function TabAnalysis() {
 
 // ─── Tab: Database ────────────────────────────────────────────────────────────
 
+const SETTINGS_ICON = 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z';
+
 function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) {
   return (
     <div className="space-y-6">
@@ -256,18 +231,9 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           title="Connection Requirements"
         />
         <div className="space-y-1.5 text-sm ln-text-muted">
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span>Requires the <strong>MSSQL extension</strong> (<code>ms-mssql.mssql</code>) — install from the VS Code Marketplace</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Minimum permission:</strong> <code>VIEW DEFINITION</code> on the database</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><strong>Table statistics</strong> additionally requires <code>VIEW SERVER STATE</code> at server level</span>
-          </div>
+          <Bullet>Requires the <strong>MSSQL extension</strong> (<code>ms-mssql.mssql</code>) — install from the VS Code Marketplace</Bullet>
+          <Bullet><strong>Minimum permission:</strong> <code>VIEW DEFINITION</code> on the database</Bullet>
+          <Bullet><strong>Table statistics</strong> additionally requires <code>VIEW SERVER STATE</code> at server level</Bullet>
         </div>
       </section>
 
@@ -305,48 +271,20 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
 
       <section>
         <SectionHeader
-          icon={<IconPath d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />}
+          icon={<IconPath d={SETTINGS_ICON} />}
           title="Customization & Settings"
         />
         <div className="space-y-1.5 text-sm ln-text-muted">
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span>
-              <strong>Custom DMV queries</strong> — <code>dmvQueriesFile</code> setting →{' '}
-              <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md')} className="ln-text-link hover:underline cursor-pointer">
-                DMV Queries guide ↗
-              </button>
-            </span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span>
-              <strong>Custom SQL parse rules</strong> — <code>parseRulesFile</code> setting →{' '}
-              <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md')} className="ln-text-link hover:underline cursor-pointer">
-                Parse Rules guide ↗
-              </button>
-            </span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><code>maxNodes</code> — import cap for large databases (default 750)</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><code>tableStatistics.enabled</code> — column profiling in the detail panel</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><code>externalRefs.enabled</code> — show/hide virtual external reference nodes</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-            <span><code>layout.direction</code> — left-to-right or top-to-bottom graph layout</span>
-          </div>
+          <Bullet><strong>Custom DMV queries</strong> — <code>dmvQueriesFile</code> setting → <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md" openExternal={openExternal}>DMV Queries guide ↗</ExtLink></Bullet>
+          <Bullet><strong>Custom SQL parse rules</strong> — <code>parseRulesFile</code> setting → <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md" openExternal={openExternal}>Parse Rules guide ↗</ExtLink></Bullet>
+          <Bullet><code>maxNodes</code> — import cap for large databases (default 750)</Bullet>
+          <Bullet><code>tableStatistics.enabled</code> — column profiling in the detail panel</Bullet>
+          <Bullet><code>externalRefs.enabled</code> — show/hide virtual external reference nodes</Bullet>
+          <Bullet><code>layout.direction</code> — left-to-right or top-to-bottom graph layout</Bullet>
         </div>
-        <div className="mt-2 p-2 rounded text-xs ln-text-muted" style={{ background: 'var(--ln-bg-secondary)' }}>
+        <p className="mt-2 p-2 rounded text-xs ln-text-muted ln-help-info-block">
           <strong className="ln-text">Most settings apply instantly.</strong> Import settings (<code>parseRulesFile</code>, <code>excludePatterns</code>) require reloading the data source.
-        </div>
+        </p>
       </section>
     </div>
   );
@@ -357,61 +295,36 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
 function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
   return (
     <div className="space-y-4">
-      <div className="rounded-xl overflow-hidden" style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border)' }}>
-        <div className="p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
-              </svg>
-              <h3 className="text-base font-bold ln-text">GitHub Copilot Chat</h3>
-            </div>
-            <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: 'var(--ln-button-secondary-bg)', color: 'var(--ln-text-link)', border: '1px solid var(--ln-border)', letterSpacing: '.05em' }}>NEW</span>
-          </div>
-          <p className="text-sm mb-3 ln-text-muted">
-            Type <span className="font-bold font-mono ln-text-link">@lineage</span> in GitHub Copilot Chat to query your loaded graph. Answers come from your actual data — never from general knowledge.
-          </p>
-          <div className="rounded-lg p-3 space-y-1.5 font-mono text-xs" style={{ background: 'var(--ln-bg)', border: '1px solid var(--ln-border)' }}>
-            {[
-              'what schemas are loaded?',
-              'find tables with Employee in the name',
-              'what does HumanResources.Employee depend on?',
-              'trace 3 levels upstream from Sales.SalesOrderDetail',
-              'which objects have more than 10 connections?',
-            ].map(q => (
-              <div key={q}>
-                <span className="font-bold ln-text-link">@lineage </span>
-                <span className="ln-text">{q}</span>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs mt-3 ln-text-muted">
-            Requires GitHub Copilot extension &amp; VS Code 1.95+. Tools are inactive when no graph is loaded.
-          </p>
+      <div className="rounded-lg p-4 ln-help-analysis-card">
+        <div className="flex items-center gap-2 mb-3">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 ln-text-link flex-shrink-0">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+          </svg>
+          <h3 className="text-sm font-semibold ln-text">GitHub Copilot Chat</h3>
+          <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full ln-help-badge">NEW</span>
         </div>
+        <p className="text-sm mb-3 ln-text-muted">
+          Type <span className="font-bold font-mono ln-text-link">@lineage</span> in GitHub Copilot Chat to query your loaded graph. Answers come from your actual data — never from general knowledge.
+        </p>
+        <div className="rounded p-3 space-y-1.5 font-mono text-xs ln-help-code-block">
+          {[
+            'what schemas are loaded?',
+            'find tables with Employee in the name',
+            'what does HumanResources.Employee depend on?',
+            'trace 3 levels upstream from Sales.SalesOrderDetail',
+            'which objects have more than 10 connections?',
+          ].map(q => (
+            <div key={q}><span className="font-bold ln-text-link">@lineage </span><span className="ln-text">{q}</span></div>
+          ))}
+        </div>
+        <p className="text-xs mt-3 ln-text-muted">Requires GitHub Copilot extension &amp; VS Code 1.95+. Tools are inactive when no graph is loaded.</p>
       </div>
 
-      <div className="text-sm ln-text-muted space-y-1.5">
-        <div className="flex items-start gap-2">
-          <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-          <span>9 built-in tools: search objects, trace dependencies, find paths, list hubs, get DDL, and more</span>
-        </div>
-        <div className="flex items-start gap-2">
-          <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-          <span>Works with any model in the Copilot chat dropdown — GPT-4o, Claude, Gemini, or local LLMs via Ollama</span>
-        </div>
-        <div className="flex items-start gap-2">
-          <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-          <span>Auto-scales context limits based on model context window size</span>
-        </div>
-        <div className="flex items-start gap-2">
-          <span className="text-xs mt-0.5 flex-shrink-0">•</span>
-          <span>
-            <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage')} className="ln-text-link hover:underline cursor-pointer">
-              View documentation and all supported tools ↗
-            </button>
-          </span>
-        </div>
+      <div className="space-y-1.5 text-sm ln-text-muted">
+        <Bullet>9 built-in tools: search objects, trace dependencies, find paths, list hubs, get DDL, and more</Bullet>
+        <Bullet>Works with any model in the Copilot chat dropdown — GPT-4o, Claude, Gemini, or local LLMs via Ollama</Bullet>
+        <Bullet>Auto-scales context limits based on model context window size</Bullet>
+        <Bullet><ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage" openExternal={openExternal}>View documentation and all supported tools ↗</ExtLink></Bullet>
       </div>
     </div>
   );
@@ -428,37 +341,22 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   const openExternal = (url: string) => vscodeApi.postMessage({ type: 'open-external', url });
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay" onClick={onClose}>
       <div
-        className="rounded-xl shadow-2xl w-full max-w-2xl flex flex-col ln-modal"
-        style={{ maxHeight: '85vh' }}
+        className="rounded-xl shadow-2xl w-full max-w-2xl flex flex-col ln-modal max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Fixed header */}
-        <div className="flex items-center justify-between px-5 py-3 flex-shrink-0" style={{ borderBottom: '1px solid var(--ln-border)' }}>
+        <div className="flex items-center justify-between px-5 py-3 flex-shrink-0 ln-help-sep-bottom">
           <div className="flex items-center gap-2">
-            <img
-              src={window.LOGO_URI}
-              alt=""
-              className="h-8 w-auto"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-            />
+            <img src={window.LOGO_URI} alt="" className="h-8 w-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             <span className="text-xs ln-text-muted opacity-60">v{__APP_VERSION__}</span>
           </div>
-          <button
-            onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded transition-colors ln-list-item ln-text"
-            title="Close"
-          >
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded transition-colors ln-list-item ln-text" title="Close">
             <CloseIcon className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Fixed tab bar */}
-        <div className="flex items-center gap-0.5 px-4 py-2 flex-shrink-0" style={{ borderBottom: '1px solid var(--ln-border)' }}>
+        <div className="flex items-center gap-0.5 px-4 py-2 flex-shrink-0 ln-help-sep-bottom">
           {TABS.map(({ id, label }) => (
             <button
               key={id}
@@ -470,7 +368,6 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           ))}
         </div>
 
-        {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 min-h-0">
           {tab === 'overview'  && <TabOverview openExternal={openExternal} />}
           {tab === 'analysis'  && <TabAnalysis />}
@@ -478,27 +375,18 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           {tab === 'ai'        && <TabAI openExternal={openExternal} />}
         </div>
 
-        {/* Fixed footer */}
-        <div className="flex items-center justify-between px-5 py-2.5 flex-shrink-0" style={{ borderTop: '1px solid var(--ln-border)' }}>
+        <div className="flex items-center justify-between px-5 py-2.5 flex-shrink-0 ln-help-sep-top">
           <button
             onClick={() => vscodeApi.postMessage({ type: 'open-settings' })}
             className="flex items-center gap-1.5 text-xs ln-text-muted hover:underline cursor-pointer"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
-            </svg>
+            <IconPath d={SETTINGS_ICON} size={3} />
             Settings
           </button>
-          <div className="flex items-center gap-3 text-xs ln-text-muted">
-            <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage/issues')} className="ln-text-link hover:underline cursor-pointer">
-              Found a bug?
-            </button>
-            <button onClick={() => openExternal('https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz&ssr=false#review-details')} className="ln-text-link hover:underline cursor-pointer">
-              ★ Leave a review
-            </button>
-            <button onClick={() => openExternal('https://www.linkedin.com/in/christian-wagner-11aa8614b')} className="ln-text-link hover:underline cursor-pointer">
-              LinkedIn
-            </button>
+          <div className="flex items-center gap-3 text-xs">
+            <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/issues" openExternal={openExternal}>Found a bug?</ExtLink>
+            <ExtLink url="https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz&ssr=false#review-details" openExternal={openExternal}>★ Leave a review</ExtLink>
+            <ExtLink url="https://www.linkedin.com/in/christian-wagner-11aa8614b" openExternal={openExternal}>LinkedIn</ExtLink>
           </div>
         </div>
       </div>

@@ -58,6 +58,9 @@
   --ln-analysis-border: var(--vscode-editorInfo-border, #3794ff);
   --ln-analysis-icon: var(--vscode-editorInfo-foreground, #3794ff);
 
+  /* Error foreground (inline text errors, delete confirmations) */
+  --ln-error-fg: var(--vscode-editorError-foreground, var(--vscode-inputValidation-errorBorder, #be1100));
+
   /* Validation colors */
   --ln-validation-error-bg: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
   --ln-validation-error-border: var(--vscode-inputValidation-errorBorder, #be1100);
@@ -86,7 +89,9 @@
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.05);
   --ln-dropdown-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
 
-  /* Wizard (start screen) colors */
+  /* Wizard (start screen) — always dark/black palette regardless of VS Code theme.
+     Use --ln-wizard-* for ALL start screen + modal colors. Never use --vscode-* tokens
+     or --ln-* theme vars here — the wizard background is always #000000. */
   --ln-wizard-bg: #000000;
   --ln-wizard-fg: #ffffff;
   --ln-wizard-border: #2a2a3a;
@@ -97,6 +102,7 @@
   --ln-wizard-hover-bg: rgba(255, 255, 255, 0.06);
   --ln-wizard-link: #60a5fa;
   --ln-wizard-fg-dim: rgba(255, 255, 255, 0.55);
+  --ln-wizard-error: #f87171;   /* red-400 — legible on black, no theme fallback needed */
 
   /* Toolbar active */
   --ln-toolbar-active-bg: var(--vscode-toolbar-activeBackground, rgba(0, 0, 0, 0.1));
@@ -393,6 +399,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 .ln-text-link { color: var(--ln-text-link); }
 .ln-text-placeholder { color: var(--ln-input-placeholder); }
 .ln-text-warning { color: var(--ln-warning-fg); }
+.ln-text-error   { color: var(--ln-error-fg); }
 
 /* Input fields */
 .ln-input {
@@ -550,6 +557,39 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.9em;
+}
+
+/* Search highlight inside text nodes */
+.ln-mark {
+  background: var(--ln-highlight-yellow);
+  color: inherit;
+}
+
+/* HelpModal — code/pattern example block */
+.ln-help-code-block {
+  background: var(--ln-bg-secondary);
+  border: 1px solid var(--ln-border);
+}
+
+/* HelpModal — analysis type card */
+.ln-help-analysis-card {
+  background: var(--ln-bg-elevated);
+  border: 1px solid var(--ln-border);
+}
+
+/* HelpModal — header/footer separators */
+.ln-help-sep-bottom { border-bottom: 1px solid var(--ln-wizard-border); }
+.ln-help-sep-top    { border-top:    1px solid var(--ln-wizard-border); }
+
+/* HelpModal — muted info note (no border) */
+.ln-help-info-block { background: var(--ln-bg-secondary); }
+
+/* HelpModal — "NEW" feature badge */
+.ln-help-badge {
+  background: var(--ln-button-secondary-bg);
+  color: var(--ln-wizard-link, #60a5fa);
+  border: 1px solid var(--ln-border);
+  letter-spacing: .05em;
 }
 
 /* Panel (card-like container) */
@@ -713,6 +753,10 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
   background: var(--ln-wizard-input-bg);
   border-color: var(--ln-wizard-border);
 }
+/* Wizard error — always-dark-palette red, use instead of --vscode-editorError-foreground in start screen */
+.ln-wizard-text-error  { color: var(--ln-wizard-error); }
+.ln-wizard-error-btn   { color: var(--ln-wizard-error); border: 1px solid var(--ln-wizard-error); }
+
 .ln-file-picker {
   background: var(--ln-input-bg);
   border: 1px solid var(--ln-input-border);
