@@ -29,6 +29,10 @@ export interface TableDetailPanelProps {
   statsEnabled: boolean;
   excludeExternalTables: boolean;
   standardModeEnabled: boolean;
+  /** Fill parent container instead of using fixed pixel width (used in standalone detail panel) */
+  fillContainer?: boolean;
+  /** Highlight this search term in column names and FK references */
+  findQuery?: string;
 }
 
 const MIN_WIDTH = 320;
@@ -51,6 +55,8 @@ export const TableDetailPanel = memo(function TableDetailPanel({
   statsEnabled,
   excludeExternalTables,
   standardModeEnabled,
+  fillContainer,
+  findQuery,
 }: TableDetailPanelProps) {
   const typeIcon = TYPE_COLORS[objectType as ObjectType]?.icon ?? '■';
   const typeLabel = externalType === 'file' ? 'FILE SOURCE'
@@ -99,7 +105,8 @@ export const TableDetailPanel = memo(function TableDetailPanel({
   return (
     <div
       style={{
-        width: panelWidth,
+        width: fillContainer ? '100%' : panelWidth,
+        height: fillContainer ? '100%' : undefined,
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'row',
@@ -108,19 +115,21 @@ export const TableDetailPanel = memo(function TableDetailPanel({
         position: 'relative',
       }}
     >
-      {/* Resize handle */}
-      <div
-        onMouseDown={onResizeStart}
-        style={{
-          width: 4,
-          flexShrink: 0,
-          cursor: 'col-resize',
-          borderLeft: '1px solid var(--ln-border)',
-          background: 'transparent',
-        }}
-        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--ln-focus-border)'; }}
-        onMouseLeave={e => { if (!dragging.current) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-      />
+      {/* Resize handle — hidden when filling the container (VS Code handles sizing) */}
+      {!fillContainer && (
+        <div
+          onMouseDown={onResizeStart}
+          style={{
+            width: 4,
+            flexShrink: 0,
+            cursor: 'col-resize',
+            borderLeft: '1px solid var(--ln-border)',
+            background: 'transparent',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--ln-focus-border)'; }}
+          onMouseLeave={e => { if (!dragging.current) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+        />
+      )}
 
       {/* Panel content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
@@ -164,10 +173,10 @@ export const TableDetailPanel = memo(function TableDetailPanel({
           </div>
 
           {/* Column table */}
-          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} />
+          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} findQuery={findQuery} />
 
           {/* Foreign Keys section */}
-          {fks.length > 0 && <ForeignKeysSection fks={fks} />}
+          {fks.length > 0 && <ForeignKeysSection fks={fks} findQuery={findQuery} />}
 
           {/* Statistics section — only shown for DB mode */}
           {isDbMode && statsEnabled && !isVirtualExt && !(excludeExternalTables && objectType === 'external') && (

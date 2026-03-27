@@ -5,14 +5,12 @@ import { CreateFlow } from './CreateFlow';
 import { VisualizingScreen, type LoadingPhase } from './VisualizingScreen';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeContextMenu } from './NodeContextMenu';
-import { TableDetailPanel, type TableStatsState } from './TableDetailPanel';
 import { useGraphology } from '../hooks/useGraphology';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DatabaseModel, LineageNode, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
+import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
-import type { StatsMode } from '../engine/profilingEngine';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
@@ -63,7 +61,7 @@ export function App() {
   const [sourceName, setSourceName] = useState<string | null>(isAutoVisualize ? 'AdventureWorks (demo)' : null);
 
   // Whether source is from database (for stats panel)
-  const [isDbSource, setIsDbSource] = useState(false);
+
 
   const [filter, setFilter] = useState<FilterState>({
     schemas: new Set(),
@@ -150,7 +148,7 @@ export function App() {
 
     if (dacpacLoader.pendingAutoVisualize) {
       // No view guard — auto-visualize fires from any state (sidebar demo, startup, button)
-      setIsDbSource(false);
+
       setSourceName(dacpacLoader.fileName || 'Demo');
       setView('visualizing');
       setLoadingPhase('parse');
@@ -248,7 +246,6 @@ export function App() {
     const project = projects.find(p => p.id === id);
     if (project) {
       setSourceName(project.name);
-      setIsDbSource(project.connection.type === 'database');
     }
 
     vscodeApi.postMessage({ type: 'save-wizard-view', view: 'projects' });
@@ -275,7 +272,6 @@ export function App() {
     setStartScreenMessage(null);
     setActiveProjectId(null);
     setSourceName('AdventureWorks (demo)');
-    setIsDbSource(false);
     dacpacLoader.loadDemo();
     setView('visualizing');
   }, [dacpacLoader.loadDemo]);
@@ -284,8 +280,7 @@ export function App() {
     dacpacLoader.resetToStart();
     setView('start');
     clearTrace();
-    setTableDetailNode(null);
-    setTableStatsState({ phase: 'idle' });
+    setIsDetailOpen(false);
     setLoadingProjectId(null);
     setLoadingError(null);
     setStartScreenMessage(null);
@@ -320,12 +315,11 @@ export function App() {
       // Save project now (dacpac: we have the full connection)
       const project = createProject(projectName, conn);
       setActiveProjectId(project.id);
-      setIsDbSource(false);
+
       vscodeApi.postMessage({ type: 'save-project', project });
       dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
     } else {
       // DB path: extension saves project after Phase 2 succeeds, sends back projects-list
-      setIsDbSource(true);
       dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
     }
 
@@ -337,8 +331,7 @@ export function App() {
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
-  const [tableDetailNode, setTableDetailNode] = useState<LineageNode | null>(null);
-  const [tableStatsState, setTableStatsState] = useState<TableStatsState>({ phase: 'idle' });
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
   const prevHideIsolatedRef = useRef<boolean | null>(null);
@@ -376,35 +369,19 @@ export function App() {
   }, [vscodeApi, model, filter, config, rebuild]);
 
   const handleNodeClick = useCallback(
-    (nodeId: string) => {
+    (nodeId: string, findQuery?: string) => {
       setHighlightedNodeId(prev => {
         const toggled = prev === nodeId ? null : nodeId;
         setInfoBarNodeId(cur => cur !== null ? toggled : null);
         return toggled;
       });
 
-      const node = model?.nodes.find(n => n.id === nodeId);
-      if (!node) return;
-
-      if (node.type === 'table' || node.type === 'external') {
-        setTableDetailNode(prev => {
-          if (!prev) return null;
-          if (prev.id === nodeId) return prev;
-          setTableStatsState({ phase: 'idle' });
-          return node;
-        });
-      } else {
-        vscodeApi.postMessage({
-          type: 'update-ddl',
-          objectName: node.name,
-          schema: node.schema,
-          objectType: node.type,
-          sqlBody: node.bodyScript,
-          columns: node.columns,
-        });
+      if (isDetailOpen) {
+        const node = model?.nodes.find(n => n.id === nodeId);
+        if (node) vscodeApi.postMessage({ type: 'update-detail', node, findQuery });
       }
     },
-    [model, vscodeApi]
+    [model, vscodeApi, isDetailOpen]
   );
 
   const handleTraceApply = useCallback((config: { upstreamLevels: number; downstreamLevels: number }) => {
@@ -434,20 +411,8 @@ export function App() {
     (nodeId: string) => {
       const node = model?.nodes.find(n => n.id === nodeId);
       if (!node) return;
-
-      if (node.type === 'table' || node.type === 'external') {
-        setTableDetailNode(node);
-        setTableStatsState({ phase: 'idle' });
-      } else {
-        vscodeApi.postMessage({
-          type: 'show-ddl',
-          objectName: node.name,
-          schema: node.schema,
-          objectType: node.type,
-          sqlBody: node.bodyScript,
-          columns: node.columns,
-        });
-      }
+      vscodeApi.postMessage({ type: 'show-detail', node });
+      setIsDetailOpen(true);
     },
     [model, vscodeApi]
   );
@@ -711,10 +676,8 @@ export function App() {
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       const msg = e.data;
-      if (msg?.type === 'table-stats-result') {
-        setTableStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
-      } else if (msg?.type === 'table-stats-error') {
-        setTableStatsState({ phase: 'error', message: msg.message });
+      if (msg?.type === 'detail-closed') {
+        setIsDetailOpen(false);
       } else if (msg?.type === 'auto-visualize-start') {
         setSourceName('AdventureWorks (demo)');
         setLoadingPhase('load');
@@ -827,41 +790,6 @@ export function App() {
     );
   }
 
-  // view === 'graph'
-  const statsEnabled = config.tableStatistics?.enabled ?? true;
-  const excludeExternalTables = config.tableStatistics?.excludeExternalTables ?? true;
-  const standardModeEnabled = config.tableStatistics?.standardModeEnabled ?? true;
-
-  const handleRequestStats = (mode: StatsMode) => {
-    if (!tableDetailNode) return;
-    setTableStatsState({ phase: 'loading', mode });
-    vscodeApi.postMessage({
-      type: 'table-stats-request',
-      schema: tableDetailNode.schema,
-      objectName: tableDetailNode.name,
-      mode,
-      columns: tableDetailNode.columns,
-    });
-  };
-
-  const tableDetailPanelElement = tableDetailNode ? (
-    <TableDetailPanel
-      schema={tableDetailNode.schema}
-      objectName={tableDetailNode.name}
-      objectType={tableDetailNode.type as 'table' | 'external'}
-      externalType={tableDetailNode.externalType}
-      columns={tableDetailNode.columns ?? []}
-      fks={tableDetailNode.fks ?? []}
-      statsState={tableStatsState}
-      onClose={() => { setTableDetailNode(null); setTableStatsState({ phase: 'idle' }); }}
-      onRequestStats={handleRequestStats}
-      isDbMode={isDbSource}
-      statsEnabled={statsEnabled}
-      excludeExternalTables={excludeExternalTables}
-      standardModeEnabled={standardModeEnabled}
-    />
-  ) : null;
-
   return (
     <ReactFlowProvider>
       <GraphCanvas
@@ -907,8 +835,6 @@ export function App() {
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}
-        tableDetailPanel={tableDetailPanelElement}
-        isPanelOpen={tableDetailNode !== null}
         sourceName={sourceName ?? dacpacLoader.fileName ?? undefined}
         filterProfiles={filterProfiles}
         activeProjectId={activeProjectId}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
@@ -50,7 +50,7 @@ interface GraphCanvasProps {
   highlightedNodeId?: string | null;
   graph?: Graph | null;
   config: ExtensionConfig;
-  onNodeClick: (nodeId: string) => void;
+  onNodeClick: (nodeId: string, findQuery?: string) => void;
   onNodeContextMenu: (nodeId: string, x: number, y: number) => void;
   onStartTraceImmediate: (nodeId: string) => void;
   onTraceApply: (config: { upstreamLevels: number; downstreamLevels: number }) => void;
@@ -85,8 +85,6 @@ interface GraphCanvasProps {
   onClearAnalysisGroup?: () => void;
   onApplyPath?: (targetNodeId: string) => boolean;
   isRebuilding?: boolean;
-  tableDetailPanel?: ReactNode;
-  isPanelOpen?: boolean;
   sourceName?: string;
   filterProfiles?: FilterProfile[];
   activeProjectId?: string | null;
@@ -139,8 +137,6 @@ export function GraphCanvas({
   onClearAnalysisGroup,
   onApplyPath,
   isRebuilding = false,
-  tableDetailPanel,
-  isPanelOpen,
   sourceName,
   filterProfiles,
   activeProjectId,
@@ -219,15 +215,6 @@ export function GraphCanvas({
     }, AUTO_FIT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [flowNodes, fitView]);
-
-  // Re-fit when the table detail panel opens/closes (canvas width changes)
-  useEffect(() => {
-    if (isPanelOpen === undefined) return;
-    const timer = setTimeout(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [isPanelOpen, fitView]);
 
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode<CustomNodeData>[]>(flowNodes);
@@ -497,8 +484,8 @@ export function GraphCanvas({
                         type: n.data.objectType as ObjectType,
                         bodyScript: modelNodeMap.get(n.id)?.bodyScript,
                       }))}
-                      onResultClick={(nodeId) => {
-                        onNodeClick(nodeId);
+                      onResultClick={(nodeId, searchTerm) => {
+                        onNodeClick(nodeId, searchTerm);
                         zoomToNode(nodeId);
                       }}
                     />
@@ -511,7 +498,6 @@ export function GraphCanvas({
 
         <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
         </div>
-        {tableDetailPanel}
       </div>
 
       {infoBarNodeId && model && (

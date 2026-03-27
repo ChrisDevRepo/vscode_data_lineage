@@ -382,10 +382,15 @@
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
         "modelDescription": "Start every new conversation by calling this tool to understand what is loaded, filtered, and visible. Returns active project name, db_platform (SQL Server/Azure SQL/Fabric), model stats (nodes/edges/schemas), current UI filter state (visible schemas, object types, exclusions), visible node count, and list of saved views.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(info)",
         "when": "dataLineageViz.modelLoaded",
-        "inputSchema": { "type": "object", "properties": {} }
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
       },
       {
         "name": "lineage_get_schema_summary",
@@ -394,10 +399,15 @@
         "userDescription": "Lists all schemas and object counts in the loaded database.",
         "modelDescription": "Returns all schemas with per-type object counts (tables/views/procedures/functions/external) for the full model — ignores the current UI filter. Call after lineage_get_context when you need the complete schema breakdown. Use schema names from this response as filter inputs to other tools.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(database)",
         "when": "dataLineageViz.modelLoaded",
-        "inputSchema": { "type": "object", "properties": {} }
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
       },
       {
         "name": "lineage_search_objects",
@@ -406,30 +416,55 @@
         "userDescription": "Search for database objects by name.",
         "modelDescription": "Search ALL database objects (tables, views, procedures, functions, external tables, virtual file/DB nodes) by name using a case-insensitive substring or regex. Returns up to 20 matches with their exact IDs, schema, type, and externalType. Use this to obtain exact object IDs — the id values returned here are the required input for lineage_get_object_detail and lineage_get_neighbors. Pass IDs verbatim, unchanged.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(search)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": { "type": "string", "description": "Name to search for (substring or regex, max 200 chars)" },
+            "query": {
+              "type": "string",
+              "description": "Name to search for (substring or regex, max 200 chars)"
+            },
             "types": {
               "type": "array",
-              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "table",
+                  "view",
+                  "procedure",
+                  "function",
+                  "external"
+                ]
+              },
               "description": "Filter to specific object types. Omit for all types."
             },
             "schemas": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Filter to specific schema names. Omit to search all schemas."
             },
             "external_subtypes": {
               "type": "array",
-              "items": { "type": "string", "enum": ["et","file","db"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "et",
+                  "file",
+                  "db"
+                ]
+              },
               "description": "When types includes 'external': filter by subtype. Omit for all."
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -439,15 +474,22 @@
         "userDescription": "Get full details for a specific database object.",
         "modelDescription": "Returns full metadata for one object by its exact ID: type, schema, columns (with types, nullable, PK/UQ/CK flags), foreign keys (referenced table + columns + ON DELETE), upstream/downstream neighbor counts, full DDL body (normalized). Provide the id exactly as returned by lineage_search_objects. If you do not have an id yet, call lineage_search_objects first.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(symbol-class)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "id": { "type": "string", "description": "Exact object ID from lineage_search_objects (e.g. '[dbo].[FactSales]')" }
+            "id": {
+              "type": "string",
+              "description": "Exact object ID from lineage_search_objects (e.g. '[dbo].[FactSales]')"
+            }
           },
-          "required": ["id"]
+          "required": [
+            "id"
+          ]
         }
       },
       {
@@ -457,21 +499,45 @@
         "userDescription": "Get direct upstream or downstream neighbors of an object.",
         "modelDescription": "Returns the immediate (1-hop) neighbors of an object. Use 'upstream' for dependencies (what does this object read from?), 'downstream' for dependents (what reads from this object?), or 'both'. Each neighbor includes its ID, type, schema, and edge type ('read' or 'exec'). Use lineage_run_bfs_trace for multi-hop traces.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(type-hierarchy)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "id": { "type": "string", "description": "Exact object ID" },
-            "direction": { "type": "string", "enum": ["upstream","downstream","both"], "description": "Default: both" },
+            "id": {
+              "type": "string",
+              "description": "Exact object ID"
+            },
+            "direction": {
+              "type": "string",
+              "enum": [
+                "upstream",
+                "downstream",
+                "both"
+              ],
+              "description": "Default: both"
+            },
             "types": {
               "type": "array",
-              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "table",
+                  "view",
+                  "procedure",
+                  "function",
+                  "external"
+                ]
+              },
               "description": "Filter neighbor results to these types. Omit for all."
             }
           },
-          "required": ["id"]
+          "required": [
+            "id"
+          ]
         }
       },
       {
@@ -481,27 +547,51 @@
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
         "modelDescription": "Runs a breadth-first lineage trace from the given node, returning all reachable nodes and edges up to the specified hop depth. Returns flat node list with depth info and edge triples. Capped at 100 nodes / 150 edges — when truncated:true, narrow scope with types/schemas filters. For 'what breaks if I change X?' use downstream. For 'where does X get its data?' use upstream.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(git-merge)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "id": { "type": "string", "description": "Exact object ID to trace from" },
-            "upstream_hops":   { "type": "number", "description": "Upstream depth (0 = no upstream). Default: 3" },
-            "downstream_hops": { "type": "number", "description": "Downstream depth (0 = no downstream). Default: 3" },
+            "id": {
+              "type": "string",
+              "description": "Exact object ID to trace from"
+            },
+            "upstream_hops": {
+              "type": "number",
+              "description": "Upstream depth (0 = no upstream). Default: 3"
+            },
+            "downstream_hops": {
+              "type": "number",
+              "description": "Downstream depth (0 = no downstream). Default: 3"
+            },
             "types": {
               "type": "array",
-              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "table",
+                  "view",
+                  "procedure",
+                  "function",
+                  "external"
+                ]
+              },
               "description": "Include only these node types in the result. Omit for all."
             },
             "schemas": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Include only nodes in these schemas. Omit for all."
             }
           },
-          "required": ["id"]
+          "required": [
+            "id"
+          ]
         }
       },
       {
@@ -511,7 +601,9 @@
         "userDescription": "Run structural analysis on the loaded lineage graph.",
         "modelDescription": "Runs a structural analysis on the full graph. Types: 'hubs' (high-degree connector objects), 'islands' (isolated subgraphs), 'orphans' (objects with no connections), 'longest-path' (deepest dependency chains), 'cycles' (circular dependencies), 'external-refs' (external tables and file/DB virtual nodes). Returns groups of node IDs with summary.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(graph)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
@@ -519,12 +611,27 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": ["hubs","islands","orphans","longest-path","cycles","external-refs"]
+              "enum": [
+                "hubs",
+                "islands",
+                "orphans",
+                "longest-path",
+                "cycles",
+                "external-refs"
+              ]
             },
-            "min_degree": { "type": "number", "description": "Hubs only: minimum degree to qualify as hub. Default from config." },
-            "max_size":   { "type": "number", "description": "Islands only: maximum component size to include. Default from config." }
+            "min_degree": {
+              "type": "number",
+              "description": "Hubs only: minimum degree to qualify as hub. Default from config."
+            },
+            "max_size": {
+              "type": "number",
+              "description": "Islands only: maximum component size to include. Default from config."
+            }
           },
-          "required": ["type"]
+          "required": [
+            "type"
+          ]
         }
       },
       {
@@ -534,20 +641,34 @@
         "userDescription": "Search SQL body scripts for a text pattern.",
         "modelDescription": "Full-text search across all loaded SP/view/function body scripts using a substring or regex. Returns matching object IDs and the matching line(s) with context. Use for 'find all procedures that reference column Amount' or 'find objects using deprecated function Y'.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(file-code)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": { "type": "string", "description": "Text or regex to search in DDL body scripts (max 200 chars)" },
+            "query": {
+              "type": "string",
+              "description": "Text or regex to search in DDL body scripts (max 200 chars)"
+            },
             "types": {
               "type": "array",
-              "items": { "type": "string", "enum": ["view","procedure","function"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "view",
+                  "procedure",
+                  "function"
+                ]
+              },
               "description": "Limit search to these object types. Default: all DDL-bearing types."
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -557,20 +678,30 @@
         "userDescription": "Save the current set of objects as a named view in the project.",
         "modelDescription": "Saves a named filter bookmark to the active project. Provide a list of exact node IDs (from search/trace results) and a name. The bookmark appears in the saved views dropdown — the user applies it to update the visible graph. All node IDs are validated before saving. Use after a lineage investigation to bookmark the relevant objects for the user.",
         "canBeReferencedInPrompt": true,
-        "tags": ["lineage"],
+        "tags": [
+          "lineage"
+        ],
         "icon": "$(bookmark)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "name": { "type": "string", "description": "Display name for the saved view (max 60 chars)" },
+            "name": {
+              "type": "string",
+              "description": "Display name for the saved view (max 60 chars)"
+            },
             "node_ids": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Exact node IDs to include in the view (from search/trace results)"
             }
           },
-          "required": ["name", "node_ids"]
+          "required": [
+            "name",
+            "node_ids"
+          ]
         }
       }
     ]
@@ -597,6 +728,7 @@
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@floating-ui/react": "^0.27.19",
+    "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.4.0",
     "fast-xml-parser": "^5.5.9",
     "graphology": "^0.25.4",
@@ -606,6 +738,7 @@
     "graphology-types": "^0.24.8",
     "js-yaml": "^4.1.0",
     "jszip": "^3.10.1",
+    "monaco-editor": "^0.55.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -626,5 +759,9 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
+  },
+  "overrides": {
+    "dompurify": "3.3.3",
+    "picomatch": "4.0.4"
   }
 }

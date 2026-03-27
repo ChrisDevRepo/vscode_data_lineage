@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased] — feature/unified-detail-panel
+
+### Changed
+- **Unified detail panel** — SP/view/function DDL and table detail now open in a single VS Code panel (moveable to a second monitor). Switches between Monaco SQL editor and table grid based on the active node.
+- **Search highlight in detail panel** — Full-text search results open the detail panel with the search term highlighted. SQL view: all occurrences highlighted with F3/Shift+F3 navigation. Table view: matching column names and FK references highlighted.
+
 ## [0.9.6] - 2026-03-26
 
 ### Added

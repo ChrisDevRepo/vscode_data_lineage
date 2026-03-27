@@ -24,11 +24,12 @@ export default defineConfig({
         // Code splitting for better performance
         manualChunks: {
           'flow-vendor': ['@xyflow/react'],
+          'monaco-vendor': ['monaco-editor'],
         },
       },
     },
     // Increase chunk size warning limit (webview bundles are typically larger)
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 3000,
   },
   resolve: {
     alias: {

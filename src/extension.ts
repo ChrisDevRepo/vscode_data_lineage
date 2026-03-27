@@ -53,9 +53,8 @@ function getThemeClass(kind: vscode.ColorThemeKind): string {
     'vscode-light';
 }
 
-// ─── DDL Virtual Document Provider ──────────────────────────────────────────
+// ─── Panel State ─────────────────────────────────────────────────────────────
 
-const DDL_SCHEME = 'dacpac-ddl';
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 
 function isDacpacTooLarge(bytes: number): boolean {
@@ -66,29 +65,6 @@ function isDacpacTooLarge(bytes: number): boolean {
 }
 let panelCounter = 0;
 let activePanel: vscode.WebviewPanel | undefined;
-const DDL_CACHE_MAX = 50;
-const ddlContentMap = new Map<string, string>();
-
-/** Set a DDL cache entry, evicting the oldest if the cache exceeds DDL_CACHE_MAX. */
-function ddlCacheSet(key: string, value: string): void {
-  ddlContentMap.delete(key); // re-insert at end for LRU ordering
-  ddlContentMap.set(key, value);
-  if (ddlContentMap.size > DDL_CACHE_MAX) {
-    const oldest = ddlContentMap.keys().next().value;
-    if (oldest !== undefined) ddlContentMap.delete(oldest);
-  }
-}
-
-const ddlProvider = new class implements vscode.TextDocumentContentProvider {
-  private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
-  onDidChange = this._onDidChange.event;
-  provideTextDocumentContent(uri: vscode.Uri): string {
-    return ddlContentMap.get(uri.toString()) || '';
-  }
-  fire(uri: vscode.Uri) { this._onDidChange.fire(uri); }
-};
-
-type DdlMessage = { objectName: string; schema: string; objectType?: ObjectType; sqlBody?: string; columns?: import('./engine/types').ColumnDef[] };
 
 // ─── Stats Connection Reuse ──────────────────────────────────────────────────
 
@@ -105,57 +81,12 @@ async function verifyStatsConnection(timeoutMs = DEFAULT_CONFIG.tableStatistics.
   }
 }
 
-// ─── DDL Text Editor (SPs, Views, Functions) ───────────────────────────────
-
-async function showDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
-  const key = ddlUri.toString();
-  const content = message.sqlBody || `-- No DDL available for [${message.schema}].[${message.objectName}]`;
-  ddlCacheSet(key, content);
-  ddlProvider.fire(ddlUri);
-
-  try {
-    const doc = await vscode.workspace.openTextDocument(ddlUri);
-    if (doc.languageId !== 'dacpac-sql') {
-      await vscode.languages.setTextDocumentLanguage(doc, 'dacpac-sql');
-    }
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: vscode.ViewColumn.Beside,
-      preserveFocus: true,
-      preview: true,
-    });
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    outputChannel.error(`Failed to show DDL: ${errorMsg}`);
-    vscode.window.showErrorMessage(`Failed to open SQL Viewer: ${errorMsg}`);
-  }
-}
-
-function updateDdlTextEditor(ddlUri: vscode.Uri, message: DdlMessage) {
-  const key = ddlUri.toString();
-  if (!ddlContentMap.has(key)) return;
-  ddlCacheSet(key, message.sqlBody || `-- No DDL available for [${message.schema}].[${message.objectName}]`);
-  ddlProvider.fire(ddlUri);
-}
-
-
 // ─── Activate ────────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
   extensionUri = context.extensionUri;
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
-  context.subscriptions.push(
-    vscode.workspace.registerTextDocumentContentProvider(DDL_SCHEME, ddlProvider)
-  );
-
-  // Clean up DDL content when virtual document is closed
-  context.subscriptions.push(
-    vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.uri.scheme === DDL_SCHEME) {
-        ddlContentMap.delete(doc.uri.toString());
-      }
-    })
-  );
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
@@ -530,8 +461,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     return;
   }
   try {
-    const panelId = ++panelCounter;
-    const ddlUri = vscode.Uri.parse(`${DDL_SCHEME}:panel-${panelId}/DDL`);
+    ++panelCounter;
 
     const panel = vscode.window.createWebviewPanel(
       'dataLineageViz',
@@ -550,16 +480,22 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     activePanel = panel;
     panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, loadDemo);
 
+    // Detail panel — opened on demand, scoped to this main panel's lifetime
+    let detailPanel: vscode.WebviewPanel | undefined;
+
     let panelDisposed = false;
     const themeChangeListener = vscode.window.onDidChangeActiveColorTheme((theme) => {
       if (panelDisposed) return;
+      // Main panel: CSS-class string for body attribute
       panel.webview.postMessage({ type: 'themeChanged', kind: getThemeClass(theme.kind) });
+      // Detail panel: numeric kind for Monaco theme mapping + body attribute
+      detailPanel?.webview.postMessage({ type: 'themeChanged', kind: theme.kind });
     });
     panel.onDidDispose(() => {
       panelDisposed = true;
       activePanel = undefined;
       themeChangeListener.dispose();
-      ddlContentMap.delete(ddlUri.toString());
+      detailPanel?.dispose();
       if (statsConnectionUri) {
         disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
           outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
@@ -601,6 +537,47 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     let currentProjectId: string | null = null;
     let cachedElements: XmlElement[] | null = null;   // dacpac Phase 1 cache
     let cachedDspName = '';                            // dacpac DSP name from Phase 1
+
+    // ─── Detail Panel Helper ─────────────────────────────────────────────────
+    function openOrRevealDetailPanel(node: import('./engine/types').LineageNode, findQuery?: string): void {
+      const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+      const detailConfig = {
+        isDbMode: lastConnectionInfo !== undefined,
+        statsEnabled: cfg.get<boolean>('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled),
+        excludeExternalTables: cfg.get<boolean>('tableStatistics.excludeExternalTables', DEFAULT_CONFIG.tableStatistics.excludeExternalTables),
+        standardModeEnabled: cfg.get<boolean>('tableStatistics.standardModeEnabled', DEFAULT_CONFIG.tableStatistics.standardModeEnabled),
+      };
+      const panelTitle = node.schema ? `[${node.schema}].[${node.name}]` : node.name;
+      if (!detailPanel) {
+        detailPanel = vscode.window.createWebviewPanel(
+          'dataLineageDetail',
+          panelTitle,
+          { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+            localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist')],
+          }
+        );
+        detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, context.extensionUri);
+        detailPanel.webview.onDidReceiveMessage(async (msg) => {
+          if (msg.type === 'table-stats-request') {
+            await handleTableStatsRequest(lastConnectionInfo, detailPanel!, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
+          } else if (msg.type === 'close-detail') {
+            detailPanel?.dispose();
+          }
+        });
+        detailPanel.onDidDispose(() => {
+          detailPanel = undefined;
+          panel.webview.postMessage({ type: 'detail-closed' });
+        });
+      } else {
+        detailPanel.title = panelTitle;
+        detailPanel.reveal(undefined, /*preserveFocus*/ true);
+      }
+      detailPanel.webview.postMessage({ type: 'detail-update', node, findQuery, config: detailConfig });
+    }
+
     const handlers: MessageHandlerMap = {
       'ready': async () => {
         if (loadDemo) {
@@ -868,11 +845,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         outputChannel.info(`Exported: ${uri.fsPath}`);
         await vscode.commands.executeCommand('revealFileInOS', uri);
       },
-      'show-ddl': async (msg) => { await showDdlTextEditor(ddlUri, msg as DdlMessage); },
-      'update-ddl': async (msg) => { updateDdlTextEditor(ddlUri, msg as DdlMessage); },
-      'table-stats-request': async (msg) => {
-        await handleTableStatsRequest(lastConnectionInfo, panel, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
-      },
+      'show-detail': (msg) => { openOrRevealDetailPanel(msg.node, msg.findQuery); },
+      'update-detail': (msg) => { if (detailPanel) openOrRevealDetailPanel(msg.node, msg.findQuery); },
+      'close-detail': () => { detailPanel?.dispose(); },
       'check-mssql': () => {
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
       },
@@ -1002,15 +977,15 @@ type WebviewMessage =
   | { type: 'error'; error: string; stack?: string }
   | { type: 'open-external'; url?: string }
   | { type: 'open-settings' }
-  | { type: 'show-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; columns?: import('./engine/types').ColumnDef[] }
-  | { type: 'update-ddl'; objectName: string; schema: string; objectType?: import('./engine/types').ObjectType; sqlBody?: string; columns?: import('./engine/types').ColumnDef[] }
+  | { type: 'show-detail'; node: import('./engine/types').LineageNode; findQuery?: string }
+  | { type: 'update-detail'; node: import('./engine/types').LineageNode; findQuery?: string }
+  | { type: 'close-detail' }
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
   | { type: 'reload' }
   | { type: 'dacpac-visualize'; schemas: string[]; projectName?: string }
   | { type: 'db-visualize'; schemas: string[]; projectName?: string }
   | { type: 'filter-changed'; filter: import('./engine/projectStore').SerializedFilterState; savedViews: import('./engine/projectStore').FilterProfile[] }
-  | { type: 'table-stats-request'; schema: string; objectName: string; mode: 'quick' | 'standard'; columns?: import('./engine/types').ColumnDef[] }
   | { type: 'export-file'; data: string; defaultName: string };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
@@ -1664,6 +1639,35 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
   `;
 }
 
+function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+  const stylesUri = getUri(webview, extensionUri, ["dist", "assets", "index.css"]);
+  const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
+
+  const nonce = getNonce();
+  const themeKind = vscode.window.activeColorTheme.kind; // numeric — used by DetailApp + Monaco
+
+  return /*html*/ `
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${nonce}'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; worker-src ${webview.cspSource} blob:;">
+        <link rel="stylesheet" type="text/css" href="${stylesUri}">
+        <title>Detail</title>
+      </head>
+      <body class="vscode-body" data-vscode-theme-kind="${themeKind}" style="margin:0;padding:0;height:100vh;overflow:hidden;">
+        <div id="root" style="width:100%;height:100%;"></div>
+        <script nonce="${nonce}">
+          window.__DETAIL_MODE__ = true;
+          window.__THEME_KIND__ = ${themeKind};
+        </script>
+        <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+      </body>
+    </html>
+  `;
+}
+
 // ─── Sidebar TreeView ────────────────────────────────────────────────────────
 
 class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -1686,7 +1690,6 @@ function sidebarItem(label: string, commandId: string, icon: string): vscode.Tre
 }
 
 export function deactivate() {
-  ddlContentMap.clear();
   if (statsConnectionUri) {
     disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
           outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);

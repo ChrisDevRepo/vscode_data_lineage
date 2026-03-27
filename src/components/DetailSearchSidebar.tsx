@@ -14,7 +14,7 @@ export interface DetailSearchNode {
 interface DetailSearchSidebarProps {
   onClose: () => void;
   allNodes: DetailSearchNode[];
-  onResultClick: (nodeId: string) => void;
+  onResultClick: (nodeId: string, searchTerm: string) => void;
 }
 
 interface SearchResult {
@@ -96,7 +96,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                   <div
                     key={r.node.id}
                     className="ln-detail-search-result"
-                    onClick={() => onResultClick(r.node.id)}
+                    onClick={() => onResultClick(r.node.id, term)}
                   >
                     <div className="text-xs font-medium" style={{ color: 'var(--ln-fg)' }}>
                       [{r.node.schema}].{r.node.name}
