@@ -414,3 +414,59 @@ describe('Suite C — callbacks', () => {
     expect(onConfig).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── Suite D — isDemo flag ────────────────────────────────────────────────────
+
+describe('Suite D — isDemo flag', () => {
+  it('isDemo=false initially', () => {
+    const { result } = renderHook(() => useDacpacLoader(vi.fn()), { wrapper });
+    expect(result.current.isDemo).toBe(false);
+  });
+
+  it('isDemo=true after loadDemo()', () => {
+    const { result } = renderHook(() => useDacpacLoader(vi.fn()), { wrapper });
+    act(() => { result.current.loadDemo(); });
+    expect(result.current.isDemo).toBe(true);
+  });
+
+  it('isDemo=false after openFile() and extension dacpac-schema-preview response', async () => {
+    const { result } = renderHook(() => useDacpacLoader(vi.fn()), { wrapper });
+    act(() => { result.current.loadDemo(); });
+    expect(result.current.isDemo).toBe(true);
+    // openFile() sets isDemoRef.current=false but doesn't trigger a re-render by itself.
+    // isDemo reflects the ref only on the next render, which happens when the extension responds.
+    act(() => { result.current.openFile(); });
+    await act(async () => {
+      dispatch({ type: 'dacpac-schema-preview', preview: makePreview(['dbo']), config: {}, filePath: '/a/b.dacpac', sourceName: 'b' });
+    });
+    expect(result.current.isDemo).toBe(false);
+  });
+
+  it('isDemo=false after loadProject() clears demo flag', () => {
+    const { result } = renderHook(() => useDacpacLoader(vi.fn()), { wrapper });
+    act(() => { result.current.loadDemo(); });
+    expect(result.current.isDemo).toBe(true);
+    act(() => { result.current.loadProject('proj-123'); });
+    expect(result.current.isDemo).toBe(false);
+  });
+
+  it('isDemo=true when pendingAutoVisualize set after loadDemo (demo restore)', async () => {
+    const { result } = renderHook(() => useDacpacLoader(vi.fn()), { wrapper });
+    act(() => { result.current.loadDemo(); });
+    await act(async () => {
+      dispatch({ type: 'dacpac-model', model: makeModel(['dbo']), config: {}, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
+    });
+    expect(result.current.pendingAutoVisualize).toBe(true);
+    expect(result.current.isDemo).toBe(true);
+  });
+
+  it('isDemo=false when pendingAutoVisualize set without loadDemo (panel restore)', async () => {
+    const { result } = renderHook(() => useDacpacLoader(vi.fn()), { wrapper });
+    // Panel restore: dacpac-model arrives without prior loadDemo()
+    await act(async () => {
+      dispatch({ type: 'dacpac-model', model: makeModel(['dbo']), config: {}, sourceName: 'MyProject', autoVisualize: true });
+    });
+    expect(result.current.pendingAutoVisualize).toBe(true);
+    expect(result.current.isDemo).toBe(false);
+  });
+});

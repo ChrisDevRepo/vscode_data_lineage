@@ -160,6 +160,9 @@ export function App() {
       setView('visualizing');
       setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
+      // Panel restore: projects-list was sent before dacpac-model, so lastOpenedId is current.
+      // Demo: isDemo=true → skip, demo has no project.
+      if (!dacpacLoader.isDemo && lastOpenedId) setActiveProjectId(lastOpenedId);
       dacpacLoader.clearAutoVisualize();
     } else if (dacpacLoader.pendingVisualize) {
       if (view !== 'visualizing') return; // guard: ignore stale responses after cancel
