@@ -54,6 +54,29 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           <section>
             <div className="flex items-center gap-2 mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+              </svg>
+              <h3 className="text-lg font-semibold">GitHub Copilot Chat</h3>
+            </div>
+            <div className="ml-7 space-y-2 text-sm ln-text-muted">
+              <p>Type <strong>@lineage</strong> in GitHub Copilot Chat to ask questions about your loaded graph. The assistant uses your actual data — it never guesses from general knowledge.</p>
+              <div className="p-2 rounded ln-bg-secondary mt-1 space-y-1 font-mono text-xs">
+                <div><span className="ln-text font-medium">@lineage</span> what schemas are loaded?</div>
+                <div><span className="ln-text font-medium">@lineage</span> find tables with Employee in the name</div>
+                <div><span className="ln-text font-medium">@lineage</span> what does HumanResources.Employee depend on?</div>
+                <div><span className="ln-text font-medium">@lineage</span> trace 3 levels upstream from Sales.SalesOrderDetail</div>
+                <div><span className="ln-text font-medium">@lineage</span> which objects have more than 10 connections?</div>
+              </div>
+              <div className="flex items-start gap-2 mt-1">
+                <span className="text-xs mt-0.5">•</span>
+                <span>Requires <strong>GitHub Copilot</strong> extension and VS Code 1.95+. Tools are only active when a lineage graph is loaded.</span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3a1.5 1.5 0 0 0-1.5 1.5v1.5H9a1.5 1.5 0 0 0 0 3h1.5V12a1.5 1.5 0 0 0 3 0V9H15a1.5 1.5 0 0 0 0-3h-1.5V4.5A1.5 1.5 0 0 0 12 3ZM3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />
               </svg>
               <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>

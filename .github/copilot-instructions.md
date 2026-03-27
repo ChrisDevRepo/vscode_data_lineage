@@ -57,11 +57,12 @@ Press F5 to launch Extension Development Host.
 | `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/projectStore.test.ts` | 153 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
+| `test/ai-tools.test.ts` | 79 | AI tool pure functions: getContext, getSchemasSummary, searchObjects, getObjectDetail, getNeighbors, runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, validateSaveView, safeRegex |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                  # Run all unit tests (946 total)
+npm test                  # Run all unit tests (1025 total)
 ```
 
 Shared test helpers in `test/testUtils.ts` — `assert()`, `assertEq()`, `test()`, `loadParseRules()`, `testPath()`, `rootPath()`, `printSummary()`, `makeGraph()`, `hasName()`, `loadAdventureWorksModel()`. Import from `./testUtils` in new test files.

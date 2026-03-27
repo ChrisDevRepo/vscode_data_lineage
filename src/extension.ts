@@ -1,6 +1,14 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import Graph from 'graphology';
+import { buildBareGraph } from './ai/graphUtils';
+import {
+  AI_CAPS,
+  getContext, getSchemasSummary, searchObjects, getObjectDetail,
+  getNeighbors, runBfsTrace, runAnalysis, searchDdl, validateSaveView,
+} from './ai/tools';
+import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -29,6 +37,14 @@ import type { Project, ProjectStore, FilterProfile, SerializedFilterState } from
 let outputChannel: vscode.LogOutputChannel;
 let extensionUri: vscode.Uri;
 let lastRulesLabel = 'built-in rules';
+
+// ─── AI bridge (module-level, written by panel closures, read by LM tools) ──
+// Only one panel is ever open at a time — safe to use module-level state.
+let _aiModel:       import('./engine/types').DatabaseModel | null = null;
+let _aiGraph:       Graph | null = null;
+let _aiFilter:      SerializedFilterState | null = null;
+let _aiViews:       FilterProfile[] = [];
+let _aiProjectName: string | null = null;
 
 function getThemeClass(kind: vscode.ColorThemeKind): string {
   return kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
@@ -188,6 +204,231 @@ export function activate(context: vscode.ExtensionContext) {
       createYamlScaffold(context, 'dmvQueries.yaml', 'dmvQueries.yaml', 'dmvQueriesFile')
     ),
   );
+
+  // ─── QuickPick object search command ───────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dataLineageViz.searchObjects', async () => {
+      if (!_aiModel) {
+        vscode.window.showWarningMessage('Open a .dacpac file or connect to a database first.');
+        return;
+      }
+      const model = _aiModel;
+      const qp = vscode.window.createQuickPick();
+      qp.placeholder = 'Search tables, views, procedures, functions…';
+      qp.matchOnDescription = false;
+      qp.matchOnDetail = false;
+
+      qp.onDidChangeValue(value => {
+        if (!value.trim()) { qp.items = []; return; }
+        const results = searchCatalog(model.nodes as SearchableNode[], value, undefined, undefined, 20);
+        qp.items = results.map(n => ({
+          label:       n.name,
+          description: `[${n.schema}]`,
+          detail:      n.type,
+        }));
+      });
+
+      qp.show();
+    }),
+  );
+
+  // ─── AI Language Model Tools ───────────────────────────────────────────────
+  // All 9 tools read from module-level _ai* bridge vars (written by panel closures).
+  // Only throws on "no model loaded" — all other errors return JSON for LLM self-correction.
+
+  function requireModel(): NonNullable<typeof _aiModel> {
+    if (!_aiModel) throw new Error('No database loaded. Open a .dacpac file or connect to a database first.');
+    return _aiModel;
+  }
+  function requireGraph(): NonNullable<typeof _aiGraph> {
+    if (!_aiGraph) throw new Error('No database loaded. Open a .dacpac file or connect to a database first.');
+    return _aiGraph;
+  }
+
+  function toolResult(data: object): vscode.LanguageModelToolResult {
+    return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(JSON.stringify(data))]);
+  }
+
+  context.subscriptions.push(
+    vscode.lm.registerTool('lineage_get_context', {
+      invoke(_options, _token) {
+        const m = requireModel();
+        outputChannel.debug('[AI] lineage_get_context');
+        return toolResult(getContext(m, _aiFilter, _aiProjectName, _aiViews));
+      },
+    }),
+    vscode.lm.registerTool('lineage_get_schema_summary', {
+      invoke(_options, _token) {
+        const m = requireModel();
+        outputChannel.debug('[AI] lineage_get_schema_summary');
+        return toolResult(getSchemasSummary(m));
+      },
+    }),
+    vscode.lm.registerTool('lineage_search_objects', {
+      invoke(options, _token) {
+        const m = requireModel();
+        const { query, types, schemas, external_subtypes } = options.input as {
+          query: string; types?: string[]; schemas?: string[]; external_subtypes?: string[];
+        };
+        outputChannel.debug(`[AI] lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}`);
+        const result = searchObjects(m, query, types as never, schemas, external_subtypes as never);
+        return toolResult(result);
+      },
+    }),
+    vscode.lm.registerTool('lineage_get_object_detail', {
+      invoke(options, _token) {
+        const m = requireModel();
+        const { id } = options.input as { id: string };
+        outputChannel.debug(`[AI] lineage_get_object_detail: id="${id}"`);
+        return toolResult(getObjectDetail(m, id));
+      },
+    }),
+    vscode.lm.registerTool('lineage_get_neighbors', {
+      invoke(options, _token) {
+        const m = requireModel();
+        const { id, direction, types } = options.input as {
+          id: string; direction?: string; types?: string[];
+        };
+        outputChannel.debug(`[AI] lineage_get_neighbors: id="${id}", direction=${direction ?? 'both'}`);
+        return toolResult(getNeighbors(m, id, direction as never, types as never));
+      },
+    }),
+    vscode.lm.registerTool('lineage_run_bfs_trace', {
+      invoke(options, _token) {
+        const m = requireModel();
+        const g = requireGraph();
+        const { id, upstream_hops, downstream_hops, types, schemas } = options.input as {
+          id: string; upstream_hops?: number; downstream_hops?: number; types?: string[]; schemas?: string[];
+        };
+        outputChannel.debug(`[AI] lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}`);
+        const result = runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3, types as never, schemas);
+        return toolResult(result);
+      },
+    }),
+    vscode.lm.registerTool('lineage_run_analysis', {
+      invoke(options, _token) {
+        const m = requireModel();
+        const g = requireGraph();
+        const { type, min_degree, max_size } = options.input as {
+          type: string; min_degree?: number; max_size?: number;
+        };
+        outputChannel.debug(`[AI] lineage_run_analysis: type="${type}"`);
+        return toolResult(runAnalysis(m, g, type as never, min_degree, max_size));
+      },
+    }),
+    vscode.lm.registerTool('lineage_search_ddl', {
+      invoke(options, _token) {
+        const m = requireModel();
+        const { query, types } = options.input as { query: string; types?: string[] };
+        outputChannel.debug(`[AI] lineage_search_ddl: query="${query.slice(0, 60)}"`);
+        return toolResult(searchDdl(m, query, types as never));
+      },
+    }),
+    vscode.lm.registerTool('lineage_save_view', {
+      prepareInvocation(options, _token) {
+        const { name, node_ids } = options.input as { name: string; node_ids: string[] };
+        return { invocationMessage: `Save view "${name}" with ${node_ids?.length ?? 0} objects` };
+      },
+      invoke(options, _token) {
+        const m = requireModel();
+        const { name, node_ids } = options.input as { name: string; node_ids: string[] };
+        outputChannel.debug(`[AI] lineage_save_view: name="${name}", ids=${node_ids?.length ?? 0}`);
+        const validation = validateSaveView(m, node_ids ?? [], name);
+        if (!validation.success) {
+          outputChannel.warn(`[AI] lineage_save_view: validation failed — ${validation.errors?.join(', ')}`);
+          return toolResult(validation);
+        }
+        // Push to the active panel's webview (if any)
+        if (activePanel) {
+          activePanel.webview.postMessage({
+            type: 'save-view',
+            name: validation.name,
+            nodeIds: validation.node_ids,
+          });
+          outputChannel.info(`[AI] lineage_save_view: saved "${validation.name}" with ${validation.node_ids.length} nodes`);
+        }
+        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length });
+      },
+    }),
+  );
+
+  // ─── @lineage Chat Participant ─────────────────────────────────────────────
+  const participant = vscode.chat.createChatParticipant(
+    'dataLineageViz.lineage',
+    async (request, _ctx, stream, token) => {
+      if (!_aiModel) {
+        stream.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first, then ask your question.');
+        return;
+      }
+
+      const lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+
+      const messages: vscode.LanguageModelChatMessage[] = [
+        vscode.LanguageModelChatMessage.User(
+          'You are a data lineage assistant for a SQL database. ' +
+          'You ONLY answer using the provided lineage tools — never from general training knowledge. ' +
+          'Start every new conversation by calling lineage_get_context to understand what is loaded. ' +
+          'Format rules: render columns as a markdown table, dependencies as a bullet list with → arrows, ' +
+          'DDL/SQL as a ```sql fenced block, search results as a short bullet list, ' +
+          'and context overviews as brief prose followed by a summary table. ' +
+          'If a question cannot be answered with the lineage tools, respond exactly: ' +
+          '"I can only answer questions about the lineage graph (tables, procedures, dependencies, data flow)."',
+        ),
+        vscode.LanguageModelChatMessage.User(request.prompt),
+      ];
+
+      const runWithTools = async (): Promise<void> => {
+        const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
+        const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
+        const toolCalls: vscode.LanguageModelToolCallPart[] = [];
+
+        for await (const part of response.stream) {
+          if (part instanceof vscode.LanguageModelTextPart) {
+            assistantParts.push(part);
+            stream.markdown(part.value);
+          } else if (part instanceof vscode.LanguageModelToolCallPart) {
+            assistantParts.push(part);
+            toolCalls.push(part);
+          }
+        }
+
+        if (!toolCalls.length) return; // done — no more tool calls
+
+        messages.push(new vscode.LanguageModelChatMessage(
+          vscode.LanguageModelChatMessageRole.Assistant, assistantParts,
+        ));
+
+        const resultParts: vscode.LanguageModelToolResultPart[] = [];
+        for (const call of toolCalls) {
+          stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
+          try {
+            const result = await vscode.lm.invokeTool(
+              call.name,
+              { input: call.input, toolInvocationToken: request.toolInvocationToken },
+              token,
+            );
+            resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, result.content));
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            outputChannel.warn(`[AI] Tool call failed: ${call.name} — ${msg}`);
+            resultParts.push(new vscode.LanguageModelToolResultPart(
+              call.callId,
+              [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: msg }))],
+            ));
+          }
+        }
+
+        messages.push(new vscode.LanguageModelChatMessage(
+          vscode.LanguageModelChatMessageRole.User, resultParts,
+        ));
+
+        return runWithTools(); // recurse until no more tool calls
+      };
+
+      await runWithTools();
+    },
+  );
+  context.subscriptions.push(participant);
 }
 
 async function createYamlScaffold(
@@ -326,6 +567,12 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         statsConnectionUri = undefined;
       }
       currentModel = null;
+      currentGraph = null;
+      _aiModel = null;
+      _aiGraph = null;
+      _aiFilter = null;
+      _aiViews = [];
+      _aiProjectName = null;
       cachedElements = null;
       cachedDspName = '';
       currentActiveFilter = null;
@@ -348,6 +595,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     let lastConnectionInfo: IConnectionInfo | undefined;
     // ─── State bridge — retained model for AI tools + panel restore ──────────
     let currentModel: DatabaseModel | null = null;
+    let currentGraph: Graph | null = null;         // bare graphology graph for AI BFS
     let currentActiveFilter: SerializedFilterState | null = null;
     let currentSavedViews: FilterProfile[] = [];
     let currentProjectId: string | null = null;
@@ -358,6 +606,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         if (loadDemo) {
           await handleLoadDemo(panel, context, true, (m) => {
             currentModel = m;
+            currentGraph = buildBareGraph(m);
+            _aiModel = m;
+            _aiGraph = currentGraph;
+            _aiProjectName = 'Demo';
             vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
           });
           return;
@@ -395,6 +647,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             cachedElements = elements;
             cachedDspName = dspName;
             currentModel = null;
+            currentGraph = null;
+            _aiModel = null;
+            _aiGraph = null;
             currentProjectId = null;
             vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
             panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: fileName });
@@ -437,10 +692,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
               const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
               currentModel = model;
+              currentGraph = buildBareGraph(model);
+              _aiModel = model;
+              _aiGraph = currentGraph;
+              _aiProjectName = conn.displayName;
               cachedElements = null;
               cachedDspName = '';
               vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
-              outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges`);
+              outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
               if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
               panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: conn.displayName });
             } else {
@@ -449,6 +708,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               cachedElements = elements;
               cachedDspName = dspName;
               currentModel = null;
+              currentGraph = null;
+              _aiModel = null;
+              _aiGraph = null;
+              vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
               panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: conn.displayName });
             }
           } catch (err) {
@@ -492,7 +755,16 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                 await runDbPhase1(panel, dbResult.connectionUri, dbResult.connectionInfo, progress, token, (r) => { allObjectsCache = r; }, (r) => { platformInfoCache = r; });
                 return;
               }
-              await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName, platformInfoCache);
+              await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName, platformInfoCache,
+                (m) => {
+                  currentModel = m;
+                  currentGraph = buildBareGraph(m);
+                  _aiModel = m;
+                  _aiGraph = currentGraph;
+                  _aiProjectName = project.name;
+                  vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+                  outputChannel.info(`[Bridge] Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
+                });
               if (!token.isCancellationRequested) {
                 const refreshed = { ...project, updatedAt: new Date().toISOString() };
                 const updatedStore = updateProject(store, refreshed);
@@ -525,6 +797,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'load-demo': async () => {
         await handleLoadDemo(panel, context, true, (m) => {
           currentModel = m;
+          currentGraph = buildBareGraph(m);
+          _aiModel = m;
+          _aiGraph = currentGraph;
+          _aiProjectName = 'Demo';
           currentProjectId = null;
           vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
         });
@@ -539,10 +815,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
           const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
           currentModel = model;
+          currentGraph = buildBareGraph(model);
+          _aiModel = model;
+          _aiGraph = currentGraph;
+          _aiProjectName = msg.projectName ?? null;
           cachedElements = null;
           cachedDspName = '';
           vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
-          outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges`);
+          outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
           if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
           const sourceName = msg.projectName ?? currentProjectId ?? 'dacpac';
           panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName });
@@ -555,6 +835,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'filter-changed': (msg) => {
         currentActiveFilter = msg.filter;
         currentSavedViews = msg.savedViews;
+        _aiFilter = msg.filter;
+        _aiViews = msg.savedViews;
+        outputChannel.debug('[Bridge] Active filter updated via filter-changed');
       },
       'parse-rules-result': (msg) => { handleParseRulesResult(msg); },
       'parse-stats': (msg) => { handleParseStats(msg.stats, msg.objectCount, msg.edgeCount, msg.schemaCount); },
@@ -620,6 +903,15 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           await runDbPhase2(
             panel, conn.connectionUri, msg.schemas, progress, token, allObjectsCache,
             conn.connectionInfo.database, sourceName, platformInfoCache,
+            (m) => {
+              currentModel = m;
+              currentGraph = buildBareGraph(m);
+              _aiModel = m;
+              _aiGraph = currentGraph;
+              _aiProjectName = msg.projectName ?? sourceName;
+              vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+              outputChannel.info(`[Bridge] Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
+            },
           );
           // Auto-save project if a name was provided (Create New DB flow)
           if (msg.projectName && !token.isCancellationRequested) {
@@ -1148,6 +1440,7 @@ async function runDbPhase2(
   currentDatabase?: string,
   sourceName?: string,
   platformInfo?: SimpleExecuteResult,
+  onModelBuilt?: (model: DatabaseModel) => void,
 ): Promise<void> {
   progress.report({ message: 'Loading queries...' });
   const queries = await loadDmvQueries(outputChannel, extensionUri);
@@ -1214,6 +1507,7 @@ async function runDbPhase2(
     outputChannel.debug(`[DB] External nodes: ${extNodes.map(n => n.fullName).join(', ')}`);
   }
 
+  onModelBuilt?.(model);
   panel.webview.postMessage({
     type: 'db-model',
     model,

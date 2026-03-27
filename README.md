@@ -1,7 +1,7 @@
 # Data Lineage Viz
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![VS Code](https://img.shields.io/badge/vscode-1.85+-blue.svg)
+![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)
 ![Status](https://img.shields.io/badge/status-preview-orange.svg)
 
 > **Preview** — This extension is functional but under active development.
@@ -26,6 +26,20 @@ Saved projects appear on the start screen — click any card to reopen instantly
 No database? Click **Try with demo data** to explore the AdventureWorks sample.
 
 ## Features
+
+### GitHub Copilot Integration
+
+Use `@lineage` in GitHub Copilot Chat to ask questions about your loaded lineage graph. The assistant answers using 9 dedicated tools — never from general knowledge.
+
+```
+@lineage what schemas are loaded?
+@lineage find tables with Employee in the name
+@lineage what does HumanResources.Employee depend on?
+@lineage trace 3 levels upstream from Sales.SalesOrderDetail
+@lineage which objects are hubs with more than 10 connections?
+```
+
+Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) and VS Code 1.95+. Tools are only active when a lineage graph is loaded.
 
 ### Data Sources
 

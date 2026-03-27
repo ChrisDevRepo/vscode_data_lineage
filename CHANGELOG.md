@@ -3,12 +3,15 @@
 ## [0.9.6] - 2026-03-26
 
 ### Added
+- **`@lineage` chat participant** — Ask questions about your loaded graph directly in GitHub Copilot Chat. Type `@lineage` followed by a question and the assistant answers using 9 dedicated lineage tools — it never guesses from general knowledge. Requires GitHub Copilot and VS Code 1.95+.
+  - *Example questions:* `@lineage what schemas are loaded?` · `@lineage find tables with Employee in the name` · `@lineage what does HumanResources.Employee depend on?` · `@lineage trace 3 levels upstream from Sales.SalesOrderDetail` · `@lineage which objects are hubs with more than 10 connections?`
+  - Tools available: context overview, schema summary, object search, object detail (columns + FKs + DDL), neighbor lookup, BFS trace, graph analysis, DDL search, save view.
+  - Tools are only active when a graph is loaded — no token waste when idle.
 - **PK badge** — Primary key columns show a "PK" flag in the table design view. Composite PKs show numbered ordinals (PK1, PK2, …).
 - **Platform label** — The extension detects the database platform (SQL Server, Azure SQL, Fabric, Synapse) from both dacpac files and live DB connections.
 
 ### Changed
 - **Faster panel restore** — Reopening the panel restores the graph in under a second instead of re-importing the full file.
-- Internal architecture: dacpac parsing moved to the extension host. Lays the groundwork for AI tools in v0.9.7.
 
 ## [0.9.5] - 2026-03-24
 
