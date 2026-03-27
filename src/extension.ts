@@ -552,6 +552,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     let cachedDspName = '';                            // dacpac DSP name from Phase 1
 
     // ─── Detail Panel Helper ─────────────────────────────────────────────────
+    // Holds the first detail-update payload until the webview signals detail-ready.
+    // The webview's message listener (useEffect) is set up after React's first render,
+    // so any postMessage sent during panel creation would be lost.
+    let pendingDetailUpdate: { node: import('./engine/types').LineageNode; findQuery?: string; config: object } | undefined;
+
     function openOrRevealDetailPanel(node: import('./engine/types').LineageNode, findQuery?: string): void {
       const cfg = vscode.workspace.getConfiguration('dataLineageViz');
       const detailConfig = {
@@ -562,6 +567,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       };
       const panelTitle = node.schema ? `[${node.schema}].[${node.name}]` : node.name;
       if (!detailPanel) {
+        // Store the payload — send it only after the webview signals detail-ready.
+        pendingDetailUpdate = { node, findQuery, config: detailConfig };
         detailPanel = vscode.window.createWebviewPanel(
           'dataLineageDetail',
           panelTitle,
@@ -575,7 +582,20 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, context.extensionUri);
         detailPanel.webview.onDidReceiveMessage(async (msg) => {
           try {
-            if (msg.type === 'table-stats-request') {
+            if (msg.type === 'detail-ready') {
+              // Webview is mounted and listening — flush the buffered first update.
+              if (pendingDetailUpdate) {
+                detailPanel?.webview.postMessage({ type: 'detail-update', ...pendingDetailUpdate });
+                pendingDetailUpdate = undefined;
+              }
+            } else if (msg.type === 'error') {
+              // React ErrorBoundary + global handlers post here.
+              // Log at error level so it's visible in the output channel without debug mode.
+              outputChannel.error(`[Detail] ${(msg as { error: string }).error}`);
+              const typedMsg = msg as { error: string; stack?: string; componentStack?: string };
+              if (typedMsg.stack) outputChannel.debug(`[Detail] Stack: ${typedMsg.stack}`);
+              if (typedMsg.componentStack) outputChannel.debug(`[Detail] Component stack: ${typedMsg.componentStack}`);
+            } else if (msg.type === 'table-stats-request') {
               await handleTableStatsRequest(lastConnectionInfo, detailPanel!, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
             } else if (msg.type === 'close-detail') {
               detailPanel?.dispose();
@@ -589,13 +609,15 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         });
         detailPanel.onDidDispose(() => {
           detailPanel = undefined;
+          pendingDetailUpdate = undefined;
           panel.webview.postMessage({ type: 'detail-closed' });
         });
       } else {
+        // Panel already loaded — postMessage is safe, webview is listening.
         detailPanel.title = panelTitle;
         detailPanel.reveal(undefined, /*preserveFocus*/ true);
+        detailPanel.webview.postMessage({ type: 'detail-update', node, findQuery, config: detailConfig });
       }
-      detailPanel.webview.postMessage({ type: 'detail-update', node, findQuery, config: detailConfig });
     }
 
     const handlers: MessageHandlerMap = {

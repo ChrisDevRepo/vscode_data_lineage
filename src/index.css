@@ -252,7 +252,8 @@ body {
 .react-flow__minimap {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--ln-border) 60%, transparent);
-  background: color-mix(in srgb, var(--ln-bg-secondary) 75%, transparent);
+  /* !important: overrides @xyflow/react default (#fff) regardless of CSS chunk order */
+  background: color-mix(in srgb, var(--ln-bg-secondary) 75%, transparent) !important;
 }
 
 .react-flow__minimap-mask {

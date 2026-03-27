@@ -30,10 +30,28 @@ const DEFAULT_DETAIL_CONFIG: DetailConfig = {
   standardModeEnabled:   DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
 };
 
+// ─── VS Code API — acquired once at module load, never inside the component ───
+// acquireVsCodeApi() throws if called more than once per webview session.
+// Calling it inside useRef(acquireVsCodeApi()) evaluates the arg on every render.
+const _vscodeApi = acquireVsCodeApi();
+// Make available to ErrorBoundary (class component, can't use context)
+window.vscode = _vscodeApi;
+
+// Global error handlers — mirror main webview (index.tsx) so nothing is silent
+window.addEventListener('unhandledrejection', (event) => {
+  const msg = event.reason instanceof Error ? event.reason.message : String(event.reason);
+  console.error('[Detail] Unhandled rejection:', msg);
+  _vscodeApi.postMessage({ type: 'error', error: `[Detail] Unhandled rejection: ${msg}` });
+});
+window.addEventListener('error', (event) => {
+  console.error('[Detail] Uncaught error:', event.message);
+  _vscodeApi.postMessage({ type: 'error', error: `[Detail] Uncaught error: ${event.message}` });
+});
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 export function DetailApp() {
-  const vscodeApi  = useRef(acquireVsCodeApi());
+  const vscodeApi  = useRef(_vscodeApi);
   const nodeIdRef  = useRef<string | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
@@ -64,9 +82,12 @@ export function DetailApp() {
         document.body.setAttribute('data-vscode-theme-kind', String(msg.kind));
       }
     }
+    // Register listener BEFORE sending detail-ready — the extension's detail-update
+    // response is async (IPC round-trip), but must find the listener already attached.
     window.addEventListener('message', handler);
+    vscodeApi.current.postMessage({ type: 'detail-ready' });
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!detail) {
     return (

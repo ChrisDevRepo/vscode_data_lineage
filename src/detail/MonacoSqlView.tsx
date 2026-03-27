@@ -117,7 +117,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
             readOnly: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            wordWrap: 'off',
+            wordWrap: 'on',
             automaticLayout: true,
             fontSize: 13,
             lineNumbers: 'on',

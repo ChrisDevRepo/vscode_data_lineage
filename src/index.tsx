@@ -8,8 +8,17 @@ if (!root) {
 
 if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
   // ─── Detail panel webview — lazy-load Monaco bundle only here ───────────────
-  import('./detail/DetailApp').then(({ DetailApp }) => {
-    createRoot(root).render(<DetailApp />);
+  // Global error handlers + ErrorBoundary are set up in DetailApp.tsx module scope
+  // (window.vscode is also set there, which ErrorBoundary requires).
+  Promise.all([
+    import('./detail/DetailApp'),
+    import('./components/ErrorBoundary'),
+  ]).then(([{ DetailApp }, { ErrorBoundary }]) => {
+    createRoot(root).render(
+      <ErrorBoundary>
+        <DetailApp />
+      </ErrorBoundary>
+    );
   });
 } else {
   // ─── Main graph webview ──────────────────────────────────────────────────────
