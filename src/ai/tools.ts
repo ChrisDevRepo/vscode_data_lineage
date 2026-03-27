@@ -120,7 +120,7 @@ export function searchObjects(
   const typeSet                = types         ? new Set<ObjectType>(types)           : undefined;
   const schemaSet              = schemas       ? new Set<string>(schemas)             : undefined;
   const excludeTypeSet         = excludeTypes  ? new Set<ObjectType>(excludeTypes)    : null;
-  // exclude_schemas: SQL LIKE patterns (% = any sequence, _ = single char, case-insensitive)
+  // exclude_schemas: SQL-style patterns — % matches any sequence; all other chars literal (case-insensitive)
   const excludeSchemaMatchers  = compileSqlLikePatterns(excludeSchemas);
 
   const nameHits = searchCatalog(
@@ -306,7 +306,7 @@ export function runBfsTrace(
   const nodeMap                = buildNodeMap(model);
   const typeSet                = types         ? new Set<ObjectType>(types)            : null;
   const schemaSet              = schemas       ? new Set<string>(schemas)              : null;
-  // exclude_schemas: SQL LIKE patterns (% = any sequence, _ = single char, case-insensitive)
+  // exclude_schemas: SQL-style patterns — % matches any sequence; all other chars literal (case-insensitive)
   const excludeSchemaMatchers  = compileSqlLikePatterns(excludeSchemas);
   const excludeTypeSet         = excludeTypes  ? new Set<ObjectType>(excludeTypes)     : null;
 

@@ -93,17 +93,18 @@ export function compileExclusionPattern(pattern: string): RegExp {
 }
 
 /**
- * Compile a pure SQL LIKE pattern to a case-insensitive RegExp.
- * Only % and _ have special meaning; all other characters are treated as literals.
+ * Compile a SQL-style pattern to a case-insensitive RegExp.
+ * Only % is a wildcard (matches any sequence of characters).
+ * All other characters, including _, are treated as literals.
  *   test%      → anchored prefix match: "test", "test_data", "testing"
  *   %test%     → substring match: any name containing "test"
  *   test       → exact match (no wildcards)
- *   _test      → single-char prefix + "test"
+ *   test_abc   → exact match for "test_abc" only (no false positives)
  * Use for AI tool parameters (exclude_schemas etc.) where predictable behavior is required.
  */
 export function compileSqlLikePattern(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-  const regexStr = escaped.replace(/%/g, '.*').replace(/_/g, '.');
+  const regexStr = escaped.replace(/%/g, '.*');
   return new RegExp(`^${regexStr}$`, 'i');
 }
 
