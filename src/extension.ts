@@ -245,6 +245,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.lm.registerTool('lineage_get_context', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Loading lineage context…' };
+      },
       invoke(_options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -253,6 +256,9 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_get_schema_summary', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Getting schema summary…' };
+      },
       invoke(_options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -261,6 +267,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_search_objects', {
+      prepareInvocation(options, _token) {
+        const { query } = options.input as { query: string };
+        return { invocationMessage: `Searching for "${query}"…` };
+      },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -273,6 +283,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_get_object_detail', {
+      prepareInvocation(options, _token) {
+        const { id } = options.input as { id: string };
+        return { invocationMessage: `Getting details for "${id}"…` };
+      },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -282,6 +296,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_get_neighbors', {
+      prepareInvocation(options, _token) {
+        const { id, direction } = options.input as { id: string; direction?: string };
+        return { invocationMessage: `Getting ${direction ?? 'all'} neighbors of "${id}"…` };
+      },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -293,6 +311,12 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_run_bfs_trace', {
+      prepareInvocation(options, _token) {
+        const { id, upstream_hops, downstream_hops } = options.input as {
+          id: string; upstream_hops?: number; downstream_hops?: number;
+        };
+        return { invocationMessage: `Tracing lineage from "${id}" (↑${upstream_hops ?? 3} ↓${downstream_hops ?? 3} hops)…` };
+      },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -306,6 +330,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
+      prepareInvocation(options, _token) {
+        const { type } = options.input as { type: string };
+        return { invocationMessage: `Running ${type} analysis…` };
+      },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -318,6 +346,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_search_ddl', {
+      prepareInvocation(options, _token) {
+        const { query } = options.input as { query: string };
+        return { invocationMessage: `Searching DDL for "${query.slice(0, 40)}"…` };
+      },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
@@ -329,7 +361,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.lm.registerTool('lineage_save_view', {
       prepareInvocation(options, _token) {
         const { name, node_ids } = options.input as { name: string; node_ids: string[] };
-        return { invocationMessage: `Save view "${name}" with ${node_ids?.length ?? 0} objects` };
+        return {
+          invocationMessage: `Save view "${name}" with ${node_ids?.length ?? 0} objects`,
+          confirmationMessages: {
+            title: 'Save lineage view?',
+            message: new vscode.MarkdownString(
+              `**${name ?? 'Unnamed'}** · ${node_ids?.length ?? 0} nodes\n\nSaved to the active project.`
+            ),
+          },
+        };
       },
       async invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
@@ -366,7 +406,7 @@ export function activate(context: vscode.ExtensionContext) {
         await saveProjectStore(context, updated);
         _aiViews = updated.projects.find(p => p.id === _aiCurrentProjectId)?.filterProfiles ?? _aiViews;
         if (activePanel) {
-          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: _aiCurrentProjectId, lastWizardView: updated.lastWizardView });
         }
         outputChannel.info(`[AI] lineage_save_view: saved "${validation.name}" with ${validation.node_ids.length} nodes → profile ${profile.id}`);
         return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length, profile_id: profile.id });
@@ -375,7 +415,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.lm.registerTool('lineage_create_ai_view', {
       prepareInvocation(options, _token) {
         const input = options.input as CreateAiViewInput;
-        return { invocationMessage: `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects` };
+        return {
+          invocationMessage: `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects`,
+          confirmationMessages: {
+            title: 'Create AI lineage view?',
+            message: new vscode.MarkdownString(
+              `**${input.name ?? 'Unnamed'}** · ${input.node_ids?.length ?? 0} nodes\n\nSaved to project and applied.`
+            ),
+          },
+        };
       },
       async invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
@@ -430,7 +478,7 @@ export function activate(context: vscode.ExtensionContext) {
         await saveProjectStore(context, updated);
         _aiViews = updated.projects.find(p => p.id === _aiCurrentProjectId)?.filterProfiles ?? _aiViews;
         if (activePanel) {
-          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: _aiCurrentProjectId, lastWizardView: updated.lastWizardView });
           activePanel.webview.postMessage({ type: 'ai-view-activate', profileId: profile.id });
         }
         outputChannel.info(`[AI] lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes → profile ${profile.id}`);
@@ -448,65 +496,99 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ─── @lineage Chat Participant ─────────────────────────────────────────────
+  type ToolCallRound = { response: string; toolCalls: vscode.LanguageModelToolCallPart[] };
+
   const participant = vscode.chat.createChatParticipant(
     'dataLineageViz.lineage',
-    async (request, context, stream, token) => {
+    async (request, context, stream, token): Promise<vscode.ChatResult> => {
       // Update model context window for auto-scaling caps
       _aiMaxInputTokens = request.model.maxInputTokens;
 
       if (!isAiEnabled()) {
         stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
-        return;
+        return {};
       }
 
       if (!_aiModel) {
         stream.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first, then ask your question.');
-        return;
+        return {};
       }
 
       const lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
 
-      // Build conversation history so the model remembers previous turns
+      // Build conversation history — re-inject tool call rounds so the model remembers prior tool use
       const historyMessages: vscode.LanguageModelChatMessage[] = [];
       for (const turn of context.history) {
         if (turn instanceof vscode.ChatRequestTurn) {
           historyMessages.push(vscode.LanguageModelChatMessage.User(turn.prompt));
         } else if (turn instanceof vscode.ChatResponseTurn) {
-          const text = turn.response
-            .filter(p => p instanceof vscode.ChatResponseMarkdownPart)
-            .map(p => (p as vscode.ChatResponseMarkdownPart).value.value)
-            .join('');
-          if (text) {
-            historyMessages.push(new vscode.LanguageModelChatMessage(
-              vscode.LanguageModelChatMessageRole.Assistant, text,
-            ));
+          const meta = (turn.result.metadata as any)?.toolCallsMetadata as
+            | { toolCallRounds: ToolCallRound[]; toolCallResults: Record<string, vscode.LanguageModelToolResult> }
+            | undefined;
+          if (meta?.toolCallRounds?.length) {
+            for (const round of meta.toolCallRounds) {
+              // Re-inject assistant turn: response text + tool call parts
+              const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
+              if (round.response) assistantParts.push(new vscode.LanguageModelTextPart(round.response));
+              assistantParts.push(...round.toolCalls);
+              historyMessages.push(new vscode.LanguageModelChatMessage(
+                vscode.LanguageModelChatMessageRole.Assistant, assistantParts,
+              ));
+              // Re-inject tool results for this round
+              const resultParts = round.toolCalls
+                .map(tc => {
+                  const r = meta.toolCallResults[tc.callId];
+                  return r ? new vscode.LanguageModelToolResultPart(tc.callId, r.content) : null;
+                })
+                .filter((p): p is vscode.LanguageModelToolResultPart => p !== null);
+              if (resultParts.length) {
+                historyMessages.push(new vscode.LanguageModelChatMessage(
+                  vscode.LanguageModelChatMessageRole.User, resultParts,
+                ));
+              }
+            }
+          } else {
+            // Text-only turn fallback (turns with no tool calls)
+            const text = turn.response
+              .filter(p => p instanceof vscode.ChatResponseMarkdownPart)
+              .map(p => (p as vscode.ChatResponseMarkdownPart).value.value)
+              .join('');
+            if (text) {
+              historyMessages.push(new vscode.LanguageModelChatMessage(
+                vscode.LanguageModelChatMessageRole.Assistant, text,
+              ));
+            }
           }
         }
       }
 
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(
-          'You are a data lineage assistant for a SQL database. ' +
-          'You ONLY answer using the provided lineage tools — never from general training knowledge. ' +
-          'Start every new conversation by calling lineage_get_context to understand what is loaded. ' +
-          'Format rules: render columns as a markdown table, dependencies as a bullet list with → arrows, ' +
-          'DDL/SQL as a ```sql fenced block, search results as a short bullet list, ' +
-          'and context overviews as brief prose followed by a summary table. ' +
-          'If a question cannot be answered with the lineage tools, respond exactly: ' +
-          '"I can only answer questions about the lineage graph (tables, procedures, dependencies, data flow)."',
+          'SQL lineage assistant. Use ONLY provided tools — never training knowledge.\n' +
+          'Call lineage_get_context first each conversation.\n' +
+          'BFS: start 1 hop, expand if incomplete=true. Never claim complete when incomplete=true.\n' +
+          'Before create_ai_view: obtain node IDs from search/BFS — never fabricate.\n' +
+          'Format: columns→table, deps→bullets with →, SQL→```sql.',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(request.prompt),
       ];
 
+      // Accumulators for this request's tool call rounds (persisted in ChatResult metadata)
+      const toolCallRounds: ToolCallRound[] = [];
+      const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
+      let totalToolCallsMade = 0;
+
       const runWithTools = async (): Promise<void> => {
         const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
         const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
+        let responseText = '';
 
         for await (const part of response.stream) {
           if (part instanceof vscode.LanguageModelTextPart) {
             assistantParts.push(part);
+            responseText += part.value;
             stream.markdown(part.value);
           } else if (part instanceof vscode.LanguageModelToolCallPart) {
             assistantParts.push(part);
@@ -530,13 +612,13 @@ export function activate(context: vscode.ExtensionContext) {
               token,
             );
             resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, result.content));
+            accumulatedToolResults[call.callId] = result;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             outputChannel.warn(`[AI] Tool call failed: ${call.name} — ${msg}`);
-            resultParts.push(new vscode.LanguageModelToolResultPart(
-              call.callId,
-              [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: msg }))],
-            ));
+            const errContent = [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: msg }))];
+            resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, errContent));
+            accumulatedToolResults[call.callId] = new vscode.LanguageModelToolResult(errContent);
           }
         }
 
@@ -544,16 +626,28 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.LanguageModelChatMessageRole.User, resultParts,
         ));
 
+        toolCallRounds.push({ response: responseText, toolCalls });
+        totalToolCallsMade += toolCalls.length;
+
         return runWithTools(); // recurse until no more tool calls
       };
 
       try {
         await runWithTools();
+        // Behavioral hint: if no tools were called, the model likely doesn't support function calling
+        if (totalToolCallsMade === 0 && lineageTools.length > 0) {
+          stream.markdown(
+            '\n\n> **Tip:** @lineage needs a model with tool/function calling support. ' +
+            'Switch to **GPT-4o**, **Claude Sonnet**, or **Gemini** in the model picker.',
+          );
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         outputChannel.error(`[AI] Chat handler failed: ${msg}`);
         stream.markdown(`\n\n*Error: ${msg}*`);
       }
+
+      return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults } } };
     },
   );
   context.subscriptions.push(participant);

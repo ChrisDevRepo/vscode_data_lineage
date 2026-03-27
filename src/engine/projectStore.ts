@@ -52,8 +52,6 @@ export interface FilterProfile {
   name: string;
   createdAt: string;
   filter: SerializedFilterState;
-  /** Keyboard shortcut slot. Alt+N applies this view. Optional — no slot assigned by default. */
-  slot?: 1|2|3|4|5|6|7|8|9;
   /** How this profile was created — shown in the info card when the view is active. */
   source?: 'user' | 'trace' | 'analysis' | 'ai';
   /** Saved per-node positions (x, y) — applied after dagre as an overlay. */

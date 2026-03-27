@@ -34,7 +34,7 @@ import { BookmarkInfoCard } from './BookmarkInfoCard';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
-import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
+import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType, InnerFilterContext } from '../engine/types';
 import type { FilterProfile } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
@@ -97,7 +97,10 @@ interface GraphCanvasProps {
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
   onDeleteView?: (profileId: string) => void;
-  onAssignSlot?: (profileId: string, slot: number | null) => void;
+  /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
+  isModeLocked?: boolean;
+  /** Active mode filter context — passed to Toolbar for dropdown gating. */
+  innerContext?: InnerFilterContext | null;
   graphMode?: GraphMode;
   onSchemaNodeDoubleClick?: (schemaName: string) => void;
   /** Called when user saves a trace/path result as an advanced bookmark. */
@@ -123,6 +126,12 @@ interface GraphCanvasProps {
   bookmarkStaleNames?: string[];
   /** Called when user clicks "Exit View" in the bookmark banner. */
   onExitAdvancedBookmark?: () => void;
+  /** Saved node positions from a bookmark — applied once after the next rebuild. */
+  pendingPositions?: Record<string, { x: number; y: number }>;
+  /** Saved ReactFlow viewport — restored together with pendingPositions. */
+  pendingViewport?: { x: number; y: number; zoom: number };
+  /** Called after pendingPositions have been applied so the parent can clear them. */
+  onPendingPositionsApplied?: () => void;
 }
 
 export function GraphCanvas({
@@ -175,7 +184,8 @@ export function GraphCanvas({
   onSaveView,
   onApplyView,
   onDeleteView,
-  onAssignSlot,
+  isModeLocked = false,
+  innerContext,
   graphMode = 'full',
   onSchemaNodeDoubleClick,
   onSaveTraceBookmark,
@@ -184,8 +194,11 @@ export function GraphCanvas({
   activeAdvancedProfile,
   bookmarkStaleNames,
   onExitAdvancedBookmark,
+  pendingPositions,
+  pendingViewport,
+  onPendingPositionsApplied,
 }: GraphCanvasProps) {
-  const { fitView, getNode, setCenter, getNodes, getViewport } = useReactFlow();
+  const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
 
   const handleNodeClick: NodeMouseHandler = useCallback(
@@ -286,28 +299,43 @@ export function GraphCanvas({
     import('../export/drawioExporter').then(({ exportToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
       const xml = exportToDrawio(flowNodes as FlowNode<CustomNodeData>[], flowEdges, schemas);
-      const base = sourceName?.replace(/\.dacpac$/i, '') || 'lineage';
+      const base = (sourceName?.replace(/\.dacpac$/i, '') || 'lineage').trim().replace(/[\\/:*?"<>|]/g, '_');
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
   }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi, graphMode]);
 
-  // Auto-fit view whenever the graph data changes (filter, trace, rebuild, etc.)
+  // Auto-fit view whenever the graph data changes — skipped when saved positions are being restored
+  // (saved viewport takes precedence over auto-fit in that case)
   // flowNodes reference only changes on rebuild — not on highlight
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    if (pendingPositions && Object.keys(pendingPositions).length > 0) return;
     const timer = setTimeout(() => {
       fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
     }, AUTO_FIT_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [flowNodes, fitView]);
+  }, [flowNodes, fitView]); // pendingPositions intentionally excluded — read at effect run time
 
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    setLocalNodes(flowNodes);
+    if (pendingPositions && Object.keys(pendingPositions).length > 0) {
+      setLocalNodes(flowNodes.map(n => {
+        const saved = pendingPositions[n.id];
+        return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
+      }));
+      if (pendingViewport) {
+        setTimeout(() => setViewport(pendingViewport), AUTO_FIT_DELAY_MS);
+      }
+      onPendingPositionsApplied?.();
+    } else {
+      setLocalNodes(flowNodes);
+    }
   }, [flowNodes]);
 
   useEffect(() => {
@@ -406,15 +434,11 @@ export function GraphCanvas({
     });
   }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
 
-  // Stable allNodes list for autocomplete/search — only lineageNode nodes (not schema overview nodes)
+  // Stable allNodes list for autocomplete/search — derived from full model catalog,
+  // not displayNodes (which only contains schemaNode entries in overview mode).
   const allNodes = useMemo(
-    () => displayNodes
-      .filter(n => n.type === 'lineageNode')
-      .map(n => {
-        const d = n.data as CustomNodeData;
-        return { id: n.id, name: d.label, schema: d.schema, type: d.objectType };
-      }),
-    [displayNodes],
+    () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),
+    [model],
   );
 
   // IDs of nodes currently rendered in the graph (after all filters: type, focus-schema,
@@ -472,7 +496,8 @@ export function GraphCanvas({
         onSaveView={onSaveView}
         onApplyView={onApplyView}
         onDeleteView={onDeleteView}
-        onAssignSlot={onAssignSlot}
+        isModeLocked={isModeLocked}
+        innerContext={innerContext}
       />
 
       {/* Advanced bookmark banner — shown whenever an allowlist view is active */}

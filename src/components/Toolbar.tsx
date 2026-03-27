@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
-import { ObjectType, AnalysisType } from '../engine/types';
+import { ObjectType, AnalysisType, type InnerFilterContext } from '../engine/types';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { HelpModal } from './HelpModal';
@@ -53,7 +53,10 @@ interface ToolbarProps {
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
   onDeleteView?: (profileId: string) => void;
-  onAssignSlot?: (profileId: string, slot: number | null) => void;
+  /** When true, analysis and trace-start buttons are disabled (trace/analysis/bookmark mode active). */
+  isModeLocked?: boolean;
+  /** Active mode filter context — determines disabled schemas/types in dropdowns. */
+  innerContext?: InnerFilterContext | null;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -69,19 +72,14 @@ function buildMetricsTooltip(
 ): string {
   const counts: Partial<Record<ObjectType, number>> = {};
   for (const n of allNodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
-  const typeParts: string[] = [];
-  if (counts.table)     typeParts.push(`${counts.table} tables`);
-  if (counts.view)      typeParts.push(`${counts.view} views`);
-  if (counts.procedure) typeParts.push(`${counts.procedure} procedures`);
-  if (counts.function)  typeParts.push(`${counts.function} functions`);
-  if (counts.external)  typeParts.push(`${counts.external} external`);
-  const lines = [
-    `Objects: ${metrics.totalNodes}`,
-    typeParts.join(' · '),
-    `Relations: ${metrics.totalEdges}`,
-    `Sources: ${metrics.rootNodes} · Sinks: ${metrics.leafNodes}`,
-  ].filter(Boolean);
-  return lines.join('\n');
+  const typeRows: string[] = [];
+  const pad = String(metrics.totalNodes).length;
+  if (counts.table)     typeRows.push(`  ${String(counts.table).padStart(pad)} tables`);
+  if (counts.view)      typeRows.push(`  ${String(counts.view).padStart(pad)} views`);
+  if (counts.procedure) typeRows.push(`  ${String(counts.procedure).padStart(pad)} procedures`);
+  if (counts.function)  typeRows.push(`  ${String(counts.function).padStart(pad)} functions`);
+  if (counts.external)  typeRows.push(`  ${String(counts.external).padStart(pad)} external`);
+  return [`Objects: ${metrics.totalNodes}`, ...typeRows].join('\n');
 }
 
 export const Toolbar = memo(function Toolbar({
@@ -123,7 +121,8 @@ export const Toolbar = memo(function Toolbar({
   onSaveView,
   onApplyView,
   onDeleteView,
-  onAssignSlot,
+  isModeLocked = false,
+  innerContext,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
@@ -134,6 +133,14 @@ export const Toolbar = memo(function Toolbar({
 
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
+
+  // Compute disabled schemas/types from innerContext (mode scope enforcement)
+  const disabledSchemas = innerContext
+    ? new Set(schemas.filter(s => !innerContext.allowedSchemas.has(s)))
+    : undefined;
+  const disabledTypes = innerContext
+    ? new Set((['table', 'view', 'procedure', 'function', 'external'] as ObjectType[]).filter(t => !innerContext.allowedTypes.has(t)))
+    : undefined;
 
   return (
     <>
@@ -153,7 +160,6 @@ export const Toolbar = memo(function Toolbar({
             onSaveView={onSaveView}
             onApplyView={onApplyView}
             onDeleteView={onDeleteView}
-            onAssignSlot={onAssignSlot}
           />
         )}
 
@@ -165,7 +171,7 @@ export const Toolbar = memo(function Toolbar({
             searchTerm={searchTerm}
             onSearchChange={onSearchChange}
             onExecuteSearch={onExecuteSearch}
-            onStartTrace={isAnalysisActive ? undefined : onStartTrace}
+            onStartTrace={isModeLocked || isAnalysisActive ? undefined : onStartTrace}
             allNodes={allNodes}
             selectedSchemas={selectedSchemas}
             types={types}
@@ -179,8 +185,8 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} />
-        <TypeFilterDropdown types={types} onToggleType={onToggleType} />
+        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} disabledSchemas={disabledSchemas} />
+        <TypeFilterDropdown types={types} onToggleType={onToggleType} disabledTypes={disabledTypes} />
         {onToggleExternalRefs && onToggleExternalRefType && (
           <ExternalRefsDropdown
             showExternalRefs={showExternalRefs}
@@ -208,12 +214,13 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
 
         {/* Analysis Dropdown */}
-        <Tooltip content="Graph Analysis">
+        <Tooltip content={isModeLocked && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
           <Button
             ref={analysis.refs.setReference}
             onClick={analysis.toggle}
             variant="icon"
             className={isAnalysisActive ? 'ln-btn-icon-active' : ''}
+            disabled={isModeLocked && !isAnalysisActive}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605" />

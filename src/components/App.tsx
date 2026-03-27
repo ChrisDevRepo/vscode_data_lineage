@@ -11,7 +11,7 @@ import { buildSchemaGraph } from '../engine/graphBuilder';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
+import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, InnerFilterContext } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { loadRules } from '../engine/sqlBodyParser';
@@ -351,13 +351,15 @@ export function App() {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
-  const prevHideIsolatedRef = useRef<boolean | null>(null);
   const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
   /** The currently active advanced bookmark profile (allowlist-based view). */
   const [activeAdvancedProfile, setActiveAdvancedProfile] = useState<FilterProfile | null>(null);
-  /** Saved filter state before an advanced bookmark was applied — restored on exit. */
-  const previousFilterRef = useRef<FilterState | null>(null);
+  /** Saved filter state before entering any locked mode (trace/analysis/bookmark) — restored on exit. */
+  const preModFilterRef = useRef<FilterState | null>(null);
+  /** Saved node positions from a bookmark — applied once after rebuild, then cleared. */
+  const [pendingPositions, setPendingPositions] = useState<Record<string, { x: number; y: number }> | undefined>(undefined);
+  const [pendingViewport, setPendingViewport] = useState<{ x: number; y: number; zoom: number } | undefined>(undefined);
 
   /** Names of allowlist node IDs no longer present in the model (stale objects). */
   const bookmarkStaleNames = useMemo(() => {
@@ -367,6 +369,91 @@ export function App() {
       .filter(id => !model.catalog[id])
       .map(id => id.split('.').pop()?.replace(/[\[\]]/g, '') ?? id);
   }, [activeAdvancedProfile, model]);
+
+  /** True when any locked mode (trace/analysis/advanced-bookmark) is active. */
+  const isModeLocked = (
+    trace.mode === 'applied' || trace.mode === 'path-applied' ||
+    !!analysisMode ||
+    !!activeAdvancedProfile
+  );
+
+  /**
+   * Active filter context — schemas and types visible in the current mode.
+   * Schemas/types NOT in these sets are shown grayed-out in filter dropdowns.
+   */
+  const innerContext = useMemo((): InnerFilterContext | null => {
+    if (!model) return null;
+    let nodeIds: string[] = [];
+    if (trace.mode === 'applied' || trace.mode === 'path-applied') {
+      nodeIds = Array.from(trace.tracedNodeIds);
+    } else if (analysisMode) {
+      if (analysisMode.activeGroupId) {
+        const group = analysisMode.result.groups.find(g => g.id === analysisMode.activeGroupId);
+        nodeIds = group?.nodeIds ?? [];
+      } else {
+        nodeIds = analysisMode.result.groups.flatMap(g => g.nodeIds);
+      }
+    } else if (activeAdvancedProfile) {
+      nodeIds = activeAdvancedProfile.filter.allowlistNodeIds ?? [];
+    } else {
+      return null;
+    }
+    const nodeSet = new Set(nodeIds);
+    const allowedSchemas = new Set<string>();
+    const allowedTypes = new Set<ObjectType>();
+    for (const n of model.nodes) {
+      if (nodeSet.has(n.id)) {
+        allowedSchemas.add(n.schema);
+        allowedTypes.add(n.type);
+      }
+    }
+    return { allowedSchemas, allowedTypes };
+  }, [model, trace.mode, trace.tracedNodeIds, analysisMode, activeAdvancedProfile]);
+
+  // ── Mode-lock filter save/restore ─────────────────────────────────────────
+  // Refs to access current values inside the effect without re-firing on every change
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+  const modelRef = useRef(model);
+  modelRef.current = model;
+  const configRef = useRef(config);
+  configRef.current = config;
+  const innerContextRef = useRef(innerContext);
+  innerContextRef.current = innerContext;
+  const rebuildRef = useRef(rebuild);
+  rebuildRef.current = rebuild;
+  const prevIsModeLocked = useRef(false);
+
+  useEffect(() => {
+    const entering = isModeLocked && !prevIsModeLocked.current;
+    const leaving = !isModeLocked && prevIsModeLocked.current;
+    prevIsModeLocked.current = isModeLocked;
+
+    if (entering && !preModFilterRef.current) {
+      // Save current filter (before narrowing) — skip if already explicitly saved
+      preModFilterRef.current = filterRef.current;
+      // Narrow schemas/types to mode scope — NO rebuild (graph already shows mode subset)
+      const ic = innerContextRef.current;
+      if (ic) {
+        setFilter(prev => ({
+          ...prev,
+          schemas: ic.allowedSchemas.size > 0
+            ? new Set([...prev.schemas].filter(s => ic.allowedSchemas.has(s)))
+            : prev.schemas,
+          types: ic.allowedTypes.size > 0
+            ? new Set([...prev.types].filter(t => ic.allowedTypes.has(t))) as FilterState['types']
+            : prev.types,
+        }));
+      }
+    } else if (leaving) {
+      const saved = preModFilterRef.current;
+      preModFilterRef.current = null;
+      if (saved && modelRef.current) {
+        setFilter(saved);
+        rebuildRef.current(modelRef.current, saved, configRef.current);
+      }
+    }
+  }, [isModeLocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = useCallback(() => {
     if (model) {
@@ -547,11 +634,14 @@ export function App() {
 
   // ── Overview mode (schema-level view) ───────────────────────────────────────
 
+  const schemasKey = useMemo(() => [...filter.schemas].sort().join(','), [filter.schemas]);
+
   const { graphMode, enteredFocusFromOverview, toggleMode, enterFocusFromOverview, resetUserChoice } = useOverviewMode({
     model,
     flowNodes,
     config,
     searchTerm: filter.searchTerm,
+    schemasKey,
     onSetFocusSchema: handleSetFocusSchema,
   });
 
@@ -645,7 +735,9 @@ export function App() {
     setInfoBarNodeId(null);
 
     if (type === 'orphans' && filter.hideIsolated) {
-      prevHideIsolatedRef.current = true;
+      // Pre-save filter (with hideIsolated: true) before we change it,
+      // so the mode-lock useEffect restores the correct value on exit.
+      preModFilterRef.current = filter;
       const nextFilter = { ...filter, hideIsolated: false };
       setFilter(nextFilter);
       setAnalysisMode(null);
@@ -684,15 +776,10 @@ export function App() {
   }, [highlightedNodeId, flowNodes, handleAddExclusionPattern]);
 
   const closeAnalysis = useCallback(() => {
+    // Filter restore is handled by the isModeLocked useEffect when analysisMode → null
     endTrace();
-    if (prevHideIsolatedRef.current !== null) {
-      const nextFilter = { ...filter, hideIsolated: true };
-      setFilter(nextFilter);
-      if (model) rebuild(model, nextFilter, config);
-      prevHideIsolatedRef.current = null;
-    }
     setAnalysisMode(null);
-  }, [endTrace, filter, model, config, rebuild]);
+  }, [endTrace]);
 
   const selectAnalysisGroup = useCallback((groupId: string) => {
     if (!analysisMode || !graph) return;
@@ -755,9 +842,13 @@ export function App() {
   const handleApplyView = useCallback((profile: FilterProfile) => {
     overviewActionsRef.current.resetUserChoice();
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
+    if (profile.positions && Object.keys(profile.positions).length > 0) {
+      setPendingPositions(profile.positions);
+      setPendingViewport(profile.viewport);
+    }
     if (isAdvanced) {
-      // Save current filter so "Exit View" can restore it
-      if (!previousFilterRef.current) previousFilterRef.current = filter;
+      // Explicitly save filter NOW (before state changes) so the mode-lock useEffect finds it set
+      if (!preModFilterRef.current) preModFilterRef.current = filter;
       const restored = deserializeFilter(profile.filter);
       // Override schemas/types to "all" so the allowlist is not pre-filtered out
       if (model) restored.schemas = new Set(model.schemas.map(s => s.name));
@@ -847,14 +938,14 @@ export function App() {
   }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
 
   const handleExitAdvancedBookmark = useCallback(() => {
-    const prev = previousFilterRef.current;
-    previousFilterRef.current = null;
+    // Filter restore is handled by the isModeLocked useEffect when activeAdvancedProfile → null
     setActiveAdvancedProfile(null);
-    if (prev) {
-      setFilter(prev);
-      if (model) rebuild(model, prev, config);
-    }
-  }, [model, config, rebuild]);
+  }, []);
+
+  const handlePendingPositionsApplied = useCallback(() => {
+    setPendingPositions(undefined);
+    setPendingViewport(undefined);
+  }, []);
 
   const handleRemoveFromView = useCallback((nodeId: string) => {
     setFilter(f => {
@@ -930,43 +1021,6 @@ export function App() {
     });
     vscodeApi.postMessage({ type: 'delete-view', projectId: activeProjectId, profileId });
   }, [activeProjectId, lastOpenedId, vscodeApi]);
-
-  const handleAssignSlot = useCallback((profileId: string, slot: number | null) => {
-    if (!activeProjectId) return;
-    const project = projects.find(p => p.id === activeProjectId);
-    if (!project) return;
-    const profiles = project.filterProfiles ?? [];
-    const newSlot = slot !== null ? slot as FilterProfile['slot'] : undefined;
-    // Update target profile + clear slot from any other profile that had it
-    const updatedProfiles = profiles.map(fp => {
-      if (fp.id === profileId) return { ...fp, slot: newSlot };
-      if (slot !== null && fp.slot === slot) return { ...fp, slot: undefined };
-      return fp;
-    });
-    // Post save-view for each changed profile
-    updatedProfiles.forEach((fp, i) => {
-      if (fp !== profiles[i]) {
-        vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: fp });
-      }
-    });
-    setProjects(prev => prev.map(p => {
-      if (p.id !== activeProjectId) return p;
-      return { ...p, filterProfiles: updatedProfiles };
-    }));
-  }, [activeProjectId, projects, vscodeApi]);
-
-  // Alt+1–9: apply bookmarked view for that slot
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!e.altKey) return;
-      const digit = parseInt(e.key, 10);
-      if (isNaN(digit) || digit < 1 || digit > 9) return;
-      const profile = filterProfiles.find(p => p.slot === digit);
-      if (profile) handleApplyView(profile);
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [filterProfiles, handleApplyView]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -1071,13 +1125,17 @@ export function App() {
         onSaveView={handleSaveView}
         onApplyView={handleApplyView}
         onDeleteView={handleDeleteView}
-        onAssignSlot={handleAssignSlot}
+        isModeLocked={isModeLocked}
+        innerContext={innerContext}
         onSaveTraceBookmark={activeProjectId ? handleSaveTraceAsBookmark : undefined}
         onSaveAnalysisBookmark={activeProjectId ? handleSaveAnalysisBookmark : undefined}
         onRemoveFromView={handleRemoveFromView}
         activeAdvancedProfile={activeAdvancedProfile}
         bookmarkStaleNames={bookmarkStaleNames}
         onExitAdvancedBookmark={handleExitAdvancedBookmark}
+        pendingPositions={pendingPositions}
+        pendingViewport={pendingViewport}
+        onPendingPositionsApplied={handlePendingPositionsApplied}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
@@ -1097,7 +1155,7 @@ export function App() {
           externalType={contextMenu.externalType}
           externalUrl={contextMenu.externalUrl}
           fullName={contextMenu.fullName}
-          isTracing={trace.mode !== 'none' || !!analysisMode}
+          isTracing={isModeLocked}
           onClose={() => setContextMenu(null)}
           onTrace={(nodeId) => startTraceConfig(nodeId)}
           onFindPath={(nodeId) => startPathFinding(nodeId)}

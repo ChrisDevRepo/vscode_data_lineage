@@ -64,7 +64,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                 className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                 aria-label="Toggle all external references"
               />
-              <span className="text-sm font-medium">External Refs</span>
+              <span className="text-sm">External Refs</span>
             </div>
 
             {/* Sub-filters (only interactive when master is ON) */}

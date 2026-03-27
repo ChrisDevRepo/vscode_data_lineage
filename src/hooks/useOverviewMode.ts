@@ -7,6 +7,8 @@ interface UseOverviewModeOptions {
   flowNodes: FlowNode[];
   config: ExtensionConfig;
   searchTerm: string;
+  /** Sorted comma-separated schema names — changing this value resets the auto-trigger guard. */
+  schemasKey: string;
   /** Called when entering focus from overview — always sets the schema (never toggles off). */
   onSetFocusSchema: (schema: string) => void;
 }
@@ -25,6 +27,7 @@ export function useOverviewMode({
   flowNodes,
   config,
   searchTerm,
+  schemasKey,
   onSetFocusSchema,
 }: UseOverviewModeOptions): UseOverviewModeResult {
   const [graphMode, setGraphMode] = useState<GraphMode>('full');
@@ -42,13 +45,25 @@ export function useOverviewMode({
     }
   }, [model]);
 
-  // Auto-trigger overview when flowNodes exceeds threshold
+  // Reset auto-trigger guard when schema selection changes (not on other filter changes)
+  const prevSchemasKey = useRef(schemasKey);
+  useEffect(() => {
+    if (schemasKey !== prevSchemasKey.current) {
+      prevSchemasKey.current = schemasKey;
+      userChoseMode.current = false;
+    }
+  }, [schemasKey]);
+
+  // Bidirectional auto-trigger: overview when above threshold, full when at/below threshold
   useEffect(() => {
     if (!config.overview.enabled) return;
     if (userChoseMode.current) return;
     if (flowNodes.length > config.overview.threshold) {
       setGraphMode('overview');
+    } else if (graphMode === 'overview') {
+      setGraphMode('full');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowNodes.length, config.overview.enabled, config.overview.threshold]);
 
   // Auto-exit overview when user types a search term

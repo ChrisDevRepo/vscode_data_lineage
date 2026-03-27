@@ -381,6 +381,16 @@ export interface FilterState {
   allowlistNodeIds?: Set<string>;
 }
 
+/**
+ * Active filter context for trace / analysis / advanced-bookmark modes.
+ * Schemas and types NOT in these sets are shown grayed-out and disabled in the
+ * filter dropdowns. The user can still reduce within this scope but cannot extend.
+ */
+export interface InnerFilterContext {
+  allowedSchemas: Set<string>;
+  allowedTypes: Set<ObjectType>;
+}
+
 export interface TraceState {
   mode: 'none' | 'configuring' | 'applied' | 'filtered' | 'pathfinding' | 'path-applied' | 'analysis';
   analysisType?: AnalysisType;

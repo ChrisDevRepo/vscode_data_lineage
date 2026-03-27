@@ -12,6 +12,8 @@ import {
   getNeighbors, runBfsTrace, runAnalysis, searchDdl, validateSaveView,
 } from '../src/ai/tools';
 import { safeRegex } from '../src/utils/modelSearch';
+import { addFilterProfile, createProject } from '../src/engine/projectStore';
+import type { FilterProfile, ProjectStore } from '../src/engine/projectStore';
 import type { DatabaseModel } from '../src/engine/types';
 import type Graph from 'graphology';
 
@@ -50,8 +52,8 @@ async function testSchemasSummary(model: DatabaseModel) {
 
   const humanResources = schemas.find(s => s.name === 'HumanResources');
   assert(humanResources !== undefined, 'schema HumanResources present');
-  const hrTables = humanResources?.tables as number;
-  assert(hrTables > 0, `HumanResources.tables > 0 (got ${hrTables})`);
+  const hrTables = humanResources?.t as number;
+  assert(hrTables > 0, `HumanResources.t > 0 (got ${hrTables})`);
 }
 
 async function testSearchObjects(model: DatabaseModel) {
@@ -88,8 +90,8 @@ async function testGetObjectDetail(model: DatabaseModel) {
 
   const columns = detail.columns as Array<Record<string, unknown>>;
   assert(columns.length > 0, `columns.length > 0 (got ${columns.length})`);
-  assert(columns.every(c => 'is_primary_key' in c), 'all columns have is_primary_key');
-  const pkCols = columns.filter(c => c.is_primary_key === true);
+  assert(columns.every(c => 'n' in c && 't' in c), 'all columns have n (name) and t (type)');
+  const pkCols = columns.filter(c => c.pk !== undefined);
   assert(pkCols.length > 0, `at least one PK column (got ${pkCols.length})`);
 
   // FK list
@@ -107,18 +109,20 @@ async function testGetNeighbors(model: DatabaseModel) {
 
   const r = getNeighbors(model, node.id) as Record<string, unknown>;
   assert(!isError(r), 'getNeighbors: no error');
-  assertEq(r.node_id as string, node.id, 'node_id matches');
-  assert(Array.isArray(r.upstream), 'upstream is array');
-  assert(Array.isArray(r.downstream), 'downstream is array');
+  assertEq(r.id as string, node.id, 'id matches');
+  const upArr = r.up as unknown[] | undefined;
+  const dnArr = r.dn as unknown[] | undefined;
+  assert(upArr === undefined || Array.isArray(upArr), 'up is array or absent');
+  assert(dnArr === undefined || Array.isArray(dnArr), 'dn is array or absent');
   assert(
-    (r.upstream as unknown[]).length + (r.downstream as unknown[]).length > 0,
+    (upArr?.length ?? 0) + (dnArr?.length ?? 0) > 0,
     'Employee has at least one neighbor',
   );
 
   // direction filter
   const downOnly = getNeighbors(model, node.id, 'downstream') as Record<string, unknown>;
-  assert(Array.isArray(downOnly.downstream), 'downstream-only: downstream present');
-  assertEq((downOnly.upstream as unknown[]).length, 0, 'downstream-only: upstream empty');
+  assert(Array.isArray(downOnly.dn), 'downstream-only: dn present');
+  assert(downOnly.up === undefined, 'downstream-only: up absent');
 
   // not_found
   const bad = getNeighbors(model, '[ghost].[node]') as Record<string, unknown>;
@@ -231,6 +235,50 @@ async function testValidateSaveView(model: DatabaseModel) {
   assert(badIds.success === false, 'unknown id: success false');
   assert(Array.isArray(badIds.errors), 'unknown id: errors array present');
   assert('hint' in badIds, 'unknown id: hint present');
+
+  // Realistic: Person.EmailAddress + neighbors — "EmailAddress Full Lineage"
+  const emailNode = model.nodes.find(n => n.schema === 'Person' && n.name === 'EmailAddress');
+  assert(emailNode !== undefined, 'Person.EmailAddress node found in model');
+  if (emailNode) {
+    const nb = model.neighborIndex[emailNode.id];
+    const neighborIds = [...(nb?.in ?? []), ...(nb?.out ?? [])].slice(0, 4);
+    const lineageIds = [emailNode.id, ...neighborIds];
+
+    const aiResult = validateSaveView(model, lineageIds, 'EmailAddress Full Lineage') as Record<string, unknown>;
+    assert(aiResult.success === true, 'EmailAddress lineage: validateSaveView succeeds');
+    assertEq(aiResult.name as string, 'EmailAddress Full Lineage', 'EmailAddress lineage: name trimmed and returned');
+    const resultIds = aiResult.node_ids as string[];
+    assertEq(resultIds.length, lineageIds.length, `EmailAddress lineage: all ${lineageIds.length} node_ids returned`);
+    assert(resultIds.includes(emailNode.id), 'EmailAddress lineage: origin node present in node_ids');
+
+    // Verify the FilterProfile that extension.ts would create has source:'ai' and allowlistNodeIds
+    const mockStore: ProjectStore = { schemaVersion: 1, projects: [], lastOpenedId: null };
+    const project = createProject('Test', { type: 'dacpac', path: 'test.dacpac', dspName: 'Test' });
+    const storeWithProject: ProjectStore = { schemaVersion: 1, projects: [project], lastOpenedId: null };
+    const profile: FilterProfile = {
+      id: 'test-ai-profile',
+      name: (aiResult.name as string),
+      createdAt: new Date().toISOString(),
+      source: 'ai',
+      filter: {
+        schemas: [],
+        types: ['table', 'view', 'procedure', 'function', 'external'],
+        searchTerm: '',
+        hideIsolated: false,
+        focusSchemas: [],
+        showExternalRefs: true,
+        externalRefTypes: ['file', 'db'],
+        exclusionPatterns: [],
+        allowlistNodeIds: resultIds,
+      },
+    };
+    const updated = addFilterProfile(storeWithProject, project.id, profile);
+    const stored = updated.projects[0].filterProfiles?.find(fp => fp.id === 'test-ai-profile');
+    assert(stored !== undefined, 'AI profile stored in project');
+    assertEq(stored?.source, 'ai', 'stored profile has source="ai"');
+    assert(Array.isArray(stored?.filter.allowlistNodeIds), 'stored profile has allowlistNodeIds array');
+    assertEq(stored?.filter.allowlistNodeIds?.length, lineageIds.length, 'stored allowlistNodeIds length matches lineage');
+  }
 }
 
 async function testSafeRegex() {

@@ -193,7 +193,7 @@ export const CreateFlow = memo(function CreateFlow({
                 />
                 <div
                   className={`text-xs px-1 ${overLimit ? 'ln-status-warning rounded px-2 py-1' : ''}`}
-                  style={{ color: overLimit ? undefined : 'var(--ln-fg-dim)' }}
+                  style={{ color: overLimit ? undefined : 'var(--ln-wizard-fg-dim)' }}
                 >
                   {overLimit
                     ? `⚠ ${selectedCount.toLocaleString()} objects selected — exceeds the ${maxNodes} node limit. Largest schemas will be trimmed.`

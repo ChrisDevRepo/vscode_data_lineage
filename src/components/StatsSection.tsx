@@ -291,11 +291,9 @@ function StatsResults({ stats, mode }: {
               onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.name); } } : undefined}
             >
               <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }} title={col.name}>
-                {canExpand && (
-                  <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)' }}>
-                    <ChevronIcon expanded={showDetail} />
-                  </span>
-                )}
+                <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)', visibility: canExpand ? 'visible' : 'hidden' }}>
+                  <ChevronIcon expanded={showDetail} />
+                </span>
                 <span style={cellClip}>{col.name}</span>
               </div>
               <div style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></div>

@@ -10,7 +10,6 @@ interface SavedViewsDropdownProps {
   onSaveView: (name: string) => void;
   onApplyView: (profile: FilterProfile) => void;
   onDeleteView: (profileId: string) => void;
-  onAssignSlot?: (profileId: string, slot: number | null) => void;
 }
 
 export const SavedViewsDropdown = memo(function SavedViewsDropdown({
@@ -19,13 +18,11 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   onSaveView,
   onApplyView,
   onDeleteView,
-  onAssignSlot,
 }: SavedViewsDropdownProps) {
   const { isOpen, toggle, close, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [slotPickerOpen, setSlotPickerOpen] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Reset internal state when dropdown closes
@@ -34,7 +31,6 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
       setIsAdding(false);
       setNewName('');
       setConfirmDeleteId(null);
-      setSlotPickerOpen(null);
     }
   }, [isOpen]);
 
@@ -50,35 +46,23 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
     setIsAdding(false);
   };
 
-  const assignedSlotCount = filterProfiles.filter(p => p.slot !== undefined).length;
-
   return (
     <>
-      <span className="relative inline-flex">
-        <Button
-          ref={refs.setReference}
-          onClick={() => isEnabled && toggle()}
-          variant="icon"
-          title={isEnabled ? 'Bookmarks' : 'Open a project to use bookmarks'}
-          disabled={!isEnabled}
-          aria-expanded={isOpen}
-          aria-haspopup="menu"
-          style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
-        >
-          {/* Heroicons bookmark */}
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
-          </svg>
-        </Button>
-        {assignedSlotCount > 0 && (
-          <span
-            className="absolute -top-1 -right-1 w-4 h-4 text-[9px] font-bold rounded-full flex items-center justify-center pointer-events-none"
-            style={{ background: 'var(--ln-button-bg)', color: 'var(--ln-button-fg)' }}
-          >
-            {assignedSlotCount}
-          </span>
-        )}
-      </span>
+      <Button
+        ref={refs.setReference}
+        onClick={() => isEnabled && toggle()}
+        variant="icon"
+        title={isEnabled ? 'Bookmarks' : 'Open a project to use bookmarks'}
+        disabled={!isEnabled}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
+      >
+        {/* Heroicons bookmark */}
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+        </svg>
+      </Button>
 
       <FloatingPortal>
         {isOpen && (
@@ -156,104 +140,44 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                     );
                   }
                   return (
-                    <div key={profile.id}>
-                      <div
-                        className="flex items-center gap-1 px-2 py-1 rounded ln-list-item"
-                        role="menuitem"
-                      >
-                        {/* Slot badge — shows assigned slot or '#' as hint; click to open picker */}
-                        {onAssignSlot && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSlotPickerOpen(v => (v === profile.id ? null : profile.id));
-                            }}
-                            title={profile.slot
-                              ? `Alt+${profile.slot} — click to change`
-                              : 'Assign keyboard shortcut (Alt+1–9)'}
-                            className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-[10px] font-mono rounded ln-list-item"
-                            style={profile.slot
-                              ? { color: 'var(--ln-text-link)', fontWeight: 700 }
-                              : { opacity: 0.35 }}
+                    <div
+                      key={profile.id}
+                      className="flex items-center gap-1 px-2 py-1 rounded ln-list-item"
+                      role="menuitem"
+                    >
+                      <span className="flex-1 text-sm truncate flex items-center gap-1" title={profile.name}>
+                        {profile.name}
+                        {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 && (
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            className="w-3 h-3 flex-shrink-0"
+                            style={{ color: 'var(--ln-analysis-fg)', opacity: 0.8 }}
+                            aria-label="Advanced bookmark"
                           >
-                            {profile.slot ?? '#'}
-                          </button>
-                        )}
-                        <span className="flex-1 text-sm truncate flex items-center gap-1" title={profile.name}>
-                          {profile.name}
-                          {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 && (
-                            <span
-                              className="text-[9px] px-1 rounded flex-shrink-0"
-                              style={{
-                                border: '1px solid var(--ln-analysis-border)',
-                                color: 'var(--ln-analysis-fg)',
-                                lineHeight: '14px',
-                              }}
-                            >
-                              {profile.source === 'ai' ? 'AI' : profile.source === 'trace' ? 'trace' : profile.source === 'analysis' ? 'analysis' : 'adv'}
-                            </span>
-                          )}
-                        </span>
-                        <Button
-                          variant="primary"
-                          className="h-6 px-2 text-xs flex-shrink-0"
-                          onClick={() => { onApplyView(profile); close(); }}
-                          title={`Apply "${profile.name}"`}
-                        >
-                          Apply
-                        </Button>
-                        <button
-                          className="flex-shrink-0 p-0.5 rounded ln-list-item"
-                          onClick={() => setConfirmDeleteId(profile.id)}
-                          title={`Delete "${profile.name}"`}
-                          aria-label={`Delete ${profile.name}`}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                            <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
                           </svg>
-                        </button>
-                      </div>
-
-                      {/* Inline slot picker — expands below the row */}
-                      {onAssignSlot && slotPickerOpen === profile.id && (
-                        <div className="px-2 pb-1.5 pt-0.5 flex items-center gap-0.5">
-                          {([1,2,3,4,5,6,7,8,9] as const).map(n => {
-                            const takenBy = filterProfiles.find(fp => fp.slot === n && fp.id !== profile.id);
-                            const isCurrent = profile.slot === n;
-                            return (
-                              <button
-                                key={n}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onAssignSlot(profile.id, isCurrent ? null : n);
-                                  setSlotPickerOpen(null);
-                                }}
-                                title={takenBy
-                                  ? `Slot ${n} used by "${takenBy.name}"`
-                                  : isCurrent
-                                    ? `Remove Alt+${n}`
-                                    : `Assign Alt+${n}`}
-                                className="w-6 h-6 text-[10px] font-mono rounded flex items-center justify-center ln-list-item"
-                                style={isCurrent
-                                  ? { background: 'var(--ln-button-bg)', color: 'var(--ln-button-fg)', fontWeight: 700 }
-                                  : takenBy
-                                    ? { opacity: 0.35 }
-                                    : undefined}
-                              >
-                                {n}
-                              </button>
-                            );
-                          })}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setSlotPickerOpen(null); }}
-                            className="w-6 h-6 text-[11px] rounded flex items-center justify-center ln-list-item ml-0.5"
-                            title="Close"
-                            style={{ opacity: 0.6 }}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      )}
+                        )}
+                      </span>
+                      <Button
+                        variant="primary"
+                        className="h-6 px-2 text-xs flex-shrink-0"
+                        onClick={() => { onApplyView(profile); close(); }}
+                        title={`Apply "${profile.name}"`}
+                      >
+                        Apply
+                      </Button>
+                      <button
+                        className="flex-shrink-0 p-0.5 rounded ln-list-item"
+                        onClick={() => setConfirmDeleteId(profile.id)}
+                        title={`Delete "${profile.name}"`}
+                        aria-label={`Delete ${profile.name}`}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
                   );
                 })}

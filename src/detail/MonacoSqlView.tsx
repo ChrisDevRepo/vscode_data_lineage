@@ -32,7 +32,7 @@ interface MonacoSqlViewProps {
 
 export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const pendingFindRef = useRef<string | undefined>(undefined);
+  const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const contentListenerRef = useRef<Monaco.IDisposable | null>(null);
   const [monacoTheme, setMonacoTheme] = useState(getMonacoTheme);
 
@@ -43,47 +43,58 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     return () => observer.disconnect();
   }, []);
 
-  // When findQuery changes, store pending; trigger immediately if editor is ready
-  useEffect(() => {
-    pendingFindRef.current = findQuery;
-    if (editorRef.current && findQuery) {
-      triggerFind(editorRef.current, findQuery);
+  // Apply inline search highlights using decorations API
+  function applyHighlights(ed: Monaco.editor.IStandaloneCodeEditor, query: string | undefined) {
+    if (!decorationsRef.current) {
+      decorationsRef.current = ed.createDecorationsCollection([]);
     }
+    if (!query) {
+      decorationsRef.current.set([]);
+      return;
+    }
+    const model = ed.getModel();
+    if (!model) return;
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const matches = model.findMatches(escaped, true, true, false, null, false);
+    decorationsRef.current.set(
+      matches.map(m => ({
+        range: m.range,
+        options: { inlineClassName: 'monaco-search-highlight' },
+      }))
+    );
+    // Scroll to first match
+    if (matches.length > 0) {
+      ed.revealRangeInCenterIfOutsideViewport(matches[0].range);
+    }
+  }
+
+  // When findQuery changes, apply highlights immediately if editor is ready
+  useEffect(() => {
+    if (editorRef.current) {
+      applyHighlights(editorRef.current, findQuery);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findQuery]);
 
-  // Dispose content listener when component unmounts
+  // Dispose decorations and content listener on unmount
   useEffect(() => {
     return () => {
+      decorationsRef.current?.clear();
+      decorationsRef.current = null;
       contentListenerRef.current?.dispose();
       contentListenerRef.current = null;
     };
   }, []);
 
-  function triggerFind(ed: Monaco.editor.IStandaloneCodeEditor, query: string) {
-    requestAnimationFrame(() => {
-      ed.trigger('source', 'editor.action.startFindWithArgs', {
-        searchString: query,
-        isRegex: false,
-        isCaseSensitive: false,
-        matchWholeWord: false,
-      });
-    });
-  }
-
   function handleEditorMount(ed: Monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = ed;
-    // After model content settles (e.g. new node), apply any pending find.
-    // Capture IDisposable so it can be explicitly cleaned up on unmount.
+    // After model content settles (e.g. new node), re-apply highlights.
     contentListenerRef.current?.dispose();
     contentListenerRef.current = ed.onDidChangeModelContent(() => {
-      if (pendingFindRef.current) {
-        triggerFind(ed, pendingFindRef.current);
-      }
+      applyHighlights(ed, findQuery);
     });
     // Apply immediately if query is already set
-    if (pendingFindRef.current) {
-      triggerFind(ed, pendingFindRef.current);
-    }
+    applyHighlights(ed, findQuery);
   }
 
   const sql = node.bodyScript ?? `-- No SQL body available for ${node.fullName}`;

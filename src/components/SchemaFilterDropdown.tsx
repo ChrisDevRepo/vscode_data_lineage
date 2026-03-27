@@ -11,6 +11,8 @@ interface SchemaFilterDropdownProps {
   onSelectAll?: (schemas: string[]) => void;
   onSelectNone?: (schemas: string[]) => void;
   onToggleFocusSchema: (schema: string) => void;
+  /** Schemas that are outside the active mode scope — shown grayed and non-interactive. */
+  disabledSchemas?: Set<string>;
 }
 
 export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
@@ -21,6 +23,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectAll,
   onSelectNone,
   onToggleFocusSchema,
+  disabledSchemas,
 }: SchemaFilterDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [searchTerm, setSearchTerm] = useState('');
@@ -87,34 +90,40 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
             </div>
 
             <div className="overflow-y-auto flex-1">
-              {filteredSchemas.map((schema) => (
-                <div
-                  key={schema}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item"
-                >
-                  {onToggleSchema && (
-                    <input
-                      type="checkbox"
-                      checked={selectedSchemas.has(schema)}
-                      onChange={() => onToggleSchema(schema)}
-                      className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
-                    />
-                  )}
-                  <button
-                    onClick={() => onToggleFocusSchema(schema)}
-                    className="p-1 rounded transition-colors"
-                    title={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}
-                    style={{
-                      color: focusSchemas.has(schema)
-                        ? 'var(--vscode-symbolIcon-functionForeground)'
-                        : 'var(--ln-fg-muted)',
-                    }}
+              {filteredSchemas.map((schema) => {
+                const isDisabled = disabledSchemas?.has(schema) ?? false;
+                return (
+                  <div
+                    key={schema}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item"
+                    style={isDisabled ? { opacity: 0.4, pointerEvents: 'none' } : undefined}
                   >
-                    {focusSchemas.has(schema) ? '⭐' : '☆'}
-                  </button>
-                  <span className="flex-1 text-sm">{schema}</span>
-                </div>
-              ))}
+                    {onToggleSchema && (
+                      <input
+                        type="checkbox"
+                        checked={selectedSchemas.has(schema)}
+                        onChange={() => !isDisabled && onToggleSchema(schema)}
+                        disabled={isDisabled}
+                        className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
+                      />
+                    )}
+                    <button
+                      onClick={() => onToggleFocusSchema(schema)}
+                      disabled={isDisabled}
+                      className="p-1 rounded transition-colors"
+                      title={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}
+                      style={{
+                        color: focusSchemas.has(schema)
+                          ? 'var(--vscode-symbolIcon-functionForeground)'
+                          : 'var(--ln-fg-muted)',
+                      }}
+                    >
+                      {focusSchemas.has(schema) ? '⭐' : '☆'}
+                    </button>
+                    <span className="flex-1 text-sm">{schema}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

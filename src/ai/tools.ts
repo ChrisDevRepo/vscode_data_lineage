@@ -31,6 +31,16 @@ export type AiCapsOverride = { [K in keyof typeof AI_CAPS]?: number };
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
+/** Strip null / undefined / false / '' / [] from a plain object before returning to LLM. */
+function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) =>
+      v !== null && v !== undefined && v !== false && v !== '' &&
+      !(Array.isArray(v) && v.length === 0)
+    )
+  ) as Partial<T>;
+}
+
 /** Map edge types to API-facing names. */
 function edgeApiType(type: string): string {
   return type === 'body' ? 'read' : type;
@@ -92,14 +102,14 @@ export function getContext(
 
 export function getSchemasSummary(model: DatabaseModel) {
   return {
-    schemas: model.schemas.map(s => ({
-      name:       s.name,
-      nodes:      s.nodeCount,
-      tables:     s.types['table']     ?? 0,
-      views:      s.types['view']      ?? 0,
-      procedures: s.types['procedure'] ?? 0,
-      functions:  s.types['function']  ?? 0,
-      external:   s.types['external']  ?? 0,
+    schemas: model.schemas.map(s => strip({
+      name: s.name,
+      n:    s.nodeCount,
+      t:    s.types['table']     || undefined,
+      v:    s.types['view']      || undefined,
+      p:    s.types['procedure'] || undefined,
+      f:    s.types['function']  || undefined,
+      ext:  s.types['external']  || undefined,
     })),
     total_nodes: model.nodes.length,
     total_edges: model.edges.length,
@@ -176,16 +186,14 @@ export function getObjectDetail(
 
   const neighbors = model.neighborIndex[id] ?? { in: [], out: [] };
 
-  const columns = node.columns?.map(c => ({
-    name:              c.name,
-    type:              c.type,
-    nullable:          c.nullable,
-    extra:             c.extra,
-    is_primary_key:    c.pkOrdinal !== undefined,
-    pk_ordinal:        c.pkOrdinal ?? null,
-    unique_constraint: c.unique ?? null,
-    check_constraint:  c.check  ?? null,
-  })) ?? null;
+  const columns = node.columns?.map(c => strip({
+    n:  c.name,
+    t:  c.type,
+    nl: c.nullable  || undefined,
+    pk: c.pkOrdinal ?? undefined,
+    uq: c.unique    || undefined,
+    ck: c.check     || undefined,
+  })) ?? undefined;
 
   const foreignKeys = node.fks?.map(fk => ({
     name:        fk.name,
@@ -196,13 +204,13 @@ export function getObjectDetail(
     on_delete:   fk.onDelete,
   })) ?? null;
 
-  const base = {
+  const base: Record<string, unknown> = {
     id:               node.id,
     schema:           node.schema,
     name:             node.name,
     type:             node.type,
-    external_type:    node.externalType  ?? null,
-    external_url:     node.externalUrl   ?? null,
+    ...(node.externalType ? { external_type: node.externalType } : {}),
+    ...(node.externalUrl  ? { external_url:  node.externalUrl  } : {}),
     columns,
     foreign_keys:     foreignKeys,
     upstream_count:   neighbors.in.length,
@@ -263,10 +271,10 @@ export function getNeighbors(
       });
   }
 
-  const upstream   = direction !== 'downstream' ? mapNeighbors(neighbors.in,  true)  : [];
-  const downstream = direction !== 'upstream'   ? mapNeighbors(neighbors.out, false) : [];
+  const upstream   = direction !== 'downstream' ? mapNeighbors(neighbors.in,  true)  : undefined;
+  const downstream = direction !== 'upstream'   ? mapNeighbors(neighbors.out, false) : undefined;
 
-  return { node_id: id, upstream, downstream };
+  return strip({ id, up: upstream, dn: downstream });
 }
 
 // ─── Tool 6: lineage_run_bfs_trace ───────────────────────────────────────────
@@ -341,14 +349,15 @@ export function runBfsTrace(
 
   const nodes = cappedIds.map(nid => {
     const n = nodeMap.get(nid);
-    return {
-      id:         nid,
-      schema:     n?.schema ?? '',
-      name:       n?.name   ?? nid,
-      type:       n?.type   ?? 'table',
-      depth_up:   upDepth.has(nid)   ? upDepth.get(nid)!   : null,
-      depth_down: downDepth.has(nid) ? downDepth.get(nid)! : null,
-    };
+    return strip({
+      id:  nid,
+      s:   n?.schema      || undefined,
+      n:   n?.name        ?? nid,
+      t:   n?.type        ?? 'table',
+      ext: n?.externalType || undefined,
+      up:  upDepth.get(nid),
+      dn:  downDepth.get(nid),
+    });
   });
 
   return {
