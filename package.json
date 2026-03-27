@@ -533,7 +533,7 @@
             "exclude_schemas": {
               "type": "array",
               "items": { "type": "string" },
-              "description": "Remove results from matching schemas. SQL LIKE patterns: % = any sequence, _ = single char. E.g. 'test%' excludes all test-* schemas, '%test%' excludes any schema containing 'test'."
+              "description": "Remove results from matching schemas. Use % as wildcard (matches any sequence). Exact names also work. E.g. 'test%' excludes all schemas starting with 'test', '%staging%' excludes any schema containing 'staging', 'test_data' matches only 'test_data'."
             },
             "exclude_types": {
               "type": "array",
@@ -576,7 +576,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "BFS trace from an object. By default (include_ddl:true) returns DDL for procedures/views/functions and column lists for tables — use for code review and dependency analysis. Set include_ddl:false for structure-only (hop counts, path shape, no DDL loaded). Include filters (schemas/types) are allowlists; exclude filters (exclude_schemas/exclude_types) are post-filters. Response includes excluded_count when exclusions remove nodes. exclude_schemas supports SQL LIKE patterns: % = any sequence, _ = single char (e.g. 'test%', '%staging%').",
+        "modelDescription": "BFS trace from an object. By default (include_ddl:true) returns DDL for procedures/views/functions and column lists for tables — use for code review and dependency analysis. Set include_ddl:false for structure-only (hop counts, path shape, no DDL loaded). Include filters (schemas/types) are allowlists; exclude filters (exclude_schemas/exclude_types) are post-filters. Response includes excluded_count when exclusions remove nodes. exclude_schemas uses % as wildcard (e.g. 'test%', '%staging%'); other characters including _ are literal.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -615,7 +615,7 @@
             "exclude_schemas": {
               "type": "array",
               "items": { "type": "string" },
-              "description": "Remove nodes in matching schemas. SQL LIKE patterns: % = any sequence, _ = single char. E.g. 'test%' removes all test-* schemas, '%staging%' removes any schema containing 'staging'."
+              "description": "Remove nodes in matching schemas. Use % as wildcard (matches any sequence); other chars including _ are literal. E.g. 'test%' removes all schemas starting with 'test', '%staging%' removes any schema containing 'staging'."
             },
             "exclude_types": {
               "type": "array",
@@ -781,7 +781,7 @@
           },
           "required": ["ids"]
         }
-      },
+      }
     ]
   },
   "scripts": {

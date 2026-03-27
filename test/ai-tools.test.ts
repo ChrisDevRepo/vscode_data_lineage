@@ -1,6 +1,6 @@
 /**
- * Unit tests for src/ai/tools.ts — all 9 pure AI tool functions.
- * Execute with: npx tsx test/ai-tools.test.ts
+ * Unit tests for src/ai/tools.ts — 9 pure tool functions + safeRegex.
+ * Execute with: npx tsx test/ai-tools.test.ts  OR  npm run test:ai
  * Requires: test/AdventureWorks.dacpac
  */
 
@@ -159,7 +159,7 @@ async function testGetObjectDetail(model: DatabaseModel) {
 }
 
 async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
-  console.log('\n── runBfsTrace (structure + DDL) ──');
+  console.log('\n── runBfsTrace ──');
   const node = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
   if (!node) { assert(false, 'HumanResources.Employee not found'); return; }
 
@@ -251,9 +251,8 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   // ── No excluded_count when no exclusions ──
   const rNoExcl = runBfsTrace(model, graph, node.id, 1, 1, undefined, undefined, false) as Record<string, unknown>;
   assert(!('excluded_count' in rNoExcl), 'no excluded_count when no exclusions applied');
-}
 
-async function testRunBfsTruncation(model: DatabaseModel, graph: Graph) {
+  // ── Truncation cap: trace from hub node with high hop depth ──
   console.log('\n── runBfsTrace truncation cap ──');
   let hubId = model.nodes[0].id;
   let maxDegree = 0;
@@ -262,12 +261,11 @@ async function testRunBfsTruncation(model: DatabaseModel, graph: Graph) {
     const deg = n.in.length + n.out.length;
     if (deg > maxDegree) { maxDegree = deg; hubId = id; }
   }
-
-  const r = runBfsTrace(model, graph, hubId, 10, 10, undefined, undefined, false) as Record<string, unknown>;
-  assert(!isError(r), 'large BFS: no error');
-  assert((r.nodes as unknown[]).length <= AI_CAPS.BFS_MAX_NODES, `nodes capped at ${AI_CAPS.BFS_MAX_NODES}`);
-  assert((r.edges as unknown[]).length <= AI_CAPS.BFS_MAX_EDGES, `edges capped at ${AI_CAPS.BFS_MAX_EDGES}`);
-  assert(typeof r.truncated === 'boolean', 'truncated is boolean');
+  const rHub = runBfsTrace(model, graph, hubId, 10, 10, undefined, undefined, false) as Record<string, unknown>;
+  assert(!isError(rHub), 'large BFS: no error');
+  assert((rHub.nodes as unknown[]).length <= AI_CAPS.BFS_MAX_NODES, `nodes capped at ${AI_CAPS.BFS_MAX_NODES}`);
+  assert((rHub.edges as unknown[]).length <= AI_CAPS.BFS_MAX_EDGES, `edges capped at ${AI_CAPS.BFS_MAX_EDGES}`);
+  assert(typeof rHub.truncated === 'boolean', 'truncated is boolean');
 }
 
 async function testRunAnalysis(model: DatabaseModel, graph: Graph) {
@@ -445,7 +443,6 @@ async function main() {
     await testSearchObjects(model);
     await testGetObjectDetail(model);
     await testRunBfsTrace(model, graph);
-    await testRunBfsTruncation(model, graph);
     await testRunAnalysis(model, graph);
     await testSearchDdl(model);
     await testGetDdlBatch(model);
