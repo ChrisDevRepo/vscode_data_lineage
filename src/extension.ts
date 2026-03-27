@@ -902,6 +902,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const store = loadProjectStore(context);
         const updated = updateProject(store, msg.project);
         await saveProjectStore(context, updated);
+        currentProjectId = msg.project.id;
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] Saved: "${msg.project.name}"`);
       },
@@ -1058,6 +1059,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               schemas: msg.schemas,
             };
             const project = createProject(msg.projectName, dbConn);
+            currentProjectId = project.id;
             const store = loadProjectStore(context);
             const updated = updateProject(store, project);
             await saveProjectStore(context, updated);
