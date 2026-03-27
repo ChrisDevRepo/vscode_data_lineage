@@ -1065,7 +1065,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             await handler(message);
           } else {
             outputChannel.debug(
-              `No handler for webview message '${(message as { type: string }).type}' — ` +
+              `[Webview] No handler for '${(message as { type: string }).type}' — ` +
               `payload: ${JSON.stringify(message).slice(0, 120)}`
             );
           }
