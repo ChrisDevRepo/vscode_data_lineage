@@ -27,13 +27,8 @@ export function DetailApp() {
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
 
-  // Sync VS Code theme kind onto <body> for CSS variables
-  useEffect(() => {
-    const kind = (window as unknown as { __THEME_KIND__?: number }).__THEME_KIND__;
-    if (kind !== undefined) {
-      document.body.setAttribute('data-vscode-theme-kind', String(kind));
-    }
-  }, []);
+  // Note: data-vscode-theme-kind is already set as CSS string by getDetailWebviewHtml.
+  // themeChanged messages from the extension update it via the message handler below.
 
   useEffect(() => {
     function handler(e: MessageEvent) {

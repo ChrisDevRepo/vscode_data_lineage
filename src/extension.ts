@@ -488,8 +488,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       if (panelDisposed) return;
       // Main panel: CSS-class string for body attribute
       panel.webview.postMessage({ type: 'themeChanged', kind: getThemeClass(theme.kind) });
-      // Detail panel: numeric kind for Monaco theme mapping + body attribute
-      detailPanel?.webview.postMessage({ type: 'themeChanged', kind: theme.kind });
+      // Detail panel: CSS-class string for body attribute (Monaco reads same attribute)
+      detailPanel?.webview.postMessage({ type: 'themeChanged', kind: getThemeClass(theme.kind) });
     });
     panel.onDidDispose(() => {
       panelDisposed = true;
@@ -1644,7 +1644,8 @@ function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri)
   const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
 
   const nonce = getNonce();
-  const themeKind = vscode.window.activeColorTheme.kind; // numeric — used by DetailApp + Monaco
+  const themeKind = vscode.window.activeColorTheme.kind;  // numeric — for Monaco theme
+  const themeClass = getThemeClass(themeKind);             // string — for CSS variables
 
   return /*html*/ `
     <!DOCTYPE html>
@@ -1656,7 +1657,7 @@ function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri)
         <link rel="stylesheet" type="text/css" href="${stylesUri}">
         <title>Detail</title>
       </head>
-      <body class="vscode-body" data-vscode-theme-kind="${themeKind}" style="margin:0;padding:0;height:100vh;overflow:hidden;">
+      <body class="vscode-body" data-vscode-theme-kind="${themeClass}" style="margin:0;padding:0;height:100vh;overflow:hidden;">
         <div id="root" style="width:100%;height:100%;"></div>
         <script nonce="${nonce}">
           window.__DETAIL_MODE__ = true;

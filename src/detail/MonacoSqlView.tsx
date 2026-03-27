@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
-import * as monacoEditor from 'monaco-editor';
+// Core editor API only — avoids bundling ts/css/html/json language workers (~9MB)
+// Same pattern as microsoft/vscode-cosmosdb
+// eslint-disable-next-line import/no-internal-modules
+import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
 import type * as Monaco from 'monaco-editor';
 import type { LineageNode } from '../engine/types';
 
@@ -10,9 +13,9 @@ loader.config({ monaco: monacoEditor });
 
 function getMonacoTheme(): string {
   const kind = document.body.getAttribute('data-vscode-theme-kind');
-  if (kind === '3') return 'hc-black';
-  if (kind === '4') return 'hc-light';
-  if (kind === '2') return 'vs-dark';
+  if (kind === 'vscode-high-contrast') return 'hc-black';
+  if (kind === 'vscode-high-contrast-light') return 'hc-light';
+  if (kind === 'vscode-dark') return 'vs-dark';
   return 'vs';
 }
 

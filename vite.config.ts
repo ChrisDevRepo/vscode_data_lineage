@@ -24,7 +24,7 @@ export default defineConfig({
         // Code splitting for better performance
         manualChunks: {
           'flow-vendor': ['@xyflow/react'],
-          'monaco-vendor': ['monaco-editor'],
+          'monaco-vendor': ['monaco-editor/esm/vs/editor/editor.api'],
         },
       },
     },

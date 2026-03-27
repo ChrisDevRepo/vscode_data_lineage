@@ -1,11 +1,5 @@
 # Changelog
 
-## [Unreleased] — feature/unified-detail-panel
-
-### Changed
-- **Unified detail panel** — SP/view/function DDL and table detail now open in a single VS Code panel (moveable to a second monitor). Switches between Monaco SQL editor and table grid based on the active node.
-- **Search highlight in detail panel** — Full-text search results open the detail panel with the search term highlighted. SQL view: all occurrences highlighted with F3/Shift+F3 navigation. Table view: matching column names and FK references highlighted.
-
 ## [0.9.6] - 2026-03-26
 
 ### Added
@@ -17,6 +11,7 @@
 - **Platform label** — The extension detects the database platform (SQL Server, Azure SQL, Fabric, Synapse) from both dacpac files and live DB connections.
 
 ### Changed
+- **Unified detail panel** — DDL and table detail open in a single moveable VS Code panel. Switches between Monaco SQL editor and table grid based on node type. Search results open the panel with the search term highlighted (SQL: all occurrences + F3 navigation; table: column and FK names highlighted).
 - **Faster panel restore** — Reopening the panel restores the graph in under a second instead of re-importing the full file.
 
 ## [0.9.5] - 2026-03-24
