@@ -779,7 +779,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && vitest run --config vitest.config.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",
@@ -788,7 +788,10 @@
     "test:sql": "tsx test/tsql-complex.test.ts",
     "test:project": "tsx test/projectStore.test.ts",
     "test:ai": "tsx test/ai-tools.test.ts",
-    "test:db": "tsx test-internal/integration-db.test.ts"
+    "test:hooks": "vitest run --config vitest.config.ts",
+    "test:hooks:watch": "vitest --config vitest.config.ts",
+    "test:db": "tsx test-internal/integration-db.test.ts",
+    "package": "npx @vscode/vsce package"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
@@ -808,6 +811,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4.0.9",
     "@types/mssql": "^9",
     "@types/node": "^20.11.0",
@@ -818,12 +822,14 @@
     "autoprefixer": "^10.4.20",
     "dotenv": "^16",
     "esbuild": "^0.25.0",
+    "happy-dom": "^14.12.3",
     "mssql": "^11",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^3.2.4"
   },
   "overrides": {
     "dompurify": "3.3.3",

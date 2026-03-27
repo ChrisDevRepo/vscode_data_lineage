@@ -924,8 +924,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         });
       },
       'dacpac-visualize': async (msg) => {
+        outputChannel.debug(`[Dacpac] Received: dacpac-visualize — schemas: ${msg.schemas?.join(', ')}`);
         if (!cachedElements) {
-          outputChannel.warn('[Dacpac] Phase 2 requested but no cached elements — aborting');
+          outputChannel.warn(
+            '[Dacpac] Phase 2 aborted — session expired between Phase 1 and schema selection ' +
+            '(no cached elements). Sending session-expired error to webview. ' +
+            'User should reopen the file to retry.'
+          );
+          panel.webview.postMessage({ type: 'db-error', message: 'Session expired — please reopen the file to restart.', phase: 'extract' });
           return;
         }
         const config = await readExtensionConfig();
@@ -1003,8 +1009,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'check-mssql': () => {
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
       },
-      'db-connect': () => withDbProgress(
-        panel, 'Data Lineage: Connecting to database',
+      'db-connect': () => {
+        outputChannel.debug('[DB] Received: db-connect');
+        return withDbProgress(panel, 'Data Lineage: Connecting to database',
         () => promptForConnection(outputChannel),
         (conn, progress, token) => {
           lastConnectionInfo = conn.connectionInfo;
@@ -1012,9 +1019,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             (result) => { allObjectsCache = result; },
             (result) => { platformInfoCache = result; });
         },
-      ),
-      'db-visualize': (msg) => withDbProgress(
-        panel, 'Data Lineage: Loading selected schemas',
+        );
+      },
+      'db-visualize': (msg) => {
+        outputChannel.debug(`[DB] Received: db-visualize — schemas: ${msg.schemas?.join(', ')}`);
+        return withDbProgress(panel, 'Data Lineage: Loading selected schemas',
         async () => {
           if (!lastConnectionInfo) {
             panel.webview.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
@@ -1056,7 +1065,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             outputChannel.info(`[Project] Saved: "${msg.projectName}"`);
           }
         },
-      ),
+      );
+      },
       'save-view': async (msg) => {
         const store = loadProjectStore(context);
         if (!store.projects.some(p => p.id === msg.projectId)) {
@@ -1088,6 +1098,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
 
     panel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
+        outputChannel.debug(`[Webview] → ${(message as { type: string }).type}`);
         try {
           const handler = handlers[message.type] as ((msg: WebviewMessage) => Promise<void> | void) | undefined;
           if (handler) {
@@ -1169,7 +1180,7 @@ async function withDbProgress(
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         const phase = title.includes('Loading') ? 'build' : 'connect';
-        outputChannel.error(`[DB] ${phase} failed: ${errorMsg}`);
+        outputChannel.error(`[DB] ${phase} failed (${title}): ${errorMsg}`);
         panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase });
       } finally {
         if (connectionUri) {
@@ -1483,6 +1494,7 @@ async function runDbPhase1(
   onCachePlatformInfo?: (result: SimpleExecuteResult) => void,
 ): Promise<void> {
   const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
+  outputChannel.info(`[DB] Phase 1 start — ${sourceName}`);
 
   progress.report({ message: 'Loading queries...' });
   const queries = await loadDmvQueries(outputChannel, extensionUri);
@@ -1578,6 +1590,7 @@ async function runDbPhase2(
   platformInfo?: SimpleExecuteResult,
   onModelBuilt?: (model: DatabaseModel) => void,
 ): Promise<void> {
+  outputChannel.info(`[DB] Phase 2 start — schemas: ${schemas.join(', ')} (${schemas.length} selected)`);
   progress.report({ message: 'Loading queries...' });
   const queries = await loadDmvQueries(outputChannel, extensionUri);
 

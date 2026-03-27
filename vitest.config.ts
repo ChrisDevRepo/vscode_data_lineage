@@ -1,0 +1,14 @@
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'happy-dom',
+    globals: true,
+    include: ['test/hooks/**/*.test.tsx', 'test/hooks/**/*.test.ts'],
+    define: {
+      __APP_VERSION__: JSON.stringify('test'),
+    },
+  },
+});
