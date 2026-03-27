@@ -45,32 +45,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
 
       return (
-        <div className="ln-error-boundary">
-          <h2>React Error</h2>
-          <p>Something went wrong in the application.</p>
-          {this.state.error && (
-            <details style={{ marginTop: '10px' }}>
-              <summary>Error Details</summary>
-              <pre>
-                {this.state.error.message}
-                {'\n\n'}
-                {this.state.error.stack}
-              </pre>
-            </details>
-          )}
-          <button
-            onClick={() => window.vscode?.postMessage({ type: 'reload' })}
-            className="ln-btn-primary"
-            style={{
-              marginTop: '15px',
-              padding: '8px 16px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            Reload Extension
-          </button>
+        <div style={{ padding: '12px 16px', color: 'var(--vscode-descriptionForeground)', fontSize: 12 }}>
+          Something went wrong. Click a node again to reload.
         </div>
       );
     }

@@ -4,6 +4,10 @@ import Editor, { loader } from '@monaco-editor/react';
 // Same pattern as microsoft/vscode-cosmosdb
 // eslint-disable-next-line import/no-internal-modules
 import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
+// SQL tokenizer (basic language, no worker) — required for syntax highlighting.
+// editor.api excludes all language contributions; this registers the SQL tokenizer only.
+// eslint-disable-next-line import/no-internal-modules
+import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution';
 import type * as Monaco from 'monaco-editor';
 import type { LineageNode } from '../engine/types';
 
@@ -117,7 +121,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
             readOnly: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            wordWrap: 'on',
+            wordWrap: 'off',
             automaticLayout: true,
             fontSize: 13,
             lineNumbers: 'on',

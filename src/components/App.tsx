@@ -376,9 +376,14 @@ export function App() {
         return toggled;
       });
 
+      const node = model?.nodes.find(n => n.id === nodeId);
+      if (!node) return;
       if (isDetailOpen) {
-        const node = model?.nodes.find(n => n.id === nodeId);
-        if (node) vscodeApi.postMessage({ type: 'update-detail', node, findQuery });
+        vscodeApi.postMessage({ type: 'update-detail', node, findQuery });
+      } else if (findQuery) {
+        // DetailSearchSidebar result clicked — open panel with search term
+        vscodeApi.postMessage({ type: 'show-detail', node, findQuery });
+        setIsDetailOpen(true);
       }
     },
     [model, vscodeApi, isDetailOpen]
@@ -844,14 +849,8 @@ export function App() {
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
-          } else {
-            vscodeApi.postMessage({
-              type: 'show-ddl',
-              objectName: 'SQL Viewer',
-              schema: '',
-              sqlBody: '-- Select a node to view its SQL definition',
-            });
           }
+          // else: no-op — user must select a node first
         }}
       />
 

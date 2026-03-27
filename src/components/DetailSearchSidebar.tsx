@@ -1,7 +1,7 @@
 import { useState, useMemo, useDeferredValue, memo } from 'react';
-import type { ObjectType } from '../engine/types';
+import type { ObjectType, ColumnDef } from '../engine/types';
 import { SidePanel } from './SidePanel';
-import { searchBodyScripts } from '../utils/modelSearch';
+import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
 
 export interface DetailSearchNode {
   id: string;
@@ -9,6 +9,7 @@ export interface DetailSearchNode {
   schema: string;
   type: ObjectType;
   bodyScript?: string;
+  columns?: ColumnDef[];
 }
 
 interface DetailSearchSidebarProps {
@@ -25,9 +26,11 @@ interface SearchResult {
 const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   procedure: 'Procedures',
   view: 'Views',
+  table: 'Tables',
+  external: 'External Tables',
 };
 
-const SEARCHABLE_TYPES = new Set<ObjectType>(['procedure', 'view']);
+const BODY_TYPES = new Set<ObjectType>(['procedure', 'view']);
 
 export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   onClose,
@@ -38,7 +41,10 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   const deferredInput = useDeferredValue(input);
 
   const results = useMemo<SearchResult[]>(() => {
-    return searchBodyScripts(allNodes, deferredInput.trim(), SEARCHABLE_TYPES);
+    const q = deferredInput.trim();
+    const bodyResults = searchBodyScripts(allNodes, q, BODY_TYPES);
+    const colResults = searchColumns(allNodes, q);
+    return [...bodyResults, ...colResults];
   }, [deferredInput, allNodes]);
 
   // Group by display label

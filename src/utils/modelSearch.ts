@@ -1,4 +1,4 @@
-import type { ObjectType } from '../engine/types';
+import type { ObjectType, ColumnDef } from '../engine/types';
 
 export interface SearchableNode {
   id: string;
@@ -7,6 +7,7 @@ export interface SearchableNode {
   type: ObjectType;
   externalType?: string;
   bodyScript?: string;
+  columns?: ColumnDef[];
 }
 
 export interface DdlMatch {
@@ -87,6 +88,30 @@ export function searchBodyScripts(
     if (!node.bodyScript) continue;
     if (!node.bodyScript.toLowerCase().includes(lower)) continue;
     matches.push({ node, snippet: buildSnippet(node.bodyScript, query, contextLines) });
+    if (matches.length >= limit) break;
+  }
+  return matches;
+}
+
+/**
+ * Search table/external nodes by column name (case-insensitive substring).
+ * Returns at most `limit` matches with a snippet of matching column names and types.
+ */
+export function searchColumns(
+  nodes: SearchableNode[],
+  query: string,
+  limit: number = 100,
+): DdlMatch[] {
+  if (query.length < 2) return [];
+  const lower = query.toLowerCase();
+  const matches: DdlMatch[] = [];
+  for (const node of nodes) {
+    if (node.type !== 'table' && node.type !== 'external') continue;
+    if (!node.columns?.length) continue;
+    const matching = node.columns.filter(c => c.name.toLowerCase().includes(lower));
+    if (matching.length === 0) continue;
+    const snippet = matching.slice(0, 3).map(c => `${c.name} (${c.type})`).join(', ');
+    matches.push({ node, snippet });
     if (matches.length >= limit) break;
   }
   return matches;

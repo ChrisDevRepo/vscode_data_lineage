@@ -4,7 +4,7 @@ import * as yaml from 'js-yaml';
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  AI_CAPS,
+  AI_CAPS, type AiCapsOverride,
   getContext, getSchemasSummary, searchObjects, getObjectDetail,
   getNeighbors, runBfsTrace, runAnalysis, searchDdl, validateSaveView,
 } from './ai/tools';
@@ -40,11 +40,48 @@ let lastRulesLabel = 'built-in rules';
 
 // ─── AI bridge (module-level, written by panel closures, read by LM tools) ──
 // Only one panel is ever open at a time — safe to use module-level state.
-let _aiModel:       import('./engine/types').DatabaseModel | null = null;
-let _aiGraph:       Graph | null = null;
-let _aiFilter:      SerializedFilterState | null = null;
-let _aiViews:       FilterProfile[] = [];
-let _aiProjectName: string | null = null;
+let _aiModel:          import('./engine/types').DatabaseModel | null = null;
+let _aiGraph:          Graph | null = null;
+let _aiFilter:         SerializedFilterState | null = null;
+let _aiViews:          FilterProfile[] = [];
+let _aiProjectName:    string | null = null;
+let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; conservative fallback
+
+function isAiEnabled(): boolean {
+  return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
+}
+
+function autoScaleTier(maxInputTokens: number): AiCapsOverride {
+  if (maxInputTokens > 128000) {
+    return { BFS_MAX_NODES: 400, BFS_MAX_EDGES: 600, SEARCH_MAX_RESULTS: 100, ANALYSIS_MAX_GROUPS: 200, MAX_DDL_CHARS: 500000 };
+  }
+  if (maxInputTokens < 32000) {
+    return { BFS_MAX_NODES: 100, BFS_MAX_EDGES: 150, SEARCH_MAX_RESULTS: 20, ANALYSIS_MAX_GROUPS: 50, MAX_DDL_CHARS: 4000 };
+  }
+  return {}; // medium tier: falls through to AI_CAPS defaults in resolve()
+}
+
+/** Caps for the current request. Precedence: explicit VS Code setting > model auto-scale > AI_CAPS defaults. */
+function readAiCaps(): AiCapsOverride {
+  const cfg  = vscode.workspace.getConfiguration('dataLineageViz.ai');
+  const tier = autoScaleTier(_aiMaxInputTokens);
+
+  function resolve(key: keyof typeof AI_CAPS, settingName: string): number {
+    const insp     = cfg.inspect<number>(settingName);
+    const explicit = insp?.globalValue ?? insp?.workspaceValue ?? insp?.workspaceFolderValue;
+    if (explicit !== undefined) return explicit;
+    const scaled = tier[key];
+    return scaled !== undefined ? scaled : AI_CAPS[key];
+  }
+
+  return {
+    SEARCH_MAX_RESULTS:  resolve('SEARCH_MAX_RESULTS',  'searchMaxResults'),
+    BFS_MAX_NODES:       resolve('BFS_MAX_NODES',       'bfsMaxNodes'),
+    BFS_MAX_EDGES:       resolve('BFS_MAX_EDGES',       'bfsMaxEdges'),
+    ANALYSIS_MAX_GROUPS: resolve('ANALYSIS_MAX_GROUPS', 'analysisMaxGroups'),
+    MAX_DDL_CHARS:       resolve('MAX_DDL_CHARS',       'maxDdlChars'),
+  };
+}
 
 function getThemeClass(kind: vscode.ColorThemeKind): string {
   return kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
@@ -187,9 +224,12 @@ export function activate(context: vscode.ExtensionContext) {
     return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(JSON.stringify(data))]);
   }
 
+  const disabled = () => toolResult({ error: 'disabled', hint: 'Enable via dataLineageViz.ai.enabled setting.' });
+
   context.subscriptions.push(
     vscode.lm.registerTool('lineage_get_context', {
       invoke(_options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         outputChannel.debug('[AI] lineage_get_context');
         return toolResult(getContext(m, _aiFilter, _aiProjectName, _aiViews));
@@ -197,6 +237,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.lm.registerTool('lineage_get_schema_summary', {
       invoke(_options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         outputChannel.debug('[AI] lineage_get_schema_summary');
         return toolResult(getSchemasSummary(m));
@@ -204,25 +245,28 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.lm.registerTool('lineage_search_objects', {
       invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { query, types, schemas, external_subtypes } = options.input as {
           query: string; types?: string[]; schemas?: string[]; external_subtypes?: string[];
         };
         outputChannel.debug(`[AI] lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}`);
-        const result = searchObjects(m, query, types as never, schemas, external_subtypes as never);
+        const result = searchObjects(m, query, types as never, schemas, external_subtypes as never, readAiCaps());
         return toolResult(result);
       },
     }),
     vscode.lm.registerTool('lineage_get_object_detail', {
       invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { id } = options.input as { id: string };
         outputChannel.debug(`[AI] lineage_get_object_detail: id="${id}"`);
-        return toolResult(getObjectDetail(m, id));
+        return toolResult(getObjectDetail(m, id, readAiCaps()));
       },
     }),
     vscode.lm.registerTool('lineage_get_neighbors', {
       invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { id, direction, types } = options.input as {
           id: string; direction?: string; types?: string[];
@@ -233,33 +277,36 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.lm.registerTool('lineage_run_bfs_trace', {
       invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const g = requireGraph();
         const { id, upstream_hops, downstream_hops, types, schemas } = options.input as {
           id: string; upstream_hops?: number; downstream_hops?: number; types?: string[]; schemas?: string[];
         };
         outputChannel.debug(`[AI] lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}`);
-        const result = runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3, types as never, schemas);
+        const result = runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3, types as never, schemas, readAiCaps());
         return toolResult(result);
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
       invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const g = requireGraph();
         const { type, min_degree, max_size } = options.input as {
           type: string; min_degree?: number; max_size?: number;
         };
         outputChannel.debug(`[AI] lineage_run_analysis: type="${type}"`);
-        return toolResult(runAnalysis(m, g, type as never, min_degree, max_size));
+        return toolResult(runAnalysis(m, g, type as never, min_degree, max_size, readAiCaps()));
       },
     }),
     vscode.lm.registerTool('lineage_search_ddl', {
       invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { query, types } = options.input as { query: string; types?: string[] };
         outputChannel.debug(`[AI] lineage_search_ddl: query="${query.slice(0, 60)}"`);
-        return toolResult(searchDdl(m, query, types as never));
+        return toolResult(searchDdl(m, query, types as never, readAiCaps()));
       },
     }),
     vscode.lm.registerTool('lineage_save_view', {
@@ -268,6 +315,7 @@ export function activate(context: vscode.ExtensionContext) {
         return { invocationMessage: `Save view "${name}" with ${node_ids?.length ?? 0} objects` };
       },
       invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { name, node_ids } = options.input as { name: string; node_ids: string[] };
         outputChannel.debug(`[AI] lineage_save_view: name="${name}", ids=${node_ids?.length ?? 0}`);
@@ -293,13 +341,39 @@ export function activate(context: vscode.ExtensionContext) {
   // ─── @lineage Chat Participant ─────────────────────────────────────────────
   const participant = vscode.chat.createChatParticipant(
     'dataLineageViz.lineage',
-    async (request, _ctx, stream, token) => {
+    async (request, context, stream, token) => {
+      // Update model context window for auto-scaling caps
+      _aiMaxInputTokens = request.model.maxInputTokens;
+
+      if (!isAiEnabled()) {
+        stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
+        return;
+      }
+
       if (!_aiModel) {
         stream.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first, then ask your question.');
         return;
       }
 
       const lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+
+      // Build conversation history so the model remembers previous turns
+      const historyMessages: vscode.LanguageModelChatMessage[] = [];
+      for (const turn of context.history) {
+        if (turn instanceof vscode.ChatRequestTurn) {
+          historyMessages.push(vscode.LanguageModelChatMessage.User(turn.prompt));
+        } else if (turn instanceof vscode.ChatResponseTurn) {
+          const text = turn.response
+            .filter(p => p instanceof vscode.ChatResponseMarkdownPart)
+            .map(p => (p as vscode.ChatResponseMarkdownPart).value.value)
+            .join('');
+          if (text) {
+            historyMessages.push(new vscode.LanguageModelChatMessage(
+              vscode.LanguageModelChatMessageRole.Assistant, text,
+            ));
+          }
+        }
+      }
 
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(
@@ -312,6 +386,7 @@ export function activate(context: vscode.ExtensionContext) {
           'If a question cannot be answered with the lineage tools, respond exactly: ' +
           '"I can only answer questions about the lineage graph (tables, procedures, dependencies, data flow)."',
         ),
+        ...historyMessages,
         vscode.LanguageModelChatMessage.User(request.prompt),
       ];
 
@@ -583,10 +658,12 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         detailPanel.webview.onDidReceiveMessage(async (msg) => {
           try {
             if (msg.type === 'detail-ready') {
-              // Webview is mounted and listening — flush the buffered first update.
               if (pendingDetailUpdate) {
+                outputChannel.debug(`[Detail] Ready — flushing '${pendingDetailUpdate.node.id}'`);
                 detailPanel?.webview.postMessage({ type: 'detail-update', ...pendingDetailUpdate });
                 pendingDetailUpdate = undefined;
+              } else {
+                outputChannel.debug('[Detail] Ready — pendingUpdate empty (re-mount or duplicate signal)');
               }
             } else if (msg.type === 'error') {
               // React ErrorBoundary + global handlers post here.
@@ -600,7 +677,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             } else if (msg.type === 'close-detail') {
               detailPanel?.dispose();
             } else {
-              outputChannel.debug(`[Detail] Unknown message type: ${(msg as { type: string }).type}`);
+              outputChannel.debug(
+                `[Detail] No handler for '${(msg as { type: string }).type}' — ` +
+                `pendingUpdate: ${pendingDetailUpdate ? 'set' : 'empty'}, ` +
+                `payload: ${JSON.stringify(msg).slice(0, 120)}`
+              );
             }
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
@@ -983,7 +1064,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           if (handler) {
             await handler(message);
           } else {
-            outputChannel.debug(`Unknown webview message type: ${(message as { type: string }).type}`);
+            outputChannel.debug(
+              `No handler for webview message '${(message as { type: string }).type}' — ` +
+              `payload: ${JSON.stringify(message).slice(0, 120)}`
+            );
           }
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);

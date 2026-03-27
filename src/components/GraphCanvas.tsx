@@ -483,6 +483,7 @@ export function GraphCanvas({
                         schema: String(n.data.schema),
                         type: n.data.objectType as ObjectType,
                         bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                        columns: modelNodeMap.get(n.id)?.columns,
                       }))}
                       onResultClick={(nodeId, searchTerm) => {
                         onNodeClick(nodeId, searchTerm);
