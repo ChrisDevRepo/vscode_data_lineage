@@ -77,7 +77,7 @@
       </div>
       <h1>Data Lineage Viz</h1>
       <p class="subtitle">
-        Object-level dependency visualization from .dacpac files or database imports — right inside VS Code. Ask questions about your graph with <strong>@lineage</strong> in GitHub Copilot Chat.
+        Object-level dependency visualization from .dacpac files or database imports — right inside VS Code. Now with <strong>@lineage</strong> AI chat.
       </p>
       <div class="btn-row">
         <a href="https://youtu.be/5yr0yRZAa98" class="btn btn-dark">
@@ -108,25 +108,46 @@
     </div>
   </section>
 
-  <hr class="divider">
-
-  <section style="max-width:800px;margin:0 auto;padding:3rem 1.5rem 1rem;">
-    <div style="background:linear-gradient(135deg,#eff6ff 0%,#f5f3ff 100%);border:1px solid #c7d2fe;border-radius:.75rem;padding:2rem 2.5rem;">
-      <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem;">
-        <span style="font-size:1.5rem;">&#10024;</span>
-        <h2 style="font-size:1.2rem;font-weight:800;color:#0f172a;">Ask @lineage in GitHub Copilot Chat</h2>
+  <section style="background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 60%,#312e81 100%);padding:4rem 1.5rem;text-align:center;">
+    <div style="max-width:720px;margin:0 auto;">
+      <div style="display:inline-flex;align-items:center;gap:.5rem;background:rgba(99,102,241,.25);border:1px solid rgba(165,180,252,.4);border-radius:9999px;padding:.3rem .9rem;margin-bottom:1.5rem;">
+        <span style="font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#a5b4fc;text-transform:uppercase;">New in v0.9.6</span>
+        <span style="font-size:.9rem;">&#10024;</span>
       </div>
-      <p style="font-size:.9rem;color:#475569;margin-bottom:1rem;">
-        Type <code style="background:#e0e7ff;color:#3730a3;padding:.15rem .4rem;border-radius:.25rem;font-size:.85rem;">@lineage</code> in GitHub Copilot Chat to query your loaded graph. The assistant uses 9 dedicated tools — it answers from your actual data, never from general knowledge.
+      <h2 style="font-size:2rem;font-weight:800;color:#fff;margin-bottom:.75rem;line-height:1.2;">
+        Ask <span style="color:#a5b4fc;">@lineage</span> in GitHub Copilot Chat
+      </h2>
+      <p style="font-size:1rem;color:#94a3b8;max-width:560px;margin:0 auto 2rem;">
+        Query your loaded lineage graph in plain English. The assistant uses 9 dedicated tools and answers from your <em style="color:#c7d2fe;">actual data</em> — never from general knowledge.
       </p>
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:.5rem;padding:1rem 1.25rem;font-family:monospace;font-size:.8rem;color:#334155;line-height:2;">
-        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> what schemas are loaded?</div>
-        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> find tables with Employee in the name</div>
-        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> what does HumanResources.Employee depend on?</div>
-        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> trace 3 levels upstream from Sales.SalesOrderDetail</div>
-        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> which objects have more than 10 connections?</div>
+
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:.75rem;overflow:hidden;text-align:left;max-width:580px;margin:0 auto 2rem;box-shadow:0 25px 60px rgba(0,0,0,.5);">
+        <div style="background:#1e293b;padding:.6rem 1rem;display:flex;align-items:center;gap:.5rem;border-bottom:1px solid #334155;">
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#ef4444;display:inline-block;"></span>
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#f59e0b;display:inline-block;"></span>
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+          <span style="font-size:.75rem;color:#64748b;margin-left:.5rem;">GitHub Copilot Chat</span>
+        </div>
+        <div style="padding:1.25rem 1.5rem;font-family:'Consolas','Fira Code',monospace;font-size:.82rem;line-height:2.2;color:#e2e8f0;">
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">what schemas are loaded?</span></div>
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">find tables with Employee in the name</span></div>
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">what does HumanResources.Employee depend on?</span></div>
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">trace 3 levels upstream from Sales.SalesOrderDetail</span></div>
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">which objects have more than 10 connections?</span></div>
+        </div>
       </div>
-      <p style="font-size:.8rem;color:#94a3b8;margin-top:.75rem;">Requires GitHub Copilot extension &amp; VS Code 1.95+. Tools are inactive when no graph is loaded.</p>
+
+      <div style="display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;">
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Answers from your actual data
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> 9 dedicated lineage tools
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Requires GitHub Copilot &amp; VS Code 1.95+
+        </div>
+      </div>
     </div>
   </section>
 
