@@ -29,6 +29,7 @@ interface MonacoSqlViewProps {
 export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const pendingFindRef = useRef<string | undefined>(undefined);
+  const contentListenerRef = useRef<Monaco.IDisposable | null>(null);
   const [monacoTheme, setMonacoTheme] = useState(getMonacoTheme);
 
   // Sync Monaco theme when VS Code theme changes
@@ -46,6 +47,14 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     }
   }, [findQuery]);
 
+  // Dispose content listener when component unmounts
+  useEffect(() => {
+    return () => {
+      contentListenerRef.current?.dispose();
+      contentListenerRef.current = null;
+    };
+  }, []);
+
   function triggerFind(ed: Monaco.editor.IStandaloneCodeEditor, query: string) {
     requestAnimationFrame(() => {
       ed.trigger('source', 'editor.action.startFindWithArgs', {
@@ -59,8 +68,10 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
 
   function handleEditorMount(ed: Monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = ed;
-    // After model content settles (e.g. new node), apply any pending find
-    ed.onDidChangeModelContent(() => {
+    // After model content settles (e.g. new node), apply any pending find.
+    // Capture IDisposable so it can be explicitly cleaned up on unmount.
+    contentListenerRef.current?.dispose();
+    contentListenerRef.current = ed.onDidChangeModelContent(() => {
       if (pendingFindRef.current) {
         triggerFind(ed, pendingFindRef.current);
       }

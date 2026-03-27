@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LineageNode } from '../engine/types';
+import { DEFAULT_CONFIG } from '../engine/types';
 import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';
@@ -20,12 +21,25 @@ interface DetailState {
   config: DetailConfig;
 }
 
+// ─── Defaults ─────────────────────────────────────────────────────────────────
+
+const DEFAULT_DETAIL_CONFIG: DetailConfig = {
+  isDbMode:              false,
+  statsEnabled:          DEFAULT_CONFIG.tableStatistics.enabled,
+  excludeExternalTables: DEFAULT_CONFIG.tableStatistics.excludeExternalTables,
+  standardModeEnabled:   DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
+};
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 export function DetailApp() {
-  const vscodeApi = useRef(acquireVsCodeApi());
+  const vscodeApi  = useRef(acquireVsCodeApi());
+  const nodeIdRef  = useRef<string | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
+
+  // Keep ref in sync so the stable message handler can read the current node id.
+  nodeIdRef.current = detail?.node?.id;
 
   // Note: data-vscode-theme-kind is already set as CSS string by getDetailWebviewHtml.
   // themeChanged messages from the extension update it via the message handler below.
@@ -36,21 +50,11 @@ export function DetailApp() {
       if (!msg?.type) return;
 
       if (msg.type === 'detail-update') {
-        // Reset stats when node changes
-        setStatsState(prev => {
-          const prev_node = detail?.node;
-          if (prev_node?.id !== msg.node?.id) return { phase: 'idle' };
-          return prev;
-        });
+        setStatsState(prev => nodeIdRef.current !== msg.node?.id ? { phase: 'idle' } : prev);
         setDetail({
-          node: msg.node,
+          node:      msg.node,
           findQuery: msg.findQuery,
-          config: msg.config ?? {
-            isDbMode: false,
-            statsEnabled: false,
-            excludeExternalTables: true,
-            standardModeEnabled: false,
-          },
+          config:    msg.config ?? DEFAULT_DETAIL_CONFIG,
         });
       } else if (msg.type === 'table-stats-result') {
         setStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
@@ -62,7 +66,7 @@ export function DetailApp() {
     }
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  });
+  }, []);
 
   if (!detail) {
     return (

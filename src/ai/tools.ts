@@ -434,7 +434,7 @@ export function validateSaveView(
     return { success: false, errors: ['node_ids is empty'], hint: 'Provide at least one node ID from search or trace results.' };
   }
 
-  const unknownIds = nodeIds.filter(id => !model.catalog[id] && !model.nodes.find(n => n.id === id));
+  const unknownIds = nodeIds.filter(id => !model.catalog[id]);
   if (unknownIds.length > 0) {
     const sample = unknownIds.slice(0, 3).join(', ');
     return {

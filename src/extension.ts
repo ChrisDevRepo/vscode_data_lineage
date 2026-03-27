@@ -92,23 +92,29 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration(async (e) => {
       if (!activePanel) return;
 
-      if (e.affectsConfiguration('dataLineageViz.parseRulesFile') || e.affectsConfiguration('dataLineageViz.excludePatterns')) {
-        const label = e.affectsConfiguration('dataLineageViz.parseRulesFile') ? 'Parse rules' : 'Exclude patterns';
-        const action = await vscode.window.showInformationMessage(
-          `${label} changed. Reload your data source to apply.`,
-          'Reload'
-        );
-        if (action === 'Reload') {
-          vscode.commands.executeCommand('dataLineageViz.open');
+      try {
+        if (e.affectsConfiguration('dataLineageViz.parseRulesFile') || e.affectsConfiguration('dataLineageViz.excludePatterns')) {
+          const label = e.affectsConfiguration('dataLineageViz.parseRulesFile') ? 'Parse rules' : 'Exclude patterns';
+          const action = await vscode.window.showInformationMessage(
+            `${label} changed. Reload your data source to apply.`,
+            'Reload'
+          );
+          if (action === 'Reload') {
+            vscode.commands.executeCommand('dataLineageViz.open');
+          }
+          return;
         }
-        return;
-      }
 
-      // All other settings: auto-push to webview → triggers rebuild
-      if (e.affectsConfiguration('dataLineageViz')) {
-        const config = await readExtensionConfig();
-        activePanel.webview.postMessage({ type: 'config-only', config });
-        outputChannel.debug('[Config] Settings changed — pushed to webview');
+        // All other settings: auto-push to webview → triggers rebuild
+        if (e.affectsConfiguration('dataLineageViz')) {
+          const config = await readExtensionConfig();
+          // Re-check after await — panel may have been disposed while waiting
+          if (!activePanel) return;
+          activePanel.webview.postMessage({ type: 'config-only', config });
+          outputChannel.debug('[Config] Settings changed — pushed to webview');
+        }
+      } catch (err) {
+        outputChannel.error(`[Config] onDidChangeConfiguration failed: ${err instanceof Error ? err.message : err}`);
       }
     })
   );
@@ -159,6 +165,7 @@ export function activate(context: vscode.ExtensionContext) {
         }));
       });
 
+      qp.onDidHide(() => qp.dispose());
       qp.show();
     }),
   );
@@ -356,7 +363,13 @@ export function activate(context: vscode.ExtensionContext) {
         return runWithTools(); // recurse until no more tool calls
       };
 
-      await runWithTools();
+      try {
+        await runWithTools();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        outputChannel.error(`[AI] Chat handler failed: ${msg}`);
+        stream.markdown(`\n\n*Error: ${msg}*`);
+      }
     },
   );
   context.subscriptions.push(participant);
@@ -561,10 +574,17 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         );
         detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, context.extensionUri);
         detailPanel.webview.onDidReceiveMessage(async (msg) => {
-          if (msg.type === 'table-stats-request') {
-            await handleTableStatsRequest(lastConnectionInfo, detailPanel!, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
-          } else if (msg.type === 'close-detail') {
-            detailPanel?.dispose();
+          try {
+            if (msg.type === 'table-stats-request') {
+              await handleTableStatsRequest(lastConnectionInfo, detailPanel!, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
+            } else if (msg.type === 'close-detail') {
+              detailPanel?.dispose();
+            } else {
+              outputChannel.debug(`[Detail] Unknown message type: ${(msg as { type: string }).type}`);
+            }
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            outputChannel.error(`[Detail] Message handler failed for "${(msg as { type: string }).type}": ${errorMsg}`);
           }
         });
         detailPanel.onDidDispose(() => {
@@ -1580,9 +1600,10 @@ function handleParseStats(stats: {
     }
     outputChannel.debug(`[Parse] ${sp.name} — ${parts.join(' | ')}`);
   }
+  const distinctDropped = new Set(stats.droppedRefs.map(r => r.split(' → ')[1] ?? '')).size;
+
   if (spCount > 0) {
-    const distinctDroppedCount = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
-    outputChannel.debug(`[Parse] Done — ${stats.resolvedEdges} resolved, ${stats.droppedRefs.length} dropped (${distinctDroppedCount} distinct unrelated)`);
+    outputChannel.debug(`[Parse] Done — ${stats.resolvedEdges} resolved, ${stats.droppedRefs.length} dropped (${distinctDropped} distinct unrelated)`);
   }
 
   // Warn: procedures with no inputs and no outputs AND no unresolved catalog refs.
@@ -1597,7 +1618,6 @@ function handleParseStats(stats: {
   }
 
   // Info level: canonical summary (last line — contains everything the user needs)
-  const distinctDropped = new Set(stats.droppedRefs.map(r => r.split(' → ')[1])).size;
   if (objectCount !== undefined && objectCount > 0) {
     outputChannel.info(`[Summary] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
   } else if (objectCount === undefined) {
@@ -1644,8 +1664,7 @@ function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri)
   const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
 
   const nonce = getNonce();
-  const themeKind = vscode.window.activeColorTheme.kind;  // numeric — for Monaco theme
-  const themeClass = getThemeClass(themeKind);             // string — for CSS variables
+  const themeClass = getThemeClass(vscode.window.activeColorTheme.kind);
 
   return /*html*/ `
     <!DOCTYPE html>
@@ -1659,10 +1678,7 @@ function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri)
       </head>
       <body class="vscode-body" data-vscode-theme-kind="${themeClass}" style="margin:0;padding:0;height:100vh;overflow:hidden;">
         <div id="root" style="width:100%;height:100%;"></div>
-        <script nonce="${nonce}">
-          window.__DETAIL_MODE__ = true;
-          window.__THEME_KIND__ = ${themeKind};
-        </script>
+        <script nonce="${nonce}">window.__DETAIL_MODE__ = true;</script>
         <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
       </body>
     </html>
