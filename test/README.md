@@ -3,7 +3,7 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Run all unit tests (1086 total)
+npm test                                       # All unit tests (1086 tsx + 126 vitest + snapshot)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (110 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (218 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (197 tests)
@@ -11,7 +11,11 @@ npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (81 tests)
 npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (193 tests)
 npx tsx test/tsql-complex.test.ts              # SQL pattern tests (55 tests)
 npx tsx test/projectStore.test.ts              # Project store tests (153 tests)
-npx tsx test/ai-tools.test.ts                  # AI tool function tests (79 tests)
+npx tsx test/ai-tools.test.ts                  # AI tool function tests (95 tests)
+npx vitest run --config vitest.config.ts       # Hook tests (126 tests, vitest + React Testing Library)
+npm run test:snapshot                          # Parser baseline check (31 AW SPs vs committed TSV)
+npm run test:snapshot:update                   # Regenerate test/aw-baseline.tsv after parser changes
+npm run test:coverage                          # Hook tests with v8 coverage report
 ```
 
 ## Test Files
@@ -25,7 +29,11 @@ npx tsx test/ai-tools.test.ts                  # AI tool function tests (79 test
 | `dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `tsql-complex.test.ts` | 55 | **SQL pattern tests** — targeted SQL files covering each parser pattern; expected results embedded as `-- EXPECT` comments |
 | `projectStore.test.ts` | 153 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `ai-tools.test.ts` | 79 | AI tool pure functions: getContext, getSchemasSummary, searchObjects, getObjectDetail, getNeighbors, runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, validateSaveView, safeRegex |
+| `ai-tools.test.ts` | 95 | AI tool pure functions: getContext, getSchemasSummary, searchObjects (incl. include_body), getObjectDetail (incl. inline neighbors), runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, validateSaveView, validateCreateAiView, safeRegex |
+| `hooks/useInteractiveTrace.test.ts` | 56 | **Trace state machine** — mode transitions (none/configuring/filtered/applied/pathfinding/path-applied/analysis), depth limits (upstream-only, downstream-only), path finding success/failure, analysis subset, endTrace/clearTrace reset from all modes, tracedNodes memoization |
+| `hooks/useGraphology.test.ts` | 34 | **Graph filter pipeline** — schema filter (case-insensitive), type filter, isolation (hideIsolated), exclusion patterns, focus schema + cross-schema neighbors, allowlist, external ref visibility, graph/metrics state, rebuild behavior |
+| `hooks/useDacpacLoader.routing.test.tsx` | 30 | useDacpacLoader: message routing (dacpac vs DB paths), state transitions, callbacks, isDemo flag |
+| `snapshot-aw-baseline.ts` | — | **Parser regression baseline** — diffs all 31 AW SPs against committed `test/aw-baseline.tsv` (see `npm run test:snapshot`) |
 
 ## Dacpac Extractor Tests (`dacpacExtractor.test.ts`)
 
@@ -127,6 +135,8 @@ All test files import shared helpers from `test/testUtils.ts`:
 
 ## Writing New Tests
 
+### tsx tests (engine / pure functions)
+
 1. Create a new `.test.ts` file in `test/`:
    ```typescript
    import { assert, assertEq, printSummary } from './testUtils';
@@ -141,21 +151,40 @@ All test files import shared helpers from `test/testUtils.ts`:
    printSummary('My Feature');
    ```
 
-2. Add to the `test` script in `package.json` (chained with `&&`):
+2. Add to the `test` script in `package.json` (chained with `&&`) before the `tsx test/snapshot-aw-baseline.ts` step:
    ```json
-   "test": "tsx test/existing.test.ts && tsx test/myFeature.test.ts"
+   "test": "... && tsx test/myFeature.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run ..."
    ```
 
 3. Run your test: `npx tsx test/myFeature.test.ts`
+
+### vitest tests (React hooks / components)
+
+Create a `.test.ts` or `.test.tsx` file in `test/hooks/` and use standard vitest + React Testing Library:
+```typescript
+import { renderHook, act } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+
+describe('My hook', () => {
+  it('does something', () => {
+    const { result } = renderHook(() => useMyHook());
+    act(() => { result.current.doSomething(); });
+    expect(result.current.state).toBe('expected');
+  });
+});
+```
+
+Vitest picks up `test/hooks/**/*.test.ts[x]` automatically — no changes to `package.json` needed.
 
 4. Update test counts in this README and `.github/copilot-instructions.md`.
 
 ## Adding Tests
 
 When modifying parse rules:
-1. Run `npm test` before changes
+1. Run `npm test` before changes (captures current snapshot state)
 2. Make your changes
 3. Run `npm test` after — zero regressions allowed
+4. If the snapshot diff shows new detections (improvements, not regressions), run `npm run test:snapshot:update` to accept them
 
 ## Internal Tests
 

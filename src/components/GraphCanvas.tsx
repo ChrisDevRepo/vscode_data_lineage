@@ -278,7 +278,7 @@ export function GraphCanvas({
           { zoom: 0.8, duration: 800 }
         );
       }
-    }, 100);
+    }, AUTO_FIT_DELAY_MS);
   }, [getNode, setCenter]);
 
   // Execute search: find node and zoom to it

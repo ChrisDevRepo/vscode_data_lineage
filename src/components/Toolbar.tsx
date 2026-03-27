@@ -147,7 +147,7 @@ export const Toolbar = memo(function Toolbar({
       <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
         {/* Navigation */}
         <Tooltip content="Back to Project Selection">
-          <Button onClick={onBack} variant="icon">
+          <Button onClick={onBack} variant="icon" aria-label="Back to Project Selection">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
             </svg>
@@ -178,7 +178,7 @@ export const Toolbar = memo(function Toolbar({
           />
         </div>
         <Tooltip content="Detail Search (full-text search in SQL bodies)">
-          <Button onClick={onToggleDetailSearch} variant="icon" className={isDetailSearchOpen ? 'ln-btn-icon-active' : ''}>
+          <Button onClick={onToggleDetailSearch} variant="icon" className={isDetailSearchOpen ? 'ln-btn-icon-active' : ''} aria-label="Detail Search" aria-pressed={isDetailSearchOpen}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 8.25v3m0 0v3m0-3h3m-3 0h-3" />
@@ -206,7 +206,7 @@ export const Toolbar = memo(function Toolbar({
 
         {/* Graph Controls: HideIsolated + Analysis + ClearFilters */}
         <Tooltip content={analysisType === 'orphans' ? 'Disabled during Orphan analysis' : 'Hide Isolated Nodes'}>
-          <Button onClick={onToggleIsolated} variant="icon" className={hideIsolated ? 'ln-btn-icon-active' : ''} disabled={analysisType === 'orphans'}>
+          <Button onClick={onToggleIsolated} variant="icon" className={hideIsolated ? 'ln-btn-icon-active' : ''} disabled={analysisType === 'orphans'} aria-label="Hide Isolated Nodes" aria-pressed={hideIsolated}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
             </svg>
@@ -221,6 +221,8 @@ export const Toolbar = memo(function Toolbar({
             variant="icon"
             className={isAnalysisActive ? 'ln-btn-icon-active' : ''}
             disabled={isModeLocked && !isAnalysisActive}
+            aria-label="Graph Analysis"
+            aria-pressed={isAnalysisActive}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605" />
@@ -266,7 +268,7 @@ export const Toolbar = memo(function Toolbar({
         </FloatingPortal>
 
         <Tooltip content="Clear All Filters">
-          <Button onClick={onRefresh} variant="icon">
+          <Button onClick={onRefresh} variant="icon" aria-label="Clear All Filters">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
@@ -278,7 +280,7 @@ export const Toolbar = memo(function Toolbar({
 
         {/* Tools: DDL Viewer, Refresh, Export */}
         <Tooltip content={hasHighlightedNode ? 'View DDL / SQL source for selected node' : 'View DDL / SQL source'}>
-          <Button onClick={onOpenDdlViewer} variant="icon">
+          <Button onClick={onOpenDdlViewer} variant="icon" aria-label="View DDL / SQL source">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" />
             </svg>
@@ -286,7 +288,7 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
         {onRebuild && (
           <Tooltip content="Refresh (re-read settings &amp; rebuild graph)">
-            <Button onClick={onRebuild} variant="icon">
+            <Button onClick={onRebuild} variant="icon" aria-label="Refresh (re-read settings and rebuild graph)">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
               </svg>
@@ -296,14 +298,14 @@ export const Toolbar = memo(function Toolbar({
 
         {/* Export & Help */}
         <Tooltip content="Export as Draw.io">
-          <Button onClick={onExportDrawio} variant="icon">
+          <Button onClick={onExportDrawio} variant="icon" aria-label="Export as Draw.io">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
             </svg>
           </Button>
         </Tooltip>
         <Tooltip content="Help">
-          <Button onClick={() => setIsHelpOpen(true)} variant="icon">
+          <Button onClick={() => setIsHelpOpen(true)} variant="icon" aria-label="Help">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
             </svg>

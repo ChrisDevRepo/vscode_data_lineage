@@ -47,16 +47,18 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
       }}
     >
       {/* Header row */}
-      <div
-        className="flex items-center justify-between px-3 py-2 cursor-pointer"
+      <button
+        className="w-full flex items-center justify-between px-3 py-2 cursor-pointer border-0"
         onClick={() => setCollapsed(c => !c)}
-        style={{ borderBottom: collapsed ? 'none' : '1px solid var(--ln-border-light)' }}
+        style={{ background: 'none', borderBottom: collapsed ? 'none' : '1px solid var(--ln-border-light)', textAlign: 'left' }}
+        aria-expanded={!collapsed}
+        aria-label="Toggle view info"
       >
         <span className="text-[10px] font-semibold ln-text-muted uppercase tracking-wide">
           View Info
         </span>
         <span className="text-[10px] ln-text-muted">{collapsed ? '▲' : '▼'}</span>
-      </div>
+      </button>
 
       {!collapsed && (
         <div className="px-3 pb-3 flex flex-col gap-1.5">

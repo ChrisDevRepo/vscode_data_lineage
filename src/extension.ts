@@ -6,7 +6,7 @@ import { buildBareGraph } from './ai/graphUtils';
 import {
   AI_CAPS, type AiCapsOverride,
   getContext, getSchemasSummary, searchObjects, getObjectDetail,
-  getNeighbors, runBfsTrace, runAnalysis, searchDdl, validateSaveView, validateCreateAiView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, validateCreateAiView,
   type CreateAiViewInput,
 } from './ai/tools';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
@@ -274,11 +274,12 @@ export function activate(context: vscode.ExtensionContext) {
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
-        const { query, types, schemas, external_subtypes } = options.input as {
+        const { query, types, schemas, external_subtypes, include_body, exclude_schemas, exclude_types } = options.input as {
           query: string; types?: string[]; schemas?: string[]; external_subtypes?: string[];
+          include_body?: boolean; exclude_schemas?: string[]; exclude_types?: string[];
         };
-        outputChannel.debug(`[AI] lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}`);
-        const result = searchObjects(m, query, types as never, schemas, external_subtypes as never, readAiCaps());
+        outputChannel.debug(`[AI] lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, include_body=${include_body ?? false}`);
+        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, external_subtypes as ('et' | 'file' | 'db')[] | undefined, include_body, exclude_schemas, exclude_types as ObjectType[] | undefined, readAiCaps());
         return toolResult(result);
       },
     }),
@@ -295,38 +296,28 @@ export function activate(context: vscode.ExtensionContext) {
         return toolResult(getObjectDetail(m, id, readAiCaps()));
       },
     }),
-    vscode.lm.registerTool('lineage_get_neighbors', {
-      prepareInvocation(options, _token) {
-        const { id, direction } = options.input as { id: string; direction?: string };
-        return { invocationMessage: `Getting ${direction ?? 'all'} neighbors of "${id}"…` };
-      },
-      invoke(options, _token) {
-        if (!isAiEnabled()) return disabled();
-        const m = requireModel();
-        const { id, direction, types } = options.input as {
-          id: string; direction?: string; types?: string[];
-        };
-        outputChannel.debug(`[AI] lineage_get_neighbors: id="${id}", direction=${direction ?? 'both'}`);
-        return toolResult(getNeighbors(m, id, direction as never, types as never));
-      },
-    }),
     vscode.lm.registerTool('lineage_run_bfs_trace', {
       prepareInvocation(options, _token) {
-        const { id, upstream_hops, downstream_hops } = options.input as {
-          id: string; upstream_hops?: number; downstream_hops?: number;
+        const { id, upstream_hops, downstream_hops, include_ddl } = options.input as {
+          id: string; upstream_hops?: number; downstream_hops?: number; include_ddl?: boolean;
         };
-        return { invocationMessage: `Tracing lineage from "${id}" (↑${upstream_hops ?? 3} ↓${downstream_hops ?? 3} hops)…` };
+        const ddlTag = (include_ddl ?? true) ? '' : ' (structure only)';
+        return { invocationMessage: `Tracing lineage from "${id}" (↑${upstream_hops ?? 3} ↓${downstream_hops ?? 3} hops)${ddlTag}…` };
       },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const g = requireGraph();
-        const { id, upstream_hops, downstream_hops, types, schemas } = options.input as {
-          id: string; upstream_hops?: number; downstream_hops?: number; types?: string[]; schemas?: string[];
-        };
-        outputChannel.debug(`[AI] lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}`);
-        const result = runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3, types as never, schemas, readAiCaps());
-        return toolResult(result);
+        const { id, upstream_hops, downstream_hops, types, schemas, include_ddl, exclude_schemas, exclude_types } =
+          options.input as {
+            id: string; upstream_hops?: number; downstream_hops?: number;
+            types?: string[]; schemas?: string[];
+            include_ddl?: boolean;
+            exclude_schemas?: string[]; exclude_types?: string[];
+          };
+        outputChannel.debug(`[AI] lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
+        return toolResult(runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
+          types as never, schemas, include_ddl ?? true, exclude_schemas, exclude_types as never, readAiCaps()));
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
@@ -358,65 +349,14 @@ export function activate(context: vscode.ExtensionContext) {
         return toolResult(searchDdl(m, query, types as never, readAiCaps()));
       },
     }),
-    vscode.lm.registerTool('lineage_save_view', {
-      prepareInvocation(options, _token) {
-        const { name, node_ids } = options.input as { name: string; node_ids: string[] };
-        return {
-          invocationMessage: `Save view "${name}" with ${node_ids?.length ?? 0} objects`,
-          confirmationMessages: {
-            title: 'Save lineage view?',
-            message: new vscode.MarkdownString(
-              `**${name ?? 'Unnamed'}** · ${node_ids?.length ?? 0} nodes\n\nSaved to the active project.`
-            ),
-          },
-        };
-      },
-      async invoke(options, _token) {
-        if (!isAiEnabled()) return disabled();
-        const m = requireModel();
-        const { name, node_ids } = options.input as { name: string; node_ids: string[] };
-        outputChannel.debug(`[AI] lineage_save_view: name="${name}", ids=${node_ids?.length ?? 0}`);
-        const validation = validateSaveView(m, node_ids ?? [], name);
-        if (!validation.success) {
-          outputChannel.warn(`[AI] lineage_save_view: validation failed — ${validation.errors?.join(', ')}`);
-          return toolResult(validation);
-        }
-        if (!_aiCurrentProjectId) {
-          return toolResult({ success: false, errors: ['No active project'], hint: 'Open a saved project before using lineage_save_view.' });
-        }
-        const profile: FilterProfile = {
-          id: crypto.randomUUID(),
-          name: validation.name,
-          createdAt: new Date().toISOString(),
-          source: 'ai',
-          filter: {
-            schemas: [],
-            types: ['table', 'view', 'procedure', 'function', 'external'],
-            searchTerm: '',
-            hideIsolated: false,
-            focusSchemas: [],
-            showExternalRefs: true,
-            externalRefTypes: ['file', 'db'],
-            exclusionPatterns: [],
-            allowlistNodeIds: validation.node_ids,
-          },
-        };
-        const store = loadProjectStore(context);
-        const updated = addFilterProfile(store, _aiCurrentProjectId, profile);
-        await saveProjectStore(context, updated);
-        _aiViews = updated.projects.find(p => p.id === _aiCurrentProjectId)?.filterProfiles ?? _aiViews;
-        if (activePanel) {
-          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: _aiCurrentProjectId, lastWizardView: updated.lastWizardView });
-        }
-        outputChannel.info(`[AI] lineage_save_view: saved "${validation.name}" with ${validation.node_ids.length} nodes → profile ${profile.id}`);
-        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length, profile_id: profile.id });
-      },
-    }),
     vscode.lm.registerTool('lineage_create_ai_view', {
       prepareInvocation(options, _token) {
         const input = options.input as CreateAiViewInput;
+        const isRich = !!(input.narrative || input.highlight_groups?.length);
         return {
-          invocationMessage: `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects`,
+          invocationMessage: isRich
+            ? `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects`
+            : `Save view "${input.name}" with ${input.node_ids?.length ?? 0} objects`,
           confirmationMessages: {
             title: 'Create AI lineage view?',
             message: new vscode.MarkdownString(
@@ -491,6 +431,19 @@ export function activate(context: vscode.ExtensionContext) {
           activePanel.reveal(vscode.ViewColumn.One);
         }
         return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length, profile_id: profile.id });
+      },
+    }),
+    vscode.lm.registerTool('lineage_get_ddl_batch', {
+      prepareInvocation(options, _token) {
+        const { ids } = options.input as { ids: string[] };
+        return { invocationMessage: `Loading DDL for ${ids.length} object(s)…` };
+      },
+      invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
+        const m = requireModel();
+        const { ids } = options.input as { ids: string[] };
+        outputChannel.debug(`[AI] lineage_get_ddl_batch: ${ids.length} ids`);
+        return toolResult(getDdlBatch(m, ids, readAiCaps()));
       },
     }),
   );
@@ -1654,8 +1607,8 @@ async function handleTableStatsRequest(
     // Invalidate stale connection on error
     if (statsConnectionUri) {
       disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
-          outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
-        });
+        outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
+      });
       statsConnectionUri = undefined;
     }
     panel.webview.postMessage({ type: 'table-stats-error', message: errorMsg });

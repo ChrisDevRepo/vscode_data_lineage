@@ -445,7 +445,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Start every new conversation by calling this tool to understand what is loaded, filtered, and visible. Returns active project name, db_platform (SQL Server/Azure SQL/Fabric), model stats (nodes/edges/schemas), current UI filter state (visible schemas, object types, exclusions), visible node count, and list of saved views.",
+        "modelDescription": "Start every new conversation by calling this tool. Returns project name, db_platform, model stats (nodes/edges/schemas), visible node count, filter (active schemas/types/searchTerm/bookmark_nodes count — allowlist IDs not included), and saved views list.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -479,7 +479,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search ALL database objects (tables, views, procedures, functions, external tables, virtual file/DB nodes) by name using a case-insensitive substring or regex. Returns up to 50 matches by default (auto-scales with model context window; configurable via dataLineageViz.ai.searchMaxResults). Results include exact IDs, schema, type, and externalType. Use this to obtain exact object IDs — the id values returned here are the required input for lineage_get_object_detail and lineage_get_neighbors. Pass IDs verbatim, unchanged.",
+        "modelDescription": "Search ALL database objects by name (case-insensitive substring or regex). Results include id, schema (s), name (n), type (t), degree (deg=total connections), match source. Set include_body:true to also search DDL bodies. Use schemas/types to include only specific schemas/types; use exclude_schemas/exclude_types to post-filter results. Pass IDs verbatim to other tools.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -525,6 +525,20 @@
                 ]
               },
               "description": "When types includes 'external': filter by subtype. Omit for all."
+            },
+            "include_body": {
+              "type": "boolean",
+              "description": "Also search DDL body scripts (views, procedures, functions). Body matches include a snippet and match:'body'. Omit or false for name-only search."
+            },
+            "exclude_schemas": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Remove results from matching schemas. SQL LIKE patterns: % = any sequence, _ = single char. E.g. 'test%' excludes all test-* schemas, '%test%' excludes any schema containing 'test'."
+            },
+            "exclude_types": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "description": "Remove results of these object types."
             }
           },
           "required": [
@@ -537,7 +551,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Returns full metadata for one object by its exact ID: type, schema, columns (with types, nullable, PK/UQ/CK flags), foreign keys (referenced table + columns + ON DELETE), upstream/downstream neighbor counts, full DDL body (normalized). Provide the id exactly as returned by lineage_search_objects. If you do not have an id yet, call lineage_search_objects first.",
+        "modelDescription": "Returns full metadata for ONE object: schema, columns (n/t/nl/pk/uq/ck), foreign keys, inline neighbors (up/dn arrays), and full DDL. Use for single-object questions ('what columns does X have?', 'show me the DDL of X'). For multi-object dependency analysis use lineage_run_bfs_trace instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -558,71 +572,23 @@
         }
       },
       {
-        "name": "lineage_get_neighbors",
-        "toolReferenceName": "lineage_get_neighbors",
-        "displayName": "Get Neighbors",
-        "userDescription": "Get direct upstream or downstream neighbors of an object.",
-        "modelDescription": "Returns the immediate (1-hop) neighbors of an object. Use 'upstream' for dependencies (what does this object read from?), 'downstream' for dependents (what reads from this object?), or 'both'. Each neighbor includes its ID, type, schema, and edge type ('read' or 'exec'). Use lineage_run_bfs_trace for multi-hop traces.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(type-hierarchy)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "description": "Exact object ID"
-            },
-            "direction": {
-              "type": "string",
-              "enum": [
-                "upstream",
-                "downstream",
-                "both"
-              ],
-              "description": "Default: both"
-            },
-            "types": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "table",
-                  "view",
-                  "procedure",
-                  "function",
-                  "external"
-                ]
-              },
-              "description": "Filter neighbor results to these types. Omit for all."
-            }
-          },
-          "required": [
-            "id"
-          ]
-        }
-      },
-      {
         "name": "lineage_run_bfs_trace",
         "toolReferenceName": "lineage_run_bfs_trace",
-        "displayName": "Run Lineage Trace",
+        "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Runs a breadth-first lineage trace from the given node, returning all reachable nodes and edges up to the specified hop depth. Returns flat node list with depth info and edge triples. Capped at 200 nodes / 300 edges by default (auto-scales with model context window; configurable via dataLineageViz.ai.bfsMaxNodes / bfsMaxEdges) — when truncated:true, narrow scope with types/schemas filters. For 'what breaks if I change X?' use downstream. For 'where does X get its data?' use upstream.",
+        "modelDescription": "BFS trace from an object. By default (include_ddl:true) returns DDL for procedures/views/functions and column lists for tables — use for code review and dependency analysis. Set include_ddl:false for structure-only (hop counts, path shape, no DDL loaded). Include filters (schemas/types) are allowlists; exclude filters (exclude_schemas/exclude_types) are post-filters. Response includes excluded_count when exclusions remove nodes. exclude_schemas supports SQL LIKE patterns: % = any sequence, _ = single char (e.g. 'test%', '%staging%').",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
         ],
-        "icon": "$(git-merge)",
+        "icon": "$(type-hierarchy-sub)",
         "when": "dataLineageViz.modelLoaded",
         "inputSchema": {
           "type": "object",
           "properties": {
             "id": {
               "type": "string",
-              "description": "Exact object ID to trace from"
+              "description": "Exact object ID to trace from (from lineage_search_objects)"
             },
             "upstream_hops": {
               "type": "number",
@@ -632,26 +598,29 @@
               "type": "number",
               "description": "Downstream depth (0 = no downstream). Default: 3"
             },
+            "include_ddl": {
+              "type": "boolean",
+              "description": "Include DDL/columns in results (default true). Set false for structure-only — returns node list + edges, no DDL loaded."
+            },
             "types": {
               "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "table",
-                  "view",
-                  "procedure",
-                  "function",
-                  "external"
-                ]
-              },
-              "description": "Include only these node types in the result. Omit for all."
+              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "description": "Include only these node types. Omit for all."
             },
             "schemas": {
               "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Include only nodes in these schemas. Omit for all."
+              "items": { "type": "string" },
+              "description": "Include only nodes in these schemas (exact names from lineage_get_schema_summary). Omit for all."
+            },
+            "exclude_schemas": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Remove nodes in matching schemas. SQL LIKE patterns: % = any sequence, _ = single char. E.g. 'test%' removes all test-* schemas, '%staging%' removes any schema containing 'staging'."
+            },
+            "exclude_types": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "description": "Remove nodes of these types from results."
             }
           },
           "required": [
@@ -737,44 +706,11 @@
         }
       },
       {
-        "name": "lineage_save_view",
-        "toolReferenceName": "lineage_save_view",
-        "displayName": "Save View",
-        "userDescription": "Save the current set of objects as a named view in the project.",
-        "modelDescription": "Saves a named filter bookmark to the active project. Provide a list of exact node IDs (from search/trace results) and a name. The bookmark appears in the saved views dropdown — the user applies it to update the visible graph. All node IDs are validated before saving. Use after a lineage investigation to bookmark the relevant objects for the user.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(bookmark)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string",
-              "description": "Display name for the saved view (max 60 chars)"
-            },
-            "node_ids": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Exact node IDs to include in the view (from search/trace results)"
-            }
-          },
-          "required": [
-            "name",
-            "node_ids"
-          ]
-        }
-      },
-      {
         "name": "lineage_create_ai_view",
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, narrative explanation, color groups, and badges. The user receives a VS Code notification and sees the view applied in the lineage graph.",
-        "modelDescription": "Creates an advanced named bookmark (AI view) in the lineage graph. Use ONLY when the user explicitly asks to 'show', 'visualize', or 'create a view'. Requires a project to be open. Provide exact node IDs (validated against catalog), a narrative (plain text, max 500 chars), optional highlight groups (max 5, colors: blue/green/red/yellow/orange), optional badges on nodes (max 50, max 15 chars text). The view is persisted, displayed in the graph with a banner, and the user is notified. Do NOT use for informational questions — only for explicit visualization requests.",
+        "modelDescription": "Saves a named bookmark and applies it immediately in the graph. Use for BOTH simple bookmarks (name + node_ids only) and rich AI views (add narrative, highlight_groups, badges). Requires an active project. Node IDs are validated before saving. Always activates the view and notifies the user — only use when the user wants to save or visualize a result.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -821,7 +757,31 @@
           },
           "required": ["name", "node_ids"]
         }
-      }
+      },
+      {
+        "name": "lineage_get_ddl_batch",
+        "toolReferenceName": "lineage_get_ddl_batch",
+        "displayName": "Get DDL for Multiple Objects",
+        "userDescription": "Get DDL body scripts for multiple objects in one call.",
+        "modelDescription": "Fetch DDL for up to 20 specific object IDs in one call. Use when you have known IDs and need their DDL without BFS traversal. Each result: {id, t, ddl} for scriptable objects, {id, t} for tables (no body), {id, error:'not_found'} for unknown IDs. ddl_too_large:true when DDL exceeds cap. Max 20 IDs — split if needed.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "lineage"
+        ],
+        "icon": "$(file-code)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Exact object IDs to fetch DDL for (max 20). Use IDs from lineage_run_bfs_trace or lineage_search_objects."
+            }
+          },
+          "required": ["ids"]
+        }
+      },
     ]
   },
   "scripts": {
@@ -832,7 +792,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && vitest run --config vitest.config.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",
@@ -841,8 +801,11 @@
     "test:sql": "tsx test/tsql-complex.test.ts",
     "test:project": "tsx test/projectStore.test.ts",
     "test:ai": "tsx test/ai-tools.test.ts",
+    "test:snapshot": "tsx test/snapshot-aw-baseline.ts",
+    "test:snapshot:update": "tsx test/snapshot-aw-baseline.ts --update",
     "test:hooks": "vitest run --config vitest.config.ts",
     "test:hooks:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "test:db": "tsx test-internal/integration-db.test.ts",
     "package": "npx @vscode/vsce package"
   },

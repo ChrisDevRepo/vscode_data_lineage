@@ -1,19 +1,26 @@
 /**
  * AI tool pure functions — zero VS Code imports.
  * All 9 functions are invoked by the registered LanguageModelTools in extension.ts.
+ *
+ * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */
 import { bfsFromNode } from 'graphology-traversal';
 import type Graph from 'graphology';
 import {
   DEFAULT_CONFIG,
   type DatabaseModel,
+  type LineageNode,
   type ObjectType,
   type AnalysisType,
 } from '../engine/types';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
 import { searchCatalog, searchBodyScripts, safeRegex, type SearchableNode } from '../utils/modelSearch';
-import { normalizeBodyScript } from '../utils/sql';
+import { normalizeBodyScript, compileSqlLikePatterns, matchesAnySqlLike } from '../utils/sql';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
+import {
+  strip, edgeApiType,
+  presentNode, presentColumn, presentSchema, presentNeighbor, presentFilter,
+} from './aiPresenter';
 
 // ─── Caps ────────────────────────────────────────────────────────────────────
 
@@ -23,28 +30,14 @@ export const AI_CAPS = {
   SEARCH_MAX_RESULTS:   50,
   REGEX_MAX_LENGTH:    200,
   ANALYSIS_MAX_GROUPS: 100,
-  MAX_DDL_CHARS:     10000,   // per getObjectDetail call; 500000 = effectively unlimited
+  MAX_DDL_CHARS:     10000,   // per object; 500000 = effectively unlimited
+  DDL_BATCH_CAP:        20,   // max IDs per getDdlBatch call
 } as const;
 
 /** Mutable override type for per-request cap tuning (auto-scale + VS Code settings). */
 export type AiCapsOverride = { [K in keyof typeof AI_CAPS]?: number };
 
-// ─── Shared helpers ───────────────────────────────────────────────────────────
-
-/** Strip null / undefined / false / '' / [] from a plain object before returning to LLM. */
-function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(obj).filter(([, v]) =>
-      v !== null && v !== undefined && v !== false && v !== '' &&
-      !(Array.isArray(v) && v.length === 0)
-    )
-  ) as Partial<T>;
-}
-
-/** Map edge types to API-facing names. */
-function edgeApiType(type: string): string {
-  return type === 'body' ? 'read' : type;
-}
+// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /** Build source→target edge type lookup for the entire model (cheap one-pass). */
 function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
@@ -56,18 +49,16 @@ function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
 }
 
 /** Build id→node lookup. */
-function buildNodeMap(model: DatabaseModel): Map<string, (typeof model.nodes)[0]> {
-  const m = new Map<string, (typeof model.nodes)[0]>();
+function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
+  const m = new Map<string, LineageNode>();
   for (const n of model.nodes) m.set(n.id, n);
   return m;
 }
 
 // ─── Result types ─────────────────────────────────────────────────────────────
 
-export type NotFoundError   = { error: 'not_found';    id: string;   hint: string };
-export type InvalidRegex    = { error: 'invalid_regex'; hint: string };
-export type SaveViewError   = { success: false; errors: string[]; hint: string };
-export type SaveViewRequest = { success: true; name: string; node_ids: string[] };
+export type NotFoundError = { error: 'not_found'; id: string; hint: string };
+export type InvalidRegex  = { error: 'invalid_regex'; hint: string };
 
 // ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
 
@@ -93,7 +84,7 @@ export function getContext(
     db_platform:   model.dbPlatform ?? null,
     model_stats:   { nodes: model.nodes.length, edges: model.edges.length, schemas: model.schemas.length },
     visible_nodes: visibleNodes,
-    active_filter: activeFilter ?? null,
+    filter:        activeFilter ? presentFilter(activeFilter) : null,
     saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
   };
 }
@@ -102,15 +93,7 @@ export function getContext(
 
 export function getSchemasSummary(model: DatabaseModel) {
   return {
-    schemas: model.schemas.map(s => strip({
-      name: s.name,
-      n:    s.nodeCount,
-      t:    s.types['table']     || undefined,
-      v:    s.types['view']      || undefined,
-      p:    s.types['procedure'] || undefined,
-      f:    s.types['function']  || undefined,
-      ext:  s.types['external']  || undefined,
-    })),
+    schemas:     model.schemas.map(s => presentSchema(s)),
     total_nodes: model.nodes.length,
     total_edges: model.edges.length,
   };
@@ -124,6 +107,9 @@ export function searchObjects(
   types?: ObjectType[],
   schemas?: string[],
   externalSubtypes?: ('et' | 'file' | 'db')[],
+  includeBody?: boolean,
+  excludeSchemas?: string[],
+  excludeTypes?: ObjectType[],
   caps?: AiCapsOverride,
 ) {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
@@ -131,10 +117,13 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: 'Query exceeds maximum length of 200 characters.' };
   }
 
-  const typeSet    = types   ? new Set<ObjectType>(types)   : undefined;
-  const schemaSet  = schemas ? new Set<string>(schemas)     : undefined;
+  const typeSet                = types         ? new Set<ObjectType>(types)           : undefined;
+  const schemaSet              = schemas       ? new Set<string>(schemas)             : undefined;
+  const excludeTypeSet         = excludeTypes  ? new Set<ObjectType>(excludeTypes)    : null;
+  // exclude_schemas: SQL LIKE patterns (% = any sequence, _ = single char, case-insensitive)
+  const excludeSchemaMatchers  = compileSqlLikePatterns(excludeSchemas);
 
-  const matches = searchCatalog(
+  const nameHits = searchCatalog(
     model.nodes as SearchableNode[],
     query,
     typeSet,
@@ -142,26 +131,53 @@ export function searchObjects(
     effectiveCaps.SEARCH_MAX_RESULTS,
   );
 
-  let filtered = matches;
-  if (externalSubtypes && externalSubtypes.length > 0) {
-    const subSet = new Set(externalSubtypes);
-    filtered = matches.filter(n =>
-      n.type !== 'external' || (n.externalType && subSet.has(n.externalType as 'et' | 'file' | 'db')),
-    );
-  }
+  // Apply externalSubtypes + exclude filters
+  const externalSet = externalSubtypes && externalSubtypes.length > 0 ? new Set(externalSubtypes) : null;
+  const filtered = nameHits.filter(n => {
+    if (externalSet && n.type === 'external' && !(n.externalType && externalSet.has(n.externalType as 'et' | 'file' | 'db'))) return false;
+    if (excludeSchemaMatchers && matchesAnySqlLike(n.schema, excludeSchemaMatchers)) return false;
+    if (excludeTypeSet        && excludeTypeSet.has(n.type))                  return false;
+    return true;
+  });
 
-  const results = filtered.map(n => ({
-    id:            n.id,
-    schema:        n.schema,
-    name:          n.name,
-    type:          n.type,
-    external_type: n.externalType ?? null,
+  const nameResults = filtered.map(n => ({
+    ...presentNode(n, model.neighborIndex),
+    match: 'name' as const,
   }));
+
+  let results: object[] = nameResults;
+
+  if (includeBody) {
+    // Body types = intersection of requested types with body-scriptable types
+    const scriptableTypes: ObjectType[] = ['view', 'procedure', 'function'];
+    const bodyTypeSet: Set<ObjectType> = typeSet
+      ? new Set(scriptableTypes.filter(t => typeSet.has(t)))
+      : new Set<ObjectType>(scriptableTypes);
+
+    if (bodyTypeSet.size > 0) {
+      const bodyHits = searchBodyScripts(
+        model.nodes as SearchableNode[],
+        query,
+        bodyTypeSet,
+        2,
+        effectiveCaps.SEARCH_MAX_RESULTS,
+      );
+      const seenIds = new Set(nameResults.map(r => (r as unknown as { id: string }).id));
+      const bodyResults = bodyHits
+        .filter(m => !seenIds.has(m.node.id))
+        .map(m => ({
+          ...presentNode(m.node, model.neighborIndex),
+          match: 'body' as const,
+          snippet: m.snippet,
+        }));
+      results = [...nameResults, ...bodyResults];
+    }
+  }
 
   const base = {
     results,
     total:     results.length,
-    truncated: matches.length >= effectiveCaps.SEARCH_MAX_RESULTS,
+    truncated: nameHits.length >= effectiveCaps.SEARCH_MAX_RESULTS,
   };
 
   if (results.length === 0) {
@@ -171,6 +187,8 @@ export function searchObjects(
 }
 
 // ─── Tool 4: lineage_get_object_detail ───────────────────────────────────────
+
+const NEIGHBOR_CAP = 25;
 
 export function getObjectDetail(
   model: DatabaseModel,
@@ -185,16 +203,17 @@ export function getObjectDetail(
   }
 
   const neighbors = model.neighborIndex[id] ?? { in: [], out: [] };
+  const nodeMap   = buildNodeMap(model);
+  const edgeMap   = buildEdgeTypeMap(model);
 
-  const columns = node.columns?.map(c => strip({
-    n:  c.name,
-    t:  c.type,
-    nl: c.nullable  || undefined,
-    pk: c.pkOrdinal ?? undefined,
-    uq: c.unique    || undefined,
-    ck: c.check     || undefined,
-  })) ?? undefined;
+  const upRaw  = neighbors.in;
+  const dnRaw  = neighbors.out;
+  const up     = upRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, id, nodeMap, edgeMap, true));
+  const dn     = dnRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, id, nodeMap, edgeMap, false));
+  const upMore = Math.max(0, upRaw.length - NEIGHBOR_CAP);
+  const dnMore = Math.max(0, dnRaw.length - NEIGHBOR_CAP);
 
+  const columns    = node.columns?.map(c => presentColumn(c)) ?? undefined;
   const foreignKeys = node.fks?.map(fk => ({
     name:        fk.name,
     columns:     fk.columns,
@@ -204,18 +223,20 @@ export function getObjectDetail(
     on_delete:   fk.onDelete,
   })) ?? null;
 
-  const base: Record<string, unknown> = {
-    id:               node.id,
-    schema:           node.schema,
-    name:             node.name,
-    type:             node.type,
-    ...(node.externalType ? { external_type: node.externalType } : {}),
-    ...(node.externalUrl  ? { external_url:  node.externalUrl  } : {}),
+  const base: Record<string, unknown> = strip({
+    id:           node.id,
+    schema:       node.schema,
+    name:         node.name,
+    type:         node.type,
+    external_type: node.externalType || undefined,
+    external_url:  node.externalUrl  || undefined,
     columns,
-    foreign_keys:     foreignKeys,
-    upstream_count:   neighbors.in.length,
-    downstream_count: neighbors.out.length,
-  };
+    foreign_keys:  foreignKeys || undefined,
+    up:            up.length > 0 ? up : undefined,
+    dn:            dn.length > 0 ? dn : undefined,
+    up_more:       upMore > 0 ? upMore : undefined,
+    dn_more:       dnMore > 0 ? dnMore : undefined,
+  } as Record<string, unknown>);
 
   const ddl = node.bodyScript ? normalizeBodyScript(node.bodyScript) : null;
 
@@ -233,61 +254,27 @@ export function getObjectDetail(
   return { ...base, ddl };
 }
 
-// ─── Tool 5: lineage_get_neighbors ───────────────────────────────────────────
+// ─── Tool 5: lineage_run_bfs_trace ────────────────────────────────────────────
+// Compound tool: BFS + optional DDL/columns per node (include_ddl=true, the default).
+// For scriptable nodes (procedure/view/function): includes normalized DDL.
+// For table/external nodes: includes compact column list instead.
+// Include filters (types/schemas) are applied first; exclude filters are post-filters.
+// excluded_count is added to the response when any exclusions were applied.
 
-export function getNeighbors(
-  model: DatabaseModel,
-  id: string,
-  direction: 'upstream' | 'downstream' | 'both' = 'both',
-  types?: ObjectType[],
-): object {
-  if (!model.neighborIndex[id]) {
-    return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
-  }
-
-  const neighbors = model.neighborIndex[id];
-  const nodeMap   = buildNodeMap(model);
-  const edgeMap   = buildEdgeTypeMap(model);
-  const typeSet   = types ? new Set<ObjectType>(types) : null;
-
-  function mapNeighbors(ids: string[], isUpstream: boolean) {
-    return ids
-      .filter(nid => {
-        if (!typeSet) return true;
-        const n = nodeMap.get(nid);
-        return n ? typeSet.has(n.type) : false;
-      })
-      .map(nid => {
-        const n = nodeMap.get(nid);
-        // edge direction: upstream neighbors have edge neighbor→id; downstream have edge id→neighbor
-        const edgeKey = isUpstream ? `${nid}→${id}` : `${id}→${nid}`;
-        return {
-          id:        nid,
-          schema:    n?.schema ?? '',
-          name:      n?.name   ?? nid,
-          type:      n?.type   ?? 'table',
-          edge_type: edgeMap.get(edgeKey) ?? 'read',
-        };
-      });
-  }
-
-  const upstream   = direction !== 'downstream' ? mapNeighbors(neighbors.in,  true)  : undefined;
-  const downstream = direction !== 'upstream'   ? mapNeighbors(neighbors.out, false) : undefined;
-
-  return strip({ id, up: upstream, dn: downstream });
-}
-
-// ─── Tool 6: lineage_run_bfs_trace ───────────────────────────────────────────
+const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
 export function runBfsTrace(
   model: DatabaseModel,
   graph: Graph,
   id: string,
-  upstreamHops:   number = 3,
-  downstreamHops: number = 3,
-  types?:   ObjectType[],
-  schemas?: string[],
-  caps?: AiCapsOverride,
+  upstreamHops:    number = 3,
+  downstreamHops:  number = 3,
+  types?:          ObjectType[],
+  schemas?:        string[],
+  includeDdl:      boolean = true,
+  excludeSchemas?: string[],
+  excludeTypes?:   ObjectType[],
+  caps?:           AiCapsOverride,
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   if (!graph.hasNode(id)) {
@@ -315,18 +302,35 @@ export function runBfsTrace(
   }
   downDepth.set(id, 0);
 
-  const allNodeIds = new Set([...upDepth.keys(), ...downDepth.keys()]);
-  const nodeMap    = buildNodeMap(model);
-  const typeSet    = types   ? new Set<ObjectType>(types)   : null;
-  const schemaSet  = schemas ? new Set<string>(schemas)     : null;
+  const allNodeIds             = new Set([...upDepth.keys(), ...downDepth.keys()]);
+  const nodeMap                = buildNodeMap(model);
+  const typeSet                = types         ? new Set<ObjectType>(types)            : null;
+  const schemaSet              = schemas       ? new Set<string>(schemas)              : null;
+  // exclude_schemas: SQL LIKE patterns (% = any sequence, _ = single char, case-insensitive)
+  const excludeSchemaMatchers  = compileSqlLikePatterns(excludeSchemas);
+  const excludeTypeSet         = excludeTypes  ? new Set<ObjectType>(excludeTypes)     : null;
 
-  let filteredIds = [...allNodeIds].filter(nid => {
+  // Include filter (allowlist — applied first; schemas/types are exact match)
+  const afterInclude = [...allNodeIds].filter(nid => {
     const n = nodeMap.get(nid);
     if (!n) return false;
     if (typeSet   && !typeSet.has(n.type))     return false;
     if (schemaSet && !schemaSet.has(n.schema)) return false;
     return true;
   });
+
+  // Exclude filter (denylist — post-filter; schema patterns use SQL LIKE, types are exact)
+  const hasExclusions = excludeSchemaMatchers !== null || excludeTypeSet !== null;
+  const filteredIds = hasExclusions
+    ? afterInclude.filter(nid => {
+        const n = nodeMap.get(nid);
+        if (!n) return true;
+        if (excludeSchemaMatchers && matchesAnySqlLike(n.schema, excludeSchemaMatchers)) return false;
+        if (excludeTypeSet        && excludeTypeSet.has(n.type))                  return false;
+        return true;
+      })
+    : afterInclude;
+  const excludedCount = afterInclude.length - filteredIds.length;
 
   // Collect edges between filtered nodes
   const filteredSet = new Set(filteredIds);
@@ -341,23 +345,41 @@ export function runBfsTrace(
   const totalEdges = allEdges.length;
   const truncated  = totalNodes > effectiveCaps.BFS_MAX_NODES || totalEdges > effectiveCaps.BFS_MAX_EDGES;
 
-  const cappedIds  = filteredIds.slice(0, effectiveCaps.BFS_MAX_NODES);
-  const cappedSet  = new Set(cappedIds);
+  const cappedIds   = filteredIds.slice(0, effectiveCaps.BFS_MAX_NODES);
+  const cappedSet   = new Set(cappedIds);
   const cappedEdges = allEdges
     .filter(([s, t]) => cappedSet.has(s) && cappedSet.has(t))
     .slice(0, effectiveCaps.BFS_MAX_EDGES);
 
   const nodes = cappedIds.map(nid => {
     const n = nodeMap.get(nid);
-    return strip({
+    const base = strip({
       id:  nid,
-      s:   n?.schema      || undefined,
-      n:   n?.name        ?? nid,
-      t:   n?.type        ?? 'table',
+      s:   n?.schema       || undefined,
+      n:   n?.name         ?? nid,
+      t:   n?.type         ?? 'table',
       ext: n?.externalType || undefined,
       up:  upDepth.get(nid),
       dn:  downDepth.get(nid),
-    });
+    } as Record<string, unknown>);
+
+    if (!includeDdl || !n) return base;
+
+    // Scriptable: add DDL
+    if (SCRIPT_TYPES.has(n.type) && n.bodyScript) {
+      const ddl = normalizeBodyScript(n.bodyScript);
+      if (ddl.length > effectiveCaps.MAX_DDL_CHARS) {
+        return { ...base, ddl_too_large: true, ddl_chars: ddl.length };
+      }
+      return { ...base, ddl };
+    }
+
+    // Table / external: add compact column list
+    if (n.columns && n.columns.length > 0) {
+      return { ...base, cols: n.columns.map(c => presentColumn(c)) };
+    }
+
+    return base;
   });
 
   return {
@@ -367,11 +389,12 @@ export function runBfsTrace(
     truncated,
     total_nodes: totalNodes,
     total_edges: totalEdges,
-    ...(truncated ? { truncation_note: `Showing ${cappedIds.length} of ${totalNodes} nodes and ${cappedEdges.length} of ${totalEdges} edges. Narrow scope with types or schemas filters.` } : {}),
+    ...(excludedCount > 0 ? { excluded_count: excludedCount, excluded_note: `${excludedCount} node(s) removed by exclude filters. Edges to excluded nodes are also absent from results.` } : {}),
+    ...(truncated ? { truncation_note: `Showing ${cappedIds.length} of ${totalNodes} nodes and ${cappedEdges.length} of ${totalEdges} edges. Narrow scope with types/schemas filters or reduce hops.` } : {}),
   };
 }
 
-// ─── Tool 7: lineage_run_analysis ─────────────────────────────────────────────
+// ─── Tool 6: lineage_run_analysis ─────────────────────────────────────────────
 
 export function runAnalysis(
   model: DatabaseModel,
@@ -403,7 +426,7 @@ export function runAnalysis(
   };
 }
 
-// ─── Tool 8: lineage_search_ddl ──────────────────────────────────────────────
+// ─── Tool 7: lineage_search_ddl ──────────────────────────────────────────────
 
 export function searchDdl(
   model: DatabaseModel,
@@ -453,7 +476,7 @@ export function searchDdl(
   return base;
 }
 
-// ─── Tool 9: lineage_create_ai_view ──────────────────────────────────────────
+// ─── Tool 8: lineage_create_ai_view ──────────────────────────────────────────
 
 export type AIHighlightColor = 'bu' | 'gn' | 'rd' | 'ye' | 'or';
 export type AiBadgeColor = AIHighlightColor | 'gy';
@@ -509,7 +532,7 @@ export function validateCreateAiView(
     const unknown = input.node_ids.filter(id => !model.catalog[id]);
     if (unknown.length > 0) {
       const sample = unknown.slice(0, 3).join(', ');
-      errors.push(`Unknown IDs: ${sample}${unknown.length > 3 ? ` (+${unknown.length - 3} more)` : ''}. Run \`lineage_search_objects\` or \`lineage_get_neighbors\` to obtain valid IDs.`);
+      errors.push(`Unknown IDs: ${sample}${unknown.length > 3 ? ` (+${unknown.length - 3} more)` : ''}. Run \`lineage_search_objects\` to obtain valid IDs.`);
     }
   }
 
@@ -559,32 +582,44 @@ export function validateCreateAiView(
   };
 }
 
-// ─── Tool 10: lineage_save_view ───────────────────────────────────────────────
+// ─── Tool 9: lineage_get_ddl_batch ───────────────────────────────────────────
 
-export function validateSaveView(
+export function getDdlBatch(
   model: DatabaseModel,
-  nodeIds: string[],
-  name: string,
-): SaveViewRequest | SaveViewError {
-  if (!name || name.trim().length === 0) {
-    return { success: false, errors: ['name is required'], hint: 'Provide a non-empty name for the view.' };
-  }
-  if (name.length > 60) {
-    return { success: false, errors: ['name exceeds 60 characters'], hint: 'Shorten the view name to 60 characters or fewer.' };
-  }
-  if (!nodeIds || nodeIds.length === 0) {
-    return { success: false, errors: ['node_ids is empty'], hint: 'Provide at least one node ID from search or trace results.' };
-  }
+  ids: string[],
+  caps?: AiCapsOverride,
+): object {
+  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  const cappedIds = ids.slice(0, effectiveCaps.DDL_BATCH_CAP);
 
-  const unknownIds = nodeIds.filter(id => !model.catalog[id]);
-  if (unknownIds.length > 0) {
-    const sample = unknownIds.slice(0, 3).join(', ');
-    return {
-      success: false,
-      errors:  unknownIds.map(id => `Unknown node ID: ${id}`),
-      hint:    `${unknownIds.length} unknown ID(s) — first 3: ${sample}. Use lineage_search_objects to obtain valid IDs.`,
-    };
-  }
+  const results = cappedIds.map(id => {
+    const node = model.nodes.find(n => n.id === id);
+    if (!node) {
+      return strip({ id, error: 'not_found' } as Record<string, unknown>);
+    }
+    if (!node.bodyScript) {
+      // Tables and external nodes have no DDL body — return type only
+      return strip({ id, t: node.type } as Record<string, unknown>);
+    }
+    const ddl = normalizeBodyScript(node.bodyScript);
+    if (ddl.length > effectiveCaps.MAX_DDL_CHARS) {
+      return strip({
+        id, t: node.type,
+        ddl_too_large: true,
+        ddl_chars: ddl.length,
+      } as Record<string, unknown>);
+    }
+    return strip({ id, t: node.type, ddl } as Record<string, unknown>);
+  });
 
-  return { success: true, name: name.trim(), node_ids: nodeIds };
+  const truncated = ids.length > effectiveCaps.DDL_BATCH_CAP;
+  return {
+    results,
+    total:     results.length,
+    truncated,
+    ...(truncated ? {
+      truncation_note: `Showing ${cappedIds.length} of ${ids.length} IDs. Split into multiple calls if needed.`,
+    } : {}),
+  };
 }
+

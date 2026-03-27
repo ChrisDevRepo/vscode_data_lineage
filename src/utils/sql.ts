@@ -92,6 +92,38 @@ export function compileExclusionPattern(pattern: string): RegExp {
   return new RegExp(pattern.replace(/%/g, '.*'), 'i');
 }
 
+/**
+ * Compile a pure SQL LIKE pattern to a case-insensitive RegExp.
+ * Only % and _ have special meaning; all other characters are treated as literals.
+ *   test%      → anchored prefix match: "test", "test_data", "testing"
+ *   %test%     → substring match: any name containing "test"
+ *   test       → exact match (no wildcards)
+ *   _test      → single-char prefix + "test"
+ * Use for AI tool parameters (exclude_schemas etc.) where predictable behavior is required.
+ */
+export function compileSqlLikePattern(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const regexStr = escaped.replace(/%/g, '.*').replace(/_/g, '.');
+  return new RegExp(`^${regexStr}$`, 'i');
+}
+
+/**
+ * Compile an array of SQL LIKE patterns. Returns null when the array is empty or undefined.
+ * Use matchesAnySqlLike() to test a value against the compiled matchers.
+ */
+export function compileSqlLikePatterns(patterns: string[] | undefined): RegExp[] | null {
+  if (!patterns || patterns.length === 0) return null;
+  return patterns.map(p => compileSqlLikePattern(p));
+}
+
+/**
+ * Test a value against an array of compiled SQL LIKE matchers.
+ * Returns true if any matcher matches.
+ */
+export function matchesAnySqlLike(value: string, matchers: RegExp[]): boolean {
+  return matchers.some(r => r.test(value));
+}
+
 /** Escape a literal string so it is safe to embed in a RegExp. */
 export function escapeRegexLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

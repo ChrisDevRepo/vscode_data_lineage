@@ -10,5 +10,13 @@ export default defineConfig({
     define: {
       __APP_VERSION__: JSON.stringify('test'),
     },
+    coverage: {
+      provider: 'v8',
+      include: ['src/engine/**', 'src/hooks/**'],
+      reporter: ['text', 'html'],
+      thresholds: {
+        lines: 80,
+      },
+    },
   },
 });

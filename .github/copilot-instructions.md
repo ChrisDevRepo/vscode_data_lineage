@@ -35,6 +35,9 @@ source format into the shared intermediate types and nothing more.
 | `docs/PARSE_RULES.md` | Custom parse rules guide |
 | `docs/DMV_QUERIES.md` | Custom DMV queries guide |
 | `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
+| `src/ai/tools.ts` | AI tool pure functions (10 tools): 9 read-only queries + `validateCreateAiView`. `AI_CAPS` defaults, `AiCapsOverride` type. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
+| `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()`, `withCap()`. Zero business logic, zero VS Code imports. |
+| `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
 
 ## Build & Test
 
@@ -57,15 +60,24 @@ Press F5 to launch Extension Development Host.
 | `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/projectStore.test.ts` | 153 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `test/ai-tools.test.ts` | 79 | AI tool pure functions: getContext, getSchemasSummary, searchObjects, getObjectDetail, getNeighbors, runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, validateSaveView, safeRegex |
+| `test/ai-tools.test.ts` | 95 | AI tool pure functions: getContext, getSchemasSummary, searchObjects (incl. include_body), getObjectDetail (incl. inline neighbors), runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, validateSaveView, safeRegex |
+| `test/hooks/useInteractiveTrace.test.ts` | 56 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
+| `test/hooks/useGraphology.test.ts` | 34 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
+| `test/hooks/useDacpacLoader.routing.test.tsx` | 30 | useDacpacLoader state machine: message routing (dacpac vs DB path), state transitions, callbacks, isDemo flag |
+| `test/snapshot-aw-baseline.ts` | — | Parser regression baseline: diffs all 31 AW SPs against committed `test/aw-baseline.tsv` — run via `npm run test:snapshot` |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                  # Run all unit tests (1086 total)
+npm test                            # All unit tests (1086 tsx + 126 vitest + snapshot)
+npm run test:snapshot               # Parser baseline check only
+npm run test:snapshot:update        # Regenerate test/aw-baseline.tsv after parser changes
+npm run test:coverage               # Vitest with v8 coverage (requires @vitest/coverage-v8)
 ```
 
-Shared test helpers in `test/testUtils.ts` — `assert()`, `assertEq()`, `test()`, `loadParseRules()`, `testPath()`, `rootPath()`, `printSummary()`, `makeGraph()`, `hasName()`, `loadAdventureWorksModel()`. Import from `./testUtils` in new test files.
+**tsx tests** (1086 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
+
+**Vitest tests** (126 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
 
 Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers must never appear in public source code, test files, or comments. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
 
@@ -82,15 +94,17 @@ Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers 
 
 ## Message Passing (Extension <-> Webview)
 
-Key messages: `ready`, `config-only`, `dacpac-data`, `show-ddl`, `update-ddl`, `log`, `error`, `themeChanged`
+Key messages: `ready`, `config-only`, `dacpac-data`, `show-detail`, `update-detail`, `close-detail`, `detail-update`, `detail-closed`, `log`, `error`, `themeChanged`, `filter-changed`
 
-Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-visualize`, `db-progress`, `db-schema-preview`, `db-model`, `db-error`, `db-cancelled`
+Dacpac messages: `dacpac-schema-preview` (Phase 1 result), `dacpac-visualize` (Phase 2 trigger), `dacpac-model` (Phase 2 result + demo + panel restore)
+
+Database messages: `check-mssql`, `mssql-status`, `db-connect`, `db-schema-preview`, `db-visualize`, `db-progress`, `db-model`, `db-error`, `db-cancelled`
 
 Project messages: `save-project`, `load-project`, `delete-project`, `save-view`, `delete-view`, `projects-list` (Extension → Webview)
 
-Other: `open-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `parse-rules-result`, `parse-stats`, `reload`, `export-file`
-
 Table statistics: `table-stats-request` (Webview → Extension), `table-stats-result`, `table-stats-error` (Extension → Webview)
+
+Other: `open-dacpac`, `last-dacpac-gone`, `load-demo`, `open-external`, `open-settings`, `parse-rules-result`, `parse-stats`, `reload`, `export-file`
 
 ## YAML Loading & Failsafe Chain
 
@@ -195,21 +209,26 @@ npm test                               # all suites must pass
 
 VS Code Copilot chat participant registered via `vscode.chat.createChatParticipant()`. NOT a standalone AI framework — the model (GPT-4o, Claude Sonnet, Gemini, local Ollama LLM) is selected by the user in the Copilot chat dropdown.
 
-**Key files:** `src/ai/tools.ts` (9 pure tool functions, `AI_CAPS` defaults), `src/ai/graphUtils.ts` (`buildBareGraph()`), `src/extension.ts` (chat participant registration, tool registration, `readAiCaps()`, `autoScaleTier()`).
+**Key files:**
+- `src/ai/tools.ts` — 10 tool functions (9 read-only queries + `validateCreateAiView` write tool). `AI_CAPS` (SEARCH=50, BFS_N=200, BFS_E=300, GROUPS=100, DDL=10000), `AiCapsOverride` type. Zero VS Code imports. Imports `strip()` and all presenters from `aiPresenter.ts`. Soft errors `{ error: 'not_found' }` (no throw). DDL too large → `{ ddl: null, ddl_too_large: true, ddl_chars: N }` (never partial DDL).
+- `src/ai/aiPresenter.ts` — Compact LLM presentation layer extracted from `tools.ts`. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (`'body'`→`'read'`), `presentNode/Column/Schema/Neighbor/Filter()`, `withCap()`. Zero business logic, zero VS Code imports — shape changes here propagate to all tools automatically.
+- `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
+- `src/extension.ts` — chat participant registration, 10 tool registrations (`readOnlyHint` on 8 read tools), `readAiCaps()`, `autoScaleTier()`, `isAiEnabled()`, participant handler.
 
-**9 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
+**10 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
 
-| Tool | Purpose |
-|------|---------|
-| `lineage_get_context` | Active project, filter state, model stats — call first |
-| `lineage_get_schemas_summary` | All schemas with per-type counts |
-| `lineage_search_objects` | Name search, returns IDs for other tools |
-| `lineage_get_object_detail` | Full metadata + DDL body for one object |
-| `lineage_get_neighbors` | 1-hop upstream/downstream neighbors |
-| `lineage_run_bfs_trace` | Multi-hop BFS lineage trace |
-| `lineage_run_analysis` | Structural analysis (hubs/islands/orphans/longest-path/cycles) |
-| `lineage_search_ddl` | Full-text search across SP/view/function bodies |
-| `lineage_save_view` | Bookmark a node set to the active project |
+| Tool | Kind | Purpose |
+|------|------|---------|
+| `lineage_get_context` | read | Active project, platform, filter state, model stats — call first each conversation |
+| `lineage_get_schemas_summary` | read | All schemas with per-type object counts |
+| `lineage_search_objects` | read | Name/body search, returns IDs for other tools. `scope=visible` restricts to screen |
+| `lineage_get_object_detail` | read | Full metadata + DDL body for one object; inline up/dn neighbors |
+| `lineage_get_neighbors` | read | 1-hop upstream/downstream neighbors with edge types |
+| `lineage_run_bfs_trace` | read | Multi-hop BFS lineage trace; `incomplete=true` means capped — narrow scope or reduce hops |
+| `lineage_run_analysis` | read | Structural analysis: hubs/islands/orphans/longest-path/cycles |
+| `lineage_search_ddl` | read | Full-text regex search across SP/view/function DDL bodies |
+| `lineage_save_view` | write | Bookmark current filter state (schemas/types/search) as named view |
+| `lineage_create_ai_view` | write | Create named AI bookmark: node set, highlight groups (up to 5), badges (up to 50), narrative |
 
 **Auto-scaling caps** — set via `request.model.maxInputTokens` per request → `autoScaleTier()`:
 
@@ -227,4 +246,4 @@ Explicit `dataLineageViz.ai.*` VS Code settings override auto-scale (detected vi
 
 **`ai.enabled` guard:** `isAiEnabled()` checked at both the chat participant level (returns disabled message) and in every tool `invoke()` handler (returns `{ error: 'disabled' }`).
 
-**Unit tests:** `test/ai-tools.test.ts` (79 tests) covers all 9 pure functions. Does not test `extension.ts` wiring (VS Code dependency).
+**Unit tests:** `test/ai-tools.test.ts` (95 tests) covers all pure tool functions (`getContext`, `getSchemasSummary`, `searchObjects` incl. `include_body`, `getObjectDetail` incl. inline neighbors, `runBfsTrace` incl. truncation, `runAnalysis`, `searchDdl`, `validateSaveView`, `validateCreateAiView`, `safeRegex`). Does not test `extension.ts` wiring (VS Code dependency).
