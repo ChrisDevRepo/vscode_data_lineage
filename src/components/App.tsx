@@ -354,6 +354,20 @@ export function App() {
   const prevHideIsolatedRef = useRef<boolean | null>(null);
   const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
+  /** The currently active advanced bookmark profile (allowlist-based view). */
+  const [activeAdvancedProfile, setActiveAdvancedProfile] = useState<FilterProfile | null>(null);
+  /** Saved filter state before an advanced bookmark was applied — restored on exit. */
+  const previousFilterRef = useRef<FilterState | null>(null);
+
+  /** Names of allowlist node IDs no longer present in the model (stale objects). */
+  const bookmarkStaleNames = useMemo(() => {
+    if (!activeAdvancedProfile || !model) return [];
+    const ids = activeAdvancedProfile.filter.allowlistNodeIds ?? [];
+    return ids
+      .filter(id => !model.catalog[id])
+      .map(id => id);
+  }, [activeAdvancedProfile, model]);
+
   const handleRefresh = useCallback(() => {
     if (model) {
       overviewActionsRef.current.resetUserChoice();
@@ -738,6 +752,26 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
 
+  const handleApplyView = useCallback((profile: FilterProfile) => {
+    overviewActionsRef.current.resetUserChoice();
+    const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
+    if (isAdvanced) {
+      // Save current filter so "Exit View" can restore it
+      if (!previousFilterRef.current) previousFilterRef.current = filter;
+      const restored = deserializeFilter(profile.filter);
+      // Override schemas/types to "all" so the allowlist is not pre-filtered out
+      if (model) restored.schemas = new Set(model.schemas.map(s => s.name));
+      restored.types = new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']);
+      setFilter(restored);
+      setActiveAdvancedProfile(profile);
+      if (model) rebuild(model, restored, config);
+    } else {
+      const restored = deserializeFilter(profile.filter);
+      setFilter(restored);
+      if (model) rebuild(model, restored, config);
+    }
+  }, [model, config, filter, rebuild]);
+
   // ── Message handler (stats + projects-list) ─────────────────────────────────
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -763,11 +797,23 @@ export function App() {
         if (view === 'visualizing' && msg.lastOpenedId) {
           setActiveProjectId(msg.lastOpenedId);
         }
+      } else if (msg?.type === 'ai-view-activate') {
+        // AI created an advanced bookmark — look it up and apply it
+        const profileId: string = msg.profileId;
+        setProjects(prev => {
+          const project = prev.find(p => p.filterProfiles?.some(fp => fp.id === profileId));
+          const profile = project?.filterProfiles?.find(fp => fp.id === profileId);
+          if (profile) {
+            // Defer to next tick so projects state is committed first
+            setTimeout(() => handleApplyView(profile), 0);
+          }
+          return prev;
+        });
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [view, toggleMode]);
+  }, [view, toggleMode, handleApplyView]);
 
   // Notify extension when graphMode changes so it can update the status bar
   useEffect(() => {
@@ -800,12 +846,80 @@ export function App() {
     vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
   }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
 
-  const handleApplyView = useCallback((profile: FilterProfile) => {
-    overviewActionsRef.current.resetUserChoice();
-    const restored = deserializeFilter(profile.filter);
-    setFilter(restored);
-    if (model) rebuild(model, restored, config);
+  const handleExitAdvancedBookmark = useCallback(() => {
+    const prev = previousFilterRef.current;
+    previousFilterRef.current = null;
+    setActiveAdvancedProfile(null);
+    if (prev) {
+      setFilter(prev);
+      if (model) rebuild(model, prev, config);
+    }
   }, [model, config, rebuild]);
+
+  const handleRemoveFromView = useCallback((nodeId: string) => {
+    setFilter(f => {
+      if (!f.allowlistNodeIds) return f;
+      const next: FilterState = {
+        ...f,
+        allowlistNodeIds: new Set([...f.allowlistNodeIds].filter(id => id !== nodeId)),
+      };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  const handleSaveTraceAsBookmark = useCallback((
+    name: string,
+    nodeIds: string[],
+    source: 'trace' | 'path',
+    positions?: Record<string, { x: number; y: number }>,
+    viewport?: { x: number; y: number; zoom: number },
+  ) => {
+    if (!activeProjectId) return;
+    const profile: FilterProfile = {
+      id: crypto.randomUUID(),
+      name,
+      createdAt: new Date().toISOString(),
+      source: source === 'path' ? 'trace' : source,
+      filter: {
+        ...serializeFilter(filter),
+        allowlistNodeIds: nodeIds,
+      },
+      ...(positions ? { positions } : {}),
+      ...(viewport ? { viewport } : {}),
+    };
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+
+  const handleSaveAnalysisBookmark = useCallback((
+    name: string,
+    nodeIds: string[],
+    positions?: Record<string, { x: number; y: number }>,
+    viewport?: { x: number; y: number; zoom: number },
+  ) => {
+    if (!activeProjectId) return;
+    const profile: FilterProfile = {
+      id: crypto.randomUUID(),
+      name,
+      createdAt: new Date().toISOString(),
+      source: 'analysis',
+      filter: {
+        ...serializeFilter(filter),
+        allowlistNodeIds: nodeIds,
+      },
+      ...(positions ? { positions } : {}),
+      ...(viewport ? { viewport } : {}),
+    };
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
 
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
@@ -958,6 +1072,12 @@ export function App() {
         onApplyView={handleApplyView}
         onDeleteView={handleDeleteView}
         onAssignSlot={handleAssignSlot}
+        onSaveTraceBookmark={activeProjectId ? handleSaveTraceAsBookmark : undefined}
+        onSaveAnalysisBookmark={activeProjectId ? handleSaveAnalysisBookmark : undefined}
+        onRemoveFromView={handleRemoveFromView}
+        activeAdvancedProfile={activeAdvancedProfile}
+        bookmarkStaleNames={bookmarkStaleNames}
+        onExitAdvancedBookmark={handleExitAdvancedBookmark}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);

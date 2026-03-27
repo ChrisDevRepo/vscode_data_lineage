@@ -41,8 +41,9 @@ export function useGraphology(): UseGraphologyReturn {
     const exclusionFiltered = applyExclusionFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.exclusionPatterns);
     const focusFiltered = applyFocusSchemaFilter(exclusionFiltered, filter.focusSchemas);
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
+    const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
 
-    const result = buildGraph(isolationFiltered, config);
+    const result = buildGraph(allowlistFiltered, config);
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
@@ -91,6 +92,19 @@ function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean): Data
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
+  return { ...model, nodes, edges };
+}
+
+// ─── Allowlist Filter ────────────────────────────────────────────────────────
+// Applied last in the pipeline — only nodes in the allowlist survive.
+// Edges are preserved only when both endpoints are in the allowlist.
+// Empty/absent allowlist = no-op (full graph passes through).
+
+function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
+  if (!allowlist || allowlist.size === 0) return model;
+  const nodes = model.nodes.filter((n) => allowlist.has(n.id));
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
   return { ...model, nodes, edges };
 }
 

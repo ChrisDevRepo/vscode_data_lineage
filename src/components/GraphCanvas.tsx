@@ -29,6 +29,8 @@ import { TracedFilterBanner } from './TracedFilterBanner';
 import { PathFinderBar } from './PathFinderBar';
 import { AnalysisBanner } from './AnalysisBanner';
 import { AnalysisSidebar } from './AnalysisSidebar';
+import { BookmarkBanner } from './BookmarkBanner';
+import { BookmarkInfoCard } from './BookmarkInfoCard';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
@@ -98,6 +100,29 @@ interface GraphCanvasProps {
   onAssignSlot?: (profileId: string, slot: number | null) => void;
   graphMode?: GraphMode;
   onSchemaNodeDoubleClick?: (schemaName: string) => void;
+  /** Called when user saves a trace/path result as an advanced bookmark. */
+  onSaveTraceBookmark?: (
+    name: string,
+    nodeIds: string[],
+    source: 'trace' | 'path',
+    positions?: Record<string, { x: number; y: number }>,
+    viewport?: { x: number; y: number; zoom: number },
+  ) => void;
+  /** Called when user saves an analysis result as an advanced bookmark. */
+  onSaveAnalysisBookmark?: (
+    name: string,
+    nodeIds: string[],
+    positions?: Record<string, { x: number; y: number }>,
+    viewport?: { x: number; y: number; zoom: number },
+  ) => void;
+  /** Called when user clicks the "×" remove-from-view button (advanced bookmark mode). */
+  onRemoveFromView?: (nodeId: string) => void;
+  /** The active advanced bookmark profile (when allowlist mode is on). */
+  activeAdvancedProfile?: FilterProfile | null;
+  /** Names of allowlist node IDs that no longer exist in the model. */
+  bookmarkStaleNames?: string[];
+  /** Called when user clicks "Exit View" in the bookmark banner. */
+  onExitAdvancedBookmark?: () => void;
 }
 
 export function GraphCanvas({
@@ -153,8 +178,14 @@ export function GraphCanvas({
   onAssignSlot,
   graphMode = 'full',
   onSchemaNodeDoubleClick,
+  onSaveTraceBookmark,
+  onSaveAnalysisBookmark,
+  onRemoveFromView,
+  activeAdvancedProfile,
+  bookmarkStaleNames,
+  onExitAdvancedBookmark,
 }: GraphCanvasProps) {
-  const { fitView, getNode, setCenter } = useReactFlow();
+  const { fitView, getNode, setCenter, getNodes, getViewport } = useReactFlow();
   const vscodeApi = useVsCode();
 
   const handleNodeClick: NodeMouseHandler = useCallback(
@@ -167,6 +198,37 @@ export function GraphCanvas({
   const handleFitView = useCallback(() => {
     fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }, [fitView]);
+
+  const handleSaveTraceAsBookmark = useCallback((name: string, withPositions: boolean) => {
+    if (!onSaveTraceBookmark) return;
+    const nodeIds = Array.from(trace.tracedNodeIds);
+    if (withPositions) {
+      const nodes = getNodes();
+      const pos: Record<string, { x: number; y: number }> = {};
+      for (const n of nodes) pos[n.id] = n.position;
+      onSaveTraceBookmark(name, nodeIds, 'trace', pos, getViewport());
+    } else {
+      onSaveTraceBookmark(name, nodeIds, 'trace');
+    }
+  }, [onSaveTraceBookmark, trace.tracedNodeIds, getNodes, getViewport]);
+
+  const handleSaveAnalysisAsBookmark = useCallback((name: string, withPositions: boolean) => {
+    if (!onSaveAnalysisBookmark || !analysisMode) return;
+    const activeGroup = analysisMode.activeGroupId
+      ? analysisMode.result.groups.find(g => g.id === analysisMode.activeGroupId)
+      : null;
+    const nodeIds = activeGroup
+      ? activeGroup.nodeIds
+      : analysisMode.result.groups.flatMap(g => g.nodeIds);
+    if (withPositions) {
+      const nodes = getNodes();
+      const pos: Record<string, { x: number; y: number }> = {};
+      for (const n of nodes) pos[n.id] = n.position;
+      onSaveAnalysisBookmark(name, nodeIds, pos, getViewport());
+    } else {
+      onSaveAnalysisBookmark(name, nodeIds);
+    }
+  }, [onSaveAnalysisBookmark, analysisMode, getNodes, getViewport]);
 
   useKeyboardShortcut(['f', 'F'], handleFitView);
 
@@ -281,6 +343,34 @@ export function GraphCanvas({
     return neighbors;
   }, [highlightedNodeId, graph]);
 
+  const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
+
+  // Build AI highlight + badge lookups from active AI profile metadata
+  const aiHighlightMap = useMemo((): Map<string, string> => {
+    const m = new Map<string, string>();
+    const groups = activeAdvancedProfile?.aiMetadata?.highlightGroups;
+    if (!groups) return m;
+    const colorHex: Record<string, string> = {
+      blue: '#3b82f6', green: '#22c55e', red: '#ef4444', yellow: '#eab308', orange: '#f97316',
+    };
+    for (const g of groups) {
+      const hex = colorHex[g.color] ?? '#3b82f6';
+      for (const id of g.nodeIds) m.set(id, hex);
+    }
+    return m;
+  }, [activeAdvancedProfile]);
+
+  const aiBadgeMap = useMemo((): Map<string, { text: string; color: string }> => {
+    const m = new Map<string, { text: string; color: string }>();
+    const badges = activeAdvancedProfile?.aiMetadata?.badges;
+    if (!badges) return m;
+    const colorHex: Record<string, string> = {
+      blue: '#3b82f6', green: '#22c55e', red: '#ef4444', yellow: '#eab308', orange: '#f97316', gray: '#6b7280',
+    };
+    for (const b of badges) m.set(b.nodeId, { text: b.text, color: colorHex[b.color] ?? '#6b7280' });
+    return m;
+  }, [activeAdvancedProfile]);
+
   const displayNodes = useMemo((): FlowNode[] => {
     return localNodes.map(node => {
       const isHighlighted = highlightedNodeId === node.id;
@@ -291,10 +381,14 @@ export function GraphCanvas({
           ...node.data,
           highlighted: isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
           dimmed: !!shouldBeDimmed,
+          showRemoveButton: isBookmarkMode,
+          onRemoveFromView: isBookmarkMode ? onRemoveFromView : undefined,
+          aiHighlight: aiHighlightMap.get(node.id),
+          aiBadge: aiBadgeMap.get(node.id),
         },
       };
     });
-  }, [localNodes, highlightedNodeId, level1Neighbors]);
+  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap]);
 
   const displayEdges = useMemo(() => {
     if (!highlightedNodeId) return localEdges;
@@ -387,6 +481,16 @@ export function GraphCanvas({
         onAssignSlot={onAssignSlot}
       />
 
+      {/* Advanced bookmark banner — shown whenever an allowlist view is active */}
+      {activeAdvancedProfile && isBookmarkMode && onExitAdvancedBookmark && (
+        <BookmarkBanner
+          profile={activeAdvancedProfile}
+          shownCount={localNodes.filter(n => n.type === 'lineageNode').length}
+          totalCount={activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0}
+          onExit={onExitAdvancedBookmark}
+        />
+      )}
+
       {/* Inline Trace Controls - shown during configuration phase */}
       {trace.mode === 'configuring' && trace.selectedNodeId && (
         <InlineTraceControls
@@ -412,6 +516,7 @@ export function GraphCanvas({
           mode={trace.mode}
           onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
           onReset={() => onResetAll()}
+          onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
         />
       )}
 
@@ -435,6 +540,7 @@ export function GraphCanvas({
         <AnalysisBanner
           analysis={analysisMode}
           onClose={onCloseAnalysis}
+          onSaveAsBookmark={onSaveAnalysisBookmark ? handleSaveAnalysisAsBookmark : undefined}
         />
       )}
 
@@ -539,6 +645,14 @@ export function GraphCanvas({
         )}
 
         <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+
+        {/* Bookmark info card — floating bottom-left, only in advanced bookmark mode */}
+        {activeAdvancedProfile && isBookmarkMode && (
+          <BookmarkInfoCard
+            profile={activeAdvancedProfile}
+            staleNodeNames={bookmarkStaleNames ?? []}
+          />
+        )}
         </div>
       </div>
 

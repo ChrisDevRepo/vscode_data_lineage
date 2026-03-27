@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState, useRef, useEffect } from 'react';
 
 interface TracedFilterBannerProps {
   startNodeName: string;
@@ -9,6 +9,8 @@ interface TracedFilterBannerProps {
   mode: 'applied' | 'filtered';
   onEnd?: () => void;
   onReset: () => void;
+  /** When provided, shows the "Save as Bookmark" button. */
+  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
 }
 
 export const TracedFilterBanner = memo(function TracedFilterBanner({
@@ -20,7 +22,25 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
   mode,
   onEnd,
   onReset,
+  onSaveAsBookmark,
 }: TracedFilterBannerProps) {
+  const [saving, setSaving] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [withPositions, setWithPositions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (saving) inputRef.current?.focus();
+  }, [saving]);
+
+  function handleConfirmSave() {
+    const name = saveName.trim();
+    if (!name) return;
+    onSaveAsBookmark?.(name, withPositions);
+    setSaving(false);
+    setSaveName('');
+    setWithPositions(false);
+  }
   const formatLevels = (levels: number) => {
     return levels === Number.MAX_SAFE_INTEGER ? 'All' : levels.toString();
   };
@@ -64,6 +84,51 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
       </div>
 
       <div className="flex items-center gap-2">
+        {onSaveAsBookmark && !saving && (
+          <button
+            onClick={() => setSaving(true)}
+            className="h-8 px-3 text-xs rounded font-medium transition-colors ln-btn-secondary"
+            title="Save this trace result as a named bookmark"
+          >
+            Save as Bookmark
+          </button>
+        )}
+        {saving && (
+          <div className="flex items-center gap-1">
+            <input
+              ref={inputRef}
+              type="text"
+              value={saveName}
+              onChange={e => setSaveName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleConfirmSave(); if (e.key === 'Escape') { setSaving(false); setSaveName(''); } }}
+              placeholder="Bookmark name…"
+              className="h-7 px-2 text-xs rounded ln-input"
+              style={{ width: 140 }}
+            />
+            <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={withPositions}
+                onChange={e => setWithPositions(e.target.checked)}
+                className="ln-checkbox"
+              />
+              Positions
+            </label>
+            <button
+              onClick={handleConfirmSave}
+              disabled={!saveName.trim()}
+              className="h-7 px-2 text-xs rounded font-medium transition-colors ln-btn-primary"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => { setSaving(false); setSaveName(''); }}
+              className="h-7 px-2 text-xs rounded font-medium transition-colors ln-btn-secondary"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <button
           onClick={mode === 'applied' && onEnd ? onEnd : onReset}
           className="h-8 px-3 text-xs rounded font-medium transition-colors ln-btn-secondary"

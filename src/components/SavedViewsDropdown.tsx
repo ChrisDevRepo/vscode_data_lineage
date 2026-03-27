@@ -179,8 +179,20 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                             {profile.slot ?? '#'}
                           </button>
                         )}
-                        <span className="flex-1 text-sm truncate" title={profile.name}>
+                        <span className="flex-1 text-sm truncate flex items-center gap-1" title={profile.name}>
                           {profile.name}
+                          {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 && (
+                            <span
+                              className="text-[9px] px-1 rounded flex-shrink-0"
+                              style={{
+                                border: '1px solid var(--ln-analysis-border)',
+                                color: 'var(--ln-analysis-fg)',
+                                lineHeight: '14px',
+                              }}
+                            >
+                              {profile.source === 'ai' ? 'AI' : profile.source === 'trace' ? 'trace' : profile.source === 'analysis' ? 'analysis' : 'adv'}
+                            </span>
+                          )}
                         </span>
                         <Button
                           variant="primary"

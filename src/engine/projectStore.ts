@@ -28,6 +28,23 @@ export interface SerializedFilterState {
   showExternalRefs: boolean;
   externalRefTypes: string[];
   exclusionPatterns?: string[];  // optional for backward compat with existing saved profiles
+  /** Allowlist: when non-empty, only these node IDs are shown. Empty/absent = no restriction. */
+  allowlistNodeIds?: string[];
+}
+
+/** Named color group for AI-authored view highlight groups. */
+export type AIHighlightColor = 'blue' | 'green' | 'red' | 'yellow' | 'orange';
+
+/** Metadata attached to AI-authored advanced bookmarks. */
+export interface AIViewMetadata {
+  /** Plain text explanation of the view, max 500 chars. */
+  narrative: string;
+  /** Up to 5 color-coded node groups shown as legend in the info card. */
+  highlightGroups: Array<{ label: string; color: AIHighlightColor; nodeIds: string[] }>;
+  /** Up to 50 per-node text badges (e.g., "Step 1", "Hub", "⚠ Cycle"). */
+  badges: Array<{ nodeId: string; text: string; color: AIHighlightColor | 'gray' }>;
+  /** Dagre layout direction hint. Default: 'TB'. */
+  layoutDirection?: 'LR' | 'TB';
 }
 
 export interface FilterProfile {
@@ -37,6 +54,14 @@ export interface FilterProfile {
   filter: SerializedFilterState;
   /** Keyboard shortcut slot. Alt+N applies this view. Optional — no slot assigned by default. */
   slot?: 1|2|3|4|5|6|7|8|9;
+  /** How this profile was created — shown in the info card when the view is active. */
+  source?: 'user' | 'trace' | 'analysis' | 'ai';
+  /** Saved per-node positions (x, y) — applied after dagre as an overlay. */
+  positions?: Record<string, { x: number; y: number }>;
+  /** Saved ReactFlow viewport — restored together with positions. */
+  viewport?: { x: number; y: number; zoom: number };
+  /** AI-authored view metadata — only present on profiles created by @lineage. */
+  aiMetadata?: AIViewMetadata;
 }
 
 export interface Project {
@@ -241,6 +266,9 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
     showExternalRefs: filter.showExternalRefs,
     externalRefTypes: Array.from(filter.externalRefTypes),
     exclusionPatterns: filter.exclusionPatterns,
+    ...(filter.allowlistNodeIds && filter.allowlistNodeIds.size > 0
+      ? { allowlistNodeIds: Array.from(filter.allowlistNodeIds) }
+      : {}),
   };
 }
 
@@ -255,5 +283,8 @@ export function deserializeFilter(s: SerializedFilterState): FilterState {
     showExternalRefs: s.showExternalRefs,
     externalRefTypes: new Set(s.externalRefTypes) as FilterState['externalRefTypes'],
     exclusionPatterns: s.exclusionPatterns ?? [],
+    ...(s.allowlistNodeIds && s.allowlistNodeIds.length > 0
+      ? { allowlistNodeIds: new Set(s.allowlistNodeIds) }
+      : {}),
   };
 }

@@ -768,6 +768,59 @@
             "node_ids"
           ]
         }
+      },
+      {
+        "name": "lineage_create_ai_view",
+        "toolReferenceName": "lineage_create_ai_view",
+        "displayName": "Create AI View",
+        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, narrative explanation, color groups, and badges. The user receives a VS Code notification and sees the view applied in the lineage graph.",
+        "modelDescription": "Creates an advanced named bookmark (AI view) in the lineage graph. Use ONLY when the user explicitly asks to 'show', 'visualize', or 'create a view'. Requires a project to be open. Provide exact node IDs (validated against catalog), a narrative (plain text, max 500 chars), optional highlight groups (max 5, colors: blue/green/red/yellow/orange), optional badges on nodes (max 50, max 15 chars text). The view is persisted, displayed in the graph with a banner, and the user is notified. Do NOT use for informational questions — only for explicit visualization requests.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "lineage"
+        ],
+        "icon": "$(sparkle)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "description": "Display name for the view (max 60 chars)" },
+            "node_ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Exact node IDs to show (1–200, validated against catalog)"
+            },
+            "narrative": { "type": "string", "description": "Plain text explanation of why these nodes matter (max 500 chars)" },
+            "layout_direction": { "type": "string", "enum": ["LR", "TB"], "description": "Graph layout direction — LR for sequential flows, TB for hierarchies (default TB)" },
+            "highlight_groups": {
+              "type": "array",
+              "description": "Color groups for visual clustering (max 5)",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": { "type": "string", "description": "Group label (max 20 chars)" },
+                  "color": { "type": "string", "enum": ["blue", "green", "red", "yellow", "orange"] },
+                  "node_ids": { "type": "array", "items": { "type": "string" }, "description": "Node IDs in this group (must be subset of top-level node_ids)" }
+                },
+                "required": ["label", "color", "node_ids"]
+              }
+            },
+            "badges": {
+              "type": "array",
+              "description": "Short text chips shown on specific nodes (max 50)",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "node_id": { "type": "string" },
+                  "text": { "type": "string", "description": "Badge text (max 15 chars)" },
+                  "color": { "type": "string", "enum": ["blue", "green", "red", "yellow", "orange", "gray"] }
+                },
+                "required": ["node_id", "text"]
+              }
+            }
+          },
+          "required": ["name", "node_ids"]
+        }
       }
     ]
   },

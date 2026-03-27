@@ -29,7 +29,7 @@ function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }
 
 function IconPath({ d }: { d: string }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-link">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
       <path strokeLinecap="round" strokeLinejoin="round" d={d} />
     </svg>
   );
@@ -109,7 +109,9 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
           <p className="font-sans mt-1.5" style={{ color: 'var(--ln-fg-dim)' }}>Matched against <em>schema.name</em>. Case-insensitive. <code>%</code> is a wildcard (like SQL LIKE).</p>
         </div>
         <div className="mt-2 text-xs ln-text-muted">
-          Exclusion rules are <strong>saved per bookmark</strong> — use Bookmarks (🔖) to save and restore views.{' '}
+          Exclusion rules are <strong>saved per bookmark</strong> — use{' '}
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 inline-block align-text-bottom mx-0.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
+          Bookmarks to save and restore views.{' '}
           <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/README.md')} className="ln-text-link hover:underline cursor-pointer">
             Full reference ↗
           </button>
@@ -119,7 +121,7 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
       {/* Trace Mode */}
       <section>
         <SectionHeader
-          icon={<IconPath d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />}
+          icon={<IconPath d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />}
           title="Trace Mode"
         />
         <div className="space-y-1.5 text-sm ln-text-muted">
@@ -225,14 +227,14 @@ function TabAnalysis() {
       {analyses.map(({ icon, title, desc, tip }) => (
         <div key={title} className="rounded-lg p-3" style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border)' }}>
           <div className="flex items-center gap-2 mb-1.5">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-link">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0 ln-text-muted">
               <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
             </svg>
             <span className="text-sm font-semibold ln-text">{title}</span>
           </div>
-          <p className="text-xs ln-text-muted mb-1">{desc}</p>
-          <p className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>
-            <span className="font-medium">Tip: </span>{tip}
+          <p className="text-xs ln-text-muted">{desc}</p>
+          <p className="text-xs ln-text-muted mt-1">
+            <span className="font-medium ln-text">Tip:</span> {tip}
           </p>
         </div>
       ))}
@@ -275,9 +277,9 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           title="Supported Platforms"
         />
         <div className="grid grid-cols-2 gap-1.5 text-sm ln-text-muted">
-          {['SQL Server 2016+', 'Azure SQL Database', 'Fabric Data Warehouse', 'Synapse Dedicated Pool', 'Synapse Serverless'].map(p => (
+          {['SQL Server 2025', 'Azure SQL Database', 'Fabric Data Warehouse', 'Synapse Dedicated SQL Pool'].map(p => (
             <div key={p} className="flex items-center gap-1.5">
-              <span className="text-xs" style={{ color: 'var(--ln-text-link)' }}>✓</span>
+              <span className="text-xs ln-text-link">✓</span>
               <span>{p}</span>
             </div>
           ))}
@@ -441,10 +443,9 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <img
               src={window.LOGO_URI}
               alt=""
-              className="h-6 w-auto"
+              className="h-8 w-auto"
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
             />
-            <span className="text-sm font-semibold ln-text">Data Lineage Viz</span>
             <span className="text-xs ln-text-muted opacity-60">v{__APP_VERSION__}</span>
           </div>
           <button

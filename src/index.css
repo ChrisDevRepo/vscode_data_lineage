@@ -295,6 +295,20 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   background: var(--ln-fg-dim) !important;
 }
 
+/* Remove-from-view button (advanced bookmark mode) */
+.ln-node-remove-btn {
+  background: var(--ln-bg-elevated);
+  color: var(--ln-fg-muted);
+  border: 1px solid var(--ln-border-light);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ln-node-remove-btn:hover {
+  opacity: 1;
+  color: var(--ln-validation-error-border);
+}
+
 /* Error boundary */
 .ln-error-boundary {
   padding: 20px;
@@ -547,6 +561,20 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 }
 
 /* Trace banner */
+/* Advanced bookmark banner (slim top bar) */
+.ln-bookmark-banner {
+  background: var(--ln-bg-secondary);
+  border-bottom: 1px solid var(--ln-border);
+}
+
+/* Advanced bookmark info card (floating bottom-left) */
+.ln-bookmark-info-card {
+  background: var(--ln-widget-bg);
+  border: 1px solid var(--ln-widget-border);
+  border-radius: 6px;
+  box-shadow: var(--ln-node-shadow);
+}
+
 .ln-trace-banner {
   background: var(--ln-warning-bg);
   border-bottom: 1px solid var(--ln-warning-border);

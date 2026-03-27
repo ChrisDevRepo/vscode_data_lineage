@@ -374,6 +374,11 @@ export interface FilterState {
   showExternalRefs: boolean;
   externalRefTypes: Set<'file' | 'db'>;
   exclusionPatterns: string[];
+  /**
+   * Allowlist: when non-empty, only these node IDs are shown (applied after all other filters).
+   * Empty/absent = no restriction. Set by advanced bookmarks (trace-save, analysis-save, AI view).
+   */
+  allowlistNodeIds?: Set<string>;
 }
 
 export interface TraceState {
@@ -427,4 +432,6 @@ export type ExtensionMessage =
   | { type: 'db-cancelled' }
   | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
   | { type: 'table-stats-error'; message: string }
-  | { type: 'toggle-overview' };
+  | { type: 'toggle-overview' }
+  /** Sent by extension after AI creates and persists an advanced bookmark. Webview applies it. */
+  | { type: 'ai-view-activate'; profileId: string };

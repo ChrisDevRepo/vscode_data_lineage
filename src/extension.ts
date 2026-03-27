@@ -6,7 +6,8 @@ import { buildBareGraph } from './ai/graphUtils';
 import {
   AI_CAPS, type AiCapsOverride,
   getContext, getSchemasSummary, searchObjects, getObjectDetail,
-  getNeighbors, runBfsTrace, runAnalysis, searchDdl, validateSaveView,
+  getNeighbors, runBfsTrace, runAnalysis, searchDdl, validateSaveView, validateCreateAiView,
+  type CreateAiViewInput,
 } from './ai/tools';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { getUri } from './utils/getUri';
@@ -30,7 +31,7 @@ import {
   migrateProjectStore, createProject, updateProject, deleteProject, generateProjectName,
   addFilterProfile, deleteFilterProfile, isValidProject,
 } from './engine/projectStore';
-import type { Project, ProjectStore, FilterProfile, SerializedFilterState } from './engine/projectStore';
+import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ let _aiGraph:          Graph | null = null;
 let _aiFilter:         SerializedFilterState | null = null;
 let _aiViews:          FilterProfile[] = [];
 let _aiProjectName:    string | null = null;
+let _aiCurrentProjectId: string | null = null;
 let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; conservative fallback
 
 function isAiEnabled(): boolean {
@@ -351,6 +353,79 @@ export function activate(context: vscode.ExtensionContext) {
         return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length });
       },
     }),
+    vscode.lm.registerTool('lineage_create_ai_view', {
+      prepareInvocation(options, _token) {
+        const input = options.input as CreateAiViewInput;
+        return { invocationMessage: `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects` };
+      },
+      async invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
+        const m = requireModel();
+        const input = options.input as CreateAiViewInput;
+        outputChannel.debug(`[AI] lineage_create_ai_view: name="${input.name}", ids=${input.node_ids?.length ?? 0}`);
+        const validation = validateCreateAiView(m, input);
+        if (!validation.success) {
+          outputChannel.warn(`[AI] lineage_create_ai_view: validation failed — ${validation.errors?.join(', ')}`);
+          return toolResult(validation);
+        }
+        if (!_aiCurrentProjectId) {
+          return toolResult({ success: false, errors: ['No active project'], hint: 'Open a saved project before using lineage_create_ai_view.' });
+        }
+        // Build the FilterProfile with aiMetadata
+        const aiMetadata: AIViewMetadata = {
+          narrative: validation.narrative ?? '',
+          highlightGroups: validation.highlight_groups.map(g => ({
+            label: g.label,
+            color: g.color,
+            nodeIds: g.node_ids,
+          })),
+          badges: validation.badges.map(b => ({
+            nodeId: b.node_id,
+            text: b.text,
+            color: b.color,
+          })),
+          layoutDirection: validation.layout_direction,
+        };
+        // Use all-schemas/all-types filter so allowlist is the only constraint when applied
+        const profile: FilterProfile = {
+          id: crypto.randomUUID(),
+          name: validation.name,
+          createdAt: new Date().toISOString(),
+          source: 'ai',
+          filter: {
+            schemas: [],
+            types: ['table', 'view', 'procedure', 'function', 'external'],
+            searchTerm: '',
+            hideIsolated: false,
+            focusSchemas: [],
+            showExternalRefs: true,
+            externalRefTypes: ['file', 'db'],
+            exclusionPatterns: [],
+            allowlistNodeIds: validation.node_ids,
+          },
+          aiMetadata,
+        };
+        // Persist + broadcast
+        const store = loadProjectStore(context);
+        const updated = addFilterProfile(store, _aiCurrentProjectId, profile);
+        await saveProjectStore(context, updated);
+        _aiViews = updated.projects.find(p => p.id === _aiCurrentProjectId)?.filterProfiles ?? _aiViews;
+        if (activePanel) {
+          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+          activePanel.webview.postMessage({ type: 'ai-view-activate', profileId: profile.id });
+        }
+        outputChannel.info(`[AI] lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes → profile ${profile.id}`);
+        // VS Code notification
+        const selected = await vscode.window.showInformationMessage(
+          `AI view "${validation.name}" is ready in the lineage graph.`,
+          'Open',
+        );
+        if (selected === 'Open' && activePanel) {
+          activePanel.reveal(vscode.ViewColumn.One);
+        }
+        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length, profile_id: profile.id });
+      },
+    }),
   );
 
   // ─── @lineage Chat Participant ─────────────────────────────────────────────
@@ -613,6 +688,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       _aiFilter = null;
       _aiViews = [];
       _aiProjectName = null;
+      _aiCurrentProjectId = null;
       cachedElements = null;
       cachedDspName = '';
       currentActiveFilter = null;
@@ -768,6 +844,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             _aiModel = null;
             _aiGraph = null;
             currentProjectId = null;
+            _aiCurrentProjectId = null;
             vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
             panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: fileName, filePath: fileUri.fsPath });
           } catch (err) {
@@ -803,6 +880,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             const config = await readExtensionConfig();
             outputChannel.info(`── Loading project "${project.name}" ──`);
             currentProjectId = project.id;
+            _aiCurrentProjectId = project.id;
             if (schemas && schemas.length > 0) {
               // Phase 2 directly: preselected schemas from saved project
               if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
@@ -903,6 +981,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const updated = updateProject(store, msg.project);
         await saveProjectStore(context, updated);
         currentProjectId = msg.project.id;
+        _aiCurrentProjectId = msg.project.id;
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] Saved: "${msg.project.name}"`);
       },
@@ -921,6 +1000,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           _aiGraph = currentGraph;
           _aiProjectName = 'Demo';
           currentProjectId = null;
+          _aiCurrentProjectId = null;
           vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
         });
       },
@@ -1060,6 +1140,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             };
             const project = createProject(msg.projectName, dbConn);
             currentProjectId = project.id;
+            _aiCurrentProjectId = project.id;
             const store = loadProjectStore(context);
             const updated = updateProject(store, project);
             await saveProjectStore(context, updated);

@@ -15,9 +15,17 @@ export type CustomNodeData = {
   externalType?: 'et' | 'file' | 'db';
   externalUrl?: string;
   externalDatabase?: string;
+  /** Badge chip shown on the node (top-right corner). Set by advanced bookmarks / AI views. */
+  aiBadge?: { text: string; color: string };
+  /** Hex color override for border and glow — overrides schema color when set. */
+  aiHighlight?: string;
+  /** When true, shows the "×" remove-from-view button (advanced bookmark mode only). */
+  showRemoveButton?: boolean;
+  /** Callback fired when user clicks the "×" remove-from-view button. */
+  onRemoveFromView?: (nodeId: string) => void;
 };
 
-function CustomNodeComponent({ data }: { data: CustomNodeData }) {
+function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
   const isVirtual = data.externalType === 'file' || data.externalType === 'db';
   // ⬢ filled = ET (real catalog object); ⬡ hollow = file/db virtual (no metadata)
@@ -27,7 +35,9 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
   const isYellowHighlight = data.highlighted === 'yellow';
 
-  const highlightColor = isYellowHighlight ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
+  const highlightColor = data.aiHighlight
+    ? data.aiHighlight
+    : isYellowHighlight ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
 
   const tooltipLines = [];
   if (data.externalType === 'file' && data.externalUrl) {
@@ -46,6 +56,7 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
       className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-tooltip"
       data-tooltip={tooltipText}
       style={{
+        position: 'relative',
         borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
         borderLeftColor: highlighted ? highlightColor : schemaColor,
         borderLeftWidth: 6,
@@ -56,7 +67,11 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
         boxShadow: highlighted
           ? (isYellowHighlight
               ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
-              : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
+              : data.aiHighlight
+                ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
+                : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
+          : data.aiHighlight
+          ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
           : dimmed
           ? 'var(--ln-node-shadow-dimmed)'
           : 'var(--ln-node-shadow)',
@@ -64,6 +79,36 @@ function CustomNodeComponent({ data }: { data: CustomNodeData }) {
         zIndex: highlighted ? 1000 : 1,
       }}
     >
+      {data.aiBadge && (
+        <div
+          className="absolute text-[8px] font-semibold px-1 rounded ln-node-badge"
+          style={{
+            top: 2,
+            right: data.showRemoveButton ? 20 : 2,
+            maxWidth: 60,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            background: data.aiBadge.color,
+            color: '#fff',
+            lineHeight: '13px',
+            zIndex: 10,
+          }}
+          title={data.aiBadge.text}
+        >
+          {data.aiBadge.text}
+        </div>
+      )}
+      {data.showRemoveButton && (
+        <button
+          className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn"
+          style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
+          onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
+          title="Remove from view"
+        >
+          ×
+        </button>
+      )}
       <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
 
       <div className="px-3 pt-1 pb-1 flex flex-col h-full">

@@ -444,6 +444,112 @@ export function searchDdl(
   return base;
 }
 
+// ─── Tool 10: lineage_create_ai_view ─────────────────────────────────────────
+
+export type AIHighlightColor = 'blue' | 'green' | 'red' | 'yellow' | 'orange';
+export type AiBadgeColor = AIHighlightColor | 'gray';
+
+export type CreateAiViewInput = {
+  name: string;
+  node_ids: string[];
+  narrative?: string;
+  layout_direction?: 'LR' | 'TB';
+  highlight_groups?: Array<{
+    label: string;
+    color: AIHighlightColor;
+    node_ids: string[];
+  }>;
+  badges?: Array<{
+    node_id: string;
+    text: string;
+    color?: AiBadgeColor;
+  }>;
+};
+
+export type CreateAiViewRequest = {
+  success: true;
+  name: string;
+  node_ids: string[];
+  narrative?: string;
+  layout_direction: 'LR' | 'TB';
+  highlight_groups: Array<{ label: string; color: AIHighlightColor; node_ids: string[] }>;
+  badges: Array<{ node_id: string; text: string; color: AiBadgeColor }>;
+};
+
+export type CreateAiViewError = { success: false; errors: string[]; hint: string };
+
+const AI_HIGHLIGHT_COLORS = new Set<string>(['blue', 'green', 'red', 'yellow', 'orange']);
+const AI_BADGE_COLORS = new Set<string>(['blue', 'green', 'red', 'yellow', 'orange', 'gray']);
+
+export function validateCreateAiView(
+  model: DatabaseModel,
+  input: CreateAiViewInput,
+): CreateAiViewRequest | CreateAiViewError {
+  const errors: string[] = [];
+
+  // Name validation
+  if (!input.name || input.name.trim().length === 0) errors.push('name is required');
+  else if (input.name.length > 60) errors.push('name exceeds 60 characters');
+
+  // node_ids validation
+  if (!input.node_ids || input.node_ids.length === 0) {
+    errors.push('node_ids must contain at least 1 ID');
+  } else if (input.node_ids.length > 200) {
+    errors.push('node_ids exceeds maximum of 200 IDs');
+  } else {
+    const unknown = input.node_ids.filter(id => !model.catalog[id]);
+    if (unknown.length > 0) {
+      const sample = unknown.slice(0, 3).join(', ');
+      errors.push(`Unknown IDs: ${sample}${unknown.length > 3 ? ` (+${unknown.length - 3} more)` : ''}. Run \`lineage_search_objects\` or \`lineage_get_neighbors\` to obtain valid IDs.`);
+    }
+  }
+
+  // narrative validation
+  if (input.narrative && input.narrative.length > 500) {
+    errors.push('narrative exceeds 500 characters');
+  }
+
+  // highlight_groups validation
+  const nodeIdSet = new Set(input.node_ids ?? []);
+  if (input.highlight_groups) {
+    if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
+    for (const g of input.highlight_groups) {
+      if (!g.label || g.label.length > 20) errors.push(`Group label "${g.label ?? ''}" must be 1–20 characters`);
+      if (!AI_HIGHLIGHT_COLORS.has(g.color)) errors.push(`Group "${g.label}" has invalid color "${g.color}"`);
+      const bad = g.node_ids.filter(id => !nodeIdSet.has(id));
+      if (bad.length > 0) errors.push(`Group "${g.label}" contains IDs not in node_ids list: ${bad.slice(0, 3).join(', ')}`);
+    }
+  }
+
+  // badges validation
+  if (input.badges) {
+    if (input.badges.length > 50) errors.push('badges exceeds maximum of 50');
+    for (const b of input.badges) {
+      if (!nodeIdSet.has(b.node_id)) errors.push(`Badge node_id "${b.node_id}" is not in node_ids list`);
+      if (!b.text || b.text.length > 15) errors.push(`Badge text "${b.text ?? ''}" must be 1–15 characters`);
+      if (b.color && !AI_BADGE_COLORS.has(b.color)) errors.push(`Badge color "${b.color}" is invalid`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return {
+      success: false,
+      errors,
+      hint: 'Fix the listed errors and retry. Use `lineage_search_objects` to verify node IDs.',
+    };
+  }
+
+  return {
+    success: true,
+    name: input.name.trim(),
+    node_ids: input.node_ids,
+    narrative: input.narrative,
+    layout_direction: input.layout_direction ?? 'TB',
+    highlight_groups: input.highlight_groups ?? [],
+    badges: (input.badges ?? []).map(b => ({ ...b, color: b.color ?? 'gray' })),
+  };
+}
+
 // ─── Tool 9: lineage_save_view ────────────────────────────────────────────────
 
 export function validateSaveView(
