@@ -363,6 +363,51 @@
             "scope": "resource"
           }
         }
+      },
+      {
+        "title": "AI Assistant",
+        "properties": {
+          "dataLineageViz.ai.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable the @lineage chat participant and AI lineage tools. Disable for users who do not use VS Code Copilot or want to remove AI features entirely."
+          },
+          "dataLineageViz.ai.searchMaxResults": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 10,
+            "maximum": 500,
+            "markdownDescription": "Maximum results per `@lineage` object or DDL search. Auto-scales with the selected model's context window when not explicitly set. Raise for large projects with high-capacity models (Claude max tier, strong local LLMs)."
+          },
+          "dataLineageViz.ai.bfsMaxNodes": {
+            "type": "integer",
+            "default": 200,
+            "minimum": 50,
+            "maximum": 750,
+            "markdownDescription": "Maximum nodes returned by `@lineage` BFS trace queries. Auto-scales with the selected model's context window when not explicitly set."
+          },
+          "dataLineageViz.ai.bfsMaxEdges": {
+            "type": "integer",
+            "default": 300,
+            "minimum": 50,
+            "maximum": 2000,
+            "markdownDescription": "Maximum edges returned by `@lineage` BFS trace queries. Auto-scales with the selected model's context window when not explicitly set."
+          },
+          "dataLineageViz.ai.analysisMaxGroups": {
+            "type": "integer",
+            "default": 100,
+            "minimum": 20,
+            "maximum": 500,
+            "markdownDescription": "Maximum groups returned by `@lineage` analysis queries (hubs, islands, orphans, cycles). Auto-scales with the selected model's context window when not explicitly set."
+          },
+          "dataLineageViz.ai.maxDdlChars": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 1000,
+            "maximum": 500000,
+            "markdownDescription": "Maximum DDL body characters per object (per single `getObjectDetail` call). When exceeded, an error is returned instead of partial DDL. Synapse/DWH stored procedures are typically 15,000–80,000 chars — raise to `500000` to effectively disable the limit. Auto-scales to `500000` when the selected model's context exceeds 128K tokens (e.g. Claude Sonnet)."
+          }
+        }
       }
     ],
     "chatParticipants": [
@@ -414,7 +459,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search ALL database objects (tables, views, procedures, functions, external tables, virtual file/DB nodes) by name using a case-insensitive substring or regex. Returns up to 20 matches with their exact IDs, schema, type, and externalType. Use this to obtain exact object IDs — the id values returned here are the required input for lineage_get_object_detail and lineage_get_neighbors. Pass IDs verbatim, unchanged.",
+        "modelDescription": "Search ALL database objects (tables, views, procedures, functions, external tables, virtual file/DB nodes) by name using a case-insensitive substring or regex. Returns up to 50 matches by default (auto-scales with model context window; configurable via dataLineageViz.ai.searchMaxResults). Results include exact IDs, schema, type, and externalType. Use this to obtain exact object IDs — the id values returned here are the required input for lineage_get_object_detail and lineage_get_neighbors. Pass IDs verbatim, unchanged.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -545,7 +590,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Run Lineage Trace",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Runs a breadth-first lineage trace from the given node, returning all reachable nodes and edges up to the specified hop depth. Returns flat node list with depth info and edge triples. Capped at 100 nodes / 150 edges — when truncated:true, narrow scope with types/schemas filters. For 'what breaks if I change X?' use downstream. For 'where does X get its data?' use upstream.",
+        "modelDescription": "Runs a breadth-first lineage trace from the given node, returning all reachable nodes and edges up to the specified hop depth. Returns flat node list with depth info and edge triples. Capped at 200 nodes / 300 edges by default (auto-scales with model context window; configurable via dataLineageViz.ai.bfsMaxNodes / bfsMaxEdges) — when truncated:true, narrow scope with types/schemas filters. For 'what breaks if I change X?' use downstream. For 'where does X get its data?' use upstream.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

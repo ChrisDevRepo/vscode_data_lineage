@@ -18,12 +18,16 @@ import type { SerializedFilterState, FilterProfile } from '../engine/projectStor
 // ─── Caps ────────────────────────────────────────────────────────────────────
 
 export const AI_CAPS = {
-  BFS_MAX_NODES:       100,
-  BFS_MAX_EDGES:       150,
-  SEARCH_MAX_RESULTS:   20,
+  BFS_MAX_NODES:       200,
+  BFS_MAX_EDGES:       300,
+  SEARCH_MAX_RESULTS:   50,
   REGEX_MAX_LENGTH:    200,
-  ANALYSIS_MAX_GROUPS:  50,
+  ANALYSIS_MAX_GROUPS: 100,
+  MAX_DDL_CHARS:     10000,   // per getObjectDetail call; 500000 = effectively unlimited
 } as const;
+
+/** Mutable override type for per-request cap tuning (auto-scale + VS Code settings). */
+export type AiCapsOverride = { [K in keyof typeof AI_CAPS]?: number };
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -110,8 +114,10 @@ export function searchObjects(
   types?: ObjectType[],
   schemas?: string[],
   externalSubtypes?: ('et' | 'file' | 'db')[],
+  caps?: AiCapsOverride,
 ) {
-  if (query.length > AI_CAPS.REGEX_MAX_LENGTH) {
+  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: 'Query exceeds maximum length of 200 characters.' };
   }
 
@@ -123,7 +129,7 @@ export function searchObjects(
     query,
     typeSet,
     schemaSet,
-    AI_CAPS.SEARCH_MAX_RESULTS,
+    effectiveCaps.SEARCH_MAX_RESULTS,
   );
 
   let filtered = matches;
@@ -145,7 +151,7 @@ export function searchObjects(
   const base = {
     results,
     total:     results.length,
-    truncated: matches.length >= AI_CAPS.SEARCH_MAX_RESULTS,
+    truncated: matches.length >= effectiveCaps.SEARCH_MAX_RESULTS,
   };
 
   if (results.length === 0) {
@@ -159,7 +165,10 @@ export function searchObjects(
 export function getObjectDetail(
   model: DatabaseModel,
   id: string,
+  caps?: AiCapsOverride,
 ): object {
+  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+
   const node = model.nodes.find(n => n.id === id);
   if (!node) {
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
@@ -187,9 +196,7 @@ export function getObjectDetail(
     on_delete:   fk.onDelete,
   })) ?? null;
 
-  const ddl = node.bodyScript ? normalizeBodyScript(node.bodyScript) : null;
-
-  return {
+  const base = {
     id:               node.id,
     schema:           node.schema,
     name:             node.name,
@@ -200,8 +207,22 @@ export function getObjectDetail(
     foreign_keys:     foreignKeys,
     upstream_count:   neighbors.in.length,
     downstream_count: neighbors.out.length,
-    ddl,
   };
+
+  const ddl = node.bodyScript ? normalizeBodyScript(node.bodyScript) : null;
+
+  if (ddl && ddl.length > effectiveCaps.MAX_DDL_CHARS) {
+    return {
+      ...base,
+      ddl: null,
+      ddl_too_large: true,
+      ddl_chars: ddl.length,
+      ddl_hint: `DDL is ${ddl.length} chars, limit is ${effectiveCaps.MAX_DDL_CHARS}. ` +
+                `Raise dataLineageViz.ai.maxDdlChars (max 500000) or use a large-context model (auto-scales).`,
+    };
+  }
+
+  return { ...base, ddl };
 }
 
 // ─── Tool 5: lineage_get_neighbors ───────────────────────────────────────────
@@ -258,7 +279,9 @@ export function runBfsTrace(
   downstreamHops: number = 3,
   types?:   ObjectType[],
   schemas?: string[],
+  caps?: AiCapsOverride,
 ): object {
+  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   if (!graph.hasNode(id)) {
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
@@ -308,13 +331,13 @@ export function runBfsTrace(
 
   const totalNodes = filteredIds.length;
   const totalEdges = allEdges.length;
-  const truncated  = totalNodes > AI_CAPS.BFS_MAX_NODES || totalEdges > AI_CAPS.BFS_MAX_EDGES;
+  const truncated  = totalNodes > effectiveCaps.BFS_MAX_NODES || totalEdges > effectiveCaps.BFS_MAX_EDGES;
 
-  const cappedIds  = filteredIds.slice(0, AI_CAPS.BFS_MAX_NODES);
+  const cappedIds  = filteredIds.slice(0, effectiveCaps.BFS_MAX_NODES);
   const cappedSet  = new Set(cappedIds);
   const cappedEdges = allEdges
     .filter(([s, t]) => cappedSet.has(s) && cappedSet.has(t))
-    .slice(0, AI_CAPS.BFS_MAX_EDGES);
+    .slice(0, effectiveCaps.BFS_MAX_EDGES);
 
   const nodes = cappedIds.map(nid => {
     const n = nodeMap.get(nid);
@@ -347,7 +370,9 @@ export function runAnalysis(
   type: AnalysisType,
   minDegree?: number,
   maxSize?: number,
+  caps?: AiCapsOverride,
 ): object {
+  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   const analysisConfig = {
     hubMinDegree:         minDegree ?? DEFAULT_CONFIG.analysis.hubMinDegree,
     islandMaxSize:        maxSize   ?? DEFAULT_CONFIG.analysis.islandMaxSize,
@@ -356,8 +381,8 @@ export function runAnalysis(
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
   const totalGroups = result.groups.length;
-  const truncated   = totalGroups > AI_CAPS.ANALYSIS_MAX_GROUPS;
-  const groups      = result.groups.slice(0, AI_CAPS.ANALYSIS_MAX_GROUPS);
+  const truncated   = totalGroups > effectiveCaps.ANALYSIS_MAX_GROUPS;
+  const groups      = result.groups.slice(0, effectiveCaps.ANALYSIS_MAX_GROUPS);
 
   return {
     type:         result.type,
@@ -375,8 +400,10 @@ export function searchDdl(
   model: DatabaseModel,
   query: string,
   types?: ('view' | 'procedure' | 'function')[],
+  caps?: AiCapsOverride,
 ): object {
-  if (query.length > AI_CAPS.REGEX_MAX_LENGTH) {
+  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: 'Query exceeds maximum length of 200 characters.' };
   }
 
@@ -395,7 +422,7 @@ export function searchDdl(
     query,
     typeSet,
     2,
-    AI_CAPS.SEARCH_MAX_RESULTS,
+    effectiveCaps.SEARCH_MAX_RESULTS,
   );
 
   const results = matches.map(m => ({
@@ -408,7 +435,7 @@ export function searchDdl(
   const base = {
     results,
     total:     results.length,
-    truncated: matches.length >= AI_CAPS.SEARCH_MAX_RESULTS,
+    truncated: matches.length >= effectiveCaps.SEARCH_MAX_RESULTS,
   };
 
   if (results.length === 0) {
