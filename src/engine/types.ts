@@ -415,7 +415,7 @@ export interface AnalysisMode {
 export type ExtensionMessage =
   | { type: 'config-only'; config: ExtensionConfig }
   | { type: 'projects-list'; projects: import('./projectStore').Project[]; lastOpenedId: string | null }
-  | { type: 'dacpac-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string }
+  | { type: 'dacpac-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string; filePath?: string }
   | { type: 'dacpac-model'; model: DatabaseModel; config: ExtensionConfig; sourceName: string; autoVisualize?: boolean }
   | { type: 'last-dacpac-gone' }
   | { type: 'themeChanged'; kind: string }

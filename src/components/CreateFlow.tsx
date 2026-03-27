@@ -172,6 +172,13 @@ export const CreateFlow = memo(function CreateFlow({
 
           {(loader.schemaPreview ?? loader.model)?.schemas && (() => {
             const schemas = (loader.schemaPreview ?? loader.model)!.schemas;
+            if (schemas.length === 0) {
+              return (
+                <div className="ln-status-warning text-xs px-3 py-2 rounded">
+                  {loader.status?.text ?? 'No schemas found — the file may be empty or damaged.'}
+                </div>
+              );
+            }
             const selectedCount = schemas
               .filter(s => loader.selectedSchemas.has(s.name))
               .reduce((sum, s) => sum + s.nodeCount, 0);

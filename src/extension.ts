@@ -760,6 +760,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             const config = await readExtensionConfig();
             outputChannel.info(`── Opening ${fileName} ──`);
             const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+            if (preview.warnings?.length) outputChannel.warn(`[Dacpac] ${preview.warnings[0]}`);
             cachedElements = elements;
             cachedDspName = dspName;
             currentModel = null;
@@ -768,7 +769,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             _aiGraph = null;
             currentProjectId = null;
             vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
-            panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: fileName });
+            panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: fileName, filePath: fileUri.fsPath });
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
             outputChannel.error(`Failed to read file: ${errorMsg}`);
@@ -821,6 +822,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             } else {
               // Phase 1: no stored schemas — show schema selector
               const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+              if (preview.warnings?.length) outputChannel.warn(`[Dacpac] ${preview.warnings[0]}`);
               cachedElements = elements;
               cachedDspName = dspName;
               currentModel = null;

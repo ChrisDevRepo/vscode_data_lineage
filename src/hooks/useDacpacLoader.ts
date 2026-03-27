@@ -160,6 +160,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
         setModel(null);  // clear stale model so visualize() routes to dacpac path
+        setFilePath(msg.filePath ?? null);
         applySchemaPreview(msg.preview, name);
         setIsLoading(false);
         setLoadingContext(null);
@@ -188,7 +189,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         const name = msg.sourceName || 'Database';
         applySchemaPreview(msg.preview, name);
         setIsLoading(false);
-        setLoadingContext(null);
+        setLoadingContext('database');
         return;
       }
 
@@ -221,7 +222,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
     // Dacpac path: request Phase 2 extraction from extension host
     // (dacpac-model response handled above — sets model + pendingVisualize)
-    if (schemaPreview !== null && model === null) {
+    if (schemaPreview !== null && model === null && loadingContext !== 'database') {
       const payload: Record<string, unknown> = { type: 'dacpac-visualize', schemas: Array.from(schemas) };
       if (projectName) payload.projectName = projectName;
       vscodeApi.postMessage(payload);
@@ -237,7 +238,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Loading selected schemas from database...', type: 'info' });
-  }, [vscodeApi, schemaPreview, model]);
+  }, [vscodeApi, schemaPreview, model, loadingContext]);
 
   const openFile = useCallback(() => {
     isDemoRef.current = false;
