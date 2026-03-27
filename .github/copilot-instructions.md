@@ -190,3 +190,41 @@ When modifying `assets/defaultParseRules.yaml` or `sqlBodyParser.ts`: run full 3
 diff tmp/baseline.tsv tmp/after.tsv   # must be empty or positive only
 npm test                               # all suites must pass
 ```
+
+## AI Chat Participant (`@lineage`)
+
+VS Code Copilot chat participant registered via `vscode.chat.createChatParticipant()`. NOT a standalone AI framework — the model (GPT-4o, Claude Sonnet, Gemini, local Ollama LLM) is selected by the user in the Copilot chat dropdown.
+
+**Key files:** `src/ai/tools.ts` (9 pure tool functions, `AI_CAPS` defaults), `src/ai/graphUtils.ts` (`buildBareGraph()`), `src/extension.ts` (chat participant registration, tool registration, `readAiCaps()`, `autoScaleTier()`).
+
+**9 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
+
+| Tool | Purpose |
+|------|---------|
+| `lineage_get_context` | Active project, filter state, model stats — call first |
+| `lineage_get_schemas_summary` | All schemas with per-type counts |
+| `lineage_search_objects` | Name search, returns IDs for other tools |
+| `lineage_get_object_detail` | Full metadata + DDL body for one object |
+| `lineage_get_neighbors` | 1-hop upstream/downstream neighbors |
+| `lineage_run_bfs_trace` | Multi-hop BFS lineage trace |
+| `lineage_run_analysis` | Structural analysis (hubs/islands/orphans/longest-path/cycles) |
+| `lineage_search_ddl` | Full-text search across SP/view/function bodies |
+| `lineage_save_view` | Bookmark a node set to the active project |
+
+**Auto-scaling caps** — set via `request.model.maxInputTokens` per request → `autoScaleTier()`:
+
+| Model context | SEARCH | BFS nodes | BFS edges | GROUPS | DDL chars |
+|---|---|---|---|---|---|
+| < 32K (small local LLM) | 20 | 100 | 150 | 50 | 4000 |
+| 32K–128K (GPT-4o, medium) | 50 | 200 | 300 | 100 | 10000 |
+| > 128K (Claude Sonnet, large) | 100 | 400 | 600 | 200 | 500000 |
+
+Explicit `dataLineageViz.ai.*` VS Code settings override auto-scale (detected via `cfg.inspect()` checking `globalValue`/`workspaceValue`).
+
+**DDL size policy:** When `MAX_DDL_CHARS` exceeded, `getObjectDetail` returns `{ ddl: null, ddl_too_large: true, ddl_chars: N, ddl_hint: "..." }` — NOT partial DDL. Partial DDL misleads the LLM.
+
+**Conversation memory:** `context.history` is read each turn and prepended to `messages[]` so the model remembers earlier questions in the same chat session.
+
+**`ai.enabled` guard:** `isAiEnabled()` checked at both the chat participant level (returns disabled message) and in every tool `invoke()` handler (returns `{ error: 'disabled' }`).
+
+**Unit tests:** `test/ai-tools.test.ts` (79 tests) covers all 9 pure functions. Does not test `extension.ts` wiring (VS Code dependency).
