@@ -77,7 +77,7 @@
       </div>
       <h1>Data Lineage Viz</h1>
       <p class="subtitle">
-        Object-level dependency visualization from .dacpac files or database imports — right inside VS Code. Currently in preview.
+        Object-level dependency visualization from .dacpac files or database imports — right inside VS Code. Ask questions about your graph with <strong>@lineage</strong> in GitHub Copilot Chat.
       </p>
       <div class="btn-row">
         <a href="https://youtu.be/5yr0yRZAa98" class="btn btn-dark">
@@ -110,7 +110,34 @@
 
   <hr class="divider">
 
+  <section style="max-width:800px;margin:0 auto;padding:3rem 1.5rem 1rem;">
+    <div style="background:linear-gradient(135deg,#eff6ff 0%,#f5f3ff 100%);border:1px solid #c7d2fe;border-radius:.75rem;padding:2rem 2.5rem;">
+      <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem;">
+        <span style="font-size:1.5rem;">&#10024;</span>
+        <h2 style="font-size:1.2rem;font-weight:800;color:#0f172a;">Ask @lineage in GitHub Copilot Chat</h2>
+      </div>
+      <p style="font-size:.9rem;color:#475569;margin-bottom:1rem;">
+        Type <code style="background:#e0e7ff;color:#3730a3;padding:.15rem .4rem;border-radius:.25rem;font-size:.85rem;">@lineage</code> in GitHub Copilot Chat to query your loaded graph. The assistant uses 9 dedicated tools — it answers from your actual data, never from general knowledge.
+      </p>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:.5rem;padding:1rem 1.25rem;font-family:monospace;font-size:.8rem;color:#334155;line-height:2;">
+        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> what schemas are loaded?</div>
+        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> find tables with Employee in the name</div>
+        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> what does HumanResources.Employee depend on?</div>
+        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> trace 3 levels upstream from Sales.SalesOrderDetail</div>
+        <div><span style="color:#6366f1;font-weight:700;">@lineage</span> which objects have more than 10 connections?</div>
+      </div>
+      <p style="font-size:.8rem;color:#94a3b8;margin-top:.75rem;">Requires GitHub Copilot extension &amp; VS Code 1.95+. Tools are inactive when no graph is loaded.</p>
+    </div>
+  </section>
+
+  <hr class="divider">
+
   <section class="features">
+    <div class="feature">
+      <div class="icon">&#10024;</div>
+      <h3>Copilot Chat (@lineage)</h3>
+      <p>Ask questions about your loaded graph in GitHub Copilot Chat. The assistant answers using your actual data — schemas, tables, dependencies, DDL — never from general knowledge.</p>
+    </div>
     <div class="feature">
       <div class="icon">&#128193;</div>
       <h3>Data Sources</h3>
