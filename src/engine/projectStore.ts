@@ -35,6 +35,8 @@ export interface FilterProfile {
   name: string;
   createdAt: string;
   filter: SerializedFilterState;
+  /** Keyboard shortcut slot. Alt+N applies this view. Optional — no slot assigned by default. */
+  slot?: 1|2|3|4|5|6|7|8|9;
 }
 
 export interface Project {

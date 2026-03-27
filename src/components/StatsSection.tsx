@@ -316,15 +316,17 @@ function StatsResults({ stats, mode }: {
             {/* Detail — labeled key-value grid (standard mode, collapsible) */}
             {showDetail && <DetailGrid col={col} rowCount={stats.rowCount} />}
 
-            {/* Completeness bar */}
-            <div className="flex items-center" style={{ paddingBottom: 3 }}>
-              <div style={{ flex: 1 }}>
-                <CompletenessBar value={col.completeness} />
+            {/* Completeness bar — only shown when column has actual nulls */}
+            {col.completeness < 1.0 && (
+              <div className="flex items-center" style={{ paddingBottom: 3 }}>
+                <div style={{ flex: 1 }} title={`${Math.round(col.completeness * 100)}% of rows have a non-null value`}>
+                  <CompletenessBar value={col.completeness} />
+                </div>
+                <span className="font-mono" style={{ width: 42, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
+                  {Math.round(col.completeness * 100)}% fill
+                </span>
               </div>
-              <span className="font-mono" style={{ width: 32, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
-                {Math.round(col.completeness * 100)}%
-              </span>
-            </div>
+            )}
           </div>
         );
       })}

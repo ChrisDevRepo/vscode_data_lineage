@@ -370,10 +370,11 @@ describe('Suite C — callbacks', () => {
       dispatch({ type: 'db-schema-preview', preview: makePreview(['dbo', 'Sales']), config: {} });
     });
 
-    act(() => { result.current.clearAllSchemas(); });
+    // Pass the full list (no search filter active) — callbacks now take explicit name list
+    act(() => { result.current.clearAllSchemas(['dbo', 'Sales']); });
     expect(result.current.selectedSchemas.size).toBe(0);
 
-    act(() => { result.current.selectAllSchemas(); });
+    act(() => { result.current.selectAllSchemas(['dbo', 'Sales']); });
     expect(result.current.selectedSchemas.size).toBe(2);
   });
 

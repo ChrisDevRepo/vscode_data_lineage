@@ -186,9 +186,11 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
         <span className="text-xs font-medium truncate" style={{ color: 'var(--ln-fg)' }}>
           {group.label}
         </span>
-        <span className="text-[11px] ml-2 flex-shrink-0" style={{ color: 'var(--ln-fg-muted)' }}>
-          {group.nodeIds.length} node{group.nodeIds.length !== 1 ? 's' : ''}
-        </span>
+        {analysisType !== 'hubs' && (
+          <span className="text-[11px] ml-2 flex-shrink-0" style={{ color: 'var(--ln-fg-muted)' }}>
+            {group.nodeIds.length} node{group.nodeIds.length !== 1 ? 's' : ''}
+          </span>
+        )}
       </div>
       {group.meta && (
         <div className="text-[11px] mt-0.5" style={{ color: 'var(--ln-fg-muted)' }}>
@@ -209,12 +211,18 @@ function renderMeta(
     case 'islands':
       return `Schemas: ${meta.schemas}`;
     case 'hubs': {
-      // Use live graph data when available (consistent with NodeInfoBar)
       if (graph && nodeIds.length === 1 && graph.hasNode(nodeIds[0])) {
         const id = nodeIds[0];
-        return `${meta.type} — in: ${graph.inDegree(id)}, out: ${graph.outDegree(id)}`;
+        const deg = graph.degree(id);
+        const neighbors = graph.neighbors(id);
+        const preview = neighbors
+          .slice(0, 3)
+          .map(n => graph.getNodeAttribute(n, 'name') as string)
+          .join(', ');
+        const more = neighbors.length > 3 ? ` +${neighbors.length - 3}` : '';
+        return `${meta.type} · ${deg} connections — ${preview}${more}`;
       }
-      return `${meta.type} — in: ${meta.inDegree}, out: ${meta.outDegree}`;
+      return `${meta.type} · ${Number(meta.inDegree) + Number(meta.outDegree)} connections`;
     }
     case 'orphans':
       return `${meta.count} ${meta.type}${Number(meta.count) !== 1 ? 's' : ''}`;

@@ -275,6 +275,13 @@ export function App() {
     vscodeApi.postMessage({ type: 'delete-project', id });
   }, [activeProjectId, vscodeApi]);
 
+  const handleDeleteAllProjects = useCallback(() => {
+    setProjects([]);
+    setActiveProjectId(null);
+    // Extension host persists each deletion; send one message per project
+    projects.forEach(p => vscodeApi.postMessage({ type: 'delete-project', id: p.id }));
+  }, [projects, vscodeApi]);
+
   const handleDemoClick = useCallback(() => {
     setLoadingPhase('load');
     setLoadingStats(null);
@@ -810,6 +817,43 @@ export function App() {
     vscodeApi.postMessage({ type: 'delete-view', projectId: activeProjectId, profileId });
   }, [activeProjectId, lastOpenedId, vscodeApi]);
 
+  const handleAssignSlot = useCallback((profileId: string, slot: number | null) => {
+    if (!activeProjectId) return;
+    const project = projects.find(p => p.id === activeProjectId);
+    if (!project) return;
+    const profiles = project.filterProfiles ?? [];
+    const newSlot = slot !== null ? slot as FilterProfile['slot'] : undefined;
+    // Update target profile + clear slot from any other profile that had it
+    const updatedProfiles = profiles.map(fp => {
+      if (fp.id === profileId) return { ...fp, slot: newSlot };
+      if (slot !== null && fp.slot === slot) return { ...fp, slot: undefined };
+      return fp;
+    });
+    // Post save-view for each changed profile
+    updatedProfiles.forEach((fp, i) => {
+      if (fp !== profiles[i]) {
+        vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: fp });
+      }
+    });
+    setProjects(prev => prev.map(p => {
+      if (p.id !== activeProjectId) return p;
+      return { ...p, filterProfiles: updatedProfiles };
+    }));
+  }, [activeProjectId, projects, vscodeApi]);
+
+  // Alt+1–9: apply bookmarked view for that slot
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.altKey) return;
+      const digit = parseInt(e.key, 10);
+      if (isNaN(digit) || digit < 1 || digit > 9) return;
+      const profile = filterProfiles.find(p => p.slot === digit);
+      if (profile) handleApplyView(profile);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [filterProfiles, handleApplyView]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
@@ -828,6 +872,7 @@ export function App() {
         onOpenProject={handleOpenProject}
         onOpenLatest={handleOpenLatest}
         onDeleteProject={handleDeleteProject}
+        onDeleteAllProjects={handleDeleteAllProjects}
         onDemo={handleDemoClick}
         onWizardViewChange={handleWizardViewChange}
       />
@@ -912,6 +957,7 @@ export function App() {
         onSaveView={handleSaveView}
         onApplyView={handleApplyView}
         onDeleteView={handleDeleteView}
+        onAssignSlot={handleAssignSlot}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);

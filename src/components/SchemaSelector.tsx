@@ -6,8 +6,8 @@ interface SchemaSelectorProps {
   schemas: SchemaInfo[];
   selectedSchemas: Set<string>;
   onToggle: (name: string) => void;
-  onSelectAll: () => void;
-  onClearAll: () => void;
+  onSelectAll: (names: string[]) => void;
+  onClearAll: (names: string[]) => void;
 }
 
 export const SchemaSelector = memo(function SchemaSelector({
@@ -27,11 +27,11 @@ export const SchemaSelector = memo(function SchemaSelector({
       <div className="flex items-center justify-between mb-1.5">
         <label className="text-xs font-medium ln-text">Schemas</label>
         <div className="flex items-center gap-2">
-          <button className="text-[10px] hover:underline ln-text-link" onClick={onSelectAll}>
+          <button className="text-[10px] hover:underline ln-text-link" onClick={() => onSelectAll(filteredSchemas.map(s => s.name))}>
             All
           </button>
           <span className="text-[10px] ln-text-muted">|</span>
-          <button className="text-[10px] hover:underline ln-text-link" onClick={onClearAll}>
+          <button className="text-[10px] hover:underline ln-text-link" onClick={() => onClearAll(filteredSchemas.map(s => s.name))}>
             None
           </button>
         </div>

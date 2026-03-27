@@ -53,6 +53,7 @@ interface ToolbarProps {
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
   onDeleteView?: (profileId: string) => void;
+  onAssignSlot?: (profileId: string, slot: number | null) => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -60,6 +61,26 @@ interface ToolbarProps {
     rootNodes: number;
     leafNodes: number;
   } | null;
+}
+
+function buildMetricsTooltip(
+  allNodes: Array<{ type: ObjectType }>,
+  metrics: { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number }
+): string {
+  const counts: Partial<Record<ObjectType, number>> = {};
+  for (const n of allNodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
+  const lines: string[] = [
+    `Objects: ${metrics.totalNodes}`,
+    ...(counts.table     ? [`  Tables:       ${counts.table}`]     : []),
+    ...(counts.view      ? [`  Views:        ${counts.view}`]      : []),
+    ...(counts.procedure ? [`  Procedures:   ${counts.procedure}`] : []),
+    ...(counts.function  ? [`  Functions:    ${counts.function}`]  : []),
+    ...(counts.external  ? [`  External:     ${counts.external}`]  : []),
+    `Relations: ${metrics.totalEdges}`,
+    `  Sources (no input):  ${metrics.rootNodes}`,
+    `  Sinks (no output):   ${metrics.leafNodes}`,
+  ];
+  return lines.join('\n');
 }
 
 export const Toolbar = memo(function Toolbar({
@@ -101,6 +122,7 @@ export const Toolbar = memo(function Toolbar({
   onSaveView,
   onApplyView,
   onDeleteView,
+  onAssignSlot,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
@@ -130,6 +152,7 @@ export const Toolbar = memo(function Toolbar({
             onSaveView={onSaveView}
             onApplyView={onApplyView}
             onDeleteView={onDeleteView}
+            onAssignSlot={onAssignSlot}
           />
         )}
 
@@ -174,14 +197,7 @@ export const Toolbar = memo(function Toolbar({
         )}
         <div className="w-px h-6 ln-divider" />
 
-        {/* View Controls */}
-        <Tooltip content={hasHighlightedNode ? 'Open SQL Viewer for selected node' : 'Open SQL Viewer'}>
-          <Button onClick={onOpenDdlViewer} variant="icon">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-            </svg>
-          </Button>
-        </Tooltip>
+        {/* Graph Controls: HideIsolated + Analysis + ClearFilters */}
         <Tooltip content={analysisType === 'orphans' ? 'Disabled during Orphan analysis' : 'Hide Isolated Nodes'}>
           <Button onClick={onToggleIsolated} variant="icon" className={hideIsolated ? 'ln-btn-icon-active' : ''} disabled={analysisType === 'orphans'}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -241,14 +257,22 @@ export const Toolbar = memo(function Toolbar({
           )}
         </FloatingPortal>
 
-        <div className="w-px h-6 ln-divider" />
-
-        {/* Actions */}
         <Tooltip content="Clear All Filters">
           <Button onClick={onRefresh} variant="icon">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
+            </svg>
+          </Button>
+        </Tooltip>
+
+        <div className="w-px h-6 ln-divider" />
+
+        {/* Tools: DDL Viewer, Refresh, Export */}
+        <Tooltip content={hasHighlightedNode ? 'View DDL / SQL source for selected node' : 'View DDL / SQL source'}>
+          <Button onClick={onOpenDdlViewer} variant="icon">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" />
             </svg>
           </Button>
         </Tooltip>
@@ -282,22 +306,15 @@ export const Toolbar = memo(function Toolbar({
         {metrics && (
           <>
             <div className="ml-auto w-px h-6 flex-shrink-0 ln-divider" />
-            <div
-              className="flex-shrink-0 text-xs ln-text-muted whitespace-nowrap font-mono tabular-nums flex items-center gap-1 pr-1"
-              title={`${metrics.totalNodes} nodes · ${metrics.totalEdges} edges · ${metrics.rootNodes} roots · ${metrics.leafNodes} leaves`}
-            >
-              <span style={{ minWidth: '3ch', display: 'inline-block', textAlign: 'right' }}>{metrics.totalNodes}</span>
-              <span className="opacity-40"> nd</span>
-              <span className="opacity-25 mx-1">·</span>
-              <span style={{ minWidth: '3ch', display: 'inline-block', textAlign: 'right' }}>{metrics.totalEdges}</span>
-              <span className="opacity-40"> eg</span>
-              <span className="opacity-25 mx-1">·</span>
-              <span style={{ minWidth: '3ch', display: 'inline-block', textAlign: 'right' }}>{metrics.rootNodes}</span>
-              <span className="opacity-40"> rt</span>
-              <span className="opacity-25 mx-1">·</span>
-              <span style={{ minWidth: '3ch', display: 'inline-block', textAlign: 'right' }}>{metrics.leafNodes}</span>
-              <span className="opacity-40"> lf</span>
-            </div>
+            <Tooltip content={buildMetricsTooltip(allNodes, metrics)} delay={400} multiline>
+              <div className="flex-shrink-0 text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-center gap-1 pr-1 cursor-default select-none">
+                <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalNodes}</span>
+                <span className="opacity-60">objects</span>
+                <span className="opacity-30 mx-1">·</span>
+                <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalEdges}</span>
+                <span className="opacity-60">relations</span>
+              </div>
+            </Tooltip>
           </>
         )}
       </div>

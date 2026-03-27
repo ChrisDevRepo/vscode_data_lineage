@@ -1,6 +1,7 @@
 import { memo, useState, useCallback } from 'react';
 import { Button } from './ui/Button';
 import { WizardPanel } from './ui/WizardPanel';
+import { StatusMessage } from './ui/StatusMessage';
 import { SchemaSelector } from './SchemaSelector';
 import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
 import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
@@ -149,9 +150,7 @@ export const CreateFlow = memo(function CreateFlow({
 
           {/* Status / error */}
           {loader.status && (
-            <div className={`text-xs px-3 py-2 rounded ln-status-${loader.status.type}`}>
-              {loader.status.text}
-            </div>
+            <StatusMessage text={loader.status.text} type={loader.status.type} />
           )}
         </div>
       )}

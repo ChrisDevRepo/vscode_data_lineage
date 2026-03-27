@@ -33,8 +33,8 @@ export interface DacpacLoaderState {
   clearPendingVisualize: () => void;
   visualize: (selectedSchemas: Set<string>, projectName?: string) => void;
   toggleSchema: (name: string) => void;
-  selectAllSchemas: () => void;
-  clearAllSchemas: () => void;
+  selectAllSchemas: (names: string[]) => void;
+  clearAllSchemas: (names: string[]) => void;
 }
 
 export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => void): DacpacLoaderState {
@@ -308,12 +308,16 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     });
   }, []);
 
-  const selectAllSchemas = useCallback(() => {
-    setSelectedSchemas(new Set(schemas.map((s) => s.name)));
-  }, [schemas]);
+  const selectAllSchemas = useCallback((names: string[]) => {
+    setSelectedSchemas(prev => new Set([...prev, ...names]));
+  }, []);
 
-  const clearAllSchemas = useCallback(() => {
-    setSelectedSchemas(new Set());
+  const clearAllSchemas = useCallback((names: string[]) => {
+    setSelectedSchemas(prev => {
+      const next = new Set(prev);
+      names.forEach(n => next.delete(n));
+      return next;
+    });
   }, []);
 
   return {

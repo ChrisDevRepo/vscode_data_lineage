@@ -17,13 +17,15 @@ interface TooltipProps {
   children: ReactNode;
   /** Delay before showing tooltip in ms. Default: 600 */
   delay?: number;
+  /** Allow multi-line content (pre-wrap, max-width: 220px). Default: false */
+  multiline?: boolean;
 }
 
 /**
  * Themed tooltip that replaces native `title` attributes.
  * Uses `--ln-*` CSS variables — correct in light, dark, and HC themes.
  */
-export const Tooltip = memo(function Tooltip({ content, children, delay = 600 }: TooltipProps) {
+export const Tooltip = memo(function Tooltip({ content, children, delay = 600, multiline = false }: TooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const { refs, floatingStyles, context } = useFloating({
@@ -53,7 +55,7 @@ export const Tooltip = memo(function Tooltip({ content, children, delay = 600 }:
         {isOpen && (
           <div
             ref={refs.setFloating}
-            style={floatingStyles}
+            style={{ ...floatingStyles, ...(multiline ? { whiteSpace: 'pre-wrap', maxWidth: 220 } : {}) }}
             className="ln-tooltip"
             {...getFloatingProps()}
           >

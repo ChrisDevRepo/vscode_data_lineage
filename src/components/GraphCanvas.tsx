@@ -95,6 +95,7 @@ interface GraphCanvasProps {
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
   onDeleteView?: (profileId: string) => void;
+  onAssignSlot?: (profileId: string, slot: number | null) => void;
   graphMode?: GraphMode;
   onSchemaNodeDoubleClick?: (schemaName: string) => void;
 }
@@ -149,6 +150,7 @@ export function GraphCanvas({
   onSaveView,
   onApplyView,
   onDeleteView,
+  onAssignSlot,
   graphMode = 'full',
   onSchemaNodeDoubleClick,
 }: GraphCanvasProps) {
@@ -382,6 +384,7 @@ export function GraphCanvas({
         onSaveView={onSaveView}
         onApplyView={onApplyView}
         onDeleteView={onDeleteView}
+        onAssignSlot={onAssignSlot}
       />
 
       {/* Inline Trace Controls - shown during configuration phase */}

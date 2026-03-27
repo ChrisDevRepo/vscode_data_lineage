@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { Button } from './ui/Button';
 import { WizardPanel } from './ui/WizardPanel';
+import { StatusMessage } from './ui/StatusMessage';
 import type { Project } from '../engine/projectStore';
 
 interface StartScreenProps {
@@ -13,6 +14,7 @@ interface StartScreenProps {
   onOpenProject: (id: string) => void;
   onOpenLatest: () => void;
   onDeleteProject: (id: string) => void;
+  onDeleteAllProjects: () => void;
   onDemo: () => void;
   onWizardViewChange?: (view: 'main' | 'projects') => void;
 }
@@ -49,14 +51,17 @@ export const StartScreen = memo(function StartScreen({
   onOpenProject,
   onOpenLatest,
   onDeleteProject,
+  onDeleteAllProjects,
   onDemo,
   onWizardViewChange,
 }: StartScreenProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [showProjects, setShowProjects] = useState(initialShowProjects);
 
   const switchView = (to: 'main' | 'projects') => {
     setShowProjects(to === 'projects');
+    setConfirmDeleteAll(false);
     onWizardViewChange?.(to);
   };
 
@@ -90,7 +95,33 @@ export const StartScreen = memo(function StartScreen({
             </svg>
           </button>
           <span className="text-sm font-medium flex-1">Saved Projects</span>
-          <span className="text-xs" style={{ opacity: 0.45 }}>{sorted.length}</span>
+          <span className="text-xs mr-2" style={{ opacity: 0.45 }}>{sorted.length}</span>
+          {sorted.length > 1 && !confirmDeleteAll && (
+            <button
+              className="text-xs ln-text-muted hover:underline"
+              style={{ opacity: 0.55 }}
+              onClick={() => setConfirmDeleteAll(true)}
+            >
+              Delete all
+            </button>
+          )}
+          {confirmDeleteAll && (
+            <div className="flex items-center gap-1.5">
+              <button
+                className="text-xs px-2 py-0.5 rounded"
+                style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)', border: '1px solid var(--vscode-editorError-foreground, #f14c4c)' }}
+                onClick={() => { onDeleteAllProjects(); setConfirmDeleteAll(false); }}
+              >
+                Confirm
+              </button>
+              <button
+                className="text-xs ln-text-muted hover:underline"
+                onClick={() => setConfirmDeleteAll(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Scrollable project list */}
@@ -162,7 +193,7 @@ export const StartScreen = memo(function StartScreen({
   return (
     <WizardPanel footer={footer}>
       {startMessage && (
-        <div className="text-xs px-3 py-2 rounded ln-status-error">{startMessage}</div>
+        <StatusMessage text={startMessage} type="error" />
       )}
 
       <Button variant="primary" className="w-full" onClick={onCreateNew}>
