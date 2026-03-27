@@ -110,7 +110,7 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
         </div>
         <div className="mt-2 text-xs ln-text-muted">
           Exclusion rules are <strong>saved per bookmark</strong> — use Bookmarks (🔖) to save and restore views.{' '}
-          <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage')} className="ln-text-link hover:underline cursor-pointer">
+          <button onClick={() => openExternal('https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/README.md')} className="ln-text-link hover:underline cursor-pointer">
             Full reference ↗
           </button>
         </div>

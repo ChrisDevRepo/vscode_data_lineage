@@ -48,7 +48,7 @@ export const Tooltip = memo(function Tooltip({ content, children, delay = 600, m
 
   return (
     <>
-      <span ref={refs.setReference} {...getReferenceProps()} style={{ display: 'contents' }}>
+      <span ref={refs.setReference} {...getReferenceProps()} style={{ display: 'inline-flex', alignItems: 'center' }}>
         {children}
       </span>
       <FloatingPortal>

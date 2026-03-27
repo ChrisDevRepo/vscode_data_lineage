@@ -69,17 +69,18 @@ function buildMetricsTooltip(
 ): string {
   const counts: Partial<Record<ObjectType, number>> = {};
   for (const n of allNodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
-  const lines: string[] = [
+  const typeParts: string[] = [];
+  if (counts.table)     typeParts.push(`${counts.table} tables`);
+  if (counts.view)      typeParts.push(`${counts.view} views`);
+  if (counts.procedure) typeParts.push(`${counts.procedure} procedures`);
+  if (counts.function)  typeParts.push(`${counts.function} functions`);
+  if (counts.external)  typeParts.push(`${counts.external} external`);
+  const lines = [
     `Objects: ${metrics.totalNodes}`,
-    ...(counts.table     ? [`  Tables:       ${counts.table}`]     : []),
-    ...(counts.view      ? [`  Views:        ${counts.view}`]      : []),
-    ...(counts.procedure ? [`  Procedures:   ${counts.procedure}`] : []),
-    ...(counts.function  ? [`  Functions:    ${counts.function}`]  : []),
-    ...(counts.external  ? [`  External:     ${counts.external}`]  : []),
+    typeParts.join(' · '),
     `Relations: ${metrics.totalEdges}`,
-    `  Sources (no input):  ${metrics.rootNodes}`,
-    `  Sinks (no output):   ${metrics.leafNodes}`,
-  ];
+    `Sources: ${metrics.rootNodes} · Sinks: ${metrics.leafNodes}`,
+  ].filter(Boolean);
   return lines.join('\n');
 }
 
