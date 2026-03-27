@@ -50,8 +50,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
-  const loadGenRef = useRef(0);
-
   // Auto-clear transient info messages after 6s (progress, connecting, loading...).
   // Success messages persist until the next action — they carry meaningful summary information.
   // Warning/error messages are always kept visible until explicitly replaced.
@@ -247,7 +245,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const resetToStart = useCallback(() => {
-    ++loadGenRef.current;
     setModel(null);
     setSchemaPreview(null);
     setSelectedSchemas(new Set());
@@ -285,7 +282,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const cancelLoading = useCallback(() => {
-    ++loadGenRef.current;
     setIsLoading(false);
     setLoadingContext(null);
     setStatus(null);

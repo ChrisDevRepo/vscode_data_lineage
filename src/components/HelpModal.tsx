@@ -51,21 +51,21 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
         </div>
 
         <div className="space-y-6 ln-text">
-          <section className="rounded-xl overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #312e81 100%)' }}>
+          <section className="rounded-xl overflow-hidden" style={{ background: 'var(--ln-bg-elevated)', border: '1px solid var(--ln-border)' }}>
             <div className="p-5">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#a5b4fc" className="w-5 h-5">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 ln-text-link">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
                   </svg>
-                  <h3 className="text-base font-bold" style={{ color: '#e2e8f0' }}>GitHub Copilot Chat</h3>
+                  <h3 className="text-base font-bold">GitHub Copilot Chat</h3>
                 </div>
-                <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(99,102,241,.3)', color: '#a5b4fc', border: '1px solid rgba(165,180,252,.35)', letterSpacing: '.05em' }}>NEW</span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: 'var(--ln-button-secondary-bg)', color: 'var(--ln-text-link)', border: '1px solid var(--ln-border)', letterSpacing: '.05em' }}>NEW</span>
               </div>
-              <p className="text-sm mb-3" style={{ color: '#94a3b8' }}>
-                Type <span className="font-bold font-mono" style={{ color: '#a5b4fc' }}>@lineage</span> in GitHub Copilot Chat to query your loaded graph. Answers come from your actual data — never from general knowledge.
+              <p className="text-sm mb-3 ln-text-muted">
+                Type <span className="font-bold font-mono ln-text-link">@lineage</span> in GitHub Copilot Chat to query your loaded graph. Answers come from your actual data — never from general knowledge.
               </p>
-              <div className="rounded-lg p-3 space-y-1.5 font-mono text-xs" style={{ background: '#0a0f1e', border: '1px solid #1e293b' }}>
+              <div className="rounded-lg p-3 space-y-1.5 font-mono text-xs" style={{ background: 'var(--ln-bg)', border: '1px solid var(--ln-border)' }}>
                 {[
                   'what schemas are loaded?',
                   'find tables with Employee in the name',
@@ -74,12 +74,12 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
                   'which objects have more than 10 connections?',
                 ].map(q => (
                   <div key={q}>
-                    <span className="font-bold" style={{ color: '#818cf8' }}>@lineage </span>
-                    <span style={{ color: '#cbd5e1' }}>{q}</span>
+                    <span className="font-bold ln-text-link">@lineage </span>
+                    <span>{q}</span>
                   </div>
                 ))}
               </div>
-              <p className="text-xs mt-3" style={{ color: '#475569' }}>Requires GitHub Copilot extension &amp; VS Code 1.95+. Tools are inactive when no graph is loaded.</p>
+              <p className="text-xs mt-3 ln-text-dim">Requires GitHub Copilot extension &amp; VS Code 1.95+. Tools are inactive when no graph is loaded.</p>
             </div>
           </section>
 

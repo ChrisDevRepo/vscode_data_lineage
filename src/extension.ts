@@ -779,7 +779,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'load-project': async (msg) => {
         // Clear stale stats connection — prevents dev/prod cross-query on project switch
         if (statsConnectionUri) {
-          disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
+          disconnectDatabase(statsConnectionUri, outputChannel).catch(err => outputChannel.debug('[DB] stats disconnect on project switch:', String(err)));
           statsConnectionUri = undefined;
         }
         const store = loadProjectStore(context);
