@@ -531,8 +531,14 @@ export function activate(context: vscode.ExtensionContext) {
       const toolCallRounds: ToolCallRound[] = [];
       const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
       let totalToolCallsMade = 0;
+      let roundCount = 0;
+      const MAX_ROUNDS = 10;
 
       const runWithTools = async (): Promise<void> => {
+        if (roundCount++ >= MAX_ROUNDS) {
+          stream.markdown('\n\n> Reached the 10 tool-call round limit.');
+          return;
+        }
         const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
         const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
