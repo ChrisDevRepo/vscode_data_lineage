@@ -444,10 +444,10 @@ export function searchDdl(
   return base;
 }
 
-// ─── Tool 10: lineage_create_ai_view ─────────────────────────────────────────
+// ─── Tool 9: lineage_create_ai_view ──────────────────────────────────────────
 
-export type AIHighlightColor = 'blue' | 'green' | 'red' | 'yellow' | 'orange';
-export type AiBadgeColor = AIHighlightColor | 'gray';
+export type AIHighlightColor = 'bu' | 'gn' | 'rd' | 'ye' | 'or';
+export type AiBadgeColor = AIHighlightColor | 'gy';
 
 export type CreateAiViewInput = {
   name: string;
@@ -473,13 +473,13 @@ export type CreateAiViewRequest = {
   narrative?: string;
   layout_direction: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightColor; node_ids: string[] }>;
-  badges: Array<{ node_id: string; text: string; color: AiBadgeColor }>;
+  badges: Array<{ node_id: string; text: string; color?: AiBadgeColor }>;
 };
 
 export type CreateAiViewError = { success: false; errors: string[]; hint: string };
 
-const AI_HIGHLIGHT_COLORS = new Set<string>(['blue', 'green', 'red', 'yellow', 'orange']);
-const AI_BADGE_COLORS = new Set<string>(['blue', 'green', 'red', 'yellow', 'orange', 'gray']);
+const AI_HIGHLIGHT_COLORS = new Set<string>(['bu', 'gn', 'rd', 'ye', 'or']);
+const AI_BADGE_COLORS = new Set<string>(['bu', 'gn', 'rd', 'ye', 'or', 'gy']);
 
 export function validateCreateAiView(
   model: DatabaseModel,
@@ -546,11 +546,11 @@ export function validateCreateAiView(
     narrative: input.narrative,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
-    badges: (input.badges ?? []).map(b => ({ ...b, color: b.color ?? 'gray' })),
+    badges: input.badges ?? [],
   };
 }
 
-// ─── Tool 9: lineage_save_view ────────────────────────────────────────────────
+// ─── Tool 10: lineage_save_view ───────────────────────────────────────────────
 
 export function validateSaveView(
   model: DatabaseModel,

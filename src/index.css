@@ -100,6 +100,14 @@
   /* Toolbar active */
   --ln-toolbar-active-bg: var(--vscode-toolbar-activeBackground, rgba(0, 0, 0, 0.1));
 
+  /* AI highlight/badge colors — two-letter codes, themed via --vscode-charts-* tokens */
+  --ln-ai-bu: var(--vscode-charts-blue,   var(--ln-analysis-border));
+  --ln-ai-gn: var(--vscode-charts-green,  #22c55e);
+  --ln-ai-rd: var(--vscode-charts-red,    var(--ln-validation-error-border));
+  --ln-ai-ye: var(--vscode-charts-yellow, var(--ln-warning-border));
+  --ln-ai-or: var(--vscode-charts-orange, #f97316);
+  --ln-ai-gy: var(--ln-fg-muted);
+
   /* Minimap mask (viewport highlight) */
   --ln-minimap-mask: rgba(0, 0, 0, 0.15);
   --ln-minimap-mask-stroke: transparent;

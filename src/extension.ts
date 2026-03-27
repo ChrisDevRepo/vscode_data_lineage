@@ -331,7 +331,7 @@ export function activate(context: vscode.ExtensionContext) {
         const { name, node_ids } = options.input as { name: string; node_ids: string[] };
         return { invocationMessage: `Save view "${name}" with ${node_ids?.length ?? 0} objects` };
       },
-      invoke(options, _token) {
+      async invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { name, node_ids } = options.input as { name: string; node_ids: string[] };
@@ -341,16 +341,35 @@ export function activate(context: vscode.ExtensionContext) {
           outputChannel.warn(`[AI] lineage_save_view: validation failed — ${validation.errors?.join(', ')}`);
           return toolResult(validation);
         }
-        // Push to the active panel's webview (if any)
-        if (activePanel) {
-          activePanel.webview.postMessage({
-            type: 'save-view',
-            name: validation.name,
-            nodeIds: validation.node_ids,
-          });
-          outputChannel.info(`[AI] lineage_save_view: saved "${validation.name}" with ${validation.node_ids.length} nodes`);
+        if (!_aiCurrentProjectId) {
+          return toolResult({ success: false, errors: ['No active project'], hint: 'Open a saved project before using lineage_save_view.' });
         }
-        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length });
+        const profile: FilterProfile = {
+          id: crypto.randomUUID(),
+          name: validation.name,
+          createdAt: new Date().toISOString(),
+          source: 'ai',
+          filter: {
+            schemas: [],
+            types: ['table', 'view', 'procedure', 'function', 'external'],
+            searchTerm: '',
+            hideIsolated: false,
+            focusSchemas: [],
+            showExternalRefs: true,
+            externalRefTypes: ['file', 'db'],
+            exclusionPatterns: [],
+            allowlistNodeIds: validation.node_ids,
+          },
+        };
+        const store = loadProjectStore(context);
+        const updated = addFilterProfile(store, _aiCurrentProjectId, profile);
+        await saveProjectStore(context, updated);
+        _aiViews = updated.projects.find(p => p.id === _aiCurrentProjectId)?.filterProfiles ?? _aiViews;
+        if (activePanel) {
+          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+        }
+        outputChannel.info(`[AI] lineage_save_view: saved "${validation.name}" with ${validation.node_ids.length} nodes → profile ${profile.id}`);
+        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length, profile_id: profile.id });
       },
     }),
     vscode.lm.registerTool('lineage_create_ai_view', {

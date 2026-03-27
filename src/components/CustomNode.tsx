@@ -90,7 +90,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             background: data.aiBadge.color,
-            color: '#fff',
+            color: 'var(--vscode-button-foreground, #fff)',
             lineHeight: '13px',
             zIndex: 10,
           }}

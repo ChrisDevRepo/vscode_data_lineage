@@ -32,8 +32,8 @@ export interface SerializedFilterState {
   allowlistNodeIds?: string[];
 }
 
-/** Named color group for AI-authored view highlight groups. */
-export type AIHighlightColor = 'blue' | 'green' | 'red' | 'yellow' | 'orange';
+/** Named color group for AI-authored view highlight groups. Two-letter codes (BU=blue, GN=green, RD=red, YE=yellow, OR=orange). */
+export type AIHighlightColor = 'bu' | 'gn' | 'rd' | 'ye' | 'or';
 
 /** Metadata attached to AI-authored advanced bookmarks. */
 export interface AIViewMetadata {
@@ -42,7 +42,7 @@ export interface AIViewMetadata {
   /** Up to 5 color-coded node groups shown as legend in the info card. */
   highlightGroups: Array<{ label: string; color: AIHighlightColor; nodeIds: string[] }>;
   /** Up to 50 per-node text badges (e.g., "Step 1", "Hub", "⚠ Cycle"). */
-  badges: Array<{ nodeId: string; text: string; color: AIHighlightColor | 'gray' }>;
+  badges: Array<{ nodeId: string; text: string; color?: AIHighlightColor | 'gy' }>;
   /** Dagre layout direction hint. Default: 'TB'. */
   layoutDirection?: 'LR' | 'TB';
 }

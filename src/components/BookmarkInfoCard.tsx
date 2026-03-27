@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
+import { AI_COLOR_HEX } from '../utils/schemaColors';
 
 interface BookmarkInfoCardProps {
   profile: FilterProfile;
@@ -13,14 +14,6 @@ const SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['source']>, string> 
   user: 'Saved view',
 };
 
-const AI_BADGE_COLORS: Record<string, string> = {
-  blue: '#3b82f6',
-  green: '#22c55e',
-  red: '#ef4444',
-  yellow: '#eab308',
-  orange: '#f97316',
-  gray: '#6b7280',
-};
 
 export const BookmarkInfoCard = memo(function BookmarkInfoCard({
   profile,
@@ -103,7 +96,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
                       width: 8,
                       height: 8,
                       borderRadius: '50%',
-                      background: AI_BADGE_COLORS[g.color] ?? g.color,
+                      background: AI_COLOR_HEX[g.color] ?? AI_COLOR_HEX.gy,
                       flexShrink: 0,
                     }}
                   />

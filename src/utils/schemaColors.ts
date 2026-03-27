@@ -77,6 +77,18 @@ export function getVirtualExtColor(): string {
   return isDarkTheme() ? VIRTUAL_EXT_COLOR_DARK : VIRTUAL_EXT_COLOR_LIGHT;
 }
 
+// ─── AI Highlight / Badge Colors ─────────────────────────────────────────────
+// Two-letter codes (BU=blue GN=green RD=red YE=yellow OR=orange GY=grey).
+// Values are CSS variable references — themed automatically via --vscode-charts-* tokens.
+export const AI_COLOR_HEX: Record<string, string> = {
+  bu: 'var(--ln-ai-bu)',
+  gn: 'var(--ln-ai-gn)',
+  rd: 'var(--ln-ai-rd)',
+  ye: 'var(--ln-ai-ye)',
+  or: 'var(--ln-ai-or)',
+  gy: 'var(--ln-ai-gy)',
+};
+
 /** Detect if VS Code is running a dark theme */
 export function isDarkTheme(): boolean {
   if (typeof document === 'undefined') return false;

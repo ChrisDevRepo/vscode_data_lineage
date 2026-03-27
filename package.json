@@ -799,7 +799,7 @@
                 "type": "object",
                 "properties": {
                   "label": { "type": "string", "description": "Group label (max 20 chars)" },
-                  "color": { "type": "string", "enum": ["blue", "green", "red", "yellow", "orange"] },
+                  "color": { "type": "string", "enum": ["bu", "gn", "rd", "ye", "or"] },
                   "node_ids": { "type": "array", "items": { "type": "string" }, "description": "Node IDs in this group (must be subset of top-level node_ids)" }
                 },
                 "required": ["label", "color", "node_ids"]
@@ -813,7 +813,7 @@
                 "properties": {
                   "node_id": { "type": "string" },
                   "text": { "type": "string", "description": "Badge text (max 15 chars)" },
-                  "color": { "type": "string", "enum": ["blue", "green", "red", "yellow", "orange", "gray"] }
+                  "color": { "type": "string", "enum": ["bu", "gn", "rd", "ye", "or", "gy"] }
                 },
                 "required": ["node_id", "text"]
               }

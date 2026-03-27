@@ -36,7 +36,7 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile } from '../engine/projectStore';
-import { getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
+import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 // IMPORTANT: nodeTypes must be defined at module level — not inside the component.
@@ -350,11 +350,8 @@ export function GraphCanvas({
     const m = new Map<string, string>();
     const groups = activeAdvancedProfile?.aiMetadata?.highlightGroups;
     if (!groups) return m;
-    const colorHex: Record<string, string> = {
-      blue: '#3b82f6', green: '#22c55e', red: '#ef4444', yellow: '#eab308', orange: '#f97316',
-    };
     for (const g of groups) {
-      const hex = colorHex[g.color] ?? '#3b82f6';
+      const hex = AI_COLOR_HEX[g.color] ?? AI_COLOR_HEX.bu;
       for (const id of g.nodeIds) m.set(id, hex);
     }
     return m;
@@ -364,10 +361,7 @@ export function GraphCanvas({
     const m = new Map<string, { text: string; color: string }>();
     const badges = activeAdvancedProfile?.aiMetadata?.badges;
     if (!badges) return m;
-    const colorHex: Record<string, string> = {
-      blue: '#3b82f6', green: '#22c55e', red: '#ef4444', yellow: '#eab308', orange: '#f97316', gray: '#6b7280',
-    };
-    for (const b of badges) m.set(b.nodeId, { text: b.text, color: colorHex[b.color] ?? '#6b7280' });
+    for (const b of badges) m.set(b.nodeId, { text: b.text, color: (b.color && AI_COLOR_HEX[b.color]) ?? AI_COLOR_HEX.gy });
     return m;
   }, [activeAdvancedProfile]);
 

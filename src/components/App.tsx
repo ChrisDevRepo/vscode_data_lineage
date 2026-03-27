@@ -365,7 +365,7 @@ export function App() {
     const ids = activeAdvancedProfile.filter.allowlistNodeIds ?? [];
     return ids
       .filter(id => !model.catalog[id])
-      .map(id => id);
+      .map(id => id.split('.').pop()?.replace(/[\[\]]/g, '') ?? id);
   }, [activeAdvancedProfile, model]);
 
   const handleRefresh = useCallback(() => {
