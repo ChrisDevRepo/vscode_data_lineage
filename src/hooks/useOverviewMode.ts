@@ -61,11 +61,8 @@ export function useOverviewMode({
 
   const toggleMode = useCallback(() => {
     userChoseMode.current = true;
-    setGraphMode((prev) => {
-      const next = prev === 'overview' ? 'full' : 'overview';
-      if (next === 'overview') setEnteredFocusFromOverview(false);
-      return next;
-    });
+    setGraphMode((prev) => (prev === 'overview' ? 'full' : 'overview'));
+    setEnteredFocusFromOverview(false);
   }, []);
 
   const enterFocusFromOverview = useCallback(

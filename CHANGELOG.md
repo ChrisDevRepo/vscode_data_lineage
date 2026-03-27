@@ -3,17 +3,14 @@
 ## [0.9.6] - 2026-03-26
 
 ### Added
-- **Schema overview mode** — When a graph exceeds the node threshold (default 150), an automatic schema-level summary activates on load: one bubble per schema showing object count and type breakdown (■ tables, ● views, ▲ procedures, ◆ functions, ⬡ external tables) with aggregated, bidirectional edge counts between schemas. Double-click any bubble to drill into that schema and its neighbors (equivalent to clicking the star in the schema dropdown). Search, clear filters, or apply a saved view automatically returns to the appropriate view. Toggle via the status bar or disable entirely via `dataLineageViz.overview.enabled`. Threshold configurable via `dataLineageViz.overview.threshold`.
-- **`@lineage` chat participant** — Ask questions about your loaded graph directly in GitHub Copilot Chat. Type `@lineage` followed by a question and the assistant answers using 9 dedicated lineage tools — it never guesses from general knowledge. Requires GitHub Copilot and VS Code 1.95+.
-  - *Example questions:* `@lineage what schemas are loaded?` · `@lineage find tables with Employee in the name` · `@lineage what does HumanResources.Employee depend on?` · `@lineage trace 3 levels upstream from Sales.SalesOrderDetail` · `@lineage which objects are hubs with more than 10 connections?`
-  - Tools available: context overview, schema summary, object search, object detail (columns + FKs + DDL), neighbor lookup, BFS trace, graph analysis, DDL search, save view.
-  - Tools are only active when a graph is loaded — no token waste when idle.
-- **PK badge** — Primary key columns show a "PK" flag in the table design view. Composite PKs show numbered ordinals (PK1, PK2, …).
-- **Platform label** — The extension detects the database platform (SQL Server, Azure SQL, Fabric, Synapse) from both dacpac files and live DB connections.
+- **Schema overview** — Large graphs (150+ nodes by default) automatically open as a schema map: one bubble per schema with object counts and type icons. Double-click a bubble to drill into that schema. Toggle with the status bar button or disable via `dataLineageViz.overview.enabled`.
+- **`@lineage` AI assistant** — Ask questions about your graph in GitHub Copilot Chat (`@lineage what depends on Sales.Order?`, `@lineage trace upstream from dbo.FactSales`). Requires GitHub Copilot and VS Code 1.95+.
+- **Primary key badges** — PK columns are flagged in the table detail view. Composite keys show ordinals (PK1, PK2, …).
+- **Platform detection** — The extension identifies SQL Server, Azure SQL, Fabric, and Synapse from both dacpac files and live connections.
 
 ### Changed
-- **Unified detail panel** — DDL and table detail open in a single moveable VS Code panel. Switches between Monaco SQL editor and table grid based on node type. Search results open the panel with the search term highlighted (SQL: all occurrences + F3 navigation; table: column and FK names highlighted).
-- **Faster panel restore** — Reopening the panel restores the graph in under a second instead of re-importing the full file.
+- **Unified detail panel** — DDL and table detail share one moveable panel; opens directly to the right type. Search highlights carry through (SQL: F3 navigation; table: column and FK names).
+- **Instant panel restore** — Switching back to the graph no longer re-imports the file.
 
 ## [0.9.5] - 2026-03-24
 

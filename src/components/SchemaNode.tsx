@@ -7,8 +7,8 @@ import type { ObjectType } from '../engine/types';
 
 export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
   const d = data as SchemaNodeData;
-  const breakdown = Object.entries(d.typeBreakdown)
-    .filter(([, count]) => count && count > 0)
+  const breakdownEntries = Object.entries(d.typeBreakdown).filter(([, count]) => count && count > 0);
+  const breakdown = breakdownEntries
     .map(([type, count]) => {
       const icon = TYPE_COLORS[type as ObjectType]?.icon ?? type[0].toUpperCase();
       return `${icon}${count}`;
@@ -69,8 +69,7 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
         {breakdown && (
           <span
             style={{ fontSize: 10, color: 'var(--ln-fg-muted)', letterSpacing: '0.03em', cursor: 'default' }}
-            title={Object.entries(d.typeBreakdown)
-              .filter(([, count]) => count && count > 0)
+            title={breakdownEntries
               .map(([type, count]) => `${TYPE_LABELS[type as ObjectType] ?? type}: ${count}`)
               .join('\n')}
           >

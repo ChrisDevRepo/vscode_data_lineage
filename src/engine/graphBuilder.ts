@@ -475,6 +475,12 @@ export function buildSchemaEdges(
     raw.get(srcSchema)!.set(tgtSchema, (raw.get(srcSchema)!.get(tgtSchema) ?? 0) + 1);
   }
 
+  // Pre-compute which schemas contain procedures/functions (for canonical direction selection)
+  const schemaProcSet = new Set<string>();
+  for (const n of model.nodes) {
+    if (n.type === 'procedure' || n.type === 'function') schemaProcSet.add(n.schema);
+  }
+
   // Second pass: merge bidirectional pairs into canonical direction
   const result = new Map<string, Map<string, number>>();
   const consumed = new Set<string>();
@@ -487,8 +493,8 @@ export function buildSchemaEdges(
       const revCount = raw.get(tgt)?.get(src) ?? 0;
       if (revCount > 0) {
         // Bidirectional — pick canonical direction: procedure/function schema on source side
-        const srcHasProc = model.nodes.some(n => n.schema === src && (n.type === 'procedure' || n.type === 'function'));
-        const tgtHasProc = model.nodes.some(n => n.schema === tgt && (n.type === 'procedure' || n.type === 'function'));
+        const srcHasProc = schemaProcSet.has(src);
+        const tgtHasProc = schemaProcSet.has(tgt);
         let canonSrc = src;
         let canonTgt = tgt;
         if (tgtHasProc && !srcHasProc) { canonSrc = tgt; canonTgt = src; }
@@ -531,7 +537,8 @@ export function buildSchemaGraph(
   }
 
   // Dagre layout for schema nodes — wider spacing than object graph
-  const schemaIds = [...visibleSchemas].filter(s => schemaMeta.has(s));
+  const schemaIdSet = new Set([...visibleSchemas].filter(s => schemaMeta.has(s)));
+  const schemaIds = [...schemaIdSet];
   const edgesForLayout: Array<{ source: string; target: string }> = [];
   for (const [src, targets] of schemaEdgeCounts) {
     for (const tgt of targets.keys()) {
@@ -568,13 +575,12 @@ export function buildSchemaGraph(
     };
   });
 
-  const LABEL_BG_PAD: [number, number] = [4, 4];
   const edges: FlowEdge[] = [];
   for (const [src, targets] of schemaEdgeCounts) {
     for (const [tgt, count] of targets) {
       const srcId = `__schema__${src}`;
       const tgtId = `__schema__${tgt}`;
-      if (!schemaIds.includes(src) || !schemaIds.includes(tgt)) continue;
+      if (!schemaIdSet.has(src) || !schemaIdSet.has(tgt)) continue;
 
       const revCount = schemaEdgeCounts.get(tgt)?.get(src);
       const isBidi = revCount !== undefined;
