@@ -8,17 +8,9 @@
 - **Primary key badges** — PK columns are flagged in the table detail view. Composite keys show ordinals (PK1, PK2, …).
 - **Platform detection** — The extension identifies SQL Server, Azure SQL, Fabric, and Synapse from both dacpac files and live connections.
 
-### Fixed
-- **DB import routing** — Connecting via SQL Server then selecting schemas now correctly sends `db-visualize` (not `dacpac-visualize`). Previously the webview routed Phase 2 to the dacpac handler, causing an infinite loading spinner.
-- **Session-expired error** — If the dacpac cache expires between Phase 1 and schema selection, the error is now surfaced in the UI immediately (spinner clears) instead of silently aborting.
-
 ### Changed
 - **Unified detail panel** — DDL and table detail share one moveable panel; opens directly to the right type. Search highlights carry through (SQL: F3 navigation; table: column and FK names).
 - **Instant panel restore** — Switching back to the graph no longer re-imports the file.
-
-### Internal
-- Added `useDacpacLoader` hook tests (24 tests) covering routing, state transitions, and all callbacks.
-- Output channel debug logging: every incoming webview message logged at entry; phase boundaries logged at info level; error messages include operation context.
 
 ## [0.9.5] - 2026-03-24
 
