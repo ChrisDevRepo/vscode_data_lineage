@@ -610,17 +610,21 @@ export function activate(context: vscode.ExtensionContext) {
           '- Notes: column-level mappings on 5-8 key SPs. No generic descriptions.\n' +
           '- Batch independent calls in ONE round. Past round 5: present findings.\n\n' +
           'WORKFLOW: SEARCH → VALIDATE → REASON → PRESENT\n' +
-          '1. get_context → learn schemas, model_size. If "small", objects[] included — skip search.\n' +
+          '1. get_context → learn schemas, model_size. If "small", objects[] has DDL+columns+edges — answer directly.\n' +
           '2. search_objects → find by name (substring or mode="regex" for batch). search_ddl → find by DDL content. Use schemas[] to filter.\n' +
           '3. VALIDATE: Do search results match what the user asked? If not → STOP, ask user (see SPEC CHECK).\n' +
           '4. run_bfs_trace (with DDL) → read INSERT/SELECT in SP DDL to trace column-level data flow.\n' +
           '5. get_ddl_batch only if you need DDL for objects OUTSIDE the BFS trace.\n' +
           '6. create_ai_view → max 25 nodes. For 3+ schemas, create 2-3 focused views.\n\n' +
-          'COLUMN TRACE ("what drives X" / "where does X come from"):\n' +
-          '- Start from output table (get_object_detail for columns).\n' +
-          '- Read SP DDL: match INSERT target columns to SELECT source columns.\n' +
-          '- Trace source tables recursively until project boundary (staging with no upstream).\n' +
-          '- Report root driver columns in notes: "X.Amount ← Y.Amount via Z".\n' +
+          'COLUMN TRACE (most common question — "what drives X" / "where does X come from"):\n' +
+          '- Start from output table → find the SP that writes to it (edge type "write").\n' +
+          '- Read that SP\'s DDL. Match INSERT columns to SELECT expressions:\n' +
+          '    INSERT INTO Target (Revenue, DateKey)\n' +
+          '    SELECT src.Amount * rate.Rate, src.DateKey FROM Source src JOIN ...\n' +
+          '  → Target.Revenue ← Source.Amount × ExchangeRate.Rate\n' +
+          '  → Target.DateKey ← Source.DateKey (pass-through)\n' +
+          '- For each source table: find ITS writing SP → repeat until staging boundary.\n' +
+          '- Put column mappings in view notes: "Revenue ← Amount × Rate via spCalc".\n' +
           '- DDL stripped from memory after 4 turns — re-fetch with get_ddl_batch.',
         ),
         ...historyMessages,

@@ -108,9 +108,31 @@ export function getContext(
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
     saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
-    // Small model: include full catalog so AI can skip search_objects and go straight to BFS
+    // Small model: include full catalog WITH DDL + columns — AI can answer column questions
+    // without any additional tool calls (no search, no BFS needed)
     ...(isSmall && {
-      objects: model.nodes.map(n => presentNode(n, model.neighborIndex)),
+      objects: model.nodes.map(n => {
+        const base = presentNode(n, model.neighborIndex);
+        // Add DDL for scriptable nodes (procedure/view/function)
+        if (SCRIPT_TYPES.has(n.type) && n.bodyScript) {
+          const ddl = normalizeBodyScript(n.bodyScript);
+          return { ...base, ddl };
+        }
+        // Add columns + FK for table/external nodes
+        if (n.columns && n.columns.length > 0) {
+          const enriched: Record<string, unknown> = { ...base, cols: n.columns.map(c => presentColumn(c)) };
+          if (n.fks && n.fks.length > 0) {
+            enriched.fks = n.fks.map(fk => ({
+              name: fk.name, columns: fk.columns,
+              ref_schema: fk.refSchema, ref_table: fk.refTable,
+              ref_columns: fk.refColumns, on_delete: fk.onDelete,
+            }));
+          }
+          return strip(enriched);
+        }
+        return base;
+      }),
+      edges: model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]),
     }),
     // Large model: tell AI how many refs are outside the loaded model
     ...(!isSmall && model.parseStats && {

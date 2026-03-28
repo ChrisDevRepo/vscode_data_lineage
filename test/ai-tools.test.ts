@@ -42,6 +42,31 @@ async function testContextTool(model: DatabaseModel) {
   assertEq(ctx.project_name as string, 'TestProject', 'project_name matches');
   assert(ctx.filter === null, 'filter null when none passed');
   assert(Array.isArray(ctx.saved_views), 'saved_views is array');
+
+  // Small model (AW has 112 nodes < 150 threshold): objects[] includes DDL + columns + edges
+  assertEq(ctx.model_size as string, 'small', 'AW is a small model');
+  const objects = ctx.objects as Array<Record<string, unknown>>;
+  assert(Array.isArray(objects), 'small model: objects[] present');
+  assert(objects.length > 0, 'small model: objects not empty');
+
+  // SPs/views/functions should have DDL
+  const spObj = objects.find(o => o.t === 'procedure');
+  assert(spObj !== undefined, 'small model: has a procedure object');
+  assert(typeof spObj?.ddl === 'string' && (spObj.ddl as string).length > 0,
+    'small model: procedure has non-empty DDL');
+
+  // Tables should have columns
+  const tblObj = objects.find(o => o.t === 'table');
+  assert(tblObj !== undefined, 'small model: has a table object');
+  assert(Array.isArray(tblObj?.cols), 'small model: table has cols[]');
+  const cols = tblObj?.cols as Array<Record<string, unknown>>;
+  assert(cols.length > 0, 'small model: table cols not empty');
+  assert(cols[0].n !== undefined, 'small model: column has name');
+
+  // Edges included for small model
+  const edges = ctx.edges as Array<unknown>;
+  assert(Array.isArray(edges), 'small model: edges[] present');
+  assert(edges.length > 0, 'small model: edges not empty');
 }
 
 async function testSearchObjects(model: DatabaseModel) {
