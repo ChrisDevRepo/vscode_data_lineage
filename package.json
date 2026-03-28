@@ -493,7 +493,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Call ONCE at conversation start. Returns project name, platform, model stats (nodes/edges), FULL schema list with per-type object counts (name/n=total/t=tables/v=views/p=procedures/f=functions/ext=external), active filter, and saved views. Use schema names from this response in schemas[] filters on other tools. Do NOT call lineage_get_schema_summary — this already includes all schema data.",
+        "modelDescription": "Call ONCE at start. Returns model overview: schemas (with per-type counts), stats, active filter, saved views. Use schema names in other tools' schemas[] filters. Includes all data from get_schema_summary.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -510,7 +510,7 @@
         "toolReferenceName": "lineage_get_schema_summary",
         "displayName": "Get Schema Summary",
         "userDescription": "Lists all schemas and object counts in the loaded database.",
-        "modelDescription": "Detailed schema breakdown with per-type counts. Prefer lineage_get_context which already includes the full schema list. Only use this tool if you need to refresh schema data mid-conversation after a model change.",
+        "modelDescription": "Schema breakdown with per-type counts. Already included in get_context — only call to refresh after model reload.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -527,7 +527,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search database objects by name. Supports smart query syntax: 'schema.name' (e.g. 'financehub.revenue') auto-splits into schema filter + name search. Space-separated 'schema name' also works if the first word matches a known schema. The query matches OBJECT NAMES only (case-insensitive substring). To filter by schema explicitly, use schemas[]. Results: id, s(schema), n(name), t(type), deg(connections). Set include_body:true to also search DDL. Minimum 2 characters required.",
+        "modelDescription": "Search objects by name (case-insensitive substring, min 2 chars). Smart syntax: 'schema.name' or 'schema name' auto-splits. Set include_body:true for DDL search. For regex DDL search use search_ddl instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -583,7 +583,7 @@
               "items": {
                 "type": "string"
               },
-              "description": "Remove results from matching schemas. Use % as wildcard (matches any sequence). Exact names also work. E.g. 'test%' excludes all schemas starting with 'test', '%staging%' excludes any schema containing 'staging', 'test_data' matches only 'test_data'."
+              "description": "Exclude schemas (% = wildcard). E.g. 'test%', '%staging%'."
             },
             "exclude_types": {
               "type": "array",
@@ -610,7 +610,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Returns full metadata for ONE object: schema, columns (n/t/nl/pk/uq/ck), foreign keys, inline neighbors (up/dn arrays), and full DDL. Use for single-object questions ('what columns does X have?', 'show me the DDL of X'). For multi-object dependency analysis use lineage_run_bfs_trace instead.",
+        "modelDescription": "Full metadata for ONE object: columns, foreign keys, neighbors (up/dn), DDL. Use for single-object questions. For multi-object dependency analysis use run_bfs_trace.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -635,7 +635,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY tool for lineage and data-flow questions. After finding an object via search, call this to trace upstream sources and downstream consumers. For 'where does X come from': set downstream_hops=0, upstream_hops=3-5. By default (include_ddl:true) returns DDL + columns for each node. Set include_ddl:false for structure-only (fast, small response — then use get_ddl_batch for specific nodes). Include filters (schemas/types) are allowlists; exclude filters are post-filters. exclude_schemas uses % as wildcard.",
+        "modelDescription": "PRIMARY lineage tool. Traces upstream sources and downstream consumers via BFS. 'Where does X come from?' → downstream_hops=0. Default include_ddl:true; set false for structure-only then get_ddl_batch for specific nodes. schemas/types are allowlists; exclude_schemas uses % wildcard.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -687,7 +687,7 @@
               "items": {
                 "type": "string"
               },
-              "description": "Remove nodes in matching schemas. Use % as wildcard (matches any sequence); other chars including _ are literal. E.g. 'test%' removes all schemas starting with 'test', '%staging%' removes any schema containing 'staging'."
+              "description": "Exclude schemas (% = wildcard). E.g. 'test%', '%staging%'."
             },
             "exclude_types": {
               "type": "array",
@@ -714,7 +714,7 @@
         "toolReferenceName": "lineage_run_analysis",
         "displayName": "Run Graph Analysis",
         "userDescription": "Run structural analysis on the loaded lineage graph.",
-        "modelDescription": "Runs a structural analysis on the full graph. Types: 'hubs' (high-degree connector objects), 'islands' (isolated subgraphs), 'orphans' (objects with no connections), 'longest-path' (deepest dependency chains), 'cycles' (circular dependencies), 'external-refs' (external tables and file/DB virtual nodes). Returns groups of node IDs with summary.",
+        "modelDescription": "Structural graph analysis. Types: hubs (high-degree), islands (isolated subgraphs), orphans (no connections), longest-path, cycles, external-refs. Returns groups of node IDs with summary.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -754,7 +754,7 @@
         "toolReferenceName": "lineage_search_ddl",
         "displayName": "Search DDL",
         "userDescription": "Search SQL body scripts for a text pattern.",
-        "modelDescription": "Full-text search across all loaded SP/view/function body scripts using a substring or regex. Returns matching object IDs and the matching line(s) with context. Use for 'find all procedures that reference column Amount' or 'find objects using deprecated function Y'.",
+        "modelDescription": "Regex search across SP/view/function DDL bodies. Returns matching lines with context. Use for pattern-based DDL search; for simple keyword name search use search_objects instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -791,7 +791,7 @@
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, narrative explanation, color groups, badges, and sticky notes. The user receives a VS Code notification and sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark and applies it immediately in the graph. Use for BOTH simple bookmarks (name + node_ids only) and rich AI views (add narrative, highlight_groups, badges, notes). Annotation tiers (all optional): badge = numbering/short labels (Step 1, Hub); note = describe calcs, logic, business rules per node (use \\n for line breaks); highlight_groups = color-code critical paths; narrative = brief overall summary, push detail into per-node notes. Requires an active project. Node IDs are validated before saving.",
+        "modelDescription": "Saves a named bookmark and applies it in the graph. Supports simple (name + node_ids) or rich views (narrative, highlight_groups, badges, notes). Annotation tiers (all optional): badge ≤15 chars (numbering/labels); note ≤200 chars (per-node logic/rules, \\n for breaks); highlight_groups = color-code paths (bu/gn/rd/ye/or); narrative ≤500 chars (overall summary). Requires active project.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -937,7 +937,7 @@
         "toolReferenceName": "lineage_get_ddl_batch",
         "displayName": "Get DDL for Multiple Objects",
         "userDescription": "Get DDL body scripts for multiple objects in one call.",
-        "modelDescription": "Fetch DDL for up to 20 specific object IDs in one call. Use when you have known IDs and need their DDL without BFS traversal. Each result: {id, t, ddl} for scriptable objects, {id, t} for tables (no body), {id, error:'not_found'} for unknown IDs. ddl_too_large:true when DDL exceeds cap. Max 20 IDs — split if needed.",
+        "modelDescription": "Batch DDL fetch for known object IDs (max 20). Use after run_bfs_trace with include_ddl:false. Returns DDL for scriptable objects, type-only for tables.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

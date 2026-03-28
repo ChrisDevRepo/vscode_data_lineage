@@ -17,7 +17,7 @@ const FIELD_TTL: Record<string, number> = {
   ddl:          4,   // 80%+ of token cost — AI can re-fetch via get_ddl_batch
   columns:      6,   // medium cost — AI can re-fetch via get_object_detail
   foreign_keys: 6,
-  edges:        6,   // edge list in BFS results
+  edges:        8,   // aligned with up/dn — model can reference full BFS at same age
   up:           8,   // neighbor arrays — useful, small
   dn:           8,
 };

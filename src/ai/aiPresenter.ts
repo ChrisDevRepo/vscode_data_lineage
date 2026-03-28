@@ -103,7 +103,7 @@ export function presentNeighbor(
     id: nid,
     s:  n?.schema || undefined,
     n:  n?.name   ?? nid,
-    t:  n?.type   ?? 'table',
+    t:  n?.type   || undefined,
     e:  edgeMap.get(edgeKey) ?? 'read',
   } as Record<string, unknown>);
 }
