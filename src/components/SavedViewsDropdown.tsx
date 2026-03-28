@@ -71,7 +71,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
           <div
             ref={refs.setFloating}
             style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
-            className="w-64 rounded-md shadow-lg z-[200] p-2 ln-dropdown"
+            className="w-72 rounded-md shadow-lg z-50 p-2 ln-dropdown"
             role="menu"
             aria-label="Bookmarks"
             {...getFloatingProps()}
@@ -79,7 +79,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
             {/* Save new view */}
             {!isAdding ? (
               <button
-                className="w-full text-left px-2 py-1.5 text-sm rounded transition-colors ln-list-item flex items-center gap-2"
+                className="w-full text-left px-2 py-1.5 text-xs rounded transition-colors ln-list-item flex items-center gap-2"
                 onClick={() => setIsAdding(true)}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
@@ -119,7 +119,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                 {filterProfiles.map((profile) => {
                   if (confirmDeleteId === profile.id) {
                     return (
-                      <div key={profile.id} className="flex items-center gap-1 px-2 py-1 text-xs">
+                      <div key={profile.id} className="flex items-center gap-1.5 px-2 py-1.5 text-xs">
                         <span className="flex-1 truncate ln-text-error">
                           Delete &ldquo;{profile.name}&rdquo;?
                         </span>
@@ -143,34 +143,44 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                   return (
                     <div
                       key={profile.id}
-                      className="flex items-center gap-1 px-2 py-1 rounded ln-list-item"
+                      className="flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors ln-list-item"
                       role="menuitem"
                     >
-                      <Tooltip content={profile.name} asChild>
-                        <span className="flex-1 text-sm truncate flex items-center gap-1">
-                        {profile.name}
+                      {/* Fixed-width icon slot for vertical alignment */}
+                      <span className="w-3 flex-shrink-0 flex items-center justify-center">
                         {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 && (
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            className="w-3 h-3 flex-shrink-0"
-                            style={{ color: 'var(--ln-analysis-fg)', opacity: 0.8 }}
-                            aria-label="Advanced bookmark"
-                          >
-                            <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
-                          </svg>
+                          <Tooltip content="Advanced bookmark">
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              className="w-3 h-3"
+                              style={{ color: 'var(--ln-analysis-fg)', opacity: 0.8 }}
+                              aria-label="Advanced bookmark"
+                            >
+                              <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
+                            </svg>
+                          </Tooltip>
                         )}
+                      </span>
+                      <Tooltip content={profile.name} asChild>
+                        <span className="flex-1 text-xs truncate">
+                          {profile.name}
                         </span>
                       </Tooltip>
                       <Tooltip content={`Apply "${profile.name}"`}>
-                        <Button
-                          variant="primary"
-                          className="h-6 px-2 text-xs flex-shrink-0"
+                        <button
+                          type="button"
+                          className="flex-shrink-0 px-1.5 py-0 text-[10px] rounded font-medium"
+                          style={{
+                            background: 'var(--ln-button-bg)',
+                            color: 'var(--ln-button-fg)',
+                            lineHeight: '18px',
+                          }}
                           onClick={() => { onApplyView(profile); close(); }}
                         >
                           Apply
-                        </Button>
+                        </button>
                       </Tooltip>
                       <Tooltip content={`Delete "${profile.name}"`}>
                         <button
@@ -179,7 +189,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                           onClick={() => setConfirmDeleteId(profile.id)}
                           aria-label={`Delete ${profile.name}`}
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                           </svg>
                         </button>

@@ -35,7 +35,7 @@ import { BookmarkInfoCard } from './BookmarkInfoCard';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
-import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType, InnerFilterContext } from '../engine/types';
+import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
@@ -99,8 +99,6 @@ interface GraphCanvasProps {
   onDeleteView?: (profileId: string) => void;
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
-  /** Active mode filter context — passed to Toolbar for dropdown gating. */
-  innerContext?: InnerFilterContext | null;
   graphMode?: GraphMode;
   onSchemaNodeDoubleClick?: (schemaName: string) => void;
   /** Called when user saves a trace/path result as an advanced bookmark. */
@@ -196,7 +194,6 @@ export function GraphCanvas({
   onApplyView,
   onDeleteView,
   isModeLocked = false,
-  innerContext,
   graphMode = 'full',
   onSchemaNodeDoubleClick,
   onSaveTraceBookmark,
@@ -564,7 +561,6 @@ export function GraphCanvas({
         onApplyView={onApplyView}
         onDeleteView={onDeleteView}
         isModeLocked={isModeLocked}
-        innerContext={innerContext}
       />
 
       {/* Advanced bookmark banner — shown whenever an allowlist view is active */}

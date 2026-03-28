@@ -55,7 +55,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
       shift({ padding: 8 }),
       size({
         apply({ rects, elements }) {
-          Object.assign(elements.floating.style, { width: `${rects.reference.width}px` });
+          Object.assign(elements.floating.style, { minWidth: `${rects.reference.width}px`, width: '360px', maxWidth: '420px' });
         },
       }),
     ],

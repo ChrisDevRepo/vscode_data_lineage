@@ -101,7 +101,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
           <div
             ref={refs.setFloating}
             style={{ ...floatingStyles, width: '288px', boxShadow: 'var(--ln-dropdown-shadow)' }}
-            className="rounded-md shadow-lg z-30 ln-dropdown"
+            className="rounded-md shadow-lg z-50 ln-dropdown"
             role="dialog"
             aria-label="Exclusion rules"
             {...getFloatingProps()}
@@ -115,7 +115,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Pattern, e.g. %tmp% or ^dbo\.stg_"
-                className="flex-1 text-sm rounded px-2 py-1 min-w-0 ln-input"
+                className="flex-1 text-xs rounded px-2 py-1.5 min-w-0 ln-input"
                 style={inputError ? { outline: '1px solid var(--vscode-inputValidation-errorBorder, #f44)' } : undefined}
                 aria-label="Enter exclusion pattern"
                 aria-invalid={inputError}
@@ -124,7 +124,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
               <Tooltip content="Add pattern (Enter)">
                 <button
                   onClick={handleAdd}
-                  className="px-2.5 py-1 text-sm rounded font-medium transition-colors ln-btn-primary"
+                  className="px-2.5 py-1 text-xs rounded font-medium transition-colors ln-btn-primary"
                 >
                   Add
                 </button>
@@ -181,7 +181,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                   return (
                     <div
                       key={pattern}
-                      className="flex items-center gap-1.5 px-2 py-1 rounded ln-list-item group"
+                      className="flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors ln-list-item group"
                     >
                       <Tooltip content={pattern} asChild>
                         <span className="flex-1 text-xs font-mono truncate ln-text">

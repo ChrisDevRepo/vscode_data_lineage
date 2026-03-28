@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
-import { ObjectType, AnalysisType, type InnerFilterContext } from '../engine/types';
+import { ObjectType, AnalysisType } from '../engine/types';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { HelpModal } from './HelpModal';
@@ -55,8 +55,6 @@ interface ToolbarProps {
   onDeleteView?: (profileId: string) => void;
   /** When true, analysis and trace-start buttons are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
-  /** Active mode filter context — determines disabled schemas/types in dropdowns. */
-  innerContext?: InnerFilterContext | null;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -122,7 +120,6 @@ export const Toolbar = memo(function Toolbar({
   onApplyView,
   onDeleteView,
   isModeLocked = false,
-  innerContext,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
@@ -133,14 +130,6 @@ export const Toolbar = memo(function Toolbar({
 
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
-
-  // Compute disabled schemas/types from innerContext (mode scope enforcement)
-  const disabledSchemas = innerContext
-    ? new Set(schemas.filter(s => !innerContext.allowedSchemas.has(s)))
-    : undefined;
-  const disabledTypes = innerContext
-    ? new Set((['table', 'view', 'procedure', 'function', 'external'] as ObjectType[]).filter(t => !innerContext.allowedTypes.has(t)))
-    : undefined;
 
   return (
     <>
@@ -166,7 +155,7 @@ export const Toolbar = memo(function Toolbar({
         <div className="w-px h-6 ln-divider" />
 
         {/* Search & Filters */}
-        <div className="flex-1 min-w-[100px] max-w-[280px]">
+        <div className="flex-1 min-w-[100px] max-w-[340px]">
           <SearchWithAutocomplete
             searchTerm={searchTerm}
             onSearchChange={onSearchChange}
@@ -185,8 +174,8 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} disabledSchemas={disabledSchemas} />
-        <TypeFilterDropdown types={types} onToggleType={onToggleType} disabledTypes={disabledTypes} />
+        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} />
+        <TypeFilterDropdown types={types} onToggleType={onToggleType} />
         {onToggleExternalRefs && onToggleExternalRefType && (
           <ExternalRefsDropdown
             showExternalRefs={showExternalRefs}

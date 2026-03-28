@@ -167,7 +167,7 @@ export function useInteractiveTrace(
     analysisType?: AnalysisType
   ) => {
     window.vscode?.postMessage({ type: 'log', text:
-      `[Trace] Analysis subset: ${analysisType ?? 'unknown'} — ${nodeIds.size} nodes, ${edgeIds.size} edges`
+      `[Trace] Analysis subset: ${analysisType ?? 'unknown'} — ${nodeIds.size} nodes, ${edgeIds.size} edges (flowNodes: ${flowNodes.length})`
     });
     setTrace({
       mode: 'analysis',
@@ -179,7 +179,7 @@ export function useInteractiveTrace(
       tracedNodeIds: nodeIds,
       tracedEdgeIds: edgeIds,
     });
-  }, []);
+  }, [flowNodes.length]);
 
   const endTrace = useCallback((onComplete?: () => void) => {
     setTrace(createInitialTrace(config));

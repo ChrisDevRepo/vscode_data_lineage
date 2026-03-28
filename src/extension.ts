@@ -1296,7 +1296,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
 
     panel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
-        logDebug(outputChannel, 'Bridge', `→ ${(message as { type: string }).type}`);
+        const msgType = (message as { type: string }).type;
+        if (msgType !== 'log' && msgType !== 'error') {
+          logDebug(outputChannel, 'Bridge', `→ ${msgType}`);
+        }
         try {
           const handler = handlers[message.type] as ((msg: WebviewMessage) => Promise<void> | void) | undefined;
           if (handler) {

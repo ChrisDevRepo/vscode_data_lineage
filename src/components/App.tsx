@@ -11,7 +11,7 @@ import { buildSchemaGraph } from '../engine/graphBuilder';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, InnerFilterContext } from '../engine/types';
+import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
@@ -332,6 +332,12 @@ export function App() {
 
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
+  // Clear stale highlight when the referenced node is removed by a filter change
+  useEffect(() => {
+    if (highlightedNodeId && flowNodes.length > 0 && !flowNodes.some(n => n.id === highlightedNodeId)) {
+      setHighlightedNodeId(null);
+    }
+  }, [highlightedNodeId, flowNodes]);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
@@ -365,41 +371,6 @@ export function App() {
     !!aiPreview
   );
 
-  /**
-   * Active filter context — schemas and types visible in the current mode.
-   * Schemas/types NOT in these sets are shown grayed-out in filter dropdowns.
-   */
-  const innerContext = useMemo((): InnerFilterContext | null => {
-    if (!model) return null;
-    let nodeIds: string[] = [];
-    if (trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'filtered') {
-      nodeIds = Array.from(trace.tracedNodeIds);
-    } else if (analysisMode) {
-      if (analysisMode.activeGroupId) {
-        const group = analysisMode.result.groups.find(g => g.id === analysisMode.activeGroupId);
-        nodeIds = group?.nodeIds ?? [];
-      } else {
-        nodeIds = analysisMode.result.groups.flatMap(g => g.nodeIds);
-      }
-    } else if (activeAdvancedProfile) {
-      nodeIds = activeAdvancedProfile.filter.allowlistNodeIds ?? [];
-    } else if (aiPreview) {
-      nodeIds = Array.from(aiPreview.nodeIds);
-    } else {
-      return null;
-    }
-    const nodeSet = new Set(nodeIds);
-    const allowedSchemas = new Set<string>();
-    const allowedTypes = new Set<ObjectType>();
-    for (const n of model.nodes) {
-      if (nodeSet.has(n.id)) {
-        allowedSchemas.add(n.schema);
-        allowedTypes.add(n.type);
-      }
-    }
-    return { allowedSchemas, allowedTypes };
-  }, [model, trace.mode, trace.tracedNodeIds, analysisMode, activeAdvancedProfile, aiPreview]);
-
   // ── Mode-lock filter save/restore ─────────────────────────────────────────
   // Refs to access current values inside the effect without re-firing on every change
   const filterRef = useRef(filter);
@@ -408,8 +379,6 @@ export function App() {
   modelRef.current = model;
   const configRef = useRef(config);
   configRef.current = config;
-  const innerContextRef = useRef(innerContext);
-  innerContextRef.current = innerContext;
   const rebuildRef = useRef(rebuild);
   rebuildRef.current = rebuild;
   const prevIsModeLocked = useRef(false);
@@ -420,21 +389,7 @@ export function App() {
     prevIsModeLocked.current = isModeLocked;
 
     if (entering && !preModFilterRef.current) {
-      // Save current filter (before narrowing) — skip if already explicitly saved
       preModFilterRef.current = filterRef.current;
-      // Narrow schemas/types to mode scope — NO rebuild (graph already shows mode subset)
-      const ic = innerContextRef.current;
-      if (ic) {
-        setFilter(prev => ({
-          ...prev,
-          schemas: ic.allowedSchemas.size > 0
-            ? new Set([...prev.schemas].filter(s => ic.allowedSchemas.has(s)))
-            : prev.schemas,
-          types: ic.allowedTypes.size > 0
-            ? new Set([...prev.types].filter(t => ic.allowedTypes.has(t))) as FilterState['types']
-            : prev.types,
-        }));
-      }
     } else if (leaving) {
       const saved = preModFilterRef.current;
       preModFilterRef.current = null;
@@ -769,6 +724,10 @@ export function App() {
     const group = analysisMode.result.groups.find(g => g.id === groupId);
     if (!group) return;
 
+    window.vscode?.postMessage({ type: 'log', text:
+      `[Trace] Group selected: ${groupId} — ${group.nodeIds.length} nodeIds, flowNodes: ${flowNodes.length}`
+    });
+
     setAnalysisMode(prev => prev ? { ...prev, activeGroupId: groupId } : null);
 
     const nodeIdSet = new Set(group.nodeIds);
@@ -799,7 +758,7 @@ export function App() {
       : undefined;
 
     applyAnalysisSubset(nodeIdSet, edgeIds, originId, analysisMode.type);
-  }, [analysisMode, graph, applyAnalysisSubset]);
+  }, [analysisMode, graph, flowNodes.length, applyAnalysisSubset]);
 
   const clearAnalysisGroup = useCallback(() => {
     if (!analysisMode) return;
@@ -1205,7 +1164,6 @@ export function App() {
         onApplyView={handleApplyView}
         onDeleteView={handleDeleteView}
         isModeLocked={isModeLocked}
-        innerContext={innerContext}
         onSaveTraceBookmark={activeProjectId ? handleSaveTraceAsBookmark : undefined}
         onSaveAnalysisBookmark={activeProjectId ? handleSaveAnalysisBookmark : undefined}
         aiPreview={aiPreview}

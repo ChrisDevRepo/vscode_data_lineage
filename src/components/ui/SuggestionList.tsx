@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode, Ref } from 'react';
 import type { AutocompleteNode } from '../../utils/autocomplete';
 import { TYPE_LABELS } from '../../utils/schemaColors';
+import { Tooltip } from './Tooltip';
 
 interface SuggestionListProps {
   suggestions: AutocompleteNode[];
@@ -38,18 +39,20 @@ export function SuggestionList({
       {suggestions.map((node, index) => (
         <div
           key={node.id}
-          className={`px-3 py-2 text-sm cursor-pointer transition-colors ln-list-item flex items-center justify-between gap-2 ${
+          className={`px-2 py-1.5 cursor-pointer transition-colors ln-list-item flex items-center justify-between gap-2 ${
             index === selectedIndex ? 'ln-list-item-selected' : ''
           }`}
           onClick={() => onSelect(node)}
           onMouseEnter={() => onHover(index)}
         >
-          <div className="flex-1 min-w-0">
-            <div className="font-medium truncate">{node.name}</div>
-            <div className="text-xs ln-text-muted">
-              {node.schema} &middot; {TYPE_LABELS[node.type]}
+          <Tooltip content={`${node.schema}.${node.name}`} asChild>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium truncate">{node.name}</div>
+              <div className="text-[10px] leading-tight ln-text-muted">
+                {node.schema} &middot; {TYPE_LABELS[node.type]}
+              </div>
             </div>
-          </div>
+          </Tooltip>
           {renderAction?.(node)}
         </div>
       ))}

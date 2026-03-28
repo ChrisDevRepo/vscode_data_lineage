@@ -51,8 +51,8 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
         {isOpen && (
           <div
             ref={refs.setFloating}
-            style={floatingStyles}
-            className="w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown"
+            style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+            className="w-56 rounded-md shadow-lg z-50 p-2 ln-dropdown"
             role="menu"
             aria-label="External reference filters"
             {...getFloatingProps()}
@@ -81,7 +81,6 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                   aria-label="Toggle file source references"
                 />
                 <span className="text-sm">File Sources</span>
-                <span className="text-[10px] ml-auto" style={{ color: 'var(--ln-fg-dim)' }}>OPENROWSET</span>
               </div>
               <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('db')}>
                 <input
@@ -93,7 +92,6 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                   aria-label="Toggle cross-database references"
                 />
                 <span className="text-sm">Cross-Database</span>
-                <span className="text-[10px] ml-auto" style={{ color: 'var(--ln-fg-dim)' }}>3-part</span>
               </div>
             </div>
           </div>

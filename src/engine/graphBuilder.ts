@@ -257,6 +257,10 @@ export function applyTraceToFlow(
   // FILTER nodes to only show traced subset
   const filteredNodes = flowNodes.filter((n) => trace.tracedNodeIds.has(n.id));
 
+  if (filteredNodes.length === 0 && flowNodes.length > 0) {
+    console.warn(`[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`);
+  }
+
   // FILTER edges to only show traced subset
   const filteredEdges = flowEdges.filter((e) => {
     // Check if edge is in traced set

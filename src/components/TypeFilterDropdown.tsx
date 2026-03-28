@@ -9,8 +9,6 @@ import { useDropdown } from '../hooks/useDropdown';
 interface TypeFilterDropdownProps {
   types: Set<ObjectType>;
   onToggleType: (type: ObjectType) => void;
-  /** Types outside the active mode scope — shown grayed and non-interactive. */
-  disabledTypes?: Set<ObjectType>;
 }
 
 const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function', 'external'];
@@ -18,7 +16,6 @@ const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function', 'exte
 export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,
   onToggleType,
-  disabledTypes,
 }: TypeFilterDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
 
@@ -57,23 +54,20 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
         {isOpen && (
           <div
             ref={refs.setFloating}
-            style={floatingStyles}
-            className="w-56 rounded-md shadow-lg z-30 p-2 ln-dropdown"
+            style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+            className="w-56 rounded-md shadow-lg z-50 p-2 ln-dropdown"
             {...getFloatingProps()}
           >
             {ALL_TYPES.map((type) => {
-              const isDisabled = disabledTypes?.has(type) ?? false;
               return (
                 <div
                   key={type}
                   className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item"
-                  style={isDisabled ? { opacity: 0.4, pointerEvents: 'none' } : undefined}
                 >
                   <input
                     type="checkbox"
                     checked={types.has(type)}
-                    onChange={() => !isDisabled && onToggleType(type)}
-                    disabled={isDisabled}
+                    onChange={() => onToggleType(type)}
                     className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                   />
                   <span className="text-sm" style={{ color: 'var(--ln-fg-dim)' }}>{TYPE_COLORS[type].icon}</span>

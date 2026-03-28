@@ -12,8 +12,6 @@ interface SchemaFilterDropdownProps {
   onSelectAll?: (schemas: string[]) => void;
   onSelectNone?: (schemas: string[]) => void;
   onToggleFocusSchema: (schema: string) => void;
-  /** Schemas that are outside the active mode scope — shown grayed and non-interactive. */
-  disabledSchemas?: Set<string>;
 }
 
 export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
@@ -24,7 +22,6 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectAll,
   onSelectNone,
   onToggleFocusSchema,
-  disabledSchemas,
 }: SchemaFilterDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [searchTerm, setSearchTerm] = useState('');
@@ -63,8 +60,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
         {isOpen && (
           <div
             ref={refs.setFloating}
-            style={floatingStyles}
-            className="w-96 rounded-md shadow-lg z-30 p-3 max-h-96 flex flex-col ln-dropdown"
+            style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+            className="w-96 rounded-md shadow-lg z-50 p-2 max-h-96 flex flex-col ln-dropdown"
             {...getFloatingProps()}
           >
             <div className="mb-2 flex items-center gap-2">
@@ -95,26 +92,22 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
 
             <div className="overflow-y-auto flex-1">
               {filteredSchemas.map((schema) => {
-                const isDisabled = disabledSchemas?.has(schema) ?? false;
                 return (
                   <div
                     key={schema}
                     className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item"
-                    style={isDisabled ? { opacity: 0.4, pointerEvents: 'none' } : undefined}
                   >
                     {onToggleSchema && (
                       <input
                         type="checkbox"
                         checked={selectedSchemas.has(schema)}
-                        onChange={() => !isDisabled && onToggleSchema(schema)}
-                        disabled={isDisabled}
+                        onChange={() => onToggleSchema(schema)}
                         className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                       />
                     )}
                     <Tooltip content={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}>
                       <button
                         onClick={() => onToggleFocusSchema(schema)}
-                        disabled={isDisabled}
                         className="p-1 rounded transition-colors"
                         style={{
                         color: focusSchemas.has(schema)
