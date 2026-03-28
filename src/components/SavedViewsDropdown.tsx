@@ -8,17 +8,23 @@ import { useDropdown } from '../hooks/useDropdown';
 interface SavedViewsDropdownProps {
   filterProfiles: FilterProfile[];
   isEnabled: boolean;
+  activeViewId?: string | null;
+  isViewModified?: boolean;
   onSaveView: (name: string) => void;
   onApplyView: (profile: FilterProfile) => void;
   onDeleteView: (profileId: string) => void;
+  onUpdateView?: (profileId: string) => void;
 }
 
 export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   filterProfiles,
   isEnabled,
+  activeViewId,
+  isViewModified,
   onSaveView,
   onApplyView,
   onDeleteView,
+  onUpdateView,
 }: SavedViewsDropdownProps) {
   const { isOpen, toggle, close, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [isAdding, setIsAdding] = useState(false);
@@ -49,7 +55,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
 
   return (
     <>
-      <Tooltip content={isEnabled ? 'Bookmarks' : 'Open a project to use bookmarks'}>
+      <Tooltip content={isEnabled ? (activeViewId ? 'Bookmarks (active)' : 'Bookmarks') : 'Open a project to use bookmarks'}>
         <Button
           ref={refs.setReference}
           onClick={() => isEnabled && toggle()}
@@ -59,10 +65,15 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
           aria-haspopup="menu"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
-        {/* Heroicons bookmark */}
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
-        </svg>
+        {activeViewId ? (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+            <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
+          </svg>
+        ) : (
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+          </svg>
+        )}
       </Button>
       </Tooltip>
 
@@ -140,15 +151,18 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                       </div>
                     );
                   }
+                  const isActive = profile.id === activeViewId;
+                  const isModified = isActive && isViewModified;
                   return (
                     <div
                       key={profile.id}
                       className="flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors ln-list-item"
                       role="menuitem"
+                      style={isActive ? { background: 'var(--ln-selection-bg)' } : undefined}
                     >
                       {/* Fixed-width icon slot for vertical alignment */}
                       <span className="w-3 flex-shrink-0 flex items-center justify-center">
-                        {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 && (
+                        {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 ? (
                           <Tooltip content="Advanced bookmark">
                             <svg
                               xmlns="http://www.w3.org/2000/svg"
@@ -161,27 +175,52 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                               <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
                             </svg>
                           </Tooltip>
-                        )}
+                        ) : isModified ? (
+                          <Tooltip content="Modified">
+                            <span
+                              className="block w-2 h-2 rounded-full"
+                              style={{ background: 'var(--ln-warning-fg)' }}
+                            />
+                          </Tooltip>
+                        ) : null}
                       </span>
                       <Tooltip content={profile.name} asChild>
                         <span className="flex-1 text-xs truncate">
                           {profile.name}
                         </span>
                       </Tooltip>
-                      <Tooltip content={`Apply "${profile.name}"`}>
-                        <button
-                          type="button"
-                          className="flex-shrink-0 px-1.5 py-0 text-[10px] rounded font-medium"
-                          style={{
-                            background: 'var(--ln-button-bg)',
-                            color: 'var(--ln-button-fg)',
-                            lineHeight: '18px',
-                          }}
-                          onClick={() => { onApplyView(profile); close(); }}
-                        >
-                          Apply
-                        </button>
-                      </Tooltip>
+                      {isModified && onUpdateView && (
+                        <Tooltip content={`Update "${profile.name}" with current filters`}>
+                          <button
+                            type="button"
+                            className="flex-shrink-0 px-1.5 py-0 text-[10px] rounded font-medium"
+                            style={{
+                              background: 'var(--ln-warning-fg)',
+                              color: '#fff',
+                              lineHeight: '18px',
+                            }}
+                            onClick={() => { onUpdateView(profile.id); }}
+                          >
+                            Update
+                          </button>
+                        </Tooltip>
+                      )}
+                      {!isActive && (
+                        <Tooltip content={`Apply "${profile.name}"`}>
+                          <button
+                            type="button"
+                            className="flex-shrink-0 px-1.5 py-0 text-[10px] rounded font-medium"
+                            style={{
+                              background: 'var(--ln-button-bg)',
+                              color: 'var(--ln-button-fg)',
+                              lineHeight: '18px',
+                            }}
+                            onClick={() => { onApplyView(profile); close(); }}
+                          >
+                            Apply
+                          </button>
+                        </Tooltip>
+                      )}
                       <Tooltip content={`Delete "${profile.name}"`}>
                         <button
                           type="button"

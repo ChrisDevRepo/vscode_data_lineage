@@ -50,9 +50,14 @@ interface ToolbarProps {
   onRemoveExclusionPattern?: (pattern: string) => void;
   filterProfiles?: FilterProfile[];
   activeProjectId?: string | null;
+  activeViewId?: string | null;
+  isViewModified?: boolean;
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
   onDeleteView?: (profileId: string) => void;
+  onUpdateView?: (profileId: string) => void;
+  /** When true, a confirmation strip is shown before navigating back. */
+  isFilterDirty?: boolean;
   /** When true, analysis and trace-start buttons are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
@@ -116,14 +121,19 @@ export const Toolbar = memo(function Toolbar({
   onRemoveExclusionPattern,
   filterProfiles = [],
   activeProjectId,
+  activeViewId,
+  isViewModified,
   onSaveView,
   onApplyView,
   onDeleteView,
+  onUpdateView,
+  isFilterDirty = false,
   isModeLocked = false,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [confirmingBack, setConfirmingBack] = useState(false);
   const analysis = useDropdown();
 
   useKeyboardShortcut('?', () => setIsHelpOpen(true));
@@ -135,10 +145,10 @@ export const Toolbar = memo(function Toolbar({
     <>
       <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
         {/* Navigation */}
-        <Tooltip content="Back to Project Selection">
-          <Button onClick={onBack} variant="icon" aria-label="Back to Project Selection">
+        <Tooltip content="Load New Project">
+          <Button onClick={() => isFilterDirty ? setConfirmingBack(true) : onBack()} variant="icon" aria-label="Load New Project">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />
             </svg>
           </Button>
         </Tooltip>
@@ -146,9 +156,12 @@ export const Toolbar = memo(function Toolbar({
           <SavedViewsDropdown
             filterProfiles={filterProfiles}
             isEnabled={!!activeProjectId}
+            activeViewId={activeViewId}
+            isViewModified={isViewModified}
             onSaveView={onSaveView}
             onApplyView={onApplyView}
             onDeleteView={onDeleteView}
+            onUpdateView={onUpdateView}
           />
         )}
 
@@ -208,7 +221,7 @@ export const Toolbar = memo(function Toolbar({
             ref={analysis.refs.setReference}
             onClick={analysis.toggle}
             variant="icon"
-            className={isAnalysisActive ? 'ln-btn-icon-active' : ''}
+            className={isAnalysisActive ? 'ln-btn-icon-active ln-btn-icon-active--analysis' : ''}
             disabled={isModeLocked && !isAnalysisActive}
             aria-label="Graph Analysis"
             aria-pressed={isAnalysisActive}
@@ -317,6 +330,14 @@ export const Toolbar = memo(function Toolbar({
           </>
         )}
       </div>
+
+      {confirmingBack && (
+        <div className="px-4 py-1.5 flex items-center gap-2 text-xs" style={{ background: 'var(--ln-bg-secondary)', borderBottom: '1px solid var(--ln-border)' }}>
+          <span className="ln-text-muted">Leave current view? Unsaved changes will be lost.</span>
+          <Button variant="ghost" className="h-6 px-2 text-xs" style={{ color: 'var(--ln-warning-fg)' }} onClick={() => { setConfirmingBack(false); onBack(); }}>Leave</Button>
+          <Button variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmingBack(false)}>Cancel</Button>
+        </div>
+      )}
 
       <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </>

@@ -1,4 +1,5 @@
 import { memo, useState, useEffect, useCallback } from 'react';
+import { FloatingPortal, useFloating, offset, flip, shift, size, autoUpdate } from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
 import { filterSuggestions } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
@@ -36,6 +37,27 @@ export const PathFinderBar = memo(function PathFinderBar({
     handleArrowKeys,
   } = useAutocomplete(suggestions, input);
 
+  const { refs, floatingStyles } = useFloating({
+    open: isOpen,
+    placement: 'bottom-start',
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(4),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+      size({
+        apply({ rects, elements }) {
+          Object.assign(elements.floating.style, { minWidth: `${rects.reference.width}px`, width: '288px' });
+        },
+      }),
+    ],
+  });
+
+  const mergedDropdownRef = useCallback((node: HTMLDivElement | null) => {
+    (dropdownRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    refs.setFloating(node);
+  }, [dropdownRef, refs]);
+
   useEffect(() => {
     inputRef.current?.focus();
   }, [inputRef]);
@@ -57,7 +79,7 @@ export const PathFinderBar = memo(function PathFinderBar({
 
         <span className="text-sm ln-text-muted flex-shrink-0">&rarr;</span>
 
-        <div className="relative flex-shrink-0">
+        <div className="relative flex-shrink-0" ref={refs.setReference}>
           <input
             ref={inputRef}
             type="text"
@@ -80,14 +102,17 @@ export const PathFinderBar = memo(function PathFinderBar({
           />
 
           {isOpen && (
-            <SuggestionList
-              suggestions={suggestions}
-              selectedIndex={selectedIndex}
-              onSelect={(node) => handleSelect(node.id)}
-              onHover={setSelectedIndex}
-              dropdownRef={dropdownRef}
-              className="w-72"
-            />
+            <FloatingPortal>
+              <SuggestionList
+                suggestions={suggestions}
+                selectedIndex={selectedIndex}
+                onSelect={(node) => handleSelect(node.id)}
+                onHover={setSelectedIndex}
+                dropdownRef={mergedDropdownRef}
+                portal
+                style={floatingStyles}
+              />
+            </FloatingPortal>
           )}
         </div>
 

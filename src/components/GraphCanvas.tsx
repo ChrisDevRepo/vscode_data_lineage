@@ -94,9 +94,13 @@ interface GraphCanvasProps {
   sourceName?: string;
   filterProfiles?: FilterProfile[];
   activeProjectId?: string | null;
+  activeViewId?: string | null;
+  isViewModified?: boolean;
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
   onDeleteView?: (profileId: string) => void;
+  onUpdateView?: (profileId: string) => void;
+  isFilterDirty?: boolean;
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
   graphMode?: GraphMode;
@@ -190,9 +194,13 @@ export function GraphCanvas({
   sourceName,
   filterProfiles,
   activeProjectId,
+  activeViewId,
+  isViewModified,
   onSaveView,
   onApplyView,
   onDeleteView,
+  onUpdateView,
+  isFilterDirty,
   isModeLocked = false,
   graphMode = 'full',
   onSchemaNodeDoubleClick,
@@ -557,9 +565,13 @@ export function GraphCanvas({
         metrics={metrics}
         filterProfiles={filterProfiles}
         activeProjectId={activeProjectId}
+        activeViewId={activeViewId}
+        isViewModified={isViewModified}
         onSaveView={onSaveView}
         onApplyView={onApplyView}
         onDeleteView={onDeleteView}
+        onUpdateView={onUpdateView}
+        isFilterDirty={isFilterDirty}
         isModeLocked={isModeLocked}
       />
 

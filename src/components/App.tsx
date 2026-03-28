@@ -55,6 +55,7 @@ export function App() {
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
   const [lastWizardView, setLastWizardView] = useState<'main' | 'projects'>('main');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
@@ -127,6 +128,7 @@ export function App() {
       setModel(trimmed);
       const f = getResetFilter(trimmed);
       setFilter(f);
+      setActiveViewId(null);
       rebuild(trimmed, f, config);
       setLoadingPhase('generate');
     },
@@ -287,6 +289,7 @@ export function App() {
     setLoadingError(null);
     setStartScreenMessage(null);
     setActiveProjectId(null);
+    setActiveViewId(null);
   }, [dacpacLoader.resetToStart, clearTrace]);
 
   const handleCancelVisualizing = useCallback(() => {
@@ -790,6 +793,7 @@ export function App() {
 
   const handleApplyView = useCallback((profile: FilterProfile) => {
     overviewActionsRef.current.resetUserChoice();
+    setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
     if (profile.positions && Object.keys(profile.positions).length > 0) {
       setPendingPositions(profile.positions);
@@ -907,6 +911,20 @@ export function App() {
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filterProfiles = activeProject?.filterProfiles ?? [];
 
+  const isViewModified = useMemo(() => {
+    if (!activeViewId) return false;
+    const profile = filterProfiles.find(p => p.id === activeViewId);
+    if (!profile) return false;
+    return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(profile.filter);
+  }, [activeViewId, filterProfiles, filter]);
+
+  const isFilterDirty = useMemo(() => {
+    if (!model) return false;
+    if (activeViewId && !isViewModified) return false;
+    const clean = getResetFilter(model);
+    return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(serializeFilter(clean));
+  }, [model, filter, activeViewId, isViewModified]);
+
   const handleSaveView = useCallback((name: string) => {
     if (!activeProjectId) {
       vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
@@ -918,6 +936,7 @@ export function App() {
       createdAt: new Date().toISOString(),
       filter: serializeFilter(filter),
     };
+    setActiveViewId(profile.id);
     // Optimistic update
     setProjects(prev => {
       const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
@@ -925,6 +944,21 @@ export function App() {
     });
     vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
   }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+
+  const handleUpdateView = useCallback((profileId: string) => {
+    if (!activeProjectId) return;
+    const existing = filterProfiles.find(p => p.id === profileId);
+    if (!existing) return;
+    const updated: FilterProfile = {
+      ...existing,
+      filter: serializeFilter(filter),
+    };
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, updated).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: updated });
+  }, [activeProjectId, filter, filterProfiles, lastOpenedId, vscodeApi]);
 
   const handleExitAdvancedBookmark = useCallback(() => {
     // Filter restore is handled by the isModeLocked useEffect when activeAdvancedProfile → null
@@ -1034,13 +1068,14 @@ export function App() {
 
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
+    if (activeViewId === profileId) setActiveViewId(null);
     // Optimistic update
     setProjects(prev => {
       const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
       return deleteFilterProfile(store, activeProjectId, profileId).projects;
     });
     vscodeApi.postMessage({ type: 'delete-view', projectId: activeProjectId, profileId });
-  }, [activeProjectId, lastOpenedId, vscodeApi]);
+  }, [activeProjectId, activeViewId, lastOpenedId, vscodeApi]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -1160,9 +1195,13 @@ export function App() {
         sourceName={sourceName ?? dacpacLoader.fileName ?? undefined}
         filterProfiles={filterProfiles}
         activeProjectId={activeProjectId}
+        activeViewId={activeViewId}
+        isViewModified={isViewModified}
         onSaveView={handleSaveView}
         onApplyView={handleApplyView}
         onDeleteView={handleDeleteView}
+        onUpdateView={handleUpdateView}
+        isFilterDirty={isFilterDirty}
         isModeLocked={isModeLocked}
         onSaveTraceBookmark={activeProjectId ? handleSaveTraceAsBookmark : undefined}
         onSaveAnalysisBookmark={activeProjectId ? handleSaveAnalysisBookmark : undefined}
