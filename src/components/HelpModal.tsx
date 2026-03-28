@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { CloseIcon } from './ui/CloseIcon';
+import { Tooltip } from './ui/Tooltip';
 
 interface HelpModalProps {
   isOpen: boolean;
@@ -357,9 +358,11 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <img src={window.LOGO_URI} alt="" className="h-8 w-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             <span className="text-xs ln-text-muted opacity-60">v{__APP_VERSION__}</span>
           </div>
-          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded transition-colors ln-list-item ln-text" title="Close">
+          <Tooltip content="Close">
+            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded transition-colors ln-list-item ln-text">
             <CloseIcon className="w-4 h-4" />
           </button>
+          </Tooltip>
         </div>
 
         <div className="flex items-center gap-0.5 px-4 py-2 flex-shrink-0 ln-help-sep-bottom">

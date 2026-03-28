@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react';
 import type Graph from 'graphology';
 import type { AnalysisMode, AnalysisType, AnalysisGroup } from '../engine/types';
 import { SidePanel } from './SidePanel';
+import { Tooltip } from './ui/Tooltip';
 import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';
 
 interface AnalysisSidebarProps {
@@ -94,16 +95,16 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
             const typeInfo = ANALYSIS_TYPE_INFO[type];
             const isActive = analysis.type === type;
             return (
-              <button
-                key={type}
-                title={typeInfo.title}
-                onClick={() => onSwitchAnalysis(type)}
-                className={`w-7 h-7 flex items-center justify-center rounded ln-btn-icon${isActive ? ' ln-btn-icon-active' : ''}`}
-              >
+              <Tooltip key={type} content={typeInfo.title}>
+                <button
+                  onClick={() => onSwitchAnalysis(type)}
+                  className={`w-7 h-7 flex items-center justify-center rounded ln-btn-icon${isActive ? ' ln-btn-icon-active' : ''}`}
+                >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                   <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
                 </svg>
               </button>
+              </Tooltip>
             );
           })}
         </div>

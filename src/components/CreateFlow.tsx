@@ -1,5 +1,6 @@
 import { memo, useState, useCallback } from 'react';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
 import { SchemaSelector } from './SchemaSelector';
@@ -131,14 +132,14 @@ export const CreateFlow = memo(function CreateFlow({
           </div>
 
           {/* Connect to Database — full width, shown-but-disabled when MSSQL unavailable */}
-          <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 rounded text-sm text-left ln-file-picker ln-list-item"
-            onClick={loader.connectToDatabase}
-            disabled={loader.isLoading || loader.mssqlAvailable !== true}
-            title={loader.mssqlAvailable === false
+          <Tooltip content={loader.mssqlAvailable === false
               ? 'Requires the SQL Server (mssql) extension'
-              : 'Connect to database'}
-          >
+              : 'Connect to database'} asChild>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded text-sm text-left ln-file-picker ln-list-item"
+              onClick={loader.connectToDatabase}
+              disabled={loader.isLoading || loader.mssqlAvailable !== true}
+            >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
             </svg>
@@ -147,6 +148,7 @@ export const CreateFlow = memo(function CreateFlow({
             </span>
             {isPhase1Loading && loader.loadingContext === 'database' && <InlineSpinner />}
           </button>
+          </Tooltip>
 
           {/* Status / error */}
           {loader.status && (

@@ -4,6 +4,7 @@ import type { SchemaNodeData } from '../engine/types';
 import { SCHEMA_NODE_WIDTH, SCHEMA_NODE_HEIGHT } from '../engine/graphBuilder';
 import { TYPE_COLORS, TYPE_LABELS } from '../utils/schemaColors';
 import type { ObjectType } from '../engine/types';
+import { Tooltip } from './ui/Tooltip';
 
 export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
   const d = data as SchemaNodeData;
@@ -21,8 +22,8 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
   ].join('\n');
 
   return (
+    <Tooltip content={tooltip} multiline placement="top" asChild>
     <div
-      title={tooltip}
       style={{
         width: SCHEMA_NODE_WIDTH,
         height: SCHEMA_NODE_HEIGHT,
@@ -83,5 +84,6 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
       <Handle type="target" position={Position.Left} style={{ background: d.color, width: 8, height: 8 }} />
       <Handle type="source" position={Position.Right} style={{ background: d.color, width: 8, height: 8 }} />
     </div>
+    </Tooltip>
   );
 });

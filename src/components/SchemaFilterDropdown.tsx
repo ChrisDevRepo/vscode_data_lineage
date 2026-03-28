@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 
 interface SchemaFilterDropdownProps {
@@ -34,13 +35,13 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
 
   return (
     <>
-      <Button
-        ref={refs.setReference}
-        onClick={toggle}
-        variant="icon"
-        title="Filter Schemas"
-        style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
-      >
+      <Tooltip content="Filter Schemas">
+        <Button
+          ref={refs.setReference}
+          onClick={toggle}
+          variant="icon"
+          style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
+        >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           fill="none"
@@ -56,6 +57,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
           />
         </svg>
       </Button>
+      </Tooltip>
 
       <FloatingPortal>
         {isOpen && (
@@ -75,16 +77,18 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
               />
               {onSelectAll && onSelectNone && (
                 <>
-                  <button
-                    onClick={() => onSelectAll(filteredSchemas)}
-                    className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
-                    title="Select all visible schemas"
-                  >All</button>
-                  <button
-                    onClick={() => onSelectNone(filteredSchemas)}
-                    className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
-                    title="Deselect all visible schemas"
-                  >None</button>
+                  <Tooltip content="Select all visible schemas">
+                    <button
+                      onClick={() => onSelectAll(filteredSchemas)}
+                      className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
+                    >All</button>
+                  </Tooltip>
+                  <Tooltip content="Deselect all visible schemas">
+                    <button
+                      onClick={() => onSelectNone(filteredSchemas)}
+                      className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
+                    >None</button>
+                  </Tooltip>
                 </>
               )}
             </div>
@@ -107,19 +111,20 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                         className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                       />
                     )}
-                    <button
-                      onClick={() => onToggleFocusSchema(schema)}
-                      disabled={isDisabled}
-                      className="p-1 rounded transition-colors"
-                      title={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}
-                      style={{
+                    <Tooltip content={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}>
+                      <button
+                        onClick={() => onToggleFocusSchema(schema)}
+                        disabled={isDisabled}
+                        className="p-1 rounded transition-colors"
+                        style={{
                         color: focusSchemas.has(schema)
                           ? 'var(--vscode-symbolIcon-functionForeground)'
                           : 'var(--ln-fg-muted)',
                       }}
                     >
-                      {focusSchemas.has(schema) ? '⭐' : '☆'}
-                    </button>
+                        {focusSchemas.has(schema) ? '⭐' : '☆'}
+                      </button>
+                    </Tooltip>
                     <span className="flex-1 text-sm">{schema}</span>
                   </div>
                 );

@@ -1,5 +1,6 @@
 import type { ForeignKeyInfo } from '../engine/types';
 import { highlightText } from './highlight';
+import { Tooltip } from './ui/Tooltip';
 
 export function ForeignKeysSection({ fks, findQuery }: { fks: ForeignKeyInfo[]; findQuery?: string }) {
   return (
@@ -20,16 +21,21 @@ export function ForeignKeysSection({ fks, findQuery }: { fks: ForeignKeyInfo[]; 
         <tbody>
           {fks.map(fk => (
             <tr key={fk.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }} title={fk.name}>
-                {highlightText(fk.name, findQuery)}
-              </td>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }} title={fk.columns.join(', ')}>
-                {fk.columns.map((c, i) => <span key={i}>{i > 0 && ', '}{highlightText(c, findQuery)}</span>)}
-              </td>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }}
-                title={`[${fk.refSchema}].[${fk.refTable}](${fk.refColumns.join(', ')})`}>
-                [{highlightText(fk.refSchema, findQuery)}].[{highlightText(fk.refTable, findQuery)}]
-              </td>
+              <Tooltip content={fk.name} asChild>
+                <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }}>
+                  {highlightText(fk.name, findQuery)}
+                </td>
+              </Tooltip>
+              <Tooltip content={fk.columns.join(', ')} asChild>
+                <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }}>
+                  {fk.columns.map((c, i) => <span key={i}>{i > 0 && ', '}{highlightText(c, findQuery)}</span>)}
+                </td>
+              </Tooltip>
+              <Tooltip content={`[${fk.refSchema}].[${fk.refTable}](${fk.refColumns.join(', ')})`} asChild>
+                <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }}>
+                  [{highlightText(fk.refSchema, findQuery)}].[{highlightText(fk.refTable, findQuery)}]
+                </td>
+              </Tooltip>
               <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
                 {fk.onDelete}
               </td>

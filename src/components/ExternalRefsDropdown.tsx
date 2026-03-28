@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 
 interface ExternalRefsDropdownProps {
@@ -20,12 +21,12 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
 
   return (
     <>
-      <Button
-        ref={refs.setReference}
-        onClick={toggle}
-        variant="icon"
-        title="External References"
-        aria-expanded={isOpen}
+      <Tooltip content="External References">
+        <Button
+          ref={refs.setReference}
+          onClick={toggle}
+          variant="icon"
+          aria-expanded={isOpen}
         aria-haspopup="true"
         style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
       >
@@ -44,6 +45,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
           />
         </svg>
       </Button>
+      </Tooltip>
 
       <FloatingPortal>
         {isOpen && (

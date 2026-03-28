@@ -1,5 +1,6 @@
 import type { ColumnDef } from '../engine/types';
 import { highlightText } from './highlight';
+import { Tooltip } from './ui/Tooltip';
 
 interface ColumnTableProps {
   columns: ColumnDef[];
@@ -39,12 +40,16 @@ export function ColumnTable({ columns, isVirtualExt, findQuery }: ColumnTablePro
           ].filter(Boolean).join(' ');
           return (
             <tr key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }} title={col.name}>
-                {highlightText(col.name, findQuery)}
-              </td>
-              <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }} title={col.type}>
-                {col.type}
-              </td>
+              <Tooltip content={col.name} asChild>
+                <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }}>
+                  {highlightText(col.name, findQuery)}
+                </td>
+              </Tooltip>
+              <Tooltip content={col.type} asChild>
+                <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg-muted)', maxWidth: '0' }}>
+                  {col.type}
+                </td>
+              </Tooltip>
               <td className="py-0.5 text-xs" style={{ color: col.nullable === 'NULL' ? 'var(--ln-fg-dim)' : 'var(--ln-fg-muted)' }}>
                 {col.nullable === 'NULL' ? 'null' : ''}
               </td>

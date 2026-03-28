@@ -3,6 +3,7 @@ import { FloatingPortal } from '@floating-ui/react';
 import { ObjectType } from '../engine/types';
 import { TYPE_LABELS, TYPE_COLORS } from '../utils/schemaColors';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 
 interface TypeFilterDropdownProps {
@@ -23,13 +24,13 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
 
   return (
     <>
-      <Button
-        ref={refs.setReference}
-        onClick={toggle}
-        variant="icon"
-        title="Filter Types"
-        style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
-      >
+      <Tooltip content="Filter Types">
+        <Button
+          ref={refs.setReference}
+          onClick={toggle}
+          variant="icon"
+          style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
+        >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           fill="none"
@@ -50,6 +51,7 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
           />
         </svg>
       </Button>
+      </Tooltip>
 
       <FloatingPortal>
         {isOpen && (

@@ -1,4 +1,5 @@
 import { typeBadgeLabel } from '../engine/profilingEngine';
+import { Tooltip } from './ui/Tooltip';
 
 // ─── Type Badge ──────────────────────────────────────────────────────────────
 
@@ -19,18 +20,19 @@ export function TypeBadge({ typeStr }: { typeStr: string }) {
   const label = typeBadgeLabel(typeStr);
   const color = BADGE_COLORS[label] ?? 'var(--ln-fg-muted)';
   return (
-    <span
-      className="font-mono text-xs"
-      style={{
-        color,
-        fontWeight: 600,
-        fontSize: '0.65rem',
-        letterSpacing: '0.03em',
-      }}
-      title={typeStr}
-    >
-      {label}
-    </span>
+    <Tooltip content={typeStr}>
+      <span
+        className="font-mono text-xs"
+        style={{
+          color,
+          fontWeight: 600,
+          fontSize: '0.65rem',
+          letterSpacing: '0.03em',
+        }}
+      >
+        {label}
+      </span>
+    </Tooltip>
   );
 }
 

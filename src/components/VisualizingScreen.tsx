@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
@@ -138,9 +139,11 @@ export const VisualizingScreen = memo(function VisualizingScreen({
       <div className="w-full max-w-md ln-panel flex flex-col" style={{ borderRadius: 6, minHeight: 280 }}>
         <div className="px-5 py-6 space-y-4 flex-1 overflow-y-auto">
           {/* Source name */}
-          <div className="text-sm font-medium truncate" title={sourceName}>
-            {sourceName}
-          </div>
+          <Tooltip content={sourceName} asChild>
+            <div className="text-sm font-medium truncate">
+              {sourceName}
+            </div>
+          </Tooltip>
 
           {/* Phase rows */}
           <div className="space-y-3">

@@ -2,6 +2,7 @@ import { Fragment, useState, useCallback, useMemo } from 'react';
 import type { TableStats, ColumnStats, StatsMode } from '../engine/profilingEngine';
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 import { CompletenessBar, UniquenessIndicator, TypeBadge } from './StatsMicroCharts';
 
 // ─── Spinner ─────────────────────────────────────────────────────────────────
@@ -115,12 +116,14 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
             style={{ color: 'var(--ln-fg-dim)', whiteSpace: 'nowrap' }}>
             {p.label}
           </span>
-          <span className="font-mono text-xs" style={{
-            color: 'var(--ln-fg)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }} title={p.value}>
-            {p.value}
-          </span>
+          <Tooltip content={p.value} asChild>
+            <span className="font-mono text-xs" style={{
+              color: 'var(--ln-fg)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {p.value}
+            </span>
+          </Tooltip>
         </Fragment>
       ))}
     </div>
@@ -290,12 +293,14 @@ function StatsResults({ stats, mode }: {
               tabIndex={canExpand ? 0 : undefined}
               onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.name); } } : undefined}
             >
-              <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }} title={col.name}>
+              <Tooltip content={col.name} asChild>
+              <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }}>
                 <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)', visibility: canExpand ? 'visible' : 'hidden' }}>
                   <ChevronIcon expanded={showDetail} />
                 </span>
                 <span style={cellClip}>{col.name}</span>
               </div>
+              </Tooltip>
               <div style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></div>
               <div className="font-mono" style={{
                 ...cellClip,
@@ -317,9 +322,11 @@ function StatsResults({ stats, mode }: {
             {/* Completeness bar — only shown when column has actual nulls */}
             {col.completeness < 1.0 && (
               <div className="flex items-center" style={{ paddingBottom: 3 }}>
-                <div style={{ flex: 1 }} title={`${Math.round(col.completeness * 100)}% of rows have a non-null value`}>
-                  <CompletenessBar value={col.completeness} />
-                </div>
+                <Tooltip content={`${Math.round(col.completeness * 100)}% of rows have a non-null value`} asChild>
+                  <div style={{ flex: 1 }}>
+                    <CompletenessBar value={col.completeness} />
+                  </div>
+                </Tooltip>
                 <span className="font-mono" style={{ width: 42, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
                   {Math.round(col.completeness * 100)}% fill
                 </span>
@@ -343,9 +350,11 @@ function StatsResults({ stats, mode }: {
           </div>
           {skipped.map(col => (
             <div key={col.name} className="flex items-center gap-2 py-0.5" style={{ color: 'var(--ln-fg-dim)' }}>
-              <span className="font-mono truncate" style={{ flex: 1, minWidth: 0 }} title={col.name}>
-                {col.name}
-              </span>
+              <Tooltip content={col.name} asChild>
+                <span className="font-mono truncate" style={{ flex: 1, minWidth: 0 }}>
+                  {col.name}
+                </span>
+              </Tooltip>
               <TypeBadge typeStr={col.type} />
             </div>
           ))}

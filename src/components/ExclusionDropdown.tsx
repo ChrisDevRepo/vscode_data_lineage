@@ -1,6 +1,7 @@
 import { memo, useState, useRef, useCallback, useEffect } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 import { compileExclusionPattern } from '../utils/sql';
 
@@ -60,12 +61,12 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
   return (
     <>
       <div className="relative inline-flex">
-        <Button
-          ref={refs.setReference}
-          onClick={toggle}
-          variant="icon"
-          title="Exclusion Rules — hide nodes matching patterns"
-          aria-expanded={isOpen}
+        <Tooltip content="Exclusion Rules — hide nodes matching patterns">
+          <Button
+            ref={refs.setReference}
+            onClick={toggle}
+            variant="icon"
+            aria-expanded={isOpen}
           aria-haspopup="true"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
@@ -74,6 +75,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
           </svg>
         </Button>
+        </Tooltip>
         {count > 0 && (
           <span
             className="absolute -top-1 -right-1 flex items-center justify-center rounded-full pointer-events-none"
@@ -119,13 +121,14 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                 aria-invalid={inputError}
                 spellCheck={false}
               />
-              <button
-                onClick={handleAdd}
-                className="px-2.5 py-1 text-sm rounded font-medium transition-colors ln-btn-primary"
-                title="Add pattern (Enter)"
-              >
-                Add
-              </button>
+              <Tooltip content="Add pattern (Enter)">
+                <button
+                  onClick={handleAdd}
+                  className="px-2.5 py-1 text-sm rounded font-medium transition-colors ln-btn-primary"
+                >
+                  Add
+                </button>
+              </Tooltip>
             </div>
             {inputError && (
               <p className="px-3 pb-1.5 text-[11px]" style={{ color: 'var(--vscode-inputValidation-errorForeground, #f44)' }}>
@@ -180,31 +183,32 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                       key={pattern}
                       className="flex items-center gap-1.5 px-2 py-1 rounded ln-list-item group"
                     >
-                      <span
-                        className="flex-1 text-xs font-mono truncate ln-text"
-                        title={pattern}
-                      >
-                        {pattern}
-                      </span>
-                      {isWildcard && (
-                        <span
-                          className="text-[10px] px-1 rounded flex-shrink-0"
-                          style={{ background: 'var(--ln-bg-secondary)', color: 'var(--ln-fg-dim)' }}
-                          title="Uses % wildcard"
-                        >
-                          %
+                      <Tooltip content={pattern} asChild>
+                        <span className="flex-1 text-xs font-mono truncate ln-text">
+                          {pattern}
                         </span>
+                      </Tooltip>
+                      {isWildcard && (
+                        <Tooltip content="Uses % wildcard">
+                          <span
+                            className="text-[10px] px-1 rounded flex-shrink-0"
+                            style={{ background: 'var(--ln-bg-secondary)', color: 'var(--ln-fg-dim)' }}
+                          >
+                            %
+                          </span>
+                        </Tooltip>
                       )}
-                      <button
-                        onClick={() => onRemovePattern(pattern)}
-                        className="flex-shrink-0 w-4 h-4 flex items-center justify-center rounded transition-colors ln-text-muted hover:opacity-80"
-                        title={`Remove: ${pattern}`}
-                        aria-label={`Remove exclusion pattern: ${pattern}`}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      <Tooltip content={`Remove: ${pattern}`}>
+                        <button
+                          onClick={() => onRemovePattern(pattern)}
+                          className="flex-shrink-0 w-4 h-4 flex items-center justify-center rounded transition-colors ln-text-muted hover:opacity-80"
+                          aria-label={`Remove exclusion pattern: ${pattern}`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </Tooltip>
                     </div>
                   );
                 })

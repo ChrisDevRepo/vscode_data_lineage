@@ -207,10 +207,10 @@ body {
   transform: translateX(-50%);
   background: var(--ln-widget-bg);
   color: var(--ln-fg);
-  border: 1px solid var(--ln-widget-border);
+  border: 1px solid var(--ln-border);
   padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: 6px;
+  font-size: 11px;
   white-space: pre;
   opacity: 0;
   pointer-events: none;
@@ -228,7 +228,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   border: 6px solid transparent;
-  border-top-color: var(--ln-widget-border);
+  border-top-color: var(--ln-border);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s;
@@ -238,6 +238,42 @@ body {
 .ln-node-tooltip:hover::before,
 .ln-node-tooltip:hover::after {
   opacity: 1;
+}
+
+body[data-vscode-theme-kind="vscode-high-contrast"] .ln-node-tooltip::before,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-node-tooltip::before {
+  border-color: var(--vscode-contrastBorder);
+}
+
+/* Mini tooltip — compact variant for small elements inside graph nodes */
+.ln-node-mini-tooltip {
+  position: relative;
+}
+.ln-node-mini-tooltip::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ln-widget-bg);
+  color: var(--ln-fg);
+  border: 1px solid var(--ln-border);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  z-index: 10002;
+}
+.ln-node-mini-tooltip:hover::before {
+  opacity: 1;
+}
+body[data-vscode-theme-kind="vscode-high-contrast"] .ln-node-mini-tooltip::before,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-node-mini-tooltip::before {
+  border-color: var(--vscode-contrastBorder);
 }
 
 /* Override dimmed node opacity on hover so tooltip is readable */
@@ -367,8 +403,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   background: var(--ln-widget-bg);
   color: var(--ln-fg);
   border: 1px solid var(--ln-border);
-  border-radius: 4px;
-  padding: 3px 7px;
+  border-radius: 6px;
+  padding: 4px 8px;
   font-size: 11px;
   line-height: 1.4;
   pointer-events: none;
@@ -813,15 +849,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 
 /* #endregion */
 
-/* #region Browser Tooltip + Color Scheme */
-/* Note: Native HTML tooltips (title attribute) have limited styling support. */
-/* This provides basic compatibility, but browser defaults may still show.    */
+/* #region Color Scheme */
 
-[title] {
-  position: relative;
-}
-
-/* Modern browsers support tooltip color customization via color-scheme */
 :root {
   color-scheme: light;
 }

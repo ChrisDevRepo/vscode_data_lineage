@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import { CloseIcon } from './ui/CloseIcon';
+import { Tooltip } from './ui/Tooltip';
 
 interface InlineTraceControlsProps {
   startNodeId: string;
@@ -95,13 +96,14 @@ export const InlineTraceControls = memo(function InlineTraceControls({
         >
           Apply
         </button>
-        <button
-          onClick={onClose}
-          className="h-8 w-8 flex items-center justify-center rounded transition-colors ln-btn-secondary"
-          title="Close Trace Configuration"
-        >
-          <CloseIcon />
-        </button>
+        <Tooltip content="Close Trace Configuration">
+          <button
+            onClick={onClose}
+            className="h-8 w-8 flex items-center justify-center rounded transition-colors ln-btn-secondary"
+          >
+            <CloseIcon />
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

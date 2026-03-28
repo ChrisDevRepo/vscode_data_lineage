@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import { Button } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
 import type { Project } from '../engine/projectStore';
@@ -85,15 +86,16 @@ export const StartScreen = memo(function StartScreen({
       <WizardPanel footer={footer}>
         {/* Header */}
         <div className="flex items-center gap-2">
-          <button
-            className="ln-list-item rounded p-1 flex-shrink-0"
-            onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
-            title="Back"
-          >
+          <Tooltip content="Back">
+            <button
+              className="ln-list-item rounded p-1 flex-shrink-0"
+              onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
+            >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
             </svg>
           </button>
+          </Tooltip>
           <span className="text-sm font-medium flex-1">Saved Projects</span>
           <span className="text-xs mr-2" style={{ opacity: 0.45 }}>{sorted.length}</span>
           {sorted.length > 1 && !confirmDeleteAll && (
@@ -157,7 +159,6 @@ export const StartScreen = memo(function StartScreen({
                 onClick={() => !isLoading && onOpenProject(project.id)}
                 role="button"
                 tabIndex={0}
-                title={[project.name, detail, schemas].filter(Boolean).join('\n')}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenProject(project.id); }}
               >
                 <span className="text-base flex-shrink-0" aria-hidden="true">
@@ -171,14 +172,15 @@ export const StartScreen = memo(function StartScreen({
                   )}
                 </div>
                 {!isLoading && (
-                  <Button
-                    variant="icon"
-                    title={`Delete "${project.name}"`}
-                    style={{ width: 28, height: 28 }}
-                    onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(project.id); }}
-                  >
-                    <IconClose />
-                  </Button>
+                  <Tooltip content={`Delete "${project.name}"`}>
+                    <Button
+                      variant="icon"
+                      style={{ width: 28, height: 28 }}
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(project.id); }}
+                    >
+                      <IconClose />
+                    </Button>
+                  </Tooltip>
                 )}
               </div>
             );
@@ -199,15 +201,15 @@ export const StartScreen = memo(function StartScreen({
       </Button>
 
       {/* Latest quick-action — always visible, grayed when no recent project */}
-      <button
-        className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
-        onClick={onOpenLatest}
-        disabled={!latestProject || !!loadingProjectId}
-        title={latestProject
+      <Tooltip content={latestProject
           ? [latestProject.name, projectDetail(latestProject), schemaLine(latestProject.connection.schemas)].filter(Boolean).join('\n')
-          : 'No recent project'}
-        style={{ opacity: latestProject ? 1 : 0.45 }}
-      >
+          : 'No recent project'} multiline asChild>
+        <button
+          className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
+          onClick={onOpenLatest}
+          disabled={!latestProject || !!loadingProjectId}
+          style={{ opacity: latestProject ? 1 : 0.45 }}
+        >
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
         </svg>
@@ -216,6 +218,7 @@ export const StartScreen = memo(function StartScreen({
         </span>
         {loadingProjectId === latestProject?.id && <Spinner className="w-4 h-4 ml-auto flex-shrink-0" />}
       </button>
+      </Tooltip>
 
       {/* Load Projects button — only shown when projects exist */}
       {sorted.length > 0 && (

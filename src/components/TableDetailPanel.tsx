@@ -3,6 +3,7 @@ import type { ColumnDef, ForeignKeyInfo, ObjectType } from '../engine/types';
 import type { TableStats, StatsMode } from '../engine/profilingEngine';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { CloseIcon } from './ui/CloseIcon';
+import { Tooltip } from './ui/Tooltip';
 import { ColumnTable } from './ColumnTable';
 import { ForeignKeysSection } from './ForeignKeysSection';
 import { StatsSection } from './StatsSection';
@@ -147,22 +148,24 @@ export const TableDetailPanel = memo(function TableDetailPanel({
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
             <span style={{ color: 'var(--ln-fg-muted)', fontSize: 12 }}>{typeIcon}</span>
-            <span
-              className="font-mono text-xs truncate"
-              style={{ color: 'var(--ln-sidebar-header-fg)', fontWeight: 600 }}
-              title={schema ? `[${schema}].[${objectName}]` : objectName}
-            >
+            <Tooltip content={schema ? `[${schema}].[${objectName}]` : objectName} asChild>
+              <span
+                className="font-mono text-xs truncate"
+                style={{ color: 'var(--ln-sidebar-header-fg)', fontWeight: 600 }}
+              >
               {schema ? <>[{schema}].[{objectName}]</> : objectName}
             </span>
+            </Tooltip>
           </div>
-          <button
-            onClick={onClose}
-            className="opacity-60 hover:opacity-100 cursor-pointer flex-shrink-0 ml-2"
-            style={{ color: 'var(--ln-fg)', background: 'none', border: 'none', padding: 0 }}
-            title="Close"
-          >
+          <Tooltip content="Close">
+            <button
+              onClick={onClose}
+              className="opacity-60 hover:opacity-100 cursor-pointer flex-shrink-0 ml-2"
+              style={{ color: 'var(--ln-fg)', background: 'none', border: 'none', padding: 0 }}
+            >
             <CloseIcon className="w-3.5 h-3.5" />
           </button>
+          </Tooltip>
         </div>
 
         {/* Scrollable body */}

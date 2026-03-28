@@ -81,7 +81,8 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
     >
       {data.aiBadge && (
         <div
-          className="absolute text-[8px] font-semibold px-1 rounded ln-node-badge"
+          className="absolute text-[8px] font-semibold px-1 rounded ln-node-badge ln-node-mini-tooltip"
+          data-tooltip={data.aiBadge.text}
           style={{
             top: 2,
             right: data.showRemoveButton ? 20 : 2,
@@ -94,17 +95,16 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             lineHeight: '13px',
             zIndex: 10,
           }}
-          title={data.aiBadge.text}
         >
           {data.aiBadge.text}
         </div>
       )}
       {data.showRemoveButton && (
         <button
-          className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn"
+          className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn ln-node-mini-tooltip"
+          data-tooltip="Remove from view"
           style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
           onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
-          title="Remove from view"
         >
           ×
         </button>

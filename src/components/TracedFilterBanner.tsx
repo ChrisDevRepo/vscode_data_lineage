@@ -1,4 +1,5 @@
 import { memo, useState, useRef, useEffect } from 'react';
+import { Tooltip } from './ui/Tooltip';
 
 interface TracedFilterBannerProps {
   startNodeName: string;
@@ -85,13 +86,14 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
 
       <div className="flex items-center gap-2">
         {onSaveAsBookmark && !saving && (
-          <button
-            onClick={() => setSaving(true)}
-            className="h-8 px-3 text-xs rounded font-medium transition-colors ln-btn-secondary"
-            title="Save this trace result as a named bookmark"
-          >
-            Save as Bookmark
-          </button>
+          <Tooltip content="Save this trace result as a named bookmark">
+            <button
+              onClick={() => setSaving(true)}
+              className="h-8 px-3 text-xs rounded font-medium transition-colors ln-btn-secondary"
+            >
+              Save as Bookmark
+            </button>
+          </Tooltip>
         )}
         {saving && (
           <div className="flex items-center gap-1">

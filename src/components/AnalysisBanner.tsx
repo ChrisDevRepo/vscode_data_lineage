@@ -1,6 +1,7 @@
 import { memo, useState, useRef, useEffect } from 'react';
 import type { AnalysisMode } from '../engine/types';
 import { ANALYSIS_TYPE_INFO, ANALYSIS_TYPE_LABELS } from '../utils/analysisInfo';
+import { Tooltip } from './ui/Tooltip';
 
 interface AnalysisBannerProps {
   analysis: AnalysisMode;
@@ -73,13 +74,14 @@ export const AnalysisBanner = memo(function AnalysisBanner({
 
       <div className="flex items-center gap-2">
         {onSaveAsBookmark && !saving && (
-          <button
-            onClick={() => setSaving(true)}
-            className="h-8 px-3 text-xs rounded font-medium transition-colors ln-btn-secondary"
-            title="Save this analysis result as a named bookmark"
-          >
-            Save as Bookmark
-          </button>
+          <Tooltip content="Save this analysis result as a named bookmark">
+            <button
+              onClick={() => setSaving(true)}
+              className="h-8 px-3 text-xs rounded font-medium transition-colors ln-btn-secondary"
+            >
+              Save as Bookmark
+            </button>
+          </Tooltip>
         )}
         {saving && (
           <div className="flex items-center gap-1">

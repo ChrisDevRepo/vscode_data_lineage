@@ -4,6 +4,7 @@ import { filterSuggestions } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
 import { SuggestionList } from './ui/SuggestionList';
 import { CloseIcon } from './ui/CloseIcon';
+import { Tooltip } from './ui/Tooltip';
 
 interface PathFinderBarProps {
   sourceNodeName: string;
@@ -103,13 +104,14 @@ export const PathFinderBar = memo(function PathFinderBar({
         )}
       </div>
 
-      <button
-        onClick={onClose}
-        className="h-8 w-8 flex items-center justify-center rounded transition-colors ln-btn-secondary flex-shrink-0"
-        title="Close Path Finder"
-      >
-        <CloseIcon />
-      </button>
+      <Tooltip content="Close Path Finder">
+        <button
+          onClick={onClose}
+          className="h-8 w-8 flex items-center justify-center rounded transition-colors ln-btn-secondary flex-shrink-0"
+        >
+          <CloseIcon />
+        </button>
+      </Tooltip>
     </div>
   );
 });

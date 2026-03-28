@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
+import { Tooltip } from './ui/Tooltip';
 
 interface BookmarkBannerProps {
   profile: FilterProfile;
@@ -46,9 +47,11 @@ export const BookmarkBanner = memo(function BookmarkBanner({
         >
           {label}
         </span>
-        <span className="text-sm font-semibold ln-text truncate" title={profile.name}>
-          {profile.name}
-        </span>
+        <Tooltip content={profile.name}>
+          <span className="text-sm font-semibold ln-text truncate">
+            {profile.name}
+          </span>
+        </Tooltip>
         <span className="text-xs ln-text-muted flex-shrink-0">
           — {shownCount === totalCount ? `${totalCount} objects` : `${shownCount} of ${totalCount} objects`}
         </span>

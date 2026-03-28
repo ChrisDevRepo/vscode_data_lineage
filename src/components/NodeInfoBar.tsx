@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import type { CatalogEntry, NeighborIndex, ParseStats } from '../engine/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
+import { Tooltip } from './ui/Tooltip';
 
 interface NodeInfoBarProps {
   nodeId: string;
@@ -64,7 +65,9 @@ function NeighborHoverList({
                   <span className="opacity-60 select-none">{icon}</span>
                   <span className={`flex-1${hidden ? ' opacity-50' : ''}`}>{entry.name}</span>
                   {hidden && (
-                    <span className="ml-2 opacity-50 text-[10px] select-none" title="Not visible in current graph view">⊘</span>
+                    <Tooltip content="Not visible in current graph view">
+                      <span className="ml-2 opacity-50 text-[10px] select-none">⊘</span>
+                    </Tooltip>
                   )}
                 </div>
               );
@@ -134,13 +137,14 @@ export const NodeInfoBar = memo(function NodeInfoBar({
       <SimpleHoverList label="Unresolved" count={unresolvedItems.length} items={unresolvedItems} />
       <span className="ln-text-dim">|</span>
       <SimpleHoverList label="Excluded" count={excludedItems.length} items={excludedItems} />
-      <button
-        onClick={onClose}
-        className="ml-auto ln-text-dim hover:opacity-80 text-sm leading-none"
-        title="Close details"
-      >
-        ✕
-      </button>
+      <Tooltip content="Close details">
+        <button
+          onClick={onClose}
+          className="ml-auto ln-text-dim hover:opacity-80 text-sm leading-none"
+        >
+          ✕
+        </button>
+      </Tooltip>
     </div>
   );
 });
