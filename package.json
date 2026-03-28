@@ -771,6 +771,7 @@
           "properties": {
             "name": {
               "type": "string",
+              "maxLength": 60,
               "description": "Display name for the view (max 60 chars)"
             },
             "node_ids": {
@@ -782,6 +783,7 @@
             },
             "narrative": {
               "type": "string",
+              "maxLength": 500,
               "description": "Plain text explanation of why these nodes matter (max 500 chars)"
             },
             "layout_direction": {
@@ -800,7 +802,7 @@
                 "properties": {
                   "label": {
                     "type": "string",
-                    "description": "Group label (max 20 chars)"
+                    "description": "Short group label"
                   },
                   "color": {
                     "type": "string",
@@ -838,6 +840,7 @@
                   },
                   "text": {
                     "type": "string",
+                    "maxLength": 15,
                     "description": "Badge text (max 15 chars)"
                   },
                   "color": {

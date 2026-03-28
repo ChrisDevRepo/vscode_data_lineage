@@ -3,7 +3,7 @@ import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
-import { buildGraph, getGraphMetrics } from '../engine/graphBuilder';
+import { buildGraph, buildGraphNoLayout, getGraphMetrics } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
 import { compileExclusionPattern } from '../utils/sql';
 
@@ -14,7 +14,9 @@ interface UseGraphologyReturn {
   metrics: ReturnType<typeof getGraphMetrics> | null;
   /** When > 0, the render limit was hit — value is the actual node count that exceeded the limit. */
   renderLimitHit: number;
-  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig) => void;
+  /** Node count after all filters — available before dagre, used by useOverviewMode for threshold decisions. */
+  filteredCount: number;
+  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => void;
 }
 
 export function useGraphology(): UseGraphologyReturn {
@@ -23,8 +25,9 @@ export function useGraphology(): UseGraphologyReturn {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
   const [renderLimitHit, setRenderLimitHit] = useState(0);
+  const [filteredCount, setFilteredCount] = useState(0);
 
-  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
+  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false) => {
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
     // Fused type + ext refs filter (single node pass)
@@ -46,17 +49,33 @@ export function useGraphology(): UseGraphologyReturn {
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
 
-    // Skip expensive dagre layout when node count exceeds render limit
-    if (allowlistFiltered.nodes.length > config.renderLimit) {
+    const count = allowlistFiltered.nodes.length;
+    setFilteredCount(count);
+
+    // Guard 1: hard render limit — skip everything
+    if (count > config.renderLimit) {
       setFlowNodes([]);
       setFlowEdges([]);
       setGraph(null);
       setMetrics(null);
-      setRenderLimitHit(allowlistFiltered.nodes.length);
+      setRenderLimitHit(count);
       return;
     }
 
     setRenderLimitHit(0);
+
+    // Guard 2: overview threshold — build graph for traces/metrics, skip expensive dagre layout.
+    // Bypassed when forceLayout=true (user manually toggled overview→full).
+    if (!forceLayout && count > config.overview.forceOverviewThreshold) {
+      const result = buildGraphNoLayout(allowlistFiltered, config);
+      setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
+      setFlowEdges(result.flowEdges);
+      setGraph(result.graph);
+      setMetrics(getGraphMetrics(result.graph));
+      return;
+    }
+
+    // Full mode — dagre runs
     const result = buildGraph(allowlistFiltered, config);
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
@@ -64,7 +83,7 @@ export function useGraphology(): UseGraphologyReturn {
     setMetrics(getGraphMetrics(result.graph));
   }, []);
 
-  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, buildFromModel };
+  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, buildFromModel };
 }
 
 // ─── Exclusion Filter (interactive / render-time) ────────────────────────────

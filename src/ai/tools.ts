@@ -567,7 +567,7 @@ export function validateCreateAiView(
   if (input.highlight_groups) {
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
-      if (!g.label || g.label.length > 20) errors.push(`Group label "${g.label ?? ''}" must be 1–20 characters`);
+      if (!g.label) errors.push('Group label is required');
       if (!AI_HIGHLIGHT_COLORS.has(g.color)) errors.push(`Group "${g.label}" has invalid color "${g.color}"`);
       const bad = g.node_ids.filter(id => !nodeIdSet.has(id));
       if (bad.length > 0) errors.push(`Group "${g.label}" contains IDs not in node_ids list: ${bad.slice(0, 3).join(', ')}`);

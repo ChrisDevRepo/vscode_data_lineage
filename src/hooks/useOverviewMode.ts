@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Node as FlowNode } from '@xyflow/react';
 import type { DatabaseModel, ExtensionConfig, GraphMode } from '../engine/types';
 
 interface UseOverviewModeOptions {
   model: DatabaseModel | null;
-  flowNodes: FlowNode[];
+  /** Node count after all filters — cheap to compute, no dagre dependency. */
+  filteredCount: number;
   config: ExtensionConfig;
   /** Sorted comma-separated schema names — changing this value resets the auto-trigger guard. */
   schemasKey: string;
@@ -23,7 +23,7 @@ interface UseOverviewModeResult {
 
 export function useOverviewMode({
   model,
-  flowNodes,
+  filteredCount,
   config,
   schemasKey,
   onSetFocusSchema,
@@ -58,19 +58,19 @@ export function useOverviewMode({
     if (!config.overview.enabled) return;
 
     // Soft guard — force overview when node count is far above threshold
-    if (flowNodes.length > config.overview.forceOverviewThreshold) {
+    if (filteredCount > config.overview.forceOverviewThreshold) {
       setGraphMode('overview');
       return;
     }
 
     if (userChoseMode.current) return;
-    if (flowNodes.length > config.overview.threshold) {
+    if (filteredCount > config.overview.threshold) {
       setGraphMode('overview');
     } else if (graphMode === 'overview') {
       setGraphMode('full');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flowNodes.length, config.overview.enabled, config.overview.threshold, config.overview.forceOverviewThreshold]);
+  }, [filteredCount, config.overview.enabled, config.overview.threshold, config.overview.forceOverviewThreshold]);
 
   const toggleMode = useCallback(() => {
     userChoseMode.current = true;

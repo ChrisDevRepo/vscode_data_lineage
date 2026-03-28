@@ -191,6 +191,15 @@ Type `@lineage` in GitHub Copilot Chat to query your loaded lineage graph in pla
 - Auto-scales context limits based on the model's context window
 - Tools are only active when a lineage graph is loaded
 
+### Tips
+
+- **Start a new chat for each topic.** The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press `Ctrl+L` to start fresh.
+- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* and the assistant builds a filtered graph view with exactly the relevant objects — bookmarked as a saved view you can return to.
+- **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"* and it answers from your live session state.
+- **Be specific with object names.** `@lineage trace from Sales.SalesOrderDetail` works better than `trace from the sales order table`.
+- **Narrow BFS scope on large graphs.** Ask for 1–2 levels first, then expand if you need more depth.
+- **Try a bigger model for large databases.** Models with 128K+ context auto-scale to show more results and larger DDL.
+
 ### Requirements
 
 - [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) extension

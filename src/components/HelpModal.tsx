@@ -330,6 +330,17 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         />
       </div>
 
+      <div className="rounded-lg p-3 ln-help-analysis-card">
+        <p className="text-xs font-semibold ln-text mb-1.5">Tips</p>
+        <ul className="text-xs ln-text-muted space-y-1 list-disc pl-4">
+          <li><span className="font-medium ln-text">Start a new chat for each topic.</span> The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press <kbd className="font-mono">Ctrl+L</kbd> to start fresh.</li>
+          <li><span className="font-medium ln-text">Ask the AI to create a view.</span> Say &quot;show me the full lineage for dbo.udfLeadingZeros in the app&quot; — it builds a filtered graph view you can bookmark.</li>
+          <li><span className="font-medium ln-text">Context-aware.</span> The assistant knows your active filters, visible schemas, and current graph state. Ask &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
+          <li><span className="font-medium ln-text">Be specific with object names.</span> Use <code>Sales.SalesOrderDetail</code> rather than &quot;the sales order table&quot;.</li>
+          <li><span className="font-medium ln-text">Try a bigger model for large databases.</span> 128K+ context models auto-scale to show more results.</li>
+        </ul>
+      </div>
+
       <p className="text-xs ln-text-muted">
         Disable AI features entirely via <code>ai.enabled</code> in VS Code Settings.
       </p>

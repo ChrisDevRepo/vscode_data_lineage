@@ -73,15 +73,12 @@ export interface GraphResult {
   graph: Graph;
 }
 
-export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
+/** Build graphology graph from model (shared by buildGraph and buildGraphNoLayout). */
+function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
-
-  // Add nodes
   for (const node of model.nodes) {
     graph.addNode(node.id, { ...node });
   }
-
-  // Add edges
   for (const edge of model.edges) {
     if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
       const edgeId = `${edge.source}→${edge.target}`;
@@ -90,11 +87,16 @@ export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAU
       }
     }
   }
+  return graph;
+}
 
-  // Layout with dagre (using config)
-  const positions = computeLayout(graph, config);
-
-  // Convert to React Flow format
+/** Convert model + graphology graph + positions into React Flow nodes/edges. */
+function toFlowResult(
+  model: DatabaseModel,
+  graph: Graph,
+  positions: Map<string, { x: number; y: number }>,
+  config: ExtensionConfig
+): GraphResult {
   const flowNodes: FlowNode[] = model.nodes.map((node) => ({
     id: node.id,
     type: 'lineageNode',
@@ -113,10 +115,21 @@ export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAU
       ...(node.externalDatabase && { externalDatabase: node.externalDatabase }),
     },
   }));
-
   const flowEdges: FlowEdge[] = buildFlowEdges(model, graph, config);
-
   return { flowNodes, flowEdges, graph };
+}
+
+export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
+  const graph = buildGraphologyGraph(model);
+  const positions = computeLayout(graph, config);
+  return toFlowResult(model, graph, positions, config);
+}
+
+/** Build graph without dagre layout — positions default to {0,0}.
+ *  Used when node count exceeds overview threshold (dagre positions never rendered). */
+export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
+  const graph = buildGraphologyGraph(model);
+  return toFlowResult(model, graph, new Map(), config);
 }
 
 // ─── Trace Logic ────────────────────────────────────────────────────────────
@@ -302,7 +315,7 @@ interface LayoutInput {
 }
 
 // LRU layout cache — avoids recomputing dagre for identical node/edge/config sets
-const LAYOUT_CACHE_SIZE = 3;
+const LAYOUT_CACHE_SIZE = 12;
 const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
 
 function layoutCacheKey(nodeIds: string[], edges: Array<{ source: string; target: string }>, config: ExtensionConfig, ranker?: string): string {
