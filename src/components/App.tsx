@@ -75,7 +75,7 @@ export function App() {
     exclusionPatterns: [],
   });
 
-  const { flowNodes, flowEdges, graph, metrics, buildFromModel } = useGraphology();
+  const { flowNodes, flowEdges, graph, metrics, renderLimitHit, buildFromModel } = useGraphology();
   const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
@@ -613,7 +613,6 @@ export function App() {
     model,
     flowNodes,
     config,
-    searchTerm: filter.searchTerm,
     schemasKey,
     onSetFocusSchema: handleSetFocusSchema,
   });
@@ -872,7 +871,7 @@ export function App() {
             analysis: { ...DEFAULT_CONFIG.analysis, ...msg.config.analysis },
           };
           setConfig(merged);
-          if (modelRef.current) {
+          if (modelRef.current && rebuildRef.current) {
             rebuildRef.current(modelRef.current, filterRef.current, merged);
           }
         }
@@ -1061,11 +1060,28 @@ export function App() {
     );
   }
 
+  if (renderLimitHit > 0 && graphMode !== 'overview') {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center p-8 max-w-md" style={{ color: 'var(--ln-fg)' }}>
+          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
+          <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)' }}>
+            The current filter selects {renderLimitHit.toLocaleString()} nodes (limit: {config.renderLimit.toLocaleString()}).
+            Select schema or type filters to reduce scope, or adjust the render limit in settings.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const renderNodes = graphMode === 'overview' ? schemaNodes : tracedNodes;
+  const renderEdges = graphMode === 'overview' ? schemaEdges : tracedEdges;
+
   return (
     <ReactFlowProvider>
       <GraphCanvas
-        flowNodes={graphMode === 'overview' ? schemaNodes : tracedNodes}
-        flowEdges={graphMode === 'overview' ? schemaEdges : tracedEdges}
+        flowNodes={renderNodes}
+        flowEdges={renderEdges}
         graphMode={graphMode}
         onSchemaNodeDoubleClick={enterFocusFromOverview}
         trace={trace}

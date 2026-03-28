@@ -142,8 +142,16 @@
             "type": "number",
             "default": 750,
             "minimum": 10,
-            "maximum": 1000,
-            "markdownDescription": "Maximum number of database objects to load. Lower values improve performance on large databases.",
+            "maximum": 10000,
+            "markdownDescription": "Maximum number of database objects to load. The graph rendering is separately capped by `renderLimit`. Values above 1000 are supported for AI/data queries but the GUI will show schema overview or a limit warning.",
+            "scope": "resource"
+          },
+          "dataLineageViz.renderLimit": {
+            "type": "number",
+            "default": 750,
+            "minimum": 100,
+            "maximum": 5000,
+            "markdownDescription": "Maximum rendered nodes before showing a warning instead of the graph. Prevents browser performance issues with very large visualizations. AI tools and BFS operate on the full model regardless of this limit.",
             "scope": "resource"
           },
           "dataLineageViz.excludePatterns": {
@@ -173,6 +181,14 @@
             "minimum": 10,
             "maximum": 1000,
             "markdownDescription": "Node count above which schema overview mode auto-activates on initial load. Only applies when `overview.enabled` is `true`.",
+            "scope": "resource"
+          },
+          "dataLineageViz.overview.forceOverviewThreshold": {
+            "type": "number",
+            "default": 300,
+            "minimum": 10,
+            "maximum": 2000,
+            "markdownDescription": "Node count above which overview mode is forced even after manual toggle (soft guard). Prevents accidentally rendering very large graphs. Must be >= `overview.threshold`.",
             "scope": "resource"
           },
           "dataLineageViz.parseRulesFile": {

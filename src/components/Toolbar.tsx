@@ -166,7 +166,7 @@ export const Toolbar = memo(function Toolbar({
         <div className="w-px h-6 ln-divider" />
 
         {/* Search & Filters */}
-        <div className="flex-1 min-w-[100px]">
+        <div className="flex-1 min-w-[100px] max-w-[280px]">
           <SearchWithAutocomplete
             searchTerm={searchTerm}
             onSearchChange={onSearchChange}

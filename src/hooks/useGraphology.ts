@@ -12,6 +12,8 @@ interface UseGraphologyReturn {
   flowEdges: FlowEdge[];
   graph: Graph | null;
   metrics: ReturnType<typeof getGraphMetrics> | null;
+  /** When > 0, the render limit was hit — value is the actual node count that exceeded the limit. */
+  renderLimitHit: number;
   buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig) => void;
 }
 
@@ -20,6 +22,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([]);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
+  const [renderLimitHit, setRenderLimitHit] = useState(0);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG) => {
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
@@ -43,6 +46,17 @@ export function useGraphology(): UseGraphologyReturn {
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
 
+    // Skip expensive dagre layout when node count exceeds render limit
+    if (allowlistFiltered.nodes.length > config.renderLimit) {
+      setFlowNodes([]);
+      setFlowEdges([]);
+      setGraph(null);
+      setMetrics(null);
+      setRenderLimitHit(allowlistFiltered.nodes.length);
+      return;
+    }
+
+    setRenderLimitHit(0);
     const result = buildGraph(allowlistFiltered, config);
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
@@ -50,7 +64,7 @@ export function useGraphology(): UseGraphologyReturn {
     setMetrics(getGraphMetrics(result.graph));
   }, []);
 
-  return { flowNodes, flowEdges, graph, metrics, buildFromModel };
+  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, buildFromModel };
 }
 
 // ─── Exclusion Filter (interactive / render-time) ────────────────────────────

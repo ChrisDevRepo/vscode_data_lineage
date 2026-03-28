@@ -91,7 +91,8 @@ Search `dataLineageViz` in VS Code Settings (`Ctrl+,`). Settings are grouped int
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `maxNodes` | `750` | Maximum nodes to display (10–1000) |
+| `maxNodes` | `750` | Maximum objects to load (10–10000). AI tools query the full model; GUI is separately capped by `renderLimit` |
+| `renderLimit` | `750` | Maximum nodes the GUI will render. Above this, a "limit reached" message is shown |
 | `excludePatterns` | `[]` | Regex patterns to exclude objects by name |
 | `layout.direction` | `"LR"` | Graph flow direction: `LR` left-to-right or `TB` top-to-bottom |
 | `tableStatistics.enabled` | `true` | Column statistics and row counts (DB import only) |

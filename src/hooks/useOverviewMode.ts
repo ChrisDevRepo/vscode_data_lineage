@@ -6,7 +6,6 @@ interface UseOverviewModeOptions {
   model: DatabaseModel | null;
   flowNodes: FlowNode[];
   config: ExtensionConfig;
-  searchTerm: string;
   /** Sorted comma-separated schema names — changing this value resets the auto-trigger guard. */
   schemasKey: string;
   /** Called when entering focus from overview — always sets the schema (never toggles off). */
@@ -26,7 +25,6 @@ export function useOverviewMode({
   model,
   flowNodes,
   config,
-  searchTerm,
   schemasKey,
   onSetFocusSchema,
 }: UseOverviewModeOptions): UseOverviewModeResult {
@@ -54,9 +52,17 @@ export function useOverviewMode({
     }
   }, [schemasKey]);
 
-  // Bidirectional auto-trigger: overview when above threshold, full when at/below threshold
+  // Bidirectional auto-trigger: overview when above threshold, full when at/below threshold.
+  // Force guard: override userChoseMode when far above threshold (soft safety net).
   useEffect(() => {
     if (!config.overview.enabled) return;
+
+    // Soft guard — force overview when node count is far above threshold
+    if (flowNodes.length > config.overview.forceOverviewThreshold) {
+      setGraphMode('overview');
+      return;
+    }
+
     if (userChoseMode.current) return;
     if (flowNodes.length > config.overview.threshold) {
       setGraphMode('overview');
@@ -64,15 +70,7 @@ export function useOverviewMode({
       setGraphMode('full');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flowNodes.length, config.overview.enabled, config.overview.threshold]);
-
-  // Auto-exit overview when user types a search term
-  useEffect(() => {
-    if (graphMode === 'overview' && searchTerm.length > 0) {
-      setGraphMode('full');
-      userChoseMode.current = true;
-    }
-  }, [searchTerm, graphMode]);
+  }, [flowNodes.length, config.overview.enabled, config.overview.threshold, config.overview.forceOverviewThreshold]);
 
   const toggleMode = useCallback(() => {
     userChoseMode.current = true;

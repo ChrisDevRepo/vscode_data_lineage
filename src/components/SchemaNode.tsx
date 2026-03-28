@@ -15,8 +15,14 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
     })
     .join('  ');
 
+  const tooltip = [
+    d.schemaName,
+    ...breakdownEntries.map(([type, count]) => `${count} ${TYPE_LABELS[type as ObjectType] ?? type}`),
+  ].join('\n');
+
   return (
     <div
+      title={tooltip}
       style={{
         width: SCHEMA_NODE_WIDTH,
         height: SCHEMA_NODE_HEIGHT,
@@ -35,7 +41,7 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
         style={{
           background: d.color,
           padding: '4px 8px',
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: 700,
           color: 'var(--vscode-button-foreground, var(--ln-fg))',
           whiteSpace: 'nowrap',
@@ -43,7 +49,6 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
           textOverflow: 'ellipsis',
           letterSpacing: '0.02em',
         }}
-        title={d.schemaName}
       >
         {d.schemaName}
       </div>
@@ -61,17 +66,14 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
-          <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--ln-fg)', lineHeight: 1 }}>
+          <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--ln-fg)', lineHeight: 1 }}>
             {d.objectCount}
           </span>
-          <span style={{ fontSize: 10, color: 'var(--ln-fg-muted)' }}>objects</span>
+          <span style={{ fontSize: 9, color: 'var(--ln-fg-muted)' }}>objects</span>
         </div>
         {breakdown && (
           <span
-            style={{ fontSize: 10, color: 'var(--ln-fg-muted)', letterSpacing: '0.03em', cursor: 'default' }}
-            title={breakdownEntries
-              .map(([type, count]) => `${TYPE_LABELS[type as ObjectType] ?? type}: ${count}`)
-              .join('\n')}
+            style={{ fontSize: 9, color: 'var(--ln-fg-muted)', letterSpacing: '0.03em', cursor: 'default' }}
           >
             {breakdown}
           </span>

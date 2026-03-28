@@ -8,9 +8,22 @@ Comprehensive guide to all features in Data Lineage Viz. For installation and qu
 
 When a graph exceeds a configurable node threshold, the extension auto-activates **schema overview mode** — replacing individual nodes with schema-level bubbles showing object counts and type distribution.
 
-- Click any schema bubble to drill into its objects and connected neighbors
+- Double-click any schema bubble to drill into its objects and connected neighbors
 - Toggle manually via the toolbar or the `Toggle Schema Overview Mode` command
 - Configure: `overview.enabled`, `overview.threshold` in VS Code Settings
+
+### Rendering Limits
+
+The extension separates **data loading** (`maxNodes`) from **graph rendering** (`renderLimit`). This allows `@lineage` AI tools and BFS to query the full loaded model while the GUI stays responsive.
+
+| Setting | Default | Controls |
+|---------|---------|----------|
+| `maxNodes` | 750 (up to 10000) | Objects loaded from dacpac / database |
+| `renderLimit` | 750 (up to 5000) | Nodes the GUI will layout and render |
+| `overview.threshold` | 150 | Auto-activates schema overview |
+| `overview.forceOverviewThreshold` | 300 | Forces overview even after manual toggle |
+
+When `renderLimit` is exceeded, the graph shows a "limit reached" message instead of rendering. The full lineage model, DDL, and AI chat remain fully functional — only the visual graph is gated.
 
 ---
 
@@ -195,7 +208,7 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 
 | Group | Key settings |
 |-------|-------------|
-| **Import** | `maxNodes`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
+| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `overview.forceOverviewThreshold`, `parseRulesFile` |
 | **Database Connection** | `dmvQueryTimeout`, `dmvQueriesFile` |
 | **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold` |
 | **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |

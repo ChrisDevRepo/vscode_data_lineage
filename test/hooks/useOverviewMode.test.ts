@@ -2,11 +2,11 @@
  * useOverviewMode state machine tests.
  *
  * Suite A — Auto-trigger on threshold
- * Suite B — searchTerm auto-exit (Quick Jump interaction)
  * Suite C — Manual toggle
  * Suite D — Schema focus entry
  * Suite E — Reset on model/schema change
  * Suite F — resetUserChoice
+ * Suite G — Force overview threshold (soft guard)
  */
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
@@ -31,9 +31,10 @@ function makeModel(): DatabaseModel {
 }
 
 const THRESHOLD = 3;
+const FORCE_THRESHOLD = 6;
 
-function defaultConfig(threshold = THRESHOLD) {
-  return { ...DEFAULT_CONFIG, overview: { enabled: true, threshold } };
+function defaultConfig(threshold = THRESHOLD, forceOverviewThreshold = FORCE_THRESHOLD) {
+  return { ...DEFAULT_CONFIG, overview: { enabled: true, threshold, forceOverviewThreshold } };
 }
 
 type HookProps = Parameters<typeof useOverviewMode>[0];
@@ -43,7 +44,6 @@ function defaultProps(overrides?: Partial<HookProps>): HookProps {
     model: makeModel(),
     flowNodes: makeFlowNodes(2), // below threshold
     config: defaultConfig(),
-    searchTerm: '',
     schemasKey: 'dbo',
     onSetFocusSchema: vi.fn(),
     ...overrides,
@@ -74,45 +74,9 @@ describe('Suite A — Auto-trigger on threshold', () => {
   });
 
   it('A4: does not auto-trigger when overview.enabled is false', () => {
-    const config = { ...defaultConfig(), overview: { enabled: false, threshold: THRESHOLD } };
+    const config = { ...defaultConfig(), overview: { enabled: false, threshold: THRESHOLD, forceOverviewThreshold: FORCE_THRESHOLD } };
     const props = defaultProps({ flowNodes: makeFlowNodes(THRESHOLD + 1), config });
     const { result } = renderHook(() => useOverviewMode(props));
-    expect(result.current.graphMode).toBe('full');
-  });
-});
-
-// ─── Suite B — searchTerm auto-exit ──────────────────────────────────────────
-
-describe('Suite B — searchTerm auto-exit (Quick Jump)', () => {
-  it('B5: exits overview when searchTerm becomes non-empty', () => {
-    const props = defaultProps({ flowNodes: makeFlowNodes(THRESHOLD + 1) });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-    expect(result.current.graphMode).toBe('overview');
-
-    rerender({ ...props, searchTerm: 'foo' });
-    expect(result.current.graphMode).toBe('full');
-  });
-
-  it('B6: guard prevents re-entering overview after search-exit', () => {
-    const props = defaultProps({ flowNodes: makeFlowNodes(THRESHOLD + 1) });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-    expect(result.current.graphMode).toBe('overview');
-
-    // search-exit
-    rerender({ ...props, searchTerm: 'foo' });
-    expect(result.current.graphMode).toBe('full');
-
-    // clear search — still above threshold but guard is set
-    rerender({ ...props, searchTerm: '' });
-    expect(result.current.graphMode).toBe('full');
-  });
-
-  it('B7: searchTerm change has no effect when already in full mode', () => {
-    const props = defaultProps(); // below threshold → full
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-    expect(result.current.graphMode).toBe('full');
-
-    rerender({ ...props, searchTerm: 'bar' });
     expect(result.current.graphMode).toBe('full');
   });
 });
@@ -270,5 +234,36 @@ describe('Suite F — resetUserChoice', () => {
     rerender({ ...props, flowNodes: makeFlowNodes(THRESHOLD) });
     rerender({ ...props, flowNodes: makeFlowNodes(THRESHOLD + 2) });
     expect(result.current.graphMode).toBe('overview');
+  });
+});
+
+// ─── Suite G — Force overview threshold (soft guard) ────────────────────────
+
+describe('Suite G — Force overview threshold (soft guard)', () => {
+  it('G20: forces overview when node count exceeds forceOverviewThreshold even after manual toggle', () => {
+    const props = defaultProps({ flowNodes: makeFlowNodes(THRESHOLD + 1) });
+    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
+    expect(result.current.graphMode).toBe('overview');
+
+    // manual toggle to full (guard set)
+    act(() => result.current.toggleMode());
+    expect(result.current.graphMode).toBe('full');
+
+    // exceed force threshold — soft guard overrides userChoseMode
+    rerender({ ...props, flowNodes: makeFlowNodes(FORCE_THRESHOLD + 1) });
+    expect(result.current.graphMode).toBe('overview');
+  });
+
+  it('G21: does not force overview when between threshold and forceOverviewThreshold with guard set', () => {
+    const props = defaultProps({ flowNodes: makeFlowNodes(THRESHOLD + 1) });
+    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
+
+    // manual toggle to full (guard set)
+    act(() => result.current.toggleMode());
+    expect(result.current.graphMode).toBe('full');
+
+    // still between threshold and forceOverviewThreshold — guard holds
+    rerender({ ...props, flowNodes: makeFlowNodes(FORCE_THRESHOLD) });
+    expect(result.current.graphMode).toBe('full');
   });
 });

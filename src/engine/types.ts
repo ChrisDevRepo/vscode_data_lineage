@@ -323,6 +323,8 @@ export interface OverviewConfig {
   enabled: boolean;
   /** Node count above which overview auto-activates on initial load (post-filter). */
   threshold: number;
+  /** Node count above which overview is forced even after manual toggle (soft guard). */
+  forceOverviewThreshold: number;
 }
 
 export interface ExtensionConfig {
@@ -336,6 +338,8 @@ export interface ExtensionConfig {
   tableStatistics: TableStatsConfig;
   externalRefs: ExternalRefsConfig;
   overview: OverviewConfig;
+  /** Max rendered nodes before showing a limit-reached warning instead of the graph. */
+  renderLimit: number;
 }
 
 /** Fabric Data Warehouse engineEditionId — used for platform-specific query branching. */
@@ -350,7 +354,8 @@ export const DEFAULT_CONFIG = {
   tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
   dmvQueryTimeout: 120,
   externalRefs: { enabled: true },
-  overview: { enabled: true, threshold: 150 },
+  overview: { enabled: true, threshold: 150, forceOverviewThreshold: 300 },
+  renderLimit: 750,
 } satisfies ExtensionConfig;
 
 // ─── UI Types ───────────────────────────────────────────────────────────────

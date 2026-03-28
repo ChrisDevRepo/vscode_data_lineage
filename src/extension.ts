@@ -117,7 +117,8 @@ async function verifyStatsConnection(timeoutMs = DEFAULT_CONFIG.tableStatistics.
   try {
     await withTimeout(executeSimpleQuery(statsConnectionUri, 'SELECT 1', outputChannel), timeoutMs);
     return true;
-  } catch {
+  } catch (err) {
+    logDebug(outputChannel, 'Stats', `Connection verification failed: ${err instanceof Error ? err.message : String(err)} — clearing URI`);
     statsConnectionUri = undefined;
     return false;
   }
@@ -533,6 +534,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.LanguageModelChatMessage.User(
           'SQL lineage assistant. Use ONLY provided tools — never training knowledge.\n' +
           'Call lineage_get_context ONCE per conversation (the context is stable and will not change mid-session).\n' +
+          'You have access to the FULL loaded model — all nodes, edges, and DDL — even if the user\'s GUI shows only a subset or schema overview.\n' +
           'BFS defaults to 3 hops each direction; reduce to 1–2 for large graphs, expand if truncated=true.\n' +
           'Before create_ai_view: obtain node IDs from search/BFS — never fabricate.\n' +
           'Format: columns→table, deps→bullets with →, SQL→```sql.\n' +
@@ -1389,6 +1391,7 @@ interface ExtensionConfigMessage {
   tableStatistics: TableStatsConfig;
   externalRefs: ExternalRefsConfig;
   overview: OverviewConfig;
+  renderLimit: number;
 }
 
 function clamp(val: number, min: number, max: number, fallback: number): number {
@@ -1410,7 +1413,7 @@ async function loadBuiltInParseRules(): Promise<Record<string, unknown>> {
 async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
 
-  const maxNodes = clamp(cfg.get<number>('maxNodes', DEFAULT_CONFIG.maxNodes), 10, 1000, DEFAULT_CONFIG.maxNodes);
+  const maxNodes = clamp(cfg.get<number>('maxNodes', DEFAULT_CONFIG.maxNodes), 10, 10000, DEFAULT_CONFIG.maxNodes);
 
   const config: ExtensionConfigMessage = {
     excludePatterns: cfg.get<string[]>('excludePatterns', []).filter(p => {
@@ -1454,7 +1457,12 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     overview: {
       enabled: cfg.get<boolean>('overview.enabled', DEFAULT_CONFIG.overview.enabled),
       threshold: clamp(cfg.get<number>('overview.threshold', DEFAULT_CONFIG.overview.threshold), 10, 1000, DEFAULT_CONFIG.overview.threshold),
+      forceOverviewThreshold: Math.max(
+        clamp(cfg.get<number>('overview.forceOverviewThreshold', DEFAULT_CONFIG.overview.forceOverviewThreshold), 10, 2000, DEFAULT_CONFIG.overview.forceOverviewThreshold),
+        clamp(cfg.get<number>('overview.threshold', DEFAULT_CONFIG.overview.threshold), 10, 1000, DEFAULT_CONFIG.overview.threshold),
+      ),
     },
+    renderLimit: clamp(cfg.get<number>('renderLimit', DEFAULT_CONFIG.renderLimit), 100, 5000, DEFAULT_CONFIG.renderLimit),
   };
 
   // Load YAML parse rules — custom file if configured, otherwise built-in defaults.
