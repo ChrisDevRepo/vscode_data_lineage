@@ -548,12 +548,23 @@
             },
             "exclude_schemas": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Remove results from matching schemas. Use % as wildcard (matches any sequence). Exact names also work. E.g. 'test%' excludes all schemas starting with 'test', '%staging%' excludes any schema containing 'staging', 'test_data' matches only 'test_data'."
             },
             "exclude_types": {
               "type": "array",
-              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "table",
+                  "view",
+                  "procedure",
+                  "function",
+                  "external"
+                ]
+              },
               "description": "Remove results of these object types."
             }
           },
@@ -620,22 +631,44 @@
             },
             "types": {
               "type": "array",
-              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "table",
+                  "view",
+                  "procedure",
+                  "function",
+                  "external"
+                ]
+              },
               "description": "Include only these node types. Omit for all."
             },
             "schemas": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Include only nodes in these schemas (exact names from lineage_get_schema_summary). Omit for all."
             },
             "exclude_schemas": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Remove nodes in matching schemas. Use % as wildcard (matches any sequence); other chars including _ are literal. E.g. 'test%' removes all schemas starting with 'test', '%staging%' removes any schema containing 'staging'."
             },
             "exclude_types": {
               "type": "array",
-              "items": { "type": "string", "enum": ["table","view","procedure","function","external"] },
+              "items": {
+                "type": "string",
+                "enum": [
+                  "table",
+                  "view",
+                  "procedure",
+                  "function",
+                  "external"
+                ]
+              },
               "description": "Remove nodes of these types from results."
             }
           },
@@ -736,25 +769,62 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "name": { "type": "string", "description": "Display name for the view (max 60 chars)" },
+            "name": {
+              "type": "string",
+              "description": "Display name for the view (max 60 chars)"
+            },
             "node_ids": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Exact node IDs to show (1–200, validated against catalog)"
             },
-            "narrative": { "type": "string", "description": "Plain text explanation of why these nodes matter (max 500 chars)" },
-            "layout_direction": { "type": "string", "enum": ["LR", "TB"], "description": "Graph layout direction — LR for sequential flows, TB for hierarchies (default TB)" },
+            "narrative": {
+              "type": "string",
+              "description": "Plain text explanation of why these nodes matter (max 500 chars)"
+            },
+            "layout_direction": {
+              "type": "string",
+              "enum": [
+                "LR",
+                "TB"
+              ],
+              "description": "Graph layout direction — LR for sequential flows, TB for hierarchies (default TB)"
+            },
             "highlight_groups": {
               "type": "array",
               "description": "Color groups for visual clustering (max 5)",
               "items": {
                 "type": "object",
                 "properties": {
-                  "label": { "type": "string", "description": "Group label (max 20 chars)" },
-                  "color": { "type": "string", "enum": ["bu", "gn", "rd", "ye", "or"] },
-                  "node_ids": { "type": "array", "items": { "type": "string" }, "description": "Node IDs in this group (must be subset of top-level node_ids)" }
+                  "label": {
+                    "type": "string",
+                    "description": "Group label (max 20 chars)"
+                  },
+                  "color": {
+                    "type": "string",
+                    "enum": [
+                      "bu",
+                      "gn",
+                      "rd",
+                      "ye",
+                      "or"
+                    ]
+                  },
+                  "node_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Node IDs in this group (must be subset of top-level node_ids)"
+                  }
                 },
-                "required": ["label", "color", "node_ids"]
+                "required": [
+                  "label",
+                  "color",
+                  "node_ids"
+                ]
               }
             },
             "badges": {
@@ -763,15 +833,36 @@
               "items": {
                 "type": "object",
                 "properties": {
-                  "node_id": { "type": "string" },
-                  "text": { "type": "string", "description": "Badge text (max 15 chars)" },
-                  "color": { "type": "string", "enum": ["bu", "gn", "rd", "ye", "or", "gy"] }
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Badge text (max 15 chars)"
+                  },
+                  "color": {
+                    "type": "string",
+                    "enum": [
+                      "bu",
+                      "gn",
+                      "rd",
+                      "ye",
+                      "or",
+                      "gy"
+                    ]
+                  }
                 },
-                "required": ["node_id", "text"]
+                "required": [
+                  "node_id",
+                  "text"
+                ]
               }
             }
           },
-          "required": ["name", "node_ids"]
+          "required": [
+            "name",
+            "node_ids"
+          ]
         }
       },
       {
@@ -791,11 +882,15 @@
           "properties": {
             "ids": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Exact object IDs to fetch DDL for (max 20). Use IDs from lineage_run_bfs_trace or lineage_search_objects."
             }
           },
-          "required": ["ids"]
+          "required": [
+            "ids"
+          ]
         }
       }
     ]
@@ -826,7 +921,7 @@
     "package": "npx @vscode/vsce package"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^1.1.4",
+    "@dagrejs/dagre": "^2.0.4",
     "@floating-ui/react": "^0.27.19",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.4.0",
@@ -845,6 +940,7 @@
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4.0.9",
+    "@types/jsdom": "^28.0.1",
     "@types/mssql": "^9",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
@@ -854,7 +950,7 @@
     "autoprefixer": "^10.4.20",
     "dotenv": "^16",
     "esbuild": "^0.25.0",
-    "happy-dom": "^14.12.3",
+    "jsdom": "^29.0.1",
     "mssql": "^11",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
