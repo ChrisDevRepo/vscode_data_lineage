@@ -54,7 +54,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
       shift({ padding: 8 }),
       size({
         apply({ rects, elements }) {
-          Object.assign(elements.floating.style, { minWidth: `${rects.reference.width}px` });
+          Object.assign(elements.floating.style, { width: `${rects.reference.width}px` });
         },
       }),
     ],
@@ -95,22 +95,23 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
         placeholder="Quick Jump..."
         className="h-9 w-full pl-3 pr-9 text-sm rounded transition-colors focus:outline-none ln-input"
       />
-      <div className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center pointer-events-none ln-text-placeholder">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth="2"
-          stroke="currentColor"
-          className="w-4 h-4"
+      {searchTerm ? (
+        <button
+          onClick={() => { onSearchChange(''); setIsOpen(false); }}
+          className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center ln-text-muted hover:opacity-70"
+          aria-label="Clear search"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
-          />
-        </svg>
-      </div>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      ) : (
+        <div className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center pointer-events-none ln-text-placeholder">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+          </svg>
+        </div>
+      )}
 
       {isOpen && (
         <FloatingPortal>
