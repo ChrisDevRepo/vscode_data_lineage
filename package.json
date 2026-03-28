@@ -589,7 +589,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY tool for lineage questions. Returns upstream/downstream nodes with DDL, columns, and edges. Use schemas[] on large models to exclude utility schemas. DDL contains INSERT/SELECT for column tracing — put column mappings in create_ai_view notes.",
+        "modelDescription": "PRIMARY tool for lineage questions. Returns upstream/downstream nodes with DDL, columns, and edges. Use schemas[] on large models. DDL contains INSERT/SELECT — read it to identify which nodes carry the target column. Only include those nodes in create_ai_view (10-15, not all BFS nodes).",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

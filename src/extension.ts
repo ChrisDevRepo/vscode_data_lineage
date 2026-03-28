@@ -600,10 +600,12 @@ export function activate(context: vscode.ExtensionContext) {
           'RULES:\n' +
           '1. VALIDATE FIRST: If search returns 0 results or schema_mismatch, STOP and ask user before proceeding.\n' +
           '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-          '3. COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources. Follow chain to staging boundary.\n' +
-          '   Example: INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
-          '4. VIEW NOTES: Column mappings on key SPs. "Revenue ← Amount × Rate via spCalc" — not generic descriptions.\n' +
-          '5. Batch independent tool calls in one round.',
+          '3. PRUNE: BFS returns many objects. Your view must include ONLY nodes in the target column\'s path.\n' +
+          '   Skip dimension lookups, utility SPs, and branches feeding other columns. 10-15 nodes, not 30+.\n' +
+          '4. COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
+          '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
+          '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
+          '5. VIEW NOTES: Column mappings on key SPs. "Revenue ← Amount × Rate via spCalc" — not generic descriptions.',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),
