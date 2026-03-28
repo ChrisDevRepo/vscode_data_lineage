@@ -609,22 +609,29 @@ export function activate(context: vscode.ExtensionContext) {
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(
           'SQL lineage assistant. Use ONLY provided tools — never training knowledge.\n' +
-          `Budget: ${MAX_ROUNDS} rounds. Plan accordingly.\n\n` +
-          'WORKFLOW:\n' +
-          '1. get_context → if model_size="small", objects[] included — skip to step 3.\n' +
-          '2. search_objects → "schema.name" auto-splits. mode="regex" for multi-pattern ("rev|gl.*cog").\n' +
-          '3. run_bfs_trace(id) → ALL connected nodes + DDL.\n' +
-          '4. create_ai_view → use ONLY IDs from tool results.\n\n' +
+          `Budget: ${MAX_ROUNDS} rounds.\n\n` +
+          'SEARCH → REASON → PRESENT\n' +
+          '1. get_context → learn schemas, model_size. If "small", objects[] included — skip search.\n' +
+          '2. search_objects/search_ddl → find starting points. "schema.name" auto-splits. mode="regex" for batch.\n' +
+          '3. run_bfs_trace → returns ALL connected objects (raw graph, unfiltered).\n' +
+          '4. REASON: filter BFS results to RELEVANT objects only.\n' +
+          '   - Exclude: copy/historization SPs, hub utilities (LogMessage), dimension lookups without calc logic.\n' +
+          '   - If concept (e.g. "revenue") does not exist in the requested schema, tell the user.\n' +
+          '5. get_ddl_batch for 4-8 key SPs → read INSERT/SELECT to trace column-level data flow.\n' +
+          '6. create_ai_view → max 25 nodes. For 3+ schemas, create 2-3 focused views.\n\n' +
+          'COLUMN TRACE ("what drives X" / "where does X come from"):\n' +
+          '- Start from output table (get_object_detail for columns).\n' +
+          '- Read SP DDL: match INSERT target columns to SELECT source columns.\n' +
+          '- Trace source tables recursively until project boundary (staging with no upstream).\n' +
+          '- Report root driver columns in notes: "X.Amount ← Y.Amount via Z".\n\n' +
           'RULES:\n' +
-          '- get_schema_summary = already in get_context. Skip.\n' +
           '- NEVER repeat same tool+params. Results are deterministic.\n' +
           '- NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-          '- BFS returns ALL node IDs — do NOT re-search for them.\n' +
-          '- unresolved_refs in BFS results = outside loaded model. Do NOT search for them.\n' +
-          '- If auto_fixes removed unknown IDs, tell user which objects are outside the loaded model.\n' +
-          '- Batch independent calls in ONE round. Past round 5: present findings.\n\n' +
-          'BFS defaults 3 hops; reduce for large graphs.\n' +
-          'Format: columns→table, deps→bullets with →, SQL→```sql.',
+          '- unresolved_refs = outside loaded model. Mention in narrative, NOT as node_ids.\n' +
+          '- BFS: up=2, down=2 for large graphs. Increase only if user asks deeper.\n' +
+          '- DDL stripped from memory after 4 turns — re-fetch with get_ddl_batch.\n' +
+          '- Notes: column-level mappings on 5-8 key SPs. No generic descriptions.\n' +
+          '- Batch independent calls in ONE round. Past round 5: present findings.',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),
@@ -718,7 +725,15 @@ export function activate(context: vscode.ExtensionContext) {
           let roundToolResultChars = 0;
           for (const call of toolCalls) {
             // Dedup: skip if identical tool+params already called this request
-            const cacheKey = `${call.name}::${JSON.stringify(call.input)}`;
+            // Normalize: sort keys + strip undefined/null values for consistent cache keys
+            const normalizeInput = (input: Record<string, unknown>): string => {
+              const sorted = Object.keys(input).sort().reduce((acc, k) => {
+                if (input[k] !== undefined && input[k] !== null) acc[k] = input[k];
+                return acc;
+              }, {} as Record<string, unknown>);
+              return JSON.stringify(sorted);
+            };
+            const cacheKey = `${call.name}::${normalizeInput(call.input as Record<string, unknown>)}`;
             const cached = toolCallCache.get(cacheKey);
             if (cached) {
               const hint = [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true, message: 'Identical call already returned — use the previous result.' }))];

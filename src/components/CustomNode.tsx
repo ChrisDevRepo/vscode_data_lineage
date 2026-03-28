@@ -4,6 +4,9 @@ import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getVirtualExtColor } from '..
 import { Tooltip } from './ui/Tooltip';
 import type { ObjectType } from '../engine/types';
 
+/* NodeToolbar is still used for notes (bottom). Badges use absolute positioning
+   inside the node container so they overlay without shifting internal text. */
+
 export type CustomNodeData = {
   label: string;
   schema: string;
@@ -56,26 +59,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
 
   return (
     <>
-      {/* AI badge — top-center, overlapping node edge */}
-      {data.aiBadge && (
-        <NodeToolbar position={Position.Top} align="center" offset={-4} isVisible>
-          <Tooltip content={data.aiBadge.text} placement="top">
-            <div
-              className="text-[10px] font-semibold px-2 py-0.5 rounded"
-              style={{
-                maxWidth: 160,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                background: data.aiBadge.color,
-                color: 'var(--vscode-button-foreground, #fff)',
-              }}
-            >
-              {data.aiBadge.text}
-            </div>
-          </Tooltip>
-        </NodeToolbar>
-      )}
+      {/* AI badge — absolute overlay above node, text stays fixed */}
       {/* AI sticky note — below node, truncated with hover overlay */}
       {data.aiNote && (
         <NodeToolbar position={Position.Bottom} align="center" offset={4} isVisible>
@@ -126,6 +110,28 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           zIndex: highlighted ? 1000 : 1,
         }}
       >
+        {data.aiBadge && (
+          <Tooltip content={data.aiBadge.text} placement="top">
+            <div
+              className="text-[10px] font-semibold px-2 py-0.5 rounded"
+              style={{
+                position: 'absolute',
+                top: -12,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 10,
+                maxWidth: 160,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                background: data.aiBadge.color,
+                color: 'var(--vscode-button-foreground, #fff)',
+              }}
+            >
+              {data.aiBadge.text}
+            </div>
+          </Tooltip>
+        )}
         {data.showRemoveButton && (
           <Tooltip content="Remove from view" placement="top">
             <button

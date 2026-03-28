@@ -381,6 +381,7 @@ export function GraphCanvas({
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
+  const [notesVisible, setNotesVisible] = useState(true);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -411,6 +412,14 @@ export function GraphCanvas({
     (changes) => setLocalEdges((eds) => applyEdgeChanges(changes, eds)),
     []
   );
+
+  /** Hide AI notes when zoomed out below threshold for readability. */
+  const handleViewportChange = useCallback((vp: { zoom: number }) => {
+    setNotesVisible(prev => {
+      const next = vp.zoom >= 0.5;
+      return prev === next ? prev : next;
+    });
+  }, []);
 
   // ── O(1) model node lookup (avoids O(n²) .find() in DetailSearchSidebar) ──
   const modelNodeMap = useMemo(() => {
@@ -477,11 +486,11 @@ export function GraphCanvas({
           onRemoveFromView: isBookmarkMode ? onRemoveFromView : undefined,
           aiHighlight: aiHighlightMap.get(node.id),
           aiBadge: aiBadgeMap.get(node.id),
-          aiNote: aiNoteMap.get(node.id),
+          aiNote: notesVisible ? aiNoteMap.get(node.id) : undefined,
         },
       };
     });
-  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap, aiNoteMap]);
+  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible]);
 
   const displayEdges = useMemo(() => {
     if (!highlightedNodeId) return localEdges;
@@ -686,6 +695,7 @@ export function GraphCanvas({
               nodesFocusable={true}
               edgesFocusable={true}
               elementsSelectable={true}
+              onViewportChange={handleViewportChange}
               selectNodesOnDrag={false}
               deleteKeyCode={null}
               panOnDrag={true}

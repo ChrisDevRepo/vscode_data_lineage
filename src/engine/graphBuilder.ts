@@ -9,7 +9,7 @@ import { getSchemaColor } from '../utils/schemaColors';
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 export const NODE_WIDTH = 220;
-export const NODE_HEIGHT = 60;
+export const NODE_HEIGHT = 80;
 export const SCHEMA_NODE_WIDTH = 200;
 export const SCHEMA_NODE_HEIGHT = 80;
 

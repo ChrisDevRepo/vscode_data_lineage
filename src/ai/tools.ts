@@ -712,21 +712,23 @@ export function autoFixCreateAiView(
     };
   }
 
-  // 3. Drop empty notes, truncate > 200 chars, drop notes for removed nodes
+  // 3. Drop empty notes, truncate > 120 chars, drop notes for removed nodes, cap at 10
   if (fixed.notes) {
     const before = fixed.notes.length;
-    fixed = {
-      ...fixed,
-      notes: fixed.notes
-        .filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0)
-        .map(n => {
-          if (n.text.length > 200) {
-            fixes.push(`Truncated note for "${n.node_id}" to 200 chars`);
-            return { ...n, text: n.text.slice(0, 200) };
-          }
-          return n;
-        }),
-    };
+    let filtered = fixed.notes
+      .filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0)
+      .map(n => {
+        if (n.text.length > 120) {
+          fixes.push(`Truncated note for "${n.node_id}" to 120 chars`);
+          return { ...n, text: n.text.slice(0, 120) };
+        }
+        return n;
+      });
+    if (filtered.length > 10) {
+      fixes.push(`Capped notes from ${filtered.length} to 10 (max per view)`);
+      filtered = filtered.slice(0, 10);
+    }
+    fixed = { ...fixed, notes: filtered };
     const dropped = before - (fixed.notes?.length ?? 0);
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
@@ -763,8 +765,8 @@ export function validateCreateAiView(
   // node_ids validation (structural only — unknown IDs handled by autoFix)
   if (!input.node_ids || input.node_ids.length === 0) {
     errors.push('node_ids must contain at least 1 ID');
-  } else if (input.node_ids.length > 200) {
-    errors.push('node_ids exceeds maximum of 200 IDs');
+  } else if (input.node_ids.length > 30) {
+    errors.push('node_ids exceeds maximum of 30 IDs — create multiple focused views instead');
   }
 
   // highlight_groups validation (structural + color validity — autoFix does not normalize colors)
