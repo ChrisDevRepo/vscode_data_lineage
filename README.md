@@ -4,132 +4,79 @@
 ![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)
 ![Status](https://img.shields.io/badge/status-preview-orange.svg)
 
-> **Preview** — This extension is functional but under active development.
+Visualize SQL dependencies right inside VS Code. Ask `@lineage` in Copilot Chat to explore your graph with natural language — or browse interactively with search, trace, and schema overview.
 
-See how tables, views, stored procedures, and functions connect — right inside VS Code. Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
+Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
 ![Data Lineage Viz — search, trace, and preview DDL](images/viz-search-screenshot.png)
 
-## Quick Start
+## Get Started
 
-**From a .dacpac file:**
 1. Run **Data Lineage: Open Wizard** (`Ctrl+Shift+P`)
-2. Click **Create New Project**, select a `.dacpac` file, pick schemas, and click **Visualize**
+2. Pick a `.dacpac` file — or **Connect to Database** via the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql)
+3. Select schemas and click **Visualize**
 
-**From a database:**
-1. Install the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql)
-2. Run **Data Lineage: Open Wizard**, click **Create New Project**, then **Connect to Database**
-3. Pick a connection, select schemas, and click **Visualize**
+No data? Click **Try with demo data** to explore the AdventureWorks sample.
 
-Saved projects appear on the start screen — click any card to reopen instantly.
+## AI-Powered Exploration
 
-No database? Click **Try with demo data** to explore the AdventureWorks sample.
-
-## Features
-
-### GitHub Copilot Integration
-
-Use `@lineage` in GitHub Copilot Chat to ask questions about your loaded lineage graph. The assistant answers using dedicated lineage tools — never from general knowledge.
+Use `@lineage` in GitHub Copilot Chat to query your loaded graph. The assistant uses dedicated lineage tools — never general knowledge.
 
 ```
-@lineage what schemas are loaded?
-@lineage find tables with Employee in the name
 @lineage what does HumanResources.Employee depend on?
 @lineage trace 3 levels upstream from Sales.SalesOrderDetail
 @lineage which objects are hubs with more than 10 connections?
 ```
 
-Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) and VS Code 1.95+. Tools are only active when a lineage graph is loaded.
+Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
 
-### Data Sources
+## Features
 
-- Import from SSDT and SDK-style `.dacpac` files
-- Connect to SQL Server, Azure SQL, Fabric DW, or Synapse databases
-- External table support
-- Virtual external references: OPENROWSET file paths, cross-database 3-part names, and CETAS targets
-- Project sessions: saved connections and schema selections reopen with a single click
-- Saved views: bookmark named filter states (schemas, types, search) per project
-
-### Visualization
-
-- **Schema overview** — On large graphs (configurable threshold), shows a schema-level summary with object counts and type icons. Double-click any schema bubble to drill into its objects and connected neighbors. Toggle with the status bar item. Disable via `dataLineageViz.overview.enabled`.
-- Search and navigate objects with autocomplete
-- Trace upstream and downstream dependencies with sibling filtering
-- Find the shortest path between any two nodes
-- Schema-based color coding with interactive minimap
-
-### Graph Analysis
-
-- Detect islands, hubs, orphans, and circular dependencies
-- Find the longest dependency chains in your project
-- Filter by schema, object type, or regex patterns
-
-### SQL Preview & Export
-
-- Click any node to view its DDL with full syntax highlighting
-- Search SQL bodies of stored procedures and views
-- Export the lineage graph to Draw.io for documentation
-
-## Limitations
-
-- **Object-level only** — no column-level lineage
-- **Static analysis** — dynamic SQL (`EXEC(@sql)`) not detected
-- **Fully-qualified names only** — only `[schema].[object]` references are detected; unqualified names (aliases, CTEs, built-ins) are excluded
+- **Search & trace** — find objects with autocomplete, trace upstream/downstream dependencies, find shortest paths between nodes
+- **Graph analysis** — detect islands, hubs, orphans, circular dependencies, and longest chains
+- **Schema overview** — large graphs auto-summarize at schema level; double-click to drill in
+- **SQL preview** — click any node to view DDL with syntax highlighting; search across procedure and view bodies
+- **Multiple sources** — SSDT and SDK-style `.dacpac`, live database connections, external tables, virtual external refs (OPENROWSET, cross-DB, CETAS)
+- **Projects & views** — save connections, schema selections, and named filter states for one-click reopen
+- **Export** — generate Draw.io diagrams for documentation
 
 ## How It Works
 
-1. **Extract** — Reads `model.xml` from a .dacpac archive, or imports metadata via DMV queries from a database
-2. **Parse** — Extracts dependencies from XML metadata + configurable regex patterns
-3. **Graph** — Builds a directed graph with dagre layout
-4. **Render** — Interactive visualization with React Flow
+1. **Extract** — reads `model.xml` from a `.dacpac`, or imports metadata via DMV queries
+2. **Parse** — combines XML/DMV dependencies with configurable regex patterns
+3. **Graph** — builds a directed graph with automatic layout
+4. **Render** — interactive visualization with pan, zoom, and filtering
 
 ## Configuration
 
-Search `dataLineageViz` in VS Code Settings (`Ctrl+,`). Settings are grouped into **Import**, **Database Connection**, **Table Statistics**, **Layout**, **Trace**, and **Analysis**. Most settings apply instantly; import settings (`parseRulesFile`, `excludePatterns`) require reloading the data source.
-
-### Key Settings
+Search `dataLineageViz` in VS Code Settings (`Ctrl+,`).
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `maxNodes` | `750` | Maximum objects to load (10–10000). AI tools query the full model; GUI is separately capped by `renderLimit` |
-| `renderLimit` | `750` | Maximum nodes the GUI will render. Above this, a "limit reached" message is shown |
+| `maxNodes` | `750` | Objects to load (up to 10,000). AI queries the full model; GUI is separately capped |
+| `renderLimit` | `750` | Max nodes the GUI renders before showing a summary |
 | `excludePatterns` | `[]` | Regex patterns to exclude objects by name |
-| `layout.direction` | `"LR"` | Graph flow direction: `LR` left-to-right or `TB` top-to-bottom |
-| `tableStatistics.enabled` | `true` | Column statistics and row counts (DB import only) |
-| `overview.enabled` | `true` | Enable schema overview mode for large graphs |
-| `overview.threshold` | `150` | Node count above which schema overview activates automatically |
+| `layout.direction` | `"LR"` | Graph direction: left-to-right or top-to-bottom |
 
-### Commands
+Advanced users can override [parse rules](docs/PARSE_RULES.md), [DMV queries](docs/DMV_QUERIES.md), and review [profiling patterns](docs/PROFILING_PATTERNS.md). Scaffold templates via Command Palette: **Create Parse Rules** / **Create DMV Queries**.
 
-| Command | Description |
-| --- | --- |
-| Data Lineage: Open Wizard | Open the visualization panel |
-| Data Lineage: Open Demo | Load the AdventureWorks demo |
-| Data Lineage: Settings | Open extension settings |
-| Data Lineage: Create Parse Rules | Scaffold a custom parse rules YAML in your workspace |
-| Data Lineage: Create DMV Queries | Scaffold a custom DMV queries YAML in your workspace |
+## Limitations
 
-### Customization
-
-Advanced users can override the built-in SQL parsing rules and database import queries:
-
-| Guide | What you can customize |
-| --- | --- |
-| [Custom Parse Rules](docs/PARSE_RULES.md) | Regex rules for SP dependency extraction |
-| [Custom DMV Queries](docs/DMV_QUERIES.md) | SQL queries for database import |
-| [Profiling Patterns](docs/PROFILING_PATTERNS.md) | Table statistics SQL reference |
+- Object-level only — no column-level lineage
+- Static analysis — dynamic SQL (`EXEC(@sql)`) not detected
+- Fully-qualified names only — unqualified references are excluded
 
 ## FAQ
 
 **Do I need a .dacpac file?**
-No — you can also import directly from a database using the MSSQL extension. If you prefer a .dacpac, it can be extracted from Visual Studio, VS Code, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications) for details.
+No — connect directly to a database. If you prefer a `.dacpac`, extract one from Visual Studio, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications).
 
 **Why are some dependencies missing?**
-Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) cannot be analyzed statically. Only compile-time dependencies are detected.
+Dynamic SQL cannot be analyzed statically. Only compile-time dependencies are detected.
 
 ## Contributing
 
-Bug reports are welcome. This is a personal project — for custom features, fork and extend it under the MIT license. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports welcome. For custom features, fork and extend under the MIT license. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

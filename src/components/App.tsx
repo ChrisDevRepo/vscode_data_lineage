@@ -22,7 +22,6 @@ import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, 
 
 type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
-const REBUILD_DELAY_MS = 400;
 const DACPAC_TIMEOUT_MS = 20_000;
 const DB_TIMEOUT_MS = 60_000;
 const MIN_SPINNER_MS = 1200;
