@@ -641,6 +641,25 @@ async function testSchemaMismatchDetection(model: DatabaseModel) {
   assert(!isError(nowhere), 'nonexistent search succeeds');
   assertEq(nowhere.total, 0, 'no results');
   assert(!('schema_mismatch' in nowhere), 'no schema_mismatch when name not found anywhere');
+
+  // Schema mismatch via explicit schemas param (how the model actually calls it)
+  const explicitMismatch = searchObjects(
+    model, 'SalesOrderDetail', undefined, ['HumanResources'],
+  ) as Record<string, unknown>;
+  assert(!isError(explicitMismatch), 'explicit schemas mismatch: no error');
+  assertEq(explicitMismatch.total, 0, 'explicit schemas mismatch: 0 results');
+  assert('schema_mismatch' in explicitMismatch, 'explicit schemas: schema_mismatch present');
+  const emm = explicitMismatch.schema_mismatch as Record<string, unknown>;
+  const efSchemas = emm.found_in_schemas as string[];
+  assert(efSchemas.includes('Sales'), 'explicit schemas: found in Sales');
+
+  // Explicit schemas with results — no mismatch
+  const explicitFound = searchObjects(
+    model, 'Employee', undefined, ['HumanResources'],
+  ) as Record<string, unknown>;
+  assert(!isError(explicitFound), 'explicit schemas found: no error');
+  assert((explicitFound.results as unknown[]).length > 0, 'explicit schemas found: has results');
+  assert(!('schema_mismatch' in explicitFound), 'explicit schemas found: no mismatch');
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────

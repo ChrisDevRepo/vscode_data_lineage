@@ -216,7 +216,8 @@ export function searchObjects(
 
   let effectiveQuery = query;
   let effectiveSchemas = schemas;
-  let appliedSchemaHints: string[] | null = null;
+  // Track any schema filter applied — from explicit schemas param OR parseSmartQuery hints
+  let appliedSchemaFilter: string[] | null = schemas && schemas.length > 0 ? [...schemas] : null;
 
   // Smart search middleware: only for substring mode (regex syntax conflicts with schema.name splitting)
   if (mode !== 'regex') {
@@ -227,10 +228,10 @@ export function searchObjects(
     }
     effectiveQuery = parsed.nameQuery;
     if (parsed.schemaHints) {
-      appliedSchemaHints = parsed.schemaHints;
       effectiveSchemas = effectiveSchemas
         ? [...new Set([...effectiveSchemas, ...parsed.schemaHints])]
         : parsed.schemaHints;
+      appliedSchemaFilter = effectiveSchemas;
     }
   }
 
@@ -303,7 +304,7 @@ export function searchObjects(
 
   if (results.length === 0) {
     // Schema mismatch detection: schema-filtered search empty, but name exists elsewhere?
-    if (appliedSchemaHints) {
+    if (appliedSchemaFilter) {
       const fallbackHits = searchCatalog(
         model.nodes as SearchableNode[],
         effectiveQuery,
@@ -316,9 +317,9 @@ export function searchObjects(
         const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
         return {
           ...base,
-          hint: `No matches in ${appliedSchemaHints.join(', ')}. Found in: ${foundSchemas.join(', ')}.`,
+          hint: `No matches in ${appliedSchemaFilter.join(', ')}. Found in: ${foundSchemas.join(', ')}.`,
           schema_mismatch: {
-            requested_schemas: appliedSchemaHints,
+            requested_schemas: appliedSchemaFilter,
             found_in_schemas: foundSchemas,
             fallback_results: fallbackHits.slice(0, 5).map(n => presentNode(n, model.neighborIndex)),
           },
