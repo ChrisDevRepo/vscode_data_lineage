@@ -82,7 +82,7 @@ async function testSearchObjects(model: DatabaseModel) {
 
   // empty result → hint present
   const r2 = searchObjects(model, 'xyznosuchthing12345') as Record<string, unknown>;
-  assert('hint' in r2, 'empty result includes hint');
+  assert('action_required' in r2, 'empty result includes action_required');
   assertEq((r2.results as unknown[]).length, 0, 'empty result has 0 results');
 
   // schemas[] filter — include only HumanResources
@@ -543,6 +543,8 @@ async function testSchemaMismatchDetection(model: DatabaseModel) {
   assert(!isError(mismatch), 'mismatch: no error');
   assertEq(mismatch.total, 0, 'mismatch: 0 results in HumanResources');
   assert('schema_mismatch' in mismatch, 'mismatch: schema_mismatch present');
+  assert('action_required' in mismatch, 'mismatch: action_required present');
+  assert((mismatch.action_required as string).includes('SCHEMA MISMATCH'), 'mismatch: action_required contains directive');
   const mm = mismatch.schema_mismatch as Record<string, unknown>;
   assert((mm.found_in_schemas as string[]).includes('Sales'), 'mismatch: found in Sales');
   assert((mm.fallback_results as unknown[]).length > 0, 'mismatch: fallback results returned');

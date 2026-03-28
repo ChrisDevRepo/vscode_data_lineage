@@ -218,7 +218,8 @@ export function searchObjects(
         const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
         return {
           ...base,
-          hint: `No matches in ${appliedSchemaFilter.join(', ')}. Found in: ${foundSchemas.join(', ')}.`,
+          action_required: `SCHEMA MISMATCH: 0 results for "${effectiveQuery}" in ${appliedSchemaFilter.join(', ')}. ` +
+            `Found in: ${foundSchemas.join(', ')}. Ask the user which schema they mean before calling any other tool.`,
           schema_mismatch: {
             requested_schemas: appliedSchemaFilter,
             found_in_schemas: foundSchemas,
@@ -227,7 +228,10 @@ export function searchObjects(
         };
       }
     }
-    return { ...base, hint: 'No matches. Try a shorter substring, check spelling, or use schema names from lineage_get_context.' };
+    return {
+      ...base,
+      action_required: `NO RESULTS for "${effectiveQuery}". Ask the user to verify the name or try a different search term.`,
+    };
   }
   return base;
 }
