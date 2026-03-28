@@ -6,7 +6,7 @@ import { buildBareGraph } from './ai/graphUtils';
 import {
   AI_CAPS, type AiCapsOverride,
   getContext, getSchemasSummary, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, validateCreateAiView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
   type CreateAiViewInput,
 } from './ai/tools';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
@@ -374,8 +374,15 @@ export function activate(context: vscode.ExtensionContext) {
       async invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
-        const input = options.input as CreateAiViewInput;
-        logDebug(outputChannel, 'AI', `lineage_create_ai_view: name="${input.name}", ids=${input.node_ids?.length ?? 0}`);
+        const rawInput = options.input as CreateAiViewInput;
+        logDebug(outputChannel, 'AI', `lineage_create_ai_view: name="${rawInput.name}", ids=${rawInput.node_ids?.length ?? 0}`);
+
+        // Auto-fix common issues (long badge text, unknown IDs, empty notes) before validation
+        const { input, fixes } = autoFixCreateAiView(m, rawInput);
+        if (fixes.length > 0) {
+          logInfo(outputChannel, 'AI', `lineage_create_ai_view: auto-fixed ${fixes.length} issue(s) — ${fixes.join('; ')}`);
+        }
+
         const validation = validateCreateAiView(m, input);
         if (!validation.success) {
           logWarn(outputChannel, 'AI', `lineage_create_ai_view: validation failed — ${validation.errors?.join(', ')}`);
@@ -431,7 +438,10 @@ export function activate(context: vscode.ExtensionContext) {
             _pendingAiPreview = null;
           }
         }
-        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length });
+        return toolResult({
+          success: true, view_name: validation.name, node_count: validation.node_ids.length,
+          ...(fixes.length > 0 ? { auto_fixes: fixes } : {}),
+        });
       },
     }),
     vscode.lm.registerTool('lineage_get_ddl_batch', {
@@ -560,13 +570,48 @@ export function activate(context: vscode.ExtensionContext) {
       const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
       let totalToolCallsMade = 0;
       let roundCount = 0;
-      const MAX_ROUNDS = 10;
+      const MAX_ROUNDS = 15;
+      const BUDGET_HINT_THRESHOLD = Math.ceil(MAX_ROUNDS * 0.6); // round 9 of 15
+
+      // Token estimation accumulators (best-effort)
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let totalToolResultChars = 0;
+
+      /** Serialize messages to a single string for countTokens (string overload only — message overload has known bugs). */
+      const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
+        const parts: string[] = [];
+        for (const m of msgs) {
+          if (typeof m.content === 'string') { parts.push(m.content); continue; }
+          if (!Array.isArray(m.content)) continue;
+          for (const p of m.content as unknown[]) {
+            if (p instanceof vscode.LanguageModelTextPart) parts.push(p.value);
+            else if (p instanceof vscode.LanguageModelToolCallPart) parts.push(JSON.stringify(p.input));
+            else if (p instanceof vscode.LanguageModelToolResultPart) {
+              for (const c of (p as { content: unknown[] }).content) {
+                if (c instanceof vscode.LanguageModelTextPart) parts.push(c.value);
+              }
+            }
+          }
+        }
+        return parts.join('\n');
+      };
 
       const runWithTools = async (): Promise<void> => {
         if (roundCount++ >= MAX_ROUNDS) {
-          stream.markdown('\n\n> Reached the 10 tool-call round limit.');
+          stream.markdown(`\n\n> Reached the ${MAX_ROUNDS} tool-call round limit.`);
           return;
         }
+
+        // Token estimation: input
+        let inputTokenEstimate = 0;
+        try {
+          inputTokenEstimate = await request.model.countTokens(serializeMessages(messages));
+          totalInputTokens += inputTokenEstimate;
+        } catch { /* countTokens may not be available on all models */ }
+
+        logInfo(outputChannel, 'AI', `Round ${roundCount}/${MAX_ROUNDS} — sending request`);
+
         const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
         const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
@@ -583,6 +628,13 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
+        // Token estimation: output
+        let outputTokenEstimate = 0;
+        try {
+          outputTokenEstimate = await request.model.countTokens(responseText);
+          totalOutputTokens += outputTokenEstimate;
+        } catch { /* best effort */ }
+
         if (!toolCalls.length) return; // done — no more tool calls
 
         messages.push(new vscode.LanguageModelChatMessage(
@@ -590,6 +642,7 @@ export function activate(context: vscode.ExtensionContext) {
         ));
 
         const resultParts: vscode.LanguageModelToolResultPart[] = [];
+        let roundToolResultChars = 0;
         for (const call of toolCalls) {
           stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
           try {
@@ -600,6 +653,7 @@ export function activate(context: vscode.ExtensionContext) {
             );
             resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, result.content));
             accumulatedToolResults[call.callId] = result;
+            roundToolResultChars += JSON.stringify(result.content).length;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             logWarn(outputChannel, 'AI', `Tool call failed: ${call.name} — ${msg}`);
@@ -608,10 +662,25 @@ export function activate(context: vscode.ExtensionContext) {
             accumulatedToolResults[call.callId] = new vscode.LanguageModelToolResult(errContent);
           }
         }
+        totalToolResultChars += roundToolResultChars;
+
+        const toolNames = toolCalls.map(c => c.name.replace('lineage_', '')).join(', ');
+        logInfo(outputChannel, 'AI', `Round ${roundCount} — ${toolCalls.length} tool call(s): ${toolNames}`);
+        logDebug(outputChannel, 'AI', `Round ${roundCount} tokens — in: ~${inputTokenEstimate}, out: ~${outputTokenEstimate}, tool results: ~${Math.round(roundToolResultChars / 4)} (est)`);
 
         messages.push(new vscode.LanguageModelChatMessage(
           vscode.LanguageModelChatMessageRole.User, resultParts,
         ));
+
+        // Budget hint for late rounds — helps model self-regulate
+        if (roundCount >= BUDGET_HINT_THRESHOLD) {
+          const remaining = MAX_ROUNDS - roundCount;
+          const budgetMsg = remaining <= 2
+            ? `SYSTEM: Round ${roundCount}/${MAX_ROUNDS}. Only ${remaining} round(s) left. Present your findings now.`
+            : `SYSTEM: Round ${roundCount}/${MAX_ROUNDS}. ${remaining} round(s) remaining. Prioritize essential work.`;
+          messages.push(vscode.LanguageModelChatMessage.User(budgetMsg));
+          logDebug(outputChannel, 'AI', `Injected budget hint — round ${roundCount}/${MAX_ROUNDS}, ${remaining} remaining`);
+        }
 
         toolCallRounds.push({ response: responseText, toolCalls });
         totalToolCallsMade += toolCalls.length;
@@ -621,6 +690,8 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         await runWithTools();
+        logInfo(outputChannel, 'AI', `Request complete — ${roundCount} round(s), ${totalToolCallsMade} tool call(s)`);
+        logDebug(outputChannel, 'AI', `Token estimates — input: ~${totalInputTokens}, output: ~${totalOutputTokens}, tool data: ~${Math.round(totalToolResultChars / 4)}`);
         // Behavioral hint: if no tools were called, the model likely doesn't support function calling
         if (totalToolCallsMade === 0 && lineageTools.length > 0) {
           stream.markdown(

@@ -9,7 +9,7 @@ import { buildBareGraph } from '../src/ai/graphUtils';
 import {
   AI_CAPS,
   getContext, getSchemasSummary, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, validateCreateAiView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
   type CreateAiViewInput,
 } from '../src/ai/tools';
 import { safeRegex } from '../src/utils/modelSearch';
@@ -430,6 +430,90 @@ async function testGetDdlBatch(model: DatabaseModel) {
   assert(emptyResult.truncated === false, 'empty ids: not truncated');
 }
 
+async function testAutoFixCreateAiView(model: DatabaseModel) {
+  console.log('\n── autoFixCreateAiView ──');
+  const node = model.nodes[0];
+  const node2 = model.nodes[1];
+
+  // Clean input: 0 fixes
+  const { input: clean, fixes: noFixes } = autoFixCreateAiView(model, {
+    name: 'Clean', node_ids: [node.id],
+  });
+  assertEq(noFixes.length, 0, 'clean input: 0 fixes');
+  assertEq(clean.node_ids.length, 1, 'clean input: node_ids unchanged');
+
+  // Badge text > 15 chars: truncated
+  const { input: fixedBadge, fixes: badgeFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id],
+    badges: [{ node_id: node.id, text: 'Step 10 – Aggregate' }],
+  });
+  assert(badgeFixes.length > 0, 'long badge: fixes reported');
+  assert(badgeFixes.some(f => f.includes('Truncated badge')), 'long badge: truncation fix');
+  assertEq(fixedBadge.badges![0].text.length, 15, 'long badge: text truncated to 15');
+
+  // Empty notes: dropped
+  const { input: fixedNote, fixes: noteFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id],
+    notes: [
+      { node_id: node.id, text: 'Valid note' },
+      { node_id: node.id, text: '' },
+      { node_id: node.id, text: '   ' },
+    ],
+  });
+  assert(noteFixes.length > 0, 'empty notes: fixes reported');
+  assertEq(fixedNote.notes!.length, 1, 'empty notes: 2 dropped, 1 kept');
+
+  // Unknown IDs (minority): removed
+  const { input: fixedIds, fixes: idFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id, node2.id, '[ghost].[nothing]'],
+  });
+  assert(idFixes.length > 0, 'unknown ID minority: fixes reported');
+  assertEq(fixedIds.node_ids.length, 2, 'unknown ID minority: ghost removed');
+
+  // Unknown IDs (majority): NOT removed — let validation fail
+  const { input: notFixed, fixes: noIdFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: ['[ghost].[a]', '[ghost].[b]', node.id],
+  });
+  assert(noIdFixes.length === 0, 'unknown ID majority: no fixes (majority unknown)');
+  assertEq(notFixed.node_ids.length, 3, 'unknown ID majority: all IDs kept');
+
+  // Badges for removed nodes: dropped
+  const { input: fixedOrphan, fixes: orphanFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id, '[ghost].[x]'],
+    badges: [
+      { node_id: node.id, text: 'Keep' },
+      { node_id: '[ghost].[x]', text: 'Drop' },
+    ],
+  });
+  assert(orphanFixes.some(f => f.includes('Dropped badge')), 'orphan badge: dropped');
+  assertEq(fixedOrphan.badges!.length, 1, 'orphan badge: only valid badge kept');
+
+  // Highlight groups pruned after ID removal
+  const { input: fixedHl, fixes: hlFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id, '[ghost].[x]'],
+    highlight_groups: [
+      { label: 'All ghosts', color: 'bu', node_ids: ['[ghost].[x]'] },
+      { label: 'Valid', color: 'gn', node_ids: [node.id] },
+    ],
+  });
+  assert(hlFixes.length > 0, 'highlight prune: fixes reported');
+  assertEq(fixedHl.highlight_groups!.length, 1, 'highlight prune: ghost group removed');
+  assertEq(fixedHl.highlight_groups![0].label, 'Valid', 'highlight prune: valid group kept');
+
+  // End-to-end: auto-fix + validate succeeds on input that would fail raw validation
+  const rawBadInput: CreateAiViewInput = {
+    name: 'Revenue Pipeline',
+    node_ids: [node.id, '[ghost].[missing]'],
+    badges: [{ node_id: node.id, text: 'Step 1 – Source Table' }],
+    notes: [{ node_id: node.id, text: '' }],
+  };
+  const rawValidation = validateCreateAiView(model, rawBadInput) as Record<string, unknown>;
+  assert(rawValidation.success === false, 'e2e: raw input fails validation');
+  const { input: autoFixed } = autoFixCreateAiView(model, rawBadInput);
+  const fixedValidation = validateCreateAiView(model, autoFixed) as Record<string, unknown>;
+  assert(fixedValidation.success === true, 'e2e: auto-fixed input passes validation');
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -447,6 +531,7 @@ async function main() {
     await testSearchDdl(model);
     await testGetDdlBatch(model);
     await testValidateCreateAiView(model);
+    await testAutoFixCreateAiView(model);
     await testSafeRegex();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);

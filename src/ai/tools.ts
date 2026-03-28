@@ -540,6 +540,83 @@ export type CreateAiViewError = { success: false; errors: string[]; hint: string
 const AI_HIGHLIGHT_COLORS = new Set<string>(['bu', 'gn', 'rd', 'ye', 'or']);
 const AI_BADGE_COLORS = new Set<string>(['bu', 'gn', 'rd', 'ye', 'or', 'gy']);
 
+export function autoFixCreateAiView(
+  model: DatabaseModel,
+  input: CreateAiViewInput,
+): { input: CreateAiViewInput; fixes: string[] } {
+  const fixes: string[] = [];
+  let fixed = { ...input };
+
+  // 1. Filter out unknown node_ids (only when majority are valid)
+  if (fixed.node_ids?.length > 0) {
+    const unknown = fixed.node_ids.filter(id => !model.catalog[id]);
+    const valid = fixed.node_ids.filter(id => model.catalog[id]);
+    if (unknown.length > 0 && valid.length >= fixed.node_ids.length / 2) {
+      fixes.push(`Removed ${unknown.length} unknown ID(s): ${unknown.slice(0, 3).join(', ')}${unknown.length > 3 ? ' ...' : ''}`);
+      fixed = { ...fixed, node_ids: valid };
+    }
+  }
+
+  const nodeIdSet = new Set(fixed.node_ids ?? []);
+
+  // 2. Truncate badge text > 15 chars, drop empty badges & badges for removed nodes
+  if (fixed.badges) {
+    fixed = {
+      ...fixed,
+      badges: fixed.badges
+        .filter(b => {
+          if (!nodeIdSet.has(b.node_id)) { fixes.push(`Dropped badge for removed node "${b.node_id}"`); return false; }
+          if (!b.text || b.text.trim().length === 0) { fixes.push('Dropped empty badge'); return false; }
+          return true;
+        })
+        .map(b => {
+          if (b.text.length > 15) {
+            fixes.push(`Truncated badge "${b.text}" → "${b.text.slice(0, 15)}"`);
+            return { ...b, text: b.text.slice(0, 15) };
+          }
+          return b;
+        }),
+    };
+  }
+
+  // 3. Drop empty notes, truncate > 200 chars, drop notes for removed nodes
+  if (fixed.notes) {
+    const before = fixed.notes.length;
+    fixed = {
+      ...fixed,
+      notes: fixed.notes
+        .filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0)
+        .map(n => {
+          if (n.text.length > 200) {
+            fixes.push(`Truncated note for "${n.node_id}" to 200 chars`);
+            return { ...n, text: n.text.slice(0, 200) };
+          }
+          return n;
+        }),
+    };
+    const dropped = before - (fixed.notes?.length ?? 0);
+    if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
+  }
+
+  // 4. Truncate narrative > 500 chars
+  if (fixed.narrative && fixed.narrative.length > 500) {
+    fixes.push(`Truncated narrative from ${fixed.narrative.length} to 500 chars`);
+    fixed = { ...fixed, narrative: fixed.narrative.slice(0, 500) };
+  }
+
+  // 5. Prune highlight_groups referencing removed nodes
+  if (fixed.highlight_groups) {
+    fixed = {
+      ...fixed,
+      highlight_groups: fixed.highlight_groups
+        .map(g => ({ ...g, node_ids: g.node_ids.filter(id => nodeIdSet.has(id)) }))
+        .filter(g => g.node_ids.length > 0),
+    };
+  }
+
+  return { input: fixed, fixes };
+}
+
 export function validateCreateAiView(
   model: DatabaseModel,
   input: CreateAiViewInput,
