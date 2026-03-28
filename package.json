@@ -452,7 +452,34 @@
         "name": "lineage",
         "fullName": "Data Lineage Assistant",
         "description": "Ask questions about your loaded lineage graph — tables, procedures, dependencies, data flow.",
-        "isSticky": true
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "trace",
+            "description": "Trace data lineage upstream or downstream from an object"
+          },
+          {
+            "name": "search",
+            "description": "Search for database objects by name or schema"
+          },
+          {
+            "name": "explain",
+            "description": "Explain what a stored procedure or view does"
+          }
+        ],
+        "disambiguation": [
+          {
+            "category": "lineage",
+            "description": "Questions about database dependencies, data flow, stored procedures, table lineage, SQL object relationships, where data comes from or goes to",
+            "examples": [
+              "Where does revenue come from",
+              "Trace the data flow for orders",
+              "What tables does this procedure read from",
+              "Show me the lineage for the financehub schema",
+              "What are the upstream sources of this table"
+            ]
+          }
+        ]
       }
     ],
     "languageModelTools": [
@@ -461,7 +488,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Start every new conversation by calling this tool. Returns project name, db_platform, model stats (nodes/edges/schemas), visible node count, filter (active schemas/types/searchTerm/bookmark_nodes count — allowlist IDs not included), and saved views list.",
+        "modelDescription": "Call ONCE at conversation start. Returns project name, platform, model stats (nodes/edges), FULL schema list with per-type object counts (name/n=total/t=tables/v=views/p=procedures/f=functions/ext=external), active filter, and saved views. Use schema names from this response in schemas[] filters on other tools. Do NOT call lineage_get_schema_summary — this already includes all schema data.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -478,7 +505,7 @@
         "toolReferenceName": "lineage_get_schema_summary",
         "displayName": "Get Schema Summary",
         "userDescription": "Lists all schemas and object counts in the loaded database.",
-        "modelDescription": "Returns all schemas with per-type object counts (tables/views/procedures/functions/external) for the full model — ignores the current UI filter. Call after lineage_get_context when you need the complete schema breakdown. Use schema names from this response as filter inputs to other tools.",
+        "modelDescription": "Detailed schema breakdown with per-type counts. Prefer lineage_get_context which already includes the full schema list. Only use this tool if you need to refresh schema data mid-conversation after a model change.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -495,7 +522,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search ALL database objects by name (case-insensitive substring or regex). Results include id, schema (s), name (n), type (t), degree (deg=total connections), match source. Set include_body:true to also search DDL bodies. Use schemas/types to include only specific schemas/types; use exclude_schemas/exclude_types to post-filter results. Pass IDs verbatim to other tools.",
+        "modelDescription": "Search database objects by name. Supports smart query syntax: 'schema.name' (e.g. 'financehub.revenue') auto-splits into schema filter + name search. Space-separated 'schema name' also works if the first word matches a known schema. The query matches OBJECT NAMES only (case-insensitive substring). To filter by schema explicitly, use schemas[]. Results: id, s(schema), n(name), t(type), deg(connections). Set include_body:true to also search DDL. Minimum 2 characters required.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -603,7 +630,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "BFS trace from an object. By default (include_ddl:true) returns DDL for procedures/views/functions and column lists for tables — use for code review and dependency analysis. Set include_ddl:false for structure-only (hop counts, path shape, no DDL loaded). Include filters (schemas/types) are allowlists; exclude filters (exclude_schemas/exclude_types) are post-filters. Response includes excluded_count when exclusions remove nodes. exclude_schemas uses % as wildcard (e.g. 'test%', '%staging%'); other characters including _ are literal.",
+        "modelDescription": "PRIMARY tool for lineage and data-flow questions. After finding an object via search, call this to trace upstream sources and downstream consumers. For 'where does X come from': set downstream_hops=0, upstream_hops=3-5. By default (include_ddl:true) returns DDL + columns for each node. Set include_ddl:false for structure-only (fast, small response — then use get_ddl_batch for specific nodes). Include filters (schemas/types) are allowlists; exclude filters are post-filters. exclude_schemas uses % as wildcard.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

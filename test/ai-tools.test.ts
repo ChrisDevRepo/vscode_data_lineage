@@ -10,7 +10,8 @@ import {
   AI_CAPS,
   getContext, getSchemasSummary, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
-  type CreateAiViewInput,
+  parseSmartQuery,
+  type CreateAiViewInput, type SmartQueryResult,
 } from '../src/ai/tools';
 import { safeRegex } from '../src/utils/modelSearch';
 import { addFilterProfile, createProject } from '../src/engine/projectStore';
@@ -34,7 +35,11 @@ async function testContextTool(model: DatabaseModel) {
   assertEq(typeof stats.nodes, 'number', 'model_stats.nodes is number');
   assert(stats.nodes > 0, `model_stats.nodes > 0 (got ${stats.nodes})`);
   assert(stats.edges > 0, `model_stats.edges > 0 (got ${stats.edges})`);
-  assert(stats.schemas > 0, `model_stats.schemas > 0 (got ${stats.schemas})`);
+  // schemas are now a top-level array with per-type counts (merged from get_schema_summary)
+  const schemas = ctx.schemas as Array<Record<string, unknown>>;
+  assert(Array.isArray(schemas), 'schemas is array');
+  assert(schemas.length > 0, `schemas.length > 0 (got ${schemas.length})`);
+  assert(schemas[0].name !== undefined, 'schema has name');
   assertEq(ctx.project_name as string, 'TestProject', 'project_name matches');
   assert(ctx.filter === null, 'filter null when none passed');
   assert(Array.isArray(ctx.saved_views), 'saved_views is array');
@@ -73,8 +78,8 @@ async function testSearchObjects(model: DatabaseModel) {
   assert('hint' in r2, 'empty result includes hint');
   assertEq((r2.results as unknown[]).length, 0, 'empty result has 0 results');
 
-  // externalSubtypes filter
-  const r3 = searchObjects(model, '', undefined, undefined, ['et']) as Record<string, unknown>;
+  // externalSubtypes filter (use valid query — empty query is now rejected by smart search)
+  const r3 = searchObjects(model, 'ext', undefined, undefined, ['et']) as Record<string, unknown>;
   assert(!isError(r3), 'externalSubtypes filter: no error');
 
   // include_body — body hits include match='body' and snippet
@@ -514,6 +519,89 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assert(fixedValidation.success === true, 'e2e: auto-fixed input passes validation');
 }
 
+async function testParseSmartQuery() {
+  console.log('\n── parseSmartQuery ──');
+  const schemas = ['dbo', 'HumanResources', 'Person', 'Production', 'Purchasing', 'Sales',
+    'consumption_financehub', 'transformation_financehub', 'staging'];
+
+  // Dot-split: schema.name
+  const r1 = parseSmartQuery('financehub.revenue', schemas);
+  assert(r1.ok === true, 'financehub.revenue parses ok');
+  if (r1.ok) {
+    assertEq(r1.nameQuery, 'revenue', 'name is revenue');
+    assert(r1.schemaHints !== null, 'schema hints present');
+    assert(r1.schemaHints!.includes('consumption_financehub'), 'matches consumption_financehub');
+    assert(r1.schemaHints!.includes('transformation_financehub'), 'matches transformation_financehub');
+  }
+
+  // Space-split: schema name
+  const r2 = parseSmartQuery('Sales Employee', schemas);
+  assert(r2.ok === true, 'Sales Employee parses ok');
+  if (r2.ok) {
+    assertEq(r2.nameQuery, 'Employee', 'name is Employee');
+    assert(r2.schemaHints !== null && r2.schemaHints.includes('Sales'), 'schema hint is Sales');
+  }
+
+  // Simple query (no schema match)
+  const r3 = parseSmartQuery('revenue', schemas);
+  assert(r3.ok === true, 'revenue parses ok');
+  if (r3.ok) {
+    assertEq(r3.nameQuery, 'revenue', 'name is revenue');
+    assertEq(r3.schemaHints, null, 'no schema hints');
+  }
+
+  // Garbage rejection: single char
+  const r4 = parseSmartQuery('.', schemas);
+  assert(r4.ok === false, 'dot rejected');
+  if (!r4.ok) assertEq(r4.error, 'query_too_short', 'error is query_too_short');
+
+  // Garbage rejection: wildcards only
+  const r5 = parseSmartQuery('.*', schemas);
+  assert(r5.ok === false, '.* rejected');
+  if (!r5.ok) assertEq(r5.error, 'query_too_broad', 'error is query_too_broad');
+
+  // Garbage rejection: empty
+  const r6 = parseSmartQuery('', schemas);
+  assert(r6.ok === false, 'empty rejected');
+
+  // Dot-split where left doesn't match any schema → treat as full query
+  const r7 = parseSmartQuery('foo.bar', schemas);
+  assert(r7.ok === true, 'foo.bar parses ok');
+  if (r7.ok) {
+    assertEq(r7.nameQuery, 'foo.bar', 'no split when left not a schema');
+    assertEq(r7.schemaHints, null, 'no schema hints');
+  }
+
+  // Space-split where left doesn't match any schema → full query
+  const r8 = parseSmartQuery('unknown something', schemas);
+  assert(r8.ok === true, 'unknown something parses ok');
+  if (r8.ok) {
+    assertEq(r8.nameQuery, 'unknown something', 'no split when left not a schema');
+    assertEq(r8.schemaHints, null, 'no schema hints');
+  }
+}
+
+async function testSmartSearchIntegration(model: DatabaseModel) {
+  console.log('\n── Smart Search Integration ──');
+
+  // search_objects with dot syntax — should find objects in matching schemas
+  const result = searchObjects(model, 'HumanResources.Employee') as Record<string, unknown>;
+  assert(!isError(result), 'HumanResources.Employee search succeeds');
+  const results = result.results as Array<Record<string, unknown>>;
+  assert(results.length > 0, 'found results');
+  // All results should be in HumanResources schema
+  for (const r of results) {
+    assertEq(r.s as string, 'HumanResources', `result in HumanResources schema: ${r.n}`);
+  }
+
+  // Garbage query rejection
+  const garbage = searchObjects(model, '.') as Record<string, unknown>;
+  assert(isError(garbage), 'dot query rejected');
+
+  const star = searchObjects(model, '*') as Record<string, unknown>;
+  assert(isError(star), 'star query rejected');
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -533,6 +621,8 @@ async function main() {
     await testValidateCreateAiView(model);
     await testAutoFixCreateAiView(model);
     await testSafeRegex();
+    await testParseSmartQuery();
+    await testSmartSearchIntegration(model);
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

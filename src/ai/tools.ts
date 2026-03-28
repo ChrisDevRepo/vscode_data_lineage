@@ -85,7 +85,8 @@ export function getContext(
     project_name:  projectName,
     source_type:   model.dbPlatform ? 'database' : 'dacpac',
     db_platform:   model.dbPlatform ?? null,
-    model_stats:   { nodes: model.nodes.length, edges: model.edges.length, schemas: model.schemas.length },
+    model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
+    schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
     saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
@@ -100,6 +101,72 @@ export function getSchemasSummary(model: DatabaseModel) {
     total_nodes: model.nodes.length,
     total_edges: model.edges.length,
   };
+}
+
+// ─── Smart search middleware ─────────────────────────────────────────────────
+
+/** Result of parsing a smart query like "financehub.revenue" or "financehub revenue". */
+export type SmartQueryResult =
+  | { ok: true; nameQuery: string; schemaHints: string[] | null }
+  | { ok: false; error: string; hint: string };
+
+/**
+ * Parse a natural-language query into name query + schema hints.
+ * - "financehub.revenue" → schema hint "financehub", name "revenue"
+ * - "financehub revenue" → if "financehub" matches a known schema, split; otherwise treat as single query
+ * - "revenue" → no schema hint
+ * - "." / "*" / single char → rejected as too broad
+ *
+ * Schema matching is case-insensitive substring: "financehub" matches "consumption_financehub".
+ */
+export function parseSmartQuery(
+  query: string,
+  schemaNames: string[],
+): SmartQueryResult {
+  const trimmed = query.trim();
+  // Reject garbage: empty, single char, or pure wildcards
+  if (trimmed.length < 2) {
+    return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters. To filter by schema, use the schemas[] parameter.' };
+  }
+  if (/^[.*?+^$]+$/.test(trimmed)) {
+    return { ok: false, error: 'query_too_broad', hint: 'Query matches everything. Be more specific or use schemas[] to narrow scope.' };
+  }
+
+  // Dot-split: "financehub.revenue" → schema hint + name
+  const dotIdx = trimmed.indexOf('.');
+  if (dotIdx > 0 && dotIdx < trimmed.length - 1) {
+    const left = trimmed.slice(0, dotIdx).trim();
+    const right = trimmed.slice(dotIdx + 1).trim();
+    if (left.length > 0 && right.length > 0) {
+      const matched = findMatchingSchemas(left, schemaNames);
+      if (matched.length > 0) {
+        return { ok: true, nameQuery: right, schemaHints: matched };
+      }
+      // Dot present but left doesn't match any schema — treat as single query
+    }
+  }
+
+  // Space-split: "financehub revenue" → try left as schema hint
+  const spaceIdx = trimmed.indexOf(' ');
+  if (spaceIdx > 0 && spaceIdx < trimmed.length - 1) {
+    const left = trimmed.slice(0, spaceIdx).trim();
+    const right = trimmed.slice(spaceIdx + 1).trim();
+    if (left.length >= 2 && right.length >= 1) {
+      const matched = findMatchingSchemas(left, schemaNames);
+      if (matched.length > 0) {
+        return { ok: true, nameQuery: right, schemaHints: matched };
+      }
+    }
+    // No schema match — fall through to use full query
+  }
+
+  return { ok: true, nameQuery: trimmed, schemaHints: null };
+}
+
+/** Case-insensitive substring match of hint against known schema names. */
+function findMatchingSchemas(hint: string, schemaNames: string[]): string[] {
+  const lower = hint.toLowerCase();
+  return schemaNames.filter(s => s.toLowerCase().includes(lower));
 }
 
 // ─── Tool 3: lineage_search_objects ──────────────────────────────────────────
@@ -120,15 +187,31 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
   }
 
+  // Smart search middleware: parse natural queries like "financehub.revenue"
+  const schemaNames = model.schemas.map(s => s.name);
+  const parsed = parseSmartQuery(query, schemaNames);
+  if (!parsed.ok) {
+    return { error: parsed.error, hint: parsed.hint };
+  }
+
+  // Merge schema hints from smart query with explicit schemas parameter
+  let effectiveSchemas = schemas;
+  if (parsed.schemaHints) {
+    effectiveSchemas = effectiveSchemas
+      ? [...new Set([...effectiveSchemas, ...parsed.schemaHints])]
+      : parsed.schemaHints;
+  }
+  const effectiveQuery = parsed.nameQuery;
+
   const typeSet                = types         ? new Set<ObjectType>(types)           : undefined;
-  const schemaSet              = schemas       ? new Set<string>(schemas)             : undefined;
+  const schemaSet              = effectiveSchemas ? new Set<string>(effectiveSchemas)   : undefined;
   const excludeTypeSet         = excludeTypes  ? new Set<ObjectType>(excludeTypes)    : null;
   // exclude_schemas: SQL-style patterns — % matches any sequence; all other chars literal (case-insensitive)
   const excludeSchemaMatchers  = compileSqlLikePatterns(excludeSchemas);
 
   const nameHits = searchCatalog(
     model.nodes as SearchableNode[],
-    query,
+    effectiveQuery,
     typeSet,
     schemaSet,
     effectiveCaps.SEARCH_MAX_RESULTS,
@@ -161,7 +244,7 @@ export function searchObjects(
     if (bodyTypeSet.size > 0) {
       const bodyHits = searchBodyScripts(
         model.nodes as SearchableNode[],
-        query,
+        effectiveQuery,
         bodyTypeSet,
         SNIPPET_CONTEXT_LINES,
         effectiveCaps.SEARCH_MAX_RESULTS,
@@ -187,7 +270,7 @@ export function searchObjects(
   };
 
   if (results.length === 0) {
-    return { ...base, hint: 'No matches. Try a shorter substring, check spelling, or call lineage_get_schema_summary to see available schema names.' };
+    return { ...base, hint: 'No matches. Try a shorter substring, check spelling, or use schema names from lineage_get_context.' };
   }
   return base;
 }

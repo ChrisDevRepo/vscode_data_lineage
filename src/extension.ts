@@ -33,6 +33,7 @@ import {
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
 import { logInfo, logDebug, logWarn, logError, logTrace } from './utils/log';
+import { compactNoiseResult, findMergeableCallIds, stripExpiredFields } from './ai/historyManager';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -481,12 +482,22 @@ export function activate(context: vscode.ExtensionContext) {
 
       const lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
 
-      // Build conversation history — re-inject tool call rounds so the model remembers prior tool use.
-      // Tool results are only re-injected for the last HISTORY_TOOL_WINDOW response turns to avoid
-      // ballooning the context window in long conversations with large BFS traces.
-      const HISTORY_TOOL_WINDOW = 3;
+      // Slash command routing — transform user prompt for focused intent
+      let effectivePrompt = request.prompt;
+      if (request.command === 'trace') {
+        effectivePrompt = `Trace the data lineage for: ${request.prompt}. Use search_objects to find the object, then run_bfs_trace with include_ddl=true.`;
+      } else if (request.command === 'search') {
+        effectivePrompt = `Search for database objects matching: ${request.prompt}. Use search_objects with smart query syntax.`;
+      } else if (request.command === 'explain') {
+        effectivePrompt = `Explain what this object does: ${request.prompt}. Use get_object_detail to get the DDL, then explain the logic.`;
+      }
+
+      // Build conversation history with smart management:
+      // 1. DROP — replace error/empty tool results with 1-line summaries
+      // 2. MERGE — deduplicate overlapping search results (keep superset)
+      // 3. FIELD-STRIP — remove heavy fields (ddl, columns) from older turns by TTL
       const responseTurns = context.history.filter(t => t instanceof vscode.ChatResponseTurn);
-      const toolResultCutoff = responseTurns.length - HISTORY_TOOL_WINDOW;
+      const totalResponseTurns = responseTurns.length;
       let responseIndex = 0;
 
       const historyMessages: vscode.LanguageModelChatMessage[] = [];
@@ -494,18 +505,28 @@ export function activate(context: vscode.ExtensionContext) {
         if (turn instanceof vscode.ChatRequestTurn) {
           historyMessages.push(vscode.LanguageModelChatMessage.User(turn.prompt));
         } else if (turn instanceof vscode.ChatResponseTurn) {
-          const isRecent = responseIndex >= toolResultCutoff;
+          const turnAge = totalResponseTurns - responseIndex; // age in turns from present
           responseIndex++;
           const meta = (turn.result.metadata as any)?.toolCallsMetadata as
             | { toolCallRounds: ToolCallRound[]; toolCallResults: Record<string, vscode.LanguageModelToolResult> }
             | undefined;
           if (meta?.toolCallRounds?.length) {
+            // MERGE: find duplicate/subset tool calls to drop
+            const mergeDropIds = findMergeableCallIds(
+              meta.toolCallRounds.map(r => ({
+                toolCalls: r.toolCalls.map(tc => ({
+                  callId: tc.callId ?? (tc as any).callId,
+                  name: tc.name ?? (tc as any).name,
+                  input: (tc.input ?? (tc as any).input) as Record<string, unknown>,
+                })),
+              })),
+            );
+
             for (const round of meta.toolCallRounds) {
               // Re-inject assistant turn: response text + tool call parts
               const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
               if (round.response) assistantParts.push(new vscode.LanguageModelTextPart(round.response));
               for (const tc of round.toolCalls) {
-                // Metadata may be serialized between turns — reconstruct instances from plain objects
                 const part = tc instanceof vscode.LanguageModelToolCallPart
                   ? tc
                   : new vscode.LanguageModelToolCallPart((tc as any).callId, (tc as any).name, (tc as any).input);
@@ -514,25 +535,40 @@ export function activate(context: vscode.ExtensionContext) {
               historyMessages.push(new vscode.LanguageModelChatMessage(
                 vscode.LanguageModelChatMessageRole.Assistant, assistantParts,
               ));
-              // Only re-inject tool result data for recent turns — older turns keep assistant text only
-              if (isRecent) {
-                const resultParts = round.toolCalls
-                  .map(tc => {
-                    const r = meta.toolCallResults[tc.callId];
-                    if (!r) return null;
-                    const content = (r.content as any[]).map((c: any) =>
-                      c instanceof vscode.LanguageModelTextPart
-                        ? c
-                        : new vscode.LanguageModelTextPart(typeof c.value === 'string' ? c.value : JSON.stringify(c)),
-                    );
-                    return new vscode.LanguageModelToolResultPart(tc.callId, content);
-                  })
-                  .filter((p): p is vscode.LanguageModelToolResultPart => p !== null);
-                if (resultParts.length) {
-                  historyMessages.push(new vscode.LanguageModelChatMessage(
-                    vscode.LanguageModelChatMessageRole.User, resultParts,
-                  ));
-                }
+
+              // Always re-inject tool results (no hard cutoff) — apply DROP + FIELD-STRIP
+              const resultParts = round.toolCalls
+                .map(tc => {
+                  const callId = tc.callId ?? (tc as any).callId;
+                  const toolName = tc.name ?? (tc as any).name;
+
+                  // MERGE: skip results for dropped (subset/duplicate) calls
+                  if (mergeDropIds.has(callId)) return null;
+
+                  const r = meta.toolCallResults[callId];
+                  if (!r) return null;
+
+                  // Serialize the content to a string for processing
+                  let contentStr = (r.content as any[]).map((c: any) =>
+                    typeof c.value === 'string' ? c.value : JSON.stringify(c),
+                  ).join('');
+
+                  // DROP: replace error/empty results with compact summary
+                  const compact = compactNoiseResult(toolName, contentStr);
+                  if (compact) contentStr = compact;
+                  // FIELD-STRIP: remove heavy fields based on turn age
+                  else contentStr = stripExpiredFields(contentStr, turnAge);
+
+                  return new vscode.LanguageModelToolResultPart(
+                    callId,
+                    [new vscode.LanguageModelTextPart(contentStr)],
+                  );
+                })
+                .filter((p): p is vscode.LanguageModelToolResultPart => p !== null);
+              if (resultParts.length) {
+                historyMessages.push(new vscode.LanguageModelChatMessage(
+                  vscode.LanguageModelChatMessageRole.User, resultParts,
+                ));
               }
             }
           } else {
@@ -553,21 +589,29 @@ export function activate(context: vscode.ExtensionContext) {
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(
           'SQL lineage assistant. Use ONLY provided tools — never training knowledge.\n' +
-          'Call lineage_get_context ONCE per conversation (the context is stable and will not change mid-session).\n' +
-          'You have access to the FULL loaded model — all nodes, edges, and DDL — even if the user\'s GUI shows only a subset or schema overview.\n' +
+          'Call lineage_get_context ONCE at conversation start — it returns schema list with object counts, filters, and saved views.\n' +
+          'You have access to the FULL loaded model — all nodes, edges, and DDL — even if the user\'s GUI shows only a subset.\n\n' +
+          'EFFICIENT QUERY PATTERNS (target 2-4 rounds per question):\n' +
+          '- "Where does X come from?" → search_objects(query="X") → run_bfs_trace(id=result, upstream_hops=3, downstream_hops=0, include_ddl=true)\n' +
+          '- "What does procedure X do?" → get_object_detail(id="[schema].[X]")\n' +
+          '- "Show lineage for schema Y" → search_objects(schemas=["Y"]) → run_bfs_trace from key object\n' +
+          '- Smart search: "schema.name" (e.g. "financehub.revenue") auto-splits into schema filter + name search.\n' +
+          '- NEVER repeat a search you already tried — results are deterministic.\n' +
+          '- Batch independent tool calls in a single round (parallel execution).\n' +
+          '- If past 5 rounds, present what you have.\n\n' +
           'BFS defaults to 3 hops each direction; reduce to 1–2 for large graphs, expand if truncated=true.\n' +
           'Before create_ai_view: obtain node IDs from search/BFS — never fabricate.\n' +
           'Annotation tiers (all optional): badge = numbering/short labels (max 15 chars); note = describe calcs, logic, business rules per node (max 200 chars, use \\n for line breaks); highlight_groups = color-code critical paths; narrative = brief overall summary, push detail into per-node notes.\n' +
-          'Format: columns→table, deps→bullets with →, SQL→```sql.\n' +
-          'Tool data older than 3 turns is not in context — re-call tools if you need earlier results.',
+          'Format: columns→table, deps→bullets with →, SQL→```sql.',
         ),
         ...historyMessages,
-        vscode.LanguageModelChatMessage.User(request.prompt),
+        vscode.LanguageModelChatMessage.User(effectivePrompt),
       ];
 
       // Accumulators for this request's tool call rounds (persisted in ChatResult metadata)
       const toolCallRounds: ToolCallRound[] = [];
       const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
+      const toolSequence: string[] = [];
       let totalToolCallsMade = 0;
       let roundCount = 0;
       const MAX_ROUNDS = 15;
@@ -635,6 +679,11 @@ export function activate(context: vscode.ExtensionContext) {
           totalOutputTokens += outputTokenEstimate;
         } catch { /* best effort */ }
 
+        // C4: Log model reasoning between tool calls
+        if (responseText.length > 0) {
+          logDebug(outputChannel, 'AI', `Model reasoning: ${responseText.slice(0, 200)}${responseText.length > 200 ? '…' : ''}`);
+        }
+
         if (!toolCalls.length) return; // done — no more tool calls
 
         messages.push(new vscode.LanguageModelChatMessage(
@@ -645,6 +694,7 @@ export function activate(context: vscode.ExtensionContext) {
         let roundToolResultChars = 0;
         for (const call of toolCalls) {
           stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
+          const t0 = performance.now();
           try {
             const result = await vscode.lm.invokeTool(
               call.name,
@@ -653,7 +703,10 @@ export function activate(context: vscode.ExtensionContext) {
             );
             resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, result.content));
             accumulatedToolResults[call.callId] = result;
-            roundToolResultChars += JSON.stringify(result.content).length;
+            const chars = JSON.stringify(result.content).length;
+            roundToolResultChars += chars;
+            // C5: Per-tool timing + result size
+            logDebug(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} — ${Math.round(performance.now() - t0)}ms, ${chars} chars`);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             logWarn(outputChannel, 'AI', `Tool call failed: ${call.name} — ${msg}`);
@@ -664,7 +717,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
         totalToolResultChars += roundToolResultChars;
 
+        // Track tool sequence for structured summary
         const toolNames = toolCalls.map(c => c.name.replace('lineage_', '')).join(', ');
+        toolSequence.push(toolCalls.length > 1 ? `[${toolNames}]` : toolNames);
         logInfo(outputChannel, 'AI', `Round ${roundCount} — ${toolCalls.length} tool call(s): ${toolNames}`);
         logDebug(outputChannel, 'AI', `Round ${roundCount} tokens — in: ~${inputTokenEstimate}, out: ~${outputTokenEstimate}, tool results: ~${Math.round(roundToolResultChars / 4)} (est)`);
 
@@ -672,14 +727,24 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.LanguageModelChatMessageRole.User, resultParts,
         ));
 
-        // Budget hint for late rounds — helps model self-regulate
-        if (roundCount >= BUDGET_HINT_THRESHOLD) {
+        // H3: Token-budget-based hints (supplements round-based hints)
+        const budgetUsedPct = _aiMaxInputTokens > 0 ? inputTokenEstimate / _aiMaxInputTokens : 0;
+        if (budgetUsedPct >= 0.8) {
+          messages.push(vscode.LanguageModelChatMessage.User(
+            `SYSTEM: ~${Math.round(budgetUsedPct * 100)}% of context window used. Present your findings now.`));
+          logDebug(outputChannel, 'AI', `Token budget warning — ${Math.round(budgetUsedPct * 100)}% used`);
+        } else if (budgetUsedPct >= 0.6) {
+          messages.push(vscode.LanguageModelChatMessage.User(
+            `SYSTEM: ~${Math.round(budgetUsedPct * 100)}% of context window used. Batch remaining calls.`));
+          logDebug(outputChannel, 'AI', `Token budget hint — ${Math.round(budgetUsedPct * 100)}% used`);
+        } else if (roundCount >= BUDGET_HINT_THRESHOLD) {
+          // Fallback: round-based hint when token estimation is unavailable or budget is fine
           const remaining = MAX_ROUNDS - roundCount;
           const budgetMsg = remaining <= 2
             ? `SYSTEM: Round ${roundCount}/${MAX_ROUNDS}. Only ${remaining} round(s) left. Present your findings now.`
             : `SYSTEM: Round ${roundCount}/${MAX_ROUNDS}. ${remaining} round(s) remaining. Prioritize essential work.`;
           messages.push(vscode.LanguageModelChatMessage.User(budgetMsg));
-          logDebug(outputChannel, 'AI', `Injected budget hint — round ${roundCount}/${MAX_ROUNDS}, ${remaining} remaining`);
+          logDebug(outputChannel, 'AI', `Injected round budget hint — round ${roundCount}/${MAX_ROUNDS}, ${remaining} remaining`);
         }
 
         toolCallRounds.push({ response: responseText, toolCalls });
@@ -690,8 +755,14 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         await runWithTools();
-        logInfo(outputChannel, 'AI', `Request complete — ${roundCount} round(s), ${totalToolCallsMade} tool call(s)`);
-        logDebug(outputChannel, 'AI', `Token estimates — input: ~${totalInputTokens}, output: ~${totalOutputTokens}, tool data: ~${Math.round(totalToolResultChars / 4)}`);
+        // C2: Structured summary
+        const totalTokenEst = totalInputTokens + totalOutputTokens + Math.round(totalToolResultChars / 4);
+        const budgetPct = _aiMaxInputTokens > 0 ? Math.round((totalInputTokens / _aiMaxInputTokens) * 100) : 0;
+        logInfo(outputChannel, 'AI', `Summary — model: ${request.model.id}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst} (${budgetPct}% of ${_aiMaxInputTokens})`);
+        if (toolSequence.length > 0) {
+          logInfo(outputChannel, 'AI', `Tool sequence: ${toolSequence.join(' → ')}`);
+        }
+        logDebug(outputChannel, 'AI', `Prompt: "${request.prompt.slice(0, 100)}${request.prompt.length > 100 ? '…' : ''}"`);
         // Behavioral hint: if no tools were called, the model likely doesn't support function calling
         if (totalToolCallsMade === 0 && lineageTools.length > 0) {
           stream.markdown(
@@ -705,9 +776,54 @@ export function activate(context: vscode.ExtensionContext) {
         stream.markdown(`\n\n*Error: ${msg}*`);
       }
 
-      return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults } } };
+      // Determine last tool types for follow-up suggestions
+      const lastTools = toolCallRounds.length > 0
+        ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map(tc => tc.name)
+        : [];
+
+      return {
+        metadata: {
+          toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults },
+          rounds: roundCount,
+          toolCalls: totalToolCallsMade,
+          model: request.model.id,
+          lastTools,
+        },
+      };
     },
   );
+
+  // B1: Follow-up provider — context-aware suggestions based on last tool calls
+  participant.followupProvider = {
+    provideFollowups(result, _context, _token) {
+      const meta = result.metadata as Record<string, unknown> | undefined;
+      const lastTools = (meta?.lastTools as string[]) ?? [];
+      const followups: vscode.ChatFollowup[] = [];
+
+      if (lastTools.some(t => t.includes('bfs_trace'))) {
+        followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
+        followups.push({ prompt: 'Show me the upstream sources in more detail', label: 'Trace deeper upstream' });
+      } else if (lastTools.some(t => t.includes('search'))) {
+        followups.push({ prompt: 'Trace the lineage from the top result', label: 'Trace lineage' });
+        followups.push({ prompt: 'Show me the DDL for the top result', label: 'Get details' });
+      } else if (lastTools.some(t => t.includes('get_object_detail'))) {
+        followups.push({ prompt: 'Trace the lineage from this object', label: 'Trace lineage' });
+        followups.push({ prompt: 'What other objects reference this one?', label: 'Find references' });
+      } else if (lastTools.some(t => t.includes('analysis'))) {
+        followups.push({ prompt: 'Show me the details of the top hub', label: 'Explore top hub' });
+      }
+
+      return followups;
+    },
+  };
+
+  // C3: Feedback telemetry — log thumbs up/down with request metadata
+  participant.onDidReceiveFeedback((feedback: vscode.ChatResultFeedback) => {
+    const meta = feedback.result.metadata as Record<string, unknown> | undefined;
+    const kind = feedback.kind === vscode.ChatResultFeedbackKind.Helpful ? 'helpful' : 'unhelpful';
+    logInfo(outputChannel, 'AI', `Feedback: ${kind} — rounds: ${meta?.rounds ?? '?'}, tools: ${meta?.toolCalls ?? '?'}, model: ${meta?.model ?? '?'}`);
+  });
+
   context.subscriptions.push(participant);
 }
 
