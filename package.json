@@ -493,7 +493,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Call ONCE at start. Returns schemas, stats, active filter, saved views. Small models (≤150 nodes): includes full DDL, columns, edges — answer directly without BFS. Use schema names in schemas[] filters.",
+        "modelDescription": "Call ONCE at start. Returns schemas, stats, active filter, saved views. If objects[] present: full dataset with DDL, columns, FKs, edges — answer directly. Otherwise: use schema names in other tools' schemas[] filters.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -510,7 +510,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search by name (substring or regex). Returns IDs for BFS/detail. Use schemas[] to filter. For DDL body search use search_ddl. Never repeat same query.",
+        "modelDescription": "Search objects by name (substring or mode='regex' for multi-pattern). Returns IDs for BFS/detail. Use schemas[] to narrow scope. For DDL body content search, use search_ddl instead. If 0 results with schemas[]: check schema_mismatch field — object may exist in another schema.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -564,7 +564,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Full metadata for ONE object: columns, foreign keys, neighbors (up/dn), DDL. Use for single-object questions. For multi-object dependency analysis use run_bfs_trace.",
+        "modelDescription": "Full metadata for ONE object: columns, FKs, neighbors (up/dn), DDL. Use for single-object questions ('what does spX do?'). For multi-object lineage, use run_bfs_trace instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -589,7 +589,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY lineage tool. Returns connected nodes with DDL, columns, and edge types. schemas[] limits scope on large models. DDL contains INSERT/SELECT for column-level tracing.",
+        "modelDescription": "PRIMARY tool for lineage questions. Returns upstream/downstream nodes with DDL, columns, and edges. Use schemas[] on large models to exclude utility schemas. DDL contains INSERT/SELECT for column tracing — put column mappings in create_ai_view notes.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -870,7 +870,7 @@
         "toolReferenceName": "lineage_get_ddl_batch",
         "displayName": "Get DDL for Multiple Objects",
         "userDescription": "Get DDL body scripts for multiple objects in one call.",
-        "modelDescription": "Batch DDL fetch for known IDs (max 20). Use for objects NOT already in a BFS result. Returns DDL for scriptable objects, type-only for tables.",
+        "modelDescription": "Batch DDL fetch for known IDs (max 20). Use ONLY for objects not already in a BFS result — BFS includes DDL by default. Returns DDL for scriptable objects, type-only for tables.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
