@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
 import { AI_COLOR_HEX } from '../utils/schemaColors';
+import { Tooltip } from './ui/Tooltip';
 
 interface BookmarkInfoCardProps {
   profile: FilterProfile;
@@ -104,7 +105,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
                       flexShrink: 0,
                     }}
                   />
-                  <span className="text-[10px] ln-text truncate" title={g.label}>{g.label}</span>
+                  <Tooltip content={g.label} asChild><span className="text-[10px] ln-text truncate">{g.label}</span></Tooltip>
                 </div>
               ))}
             </div>
