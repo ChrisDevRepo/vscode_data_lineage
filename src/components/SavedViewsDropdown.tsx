@@ -118,13 +118,12 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                   if (confirmDeleteId === profile.id) {
                     return (
                       <div key={profile.id} className="flex items-center gap-1 px-2 py-1 text-xs">
-                        <span className="flex-1 truncate" style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}>
+                        <span className="flex-1 truncate ln-text-error">
                           Delete &ldquo;{profile.name}&rdquo;?
                         </span>
                         <Button
                           variant="ghost"
-                          className="h-6 px-1.5 text-xs"
-                          style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}
+                          className="h-6 px-1.5 text-xs ln-text-error"
                           onClick={() => { onDeleteView(profile.id); setConfirmDeleteId(null); }}
                         >
                           Delete
@@ -169,6 +168,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                         Apply
                       </Button>
                       <button
+                        type="button"
                         className="flex-shrink-0 p-0.5 rounded ln-list-item"
                         onClick={() => setConfirmDeleteId(profile.id)}
                         title={`Delete "${profile.name}"`}

@@ -14,7 +14,6 @@ import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, InnerFilterContext } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
-import { loadRules } from '../engine/sqlBodyParser';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import { escapeRegexLiteral } from '../utils/sql';
@@ -87,27 +86,7 @@ export function App() {
 
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
     setConfig(cfg);
-    if (cfg.parseRules) {
-      const result = loadRules(cfg.parseRules);
-      vscodeApi.postMessage({
-        type: 'parse-rules-result',
-        loaded: result.loaded,
-        skipped: result.skipped,
-        errors: result.errors,
-        usedDefaults: result.usedDefaults,
-        categoryCounts: result.categoryCounts,
-      });
-    } else {
-      vscodeApi.postMessage({
-        type: 'parse-rules-result',
-        loaded: 0,
-        skipped: [],
-        errors: ['No parse rules received from extension host'],
-        usedDefaults: true,
-        categoryCounts: {},
-      });
-    }
-  }, [vscodeApi]);
+  }, []);
 
   const dacpacLoader = useDacpacLoader(applyConfig);
   const [, startTransition] = useTransition();
@@ -478,7 +457,7 @@ export function App() {
   }, [model, config, rebuild, clearTrace]);
 
   const handleRebuild = useCallback(() => {
-    vscodeApi.postMessage({ type: 'ready' });
+    vscodeApi.postMessage({ type: 'rebuild' });
     if (model) {
       setIsRebuilding(true);
       setTimeout(() => {

@@ -20,9 +20,11 @@ export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
   ) as Partial<T>;
 }
 
+const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', write: 'write', exec: 'exec', read: 'read' };
+
 /** Map internal edge types to the AI-facing API name. */
 export function edgeApiType(type: string): string {
-  return type === 'body' ? 'read' : type;
+  return EDGE_TYPE_MAP[type] ?? 'read';
 }
 
 // ─── Compact shape presenters ─────────────────────────────────────────────────
@@ -97,13 +99,13 @@ export function presentNeighbor(
 ): Record<string, unknown> {
   const n = nodeMap.get(nid);
   const edgeKey = isUpstream ? `${nid}→${originId}` : `${originId}→${nid}`;
-  return {
+  return strip({
     id: nid,
-    s:  n?.schema ?? '',
+    s:  n?.schema || undefined,
     n:  n?.name   ?? nid,
     t:  n?.type   ?? 'table',
     e:  edgeMap.get(edgeKey) ?? 'read',
-  };
+  } as Record<string, unknown>);
 }
 
 /**
@@ -126,18 +128,3 @@ export function presentFilter(filter: SerializedFilterState): Record<string, unk
   } as Record<string, unknown>);
 }
 
-/**
- * Cap an array and return capped slice + metadata.
- * Use `capped` as the response array, `total`/`truncated` as envelope fields.
- */
-export function withCap<T>(
-  items: T[],
-  cap: number,
-): { capped: T[]; total: number; truncated: boolean } {
-  const truncated = items.length > cap;
-  return {
-    capped:    truncated ? items.slice(0, cap) : items,
-    total:     items.length,
-    truncated,
-  };
-}

@@ -45,7 +45,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
 
       return (
-        <div style={{ padding: '12px 16px', color: 'var(--vscode-descriptionForeground)', fontSize: 12 }}>
+        <div className="px-4 py-3 text-xs ln-text-muted">
           Something went wrong. Click a node again to reload.
         </div>
       );

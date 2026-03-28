@@ -39,6 +39,9 @@ export type AiCapsOverride = { [K in keyof typeof AI_CAPS]?: number };
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
+/** Number of context lines shown in DDL/body search snippets. */
+const SNIPPET_CONTEXT_LINES = 2;
+
 /** Build source→target edge type lookup for the entire model (cheap one-pass). */
 function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const m = new Map<string, string>();
@@ -114,7 +117,7 @@ export function searchObjects(
 ) {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: 'Query exceeds maximum length of 200 characters.' };
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
   }
 
   const typeSet                = types         ? new Set<ObjectType>(types)           : undefined;
@@ -146,6 +149,7 @@ export function searchObjects(
   }));
 
   let results: object[] = nameResults;
+  let bodyTruncated = false;
 
   if (includeBody) {
     // Body types = intersection of requested types with body-scriptable types
@@ -159,10 +163,12 @@ export function searchObjects(
         model.nodes as SearchableNode[],
         query,
         bodyTypeSet,
-        2,
+        SNIPPET_CONTEXT_LINES,
         effectiveCaps.SEARCH_MAX_RESULTS,
       );
-      const seenIds = new Set(nameResults.map(r => (r as unknown as { id: string }).id));
+      bodyTruncated = bodyHits.length >= effectiveCaps.SEARCH_MAX_RESULTS;
+      // Deduplicate against name hits using source node IDs (typed — avoids casting nameResults)
+      const seenIds = new Set(filtered.map(n => n.id));
       const bodyResults = bodyHits
         .filter(m => !seenIds.has(m.node.id))
         .map(m => ({
@@ -177,7 +183,7 @@ export function searchObjects(
   const base = {
     results,
     total:     results.length,
-    truncated: nameHits.length >= effectiveCaps.SEARCH_MAX_RESULTS,
+    truncated: nameHits.length >= effectiveCaps.SEARCH_MAX_RESULTS || bodyTruncated,
   };
 
   if (results.length === 0) {
@@ -197,13 +203,13 @@ export function getObjectDetail(
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
 
-  const node = model.nodes.find(n => n.id === id);
+  const nodeMap   = buildNodeMap(model);
+  const node      = nodeMap.get(id);
   if (!node) {
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
 
   const neighbors = model.neighborIndex[id] ?? { in: [], out: [] };
-  const nodeMap   = buildNodeMap(model);
   const edgeMap   = buildEdgeTypeMap(model);
 
   const upRaw  = neighbors.in;
@@ -263,6 +269,77 @@ export function getObjectDetail(
 
 const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
+/** Run bidirectional BFS and return depth maps for each direction. */
+function executeBfs(
+  graph: Graph, id: string, upstreamHops: number, downstreamHops: number,
+): { upDepth: Map<string, number>; downDepth: Map<string, number> } {
+  const upDepth   = new Map<string, number>();
+  const downDepth = new Map<string, number>();
+  if (upstreamHops > 0) {
+    bfsFromNode(graph, id, (node, _attr, depth) => {
+      if (depth > upstreamHops) return true;
+      upDepth.set(node, depth);
+    }, { mode: 'inbound' });
+  }
+  upDepth.set(id, 0);
+  if (downstreamHops > 0) {
+    bfsFromNode(graph, id, (node, _attr, depth) => {
+      if (depth > downstreamHops) return true;
+      downDepth.set(node, depth);
+    }, { mode: 'outbound' });
+  }
+  downDepth.set(id, 0);
+  return { upDepth, downDepth };
+}
+
+/** Apply include + exclude filters to a node ID set. Returns filtered IDs and excluded count. */
+function applyBfsFilters(
+  allNodeIds: Set<string>,
+  nodeMap: Map<string, LineageNode>,
+  typeSet: Set<ObjectType> | null,
+  schemaSet: Set<string> | null,
+  excludeSchemaMatchers: RegExp[] | null,
+  excludeTypeSet: Set<ObjectType> | null,
+): { filteredIds: string[]; excludedCount: number } {
+  const afterInclude = [...allNodeIds].filter(nid => {
+    const n = nodeMap.get(nid);
+    if (!n) return false;
+    if (typeSet   && !typeSet.has(n.type))     return false;
+    if (schemaSet && !schemaSet.has(n.schema)) return false;
+    return true;
+  });
+  const hasExclusions = excludeSchemaMatchers !== null || excludeTypeSet !== null;
+  const filteredIds = hasExclusions
+    ? afterInclude.filter(nid => {
+        const n = nodeMap.get(nid);
+        if (!n) return true;
+        if (excludeSchemaMatchers && matchesAnySqlLike(n.schema, excludeSchemaMatchers)) return false;
+        if (excludeTypeSet        && excludeTypeSet.has(n.type))                         return false;
+        return true;
+      })
+    : afterInclude;
+  return { filteredIds, excludedCount: afterInclude.length - filteredIds.length };
+}
+
+/** Attach DDL or column list to a BFS node base object. */
+function attachDdl(
+  base: Record<string, unknown>,
+  node: LineageNode | undefined,
+  includeDdl: boolean,
+  maxDdlChars: number,
+): Record<string, unknown> {
+  if (!includeDdl || !node) return base;
+  if (SCRIPT_TYPES.has(node.type) && node.bodyScript) {
+    const ddl = normalizeBodyScript(node.bodyScript);
+    if (ddl.length > maxDdlChars) return { ...base, ddl_too_large: true, ddl_chars: ddl.length };
+    return { ...base, ddl };
+  }
+  if (node.columns && node.columns.length > 0) {
+    return { ...base, cols: node.columns.map(c => presentColumn(c)) };
+  }
+  return base;
+}
+
 export function runBfsTrace(
   model: DatabaseModel,
   graph: Graph,
@@ -281,56 +358,18 @@ export function runBfsTrace(
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
 
-  const upDepth   = new Map<string, number>();
-  const downDepth = new Map<string, number>();
-
-  // Upstream BFS (inbound = follow edges backwards toward sources)
-  if (upstreamHops > 0) {
-    bfsFromNode(graph, id, (node, _attr, depth) => {
-      if (depth > upstreamHops) return true; // prune branch
-      upDepth.set(node, depth);
-    }, { mode: 'inbound' });
-  }
-  upDepth.set(id, 0);
-
-  // Downstream BFS (outbound = follow edges toward dependents)
-  if (downstreamHops > 0) {
-    bfsFromNode(graph, id, (node, _attr, depth) => {
-      if (depth > downstreamHops) return true;
-      downDepth.set(node, depth);
-    }, { mode: 'outbound' });
-  }
-  downDepth.set(id, 0);
-
-  const allNodeIds             = new Set([...upDepth.keys(), ...downDepth.keys()]);
-  const nodeMap                = buildNodeMap(model);
-  const typeSet                = types         ? new Set<ObjectType>(types)            : null;
-  const schemaSet              = schemas       ? new Set<string>(schemas)              : null;
+  const { upDepth, downDepth } = executeBfs(graph, id, upstreamHops, downstreamHops);
+  const allNodeIds    = new Set([...upDepth.keys(), ...downDepth.keys()]);
+  const nodeMap       = buildNodeMap(model);
+  const typeSet       = types        ? new Set<ObjectType>(types)   : null;
+  const schemaSet     = schemas      ? new Set<string>(schemas)     : null;
   // exclude_schemas: SQL-style patterns — % matches any sequence; all other chars literal (case-insensitive)
-  const excludeSchemaMatchers  = compileSqlLikePatterns(excludeSchemas);
-  const excludeTypeSet         = excludeTypes  ? new Set<ObjectType>(excludeTypes)     : null;
+  const excludeSchemaMatchers = compileSqlLikePatterns(excludeSchemas);
+  const excludeTypeSet        = excludeTypes ? new Set<ObjectType>(excludeTypes) : null;
 
-  // Include filter (allowlist — applied first; schemas/types are exact match)
-  const afterInclude = [...allNodeIds].filter(nid => {
-    const n = nodeMap.get(nid);
-    if (!n) return false;
-    if (typeSet   && !typeSet.has(n.type))     return false;
-    if (schemaSet && !schemaSet.has(n.schema)) return false;
-    return true;
-  });
-
-  // Exclude filter (denylist — post-filter; schema patterns use SQL LIKE, types are exact)
-  const hasExclusions = excludeSchemaMatchers !== null || excludeTypeSet !== null;
-  const filteredIds = hasExclusions
-    ? afterInclude.filter(nid => {
-        const n = nodeMap.get(nid);
-        if (!n) return true;
-        if (excludeSchemaMatchers && matchesAnySqlLike(n.schema, excludeSchemaMatchers)) return false;
-        if (excludeTypeSet        && excludeTypeSet.has(n.type))                  return false;
-        return true;
-      })
-    : afterInclude;
-  const excludedCount = afterInclude.length - filteredIds.length;
+  const { filteredIds, excludedCount } = applyBfsFilters(
+    allNodeIds, nodeMap, typeSet, schemaSet, excludeSchemaMatchers, excludeTypeSet,
+  );
 
   // Collect edges between filtered nodes
   const filteredSet = new Set(filteredIds);
@@ -341,10 +380,9 @@ export function runBfsTrace(
     }
   }
 
-  const totalNodes = filteredIds.length;
-  const totalEdges = allEdges.length;
-  const truncated  = totalNodes > effectiveCaps.BFS_MAX_NODES || totalEdges > effectiveCaps.BFS_MAX_EDGES;
-
+  const totalNodes  = filteredIds.length;
+  const totalEdges  = allEdges.length;
+  const truncated   = totalNodes > effectiveCaps.BFS_MAX_NODES || totalEdges > effectiveCaps.BFS_MAX_EDGES;
   const cappedIds   = filteredIds.slice(0, effectiveCaps.BFS_MAX_NODES);
   const cappedSet   = new Set(cappedIds);
   const cappedEdges = allEdges
@@ -352,7 +390,7 @@ export function runBfsTrace(
     .slice(0, effectiveCaps.BFS_MAX_EDGES);
 
   const nodes = cappedIds.map(nid => {
-    const n = nodeMap.get(nid);
+    const n    = nodeMap.get(nid);
     const base = strip({
       id:  nid,
       s:   n?.schema       || undefined,
@@ -362,24 +400,7 @@ export function runBfsTrace(
       up:  upDepth.get(nid),
       dn:  downDepth.get(nid),
     } as Record<string, unknown>);
-
-    if (!includeDdl || !n) return base;
-
-    // Scriptable: add DDL
-    if (SCRIPT_TYPES.has(n.type) && n.bodyScript) {
-      const ddl = normalizeBodyScript(n.bodyScript);
-      if (ddl.length > effectiveCaps.MAX_DDL_CHARS) {
-        return { ...base, ddl_too_large: true, ddl_chars: ddl.length };
-      }
-      return { ...base, ddl };
-    }
-
-    // Table / external: add compact column list
-    if (n.columns && n.columns.length > 0) {
-      return { ...base, cols: n.columns.map(c => presentColumn(c)) };
-    }
-
-    return base;
+    return attachDdl(base, n, includeDdl, effectiveCaps.MAX_DDL_CHARS);
   });
 
   return {
@@ -436,7 +457,7 @@ export function searchDdl(
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: 'Query exceeds maximum length of 200 characters.' };
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
   }
 
   // Reject invalid / catastrophically slow regex
@@ -591,9 +612,10 @@ export function getDdlBatch(
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   const cappedIds = ids.slice(0, effectiveCaps.DDL_BATCH_CAP);
+  const nodeMap   = buildNodeMap(model);
 
   const results = cappedIds.map(id => {
-    const node = model.nodes.find(n => n.id === id);
+    const node = nodeMap.get(id);
     if (!node) {
       return strip({ id, error: 'not_found' } as Record<string, unknown>);
     }

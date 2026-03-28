@@ -55,7 +55,7 @@ export const StatusMessage = memo(function StatusMessage({ text, type }: StatusM
       </svg>
       <div className="min-w-0">
         <div className="text-xs font-semibold">{title}</div>
-        <div className="text-xs mt-0.5 break-words" style={{ color: 'var(--ln-fg-muted)', opacity: 0.9 }}>
+        <div className="text-xs mt-0.5 break-words ln-status-body">
           {body}
         </div>
       </div>

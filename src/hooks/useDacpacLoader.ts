@@ -88,18 +88,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       setStatus({ text: `${result.nodes.length} nodes · ${result.edges.length} edges · ${result.schemas.length} schema${s}`, type: 'success' });
     }
 
-    if (result.parseStats) {
-      vscodeApi.postMessage({
-        type: 'parse-stats',
-        stats: result.parseStats,
-        objectCount: result.nodes.length,
-        edgeCount: result.edges.length,
-        schemaCount: result.schemas.length,
-      });
-    } else {
-      vscodeApi.postMessage({ type: 'log', text: statusText });
-    }
-  }, [vscodeApi]);
+  }, []);
 
   // Listen for messages from VS Code extension host
   useEffect(() => {

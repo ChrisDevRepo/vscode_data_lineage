@@ -558,6 +558,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
   border-radius: 3px;
   font-size: 0.9em;
 }
+.ln-modal .ln-text-dim {
+  color: var(--ln-wizard-fg-dim);
+}
 
 /* Search highlight inside text nodes */
 .ln-mark {
@@ -567,14 +570,14 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 
 /* HelpModal — code/pattern example block */
 .ln-help-code-block {
-  background: var(--ln-bg-secondary);
-  border: 1px solid var(--ln-border);
+  background: var(--ln-wizard-input-bg);
+  border: 1px solid var(--ln-wizard-border);
 }
 
 /* HelpModal — analysis type card */
 .ln-help-analysis-card {
-  background: var(--ln-bg-elevated);
-  border: 1px solid var(--ln-border);
+  background: var(--ln-wizard-input-bg);
+  border: 1px solid var(--ln-wizard-border);
 }
 
 /* HelpModal — header/footer separators */
@@ -582,13 +585,16 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 .ln-help-sep-top    { border-top:    1px solid var(--ln-wizard-border); }
 
 /* HelpModal — muted info note (no border) */
-.ln-help-info-block { background: var(--ln-bg-secondary); }
+.ln-help-info-block {
+  background: var(--ln-wizard-input-bg);
+  border: 1px solid var(--ln-wizard-border);
+}
 
 /* HelpModal — "NEW" feature badge */
 .ln-help-badge {
-  background: var(--ln-button-secondary-bg);
+  background: var(--ln-wizard-btn-bg);
   color: var(--ln-wizard-link, #60a5fa);
-  border: 1px solid var(--ln-border);
+  border: 1px solid var(--ln-wizard-border);
   letter-spacing: .05em;
 }
 
@@ -663,6 +669,13 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 .ln-status-info {
   background: transparent;
   border: 1px solid var(--ln-border);
+}
+.ln-status-body {
+  color: var(--ln-fg-muted);
+  opacity: 0.9;
+}
+.ln-status-error .ln-status-body {
+  color: inherit;
 }
 
 /* Start screen — outer area follows the active theme */
@@ -752,6 +765,10 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 .ln-start-screen .ln-panel .ln-status-info {
   background: var(--ln-wizard-input-bg);
   border-color: var(--ln-wizard-border);
+}
+.ln-start-screen .ln-panel .ln-status-error {
+  color: var(--ln-wizard-error);
+  border-color: var(--ln-wizard-error);
 }
 /* Wizard error — always-dark-palette red, use instead of --vscode-editorError-foreground in start screen */
 .ln-wizard-text-error  { color: var(--ln-wizard-error); }

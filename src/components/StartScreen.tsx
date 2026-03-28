@@ -108,8 +108,7 @@ export const StartScreen = memo(function StartScreen({
           {confirmDeleteAll && (
             <div className="flex items-center gap-1.5">
               <button
-                className="text-xs px-2 py-0.5 rounded"
-                style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)', border: '1px solid var(--vscode-editorError-foreground, #f14c4c)' }}
+                className="text-xs px-2 py-0.5 rounded ln-wizard-error-btn"
                 onClick={() => { onDeleteAllProjects(); setConfirmDeleteAll(false); }}
               >
                 Confirm
@@ -139,8 +138,7 @@ export const StartScreen = memo(function StartScreen({
                   <span className="text-sm truncate">Delete &ldquo;{project.name}&rdquo;?</span>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
-                      className="text-xs px-2 py-1 rounded ln-list-item"
-                      style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}
+                      className="text-xs px-2 py-1 rounded ln-list-item ln-wizard-text-error"
                       onClick={(e) => { e.stopPropagation(); onDeleteProject(project.id); setConfirmDeleteId(null); }}
                     >Delete</button>
                     <button

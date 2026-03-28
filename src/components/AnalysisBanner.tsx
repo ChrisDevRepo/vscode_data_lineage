@@ -90,8 +90,7 @@ export const AnalysisBanner = memo(function AnalysisBanner({
               onChange={e => setSaveName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleConfirmSave(); if (e.key === 'Escape') { setSaving(false); setSaveName(''); } }}
               placeholder="Bookmark name…"
-              className="h-7 px-2 text-xs rounded ln-input"
-              style={{ width: 140 }}
+              className="h-7 px-2 text-xs rounded ln-input w-[140px]"
             />
             <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none">
               <input

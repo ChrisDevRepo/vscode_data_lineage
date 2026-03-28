@@ -13,7 +13,7 @@ import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
-import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ExternalRefsConfig, type OverviewConfig, type ObjectType, type DatabaseModel, type XmlElement } from './engine/types';
+import { DEFAULT_CONFIG, ENGINE_EDITION_FABRIC, type LayoutConfig, type EdgeStyle, type TraceConfig, type AnalysisConfig, type TableStatsConfig, type ExternalRefsConfig, type OverviewConfig, type ObjectType, type AnalysisType, type DatabaseModel, type XmlElement } from './engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from './engine/dacpacExtractor';
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
@@ -48,6 +48,7 @@ let _aiViews:          FilterProfile[] = [];
 let _aiProjectName:    string | null = null;
 let _aiCurrentProjectId: string | null = null;
 let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; conservative fallback
+let _aiCaps:           AiCapsOverride = {};  // refreshed once per @lineage request; avoids re-reading config per tool call
 
 function isAiEnabled(): boolean {
   return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
@@ -55,7 +56,7 @@ function isAiEnabled(): boolean {
 
 function autoScaleTier(maxInputTokens: number): AiCapsOverride {
   if (maxInputTokens > 128000) {
-    return { BFS_MAX_NODES: 400, BFS_MAX_EDGES: 600, SEARCH_MAX_RESULTS: 100, ANALYSIS_MAX_GROUPS: 200, MAX_DDL_CHARS: 500000 };
+    return { BFS_MAX_NODES: 400, BFS_MAX_EDGES: 600, SEARCH_MAX_RESULTS: 100, ANALYSIS_MAX_GROUPS: 200, MAX_DDL_CHARS: 500000, DDL_BATCH_CAP: 40 };
   }
   if (maxInputTokens < 32000) {
     return { BFS_MAX_NODES: 100, BFS_MAX_EDGES: 150, SEARCH_MAX_RESULTS: 20, ANALYSIS_MAX_GROUPS: 50, MAX_DDL_CHARS: 4000 };
@@ -279,7 +280,7 @@ export function activate(context: vscode.ExtensionContext) {
           include_body?: boolean; exclude_schemas?: string[]; exclude_types?: string[];
         };
         outputChannel.debug(`[AI] lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, include_body=${include_body ?? false}`);
-        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, external_subtypes as ('et' | 'file' | 'db')[] | undefined, include_body, exclude_schemas, exclude_types as ObjectType[] | undefined, readAiCaps());
+        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, external_subtypes as ('et' | 'file' | 'db')[] | undefined, include_body, exclude_schemas, exclude_types as ObjectType[] | undefined, _aiCaps);
         return toolResult(result);
       },
     }),
@@ -293,7 +294,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { id } = options.input as { id: string };
         outputChannel.debug(`[AI] lineage_get_object_detail: id="${id}"`);
-        return toolResult(getObjectDetail(m, id, readAiCaps()));
+        return toolResult(getObjectDetail(m, id, _aiCaps));
       },
     }),
     vscode.lm.registerTool('lineage_run_bfs_trace', {
@@ -317,7 +318,7 @@ export function activate(context: vscode.ExtensionContext) {
           };
         outputChannel.debug(`[AI] lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
         return toolResult(runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
-          types as never, schemas, include_ddl ?? true, exclude_schemas, exclude_types as never, readAiCaps()));
+          types as ObjectType[] | undefined, schemas, include_ddl ?? true, exclude_schemas, exclude_types as ObjectType[] | undefined, _aiCaps));
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
@@ -333,7 +334,7 @@ export function activate(context: vscode.ExtensionContext) {
           type: string; min_degree?: number; max_size?: number;
         };
         outputChannel.debug(`[AI] lineage_run_analysis: type="${type}"`);
-        return toolResult(runAnalysis(m, g, type as never, min_degree, max_size, readAiCaps()));
+        return toolResult(runAnalysis(m, g, type as AnalysisType, min_degree, max_size, _aiCaps));
       },
     }),
     vscode.lm.registerTool('lineage_search_ddl', {
@@ -346,7 +347,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { query, types } = options.input as { query: string; types?: string[] };
         outputChannel.debug(`[AI] lineage_search_ddl: query="${query.slice(0, 60)}"`);
-        return toolResult(searchDdl(m, query, types as never, readAiCaps()));
+        return toolResult(searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _aiCaps));
       },
     }),
     vscode.lm.registerTool('lineage_create_ai_view', {
@@ -443,7 +444,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { ids } = options.input as { ids: string[] };
         outputChannel.debug(`[AI] lineage_get_ddl_batch: ${ids.length} ids`);
-        return toolResult(getDdlBatch(m, ids, readAiCaps()));
+        return toolResult(getDdlBatch(m, ids, _aiCaps));
       },
     }),
   );
@@ -454,8 +455,9 @@ export function activate(context: vscode.ExtensionContext) {
   const participant = vscode.chat.createChatParticipant(
     'dataLineageViz.lineage',
     async (request, context, stream, token): Promise<vscode.ChatResult> => {
-      // Update model context window for auto-scaling caps
+      // Update model context window and refresh caps once per request
       _aiMaxInputTokens = request.model.maxInputTokens;
+      _aiCaps = readAiCaps();
 
       if (!isAiEnabled()) {
         stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
@@ -469,12 +471,21 @@ export function activate(context: vscode.ExtensionContext) {
 
       const lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
 
-      // Build conversation history — re-inject tool call rounds so the model remembers prior tool use
+      // Build conversation history — re-inject tool call rounds so the model remembers prior tool use.
+      // Tool results are only re-injected for the last HISTORY_TOOL_WINDOW response turns to avoid
+      // ballooning the context window in long conversations with large BFS traces.
+      const HISTORY_TOOL_WINDOW = 3;
+      const responseTurns = context.history.filter(t => t instanceof vscode.ChatResponseTurn);
+      const toolResultCutoff = responseTurns.length - HISTORY_TOOL_WINDOW;
+      let responseIndex = 0;
+
       const historyMessages: vscode.LanguageModelChatMessage[] = [];
       for (const turn of context.history) {
         if (turn instanceof vscode.ChatRequestTurn) {
           historyMessages.push(vscode.LanguageModelChatMessage.User(turn.prompt));
         } else if (turn instanceof vscode.ChatResponseTurn) {
+          const isRecent = responseIndex >= toolResultCutoff;
+          responseIndex++;
           const meta = (turn.result.metadata as any)?.toolCallsMetadata as
             | { toolCallRounds: ToolCallRound[]; toolCallResults: Record<string, vscode.LanguageModelToolResult> }
             | undefined;
@@ -487,17 +498,19 @@ export function activate(context: vscode.ExtensionContext) {
               historyMessages.push(new vscode.LanguageModelChatMessage(
                 vscode.LanguageModelChatMessageRole.Assistant, assistantParts,
               ));
-              // Re-inject tool results for this round
-              const resultParts = round.toolCalls
-                .map(tc => {
-                  const r = meta.toolCallResults[tc.callId];
-                  return r ? new vscode.LanguageModelToolResultPart(tc.callId, r.content) : null;
-                })
-                .filter((p): p is vscode.LanguageModelToolResultPart => p !== null);
-              if (resultParts.length) {
-                historyMessages.push(new vscode.LanguageModelChatMessage(
-                  vscode.LanguageModelChatMessageRole.User, resultParts,
-                ));
+              // Only re-inject tool result data for recent turns — older turns keep assistant text only
+              if (isRecent) {
+                const resultParts = round.toolCalls
+                  .map(tc => {
+                    const r = meta.toolCallResults[tc.callId];
+                    return r ? new vscode.LanguageModelToolResultPart(tc.callId, r.content) : null;
+                  })
+                  .filter((p): p is vscode.LanguageModelToolResultPart => p !== null);
+                if (resultParts.length) {
+                  historyMessages.push(new vscode.LanguageModelChatMessage(
+                    vscode.LanguageModelChatMessageRole.User, resultParts,
+                  ));
+                }
               }
             }
           } else {
@@ -518,10 +531,11 @@ export function activate(context: vscode.ExtensionContext) {
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(
           'SQL lineage assistant. Use ONLY provided tools — never training knowledge.\n' +
-          'Call lineage_get_context first each conversation.\n' +
-          'BFS: start 1 hop, expand if incomplete=true. Never claim complete when incomplete=true.\n' +
+          'Call lineage_get_context ONCE per conversation (the context is stable and will not change mid-session).\n' +
+          'BFS defaults to 3 hops each direction; reduce to 1–2 for large graphs, expand if truncated=true.\n' +
           'Before create_ai_view: obtain node IDs from search/BFS — never fabricate.\n' +
-          'Format: columns→table, deps→bullets with →, SQL→```sql.',
+          'Format: columns→table, deps→bullets with →, SQL→```sql.\n' +
+          'Tool data older than 3 turns is not in context — re-call tools if you need earlier results.',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(request.prompt),
@@ -955,7 +969,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             _aiCurrentProjectId = project.id;
             if (schemas && schemas.length > 0) {
               // Phase 2 directly: preselected schemas from saved project
-              if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
+              if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
               const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
               const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
               currentModel = model;
@@ -1089,7 +1103,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         }
         const config = await readExtensionConfig();
         try {
-          if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
+          if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
           const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
           currentModel = model;
           currentGraph = buildBareGraph(model);
@@ -1116,8 +1130,6 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         _aiViews = msg.savedViews;
         outputChannel.debug('[Bridge] Active filter updated via filter-changed');
       },
-      'parse-rules-result': (msg) => { handleParseRulesResult(msg); },
-      'parse-stats': (msg) => { handleParseStats(msg.stats, msg.objectCount, msg.edgeCount, msg.schemaCount); },
       'log': (msg) => { outputChannel.info(msg.text); },
       'error': (msg) => {
         outputChannel.error(msg.error);
@@ -1245,6 +1257,11 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
         outputChannel.debug(`[Project] View deleted: ${msg.profileId}`);
       },
+      'rebuild': async () => {
+        const config = await readExtensionConfig();
+        panel.webview.postMessage({ type: 'config-only', config });
+        outputChannel.debug('[Rebuild] Config re-sent to webview');
+      },
       'reload': () => {
         panel.dispose();
         openPanel(context, title, loadDemo);
@@ -1292,8 +1309,6 @@ type WebviewMessage =
   | { type: 'save-view'; projectId: string; profile: import('./engine/projectStore').FilterProfile }
   | { type: 'save-wizard-view'; view: 'main' | 'projects' }
   | { type: 'delete-view'; projectId: string; profileId: string }
-  | { type: 'parse-rules-result'; loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean; categoryCounts?: Record<string, number> }
-  | { type: 'parse-stats'; stats: { parsedRefs: number; resolvedEdges: number; droppedRefs: string[]; spDetails?: { name: string; inCount: number; outCount: number; inRefs?: string[]; outRefs?: string[]; unrelated: string[]; skippedRefs?: string[] }[] }; objectCount?: number; edgeCount?: number; schemaCount?: number }
   | { type: 'log'; text: string }
   | { type: 'error'; error: string; stack?: string }
   | { type: 'open-external'; url?: string }
@@ -1303,6 +1318,7 @@ type WebviewMessage =
   | { type: 'close-detail' }
   | { type: 'check-mssql' }
   | { type: 'db-connect' }
+  | { type: 'rebuild' }
   | { type: 'reload' }
   | { type: 'dacpac-visualize'; schemas: string[]; projectName?: string }
   | { type: 'db-visualize'; schemas: string[]; projectName?: string }
@@ -1435,7 +1451,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     try {
       config.parseRules = await loadBuiltInParseRules();
       lastRulesLabel = 'built-in rules';
-      outputChannel.info(`[ParseRules] Using built-in defaults (${(config.parseRules as Record<string, unknown[]>).rules.length} rules)`);
+      outputChannel.debug(`[ParseRules] Built-in YAML loaded (${(config.parseRules as Record<string, unknown[]>).rules.length} rules)`);
     } catch (err) {
       outputChannel.error(`[ParseRules] Failed to load built-in rules: ${err instanceof Error ? err.message : String(err)}`);
       vscode.window.showWarningMessage('Failed to load parse rules — regex-based edge detection disabled. Check Output channel.');
@@ -1798,10 +1814,7 @@ async function runDbPhase2(
   outputChannel.info('[DB] Building model from DMV results...');
   const start = Date.now();
   const preConfig = await readExtensionConfig();
-  if (preConfig.parseRules) {
-    const rulesResult = loadRules(preConfig.parseRules as ParseRulesConfig);
-    outputChannel.debug(`[DB] Parse rules loaded: ${rulesResult.loaded} rules (${Object.entries(rulesResult.categoryCounts).map(([k, v]) => `${k}: ${v}`).join(', ')})`);
-  }
+  if (preConfig.parseRules) handleParseRulesResult(loadRules(preConfig.parseRules as ParseRulesConfig));
   const model = buildModelFromDmv(dmvResults, currentDatabase, preConfig.externalRefs.enabled, preConfig.maxNodes);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   const extNodes = model.nodes.filter(n => n.type === 'external');
@@ -1811,6 +1824,7 @@ async function runDbPhase2(
     outputChannel.debug(`[DB] External nodes: ${extNodes.map(n => n.fullName).join(', ')}`);
   }
 
+  if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
   onModelBuilt?.(model);
   panel.webview.postMessage({
     type: 'db-model',
@@ -1841,7 +1855,7 @@ async function handleLoadDemo(
     const data = await vscode.workspace.fs.readFile(demoUri);
     if (isDacpacTooLarge(data.byteLength)) return;
     outputChannel.info('── Opening AdventureWorks (Demo) ──');
-    if (config.parseRules) loadRules(config.parseRules as ParseRulesConfig);
+    if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
     const model = await extractDacpac(data.buffer as ArrayBuffer);
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
@@ -1879,7 +1893,7 @@ function handleParseRulesResult(message: {
       `Parse rules: ${message.loaded} loaded, ${message.skipped.length} skipped (${message.skipped.join(', ')}). Check Output channel for details.`
     );
   } else {
-    outputChannel.info(`[ParseRules] Custom rules loaded: ${message.loaded} rules${breakdown}`);
+    outputChannel.info(`[ParseRules] ${lastRulesLabel || `${message.loaded} rules`} loaded${breakdown}`);
   }
 }
 
