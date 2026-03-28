@@ -189,6 +189,16 @@ export function activate(context: vscode.ExtensionContext) {
     ),
   );
 
+  // ─── AI: "Show in Graph" — sends follow-up to @lineage to create annotated view
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dataLineageViz.aiCreateView', (originalPrompt: string) => {
+      const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${(originalPrompt || '').slice(0, 60)}"`;
+      vscode.commands.executeCommand('workbench.action.chat.open', {
+        query: `@lineage ${viewPrompt}`,
+      });
+    }),
+  );
+
   // ─── Schema overview mode: status bar + toggle command ─────────────────────
   overviewStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   overviewStatusBar.command = 'dataLineageViz.toggleOverviewMode';
@@ -462,6 +472,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ─── @lineage Chat Participant ─────────────────────────────────────────────
   type ToolCallRound = { response: string; toolCalls: vscode.LanguageModelToolCallPart[] };
+
+
 
   const participant = vscode.chat.createChatParticipant(
     'dataLineageViz.lineage',
@@ -763,6 +775,15 @@ export function activate(context: vscode.ExtensionContext) {
           logInfo(outputChannel, 'AI', `Tool sequence: ${toolSequence.join(' → ')}`);
         }
         logDebug(outputChannel, 'AI', `Prompt: "${request.prompt.slice(0, 100)}${request.prompt.length > 100 ? '…' : ''}"`);
+        // B3: "Show in Graph" button after BFS trace — triggers AI to create an annotated view
+        if (activePanel && toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'))) {
+          stream.button({
+            command: 'dataLineageViz.aiCreateView',
+            title: '$(type-hierarchy-sub) Show in Graph',
+            arguments: [request.prompt],
+          });
+        }
+
         // Behavioral hint: if no tools were called, the model likely doesn't support function calling
         if (totalToolCallsMade === 0 && lineageTools.length > 0) {
           stream.markdown(
