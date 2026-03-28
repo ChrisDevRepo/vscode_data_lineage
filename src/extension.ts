@@ -5,7 +5,7 @@ import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
   AI_CAPS, type AiCapsOverride,
-  getContext, getSchemasSummary, searchObjects, getObjectDetail,
+  getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
   type CreateAiViewInput,
 } from './ai/tools';
@@ -273,17 +273,6 @@ export function activate(context: vscode.ExtensionContext) {
         return toolResult(getContext(m, _aiFilter, _aiProjectName, _aiViews));
       },
     }),
-    vscode.lm.registerTool('lineage_get_schema_summary', {
-      prepareInvocation(_options, _token) {
-        return { invocationMessage: 'Getting schema summary…' };
-      },
-      invoke(_options, _token) {
-        if (!isAiEnabled()) return disabled();
-        const m = requireModel();
-        logDebug(outputChannel, 'AI', 'lineage_get_schema_summary');
-        return toolResult(getSchemasSummary(m));
-      },
-    }),
     vscode.lm.registerTool('lineage_search_objects', {
       prepareInvocation(options, _token) {
         const { query } = options.input as { query: string };
@@ -292,13 +281,12 @@ export function activate(context: vscode.ExtensionContext) {
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
-        const { query, types, schemas, external_subtypes, include_body, exclude_schemas, exclude_types, mode } = options.input as {
-          query: string; types?: string[]; schemas?: string[]; external_subtypes?: string[];
-          include_body?: boolean; exclude_schemas?: string[]; exclude_types?: string[];
+        const { query, types, schemas, mode } = options.input as {
+          query: string; types?: string[]; schemas?: string[];
           mode?: 'substring' | 'regex';
         };
-        logDebug(outputChannel, 'AI', `lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, include_body=${include_body ?? false}${mode === 'regex' ? ', mode=regex' : ''}`);
-        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, external_subtypes as ('et' | 'file' | 'db')[] | undefined, include_body, exclude_schemas, exclude_types as ObjectType[] | undefined, mode ?? 'substring', _aiCaps);
+        logDebug(outputChannel, 'AI', `lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, schemas=${JSON.stringify(schemas ?? null)}${mode === 'regex' ? ', mode=regex' : ''}`);
+        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, mode ?? 'substring', _aiCaps);
         return toolResult(result);
       },
     }),
@@ -320,23 +308,22 @@ export function activate(context: vscode.ExtensionContext) {
         const { id, upstream_hops, downstream_hops, include_ddl } = options.input as {
           id: string; upstream_hops?: number; downstream_hops?: number; include_ddl?: boolean;
         };
-        const ddlTag = (include_ddl ?? true) ? '' : ' (structure only)';
+        const ddlTag = (include_ddl ?? false) ? ' (with DDL)' : '';
         return { invocationMessage: `Tracing lineage from "${id}" (↑${upstream_hops ?? 3} ↓${downstream_hops ?? 3} hops)${ddlTag}…` };
       },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const g = requireGraph();
-        const { id, upstream_hops, downstream_hops, types, schemas, include_ddl, exclude_schemas, exclude_types } =
+        const { id, upstream_hops, downstream_hops, types, schemas, include_ddl } =
           options.input as {
             id: string; upstream_hops?: number; downstream_hops?: number;
             types?: string[]; schemas?: string[];
             include_ddl?: boolean;
-            exclude_schemas?: string[]; exclude_types?: string[];
           };
-        logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
+        logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? false}`);
         return toolResult(runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
-          types as ObjectType[] | undefined, schemas, include_ddl ?? true, exclude_schemas, exclude_types as ObjectType[] | undefined, _aiCaps));
+          types as ObjectType[] | undefined, schemas, include_ddl ?? false, _aiCaps));
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
@@ -624,10 +611,10 @@ export function activate(context: vscode.ExtensionContext) {
           '- Batch independent calls in ONE round. Past round 5: present findings.\n\n' +
           'WORKFLOW: SEARCH → VALIDATE → REASON → PRESENT\n' +
           '1. get_context → learn schemas, model_size. If "small", objects[] included — skip search.\n' +
-          '2. search_objects/search_ddl → find starting points. "schema.name" auto-splits. mode="regex" for batch.\n' +
+          '2. search_objects → find by name (substring or mode="regex" for batch). search_ddl → find by DDL content. Use schemas[] to filter.\n' +
           '3. VALIDATE: Do search results match what the user asked? If not → STOP, ask user (see SPEC CHECK).\n' +
-          '4. run_bfs_trace → ALL connected objects. Exclude copy/historization SPs, hub utilities, dim lookups.\n' +
-          '5. get_ddl_batch for key SPs → INSERT/SELECT to trace column-level data flow.\n' +
+          '4. run_bfs_trace (ddl=false default) → structure only. Then get_ddl_batch for 4-8 key SPs.\n' +
+          '5. Read DDL: INSERT/SELECT column mappings to trace data flow.\n' +
           '6. create_ai_view → max 25 nodes. For 3+ schemas, create 2-3 focused views.\n\n' +
           'COLUMN TRACE ("what drives X" / "where does X come from"):\n' +
           '- Start from output table (get_object_detail for columns).\n' +

@@ -71,7 +71,7 @@ export function presentColumn(col: ColumnDef): Record<string, unknown> {
 }
 
 /**
- * Compact schema shape used in getSchemasSummary.
+ * Compact schema shape used in getContext.
  * Type counts stripped when zero.
  */
 export function presentSchema(schema: SchemaInfo): Record<string, unknown> {

@@ -493,7 +493,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Call ONCE at start. Returns model overview: schemas (with per-type counts), stats, active filter, saved views. Use schema names in other tools' schemas[] filters. Includes all data from get_schema_summary.",
+        "modelDescription": "Call ONCE at start. Returns schemas (with per-type counts), stats, active filter, saved views. Use schema names in other tools' schemas[] filters.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -506,28 +506,11 @@
         }
       },
       {
-        "name": "lineage_get_schema_summary",
-        "toolReferenceName": "lineage_get_schema_summary",
-        "displayName": "Get Schema Summary",
-        "userDescription": "Lists all schemas and object counts in the loaded database.",
-        "modelDescription": "SKIP — identical data returned by get_context. Only call after model reload.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(database)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {}
-        }
-      },
-      {
         "name": "lineage_search_objects",
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search by name. Use mode='regex' for multi-pattern ('rev|gl.*cog'). Smart: 'schema.name' auto-splits (substring only). Returns IDs for BFS. Never repeat same query.",
+        "modelDescription": "Search by name (substring or regex). Returns IDs for BFS/detail. Use schemas[] to filter. For DDL body search use search_ddl. Never repeat same query.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -539,7 +522,7 @@
           "properties": {
             "query": {
               "type": "string",
-              "description": "Name to search for (substring or regex, max 200 chars)"
+              "description": "Name to search for (max 200 chars)"
             },
             "types": {
               "type": "array",
@@ -553,51 +536,14 @@
                   "external"
                 ]
               },
-              "description": "Filter to specific object types. Omit for all types."
+              "description": "Include only these object types. Omit for all."
             },
             "schemas": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Filter to specific schema names. Omit to search all schemas."
-            },
-            "external_subtypes": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "et",
-                  "file",
-                  "db"
-                ]
-              },
-              "description": "When types includes 'external': filter by subtype. Omit for all."
-            },
-            "include_body": {
-              "type": "boolean",
-              "description": "Also search DDL body scripts (views, procedures, functions). Body matches include a snippet and match:'body'. Omit or false for name-only search."
-            },
-            "exclude_schemas": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Exclude schemas (% = wildcard). E.g. 'test%', '%staging%'."
-            },
-            "exclude_types": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "table",
-                  "view",
-                  "procedure",
-                  "function",
-                  "external"
-                ]
-              },
-              "description": "Remove results of these object types."
+              "description": "Include only these schemas. Omit for all."
             },
             "mode": {
               "type": "string",
@@ -605,7 +551,7 @@
                 "substring",
                 "regex"
               ],
-              "description": "substring (default) or regex pattern"
+              "description": "substring (default) or regex for multi-pattern ('rev|gl.*cog')"
             }
           },
           "required": [
@@ -643,7 +589,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY lineage tool. Returns ALL connected nodes with IDs, DDL, and unresolved_refs (out-of-scope — ignore). 'Where from?' → downstream_hops=0. schemas/types are allowlists; exclude_schemas uses % wildcard.",
+        "modelDescription": "PRIMARY lineage tool. Returns ALL connected nodes with IDs and unresolved_refs. Default ddl=false — use get_ddl_batch for targeted DDL. schemas[]/types[] are include-only filters.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -655,19 +601,15 @@
           "properties": {
             "id": {
               "type": "string",
-              "description": "Exact object ID to trace from (from lineage_search_objects)"
+              "description": "Exact object ID to trace from"
             },
             "upstream_hops": {
               "type": "number",
-              "description": "Upstream depth (0 = no upstream). Default: 3"
+              "description": "Upstream depth (0 = none). Default 3."
             },
             "downstream_hops": {
               "type": "number",
-              "description": "Downstream depth (0 = no downstream). Default: 3"
-            },
-            "include_ddl": {
-              "type": "boolean",
-              "description": "Include DDL/columns in results (default true). Set false for structure-only — returns node list + edges, no DDL loaded."
+              "description": "Downstream depth (0 = none). Default 3."
             },
             "types": {
               "type": "array",
@@ -688,28 +630,11 @@
               "items": {
                 "type": "string"
               },
-              "description": "Include only nodes in these schemas (exact names from lineage_get_schema_summary). Omit for all."
+              "description": "Include only nodes in these schemas. Omit for all."
             },
-            "exclude_schemas": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Exclude schemas (% = wildcard). E.g. 'test%', '%staging%'."
-            },
-            "exclude_types": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "table",
-                  "view",
-                  "procedure",
-                  "function",
-                  "external"
-                ]
-              },
-              "description": "Remove nodes of these types from results."
+            "include_ddl": {
+              "type": "boolean",
+              "description": "Include DDL in results. Default false — use get_ddl_batch for targeted DDL."
             }
           },
           "required": [

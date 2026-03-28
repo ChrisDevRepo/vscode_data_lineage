@@ -100,7 +100,7 @@ export function compileExclusionPattern(pattern: string): RegExp {
  *   %test%     → substring match: any name containing "test"
  *   test       → exact match (no wildcards)
  *   test_abc   → exact match for "test_abc" only (no false positives)
- * Use for AI tool parameters (exclude_schemas etc.) where predictable behavior is required.
+ * Use where predictable SQL LIKE behavior is required.
  */
 export function compileSqlLikePattern(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');

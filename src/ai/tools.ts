@@ -1,6 +1,6 @@
 /**
  * AI tool pure functions — zero VS Code imports.
- * All 9 functions are invoked by the registered LanguageModelTools in extension.ts.
+ * All 8 functions are invoked by the registered LanguageModelTools in extension.ts.
  *
  * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */
@@ -14,8 +14,8 @@ import {
   type AnalysisType,
 } from '../engine/types';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
-import { searchCatalog, searchBodyScripts, safeRegex, type SearchableNode } from '../utils/modelSearch';
-import { normalizeBodyScript, compileSqlLikePatterns, matchesAnySqlLike } from '../utils/sql';
+import { searchCatalog, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
+import { normalizeBodyScript } from '../utils/sql';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
 import {
   strip, edgeApiType,
@@ -119,93 +119,27 @@ export function getContext(
   };
 }
 
-// ─── Tool 2: lineage_get_schema_summary ──────────────────────────────────────
+// ─── Query validation ───────────────────────────────────────────────────────
 
-export function getSchemasSummary(model: DatabaseModel) {
-  return {
-    schemas:     model.schemas.map(s => presentSchema(s)),
-    total_nodes: model.nodes.length,
-    total_edges: model.edges.length,
-  };
-}
-
-// ─── Smart search middleware ─────────────────────────────────────────────────
-
-/** Result of parsing a smart query like "financehub.revenue" or "financehub revenue". */
-export type SmartQueryResult =
-  | { ok: true; nameQuery: string; schemaHints: string[] | null }
-  | { ok: false; error: string; hint: string };
-
-/**
- * Parse a natural-language query into name query + schema hints.
- * - "financehub.revenue" → schema hint "financehub", name "revenue"
- * - "financehub revenue" → if "financehub" matches a known schema, split; otherwise treat as single query
- * - "revenue" → no schema hint
- * - "." / "*" / single char → rejected as too broad
- *
- * Schema matching is case-insensitive substring: "financehub" matches "consumption_financehub".
- */
-export function parseSmartQuery(
-  query: string,
-  schemaNames: string[],
-): SmartQueryResult {
+/** Reject garbage queries (empty, single char, pure wildcards). */
+export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
-  // Reject garbage: empty, single char, or pure wildcards
   if (trimmed.length < 2) {
-    return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters. To filter by schema, use the schemas[] parameter.' };
+    return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters.' };
   }
   if (/^[.*?+^$]+$/.test(trimmed)) {
     return { ok: false, error: 'query_too_broad', hint: 'Query matches everything. Be more specific or use schemas[] to narrow scope.' };
   }
-
-  // Dot-split: "financehub.revenue" → schema hint + name
-  const dotIdx = trimmed.indexOf('.');
-  if (dotIdx > 0 && dotIdx < trimmed.length - 1) {
-    const left = trimmed.slice(0, dotIdx).trim();
-    const right = trimmed.slice(dotIdx + 1).trim();
-    if (left.length > 0 && right.length > 0) {
-      const matched = findMatchingSchemas(left, schemaNames);
-      if (matched.length > 0) {
-        return { ok: true, nameQuery: right, schemaHints: matched };
-      }
-      // Dot present but left doesn't match any schema — treat as single query
-    }
-  }
-
-  // Space-split: "financehub revenue" → try left as schema hint
-  const spaceIdx = trimmed.indexOf(' ');
-  if (spaceIdx > 0 && spaceIdx < trimmed.length - 1) {
-    const left = trimmed.slice(0, spaceIdx).trim();
-    const right = trimmed.slice(spaceIdx + 1).trim();
-    if (left.length >= 2 && right.length >= 1) {
-      const matched = findMatchingSchemas(left, schemaNames);
-      if (matched.length > 0) {
-        return { ok: true, nameQuery: right, schemaHints: matched };
-      }
-    }
-    // No schema match — fall through to use full query
-  }
-
-  return { ok: true, nameQuery: trimmed, schemaHints: null };
+  return { ok: true };
 }
 
-/** Case-insensitive substring match of hint against known schema names. */
-function findMatchingSchemas(hint: string, schemaNames: string[]): string[] {
-  const lower = hint.toLowerCase();
-  return schemaNames.filter(s => s.toLowerCase().includes(lower));
-}
-
-// ─── Tool 3: lineage_search_objects ──────────────────────────────────────────
+// ─── Tool 2: lineage_search_objects ──────────────────────────────────────────
 
 export function searchObjects(
   model: DatabaseModel,
   query: string,
   types?: ObjectType[],
   schemas?: string[],
-  externalSubtypes?: ('et' | 'file' | 'db')[],
-  includeBody?: boolean,
-  excludeSchemas?: string[],
-  excludeTypes?: ObjectType[],
   mode: 'substring' | 'regex' = 'substring',
   caps?: AiCapsOverride,
 ) {
@@ -214,32 +148,18 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
   }
 
-  let effectiveQuery = query;
-  let effectiveSchemas = schemas;
-  // Track any schema filter applied — from explicit schemas param OR parseSmartQuery hints
-  let appliedSchemaFilter: string[] | null = schemas && schemas.length > 0 ? [...schemas] : null;
-
-  // Smart search middleware: only for substring mode (regex syntax conflicts with schema.name splitting)
+  // Validate query (reject garbage)
   if (mode !== 'regex') {
-    const schemaNames = model.schemas.map(s => s.name);
-    const parsed = parseSmartQuery(query, schemaNames);
-    if (!parsed.ok) {
-      return { error: parsed.error, hint: parsed.hint };
-    }
-    effectiveQuery = parsed.nameQuery;
-    if (parsed.schemaHints) {
-      effectiveSchemas = effectiveSchemas
-        ? [...new Set([...effectiveSchemas, ...parsed.schemaHints])]
-        : parsed.schemaHints;
-      appliedSchemaFilter = effectiveSchemas;
+    const validation = validateQuery(query);
+    if (!validation.ok) {
+      return { error: validation.error, hint: validation.hint };
     }
   }
 
-  const typeSet                = types         ? new Set<ObjectType>(types)           : undefined;
-  const schemaSet              = effectiveSchemas ? new Set<string>(effectiveSchemas)   : undefined;
-  const excludeTypeSet         = excludeTypes  ? new Set<ObjectType>(excludeTypes)    : null;
-  // exclude_schemas: SQL-style patterns — % matches any sequence; all other chars literal (case-insensitive)
-  const excludeSchemaMatchers  = compileSqlLikePatterns(excludeSchemas);
+  const effectiveQuery = query.trim();
+  const appliedSchemaFilter: string[] | null = schemas && schemas.length > 0 ? [...schemas] : null;
+  const typeSet   = types   ? new Set<ObjectType>(types)   : undefined;
+  const schemaSet = appliedSchemaFilter ? new Set<string>(schemas!) : undefined;
 
   const nameHits = searchCatalog(
     model.nodes as SearchableNode[],
@@ -250,56 +170,15 @@ export function searchObjects(
     mode,
   );
 
-  // Apply externalSubtypes + exclude filters
-  const externalSet = externalSubtypes && externalSubtypes.length > 0 ? new Set(externalSubtypes) : null;
-  const filtered = nameHits.filter(n => {
-    if (externalSet && n.type === 'external' && !(n.externalType && externalSet.has(n.externalType as 'et' | 'file' | 'db'))) return false;
-    if (excludeSchemaMatchers && matchesAnySqlLike(n.schema, excludeSchemaMatchers)) return false;
-    if (excludeTypeSet        && excludeTypeSet.has(n.type))                  return false;
-    return true;
-  });
-
-  const nameResults = filtered.map(n => ({
+  const results = nameHits.map(n => ({
     ...presentNode(n, model.neighborIndex),
     match: 'name' as const,
   }));
 
-  let results: object[] = nameResults;
-  let bodyTruncated = false;
-
-  if (includeBody) {
-    // Body types = intersection of requested types with body-scriptable types
-    const scriptableTypes: ObjectType[] = ['view', 'procedure', 'function'];
-    const bodyTypeSet: Set<ObjectType> = typeSet
-      ? new Set(scriptableTypes.filter(t => typeSet.has(t)))
-      : new Set<ObjectType>(scriptableTypes);
-
-    if (bodyTypeSet.size > 0) {
-      const bodyHits = searchBodyScripts(
-        model.nodes as SearchableNode[],
-        effectiveQuery,
-        bodyTypeSet,
-        SNIPPET_CONTEXT_LINES,
-        effectiveCaps.SEARCH_MAX_RESULTS,
-      );
-      bodyTruncated = bodyHits.length >= effectiveCaps.SEARCH_MAX_RESULTS;
-      // Deduplicate against name hits using source node IDs (typed — avoids casting nameResults)
-      const seenIds = new Set(filtered.map(n => n.id));
-      const bodyResults = bodyHits
-        .filter(m => !seenIds.has(m.node.id))
-        .map(m => ({
-          ...presentNode(m.node, model.neighborIndex),
-          match: 'body' as const,
-          snippet: m.snippet,
-        }));
-      results = [...nameResults, ...bodyResults];
-    }
-  }
-
   const base = {
     results,
     total:     results.length,
-    truncated: nameHits.length >= effectiveCaps.SEARCH_MAX_RESULTS || bodyTruncated,
+    truncated: nameHits.length >= effectiveCaps.SEARCH_MAX_RESULTS,
   };
 
   if (results.length === 0) {
@@ -331,7 +210,7 @@ export function searchObjects(
   return base;
 }
 
-// ─── Tool 4: lineage_get_object_detail ───────────────────────────────────────
+// ─── Tool 3: lineage_get_object_detail ───────────────────────────────────────
 
 const NEIGHBOR_CAP = 25;
 
@@ -405,12 +284,11 @@ export function getObjectDetail(
   return { ...base, ddl, unresolved_refs };
 }
 
-// ─── Tool 5: lineage_run_bfs_trace ────────────────────────────────────────────
-// Compound tool: BFS + optional DDL/columns per node (include_ddl=true, the default).
+// ─── Tool 4: lineage_run_bfs_trace ────────────────────────────────────────────
+// Compound tool: BFS + optional DDL/columns per node (include_ddl — default false).
 // For scriptable nodes (procedure/view/function): includes normalized DDL.
 // For table/external nodes: includes compact column list instead.
-// Include filters (types/schemas) are applied first; exclude filters are post-filters.
-// excluded_count is added to the response when any exclusions were applied.
+// types[] and schemas[] are include-only filters (no exclude).
 
 const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
@@ -437,33 +315,20 @@ function executeBfs(
   return { upDepth, downDepth };
 }
 
-/** Apply include + exclude filters to a node ID set. Returns filtered IDs and excluded count. */
+/** Apply include filters to a node ID set. Returns filtered IDs. */
 function applyBfsFilters(
   allNodeIds: Set<string>,
   nodeMap: Map<string, LineageNode>,
   typeSet: Set<ObjectType> | null,
   schemaSet: Set<string> | null,
-  excludeSchemaMatchers: RegExp[] | null,
-  excludeTypeSet: Set<ObjectType> | null,
-): { filteredIds: string[]; excludedCount: number } {
-  const afterInclude = [...allNodeIds].filter(nid => {
+): string[] {
+  return [...allNodeIds].filter(nid => {
     const n = nodeMap.get(nid);
     if (!n) return false;
     if (typeSet   && !typeSet.has(n.type))     return false;
     if (schemaSet && !schemaSet.has(n.schema)) return false;
     return true;
   });
-  const hasExclusions = excludeSchemaMatchers !== null || excludeTypeSet !== null;
-  const filteredIds = hasExclusions
-    ? afterInclude.filter(nid => {
-        const n = nodeMap.get(nid);
-        if (!n) return true;
-        if (excludeSchemaMatchers && matchesAnySqlLike(n.schema, excludeSchemaMatchers)) return false;
-        if (excludeTypeSet        && excludeTypeSet.has(n.type))                         return false;
-        return true;
-      })
-    : afterInclude;
-  return { filteredIds, excludedCount: afterInclude.length - filteredIds.length };
 }
 
 /** Attach DDL or column list to a BFS node base object, plus unresolved_refs when available. */
@@ -505,9 +370,7 @@ export function runBfsTrace(
   downstreamHops:  number = 3,
   types?:          ObjectType[],
   schemas?:        string[],
-  includeDdl:      boolean = true,
-  excludeSchemas?: string[],
-  excludeTypes?:   ObjectType[],
+  includeDdl:      boolean = false,
   caps?:           AiCapsOverride,
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
@@ -518,15 +381,10 @@ export function runBfsTrace(
   const { upDepth, downDepth } = executeBfs(graph, id, upstreamHops, downstreamHops);
   const allNodeIds    = new Set([...upDepth.keys(), ...downDepth.keys()]);
   const nodeMap       = buildNodeMap(model);
-  const typeSet       = types        ? new Set<ObjectType>(types)   : null;
-  const schemaSet     = schemas      ? new Set<string>(schemas)     : null;
-  // exclude_schemas: SQL-style patterns — % matches any sequence; all other chars literal (case-insensitive)
-  const excludeSchemaMatchers = compileSqlLikePatterns(excludeSchemas);
-  const excludeTypeSet        = excludeTypes ? new Set<ObjectType>(excludeTypes) : null;
+  const typeSet       = types   ? new Set<ObjectType>(types)   : null;
+  const schemaSet     = schemas ? new Set<string>(schemas)     : null;
 
-  const { filteredIds, excludedCount } = applyBfsFilters(
-    allNodeIds, nodeMap, typeSet, schemaSet, excludeSchemaMatchers, excludeTypeSet,
-  );
+  const filteredIds = applyBfsFilters(allNodeIds, nodeMap, typeSet, schemaSet);
 
   // Collect edges between filtered nodes
   const filteredSet = new Set(filteredIds);
@@ -569,12 +427,11 @@ export function runBfsTrace(
     truncated,
     total_nodes: totalNodes,
     total_edges: totalEdges,
-    ...(excludedCount > 0 ? { excluded_count: excludedCount, excluded_note: `${excludedCount} node(s) removed by exclude filters. Edges to excluded nodes are also absent from results.` } : {}),
-    ...(truncated ? { truncation_note: `Showing ${cappedIds.length} of ${totalNodes} nodes and ${cappedEdges.length} of ${totalEdges} edges. Narrow scope with types/schemas filters or reduce hops.` } : {}),
+    ...(truncated ? { truncation_note: `Showing ${cappedIds.length} of ${totalNodes} nodes and ${cappedEdges.length} of ${totalEdges} edges. Narrow scope with types[]/schemas[] or reduce hops.` } : {}),
   };
 }
 
-// ─── Tool 6: lineage_run_analysis ─────────────────────────────────────────────
+// ─── Tool 5: lineage_run_analysis ─────────────────────────────────────────────
 
 export function runAnalysis(
   model: DatabaseModel,
@@ -606,7 +463,7 @@ export function runAnalysis(
   };
 }
 
-// ─── Tool 7: lineage_search_ddl ──────────────────────────────────────────────
+// ─── Tool 6: lineage_search_ddl ──────────────────────────────────────────────
 
 export function searchDdl(
   model: DatabaseModel,
@@ -633,7 +490,7 @@ export function searchDdl(
     model.nodes as SearchableNode[],
     query,
     typeSet,
-    2,
+    SNIPPET_CONTEXT_LINES,
     effectiveCaps.SEARCH_MAX_RESULTS,
   );
 
@@ -656,7 +513,7 @@ export function searchDdl(
   return base;
 }
 
-// ─── Tool 8: lineage_create_ai_view ──────────────────────────────────────────
+// ─── Tool 7: lineage_create_ai_view ──────────────────────────────────────────
 
 export type AIHighlightColor = 'bu' | 'gn' | 'rd' | 'ye' | 'or';
 export type AiBadgeColor = AIHighlightColor | 'gy';
@@ -837,7 +694,7 @@ export function validateCreateAiView(
   };
 }
 
-// ─── Tool 9: lineage_get_ddl_batch ───────────────────────────────────────────
+// ─── Tool 8: lineage_get_ddl_batch ───────────────────────────────────────────
 
 export function getDdlBatch(
   model: DatabaseModel,

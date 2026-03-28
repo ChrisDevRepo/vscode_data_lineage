@@ -238,6 +238,8 @@ body {
   font-size: 12px;
   line-height: 1.4;
   white-space: pre-wrap;
+  width: max-content;
+  min-width: 200px;
   max-width: 420px;
   max-height: 200px;
   overflow-y: auto;

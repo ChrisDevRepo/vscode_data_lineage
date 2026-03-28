@@ -1,5 +1,5 @@
 /**
- * Unit tests for src/ai/tools.ts — 9 pure tool functions + safeRegex.
+ * Unit tests for src/ai/tools.ts — 8 pure tool functions + safeRegex.
  * Execute with: npx tsx test/ai-tools.test.ts  OR  npm run test:ai
  * Requires: test/AdventureWorks.dacpac
  */
@@ -8,10 +8,10 @@ import { assert, assertEq, testPath, printSummary, loadAdventureWorksModel } fro
 import { buildBareGraph } from '../src/ai/graphUtils';
 import {
   AI_CAPS,
-  getContext, getSchemasSummary, searchObjects, getObjectDetail,
+  getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
-  parseSmartQuery,
-  type CreateAiViewInput, type SmartQueryResult,
+  validateQuery,
+  type CreateAiViewInput,
 } from '../src/ai/tools';
 import { safeRegex } from '../src/utils/modelSearch';
 import { addFilterProfile, createProject } from '../src/engine/projectStore';
@@ -35,7 +35,6 @@ async function testContextTool(model: DatabaseModel) {
   assertEq(typeof stats.nodes, 'number', 'model_stats.nodes is number');
   assert(stats.nodes > 0, `model_stats.nodes > 0 (got ${stats.nodes})`);
   assert(stats.edges > 0, `model_stats.edges > 0 (got ${stats.edges})`);
-  // schemas are now a top-level array with per-type counts (merged from get_schema_summary)
   const schemas = ctx.schemas as Array<Record<string, unknown>>;
   assert(Array.isArray(schemas), 'schemas is array');
   assert(schemas.length > 0, `schemas.length > 0 (got ${schemas.length})`);
@@ -43,23 +42,6 @@ async function testContextTool(model: DatabaseModel) {
   assertEq(ctx.project_name as string, 'TestProject', 'project_name matches');
   assert(ctx.filter === null, 'filter null when none passed');
   assert(Array.isArray(ctx.saved_views), 'saved_views is array');
-}
-
-async function testSchemasSummary(model: DatabaseModel) {
-  console.log('\n── getSchemasSummary ──');
-  const result = getSchemasSummary(model) as Record<string, unknown>;
-  const schemas = result.schemas as Array<Record<string, unknown>>;
-  assertEq(schemas.length, 6, 'AdventureWorks has 6 schemas');
-  assert(typeof result.total_nodes === 'number', 'total_nodes is number');
-  assert(typeof result.total_edges === 'number', 'total_edges is number');
-
-  const dbo = schemas.find(s => s.name === 'dbo');
-  assert(dbo !== undefined, 'schema dbo present');
-
-  const humanResources = schemas.find(s => s.name === 'HumanResources');
-  assert(humanResources !== undefined, 'schema HumanResources present');
-  const hrTables = humanResources?.t as number;
-  assert(hrTables > 0, `HumanResources.t > 0 (got ${hrTables})`);
 }
 
 async function testSearchObjects(model: DatabaseModel) {
@@ -78,37 +60,30 @@ async function testSearchObjects(model: DatabaseModel) {
   assert('hint' in r2, 'empty result includes hint');
   assertEq((r2.results as unknown[]).length, 0, 'empty result has 0 results');
 
-  // externalSubtypes filter (use valid query — empty query is now rejected by smart search)
-  const r3 = searchObjects(model, 'ext', undefined, undefined, ['et']) as Record<string, unknown>;
-  assert(!isError(r3), 'externalSubtypes filter: no error');
+  // schemas[] filter — include only HumanResources
+  const r3 = searchObjects(model, 'Employee', undefined, ['HumanResources']) as Record<string, unknown>;
+  assert(!isError(r3), 'schemas filter: no error');
+  const results3 = r3.results as Array<Record<string, unknown>>;
+  assert(results3.length > 0, 'schemas filter: found results');
+  assert(results3.every(n => n.s === 'HumanResources'), 'schemas filter: all in HumanResources');
 
-  // include_body — body hits include match='body' and snippet
-  const r4 = searchObjects(model, 'Employee', undefined, undefined, undefined, true) as Record<string, unknown>;
-  assert(!isError(r4), 'include_body search: no error');
+  // types[] filter — only tables
+  const r4 = searchObjects(model, 'Employee', ['table']) as Record<string, unknown>;
+  assert(!isError(r4), 'types filter: no error');
   const results4 = r4.results as Array<Record<string, unknown>>;
-  assert(results4.length > 0, `include_body Employee results > 0 (got ${results4.length})`);
-  const bodyHits = results4.filter(n => n.match === 'body');
-  const nameHits = results4.filter(n => n.match === 'name');
-  assert(nameHits.length > 0, 'include_body: name hits present');
-  if (bodyHits.length > 0) {
-    assert(bodyHits.every(n => typeof n.snippet === 'string'), 'body hits have snippet');
-  }
+  assert(results4.every(n => n.t === 'table'), 'types filter: all tables');
 
-  // exclude_schemas — SQL LIKE: exclude HumanResources schema, verify none appear
-  const r5 = searchObjects(model, 'Employee', undefined, undefined, undefined, false, ['HumanResources']) as Record<string, unknown>;
-  assert(!isError(r5), 'exclude_schemas search: no error');
+  // mode=regex — multi-pattern
+  const r5 = searchObjects(model, 'Employee|Address', undefined, undefined, 'regex') as Record<string, unknown>;
+  assert(!isError(r5), 'regex mode: no error');
   const results5 = r5.results as Array<Record<string, unknown>>;
-  assert(results5.every(n => n.s !== 'HumanResources'), 'exclude_schemas: no HumanResources results');
+  assert(results5.length > 2, `regex mode: found multiple (got ${results5.length})`);
 
-  // exclude_schemas SQL LIKE pattern: '%Human%' should also exclude HumanResources
-  const r6 = searchObjects(model, 'Employee', undefined, undefined, undefined, false, ['%Human%']) as Record<string, unknown>;
-  const results6 = r6.results as Array<Record<string, unknown>>;
-  assert(results6.every(n => !(n.s as string).toLowerCase().includes('human')), 'exclude_schemas LIKE %Human%: no human* schemas');
-
-  // exclude_types — exclude 'table': only non-table results
-  const r7 = searchObjects(model, 'Employee', undefined, undefined, undefined, false, undefined, ['table']) as Record<string, unknown>;
-  const results7 = r7.results as Array<Record<string, unknown>>;
-  assert(results7.every(n => n.t !== 'table'), 'exclude_types table: no table results');
+  // Garbage query rejection (substring mode only)
+  const garbage = searchObjects(model, '.') as Record<string, unknown>;
+  assert(isError(garbage), 'dot query rejected');
+  const star = searchObjects(model, '*') as Record<string, unknown>;
+  assert(isError(star), 'star query rejected');
 }
 
 async function testGetObjectDetail(model: DatabaseModel) {
@@ -168,8 +143,8 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   const node = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
   if (!node) { assert(false, 'HumanResources.Employee not found'); return; }
 
-  // ── include_ddl=false (structure only) ──
-  const rStruct = runBfsTrace(model, graph, node.id, 2, 2, undefined, undefined, false) as Record<string, unknown>;
+  // ── default (ddl=false, structure only) ──
+  const rStruct = runBfsTrace(model, graph, node.id, 2, 2) as Record<string, unknown>;
   assert(!isError(rStruct), 'runBfsTrace structure: no error');
   const nodesStruct = rStruct.nodes as Array<Record<string, unknown>>;
   assert(nodesStruct.length > 1, `BFS returned > 1 node (got ${nodesStruct.length})`);
@@ -192,8 +167,8 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   assert(typeof rStruct.total_nodes === 'number', 'total_nodes is number');
   assert(typeof rStruct.total_edges === 'number', 'total_edges is number');
 
-  // ── include_ddl=true (default) — scriptable nodes get DDL, tables get cols ──
-  const rDdl = runBfsTrace(model, graph, node.id, 2, 2) as Record<string, unknown>; // default includeDdl=true
+  // ── include_ddl=true (explicit) — scriptable nodes get DDL, tables get cols ──
+  const rDdl = runBfsTrace(model, graph, node.id, 2, 2, undefined, undefined, true) as Record<string, unknown>;
   assert(!isError(rDdl), 'runBfsTrace DDL: no error');
   const nodesDdl = rDdl.nodes as Array<Record<string, unknown>>;
   assert(nodesDdl.length > 0, 'DDL trace: nodes present');
@@ -230,32 +205,17 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   const bad = runBfsTrace(model, graph, '[ghost].[node]', 1, 1) as Record<string, unknown>;
   assertEq(bad.error as string, 'not_found', 'unknown node returns not_found');
 
-  // ── exclude_schemas SQL LIKE: trace then exclude HumanResources ──
-  const rExcludeSchema = runBfsTrace(model, graph, node.id, 2, 2, undefined, undefined, false, ['HumanResources']) as Record<string, unknown>;
-  assert(!isError(rExcludeSchema), 'exclude_schemas trace: no error');
-  const nodesExcl = rExcludeSchema.nodes as Array<Record<string, unknown>>;
-  // Origin (HumanResources.Employee) itself is excluded — so it should be absent
-  const hasHRNodes = nodesExcl.some(n => n.s === 'HumanResources');
-  assert(!hasHRNodes, 'exclude_schemas HumanResources: no HR nodes in result');
-  // excluded_count and excluded_note present when nodes were removed
-  assert(typeof rExcludeSchema.excluded_count === 'number' && (rExcludeSchema.excluded_count as number) > 0,
-    'excluded_count > 0 when exclusions applied');
-  assert(typeof rExcludeSchema.excluded_note === 'string', 'excluded_note present when exclusions applied');
+  // ── schemas[] include filter ──
+  const rSchemaFilter = runBfsTrace(model, graph, node.id, 2, 2, undefined, ['dbo']) as Record<string, unknown>;
+  assert(!isError(rSchemaFilter), 'schemas filter trace: no error');
+  const nodesFiltered = rSchemaFilter.nodes as Array<Record<string, unknown>>;
+  assert(nodesFiltered.every(n => n.s === 'dbo'), 'schemas filter: all nodes in dbo');
 
-  // ── exclude_schemas SQL LIKE pattern: '%Human%' same effect ──
-  const rExcludePattern = runBfsTrace(model, graph, node.id, 2, 2, undefined, undefined, false, ['%Human%']) as Record<string, unknown>;
-  const nodesExclPattern = rExcludePattern.nodes as Array<Record<string, unknown>>;
-  assert(nodesExclPattern.every(n => !(n.s as string ?? '').toLowerCase().includes('human')),
-    'exclude_schemas LIKE %Human%: no human* schema nodes');
-
-  // ── exclude_types: exclude 'table' ──
-  const rExcludeType = runBfsTrace(model, graph, node.id, 2, 2, undefined, undefined, false, undefined, ['table']) as Record<string, unknown>;
-  const nodesExclType = rExcludeType.nodes as Array<Record<string, unknown>>;
-  assert(nodesExclType.every(n => n.t !== 'table'), 'exclude_types table: no table nodes');
-
-  // ── No excluded_count when no exclusions ──
-  const rNoExcl = runBfsTrace(model, graph, node.id, 1, 1, undefined, undefined, false) as Record<string, unknown>;
-  assert(!('excluded_count' in rNoExcl), 'no excluded_count when no exclusions applied');
+  // ── types[] include filter ──
+  const rTypeFilter = runBfsTrace(model, graph, node.id, 2, 2, ['procedure']) as Record<string, unknown>;
+  assert(!isError(rTypeFilter), 'types filter trace: no error');
+  const nodesTyped = rTypeFilter.nodes as Array<Record<string, unknown>>;
+  assert(nodesTyped.every(n => n.t === 'procedure'), 'types filter: all nodes are procedures');
 
   // ── Truncation cap: trace from hub node with high hop depth ──
   console.log('\n── runBfsTrace truncation cap ──');
@@ -266,7 +226,7 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
     const deg = n.in.length + n.out.length;
     if (deg > maxDegree) { maxDegree = deg; hubId = id; }
   }
-  const rHub = runBfsTrace(model, graph, hubId, 10, 10, undefined, undefined, false) as Record<string, unknown>;
+  const rHub = runBfsTrace(model, graph, hubId, 10, 10) as Record<string, unknown>;
   assert(!isError(rHub), 'large BFS: no error');
   assert((rHub.nodes as unknown[]).length <= AI_CAPS.BFS_MAX_NODES, `nodes capped at ${AI_CAPS.BFS_MAX_NODES}`);
   assert((rHub.edges as unknown[]).length <= AI_CAPS.BFS_MAX_EDGES, `edges capped at ${AI_CAPS.BFS_MAX_EDGES}`);
@@ -324,7 +284,6 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   assert(noIds.success === false, 'empty node_ids: success false');
 
   // Unknown node id — validation no longer rejects (auto-fix handles it upstream)
-  // With only unknown IDs: validation passes because it doesn't check catalog membership
   const badIds = validateCreateAiView(model, { name: 'Ghost', node_ids: ['[ghost].[nothing]'] }) as Record<string, unknown>;
   assert(badIds.success === true, 'unknown id: validation passes (auto-fix handles upstream)');
 
@@ -505,7 +464,6 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assertEq(fixedHl.highlight_groups![0].label, 'Valid', 'highlight prune: valid group kept');
 
   // End-to-end: auto-fix cleans input, validate passes
-  // Unknown IDs, long badge text, empty notes — all handled by auto-fix
   const rawBadInput: CreateAiViewInput = {
     name: 'Revenue Pipeline',
     node_ids: [node.id, '[ghost].[missing]'],
@@ -527,139 +485,59 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assert(colorValidation.success === false, 'e2e: invalid color fails validation');
 }
 
-async function testParseSmartQuery() {
-  console.log('\n── parseSmartQuery ──');
-  const schemas = ['dbo', 'HumanResources', 'Person', 'Production', 'Purchasing', 'Sales',
-    'consumption_financehub', 'transformation_financehub', 'staging'];
+async function testValidateQuery() {
+  console.log('\n── validateQuery ──');
 
-  // Dot-split: schema.name
-  const r1 = parseSmartQuery('financehub.revenue', schemas);
-  assert(r1.ok === true, 'financehub.revenue parses ok');
-  if (r1.ok) {
-    assertEq(r1.nameQuery, 'revenue', 'name is revenue');
-    assert(r1.schemaHints !== null, 'schema hints present');
-    assert(r1.schemaHints!.includes('consumption_financehub'), 'matches consumption_financehub');
-    assert(r1.schemaHints!.includes('transformation_financehub'), 'matches transformation_financehub');
-  }
-
-  // Space-split: schema name
-  const r2 = parseSmartQuery('Sales Employee', schemas);
-  assert(r2.ok === true, 'Sales Employee parses ok');
-  if (r2.ok) {
-    assertEq(r2.nameQuery, 'Employee', 'name is Employee');
-    assert(r2.schemaHints !== null && r2.schemaHints.includes('Sales'), 'schema hint is Sales');
-  }
-
-  // Simple query (no schema match)
-  const r3 = parseSmartQuery('revenue', schemas);
-  assert(r3.ok === true, 'revenue parses ok');
-  if (r3.ok) {
-    assertEq(r3.nameQuery, 'revenue', 'name is revenue');
-    assertEq(r3.schemaHints, null, 'no schema hints');
-  }
-
-  // Garbage rejection: single char
-  const r4 = parseSmartQuery('.', schemas);
-  assert(r4.ok === false, 'dot rejected');
-  if (!r4.ok) assertEq(r4.error, 'query_too_short', 'error is query_too_short');
-
-  // Garbage rejection: wildcards only
-  const r5 = parseSmartQuery('.*', schemas);
-  assert(r5.ok === false, '.* rejected');
-  if (!r5.ok) assertEq(r5.error, 'query_too_broad', 'error is query_too_broad');
-
-  // Garbage rejection: empty
-  const r6 = parseSmartQuery('', schemas);
-  assert(r6.ok === false, 'empty rejected');
-
-  // Dot-split where left doesn't match any schema → treat as full query
-  const r7 = parseSmartQuery('foo.bar', schemas);
-  assert(r7.ok === true, 'foo.bar parses ok');
-  if (r7.ok) {
-    assertEq(r7.nameQuery, 'foo.bar', 'no split when left not a schema');
-    assertEq(r7.schemaHints, null, 'no schema hints');
-  }
-
-  // Space-split where left doesn't match any schema → full query
-  const r8 = parseSmartQuery('unknown something', schemas);
-  assert(r8.ok === true, 'unknown something parses ok');
-  if (r8.ok) {
-    assertEq(r8.nameQuery, 'unknown something', 'no split when left not a schema');
-    assertEq(r8.schemaHints, null, 'no schema hints');
-  }
+  assert(validateQuery('Employee').ok === true, 'normal query ok');
+  assert(validateQuery('revenue').ok === true, 'revenue ok');
+  assert(validateQuery('.').ok === false, 'dot rejected');
+  assert(validateQuery('.*').ok === false, '.* rejected');
+  assert(validateQuery('').ok === false, 'empty rejected');
+  assert(validateQuery('x').ok === false, 'single char rejected');
+  assert(validateQuery('ab').ok === true, '2 chars ok');
 }
 
-async function testSmartSearchIntegration(model: DatabaseModel) {
-  console.log('\n── Smart Search Integration ──');
+async function testSearchWithSchemas(model: DatabaseModel) {
+  console.log('\n── Search with schemas[] param ──');
 
-  // search_objects with dot syntax — should find objects in matching schemas
-  const result = searchObjects(model, 'HumanResources.Employee') as Record<string, unknown>;
-  assert(!isError(result), 'HumanResources.Employee search succeeds');
+  // schemas[] filters results to specified schemas
+  const result = searchObjects(model, 'Employee', undefined, ['HumanResources']) as Record<string, unknown>;
+  assert(!isError(result), 'Employee + schemas=[HR] succeeds');
   const results = result.results as Array<Record<string, unknown>>;
   assert(results.length > 0, 'found results');
-  // All results should be in HumanResources schema
   for (const r of results) {
     assertEq(r.s as string, 'HumanResources', `result in HumanResources schema: ${r.n}`);
   }
-
-  // Garbage query rejection
-  const garbage = searchObjects(model, '.') as Record<string, unknown>;
-  assert(isError(garbage), 'dot query rejected');
-
-  const star = searchObjects(model, '*') as Record<string, unknown>;
-  assert(isError(star), 'star query rejected');
 }
 
 async function testSchemaMismatchDetection(model: DatabaseModel) {
   console.log('\n── Schema Mismatch Detection ──');
 
   // Schema mismatch: SalesOrderDetail is in Sales, not HumanResources
-  const mismatch = searchObjects(model, 'HumanResources.SalesOrderDetail') as Record<string, unknown>;
-  assert(!isError(mismatch), 'mismatch search succeeds (not a hard error)');
-  assertEq(mismatch.total, 0, 'no results in HumanResources');
-  assert('schema_mismatch' in mismatch, 'schema_mismatch field present');
+  const mismatch = searchObjects(model, 'SalesOrderDetail', undefined, ['HumanResources']) as Record<string, unknown>;
+  assert(!isError(mismatch), 'mismatch: no error');
+  assertEq(mismatch.total, 0, 'mismatch: 0 results in HumanResources');
+  assert('schema_mismatch' in mismatch, 'mismatch: schema_mismatch present');
   const mm = mismatch.schema_mismatch as Record<string, unknown>;
-  const foundSchemas = mm.found_in_schemas as string[];
-  assert(foundSchemas.includes('Sales'), 'found in Sales schema');
-  const fallback = mm.fallback_results as Array<Record<string, unknown>>;
-  assert(fallback.length > 0, 'fallback results returned');
+  assert((mm.found_in_schemas as string[]).includes('Sales'), 'mismatch: found in Sales');
+  assert((mm.fallback_results as unknown[]).length > 0, 'mismatch: fallback results returned');
 
   // No mismatch when object IS in stated schema
-  const noMismatch = searchObjects(model, 'HumanResources.Employee') as Record<string, unknown>;
-  assert(!isError(noMismatch), 'Employee search succeeds');
-  assert((noMismatch.results as unknown[]).length > 0, 'found results in HumanResources');
-  assert(!('schema_mismatch' in noMismatch), 'no schema_mismatch when results found');
+  const noMismatch = searchObjects(model, 'Employee', undefined, ['HumanResources']) as Record<string, unknown>;
+  assert(!isError(noMismatch), 'no mismatch: search succeeds');
+  assert((noMismatch.results as unknown[]).length > 0, 'no mismatch: found results');
+  assert(!('schema_mismatch' in noMismatch), 'no mismatch: field absent');
 
-  // No mismatch without schema hint (plain query)
-  const noHint = searchObjects(model, 'SalesOrderDetail') as Record<string, unknown>;
-  assert(!isError(noHint), 'plain search succeeds');
-  assert((noHint.results as unknown[]).length > 0, 'found results without hint');
-  assert(!('schema_mismatch' in noHint), 'no schema_mismatch without schema hint');
+  // No mismatch without schema filter (plain query)
+  const noFilter = searchObjects(model, 'SalesOrderDetail') as Record<string, unknown>;
+  assert(!isError(noFilter), 'no filter: search succeeds');
+  assert((noFilter.results as unknown[]).length > 0, 'no filter: found results');
+  assert(!('schema_mismatch' in noFilter), 'no filter: no mismatch');
 
-  // No mismatch when nothing exists anywhere
-  const nowhere = searchObjects(model, 'HumanResources.xyznonexistent') as Record<string, unknown>;
-  assert(!isError(nowhere), 'nonexistent search succeeds');
-  assertEq(nowhere.total, 0, 'no results');
-  assert(!('schema_mismatch' in nowhere), 'no schema_mismatch when name not found anywhere');
-
-  // Schema mismatch via explicit schemas param (how the model actually calls it)
-  const explicitMismatch = searchObjects(
-    model, 'SalesOrderDetail', undefined, ['HumanResources'],
-  ) as Record<string, unknown>;
-  assert(!isError(explicitMismatch), 'explicit schemas mismatch: no error');
-  assertEq(explicitMismatch.total, 0, 'explicit schemas mismatch: 0 results');
-  assert('schema_mismatch' in explicitMismatch, 'explicit schemas: schema_mismatch present');
-  const emm = explicitMismatch.schema_mismatch as Record<string, unknown>;
-  const efSchemas = emm.found_in_schemas as string[];
-  assert(efSchemas.includes('Sales'), 'explicit schemas: found in Sales');
-
-  // Explicit schemas with results — no mismatch
-  const explicitFound = searchObjects(
-    model, 'Employee', undefined, ['HumanResources'],
-  ) as Record<string, unknown>;
-  assert(!isError(explicitFound), 'explicit schemas found: no error');
-  assert((explicitFound.results as unknown[]).length > 0, 'explicit schemas found: has results');
-  assert(!('schema_mismatch' in explicitFound), 'explicit schemas found: no mismatch');
+  // No mismatch when name doesn't exist anywhere
+  const nowhere = searchObjects(model, 'xyznonexistent', undefined, ['HumanResources']) as Record<string, unknown>;
+  assertEq(nowhere.total, 0, 'nowhere: 0 results');
+  assert(!('schema_mismatch' in nowhere), 'nowhere: no mismatch when name not found anywhere');
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -671,7 +549,6 @@ async function main() {
     const graph = buildBareGraph(model);
 
     await testContextTool(model);
-    await testSchemasSummary(model);
     await testSearchObjects(model);
     await testGetObjectDetail(model);
     await testRunBfsTrace(model, graph);
@@ -681,8 +558,8 @@ async function main() {
     await testValidateCreateAiView(model);
     await testAutoFixCreateAiView(model);
     await testSafeRegex();
-    await testParseSmartQuery();
-    await testSmartSearchIntegration(model);
+    await testValidateQuery();
+    await testSearchWithSchemas(model);
     await testSchemaMismatchDetection(model);
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
