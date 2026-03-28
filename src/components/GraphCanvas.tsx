@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
@@ -201,6 +201,13 @@ export function GraphCanvas({
   const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
 
+  // Pending actions for post-rebuild drill-down (overview → full + zoom to node)
+  const pendingZoomRef = useRef<string | null>(null);
+  const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
+  // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
+  const onNodeClickRef = useRef(onNodeClick);
+  onNodeClickRef.current = onNodeClick;
+
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
       onNodeClick(node.id);
@@ -281,7 +288,7 @@ export function GraphCanvas({
     }, AUTO_FIT_DELAY_MS);
   }, [getNode, setCenter]);
 
-  // Execute search: find node and zoom to it
+  // Execute search: find node and zoom to it (drills down from overview if needed)
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const foundNode = schema
       ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
@@ -290,8 +297,21 @@ export function GraphCanvas({
     if (foundNode) {
       onNodeClick(foundNode.id);
       zoomToNode(foundNode.id);
+      return;
     }
-  }, [flowNodes, zoomToNode, onNodeClick]);
+
+    // Overview mode: node not in flowNodes — drill down to its schema
+    if (graphMode === 'overview' && model) {
+      const modelNode = schema
+        ? model.nodes.find(n => n.name === name && n.schema === schema)
+        : model.nodes.find(n => n.name === name);
+      if (modelNode) {
+        pendingZoomRef.current = modelNode.id;
+        pendingClickRef.current = { id: modelNode.id };
+        onSchemaNodeDoubleClick?.(modelNode.schema);
+      }
+    }
+  }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick]);
 
   // Export current graph to Draw.io format (disabled in overview mode)
   const handleExportDrawio = useCallback(() => {
@@ -306,17 +326,26 @@ export function GraphCanvas({
     });
   }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi, graphMode]);
 
-  // Auto-fit view whenever the graph data changes — skipped when saved positions are being restored
-  // (saved viewport takes precedence over auto-fit in that case)
+  // Auto-fit view whenever the graph data changes — skipped when saved positions are being restored.
+  // If a pending drill-down zoom target exists (overview → full), zoom to that node instead of fitView.
   // flowNodes reference only changes on rebuild — not on highlight
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) return;
+    const zoomTarget = pendingZoomRef.current;
+    const clickTarget = pendingClickRef.current;
+    if (zoomTarget) {
+      pendingZoomRef.current = null;
+      pendingClickRef.current = null;
+      zoomToNode(zoomTarget);
+      if (clickTarget) onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm);
+      return;
+    }
     const timer = setTimeout(() => {
       fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
     }, AUTO_FIT_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [flowNodes, fitView]); // pendingPositions intentionally excluded — read at effect run time
+  }, [flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
@@ -639,20 +668,24 @@ export function GraphCanvas({
                   ) : onToggleDetailSearch ? (
                     <DetailSearchSidebar
                       onClose={onToggleDetailSearch}
-                      allNodes={displayNodes
-                        .filter(n => n.type === 'lineageNode')
-                        .map(n => {
-                          const d = n.data as CustomNodeData;
-                          return {
-                            id: n.id,
-                            name: String(d.label),
-                            schema: String(d.schema),
-                            type: d.objectType as ObjectType,
-                            bodyScript: modelNodeMap.get(n.id)?.bodyScript,
-                            columns: modelNodeMap.get(n.id)?.columns,
-                          };
-                        })}
+                      allNodes={allNodes.map(n => ({
+                        id: n.id,
+                        name: n.name,
+                        schema: n.schema,
+                        type: n.type,
+                        bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                        columns: modelNodeMap.get(n.id)?.columns,
+                      }))}
                       onResultClick={(nodeId, searchTerm) => {
+                        if (graphMode === 'overview') {
+                          const node = model?.nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            pendingZoomRef.current = nodeId;
+                            pendingClickRef.current = { id: nodeId, searchTerm };
+                            onSchemaNodeDoubleClick?.(node.schema);
+                            return;
+                          }
+                        }
                         onNodeClick(nodeId, searchTerm);
                         zoomToNode(nodeId);
                       }}
