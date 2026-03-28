@@ -58,12 +58,27 @@ function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   return m;
 }
 
+/** Build lowercase "Schema.Name" → unrelated refs lookup from parse stats. */
+function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  if (!model.parseStats?.spDetails) return m;
+  for (const d of model.parseStats.spDetails) {
+    if (d.unrelated?.length) {
+      m.set(d.name.toLowerCase(), d.unrelated.map(r => r.replace(/ \(exec\)$/, '')));
+    }
+  }
+  return m;
+}
+
 // ─── Result types ─────────────────────────────────────────────────────────────
 
 export type NotFoundError = { error: 'not_found'; id: string; hint: string };
 export type InvalidRegex  = { error: 'invalid_regex'; hint: string };
 
 // ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
+
+/** Threshold: models at or below this size include full object catalog in get_context. */
+const SMALL_MODEL_THRESHOLD = 150;
 
 export function getContext(
   model: DatabaseModel,
@@ -81,15 +96,26 @@ export function getContext(
       }).length
     : model.nodes.length;
 
+  const isSmall = model.nodes.length <= SMALL_MODEL_THRESHOLD;
+
   return {
     project_name:  projectName,
     source_type:   model.dbPlatform ? 'database' : 'dacpac',
     db_platform:   model.dbPlatform ?? null,
+    model_size:    isSmall ? 'small' as const : 'large' as const,
     model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
     schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
     saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
+    // Small model: include full catalog so AI can skip search_objects and go straight to BFS
+    ...(isSmall && {
+      objects: model.nodes.map(n => presentNode(n, model.neighborIndex)),
+    }),
+    // Large model: tell AI how many refs are outside the loaded model
+    ...(!isSmall && model.parseStats && {
+      unresolved_ref_count: model.parseStats.droppedRefs?.length ?? 0,
+    }),
   };
 }
 
@@ -180,6 +206,7 @@ export function searchObjects(
   includeBody?: boolean,
   excludeSchemas?: string[],
   excludeTypes?: ObjectType[],
+  mode: 'substring' | 'regex' = 'substring',
   caps?: AiCapsOverride,
 ) {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
@@ -187,21 +214,23 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
   }
 
-  // Smart search middleware: parse natural queries like "financehub.revenue"
-  const schemaNames = model.schemas.map(s => s.name);
-  const parsed = parseSmartQuery(query, schemaNames);
-  if (!parsed.ok) {
-    return { error: parsed.error, hint: parsed.hint };
-  }
-
-  // Merge schema hints from smart query with explicit schemas parameter
+  let effectiveQuery = query;
   let effectiveSchemas = schemas;
-  if (parsed.schemaHints) {
-    effectiveSchemas = effectiveSchemas
-      ? [...new Set([...effectiveSchemas, ...parsed.schemaHints])]
-      : parsed.schemaHints;
+
+  // Smart search middleware: only for substring mode (regex syntax conflicts with schema.name splitting)
+  if (mode !== 'regex') {
+    const schemaNames = model.schemas.map(s => s.name);
+    const parsed = parseSmartQuery(query, schemaNames);
+    if (!parsed.ok) {
+      return { error: parsed.error, hint: parsed.hint };
+    }
+    effectiveQuery = parsed.nameQuery;
+    if (parsed.schemaHints) {
+      effectiveSchemas = effectiveSchemas
+        ? [...new Set([...effectiveSchemas, ...parsed.schemaHints])]
+        : parsed.schemaHints;
+    }
   }
-  const effectiveQuery = parsed.nameQuery;
 
   const typeSet                = types         ? new Set<ObjectType>(types)           : undefined;
   const schemaSet              = effectiveSchemas ? new Set<string>(effectiveSchemas)   : undefined;
@@ -215,6 +244,7 @@ export function searchObjects(
     typeSet,
     schemaSet,
     effectiveCaps.SEARCH_MAX_RESULTS,
+    mode,
   );
 
   // Apply externalSubtypes + exclude filters
@@ -329,6 +359,11 @@ export function getObjectDetail(
 
   const ddl = node.bodyScript ? normalizeBodyScript(node.bodyScript) : null;
 
+  // Attach unresolved refs for scriptable nodes
+  const unrelMap = buildUnrelatedMap(model);
+  const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
+  const unresolved_refs = unrelMap.get(unrelKey) ?? undefined;
+
   if (ddl && ddl.length > effectiveCaps.MAX_DDL_CHARS) {
     return {
       ...base,
@@ -337,10 +372,11 @@ export function getObjectDetail(
       ddl_chars: ddl.length,
       ddl_hint: `DDL is ${ddl.length} chars, limit is ${effectiveCaps.MAX_DDL_CHARS}. ` +
                 `Raise dataLineageViz.ai.maxDdlChars (max 500000) or use a large-context model (auto-scales).`,
+      unresolved_refs,
     };
   }
 
-  return { ...base, ddl };
+  return { ...base, ddl, unresolved_refs };
 }
 
 // ─── Tool 5: lineage_run_bfs_trace ────────────────────────────────────────────
@@ -404,23 +440,35 @@ function applyBfsFilters(
   return { filteredIds, excludedCount: afterInclude.length - filteredIds.length };
 }
 
-/** Attach DDL or column list to a BFS node base object. */
+/** Attach DDL or column list to a BFS node base object, plus unresolved_refs when available. */
 function attachDdl(
   base: Record<string, unknown>,
   node: LineageNode | undefined,
   includeDdl: boolean,
   maxDdlChars: number,
+  unrelMap?: Map<string, string[]>,
 ): Record<string, unknown> {
   if (!includeDdl || !node) return base;
+  let result = base;
   if (SCRIPT_TYPES.has(node.type) && node.bodyScript) {
     const ddl = normalizeBodyScript(node.bodyScript);
-    if (ddl.length > maxDdlChars) return { ...base, ddl_too_large: true, ddl_chars: ddl.length };
-    return { ...base, ddl };
+    if (ddl.length > maxDdlChars) {
+      result = { ...result, ddl_too_large: true, ddl_chars: ddl.length };
+    } else {
+      result = { ...result, ddl };
+    }
+    // Attach unresolved refs for scriptable nodes — tells AI which DDL refs are outside the model
+    if (unrelMap) {
+      const key = `${node.schema}.${node.name}`.toLowerCase();
+      const unrel = unrelMap.get(key);
+      if (unrel) result = { ...result, unresolved_refs: unrel };
+    }
+    return result;
   }
   if (node.columns && node.columns.length > 0) {
-    return { ...base, cols: node.columns.map(c => presentColumn(c)) };
+    return { ...result, cols: node.columns.map(c => presentColumn(c)) };
   }
-  return base;
+  return result;
 }
 
 export function runBfsTrace(
@@ -472,6 +520,8 @@ export function runBfsTrace(
     .filter(([s, t]) => cappedSet.has(s) && cappedSet.has(t))
     .slice(0, effectiveCaps.BFS_MAX_EDGES);
 
+  const unrelMap = includeDdl ? buildUnrelatedMap(model) : undefined;
+
   const nodes = cappedIds.map(nid => {
     const n    = nodeMap.get(nid);
     const base = strip({
@@ -483,7 +533,7 @@ export function runBfsTrace(
       up:  upDepth.get(nid),
       dn:  downDepth.get(nid),
     } as Record<string, unknown>);
-    return attachDdl(base, n, includeDdl, effectiveCaps.MAX_DDL_CHARS);
+    return attachDdl(base, n, includeDdl, effectiveCaps.MAX_DDL_CHARS, unrelMap);
   });
 
   return {
@@ -630,11 +680,11 @@ export function autoFixCreateAiView(
   const fixes: string[] = [];
   let fixed = { ...input };
 
-  // 1. Filter out unknown node_ids (only when majority are valid)
+  // 1. Filter out unknown node_ids (as long as at least 1 valid ID remains)
   if (fixed.node_ids?.length > 0) {
     const unknown = fixed.node_ids.filter(id => !model.catalog[id]);
     const valid = fixed.node_ids.filter(id => model.catalog[id]);
-    if (unknown.length > 0 && valid.length >= fixed.node_ids.length / 2) {
+    if (unknown.length > 0 && valid.length >= 1) {
       fixes.push(`Removed ${unknown.length} unknown ID(s): ${unknown.slice(0, 3).join(', ')}${unknown.length > 3 ? ' ...' : ''}`);
       fixed = { ...fixed, node_ids: valid };
     }
@@ -710,52 +760,31 @@ export function validateCreateAiView(
   if (!input.name || input.name.trim().length === 0) errors.push('name is required');
   else if (input.name.length > 60) errors.push('name exceeds 60 characters');
 
-  // node_ids validation
+  // node_ids validation (structural only — unknown IDs handled by autoFix)
   if (!input.node_ids || input.node_ids.length === 0) {
     errors.push('node_ids must contain at least 1 ID');
   } else if (input.node_ids.length > 200) {
     errors.push('node_ids exceeds maximum of 200 IDs');
-  } else {
-    const unknown = input.node_ids.filter(id => !model.catalog[id]);
-    if (unknown.length > 0) {
-      const sample = unknown.slice(0, 3).join(', ');
-      errors.push(`Unknown IDs: ${sample}${unknown.length > 3 ? ` (+${unknown.length - 3} more)` : ''}. Run \`lineage_search_objects\` to obtain valid IDs.`);
-    }
   }
 
-  // narrative validation
-  if (input.narrative && input.narrative.length > 500) {
-    errors.push('narrative exceeds 500 characters');
-  }
-
-  // highlight_groups validation
+  // highlight_groups validation (structural + color validity — autoFix does not normalize colors)
   const nodeIdSet = new Set(input.node_ids ?? []);
   if (input.highlight_groups) {
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
       if (!g.label) errors.push('Group label is required');
       if (!AI_HIGHLIGHT_COLORS.has(g.color)) errors.push(`Group "${g.label}" has invalid color "${g.color}"`);
-      const bad = g.node_ids.filter(id => !nodeIdSet.has(id));
-      if (bad.length > 0) errors.push(`Group "${g.label}" contains IDs not in node_ids list: ${bad.slice(0, 3).join(', ')}`);
     }
   }
 
-  // badges validation
+  // Color validity only — text length and orphan checks handled by autoFix
   if (input.badges) {
-    if (input.badges.length > 50) errors.push('badges exceeds maximum of 50');
     for (const b of input.badges) {
-      if (!nodeIdSet.has(b.node_id)) errors.push(`Badge node_id "${b.node_id}" is not in node_ids list`);
-      if (!b.text || b.text.length > 15) errors.push(`Badge text "${b.text ?? ''}" must be 1–15 characters`);
       if (b.color && !AI_BADGE_COLORS.has(b.color)) errors.push(`Badge color "${b.color}" is invalid`);
     }
   }
-
-  // notes validation
   if (input.notes) {
-    if (input.notes.length > 50) errors.push('notes exceeds maximum of 50');
     for (const n of input.notes) {
-      if (!nodeIdSet.has(n.node_id)) errors.push(`Note node_id "${n.node_id}" is not in node_ids list`);
-      if (!n.text || n.text.length > 200) errors.push(`Note text must be 1–200 characters`);
       if (n.color && !AI_BADGE_COLORS.has(n.color)) errors.push(`Note color "${n.color}" is invalid`);
     }
   }
@@ -764,7 +793,7 @@ export function validateCreateAiView(
     return {
       success: false,
       errors,
-      hint: 'Fix the listed errors and retry. Use `lineage_search_objects` to verify node IDs.',
+      hint: 'Fix the listed errors and retry.',
     };
   }
 

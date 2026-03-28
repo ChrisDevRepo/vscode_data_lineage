@@ -323,11 +323,10 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   const noIds = validateCreateAiView(model, { name: 'Test', node_ids: [] }) as Record<string, unknown>;
   assert(noIds.success === false, 'empty node_ids: success false');
 
-  // Unknown node id
+  // Unknown node id — validation no longer rejects (auto-fix handles it upstream)
+  // With only unknown IDs: validation passes because it doesn't check catalog membership
   const badIds = validateCreateAiView(model, { name: 'Ghost', node_ids: ['[ghost].[nothing]'] }) as Record<string, unknown>;
-  assert(badIds.success === false, 'unknown id: success false');
-  assert(Array.isArray(badIds.errors), 'unknown id: errors array present');
-  assert('hint' in badIds, 'unknown id: hint present');
+  assert(badIds.success === true, 'unknown id: validation passes (auto-fix handles upstream)');
 
   // Realistic: Person.EmailAddress + neighbors with narrative
   const emailNode = model.nodes.find(n => n.schema === 'Person' && n.name === 'EmailAddress');
@@ -475,12 +474,12 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assert(idFixes.length > 0, 'unknown ID minority: fixes reported');
   assertEq(fixedIds.node_ids.length, 2, 'unknown ID minority: ghost removed');
 
-  // Unknown IDs (majority): NOT removed — let validation fail
-  const { input: notFixed, fixes: noIdFixes } = autoFixCreateAiView(model, {
+  // Unknown IDs (majority): now removed as long as >= 1 valid ID remains
+  const { input: majorityFixed, fixes: majorityFixes } = autoFixCreateAiView(model, {
     name: 'Test', node_ids: ['[ghost].[a]', '[ghost].[b]', node.id],
   });
-  assert(noIdFixes.length === 0, 'unknown ID majority: no fixes (majority unknown)');
-  assertEq(notFixed.node_ids.length, 3, 'unknown ID majority: all IDs kept');
+  assert(majorityFixes.length > 0, 'unknown ID majority: fixes applied');
+  assertEq(majorityFixed.node_ids.length, 1, 'unknown ID majority: only valid ID kept');
 
   // Badges for removed nodes: dropped
   const { input: fixedOrphan, fixes: orphanFixes } = autoFixCreateAiView(model, {
@@ -505,18 +504,27 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assertEq(fixedHl.highlight_groups!.length, 1, 'highlight prune: ghost group removed');
   assertEq(fixedHl.highlight_groups![0].label, 'Valid', 'highlight prune: valid group kept');
 
-  // End-to-end: auto-fix + validate succeeds on input that would fail raw validation
+  // End-to-end: auto-fix cleans input, validate passes
+  // Unknown IDs, long badge text, empty notes — all handled by auto-fix
   const rawBadInput: CreateAiViewInput = {
     name: 'Revenue Pipeline',
     node_ids: [node.id, '[ghost].[missing]'],
     badges: [{ node_id: node.id, text: 'Step 1 – Source Table' }],
     notes: [{ node_id: node.id, text: '' }],
   };
-  const rawValidation = validateCreateAiView(model, rawBadInput) as Record<string, unknown>;
-  assert(rawValidation.success === false, 'e2e: raw input fails validation');
-  const { input: autoFixed } = autoFixCreateAiView(model, rawBadInput);
+  const { input: autoFixed, fixes: e2eFixes } = autoFixCreateAiView(model, rawBadInput);
+  assert(e2eFixes.length > 0, 'e2e: auto-fix applied changes');
+  assertEq(autoFixed.node_ids.length, 1, 'e2e: ghost ID removed');
   const fixedValidation = validateCreateAiView(model, autoFixed) as Record<string, unknown>;
   assert(fixedValidation.success === true, 'e2e: auto-fixed input passes validation');
+
+  // Structural error (invalid color) still fails validation even after auto-fix
+  const colorBadInput: CreateAiViewInput = {
+    name: 'Test', node_ids: [node.id],
+    badges: [{ node_id: node.id, text: 'OK', color: 'invalid' as any }],
+  };
+  const colorValidation = validateCreateAiView(model, colorBadInput) as Record<string, unknown>;
+  assert(colorValidation.success === false, 'e2e: invalid color fails validation');
 }
 
 async function testParseSmartQuery() {

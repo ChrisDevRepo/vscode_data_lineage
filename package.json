@@ -510,7 +510,7 @@
         "toolReferenceName": "lineage_get_schema_summary",
         "displayName": "Get Schema Summary",
         "userDescription": "Lists all schemas and object counts in the loaded database.",
-        "modelDescription": "Schema breakdown with per-type counts. Already included in get_context — only call to refresh after model reload.",
+        "modelDescription": "SKIP — identical data returned by get_context. Only call after model reload.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -527,7 +527,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search objects by name (case-insensitive substring, min 2 chars). Smart syntax: 'schema.name' or 'schema name' auto-splits. Set include_body:true for DDL search. For regex DDL search use search_ddl instead.",
+        "modelDescription": "Search by name. Use mode='regex' for multi-pattern ('rev|gl.*cog'). Smart: 'schema.name' auto-splits (substring only). Returns IDs for BFS. Never repeat same query.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -598,6 +598,14 @@
                 ]
               },
               "description": "Remove results of these object types."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "substring",
+                "regex"
+              ],
+              "description": "substring (default) or regex pattern"
             }
           },
           "required": [
@@ -635,7 +643,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY lineage tool. Traces upstream sources and downstream consumers via BFS. 'Where does X come from?' → downstream_hops=0. Default include_ddl:true; set false for structure-only then get_ddl_batch for specific nodes. schemas/types are allowlists; exclude_schemas uses % wildcard.",
+        "modelDescription": "PRIMARY lineage tool. Returns ALL connected nodes with IDs, DDL, and unresolved_refs (out-of-scope — ignore). 'Where from?' → downstream_hops=0. schemas/types are allowlists; exclude_schemas uses % wildcard.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

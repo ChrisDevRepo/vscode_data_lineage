@@ -292,12 +292,13 @@ export function activate(context: vscode.ExtensionContext) {
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
-        const { query, types, schemas, external_subtypes, include_body, exclude_schemas, exclude_types } = options.input as {
+        const { query, types, schemas, external_subtypes, include_body, exclude_schemas, exclude_types, mode } = options.input as {
           query: string; types?: string[]; schemas?: string[]; external_subtypes?: string[];
           include_body?: boolean; exclude_schemas?: string[]; exclude_types?: string[];
+          mode?: 'substring' | 'regex';
         };
-        logDebug(outputChannel, 'AI', `lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, include_body=${include_body ?? false}`);
-        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, external_subtypes as ('et' | 'file' | 'db')[] | undefined, include_body, exclude_schemas, exclude_types as ObjectType[] | undefined, _aiCaps);
+        logDebug(outputChannel, 'AI', `lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, include_body=${include_body ?? false}${mode === 'regex' ? ', mode=regex' : ''}`);
+        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, external_subtypes as ('et' | 'file' | 'db')[] | undefined, include_body, exclude_schemas, exclude_types as ObjectType[] | undefined, mode ?? 'substring', _aiCaps);
         return toolResult(result);
       },
     }),
@@ -602,19 +603,27 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
+      const MAX_ROUNDS = 15;
+      const BUDGET_HINT_THRESHOLD = Math.ceil(MAX_ROUNDS * 0.6); // round 9 of 15
+
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(
           'SQL lineage assistant. Use ONLY provided tools — never training knowledge.\n' +
-          'Call get_context ONCE at start — returns schemas, stats, filters, views.\n' +
-          'You query the FULL model — not just what the GUI shows.\n\n' +
-          'Patterns (target 2-4 rounds):\n' +
-          '- Lineage: search_objects → run_bfs_trace (upstream_hops/downstream_hops=0 for one direction)\n' +
-          '- Detail: get_object_detail for single object DDL/columns\n' +
-          '- Smart search: "schema.name" auto-splits into schema filter + name\n' +
-          '- NEVER repeat a search — results are deterministic. Batch parallel calls.\n' +
-          '- Past 5 rounds: present what you have.\n\n' +
-          'BFS defaults 3 hops; reduce for large graphs, expand if truncated=true.\n' +
-          'create_ai_view: obtain node IDs from search/BFS — never fabricate.\n' +
+          `Budget: ${MAX_ROUNDS} rounds. Plan accordingly.\n\n` +
+          'WORKFLOW:\n' +
+          '1. get_context → if model_size="small", objects[] included — skip to step 3.\n' +
+          '2. search_objects → "schema.name" auto-splits. mode="regex" for multi-pattern ("rev|gl.*cog").\n' +
+          '3. run_bfs_trace(id) → ALL connected nodes + DDL.\n' +
+          '4. create_ai_view → use ONLY IDs from tool results.\n\n' +
+          'RULES:\n' +
+          '- get_schema_summary = already in get_context. Skip.\n' +
+          '- NEVER repeat same tool+params. Results are deterministic.\n' +
+          '- NEVER fabricate IDs. Only use IDs returned by tools.\n' +
+          '- BFS returns ALL node IDs — do NOT re-search for them.\n' +
+          '- unresolved_refs in BFS results = outside loaded model. Do NOT search for them.\n' +
+          '- If auto_fixes removed unknown IDs, tell user which objects are outside the loaded model.\n' +
+          '- Batch independent calls in ONE round. Past round 5: present findings.\n\n' +
+          'BFS defaults 3 hops; reduce for large graphs.\n' +
           'Format: columns→table, deps→bullets with →, SQL→```sql.',
         ),
         ...historyMessages,
@@ -626,9 +635,9 @@ export function activate(context: vscode.ExtensionContext) {
       const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
       const toolSequence: string[] = [];
       let totalToolCallsMade = 0;
+      // Dedup cache: tool_name::JSON(input) → cached result (prevents identical calls within one request)
+      const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
       let roundCount = 0;
-      const MAX_ROUNDS = 15;
-      const BUDGET_HINT_THRESHOLD = Math.ceil(MAX_ROUNDS * 0.6); // round 9 of 15
 
       // Token estimation accumulators (best-effort)
       // NOTE: lastInputTokenEstimate = current round's full context (correct for budget %).
@@ -708,6 +717,15 @@ export function activate(context: vscode.ExtensionContext) {
           const resultParts: vscode.LanguageModelToolResultPart[] = [];
           let roundToolResultChars = 0;
           for (const call of toolCalls) {
+            // Dedup: skip if identical tool+params already called this request
+            const cacheKey = `${call.name}::${JSON.stringify(call.input)}`;
+            const cached = toolCallCache.get(cacheKey);
+            if (cached) {
+              const hint = [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true, message: 'Identical call already returned — use the previous result.' }))];
+              resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, hint));
+              logDebug(outputChannel, 'AI', `Dedup: ${call.name.replace('lineage_', '')}`);
+              continue;
+            }
             stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
             const t0 = performance.now();
             try {
@@ -718,6 +736,7 @@ export function activate(context: vscode.ExtensionContext) {
               );
               resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, result.content));
               accumulatedToolResults[call.callId] = result;
+              toolCallCache.set(cacheKey, result);
               const chars = JSON.stringify(result.content).length;
               roundToolResultChars += chars;
               // C5: Per-tool timing + result size

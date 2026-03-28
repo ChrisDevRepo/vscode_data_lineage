@@ -45,13 +45,24 @@ export function searchCatalog(
   types?: Set<ObjectType>,
   schemas?: Set<string>,
   limit: number = 20,
+  mode: 'substring' | 'regex' = 'substring',
 ): SearchableNode[] {
   if (query.length < 1) return [];
-  const lower = query.toLowerCase();
   let filtered = nodes;
   if (types && types.size > 0) filtered = filtered.filter(n => types.has(n.type));
   if (schemas && schemas.size > 0) filtered = filtered.filter(n => schemas.has(n.schema));
 
+  // Regex mode: match against name or schema.name
+  if (mode === 'regex') {
+    const re = safeRegex(query);
+    if (!re) return [];
+    return filtered
+      .filter(n => re.test(n.name) || re.test(`${n.schema}.${n.name}`))
+      .slice(0, limit);
+  }
+
+  // Substring mode (default): case-insensitive, starts-with ranked first
+  const lower = query.toLowerCase();
   const matches = filtered
     .map(n => ({ node: n, lower: n.name.toLowerCase() }))
     .filter(m => m.lower.includes(lower));
