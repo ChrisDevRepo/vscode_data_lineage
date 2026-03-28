@@ -610,6 +610,39 @@ async function testSmartSearchIntegration(model: DatabaseModel) {
   assert(isError(star), 'star query rejected');
 }
 
+async function testSchemaMismatchDetection(model: DatabaseModel) {
+  console.log('\n── Schema Mismatch Detection ──');
+
+  // Schema mismatch: SalesOrderDetail is in Sales, not HumanResources
+  const mismatch = searchObjects(model, 'HumanResources.SalesOrderDetail') as Record<string, unknown>;
+  assert(!isError(mismatch), 'mismatch search succeeds (not a hard error)');
+  assertEq(mismatch.total, 0, 'no results in HumanResources');
+  assert('schema_mismatch' in mismatch, 'schema_mismatch field present');
+  const mm = mismatch.schema_mismatch as Record<string, unknown>;
+  const foundSchemas = mm.found_in_schemas as string[];
+  assert(foundSchemas.includes('Sales'), 'found in Sales schema');
+  const fallback = mm.fallback_results as Array<Record<string, unknown>>;
+  assert(fallback.length > 0, 'fallback results returned');
+
+  // No mismatch when object IS in stated schema
+  const noMismatch = searchObjects(model, 'HumanResources.Employee') as Record<string, unknown>;
+  assert(!isError(noMismatch), 'Employee search succeeds');
+  assert((noMismatch.results as unknown[]).length > 0, 'found results in HumanResources');
+  assert(!('schema_mismatch' in noMismatch), 'no schema_mismatch when results found');
+
+  // No mismatch without schema hint (plain query)
+  const noHint = searchObjects(model, 'SalesOrderDetail') as Record<string, unknown>;
+  assert(!isError(noHint), 'plain search succeeds');
+  assert((noHint.results as unknown[]).length > 0, 'found results without hint');
+  assert(!('schema_mismatch' in noHint), 'no schema_mismatch without schema hint');
+
+  // No mismatch when nothing exists anywhere
+  const nowhere = searchObjects(model, 'HumanResources.xyznonexistent') as Record<string, unknown>;
+  assert(!isError(nowhere), 'nonexistent search succeeds');
+  assertEq(nowhere.total, 0, 'no results');
+  assert(!('schema_mismatch' in nowhere), 'no schema_mismatch when name not found anywhere');
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -631,6 +664,7 @@ async function main() {
     await testSafeRegex();
     await testParseSmartQuery();
     await testSmartSearchIntegration(model);
+    await testSchemaMismatchDetection(model);
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

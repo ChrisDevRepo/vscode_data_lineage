@@ -610,15 +610,22 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.LanguageModelChatMessage.User(
           'SQL lineage assistant. Use ONLY provided tools — never training knowledge.\n' +
           `Budget: ${MAX_ROUNDS} rounds.\n\n` +
-          'SEARCH → REASON → PRESENT\n' +
+          'SCOPE: Answer ONLY based on objects found in the loaded database model.\n' +
+          'If a question cannot be answered from the model metadata, say so.\n\n' +
+          'SEARCH → VALIDATE → REASON → PRESENT\n' +
           '1. get_context → learn schemas, model_size. If "small", objects[] included — skip search.\n' +
           '2. search_objects/search_ddl → find starting points. "schema.name" auto-splits. mode="regex" for batch.\n' +
-          '3. run_bfs_trace → returns ALL connected objects (raw graph, unfiltered).\n' +
-          '4. REASON: filter BFS results to RELEVANT objects only.\n' +
+          '3. VALIDATE before tracing:\n' +
+          '   - Schema not found? → "No schema X. Available: [list]. Did you mean Y?"\n' +
+          '   - Object not in stated schema? → "No X in Y. Found in Z — trace that instead?"\n' +
+          '   - schema_mismatch in tool result? → Report it. Do NOT ignore.\n' +
+          '   - STOP. Do NOT call run_bfs_trace until starting point is confirmed.\n' +
+          '4. run_bfs_trace → returns ALL connected objects (raw graph, unfiltered).\n' +
+          '5. REASON: filter BFS results to RELEVANT objects only.\n' +
           '   - Exclude: copy/historization SPs, hub utilities (LogMessage), dimension lookups without calc logic.\n' +
-          '   - If concept (e.g. "revenue") does not exist in the requested schema, tell the user.\n' +
-          '5. get_ddl_batch for 4-8 key SPs → read INSERT/SELECT to trace column-level data flow.\n' +
-          '6. create_ai_view → max 25 nodes. For 3+ schemas, create 2-3 focused views.\n\n' +
+          '   - If results don\'t match user\'s stated scope, stop and clarify (see 3).\n' +
+          '6. get_ddl_batch for 4-8 key SPs → read INSERT/SELECT to trace column-level data flow.\n' +
+          '7. create_ai_view → max 25 nodes. For 3+ schemas, create 2-3 focused views.\n\n' +
           'COLUMN TRACE ("what drives X" / "where does X come from"):\n' +
           '- Start from output table (get_object_detail for columns).\n' +
           '- Read SP DDL: match INSERT target columns to SELECT source columns.\n' +
@@ -728,7 +735,8 @@ export function activate(context: vscode.ExtensionContext) {
             // Normalize: sort keys + strip undefined/null values for consistent cache keys
             const normalizeInput = (input: Record<string, unknown>): string => {
               const sorted = Object.keys(input).sort().reduce((acc, k) => {
-                if (input[k] !== undefined && input[k] !== null) acc[k] = input[k];
+                // Strip undefined, null, and false (all boolean tool params default to false)
+                if (input[k] !== undefined && input[k] !== null && input[k] !== false) acc[k] = input[k];
                 return acc;
               }, {} as Record<string, unknown>);
               return JSON.stringify(sorted);
