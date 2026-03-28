@@ -9,6 +9,14 @@
 
 ---
 
+## Prerequisites
+
+- **Permission**: `SELECT` on profiled tables; `VIEW SERVER STATE` at server level (for row counts via `sys.dm_db_partition_stats`)
+- **Connection**: Profiling opens a separate database connection on first click; it stays alive for subsequent profiling and closes on panel dispose or error
+- **Output**: All generated SQL is logged to the `Data Lineage Viz` output channel (`View → Output → select "Data Lineage Viz"`)
+
+---
+
 ## How It Works
 
 1. **User clicks Quick or Standard** in the table detail panel (DB mode only)

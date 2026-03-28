@@ -32,6 +32,7 @@ import {
   addFilterProfile, deleteFilterProfile, isValidProject,
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
+import { logInfo, logDebug, logWarn, logError, logTrace } from './utils/log';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -152,14 +153,14 @@ export function activate(context: vscode.ExtensionContext) {
           // Re-check after await — panel may have been disposed while waiting
           if (!activePanel) return;
           activePanel.webview.postMessage({ type: 'config-only', config });
-          outputChannel.debug('[Config] Settings changed — pushed to webview');
+          logDebug(outputChannel, 'Config', 'Settings changed — pushed to webview');
         }
       } catch (err) {
-        outputChannel.error(`[Config] onDidChangeConfiguration failed: ${err instanceof Error ? err.message : err}`);
+        logError(outputChannel, 'Config', 'onDidChangeConfiguration', err);
       }
     })
   );
-  outputChannel.info('Activated');
+  logInfo(outputChannel, 'Config', 'Extension activated');
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', new SidebarProvider())
@@ -252,7 +253,7 @@ export function activate(context: vscode.ExtensionContext) {
       invoke(_options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
-        outputChannel.debug('[AI] lineage_get_context');
+        logDebug(outputChannel, 'AI', 'lineage_get_context');
         return toolResult(getContext(m, _aiFilter, _aiProjectName, _aiViews));
       },
     }),
@@ -263,7 +264,7 @@ export function activate(context: vscode.ExtensionContext) {
       invoke(_options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
-        outputChannel.debug('[AI] lineage_get_schema_summary');
+        logDebug(outputChannel, 'AI', 'lineage_get_schema_summary');
         return toolResult(getSchemasSummary(m));
       },
     }),
@@ -279,7 +280,7 @@ export function activate(context: vscode.ExtensionContext) {
           query: string; types?: string[]; schemas?: string[]; external_subtypes?: string[];
           include_body?: boolean; exclude_schemas?: string[]; exclude_types?: string[];
         };
-        outputChannel.debug(`[AI] lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, include_body=${include_body ?? false}`);
+        logDebug(outputChannel, 'AI', `lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, include_body=${include_body ?? false}`);
         const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, external_subtypes as ('et' | 'file' | 'db')[] | undefined, include_body, exclude_schemas, exclude_types as ObjectType[] | undefined, _aiCaps);
         return toolResult(result);
       },
@@ -293,7 +294,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { id } = options.input as { id: string };
-        outputChannel.debug(`[AI] lineage_get_object_detail: id="${id}"`);
+        logDebug(outputChannel, 'AI', `lineage_get_object_detail: id="${id}"`);
         return toolResult(getObjectDetail(m, id, _aiCaps));
       },
     }),
@@ -316,7 +317,7 @@ export function activate(context: vscode.ExtensionContext) {
             include_ddl?: boolean;
             exclude_schemas?: string[]; exclude_types?: string[];
           };
-        outputChannel.debug(`[AI] lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
+        logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
         return toolResult(runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
           types as ObjectType[] | undefined, schemas, include_ddl ?? true, exclude_schemas, exclude_types as ObjectType[] | undefined, _aiCaps));
       },
@@ -333,7 +334,7 @@ export function activate(context: vscode.ExtensionContext) {
         const { type, min_degree, max_size } = options.input as {
           type: string; min_degree?: number; max_size?: number;
         };
-        outputChannel.debug(`[AI] lineage_run_analysis: type="${type}"`);
+        logDebug(outputChannel, 'AI', `lineage_run_analysis: type="${type}"`);
         return toolResult(runAnalysis(m, g, type as AnalysisType, min_degree, max_size, _aiCaps));
       },
     }),
@@ -346,7 +347,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { query, types } = options.input as { query: string; types?: string[] };
-        outputChannel.debug(`[AI] lineage_search_ddl: query="${query.slice(0, 60)}"`);
+        logDebug(outputChannel, 'AI', `lineage_search_ddl: query="${query.slice(0, 60)}"`);
         return toolResult(searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _aiCaps));
       },
     }),
@@ -370,10 +371,10 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const input = options.input as CreateAiViewInput;
-        outputChannel.debug(`[AI] lineage_create_ai_view: name="${input.name}", ids=${input.node_ids?.length ?? 0}`);
+        logDebug(outputChannel, 'AI', `lineage_create_ai_view: name="${input.name}", ids=${input.node_ids?.length ?? 0}`);
         const validation = validateCreateAiView(m, input);
         if (!validation.success) {
-          outputChannel.warn(`[AI] lineage_create_ai_view: validation failed — ${validation.errors?.join(', ')}`);
+          logWarn(outputChannel, 'AI', `lineage_create_ai_view: validation failed — ${validation.errors?.join(', ')}`);
           return toolResult(validation);
         }
         if (!_aiCurrentProjectId) {
@@ -422,7 +423,7 @@ export function activate(context: vscode.ExtensionContext) {
           activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: _aiCurrentProjectId, lastWizardView: updated.lastWizardView });
           activePanel.webview.postMessage({ type: 'ai-view-activate', profileId: profile.id });
         }
-        outputChannel.info(`[AI] lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes → profile ${profile.id}`);
+        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes → profile ${profile.id}`);
         // VS Code notification
         const selected = await vscode.window.showInformationMessage(
           `AI view "${validation.name}" is ready in the lineage graph.`,
@@ -443,7 +444,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const { ids } = options.input as { ids: string[] };
-        outputChannel.debug(`[AI] lineage_get_ddl_batch: ${ids.length} ids`);
+        logDebug(outputChannel, 'AI', `lineage_get_ddl_batch: ${ids.length} ids`);
         return toolResult(getDdlBatch(m, ids, _aiCaps));
       },
     }),
@@ -588,7 +589,7 @@ export function activate(context: vscode.ExtensionContext) {
             accumulatedToolResults[call.callId] = result;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            outputChannel.warn(`[AI] Tool call failed: ${call.name} — ${msg}`);
+            logWarn(outputChannel, 'AI', `Tool call failed: ${call.name} — ${msg}`);
             const errContent = [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: msg }))];
             resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, errContent));
             accumulatedToolResults[call.callId] = new vscode.LanguageModelToolResult(errContent);
@@ -616,7 +617,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        outputChannel.error(`[AI] Chat handler failed: ${msg}`);
+        logError(outputChannel, 'AI', 'Chat handler', err);
         stream.markdown(`\n\n*Error: ${msg}*`);
       }
 
@@ -701,7 +702,7 @@ async function migrateFromWorkspaceState(context: vscode.ExtensionContext): Prom
     const store = loadProjectStore(context);
     const updated = updateProject(store, project);
     await saveProjectStore(context, updated);
-    outputChannel.info(`[Project] Migrated legacy connection to project "${name}"`);
+    logInfo(outputChannel, 'Project', `Migrated legacy connection to project "${name}"`);
   }
 
   // Clear old workspaceState keys regardless
@@ -720,7 +721,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     activePanel.reveal();
     if (loadDemo) {
       activePanel.webview.postMessage({ type: 'auto-visualize-start' });
-      handleLoadDemo(activePanel, context, true).catch(err => outputChannel.error(`Demo: ${err}`));
+      handleLoadDemo(activePanel, context, true).catch(err => logError(outputChannel, 'Dacpac', 'Load demo', err));
     }
     return;
   }
@@ -763,7 +764,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       detailPanel?.dispose();
       if (statsConnectionUri) {
         disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
-          outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
+          logDebug(outputChannel, 'DB', `Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
         });
         statsConnectionUri = undefined;
       }
@@ -781,7 +782,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       currentSavedViews = [];
       currentProjectId = null;
       vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
-      outputChannel.debug('[Bridge] Model cleared (panel disposed)');
+      logDebug(outputChannel, 'Bridge', 'Model cleared (panel disposed)');
     });
 
     // ─── Message Handler Map ──────────────────────────────────────────────
@@ -837,33 +838,33 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           try {
             if (msg.type === 'detail-ready') {
               if (pendingDetailUpdate) {
-                outputChannel.debug(`[Detail] Ready — flushing '${pendingDetailUpdate.node.id}'`);
+                logDebug(outputChannel, 'Detail', `Ready — flushing '${pendingDetailUpdate.node.id}'`);
                 detailPanel?.webview.postMessage({ type: 'detail-update', ...pendingDetailUpdate });
                 pendingDetailUpdate = undefined;
               } else {
-                outputChannel.debug('[Detail] Ready — pendingUpdate empty (re-mount or duplicate signal)');
+                logDebug(outputChannel, 'Detail', 'Ready — pendingUpdate empty (re-mount or duplicate signal)');
               }
             } else if (msg.type === 'error') {
               // React ErrorBoundary + global handlers post here.
               // Log at error level so it's visible in the output channel without debug mode.
-              outputChannel.error(`[Detail] ${(msg as { error: string }).error}`);
+              logWarn(outputChannel, 'Detail', (msg as { error: string }).error);
               const typedMsg = msg as { error: string; stack?: string; componentStack?: string };
-              if (typedMsg.stack) outputChannel.debug(`[Detail] Stack: ${typedMsg.stack}`);
-              if (typedMsg.componentStack) outputChannel.debug(`[Detail] Component stack: ${typedMsg.componentStack}`);
+              if (typedMsg.stack) logDebug(outputChannel, 'Detail', `Stack: ${typedMsg.stack}`);
+              if (typedMsg.componentStack) logDebug(outputChannel, 'Detail', `Component stack: ${typedMsg.componentStack}`);
             } else if (msg.type === 'table-stats-request') {
               await handleTableStatsRequest(lastConnectionInfo, detailPanel!, msg.schema, msg.objectName, msg.mode, msg.columns ?? []);
             } else if (msg.type === 'close-detail') {
               detailPanel?.dispose();
             } else {
-              outputChannel.debug(
-                `[Detail] No handler for '${(msg as { type: string }).type}' — ` +
+              logDebug(outputChannel, 'Detail',
+                `No handler for '${(msg as { type: string }).type}' — ` +
                 `pendingUpdate: ${pendingDetailUpdate ? 'set' : 'empty'}, ` +
                 `payload: ${JSON.stringify(msg).slice(0, 120)}`
               );
             }
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
-            outputChannel.error(`[Detail] Message handler failed for "${(msg as { type: string }).type}": ${errorMsg}`);
+            logError(outputChannel, 'Detail', `Message handler for "${(msg as { type: string }).type}"`, err);
           }
         });
         detailPanel.onDidDispose(() => {
@@ -904,7 +905,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         if (currentModel) {
           const projectName = store.projects.find(p => p.id === currentProjectId)?.name;
           panel.webview.postMessage({ type: 'dacpac-model', model: currentModel, config, sourceName: projectName ?? 'Project', autoVisualize: true });
-          outputChannel.debug('[Bridge] Panel restored from retained model');
+          logDebug(outputChannel, 'Bridge', 'Panel restored from retained model');
         }
       },
       'open-dacpac': async () => {
@@ -920,9 +921,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             const data = await vscode.workspace.fs.readFile(fileUri);
             if (isDacpacTooLarge(data.byteLength)) return;
             const config = await readExtensionConfig();
-            outputChannel.info(`── Opening ${fileName} ──`);
+            logInfo(outputChannel, 'Dacpac', `Opening ${fileName}`);
             const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
-            if (preview.warnings?.length) outputChannel.warn(`[Dacpac] ${preview.warnings[0]}`);
+            if (preview.warnings?.length) logWarn(outputChannel, 'Dacpac', preview.warnings[0]);
             cachedElements = elements;
             cachedDspName = dspName;
             currentModel = null;
@@ -935,7 +936,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: fileName, filePath: fileUri.fsPath });
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
-            outputChannel.error(`Failed to read file: ${errorMsg}`);
+            logError(outputChannel, 'Dacpac', 'Read file', err);
             vscode.window.showErrorMessage(`Failed to read file: ${errorMsg}`);
           }
         }
@@ -943,7 +944,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'load-project': async (msg) => {
         // Clear stale stats connection — prevents dev/prod cross-query on project switch
         if (statsConnectionUri) {
-          disconnectDatabase(statsConnectionUri, outputChannel).catch(err => outputChannel.debug('[DB] stats disconnect on project switch:', String(err)));
+          disconnectDatabase(statsConnectionUri, outputChannel).catch(err => logDebug(outputChannel, 'DB', `stats disconnect on project switch: ${String(err)}`));
           statsConnectionUri = undefined;
         }
         const store = loadProjectStore(context);
@@ -964,7 +965,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             await saveProjectStore(context, updatedStore);
             panel.webview.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
             const config = await readExtensionConfig();
-            outputChannel.info(`── Loading project "${project.name}" ──`);
+            logInfo(outputChannel, 'Project', `Loading project "${project.name}"`);
             currentProjectId = project.id;
             _aiCurrentProjectId = project.id;
             if (schemas && schemas.length > 0) {
@@ -980,13 +981,13 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               cachedElements = null;
               cachedDspName = '';
               vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
-              outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
+              logInfo(outputChannel, 'Bridge', `Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
               if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
               panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: conn.displayName });
             } else {
               // Phase 1: no stored schemas — show schema selector
               const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
-              if (preview.warnings?.length) outputChannel.warn(`[Dacpac] ${preview.warnings[0]}`);
+              if (preview.warnings?.length) logWarn(outputChannel, 'Dacpac', preview.warnings[0]);
               cachedElements = elements;
               cachedDspName = dspName;
               currentModel = null;
@@ -998,7 +999,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             }
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
-            outputChannel.error(`[Project] Failed to load "${conn.path}": ${errorMsg}`);
+            logError(outputChannel, 'Project', `Load "${conn.path}"`, err);
             if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
               panel.webview.postMessage({ type: 'last-dacpac-gone' });
             } else {
@@ -1012,7 +1013,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             async () => {
               const result = await connectDirect(conn.connectionInfo as IConnectionInfo, outputChannel);
               if (result) return result;
-              outputChannel.info('[Project] Direct reconnect failed — falling back to picker');
+              logInfo(outputChannel, 'Project', 'Direct reconnect failed — falling back to picker');
               return promptForConnection(outputChannel);
             },
             async (dbResult, progress, token) => {
@@ -1026,7 +1027,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                 const r = ph1Result.get('all-objects');
                 if (r) {
                   allObjectsCache = r;
-                  outputChannel.info(`[Project] Catalog: ${r.rowCount} objects loaded`);
+                  logInfo(outputChannel, 'Project', `Catalog: ${r.rowCount} objects loaded`);
                 }
               }
               if (token.isCancellationRequested) { panel.webview.postMessage({ type: 'db-cancelled' }); return; }
@@ -1045,7 +1046,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                   _aiGraph = currentGraph;
                   _aiProjectName = project.name;
                   vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
-                  outputChannel.info(`[Bridge] Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
+                  logInfo(outputChannel, 'Bridge', `Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
                 });
               if (!token.isCancellationRequested) {
                 const refreshed = { ...project, updatedAt: new Date().toISOString() };
@@ -1053,14 +1054,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
                 await saveProjectStore(context, updatedStore);
                 panel.webview.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
               }
-              outputChannel.info(`── Loading project "${project.name}" ──`);
+              logInfo(outputChannel, 'Project', `Loading project "${project.name}"`);
             },
           );
         }
       },
       'save-project': async (msg) => {
         if (!isValidProject(msg.project)) {
-          outputChannel.warn(`[Project] Rejected malformed save-project payload: ${JSON.stringify(msg.project)}`);
+          logWarn(outputChannel, 'Project', `Rejected malformed save-project payload: ${JSON.stringify(msg.project)}`);
           return;
         }
         const store = loadProjectStore(context);
@@ -1069,14 +1070,14 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         currentProjectId = msg.project.id;
         _aiCurrentProjectId = msg.project.id;
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-        outputChannel.debug(`[Project] Saved: "${msg.project.name}"`);
+        logInfo(outputChannel, 'Project', `Saved: "${msg.project.name}"`);
       },
       'delete-project': async (msg) => {
         const store = loadProjectStore(context);
         const updated = deleteProject(store, msg.id);
         await saveProjectStore(context, updated);
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-        outputChannel.debug(`[Project] Deleted: ${msg.id}`);
+        logInfo(outputChannel, 'Project', `Deleted: ${msg.id}`);
       },
       'load-demo': async () => {
         await handleLoadDemo(panel, context, true, (m) => {
@@ -1091,10 +1092,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         });
       },
       'dacpac-visualize': async (msg) => {
-        outputChannel.debug(`[Dacpac] Received: dacpac-visualize — schemas: ${msg.schemas?.join(', ')}`);
+        logDebug(outputChannel, 'Dacpac', `Received: dacpac-visualize — schemas: ${msg.schemas?.join(', ')}`);
         if (!cachedElements) {
-          outputChannel.warn(
-            '[Dacpac] Phase 2 aborted — session expired between Phase 1 and schema selection ' +
+          logWarn(outputChannel, 'Dacpac',
+            'Phase 2 aborted — session expired between Phase 1 and schema selection ' +
             '(no cached elements). Sending session-expired error to webview. ' +
             'User should reopen the file to retry.'
           );
@@ -1113,13 +1114,13 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           cachedElements = null;
           cachedDspName = '';
           vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
-          outputChannel.info(`[Bridge] Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
+          logInfo(outputChannel, 'Bridge', `Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
           if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
           const sourceName = msg.projectName ?? currentProjectId ?? 'dacpac';
           panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName });
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          outputChannel.error(`[Dacpac] Phase 2 extraction failed: ${errorMsg}`);
+          logError(outputChannel, 'Dacpac', 'Phase 2 extraction', err);
           panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase: 'extract' });
         }
       },
@@ -1128,7 +1129,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         currentSavedViews = msg.savedViews;
         _aiFilter = msg.filter;
         _aiViews = msg.savedViews;
-        outputChannel.debug('[Bridge] Active filter updated via filter-changed');
+        logDebug(outputChannel, 'Bridge', 'Active filter updated via filter-changed');
       },
       'log': (msg) => { outputChannel.info(msg.text); },
       'error': (msg) => {
@@ -1165,7 +1166,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         });
         if (!uri) return;
         await vscode.workspace.fs.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
-        outputChannel.info(`Exported: ${uri.fsPath}`);
+        logInfo(outputChannel, 'Bridge', `Exported: ${uri.fsPath}`);
         await vscode.commands.executeCommand('revealFileInOS', uri);
       },
       'show-detail': (msg) => { openOrRevealDetailPanel(msg.node, msg.findQuery); },
@@ -1175,7 +1176,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
       },
       'db-connect': () => {
-        outputChannel.debug('[DB] Received: db-connect');
+        logDebug(outputChannel, 'DB', 'Received: db-connect');
         return withDbProgress(panel, 'Data Lineage: Connecting to database',
         () => promptForConnection(outputChannel),
         (conn, progress, token) => {
@@ -1187,7 +1188,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         );
       },
       'db-visualize': (msg) => {
-        outputChannel.debug(`[DB] Received: db-visualize — schemas: ${msg.schemas?.join(', ')}`);
+        logDebug(outputChannel, 'DB', `Received: db-visualize — schemas: ${msg.schemas?.join(', ')}`);
         return withDbProgress(panel, 'Data Lineage: Loading selected schemas',
         async () => {
           if (!lastConnectionInfo) {
@@ -1196,7 +1197,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           }
           const result = await connectDirect(lastConnectionInfo, outputChannel);
           if (result) return result;
-          outputChannel.info('[DB] Direct reconnect failed for Phase 2 — falling back to picker');
+          logInfo(outputChannel, 'DB', 'Direct reconnect failed for Phase 2 — falling back to picker');
           return promptForConnection(outputChannel);
         },
         async (conn, progress, token) => {
@@ -1211,7 +1212,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               _aiGraph = currentGraph;
               _aiProjectName = msg.projectName ?? sourceName;
               vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
-              outputChannel.info(`[Bridge] Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
+              logInfo(outputChannel, 'Bridge', `Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
             },
           );
           // Auto-save project if a name was provided (Create New DB flow)
@@ -1229,7 +1230,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             const updated = updateProject(store, project);
             await saveProjectStore(context, updated);
             panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-            outputChannel.info(`[Project] Saved: "${msg.projectName}"`);
+            logInfo(outputChannel, 'Project', `Saved: "${msg.projectName}"`);
           }
         },
       );
@@ -1237,32 +1238,44 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'save-view': async (msg) => {
         const store = loadProjectStore(context);
         if (!store.projects.some(p => p.id === msg.projectId)) {
-          outputChannel.warn(`[Project] save-view: projectId ${msg.projectId} not found in store`);
+          logWarn(outputChannel, 'Project', `save-view: projectId ${msg.projectId} not found in store`);
           return;
         }
         const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
         await saveProjectStore(context, updated);
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-        outputChannel.debug(`[Project] View saved: "${(msg.profile as FilterProfile).name}" on project ${msg.projectId}`);
+        logInfo(outputChannel, 'Project', `View saved: "${(msg.profile as FilterProfile).name}" on project ${msg.projectId}`);
       },
       'save-wizard-view': async (msg) => {
         const store = loadProjectStore(context);
         await saveProjectStore(context, { ...store, lastWizardView: msg.view as 'main' | 'projects' });
-        outputChannel.debug(`[Project] Wizard view saved: ${msg.view}`);
+        logDebug(outputChannel, 'Project', `Wizard view saved: ${msg.view}`);
       },
       'delete-view': async (msg) => {
         const store = loadProjectStore(context);
         const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
         await saveProjectStore(context, updated);
         panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-        outputChannel.debug(`[Project] View deleted: ${msg.profileId}`);
+        logInfo(outputChannel, 'Project', `View deleted: ${msg.profileId}`);
       },
       'rebuild': async () => {
         const config = await readExtensionConfig();
-        panel.webview.postMessage({ type: 'config-only', config });
-        outputChannel.debug('[Rebuild] Config re-sent to webview');
+        if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
+        panel.webview.postMessage({ type: 'rebuild-config', config });
+        const { layout, excludePatterns, maxNodes, analysis, externalRefs } = config;
+        logDebug(outputChannel, 'Bridge',
+          `Rebuild: direction=${layout.direction}, edgeStyle=${layout.edgeStyle}, ` +
+          `nodeSep=${layout.nodeSeparation}, rankSep=${layout.rankSeparation}, ` +
+          `maxNodes=${maxNodes}, excludePatterns=${excludePatterns.length ? excludePatterns.join(';') : '(none)'}, ` +
+          `islandMaxSize=${analysis.islandMaxSize}, hubMinDegree=${analysis.hubMinDegree}, ` +
+          `externalRefs=${externalRefs.enabled ? 'on' : 'off'}`
+        );
+        const nodeCount = currentModel?.nodes.length ?? 0;
+        const edgeCount = currentModel?.edges.length ?? 0;
+        logDebug(outputChannel, 'Bridge', `Rebuilding dagre layout for ${nodeCount} nodes, ${edgeCount} edges`);
       },
       'reload': () => {
+        logInfo(outputChannel, 'Bridge', 'Panel reload requested');
         panel.dispose();
         openPanel(context, title, loadDemo);
       },
@@ -1270,20 +1283,20 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
 
     panel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
-        outputChannel.debug(`[Webview] → ${(message as { type: string }).type}`);
+        logDebug(outputChannel, 'Bridge', `→ ${(message as { type: string }).type}`);
         try {
           const handler = handlers[message.type] as ((msg: WebviewMessage) => Promise<void> | void) | undefined;
           if (handler) {
             await handler(message);
           } else {
-            outputChannel.debug(
-              `[Webview] No handler for '${(message as { type: string }).type}' — ` +
+            logDebug(outputChannel, 'Bridge',
+              `No handler for '${(message as { type: string }).type}' — ` +
               `payload: ${JSON.stringify(message).slice(0, 120)}`
             );
           }
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          outputChannel.error(`Message handler failed for "${message.type}": ${errorMsg}`);
+          logError(outputChannel, 'Bridge', `Message handler for "${message.type}"`, err);
           vscode.window.showErrorMessage(`Data Lineage Error: ${errorMsg}`);
         }
       },
@@ -1292,7 +1305,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     );
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    outputChannel.error(errorMsg);
+    logError(outputChannel, 'Bridge', 'Open panel', error);
     vscode.window.showErrorMessage(`Failed to open Data Lineage: ${errorMsg}`);
   }
 }
@@ -1351,12 +1364,12 @@ async function withDbProgress(
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         const phase = title.includes('Loading') ? 'build' : 'connect';
-        outputChannel.error(`[DB] ${phase} failed (${title}): ${errorMsg}`);
+        logError(outputChannel, 'DB', `${phase} (${title})`, err);
         panel.webview.postMessage({ type: 'db-error', message: errorMsg, phase });
       } finally {
         if (connectionUri) {
           await disconnectDatabase(connectionUri, outputChannel).catch(err => {
-            outputChannel.warn(`[DB] Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
+            logWarn(outputChannel, 'DB', `Disconnect cleanup failed: ${err instanceof Error ? err.message : err}`);
           });
         }
       }
@@ -1402,7 +1415,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
   const config: ExtensionConfigMessage = {
     excludePatterns: cfg.get<string[]>('excludePatterns', []).filter(p => {
       try { new RegExp(p); return true; } catch {
-        outputChannel.warn(`[Config] Invalid excludePattern "${p}" — not a valid regex. Pattern removed.`);
+        logWarn(outputChannel, 'Config', `Invalid excludePattern "${p}" — not a valid regex. Pattern removed.`);
         return false;
       }
     }),
@@ -1451,20 +1464,20 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     try {
       config.parseRules = await loadBuiltInParseRules();
       lastRulesLabel = 'built-in rules';
-      outputChannel.debug(`[ParseRules] Built-in YAML loaded (${(config.parseRules as Record<string, unknown[]>).rules.length} rules)`);
+      logDebug(outputChannel, 'Config', `Built-in YAML loaded (${(config.parseRules as Record<string, unknown[]>).rules.length} rules)`);
     } catch (err) {
-      outputChannel.error(`[ParseRules] Failed to load built-in rules: ${err instanceof Error ? err.message : String(err)}`);
+      logError(outputChannel, 'Config', 'Load built-in rules', err);
       vscode.window.showWarningMessage('Failed to load parse rules — regex-based edge detection disabled. Check Output channel.');
     }
   } else {
     const resolved = resolveWorkspacePath(rulesPath);
     if (!resolved) {
-      outputChannel.warn(`[ParseRules] Cannot resolve "${rulesPath}" — no workspace folder open`);
+      logWarn(outputChannel, 'Config', `Cannot resolve "${rulesPath}" — no workspace folder open`);
       vscode.window.showWarningMessage(
         `Parse rules: cannot resolve "${rulesPath}" — open a workspace folder or use an absolute path.`
       );
       config.parseRules = await loadBuiltInParseRules().catch(fallbackErr => {
-        outputChannel.error(`[ParseRules] Built-in fallback also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
+        logError(outputChannel, 'Config', 'Built-in fallback', fallbackErr);
         return undefined;
       });
     } else {
@@ -1474,23 +1487,23 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
         const content = new TextDecoder().decode(data);
         const parsed = yaml.load(content) as Record<string, unknown>;
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) {
-          outputChannel.warn(`[ParseRules] Invalid YAML in ${rulesPath} — missing "rules" array`);
+          logWarn(outputChannel, 'Config', `Invalid YAML in ${rulesPath} — missing "rules" array`);
           vscode.window.showWarningMessage(
             `Parse rules YAML invalid: missing "rules" array. Using built-in defaults.`
           );
           config.parseRules = await loadBuiltInParseRules().catch(fallbackErr => {
-        outputChannel.error(`[ParseRules] Built-in fallback also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
+        logError(outputChannel, 'Config', 'Built-in fallback', fallbackErr);
         return undefined;
       });
         } else {
           config.parseRules = parsed;
           lastRulesLabel = `${parsed.rules.length} rules from ${path.basename(rulesPath)}`;
-          outputChannel.debug(`[ParseRules] Read ${parsed.rules.length} rules from ${rulesPath}`);
+          logDebug(outputChannel, 'Config', `Read ${parsed.rules.length} rules from ${rulesPath}`);
           await persistAbsolutePath('parseRulesFile', rulesPath, resolved);
         }
       } catch (err) {
         if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
-          outputChannel.warn(`[ParseRules] File not found: ${rulesPath} — using built-in defaults`);
+          logWarn(outputChannel, 'Config', `File not found: ${rulesPath} — using built-in defaults`);
           vscode.window.showWarningMessage(
             `Parse rules file not found: ${rulesPath}. Using built-in defaults.`
           );
@@ -1500,7 +1513,7 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
           );
         }
         config.parseRules = await loadBuiltInParseRules().catch(fallbackErr => {
-        outputChannel.error(`[ParseRules] Built-in fallback also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
+        logError(outputChannel, 'Config', 'Built-in fallback', fallbackErr);
         return undefined;
       });
       }
@@ -1539,7 +1552,7 @@ async function handleTableStatsRequest(
   const queryTimeout = clamp(cfg.get<number>('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout), 10, 600, DEFAULT_CONFIG.tableStatistics.queryTimeout) * 1000;
 
   try {
-    outputChannel.info(`[Stats] Profiling [${schema}].[${objectName}] (mode=${mode}, timeout=${queryTimeout / 1000}s, cols=${cols.length})`);
+    logInfo(outputChannel, 'Stats', `Profiling [${schema}].[${objectName}] (mode=${mode}, timeout=${queryTimeout / 1000}s, cols=${cols.length})`);
 
     // Reuse existing stats connection if alive; otherwise connect (stored creds → picker)
     const isAlive = await verifyStatsConnection(queryTimeout);
@@ -1558,17 +1571,17 @@ async function handleTableStatsRequest(
     const connectionUri = statsConnectionUri!;
 
     // Get server info for platform detection
-    outputChannel.info(`[Stats] Getting server info (timeout=${queryTimeout / 1000}s)...`);
+    logInfo(outputChannel, 'Stats', `Getting server info (timeout=${queryTimeout / 1000}s)...`);
     const serverInfo = await withTimeout(getServerInfo(connectionUri, outputChannel), queryTimeout);
     const engineEdition = serverInfo.engineEditionId;
-    outputChannel.info(`[Stats] Platform: engineEditionId=${engineEdition}, server=${serverInfo.serverVersion}`);
+    logInfo(outputChannel, 'Stats', `Platform: engineEditionId=${engineEdition}, server=${serverInfo.serverVersion}`);
 
     // Row count from DMV
     const rowCountSql = buildRowCountQuery(schema, objectName);
-    outputChannel.info(`[Stats] Row count query:\n${rowCountSql}`);
+    logInfo(outputChannel, 'Stats', `Row count query:\n${rowCountSql}`);
     const rowCountResult = await withTimeout(executeSimpleQuery(connectionUri, rowCountSql, outputChannel), queryTimeout);
     const rowCount = rowCountResult.rowCount > 0 ? parseInt(rowCountResult.rows[0][0].displayValue, 10) || 0 : 0;
-    outputChannel.info(`[Stats] Row count: ${rowCount.toLocaleString()}`);
+    logInfo(outputChannel, 'Stats', `Row count: ${rowCount.toLocaleString()}`);
 
     // Build and run profiling query
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
@@ -1579,7 +1592,7 @@ async function handleTableStatsRequest(
       return;
     }
 
-    outputChannel.info(`[Stats] Profiling query (${mode}):\n${profilingSql}`);
+    logInfo(outputChannel, 'Stats', `Profiling query (${mode}):\n${profilingSql}`);
     const start = Date.now();
 
     let profilingResult: SimpleExecuteResult;
@@ -1588,7 +1601,7 @@ async function handleTableStatsRequest(
     } catch (err) {
       // Retry without sampling on TABLESAMPLE failure (e.g., Fabric DWH)
       if (String(err).includes('TABLESAMPLE') && engineEdition !== ENGINE_EDITION_FABRIC) {
-        outputChannel.warn(`[Stats] TABLESAMPLE failed, retrying without sampling...`);
+        logWarn(outputChannel, 'Stats', 'TABLESAMPLE failed, retrying without sampling...');
         const fallbackSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, 0, sampleThreshold, sampleSize);
         profilingResult = await withTimeout(executeSimpleQuery(connectionUri, fallbackSql, outputChannel), queryTimeout);
       } else {
@@ -1597,7 +1610,7 @@ async function handleTableStatsRequest(
     }
 
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    outputChannel.info(`[Stats] Profiling completed in ${elapsed}s (${profilingResult.rowCount} rows returned)`);
+    logInfo(outputChannel, 'Stats', `Profiling completed in ${elapsed}s (${profilingResult.rowCount} rows returned)`);
 
     if (profilingResult.rowCount === 0 || profilingResult.rows.length === 0) {
       panel.webview.postMessage({ type: 'table-stats-error', message: 'Profiling query returned no results. Table may be empty.' });
@@ -1617,7 +1630,7 @@ async function handleTableStatsRequest(
 
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
     if (stats.warnings) {
-      for (const w of stats.warnings) outputChannel.warn(`[Stats] Parse warning: ${w}`);
+      for (const w of stats.warnings) logWarn(outputChannel, 'Stats', `Parse warning: ${w}`);
     }
     panel.webview.postMessage({ type: 'table-stats-result', stats, mode });
 
@@ -1625,11 +1638,11 @@ async function handleTableStatsRequest(
 
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    outputChannel.error(`[Stats] Failed: ${errorMsg}`);
+    logError(outputChannel, 'Stats', 'Profiling', err);
     // Invalidate stale connection on error
     if (statsConnectionUri) {
       disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
-        outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
+        logDebug(outputChannel, 'DB', `Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
       });
       statsConnectionUri = undefined;
     }
@@ -1665,7 +1678,7 @@ async function runDbPhase1(
   onCachePlatformInfo?: (result: SimpleExecuteResult) => void,
 ): Promise<void> {
   const sourceName = `${connectionInfo.server} / ${connectionInfo.database}`;
-  outputChannel.info(`[DB] Phase 1 start — ${sourceName}`);
+  logInfo(outputChannel, 'DB', `Phase 1 start — ${sourceName}`);
 
   progress.report({ message: 'Loading queries...' });
   const queries = await loadDmvQueries(outputChannel, extensionUri);
@@ -1710,12 +1723,12 @@ async function runDbPhase1(
     const allObjectsResult = previewResult.get('all-objects');
     if (allObjectsResult) {
       onCacheAllObjects(allObjectsResult);
-      outputChannel.info(`[DB] Full catalog: ${allObjectsResult.rowCount} objects loaded for cross-schema resolution`);
+      logInfo(outputChannel, 'DB', `Full catalog: ${allObjectsResult.rowCount} objects loaded for cross-schema resolution`);
     } else {
-      outputChannel.warn('[DB] all-objects query returned no result — cross-schema resolution disabled');
+      logWarn(outputChannel, 'DB', 'all-objects query returned no result — cross-schema resolution disabled');
     }
   } else {
-    outputChannel.warn('[DB] No all-objects query found in YAML — cross-schema resolution disabled');
+    logWarn(outputChannel, 'DB', 'No all-objects query found in YAML — cross-schema resolution disabled');
   }
 
   // Cache platform-info for Phase 2 model building (optional — no warning if absent)
@@ -1729,10 +1742,10 @@ async function runDbPhase1(
   }
   const preview = buildSchemaPreview(result);
   const etPreviewTotal = preview.schemas.reduce((sum, s) => sum + (s.types.external ?? 0), 0);
-  outputChannel.info(`[DB] Schema preview: ${preview.schemas.length} schemas, ${preview.totalObjects} total objects${etPreviewTotal > 0 ? ` (${etPreviewTotal} external ⬡)` : ''}`);
+  logInfo(outputChannel, 'DB', `Schema preview: ${preview.schemas.length} schemas, ${preview.totalObjects} total objects${etPreviewTotal > 0 ? ` (${etPreviewTotal} external ⬡)` : ''}`);
   if (etPreviewTotal > 0) {
     for (const s of preview.schemas.filter(s => s.types.external > 0)) {
-      outputChannel.debug(`[DB] Schema '${s.name}': ${s.types.external} external table(s) detected`);
+      logDebug(outputChannel, 'DB', `Schema '${s.name}': ${s.types.external} external table(s) detected`);
     }
   }
 
@@ -1761,7 +1774,7 @@ async function runDbPhase2(
   platformInfo?: SimpleExecuteResult,
   onModelBuilt?: (model: DatabaseModel) => void,
 ): Promise<void> {
-  outputChannel.info(`[DB] Phase 2 start — schemas: ${schemas.join(', ')} (${schemas.length} selected)`);
+  logInfo(outputChannel, 'DB', `Phase 2 start — schemas: ${schemas.join(', ')} (${schemas.length} selected)`);
   progress.report({ message: 'Loading queries...' });
   const queries = await loadDmvQueries(outputChannel, extensionUri);
 
@@ -1811,7 +1824,7 @@ async function runDbPhase2(
   };
 
   progress.report({ message: 'Building model...' });
-  outputChannel.info('[DB] Building model from DMV results...');
+  logInfo(outputChannel, 'DB', 'Building model from DMV results...');
   const start = Date.now();
   const preConfig = await readExtensionConfig();
   if (preConfig.parseRules) handleParseRulesResult(loadRules(preConfig.parseRules as ParseRulesConfig));
@@ -1819,9 +1832,9 @@ async function runDbPhase2(
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   const extNodes = model.nodes.filter(n => n.type === 'external');
   const extSuffix = extNodes.length > 0 ? `, incl. ${extNodes.length} external (⬡)` : '';
-  outputChannel.info(`[DB] Model built: ${model.nodes.length} nodes${extSuffix}, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
+  logInfo(outputChannel, 'DB', `Model built: ${model.nodes.length} nodes${extSuffix}, ${model.edges.length} edges, ${model.schemas.length} schemas (${elapsed}s)`);
   if (extNodes.length > 0) {
-    outputChannel.debug(`[DB] External nodes: ${extNodes.map(n => n.fullName).join(', ')}`);
+    logDebug(outputChannel, 'DB', `External nodes: ${extNodes.map(n => n.fullName).join(', ')}`);
   }
 
   if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
@@ -1854,7 +1867,7 @@ async function handleLoadDemo(
     const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
     const data = await vscode.workspace.fs.readFile(demoUri);
     if (isDacpacTooLarge(data.byteLength)) return;
-    outputChannel.info('── Opening AdventureWorks (Demo) ──');
+    logInfo(outputChannel, 'Dacpac', 'Opening AdventureWorks (Demo)');
     if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
     const model = await extractDacpac(data.buffer as ArrayBuffer);
     onModelBuilt?.(model);
@@ -1862,7 +1875,7 @@ async function handleLoadDemo(
     panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    outputChannel.error(`Failed to load demo: ${errorMsg}`);
+    logError(outputChannel, 'Dacpac', 'Load demo', err);
     vscode.window.showErrorMessage(`Failed to load demo: ${errorMsg}`);
   }
 }
@@ -1876,24 +1889,24 @@ function handleParseRulesResult(message: {
 }) {
   // Detail per-rule errors at debug level
   for (const err of message.errors) {
-    outputChannel.debug(`[ParseRules] ${err}`);
+    logDebug(outputChannel, 'Config', err);
   }
 
   const breakdown = formatCategoryCounts(message.categoryCounts);
 
   // Summary at info level + VS Code notification for problems
   if (message.usedDefaults) {
-    outputChannel.warn('[ParseRules] YAML invalid — using built-in defaults');
+    logWarn(outputChannel, 'Config', 'YAML invalid — using built-in defaults');
     vscode.window.showWarningMessage(
       'Parse rules YAML invalid — using built-in defaults. Check Output channel for details.'
     );
   } else if (message.skipped.length > 0) {
-    outputChannel.warn(`[ParseRules] ${message.loaded} loaded${breakdown}, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
+    logWarn(outputChannel, 'Config', `${message.loaded} loaded${breakdown}, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
     vscode.window.showWarningMessage(
       `Parse rules: ${message.loaded} loaded, ${message.skipped.length} skipped (${message.skipped.join(', ')}). Check Output channel for details.`
     );
   } else {
-    outputChannel.info(`[ParseRules] ${lastRulesLabel || `${message.loaded} rules`} loaded${breakdown}`);
+    logInfo(outputChannel, 'Config', `${lastRulesLabel || `${message.loaded} rules`} loaded${breakdown}`);
   }
 }
 
@@ -1909,7 +1922,7 @@ function handleParseStats(stats: {
   // Debug level: opener + one line per object + closer
   // spDetails covers SPs (full regex parse) and views/functions (parser supplement — delta only).
   if (spCount > 0) {
-    outputChannel.debug(`[Parse] Starting — ${spCount} object(s) with ${lastRulesLabel}`);
+    logDebug(outputChannel, 'Parse', `Starting — ${spCount} object(s) with ${lastRulesLabel}`);
   }
   for (const sp of spDetails) {
     const inLabel = sp.inRefs && sp.inRefs.length > 0 ? sp.inRefs.join(', ') : String(sp.inCount);
@@ -1921,12 +1934,12 @@ function handleParseStats(stats: {
     if (sp.skippedRefs && sp.skippedRefs.length > 0) {
       parts.push(`Skipped: ${sp.skippedRefs.join(', ')}`);
     }
-    outputChannel.debug(`[Parse] ${sp.name} — ${parts.join(' | ')}`);
+    logDebug(outputChannel, 'Parse', `${sp.name} — ${parts.join(' | ')}`);
   }
   const distinctDropped = new Set(stats.droppedRefs.map(r => r.split(' → ')[1] ?? '')).size;
 
   if (spCount > 0) {
-    outputChannel.debug(`[Parse] Done — ${stats.resolvedEdges} resolved, ${stats.droppedRefs.length} dropped (${distinctDropped} distinct unrelated)`);
+    logDebug(outputChannel, 'Parse', `Done — ${stats.resolvedEdges} resolved, ${stats.droppedRefs.length} dropped (${distinctDropped} distinct unrelated)`);
   }
 
   // Warn: procedures with no inputs and no outputs AND no unresolved catalog refs.
@@ -1937,14 +1950,14 @@ function handleParseStats(stats: {
     !(sp.skippedRefs && sp.skippedRefs.length > 0)
   );
   if (empty.length > 0) {
-    outputChannel.warn(`[Parse] ${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
+    logWarn(outputChannel, 'Parse', `${empty.length} procedure(s) with no dependencies found: ${empty.map(sp => sp.name).join(', ')}`);
   }
 
   // Info level: canonical summary (last line — contains everything the user needs)
   if (objectCount !== undefined && objectCount > 0) {
-    outputChannel.info(`[Summary] ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
+    logInfo(outputChannel, 'Parse', `${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${lastRulesLabel}, ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs dropped`);
   } else if (objectCount === undefined) {
-    outputChannel.info(`[Summary] ${lastRulesLabel}, ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
+    logInfo(outputChannel, 'Parse', `${lastRulesLabel}, ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved, ${distinctDropped} distinct unrelated refs removed`);
   }
   // objectCount === 0: no [Summary] line — UI already shows a warning
 }
@@ -2032,7 +2045,7 @@ function sidebarItem(label: string, commandId: string, icon: string): vscode.Tre
 export function deactivate() {
   if (statsConnectionUri) {
     disconnectDatabase(statsConnectionUri, outputChannel).catch(err => {
-          outputChannel.debug(`[DB] Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
+          logDebug(outputChannel, 'DB', `Disconnect cleanup: ${err instanceof Error ? err.message : err}`);
         });
     statsConnectionUri = undefined;
   }

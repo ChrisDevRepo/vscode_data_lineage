@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Data Lineage Viz - VS Code Extension</title>
-  <meta name="description" content="VS Code extension for object-level dependency visualization from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases.">
+  <meta name="description" content="Visualize SQL object dependencies from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases.">
   <meta name="keywords" content="dacpac, sql server, azure sql, fabric, synapse, lineage, dependencies, visualization, vscode extension, database, data lineage">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -78,7 +78,7 @@
       </div>
       <h1>Data Lineage Viz</h1>
       <p class="subtitle">
-        See what depends on what — right inside VS Code. Visualize SQL object dependencies from .dacpac files or database imports. Now with <strong>@lineage</strong> AI.
+        See how tables, views, stored procedures, and functions connect — right inside VS Code. Import from .dacpac files or connect directly to SQL Server, Azure SQL, Fabric DW, or Synapse. Now with <strong>@lineage</strong> AI and schema overview.
       </p>
       <p style="font-size:.8rem;color:#94a3b8;margin-bottom:1.5rem;">Tested with SQL Server 2025 &middot; Azure SQL Database &middot; Fabric Data Warehouse &middot; Synapse Dedicated SQL Pool</p>
       <div class="btn-row">
@@ -120,7 +120,7 @@
         Ask <span style="color:#a5b4fc;">@lineage</span> in GitHub Copilot Chat
       </h2>
       <p style="font-size:1rem;color:#94a3b8;max-width:560px;margin:0 auto 2rem;">
-        Query your loaded lineage graph in plain English. The assistant uses 9 dedicated tools and answers from your <em style="color:#c7d2fe;">own data model</em> — never from general knowledge.
+        Query your loaded lineage graph in plain English. The assistant uses dedicated lineage tools and answers from your <em style="color:#c7d2fe;">own data model</em> — never from general knowledge.
       </p>
 
       <div style="background:#0f172a;border:1px solid #334155;border-radius:.75rem;overflow:hidden;text-align:left;max-width:580px;margin:0 auto 2rem;box-shadow:0 25px 60px rgba(0,0,0,.5);">
@@ -144,7 +144,7 @@
           <span style="color:#22c55e;">&#10003;</span> Answers from your own data model
         </div>
         <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
-          <span style="color:#22c55e;">&#10003;</span> 9 dedicated lineage tools
+          <span style="color:#22c55e;">&#10003;</span> Dedicated lineage tools
         </div>
         <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
           <span style="color:#22c55e;">&#10003;</span> Requires GitHub Copilot &amp; VS Code 1.95+
@@ -185,6 +185,11 @@
       <div class="icon">&#128196;</div>
       <h3>DDL &amp; SQL Search</h3>
       <p>Click any node to read its SQL with full syntax highlighting. Full-text search across all stored procedures and views.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128200;</div>
+      <h3>Schema Overview</h3>
+      <p>Large graphs auto-switch to schema-level bubbles. Click any schema to drill into its objects and neighbors.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128230;</div>

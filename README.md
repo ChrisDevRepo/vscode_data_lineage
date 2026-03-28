@@ -6,7 +6,7 @@
 
 > **Preview** — This extension is functional but under active development.
 
-Visualize object-level dependencies from `.dacpac` files or by importing directly from SQL Server, Azure SQL, Fabric DW, or Synapse. See how tables, views, stored procedures, and functions connect through an interactive graph.
+See how tables, views, stored procedures, and functions connect — right inside VS Code. Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
 ![Data Lineage Viz — search, trace, and preview DDL](images/viz-search-screenshot.png)
 
@@ -29,7 +29,7 @@ No database? Click **Try with demo data** to explore the AdventureWorks sample.
 
 ### GitHub Copilot Integration
 
-Use `@lineage` in GitHub Copilot Chat to ask questions about your loaded lineage graph. The assistant answers using 9 dedicated tools — never from general knowledge.
+Use `@lineage` in GitHub Copilot Chat to ask questions about your loaded lineage graph. The assistant answers using dedicated lineage tools — never from general knowledge.
 
 ```
 @lineage what schemas are loaded?

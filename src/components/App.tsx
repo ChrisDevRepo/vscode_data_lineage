@@ -457,15 +457,9 @@ export function App() {
   }, [model, config, rebuild, clearTrace]);
 
   const handleRebuild = useCallback(() => {
+    if (model) setIsRebuilding(true);
     vscodeApi.postMessage({ type: 'rebuild' });
-    if (model) {
-      setIsRebuilding(true);
-      setTimeout(() => {
-        rebuild(model, filter, config);
-        setIsRebuilding(false);
-      }, REBUILD_DELAY_MS);
-    }
-  }, [vscodeApi, model, filter, config, rebuild]);
+  }, [vscodeApi, model]);
 
   const handleNodeClick = useCallback(
     (nodeId: string, findQuery?: string) => {
@@ -867,6 +861,22 @@ export function App() {
         if (view === 'visualizing' && msg.lastOpenedId) {
           setActiveProjectId(msg.lastOpenedId);
         }
+      } else if (msg?.type === 'rebuild-config') {
+        // Fresh config from extension host — apply and rebuild graph with new settings
+        if (msg.config) {
+          const merged: ExtensionConfig = {
+            ...DEFAULT_CONFIG,
+            ...msg.config,
+            layout: { ...DEFAULT_CONFIG.layout, ...msg.config.layout },
+            trace: { ...DEFAULT_CONFIG.trace, ...msg.config.trace },
+            analysis: { ...DEFAULT_CONFIG.analysis, ...msg.config.analysis },
+          };
+          setConfig(merged);
+          if (modelRef.current) {
+            rebuildRef.current(modelRef.current, filterRef.current, merged);
+          }
+        }
+        setIsRebuilding(false);
       } else if (msg?.type === 'ai-view-activate') {
         // AI created an advanced bookmark — look it up and apply it
         const profileId: string = msg.profileId;
