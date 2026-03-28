@@ -103,6 +103,9 @@
   --ln-wizard-link: #60a5fa;
   --ln-wizard-fg-dim: rgba(255, 255, 255, 0.55);
   --ln-wizard-error: #f87171;   /* red-400 — legible on black, no theme fallback needed */
+  --ln-wizard-warning: #fbbf24; /* amber-400 */
+  --ln-wizard-success: #34d399; /* emerald-400 */
+  --ln-wizard-info: #94a3b8;    /* slate-400 */
 
   /* Toolbar active */
   --ln-toolbar-active-bg: var(--vscode-toolbar-activeBackground, rgba(0, 0, 0, 0.1));
@@ -757,18 +760,38 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
 .ln-start-screen .ln-panel .ln-list-item:hover {
   background: var(--ln-wizard-hover-bg);
 }
-/* Status message boxes inside wizard panel — force dark background so colored
-   text (green/yellow/red) has sufficient contrast regardless of VS Code theme */
-.ln-start-screen .ln-panel .ln-status-success,
-.ln-start-screen .ln-panel .ln-status-warning,
-.ln-start-screen .ln-panel .ln-status-error,
-.ln-start-screen .ln-panel .ln-status-info {
-  background: var(--ln-wizard-input-bg);
-  border-color: var(--ln-wizard-border);
-}
+/* Status message boxes inside wizard panel — per-type colors on the always-dark
+   wizard background. Tinted backgrounds reinforce color coding at a glance. */
 .ln-start-screen .ln-panel .ln-status-error {
+  background: rgba(248, 113, 113, 0.08);
   color: var(--ln-wizard-error);
   border-color: var(--ln-wizard-error);
+}
+.ln-start-screen .ln-panel .ln-status-warning {
+  background: rgba(251, 191, 36, 0.08);
+  color: var(--ln-wizard-warning);
+  border-color: var(--ln-wizard-warning);
+}
+.ln-start-screen .ln-panel .ln-status-success {
+  background: rgba(52, 211, 153, 0.08);
+  color: var(--ln-wizard-success);
+  border-color: var(--ln-wizard-success);
+}
+.ln-start-screen .ln-panel .ln-status-info {
+  background: var(--ln-wizard-input-bg);
+  color: var(--ln-wizard-info);
+  border-color: var(--ln-wizard-border);
+}
+.ln-start-screen .ln-panel .ln-status-body {
+  color: inherit;
+  opacity: 0.85;
+}
+/* Status message icons inherit type color instead of blanket white */
+.ln-start-screen .ln-panel .ln-status-error svg,
+.ln-start-screen .ln-panel .ln-status-warning svg,
+.ln-start-screen .ln-panel .ln-status-success svg,
+.ln-start-screen .ln-panel .ln-status-info svg {
+  color: inherit;
 }
 /* Wizard error — always-dark-palette red, use instead of --vscode-editorError-foreground in start screen */
 .ln-wizard-text-error  { color: var(--ln-wizard-error); }

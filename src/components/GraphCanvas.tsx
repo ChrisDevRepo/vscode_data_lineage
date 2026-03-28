@@ -417,13 +417,14 @@ export function GraphCanvas({
 
     return localEdges.map(edge => {
       const isConnected = edge.source === highlightedNodeId || edge.target === highlightedNodeId;
+      const baseWidth = (edge.style?.strokeWidth as number | undefined) ?? 1.2;
       return {
         ...edge,
         style: {
           ...edge.style,
           stroke: isConnected ? 'var(--ln-focus-border)' : edge.style?.stroke,
-          strokeWidth: isConnected ? 1.8 : edge.style?.strokeWidth || 0.8,
-          opacity: isConnected ? 1 : 0.6,
+          strokeWidth: isConnected ? Math.max(baseWidth + 0.6, 2.0) : baseWidth * 0.6,
+          opacity: isConnected ? 1 : 0.35,
         },
         animated: isConnected && (
           (trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied')

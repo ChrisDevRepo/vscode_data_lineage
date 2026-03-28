@@ -515,6 +515,12 @@ export function buildSchemaEdges(
   return result;
 }
 
+/** Log-scaled stroke weight for schema overview edges (flow-map technique). */
+function schemaEdgeStroke(count: number): { strokeWidth: number; opacity: number } {
+  const t = Math.min(Math.log2(Math.max(count, 1)) / 6, 1);
+  return { strokeWidth: 0.8 + t * 2.2, opacity: 0.55 + t * 0.45 };
+}
+
 /**
  * Build React Flow schema super-nodes + aggregated edges for overview mode.
  * Only includes schemas present in visibleSchemas.
@@ -584,6 +590,7 @@ export function buildSchemaGraph(
 
       const revCount = schemaEdgeCounts.get(tgt)?.get(src);
       const isBidi = revCount !== undefined;
+      const { strokeWidth, opacity } = schemaEdgeStroke(count);
 
       edges.push({
         id: isBidi ? `__schema__${src}↔${tgt}` : `__schema__${src}→${tgt}`,
@@ -593,7 +600,7 @@ export function buildSchemaGraph(
         labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
         labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
         labelBgPadding: LABEL_BG_PAD,
-        style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.2 },
+        style: { stroke: 'var(--ln-edge-color)', strokeWidth, opacity },
         markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
         ...(isBidi && {
           label: `⇄ ${count}`,

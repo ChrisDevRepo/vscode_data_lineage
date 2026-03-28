@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from 'react';
+import type { CSSProperties, ReactNode, Ref } from 'react';
 import type { AutocompleteNode } from '../../utils/autocomplete';
 import { TYPE_LABELS } from '../../utils/schemaColors';
 
@@ -7,9 +7,13 @@ interface SuggestionListProps {
   selectedIndex: number;
   onSelect: (node: AutocompleteNode) => void;
   onHover: (index: number) => void;
-  dropdownRef: RefObject<HTMLDivElement | null>;
+  dropdownRef: Ref<HTMLDivElement>;
   className?: string;
   renderAction?: (node: AutocompleteNode) => ReactNode;
+  /** When true, skip absolute positioning classes (portal handles positioning). */
+  portal?: boolean;
+  /** Inline styles from Floating UI positioning. */
+  style?: CSSProperties;
 }
 
 export function SuggestionList({
@@ -20,13 +24,16 @@ export function SuggestionList({
   dropdownRef,
   className = 'w-full',
   renderAction,
+  portal = false,
+  style,
 }: SuggestionListProps) {
   if (suggestions.length === 0) return null;
 
   return (
     <div
       ref={dropdownRef}
-      className={`absolute top-full mt-1 rounded-md shadow-lg z-30 overflow-hidden ln-dropdown ${className}`}
+      className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-hidden ln-dropdown ${className}`}
+      style={style}
     >
       {suggestions.map((node, index) => (
         <div

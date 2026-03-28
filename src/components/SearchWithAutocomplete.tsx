@@ -1,4 +1,5 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useCallback } from 'react';
+import { FloatingPortal, useFloating, offset, flip, shift, size, autoUpdate } from '@floating-ui/react';
 import { ObjectType } from '../engine/types';
 import { filterSuggestions } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
@@ -43,10 +44,32 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     handleArrowKeys,
   } = useAutocomplete(suggestions, searchTerm);
 
+  const { refs, floatingStyles } = useFloating({
+    open: isOpen,
+    placement: 'bottom-start',
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(4),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+      size({
+        apply({ rects, elements }) {
+          Object.assign(elements.floating.style, { minWidth: `${rects.reference.width}px` });
+        },
+      }),
+    ],
+  });
+
+  // Merge dropdownRef (outside-click detection) with floating ref (portal positioning)
+  const mergedDropdownRef = useCallback((node: HTMLDivElement | null) => {
+    (dropdownRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    refs.setFloating(node);
+  }, [dropdownRef, refs]);
+
   useKeyboardShortcut('/', () => inputRef.current?.focus(), true);
 
   return (
-    <div className="relative">
+    <div className="relative" ref={refs.setReference}>
       <input
         ref={inputRef}
         type="text"
@@ -90,35 +113,39 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
       </div>
 
       {isOpen && (
-        <SuggestionList
-          suggestions={suggestions}
-          selectedIndex={selectedIndex}
-          onSelect={(node) => {
-            if (onExecuteSearch) {
-              onExecuteSearch(node.name, node.schema);
-              onSearchChange('');
-              setIsOpen(false);
-            }
-          }}
-          onHover={setSelectedIndex}
-          dropdownRef={dropdownRef}
-          renderAction={onStartTrace ? (node) => (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onStartTrace(node.id);
+        <FloatingPortal>
+          <SuggestionList
+            suggestions={suggestions}
+            selectedIndex={selectedIndex}
+            onSelect={(node) => {
+              if (onExecuteSearch) {
+                onExecuteSearch(node.name, node.schema);
                 onSearchChange('');
                 setIsOpen(false);
-              }}
-              className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded hover:opacity-70 ln-text-link"
-              title="Start Trace"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
-              </svg>
-            </button>
-          ) : undefined}
-        />
+              }
+            }}
+            onHover={setSelectedIndex}
+            dropdownRef={mergedDropdownRef}
+            portal
+            style={floatingStyles}
+            renderAction={onStartTrace ? (node) => (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStartTrace(node.id);
+                  onSearchChange('');
+                  setIsOpen(false);
+                }}
+                className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded hover:opacity-70 ln-text-link"
+                title="Start Trace"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
+                </svg>
+              </button>
+            ) : undefined}
+          />
+        </FloatingPortal>
       )}
     </div>
   );

@@ -1074,8 +1074,9 @@ export function App() {
     );
   }
 
-  const renderNodes = graphMode === 'overview' ? schemaNodes : tracedNodes;
-  const renderEdges = graphMode === 'overview' ? schemaEdges : tracedEdges;
+  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'analysis';
+  const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
+  const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
 
   return (
     <ReactFlowProvider>
