@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import type { ObjectType } from '../engine/types';
 
@@ -52,98 +52,99 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const tooltipText = tooltipLines.join('\n');
 
   return (
-    <div
-      className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-tooltip"
-      data-tooltip={tooltipText}
-      style={{
-        position: 'relative',
-        borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
-        borderLeftColor: highlighted ? highlightColor : schemaColor,
-        borderLeftWidth: 6,
-        backgroundColor: 'var(--ln-node-bg)',
-        opacity: dimmed ? 0.25 : 1,
-        width: 180,
-        height: 70,
-        boxShadow: highlighted
-          ? (isYellowHighlight
-              ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
-              : data.aiHighlight
-                ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
-                : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
-          : data.aiHighlight
-          ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
-          : dimmed
-          ? 'var(--ln-node-shadow-dimmed)'
-          : 'var(--ln-node-shadow)',
-        transform: highlighted ? 'scale(1.05)' : 'scale(1)',
-        zIndex: highlighted ? 1000 : 1,
-      }}
-    >
+    <>
+      {/* AI badge — rendered below node via NodeToolbar (outside node bounds) */}
       {data.aiBadge && (
-        <div
-          className="absolute text-[8px] font-semibold px-1 rounded ln-node-badge ln-node-mini-tooltip"
-          data-tooltip={data.aiBadge.text}
-          style={{
-            top: 2,
-            right: data.showRemoveButton ? 20 : 2,
-            maxWidth: 60,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            background: data.aiBadge.color,
-            color: 'var(--vscode-button-foreground, #fff)',
-            lineHeight: '13px',
-            zIndex: 10,
-          }}
-        >
-          {data.aiBadge.text}
-        </div>
-      )}
-      {data.showRemoveButton && (
-        <button
-          className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn ln-node-mini-tooltip"
-          data-tooltip="Remove from view"
-          style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
-          onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
-        >
-          ×
-        </button>
-      )}
-      <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
-
-      <div className="px-3 pt-1 pb-1 flex flex-col h-full">
-        {/* Type symbol and stats on same line */}
-        <div className="flex items-center justify-between gap-1.5 whitespace-nowrap" style={{ lineHeight: 1 }}>
-          <span
-            className="text-base font-medium whitespace-nowrap leading-none"
-            style={{ color: 'var(--ln-fg-muted)' }}
+        <NodeToolbar position={Position.Bottom} align="center" offset={4} isVisible>
+          <div
+            className="text-[10px] font-semibold px-2 py-0.5 rounded ln-node-mini-tooltip"
+            data-tooltip={data.aiBadge.text}
+            style={{
+              maxWidth: 160,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              background: data.aiBadge.color,
+              color: 'var(--vscode-button-foreground, #fff)',
+            }}
           >
-            {displayIcon}
-          </span>
-          <span className="text-[9px] flex-shrink-0 whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)' }}>
-            {data.inDegree}↓ {data.outDegree}↑
-          </span>
+            {data.aiBadge.text}
+          </div>
+        </NodeToolbar>
+      )}
+      <div
+        className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-tooltip"
+        data-tooltip={tooltipText}
+        style={{
+          position: 'relative',
+          borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
+          borderLeftColor: highlighted ? highlightColor : schemaColor,
+          borderLeftWidth: 6,
+          backgroundColor: 'var(--ln-node-bg)',
+          opacity: dimmed ? 0.25 : 1,
+          width: 180,
+          height: 70,
+          boxShadow: highlighted
+            ? (isYellowHighlight
+                ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
+                : data.aiHighlight
+                  ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
+                  : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
+            : data.aiHighlight
+            ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
+            : dimmed
+            ? 'var(--ln-node-shadow-dimmed)'
+            : 'var(--ln-node-shadow)',
+          transform: highlighted ? 'scale(1.05)' : 'scale(1)',
+          zIndex: highlighted ? 1000 : 1,
+        }}
+      >
+        {data.showRemoveButton && (
+          <button
+            className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn ln-node-mini-tooltip"
+            data-tooltip="Remove from view"
+            style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
+            onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
+          >
+            ×
+          </button>
+        )}
+        <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
+
+        <div className="px-3 pt-1 pb-1 flex flex-col h-full">
+          {/* Type symbol and stats on same line */}
+          <div className="flex items-center justify-between gap-1.5 whitespace-nowrap" style={{ lineHeight: 1 }}>
+            <span
+              className="text-base font-medium whitespace-nowrap leading-none"
+              style={{ color: 'var(--ln-fg-muted)' }}
+            >
+              {displayIcon}
+            </span>
+            <span className="text-[9px] flex-shrink-0 whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)' }}>
+              {data.inDegree}↓ {data.outDegree}↑
+            </span>
+          </div>
+
+          {/* Object name */}
+          <div
+            className="text-[11px] overflow-hidden text-ellipsis whitespace-nowrap mt-0.5"
+            style={{ color: 'var(--ln-fg)' }}
+          >
+            {data.label}
+          </div>
+
+          {/* Schema name */}
+          <div
+            className="text-[9px] overflow-hidden text-ellipsis whitespace-nowrap"
+            style={{ color: 'var(--ln-fg-muted)', lineHeight: 1.1 }}
+          >
+            {data.externalType === 'file' ? 'File Source' : data.externalType === 'db' ? `↗ ${data.externalDatabase || 'Cross-DB'}` : data.schema}
+          </div>
         </div>
 
-        {/* Object name */}
-        <div
-          className="text-[11px] overflow-hidden text-ellipsis whitespace-nowrap mt-0.5"
-          style={{ color: 'var(--ln-fg)' }}
-        >
-          {data.label}
-        </div>
-
-        {/* Schema name */}
-        <div
-          className="text-[9px] overflow-hidden text-ellipsis whitespace-nowrap"
-          style={{ color: 'var(--ln-fg-muted)', lineHeight: 1.1 }}
-        >
-          {data.externalType === 'file' ? 'File Source' : data.externalType === 'db' ? `↗ ${data.externalDatabase || 'Cross-DB'}` : data.schema}
-        </div>
+        <Handle type="source" position={Position.Right} className="!w-2 !h-2 ln-handle" />
       </div>
-
-      <Handle type="source" position={Position.Right} className="!w-2 !h-2 ln-handle" />
-    </div>
+    </>
   );
 }
 

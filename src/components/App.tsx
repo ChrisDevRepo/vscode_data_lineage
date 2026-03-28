@@ -17,8 +17,15 @@ import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import { escapeRegexLiteral } from '../utils/sql';
-import type { Project, FilterProfile, DacpacConnection, DatabaseConnection } from '../engine/projectStore';
+import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
+
+/** Transient AI view — shown as a preview before the user decides to save. */
+interface AiPreview {
+  name: string;
+  nodeIds: Set<string>;
+  aiMetadata: AIViewMetadata;
+}
 
 type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
@@ -74,7 +81,7 @@ export function App() {
     exclusionPatterns: [],
   });
 
-  const { flowNodes, flowEdges, graph, metrics, renderLimitHit, buildFromModel } = useGraphology();
+  const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, buildFromModel } = useGraphology();
   const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
@@ -91,8 +98,8 @@ export function App() {
   const [, startTransition] = useTransition();
 
   const rebuild = useCallback(
-    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig) => {
-      startTransition(() => buildFromModel(m, f, cfg || config));
+    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false) => {
+      startTransition(() => buildFromModel(m, f, cfg || config, forceLayout));
     },
     [buildFromModel, config]
   );
@@ -333,6 +340,8 @@ export function App() {
 
   /** The currently active advanced bookmark profile (allowlist-based view). */
   const [activeAdvancedProfile, setActiveAdvancedProfile] = useState<FilterProfile | null>(null);
+  /** Transient AI preview — shown before user decides to save as bookmark. */
+  const [aiPreview, setAiPreview] = useState<AiPreview | null>(null);
   /** Saved filter state before entering any locked mode (trace/analysis/bookmark) — restored on exit. */
   const preModFilterRef = useRef<FilterState | null>(null);
   /** Saved node positions from a bookmark — applied once after rebuild, then cleared. */
@@ -348,11 +357,12 @@ export function App() {
       .map(id => id.split('.').pop()?.replace(/[\[\]]/g, '') ?? id);
   }, [activeAdvancedProfile, model]);
 
-  /** True when any locked mode (trace/analysis/advanced-bookmark) is active. */
+  /** True when any locked mode (trace/analysis/advanced-bookmark/ai-preview) is active. */
   const isModeLocked = (
     trace.mode === 'applied' || trace.mode === 'path-applied' ||
     !!analysisMode ||
-    !!activeAdvancedProfile
+    !!activeAdvancedProfile ||
+    !!aiPreview
   );
 
   /**
@@ -373,6 +383,8 @@ export function App() {
       }
     } else if (activeAdvancedProfile) {
       nodeIds = activeAdvancedProfile.filter.allowlistNodeIds ?? [];
+    } else if (aiPreview) {
+      nodeIds = Array.from(aiPreview.nodeIds);
     } else {
       return null;
     }
@@ -386,7 +398,7 @@ export function App() {
       }
     }
     return { allowedSchemas, allowedTypes };
-  }, [model, trace.mode, trace.tracedNodeIds, analysisMode, activeAdvancedProfile]);
+  }, [model, trace.mode, trace.tracedNodeIds, analysisMode, activeAdvancedProfile, aiPreview]);
 
   // ── Mode-lock filter save/restore ─────────────────────────────────────────
   // Refs to access current values inside the effect without re-firing on every change
@@ -610,7 +622,7 @@ export function App() {
 
   const { graphMode, enteredFocusFromOverview, toggleMode, enterFocusFromOverview, resetUserChoice } = useOverviewMode({
     model,
-    flowNodes,
+    filteredCount,
     config,
     schemasKey,
     onSetFocusSchema: handleSetFocusSchema,
@@ -795,10 +807,17 @@ export function App() {
     endTrace();
   }, [analysisMode, endTrace]);
 
+  const handleDiscardAiPreview = useCallback(() => {
+    setAiPreview(null);
+    // Mode-lock restore triggers automatically via isModeLocked → false
+  }, []);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (analysisMode) {
+        if (aiPreview) {
+          handleDiscardAiPreview();
+        } else if (analysisMode) {
           if (analysisMode.activeGroupId) clearAnalysisGroup();
           else closeAnalysis();
         } else if (trace.mode !== 'none') {
@@ -808,7 +827,7 @@ export function App() {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup]);
+  }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup, aiPreview, handleDiscardAiPreview]);
 
   const handleApplyView = useCallback((profile: FilterProfile) => {
     overviewActionsRef.current.resetUserChoice();
@@ -875,18 +894,30 @@ export function App() {
           }
         }
         setIsRebuilding(false);
-      } else if (msg?.type === 'ai-view-activate') {
-        // AI created an advanced bookmark — look it up and apply it
-        const profileId: string = msg.profileId;
-        setProjects(prev => {
-          const project = prev.find(p => p.filterProfiles?.some(fp => fp.id === profileId));
-          const profile = project?.filterProfiles?.find(fp => fp.id === profileId);
-          if (profile) {
-            // Defer to next tick so projects state is committed first
-            setTimeout(() => handleApplyView(profile), 0);
-          }
-          return prev;
+      } else if (msg?.type === 'ai-view-preview') {
+        // AI created a transient view — show as preview, user decides whether to save
+        const preview: AiPreview = {
+          name: msg.name,
+          nodeIds: new Set<string>(msg.nodeIds),
+          aiMetadata: msg.aiMetadata,
+        };
+        // Save current filter before entering mode-lock
+        if (!preModFilterRef.current) preModFilterRef.current = filterRef.current;
+        // Set allowlist filter so graph shows only preview nodes
+        const allowlist = preview.nodeIds;
+        setFilter(prev => {
+          const next: FilterState = {
+            ...prev,
+            allowlistNodeIds: allowlist,
+            // Override schemas/types to "all" so allowlist is not pre-filtered
+            schemas: modelRef.current ? new Set(modelRef.current.schemas.map(s => s.name)) : prev.schemas,
+            types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
+          };
+          if (modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
+          return next;
         });
+        setAiPreview(preview);
+        overviewActionsRef.current.resetUserChoice();
       }
     };
     window.addEventListener('message', handler);
@@ -899,6 +930,18 @@ export function App() {
       vscodeApi.postMessage({ type: 'overview-mode-changed', mode: graphMode, enteredFocusFromOverview });
     }
   }, [graphMode, enteredFocusFromOverview, view, vscodeApi]);
+
+  // When user toggles overview→full and dagre was skipped (Guard 2), trigger a full rebuild
+  // so dagre positions are computed before the node graph renders.
+  const prevGraphModeRef = useRef(graphMode);
+  useEffect(() => {
+    const wasOverview = prevGraphModeRef.current === 'overview';
+    prevGraphModeRef.current = graphMode;
+    if (wasOverview && graphMode === 'full' && model && filteredCount > config.overview.forceOverviewThreshold) {
+      rebuild(model, filter, config, true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphMode]);
 
   // ── Saved Views ─────────────────────────────────────────────────────────────
 
@@ -998,6 +1041,37 @@ export function App() {
     });
     vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
   }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+
+  const handleSaveAiBookmark = useCallback((
+    name: string,
+    withPositions: boolean,
+    positions?: Record<string, { x: number; y: number }>,
+    viewport?: { x: number; y: number; zoom: number },
+  ) => {
+    if (!activeProjectId || !aiPreview) return;
+    const profile: FilterProfile = {
+      id: crypto.randomUUID(),
+      name,
+      createdAt: new Date().toISOString(),
+      source: 'ai',
+      filter: {
+        ...serializeFilter(filter),
+        allowlistNodeIds: Array.from(aiPreview.nodeIds),
+      },
+      aiMetadata: aiPreview.aiMetadata,
+      ...(withPositions && positions ? { positions } : {}),
+      ...(withPositions && viewport ? { viewport } : {}),
+    };
+    // Optimistic update + persist
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+    // Clear transient preview and switch to the saved profile
+    setAiPreview(null);
+    setActiveAdvancedProfile(profile);
+  }, [activeProjectId, filter, aiPreview, lastOpenedId, vscodeApi]);
 
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
@@ -1134,6 +1208,9 @@ export function App() {
         innerContext={innerContext}
         onSaveTraceBookmark={activeProjectId ? handleSaveTraceAsBookmark : undefined}
         onSaveAnalysisBookmark={activeProjectId ? handleSaveAnalysisBookmark : undefined}
+        aiPreview={aiPreview}
+        onSaveAiBookmark={activeProjectId ? handleSaveAiBookmark : undefined}
+        onDiscardAiPreview={handleDiscardAiPreview}
         onRemoveFromView={handleRemoveFromView}
         activeAdvancedProfile={activeAdvancedProfile}
         bookmarkStaleNames={bookmarkStaleNames}

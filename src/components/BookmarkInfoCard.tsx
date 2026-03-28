@@ -43,6 +43,8 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
         left: 12,
         zIndex: 5,
         width: 220,
+        maxHeight: 'min(60vh, 400px)',
+        overflowY: 'auto',
         pointerEvents: 'auto',
       }}
     >
@@ -80,7 +82,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
               <span className="text-[9px] ln-text-muted uppercase tracking-wide">Summary</span>
               <span
                 className="text-[10px] ln-text"
-                style={{ maxHeight: 100, overflowY: 'auto', lineHeight: 1.4 }}
+                style={{ lineHeight: 1.4 }}
               >
                 {profile.aiMetadata!.narrative}
               </span>
@@ -91,8 +93,8 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
           {hasGroups && (
             <div className="flex flex-col gap-0.5">
               <span className="text-[9px] ln-text-muted uppercase tracking-wide">Groups</span>
-              {profile.aiMetadata!.highlightGroups.map((g) => (
-                <div key={g.label} className="flex items-center gap-1.5">
+              {profile.aiMetadata!.highlightGroups.map((g, i) => (
+                <div key={i} className="flex items-center gap-1.5">
                   <span
                     style={{
                       width: 8,
@@ -102,7 +104,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
                       flexShrink: 0,
                     }}
                   />
-                  <span className="text-[10px] ln-text truncate">{g.label}</span>
+                  <span className="text-[10px] ln-text truncate" title={g.label}>{g.label}</span>
                 </div>
               ))}
             </div>

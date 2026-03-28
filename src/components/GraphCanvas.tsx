@@ -29,13 +29,14 @@ import { TracedFilterBanner } from './TracedFilterBanner';
 import { PathFinderBar } from './PathFinderBar';
 import { AnalysisBanner } from './AnalysisBanner';
 import { AnalysisSidebar } from './AnalysisSidebar';
+import { AiViewBanner } from './AiViewBanner';
 import { BookmarkBanner } from './BookmarkBanner';
 import { BookmarkInfoCard } from './BookmarkInfoCard';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType, InnerFilterContext } from '../engine/types';
-import type { FilterProfile } from '../engine/projectStore';
+import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
@@ -44,8 +45,7 @@ import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode } satisfies NodeTypes;
 
 const FIT_VIEW_PADDING = 0.15;
-const FIT_VIEW_DURATION = 800;
-const AUTO_FIT_DELAY_MS = 100;
+const FIT_VIEW_DURATION = 250;
 
 interface GraphCanvasProps {
   flowNodes: FlowNode[];
@@ -118,6 +118,17 @@ interface GraphCanvasProps {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => void;
+  /** Transient AI preview — shown before user decides to save. */
+  aiPreview?: { name: string; nodeIds: Set<string>; aiMetadata: AIViewMetadata } | null;
+  /** Called when user saves an AI preview as a bookmark. */
+  onSaveAiBookmark?: (
+    name: string,
+    withPositions: boolean,
+    positions?: Record<string, { x: number; y: number }>,
+    viewport?: { x: number; y: number; zoom: number },
+  ) => void;
+  /** Called when user discards the AI preview. */
+  onDiscardAiPreview?: () => void;
   /** Called when user clicks the "×" remove-from-view button (advanced bookmark mode). */
   onRemoveFromView?: (nodeId: string) => void;
   /** The active advanced bookmark profile (when allowlist mode is on). */
@@ -190,6 +201,9 @@ export function GraphCanvas({
   onSchemaNodeDoubleClick,
   onSaveTraceBookmark,
   onSaveAnalysisBookmark,
+  aiPreview,
+  onSaveAiBookmark,
+  onDiscardAiPreview,
   onRemoveFromView,
   activeAdvancedProfile,
   bookmarkStaleNames,
@@ -250,6 +264,18 @@ export function GraphCanvas({
     }
   }, [onSaveAnalysisBookmark, analysisMode, getNodes, getViewport]);
 
+  const handleSaveAiAsBookmark = useCallback((name: string, withPositions: boolean) => {
+    if (!onSaveAiBookmark) return;
+    if (withPositions) {
+      const nodes = getNodes();
+      const pos: Record<string, { x: number; y: number }> = {};
+      for (const n of nodes) pos[n.id] = n.position;
+      onSaveAiBookmark(name, withPositions, pos, getViewport());
+    } else {
+      onSaveAiBookmark(name, withPositions);
+    }
+  }, [onSaveAiBookmark, getNodes, getViewport]);
+
   useKeyboardShortcut(['f', 'F'], handleFitView);
 
   const minimapNodeColor = useCallback(
@@ -276,16 +302,16 @@ export function GraphCanvas({
 
   // Zoom and center on a specific node
   const zoomToNode = useCallback((nodeId: string) => {
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
         setCenter(
           targetNode.position.x + NODE_WIDTH / 2,
           targetNode.position.y + NODE_HEIGHT / 2,
-          { zoom: 0.8, duration: 800 }
+          { zoom: 0.8, duration: FIT_VIEW_DURATION }
         );
       }
-    }, AUTO_FIT_DELAY_MS);
+    });
   }, [getNode, setCenter]);
 
   // Execute search: find node and zoom to it (drills down from overview if needed)
@@ -341,10 +367,10 @@ export function GraphCanvas({
       if (clickTarget) onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm);
       return;
     }
-    const timer = setTimeout(() => {
+    const raf = requestAnimationFrame(() => {
       fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
-    }, AUTO_FIT_DELAY_MS);
-    return () => clearTimeout(timer);
+    });
+    return () => cancelAnimationFrame(raf);
   }, [flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   // Local state preserves drag positions across highlight changes
@@ -359,7 +385,7 @@ export function GraphCanvas({
         return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
       }));
       if (pendingViewport) {
-        setTimeout(() => setViewport(pendingViewport), AUTO_FIT_DELAY_MS);
+        requestAnimationFrame(() => setViewport(pendingViewport));
       }
       onPendingPositionsApplied?.();
     } else {
@@ -402,25 +428,27 @@ export function GraphCanvas({
 
   const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
 
-  // Build AI highlight + badge lookups from active AI profile metadata
+  // Build AI highlight + badge lookups from active AI profile OR transient AI preview
+  const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
+
   const aiHighlightMap = useMemo((): Map<string, string> => {
     const m = new Map<string, string>();
-    const groups = activeAdvancedProfile?.aiMetadata?.highlightGroups;
+    const groups = activeAiMetadata?.highlightGroups;
     if (!groups) return m;
     for (const g of groups) {
       const hex = AI_COLOR_HEX[g.color] ?? AI_COLOR_HEX.bu;
       for (const id of g.nodeIds) m.set(id, hex);
     }
     return m;
-  }, [activeAdvancedProfile]);
+  }, [activeAiMetadata]);
 
   const aiBadgeMap = useMemo((): Map<string, { text: string; color: string }> => {
     const m = new Map<string, { text: string; color: string }>();
-    const badges = activeAdvancedProfile?.aiMetadata?.badges;
+    const badges = activeAiMetadata?.badges;
     if (!badges) return m;
     for (const b of badges) m.set(b.nodeId, { text: b.text, color: (b.color && AI_COLOR_HEX[b.color]) ?? AI_COLOR_HEX.gy });
     return m;
-  }, [activeAdvancedProfile]);
+  }, [activeAiMetadata]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     return localNodes.map(node => {
@@ -593,6 +621,16 @@ export function GraphCanvas({
         />
       )}
 
+      {/* AI Preview Banner - shown when a transient AI view is active */}
+      {aiPreview && onDiscardAiPreview && (
+        <AiViewBanner
+          name={aiPreview.name}
+          nodeCount={aiPreview.nodeIds.size}
+          onDiscard={onDiscardAiPreview}
+          onSaveAsBookmark={onSaveAiBookmark ? handleSaveAiAsBookmark : undefined}
+        />
+      )}
+
       <div className="flex-1 flex flex-row overflow-hidden min-h-0">
         <div className="flex-1 relative overflow-hidden min-w-0">
         {isRebuilding && (
@@ -699,11 +737,24 @@ export function GraphCanvas({
 
         <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
 
-        {/* Bookmark info card — floating bottom-left, only in advanced bookmark mode */}
+        {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (
           <BookmarkInfoCard
             profile={activeAdvancedProfile}
             staleNodeNames={bookmarkStaleNames ?? []}
+          />
+        )}
+        {aiPreview && !activeAdvancedProfile && (
+          <BookmarkInfoCard
+            profile={{
+              id: '',
+              name: aiPreview.name,
+              createdAt: new Date().toISOString(),
+              source: 'ai',
+              filter: { schemas: [], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: true, externalRefTypes: [], exclusionPatterns: [] },
+              aiMetadata: aiPreview.aiMetadata,
+            }}
+            staleNodeNames={[]}
           />
         )}
         </div>

@@ -51,6 +51,9 @@ let _aiCurrentProjectId: string | null = null;
 let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; conservative fallback
 let _aiCaps:           AiCapsOverride = {};  // refreshed once per @lineage request; avoids re-reading config per tool call
 
+/** Pending AI view preview — queued when webview is in a locked mode. */
+let _pendingAiPreview: { name: string; nodeIds: string[]; aiMetadata: AIViewMetadata } | null = null;
+
 function isAiEnabled(): boolean {
   return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
 }
@@ -381,7 +384,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!_aiCurrentProjectId) {
           return toolResult({ success: false, errors: ['No active project'], hint: 'Open a saved project before using lineage_create_ai_view.' });
         }
-        // Build the FilterProfile with aiMetadata
+        // Build aiMetadata for the transient preview (NOT saved yet — user decides)
         const aiMetadata: AIViewMetadata = {
           narrative: validation.narrative ?? '',
           highlightGroups: validation.highlight_groups.map(g => ({
@@ -396,44 +399,34 @@ export function activate(context: vscode.ExtensionContext) {
           })),
           layoutDirection: validation.layout_direction,
         };
-        // Use all-schemas/all-types filter so allowlist is the only constraint when applied
-        const profile: FilterProfile = {
-          id: crypto.randomUUID(),
-          name: validation.name,
-          createdAt: new Date().toISOString(),
-          source: 'ai',
-          filter: {
-            schemas: [],
-            types: ['table', 'view', 'procedure', 'function', 'external'],
-            searchTerm: '',
-            hideIsolated: false,
-            focusSchemas: [],
-            showExternalRefs: true,
-            externalRefTypes: ['file', 'db'],
-            exclusionPatterns: [],
-            allowlistNodeIds: validation.node_ids,
-          },
-          aiMetadata,
-        };
-        // Persist + broadcast
-        const store = loadProjectStore(context);
-        const updated = addFilterProfile(store, _aiCurrentProjectId, profile);
-        await saveProjectStore(context, updated);
-        _aiViews = updated.projects.find(p => p.id === _aiCurrentProjectId)?.filterProfiles ?? _aiViews;
-        if (activePanel) {
-          activePanel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: _aiCurrentProjectId, lastWizardView: updated.lastWizardView });
-          activePanel.webview.postMessage({ type: 'ai-view-activate', profileId: profile.id });
-        }
-        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes → profile ${profile.id}`);
-        // VS Code notification
-        const selected = await vscode.window.showInformationMessage(
-          `AI view "${validation.name}" is ready in the lineage graph.`,
-          'Open',
-        );
-        if (selected === 'Open' && activePanel) {
+        const preview = { name: validation.name, nodeIds: validation.node_ids, aiMetadata };
+        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes → preview`);
+
+        // Check if webview is in a locked mode (allowlist active = trace/analysis/bookmark)
+        const isWebviewLocked = (_aiFilter?.allowlistNodeIds?.length ?? 0) > 0;
+
+        if (activePanel && !isWebviewLocked) {
+          // Send preview directly — webview shows it as transient view
+          activePanel.webview.postMessage({ type: 'ai-view-preview', ...preview });
           activePanel.reveal(vscode.ViewColumn.One);
+          _pendingAiPreview = null;
+        } else {
+          // Queue the preview and notify user
+          _pendingAiPreview = preview;
+          const selected = await vscode.window.showInformationMessage(
+            `Data Lineage: AI view "${validation.name}" is ready.`,
+            'Show Now',
+            'Dismiss',
+          );
+          if (selected === 'Show Now' && activePanel && _pendingAiPreview) {
+            activePanel.webview.postMessage({ type: 'ai-view-preview', ..._pendingAiPreview });
+            activePanel.reveal(vscode.ViewColumn.One);
+            _pendingAiPreview = null;
+          } else if (selected === 'Dismiss') {
+            _pendingAiPreview = null;
+          }
         }
-        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length, profile_id: profile.id });
+        return toolResult({ success: true, view_name: validation.name, node_count: validation.node_ids.length });
       },
     }),
     vscode.lm.registerTool('lineage_get_ddl_batch', {
@@ -496,7 +489,13 @@ export function activate(context: vscode.ExtensionContext) {
               // Re-inject assistant turn: response text + tool call parts
               const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
               if (round.response) assistantParts.push(new vscode.LanguageModelTextPart(round.response));
-              assistantParts.push(...round.toolCalls);
+              for (const tc of round.toolCalls) {
+                // Metadata may be serialized between turns — reconstruct instances from plain objects
+                const part = tc instanceof vscode.LanguageModelToolCallPart
+                  ? tc
+                  : new vscode.LanguageModelToolCallPart((tc as any).callId, (tc as any).name, (tc as any).input);
+                assistantParts.push(part);
+              }
               historyMessages.push(new vscode.LanguageModelChatMessage(
                 vscode.LanguageModelChatMessageRole.Assistant, assistantParts,
               ));
@@ -505,7 +504,13 @@ export function activate(context: vscode.ExtensionContext) {
                 const resultParts = round.toolCalls
                   .map(tc => {
                     const r = meta.toolCallResults[tc.callId];
-                    return r ? new vscode.LanguageModelToolResultPart(tc.callId, r.content) : null;
+                    if (!r) return null;
+                    const content = (r.content as any[]).map((c: any) =>
+                      c instanceof vscode.LanguageModelTextPart
+                        ? c
+                        : new vscode.LanguageModelTextPart(typeof c.value === 'string' ? c.value : JSON.stringify(c)),
+                    );
+                    return new vscode.LanguageModelToolResultPart(tc.callId, content);
                   })
                   .filter((p): p is vscode.LanguageModelToolResultPart => p !== null);
                 if (resultParts.length) {
