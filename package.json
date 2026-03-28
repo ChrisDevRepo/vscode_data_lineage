@@ -589,7 +589,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY lineage tool. Returns ALL connected nodes with IDs and unresolved_refs. Default ddl=false — use get_ddl_batch for targeted DDL. schemas[]/types[] are include-only filters.",
+        "modelDescription": "PRIMARY lineage tool. Returns connected nodes with DDL (default). Read INSERT/SELECT in DDL to trace column-level data flow. Use schemas[] to limit scope on large models.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -634,7 +634,7 @@
             },
             "include_ddl": {
               "type": "boolean",
-              "description": "Include DDL in results. Default false — use get_ddl_batch for targeted DDL."
+              "description": "Include DDL/columns in results (default true). Set false for structure-only overview."
             }
           },
           "required": [

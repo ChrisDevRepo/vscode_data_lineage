@@ -308,7 +308,7 @@ export function activate(context: vscode.ExtensionContext) {
         const { id, upstream_hops, downstream_hops, include_ddl } = options.input as {
           id: string; upstream_hops?: number; downstream_hops?: number; include_ddl?: boolean;
         };
-        const ddlTag = (include_ddl ?? false) ? ' (with DDL)' : '';
+        const ddlTag = (include_ddl ?? true) ? '' : ' (structure only)';
         return { invocationMessage: `Tracing lineage from "${id}" (↑${upstream_hops ?? 3} ↓${downstream_hops ?? 3} hops)${ddlTag}…` };
       },
       invoke(options, _token) {
@@ -321,9 +321,9 @@ export function activate(context: vscode.ExtensionContext) {
             types?: string[]; schemas?: string[];
             include_ddl?: boolean;
           };
-        logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? false}`);
+        logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
         return toolResult(runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
-          types as ObjectType[] | undefined, schemas, include_ddl ?? false, _aiCaps));
+          types as ObjectType[] | undefined, schemas, include_ddl ?? true, _aiCaps));
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
@@ -606,15 +606,15 @@ export function activate(context: vscode.ExtensionContext) {
           '- NEVER repeat same tool+params. Results are deterministic.\n' +
           '- NEVER fabricate IDs. Only use IDs returned by tools.\n' +
           '- unresolved_refs = outside loaded model. Mention in narrative, NOT as node_ids.\n' +
-          '- BFS: up=2, down=2. ddl=false first. get_ddl_batch for 4-8 key SPs after.\n' +
+          '- BFS: use schemas[] to focus scope. DDL included by default — read INSERT/SELECT for columns.\n' +
           '- Notes: column-level mappings on 5-8 key SPs. No generic descriptions.\n' +
           '- Batch independent calls in ONE round. Past round 5: present findings.\n\n' +
           'WORKFLOW: SEARCH → VALIDATE → REASON → PRESENT\n' +
           '1. get_context → learn schemas, model_size. If "small", objects[] included — skip search.\n' +
           '2. search_objects → find by name (substring or mode="regex" for batch). search_ddl → find by DDL content. Use schemas[] to filter.\n' +
           '3. VALIDATE: Do search results match what the user asked? If not → STOP, ask user (see SPEC CHECK).\n' +
-          '4. run_bfs_trace (ddl=false default) → structure only. Then get_ddl_batch for 4-8 key SPs.\n' +
-          '5. Read DDL: INSERT/SELECT column mappings to trace data flow.\n' +
+          '4. run_bfs_trace (with DDL) → read INSERT/SELECT in SP DDL to trace column-level data flow.\n' +
+          '5. get_ddl_batch only if you need DDL for objects OUTSIDE the BFS trace.\n' +
           '6. create_ai_view → max 25 nodes. For 3+ schemas, create 2-3 focused views.\n\n' +
           'COLUMN TRACE ("what drives X" / "where does X come from"):\n' +
           '- Start from output table (get_object_detail for columns).\n' +

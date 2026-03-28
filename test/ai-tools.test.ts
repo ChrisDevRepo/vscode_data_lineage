@@ -143,8 +143,8 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   const node = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
   if (!node) { assert(false, 'HumanResources.Employee not found'); return; }
 
-  // ── default (ddl=false, structure only) ──
-  const rStruct = runBfsTrace(model, graph, node.id, 2, 2) as Record<string, unknown>;
+  // ── include_ddl=false (structure only) ──
+  const rStruct = runBfsTrace(model, graph, node.id, 2, 2, undefined, undefined, false) as Record<string, unknown>;
   assert(!isError(rStruct), 'runBfsTrace structure: no error');
   const nodesStruct = rStruct.nodes as Array<Record<string, unknown>>;
   assert(nodesStruct.length > 1, `BFS returned > 1 node (got ${nodesStruct.length})`);
@@ -167,8 +167,8 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   assert(typeof rStruct.total_nodes === 'number', 'total_nodes is number');
   assert(typeof rStruct.total_edges === 'number', 'total_edges is number');
 
-  // ── include_ddl=true (explicit) — scriptable nodes get DDL, tables get cols ──
-  const rDdl = runBfsTrace(model, graph, node.id, 2, 2, undefined, undefined, true) as Record<string, unknown>;
+  // ── include_ddl=true (default) — scriptable nodes get DDL, tables get cols ──
+  const rDdl = runBfsTrace(model, graph, node.id, 2, 2) as Record<string, unknown>;
   assert(!isError(rDdl), 'runBfsTrace DDL: no error');
   const nodesDdl = rDdl.nodes as Array<Record<string, unknown>>;
   assert(nodesDdl.length > 0, 'DDL trace: nodes present');
@@ -226,7 +226,7 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
     const deg = n.in.length + n.out.length;
     if (deg > maxDegree) { maxDegree = deg; hubId = id; }
   }
-  const rHub = runBfsTrace(model, graph, hubId, 10, 10) as Record<string, unknown>;
+  const rHub = runBfsTrace(model, graph, hubId, 10, 10, undefined, undefined, false) as Record<string, unknown>;
   assert(!isError(rHub), 'large BFS: no error');
   assert((rHub.nodes as unknown[]).length <= AI_CAPS.BFS_MAX_NODES, `nodes capped at ${AI_CAPS.BFS_MAX_NODES}`);
   assert((rHub.edges as unknown[]).length <= AI_CAPS.BFS_MAX_EDGES, `edges capped at ${AI_CAPS.BFS_MAX_EDGES}`);

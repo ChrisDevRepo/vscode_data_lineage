@@ -285,10 +285,11 @@ export function getObjectDetail(
 }
 
 // ─── Tool 4: lineage_run_bfs_trace ────────────────────────────────────────────
-// Compound tool: BFS + optional DDL/columns per node (include_ddl — default false).
+// Compound tool: BFS + DDL/columns per node (include_ddl=true default).
 // For scriptable nodes (procedure/view/function): includes normalized DDL.
 // For table/external nodes: includes compact column list instead.
 // types[] and schemas[] are include-only filters (no exclude).
+// BFS_MAX_NODES/BFS_MAX_EDGES caps prevent payload blow-up — no depth clamp needed.
 
 const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
@@ -370,7 +371,7 @@ export function runBfsTrace(
   downstreamHops:  number = 3,
   types?:          ObjectType[],
   schemas?:        string[],
-  includeDdl:      boolean = false,
+  includeDdl:      boolean = true,
   caps?:           AiCapsOverride,
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
