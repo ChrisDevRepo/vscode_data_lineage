@@ -43,6 +43,8 @@ export interface AIViewMetadata {
   highlightGroups: Array<{ label: string; color: AIHighlightColor; nodeIds: string[] }>;
   /** Up to 50 per-node text badges (e.g., "Step 1", "Hub", "⚠ Cycle"). */
   badges: Array<{ nodeId: string; text: string; color?: AIHighlightColor | 'gy' }>;
+  /** Up to 50 per-node sticky notes — calc explanations, step descriptions (max 200 chars, \n for line breaks). */
+  notes?: Array<{ nodeId: string; text: string; color?: AIHighlightColor | 'gy' }>;
   /** Dagre layout direction hint. Default: 'TB'. */
   layoutDirection?: 'LR' | 'TB';
 }

@@ -517,6 +517,11 @@ export type CreateAiViewInput = {
     text: string;
     color?: AiBadgeColor;
   }>;
+  notes?: Array<{
+    node_id: string;
+    text: string;
+    color?: AiBadgeColor;
+  }>;
 };
 
 export type CreateAiViewRequest = {
@@ -527,6 +532,7 @@ export type CreateAiViewRequest = {
   layout_direction: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightColor; node_ids: string[] }>;
   badges: Array<{ node_id: string; text: string; color?: AiBadgeColor }>;
+  notes: Array<{ node_id: string; text: string; color?: AiBadgeColor }>;
 };
 
 export type CreateAiViewError = { success: false; errors: string[]; hint: string };
@@ -584,6 +590,16 @@ export function validateCreateAiView(
     }
   }
 
+  // notes validation
+  if (input.notes) {
+    if (input.notes.length > 50) errors.push('notes exceeds maximum of 50');
+    for (const n of input.notes) {
+      if (!nodeIdSet.has(n.node_id)) errors.push(`Note node_id "${n.node_id}" is not in node_ids list`);
+      if (!n.text || n.text.length > 200) errors.push(`Note text must be 1–200 characters`);
+      if (n.color && !AI_BADGE_COLORS.has(n.color)) errors.push(`Note color "${n.color}" is invalid`);
+    }
+  }
+
   if (errors.length > 0) {
     return {
       success: false,
@@ -600,6 +616,7 @@ export function validateCreateAiView(
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
     badges: input.badges ?? [],
+    notes: input.notes ?? [],
   };
 }
 

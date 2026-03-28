@@ -48,7 +48,7 @@ function NeighborHoverList({
   return (
     <span className="relative group cursor-default">
       <span className="ln-text">{label}: {count}</span>
-      <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 min-w-[260px] rounded shadow-lg py-1.5 px-2 text-xs ln-modal">
+      <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 min-w-[260px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover">
         {sortedSchemas.map(([schema, items]) => (
           <div key={schema}>
             <div className="text-[10px] uppercase tracking-wide ln-text pt-1.5 pb-0.5 first:pt-0 border-b ln-border">
@@ -86,7 +86,7 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
   return (
     <span className="relative group cursor-default">
       <span className="ln-text">{label}: {count}</span>
-      <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 min-w-[240px] rounded shadow-lg py-1.5 px-2 text-xs ln-modal">
+      <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 min-w-[240px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover">
         {items.map((item) => (
           <div key={item} className="py-0.5 ln-text whitespace-nowrap">{item}</div>
         ))}

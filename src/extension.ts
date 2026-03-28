@@ -397,6 +397,11 @@ export function activate(context: vscode.ExtensionContext) {
             text: b.text,
             color: b.color,
           })),
+          notes: validation.notes.map(n => ({
+            nodeId: n.node_id,
+            text: n.text,
+            color: n.color,
+          })),
           layoutDirection: validation.layout_direction,
         };
         const preview = { name: validation.name, nodeIds: validation.node_ids, aiMetadata };
@@ -542,6 +547,7 @@ export function activate(context: vscode.ExtensionContext) {
           'You have access to the FULL loaded model — all nodes, edges, and DDL — even if the user\'s GUI shows only a subset or schema overview.\n' +
           'BFS defaults to 3 hops each direction; reduce to 1–2 for large graphs, expand if truncated=true.\n' +
           'Before create_ai_view: obtain node IDs from search/BFS — never fabricate.\n' +
+          'Annotation tiers (all optional): badge = numbering/short labels (max 15 chars); note = describe calcs, logic, business rules per node (max 200 chars, use \\n for line breaks); highlight_groups = color-code critical paths; narrative = brief overall summary, push detail into per-node notes.\n' +
           'Format: columns→table, deps→bullets with →, SQL→```sql.\n' +
           'Tool data older than 3 turns is not in context — re-call tools if you need earlier results.',
         ),

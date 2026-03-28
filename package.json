@@ -758,8 +758,8 @@
         "name": "lineage_create_ai_view",
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
-        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, narrative explanation, color groups, and badges. The user receives a VS Code notification and sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark and applies it immediately in the graph. Use for BOTH simple bookmarks (name + node_ids only) and rich AI views (add narrative, highlight_groups, badges). Requires an active project. Node IDs are validated before saving. Always activates the view and notifies the user — only use when the user wants to save or visualize a result.",
+        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, narrative explanation, color groups, badges, and sticky notes. The user receives a VS Code notification and sees the view applied in the lineage graph.",
+        "modelDescription": "Saves a named bookmark and applies it immediately in the graph. Use for BOTH simple bookmarks (name + node_ids only) and rich AI views (add narrative, highlight_groups, badges, notes). Annotation tiers (all optional): badge = numbering/short labels (Step 1, Hub); note = describe calcs, logic, business rules per node (use \\n for line breaks); highlight_groups = color-code critical paths; narrative = brief overall summary, push detail into per-node notes. Requires an active project. Node IDs are validated before saving.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -842,6 +842,38 @@
                     "type": "string",
                     "maxLength": 15,
                     "description": "Badge text (max 15 chars)"
+                  },
+                  "color": {
+                    "type": "string",
+                    "enum": [
+                      "bu",
+                      "gn",
+                      "rd",
+                      "ye",
+                      "or",
+                      "gy"
+                    ]
+                  }
+                },
+                "required": [
+                  "node_id",
+                  "text"
+                ]
+              }
+            },
+            "notes": {
+              "type": "array",
+              "description": "Sticky-note annotations — describe calcs, logic, or what each node does (max 50). Use \\n for line breaks.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Note text (max 200 chars, \\n for line breaks)"
                   },
                   "color": {
                     "type": "string",

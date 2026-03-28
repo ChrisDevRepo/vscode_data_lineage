@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
+import { Tooltip } from './ui/Tooltip';
 import type { ObjectType } from '../engine/types';
 
 export type CustomNodeData = {
@@ -15,8 +16,10 @@ export type CustomNodeData = {
   externalType?: 'et' | 'file' | 'db';
   externalUrl?: string;
   externalDatabase?: string;
-  /** Badge chip shown on the node (top-right corner). Set by advanced bookmarks / AI views. */
+  /** Badge chip shown on the node (top-center, overlapping). Set by advanced bookmarks / AI views. */
   aiBadge?: { text: string; color: string };
+  /** Sticky note shown below the node — longer description of calcs, logic, business rules. */
+  aiNote?: { text: string; color: string };
   /** Hex color override for border and glow — overrides schema color when set. */
   aiHighlight?: string;
   /** When true, shows the "×" remove-from-view button (advanced bookmark mode only). */
@@ -53,28 +56,52 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
 
   return (
     <>
-      {/* AI badge — rendered below node via NodeToolbar (outside node bounds) */}
+      {/* AI badge — top-center, overlapping node edge */}
       {data.aiBadge && (
+        <NodeToolbar position={Position.Top} align="center" offset={-4} isVisible>
+          <Tooltip content={data.aiBadge.text} placement="top">
+            <div
+              className="text-[10px] font-semibold px-2 py-0.5 rounded"
+              style={{
+                maxWidth: 160,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                background: data.aiBadge.color,
+                color: 'var(--vscode-button-foreground, #fff)',
+              }}
+            >
+              {data.aiBadge.text}
+            </div>
+          </Tooltip>
+        </NodeToolbar>
+      )}
+      {/* AI sticky note — below node, truncated with hover overlay */}
+      {data.aiNote && (
         <NodeToolbar position={Position.Bottom} align="center" offset={4} isVisible>
-          <div
-            className="text-[10px] font-semibold px-2 py-0.5 rounded ln-node-mini-tooltip"
-            data-tooltip={data.aiBadge.text}
-            style={{
-              maxWidth: 160,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              background: data.aiBadge.color,
-              color: 'var(--vscode-button-foreground, #fff)',
-            }}
-          >
-            {data.aiBadge.text}
+          <div className="ln-ai-note-wrap">
+            <div
+              className="ln-ai-note"
+              style={{
+                maxWidth: 200,
+                borderLeft: `3px solid ${data.aiNote.color}`,
+                background: 'var(--ln-widget-bg)',
+                color: 'var(--ln-fg)',
+              }}
+            >
+              {data.aiNote.text}
+            </div>
+            <div className="ln-ai-note-full">
+              {data.aiNote.text.split('\n').map((line, i) => (
+                <div key={i}>{line}</div>
+              ))}
+            </div>
           </div>
         </NodeToolbar>
       )}
+      <Tooltip content={tooltipText} placement="top" multiline maxWidth={300} asChild>
       <div
-        className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-tooltip"
-        data-tooltip={tooltipText}
+        className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-card"
         style={{
           position: 'relative',
           borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
@@ -100,14 +127,15 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
         }}
       >
         {data.showRemoveButton && (
-          <button
-            className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn ln-node-mini-tooltip"
-            data-tooltip="Remove from view"
-            style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
-            onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
-          >
-            ×
-          </button>
+          <Tooltip content="Remove from view" placement="top">
+            <button
+              className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn"
+              style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
+              onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
+            >
+              ×
+            </button>
+          </Tooltip>
         )}
         <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
 
@@ -144,6 +172,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
 
         <Handle type="source" position={Position.Right} className="!w-2 !h-2 ln-handle" />
       </div>
+      </Tooltip>
     </>
   );
 }

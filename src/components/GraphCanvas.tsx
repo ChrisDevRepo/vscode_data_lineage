@@ -450,6 +450,14 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
+  const aiNoteMap = useMemo((): Map<string, { text: string; color: string }> => {
+    const m = new Map<string, { text: string; color: string }>();
+    const notes = activeAiMetadata?.notes;
+    if (!notes) return m;
+    for (const n of notes) m.set(n.nodeId, { text: n.text, color: (n.color && AI_COLOR_HEX[n.color]) ?? AI_COLOR_HEX.gy });
+    return m;
+  }, [activeAiMetadata]);
+
   const displayNodes = useMemo((): FlowNode[] => {
     return localNodes.map(node => {
       const isHighlighted = highlightedNodeId === node.id;
@@ -464,10 +472,11 @@ export function GraphCanvas({
           onRemoveFromView: isBookmarkMode ? onRemoveFromView : undefined,
           aiHighlight: aiHighlightMap.get(node.id),
           aiBadge: aiBadgeMap.get(node.id),
+          aiNote: aiNoteMap.get(node.id),
         },
       };
     });
-  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap]);
+  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap, aiNoteMap]);
 
   const displayEdges = useMemo(() => {
     if (!highlightedNodeId) return localEdges;

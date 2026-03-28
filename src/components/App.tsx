@@ -359,7 +359,7 @@ export function App() {
 
   /** True when any locked mode (trace/analysis/advanced-bookmark/ai-preview) is active. */
   const isModeLocked = (
-    trace.mode === 'applied' || trace.mode === 'path-applied' ||
+    trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'filtered' ||
     !!analysisMode ||
     !!activeAdvancedProfile ||
     !!aiPreview
@@ -372,7 +372,7 @@ export function App() {
   const innerContext = useMemo((): InnerFilterContext | null => {
     if (!model) return null;
     let nodeIds: string[] = [];
-    if (trace.mode === 'applied' || trace.mode === 'path-applied') {
+    if (trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'filtered') {
       nodeIds = Array.from(trace.tracedNodeIds);
     } else if (analysisMode) {
       if (analysisMode.activeGroupId) {
@@ -1147,7 +1147,7 @@ export function App() {
     );
   }
 
-  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'analysis';
+  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'filtered' || trace.mode === 'analysis';
   const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
   const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
 

@@ -58,6 +58,11 @@
   --ln-analysis-border: var(--vscode-editorInfo-border, #3794ff);
   --ln-analysis-icon: var(--vscode-editorInfo-foreground, #3794ff);
 
+  /* AI colors (purple) */
+  --ln-ai-bg: rgba(136, 71, 255, 0.08);
+  --ln-ai-border: #8847ff;
+  --ln-ai-icon: #8847ff;
+
   /* Error foreground (inline text errors, delete confirmations) */
   --ln-error-fg: var(--vscode-editorError-foreground, var(--vscode-inputValidation-errorBorder, #be1100));
 
@@ -199,85 +204,57 @@ body {
 /* #endregion */
 
 /* #region Tooltips */
-.ln-node-tooltip::before {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 12px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--ln-widget-bg);
-  color: var(--ln-fg);
-  border: 1px solid var(--ln-border);
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 11px;
-  white-space: pre;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  box-shadow: var(--ln-dropdown-shadow);
-  z-index: 10000;
-  min-width: 250px;
-  line-height: 1.5;
+
+/* AI sticky note — truncated on-node view */
+.ln-ai-note {
+  font-size: 10px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
-.ln-node-tooltip::after {
-  content: '';
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  border: 6px solid transparent;
-  border-top-color: var(--ln-border);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  z-index: 10001;
-}
-
-.ln-node-tooltip:hover::before,
-.ln-node-tooltip:hover::after {
-  opacity: 1;
-}
-
-body[data-vscode-theme-kind="vscode-high-contrast"] .ln-node-tooltip::before,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-node-tooltip::before {
-  border-color: var(--vscode-contrastBorder);
-}
-
-/* Mini tooltip — compact variant for small elements inside graph nodes */
-.ln-node-mini-tooltip {
+/* Hover wrapper — positions the full-text overlay */
+.ln-ai-note-wrap {
   position: relative;
 }
-.ln-node-mini-tooltip::before {
-  content: attr(data-tooltip);
+
+/* Full-text overlay — hidden by default, shown on hover */
+.ln-ai-note-full {
+  display: none;
   position: absolute;
-  bottom: calc(100% + 6px);
+  top: calc(100% + 4px);
   left: 50%;
   transform: translateX(-50%);
   background: var(--ln-widget-bg);
   color: var(--ln-fg);
   border: 1px solid var(--ln-border);
-  padding: 4px 8px;
+  padding: 6px 10px;
   border-radius: 6px;
   font-size: 11px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  line-height: 1.4;
+  max-width: 280px;
+  max-height: 200px;
+  overflow-y: auto;
+  word-break: break-word;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   z-index: 10002;
 }
-.ln-node-mini-tooltip:hover::before {
-  opacity: 1;
+.ln-ai-note-wrap:hover .ln-ai-note-full {
+  display: block;
 }
-body[data-vscode-theme-kind="vscode-high-contrast"] .ln-node-mini-tooltip::before,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-node-mini-tooltip::before {
+
+body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-note-full,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-note-full {
   border-color: var(--vscode-contrastBorder);
 }
 
-/* Override dimmed node opacity on hover so tooltip is readable */
-.ln-node-tooltip:hover {
+/* Override dimmed node opacity on hover so node content is readable */
+.ln-node-card:hover {
   opacity: 1 !important;
 }
 
@@ -414,6 +391,21 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 }
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-tooltip,
 body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
+  border-color: var(--vscode-contrastBorder);
+}
+
+/* Popover — theme-aware hover list (matches tooltip look) */
+.ln-popover {
+  background: var(--ln-widget-bg);
+  color: var(--ln-fg);
+  border: 1px solid var(--ln-border);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+.ln-popover .ln-text { color: var(--ln-fg); }
+.ln-popover .ln-text-dim { color: var(--ln-fg-dim); }
+.ln-popover .ln-border { border-color: var(--ln-border); }
+body[data-vscode-theme-kind="vscode-high-contrast"] .ln-popover,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   border-color: var(--vscode-contrastBorder);
 }
 
@@ -679,6 +671,17 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
   background: var(--ln-warning-bg);
   border-bottom: 1px solid var(--ln-warning-border);
 }
+
+/* ─── Generic Mode Banner ──────────────────────────────────────────────── */
+.ln-mode-banner { background: var(--ln-bg-secondary); border-bottom: 1px solid var(--ln-border); }
+.ln-mode-banner--trace    .ln-mode-banner__icon { color: var(--ln-warning-fg); }
+.ln-mode-banner--analysis .ln-mode-banner__icon { color: var(--ln-analysis-icon); }
+.ln-mode-banner--ai       .ln-mode-banner__icon { color: var(--ln-ai-icon); }
+.ln-mode-banner__link { background: none; border: none; color: var(--ln-fg-muted); font-size: 0.75rem; cursor: pointer; text-decoration: none; padding: 0; }
+.ln-mode-banner__link:hover { text-decoration: underline; color: var(--ln-fg); }
+.ln-mode-banner__close { display: flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; background: none; border: none; border-radius: 0.25rem; color: var(--ln-fg-muted); cursor: pointer; padding: 0; transition: background-color 150ms, color 150ms; }
+.ln-mode-banner__close:hover { background: var(--ln-hover-bg); color: var(--ln-fg); }
+.ln-mode-banner__btn-sm { height: 1.75rem; padding: 0 0.5rem; font-size: 0.75rem; border-radius: 0.25rem; font-weight: 500; transition: background-color 150ms, color 150ms; }
 
 /* Trace config bar */
 .ln-trace-config {
