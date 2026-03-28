@@ -617,15 +617,16 @@ export function activate(context: vscode.ExtensionContext) {
           '5. get_ddl_batch only if you need DDL for objects OUTSIDE the BFS trace.\n' +
           '6. create_ai_view → max 25 nodes. For 3+ schemas, create 2-3 focused views.\n\n' +
           'COLUMN TRACE (most common question — "what drives X" / "where does X come from"):\n' +
-          '- Start from output table → find the SP that writes to it (edge type "write").\n' +
-          '- Read that SP\'s DDL. Match INSERT columns to SELECT expressions:\n' +
+          '- BFS result already contains DDL for all SPs in the trace. Read it.\n' +
+          '- Find output table → find the SP that writes to it (edge type "write").\n' +
+          '- In that SP\'s DDL, match INSERT columns to SELECT expressions:\n' +
           '    INSERT INTO Target (Revenue, DateKey)\n' +
           '    SELECT src.Amount * rate.Rate, src.DateKey FROM Source src JOIN ...\n' +
           '  → Target.Revenue ← Source.Amount × ExchangeRate.Rate\n' +
           '  → Target.DateKey ← Source.DateKey (pass-through)\n' +
-          '- For each source table: find ITS writing SP → repeat until staging boundary.\n' +
-          '- Put column mappings in view notes: "Revenue ← Amount × Rate via spCalc".\n' +
-          '- DDL stripped from memory after 4 turns — re-fetch with get_ddl_batch.',
+          '- Follow source tables through their writing SPs (DDL already in result).\n' +
+          '- Stop at staging tables (no upstream SP = project boundary).\n' +
+          '- Put column mappings in view notes: "Revenue ← Amount × Rate via spCalc".',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),

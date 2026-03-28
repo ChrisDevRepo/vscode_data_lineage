@@ -493,7 +493,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Call ONCE at start. Returns schemas (with per-type counts), stats, active filter, saved views. Use schema names in other tools' schemas[] filters.",
+        "modelDescription": "Call ONCE at start. Returns schemas, stats, active filter, saved views. Small models (≤150 nodes): includes full DDL, columns, edges — answer directly without BFS. Use schema names in schemas[] filters.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -589,7 +589,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY lineage tool. Returns connected nodes with DDL (default). Read INSERT/SELECT in DDL to trace column-level data flow. Use schemas[] to limit scope on large models.",
+        "modelDescription": "PRIMARY lineage tool. Returns connected nodes with DDL, columns, and edge types. schemas[] limits scope on large models. DDL contains INSERT/SELECT for column-level tracing.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -870,7 +870,7 @@
         "toolReferenceName": "lineage_get_ddl_batch",
         "displayName": "Get DDL for Multiple Objects",
         "userDescription": "Get DDL body scripts for multiple objects in one call.",
-        "modelDescription": "Batch DDL fetch for known object IDs (max 20). Use after run_bfs_trace with include_ddl:false. Returns DDL for scriptable objects, type-only for tables.",
+        "modelDescription": "Batch DDL fetch for known IDs (max 20). Use for objects NOT already in a BFS result. Returns DDL for scriptable objects, type-only for tables.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
