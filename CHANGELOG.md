@@ -10,7 +10,6 @@
 
 ### Changed
 - **Unified detail panel** — DDL and table detail share one moveable panel; opens directly to the right type. Search highlights carry through (SQL: F3 navigation; table: column and FK names).
-- **Instant panel restore** — Switching back to the graph no longer re-imports the file.
 
 ## [0.9.5] - 2026-03-24
 

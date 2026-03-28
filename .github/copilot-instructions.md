@@ -35,8 +35,8 @@ source format into the shared intermediate types and nothing more.
 | `docs/PARSE_RULES.md` | Custom parse rules guide |
 | `docs/DMV_QUERIES.md` | Custom DMV queries guide |
 | `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
-| `src/ai/tools.ts` | AI tool pure functions (10 tools): 9 read-only queries + `validateCreateAiView`. `AI_CAPS` defaults, `AiCapsOverride` type. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
-| `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()`, `withCap()`. Zero business logic, zero VS Code imports. |
+| `src/ai/tools.ts` | AI tool pure functions (9 tools): 8 read-only queries + `validateCreateAiView`. `AI_CAPS` defaults, `AiCapsOverride` type. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
+| `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()` (explicit type map with 'read' fallback). Zero business logic, zero VS Code imports. |
 | `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
 
 ## Build & Test
@@ -207,27 +207,26 @@ npm test                               # all suites must pass
 
 ## AI Chat Participant (`@lineage`)
 
-VS Code Copilot chat participant registered via `vscode.chat.createChatParticipant()`. NOT a standalone AI framework — the model (GPT-4o, Claude Sonnet, Gemini, local Ollama LLM) is selected by the user in the Copilot chat dropdown.
+**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 9 language model tools via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
 
 **Key files:**
-- `src/ai/tools.ts` — 10 tool functions (9 read-only queries + `validateCreateAiView` write tool). `AI_CAPS` (SEARCH=50, BFS_N=200, BFS_E=300, GROUPS=100, DDL=10000), `AiCapsOverride` type. Zero VS Code imports. Imports `strip()` and all presenters from `aiPresenter.ts`. Soft errors `{ error: 'not_found' }` (no throw). DDL too large → `{ ddl: null, ddl_too_large: true, ddl_chars: N }` (never partial DDL).
-- `src/ai/aiPresenter.ts` — Compact LLM presentation layer extracted from `tools.ts`. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (`'body'`→`'read'`), `presentNode/Column/Schema/Neighbor/Filter()`, `withCap()`. Zero business logic, zero VS Code imports — shape changes here propagate to all tools automatically.
+- `src/ai/tools.ts` — 9 pure tool functions (8 read-only queries + `validateCreateAiView` write tool). `AI_CAPS` (SEARCH=50, BFS_N=200, BFS_E=300, GROUPS=100, DDL=10000, BATCH=20), `AiCapsOverride` type. Zero VS Code imports. Imports `strip()` and all presenters from `aiPresenter.ts`. Soft errors `{ error: 'not_found' }` (no throw). DDL too large → `{ ddl: null, ddl_too_large: true, ddl_chars: N }` (never partial DDL).
+- `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
 - `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
-- `src/extension.ts` — chat participant registration, 10 tool registrations (`readOnlyHint` on 8 read tools), `readAiCaps()`, `autoScaleTier()`, `isAiEnabled()`, participant handler.
+- `src/extension.ts` — chat participant registration, 9 tool registrations, `readAiCaps()`, `autoScaleTier()`, `isAiEnabled()`, participant handler. Write tool (`create_ai_view`) uses `confirmationMessages` in `prepareInvocation`.
 
-**10 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
+**9 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
 
 | Tool | Kind | Purpose |
 |------|------|---------|
 | `lineage_get_context` | read | Active project, platform, filter state, model stats — call first each conversation |
-| `lineage_get_schemas_summary` | read | All schemas with per-type object counts |
+| `lineage_get_schema_summary` | read | All schemas with per-type object counts |
 | `lineage_search_objects` | read | Name/body search, returns IDs for other tools. `scope=visible` restricts to screen |
 | `lineage_get_object_detail` | read | Full metadata + DDL body for one object; inline up/dn neighbors |
-| `lineage_get_neighbors` | read | 1-hop upstream/downstream neighbors with edge types |
 | `lineage_run_bfs_trace` | read | Multi-hop BFS lineage trace; `incomplete=true` means capped — narrow scope or reduce hops |
 | `lineage_run_analysis` | read | Structural analysis: hubs/islands/orphans/longest-path/cycles |
 | `lineage_search_ddl` | read | Full-text regex search across SP/view/function DDL bodies |
-| `lineage_save_view` | write | Bookmark current filter state (schemas/types/search) as named view |
+| `lineage_get_ddl_batch` | read | Batch DDL retrieval for multiple objects by ID array |
 | `lineage_create_ai_view` | write | Create named AI bookmark: node set, highlight groups (up to 5), badges (up to 50), narrative |
 
 **Auto-scaling caps** — set via `request.model.maxInputTokens` per request → `autoScaleTier()`:
@@ -246,4 +245,4 @@ Explicit `dataLineageViz.ai.*` VS Code settings override auto-scale (detected vi
 
 **`ai.enabled` guard:** `isAiEnabled()` checked at both the chat participant level (returns disabled message) and in every tool `invoke()` handler (returns `{ error: 'disabled' }`).
 
-**Unit tests:** `test/ai-tools.test.ts` (95 tests) covers all pure tool functions (`getContext`, `getSchemasSummary`, `searchObjects` incl. `include_body`, `getObjectDetail` incl. inline neighbors, `runBfsTrace` incl. truncation, `runAnalysis`, `searchDdl`, `validateSaveView`, `validateCreateAiView`, `safeRegex`). Does not test `extension.ts` wiring (VS Code dependency).
+**Unit tests:** `test/ai-tools.test.ts` (156 tests) covers all 9 pure tool functions (`getContext`, `getSchemasSummary`, `searchObjects` incl. `include_body`, `getObjectDetail` incl. inline neighbors, `runBfsTrace` incl. truncation, `runAnalysis`, `searchDdl`, `getDdlBatch`, `validateCreateAiView`, `safeRegex`). Does not test `extension.ts` wiring (VS Code dependency).

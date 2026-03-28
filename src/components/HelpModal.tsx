@@ -16,9 +16,11 @@ const TABS: Array<{ id: HelpTab; label: string }> = [
   { id: 'ai',       label: '@lineage AI' },
 ];
 
+const ICON_SIZE: Record<number, string> = { 3: 'w-3 h-3', 4: 'w-4 h-4' };
+
 function IconPath({ d, size = 4 }: { d: string; size?: number }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-${size} h-${size} flex-shrink-0 ln-text-muted`}>
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`${ICON_SIZE[size] ?? 'w-4 h-4'} flex-shrink-0 ln-text-muted`}>
       <path strokeLinecap="round" strokeLinejoin="round" d={d} />
     </svg>
   );
@@ -39,9 +41,9 @@ function ExtLink({ url, openExternal, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <button onClick={() => openExternal(url)} className="ln-text-link hover:underline cursor-pointer">
+    <a href="#" role="link" onClick={(e) => { e.preventDefault(); openExternal(url); }} className="ln-text-link hover:underline cursor-pointer">
       {children}
-    </button>
+    </a>
   );
 }
 
