@@ -196,7 +196,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                             className="flex-shrink-0 px-1.5 py-0 text-[10px] rounded font-medium"
                             style={{
                               background: 'var(--ln-warning-fg)',
-                              color: '#fff',
+                              color: 'var(--vscode-button-foreground, #fff)',
                               lineHeight: '18px',
                             }}
                             onClick={() => { onUpdateView(profile.id); }}

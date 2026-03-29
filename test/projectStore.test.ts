@@ -55,28 +55,20 @@ function makeStore(projects: Project[] = [], lastOpenedId: string | null = null)
 
 console.log('\n── createProject ──────────────────────────────────────────────');
 
-test('sets a non-empty string id', () => {
-  const p = createProject('Test', dacpacConn);
-  assert(typeof p.id === 'string' && p.id.length > 0, 'id is non-empty string');
-});
-
-test('generates unique ids on successive calls', () => {
+test('generates unique non-empty ids', () => {
   const p1 = createProject('A', dacpacConn);
   const p2 = createProject('B', dacpacConn);
+  assert(typeof p1.id === 'string' && p1.id.length > 0, 'id is non-empty string');
   assert(p1.id !== p2.id, 'ids are distinct');
 });
 
-test('sets createdAt to an ISO 8601 string', () => {
+test('timestamps are correct on creation', () => {
   const before = Date.now();
   const p = createProject('T', dacpacConn);
   const after = Date.now();
   const ts = new Date(p.createdAt).getTime();
   assert(!isNaN(ts), 'createdAt is parseable');
   assert(ts >= before && ts <= after, 'createdAt is within call window');
-});
-
-test('sets updatedAt equal to createdAt on creation', () => {
-  const p = createProject('T', dacpacConn);
   assertEq(p.updatedAt, p.createdAt, 'updatedAt equals createdAt');
 });
 
@@ -85,29 +77,24 @@ test('stores the provided name', () => {
   assertEq(p.name, 'My Project', 'name matches');
 });
 
-test('stores a dacpac connection', () => {
-  const p = createProject('T', dacpacConn);
-  assert(p.connection.type === 'dacpac', 'type is dacpac');
-  const c = p.connection as DacpacConnection;
-  assertEq(c.path, dacpacConn.path, 'path matches');
-  assertEq(c.displayName, dacpacConn.displayName, 'displayName matches');
-  assertEq(c.schemas.length, 2, 'schemas length matches');
-});
-
-test('stores a database connection', () => {
-  const p = createProject('T', dbConn);
-  assert(p.connection.type === 'database', 'type is database');
-  const c = p.connection as DatabaseConnection;
-  assertEq(c.sourceName, dbConn.sourceName, 'sourceName matches');
-  assertEq(c.connectionInfo.server, dbConn.connectionInfo.server, 'server matches');
-  assertEq(c.connectionInfo.database, dbConn.connectionInfo.database, 'database matches');
-});
-
-test('stored connection info has no password field', () => {
-  const p = createProject('T', dbConn);
-  const c = p.connection as DatabaseConnection;
-  assert(!('password' in c.connectionInfo), 'no password field');
-  assert(!('connectionString' in c.connectionInfo), 'no connectionString field');
+test('stores connection data correctly', () => {
+  // Dacpac connection
+  const pd = createProject('T', dacpacConn);
+  assert(pd.connection.type === 'dacpac', 'type is dacpac');
+  const cd = pd.connection as DacpacConnection;
+  assertEq(cd.path, dacpacConn.path, 'path matches');
+  assertEq(cd.displayName, dacpacConn.displayName, 'displayName matches');
+  assertEq(cd.schemas.length, 2, 'schemas length matches');
+  // Database connection
+  const pdb = createProject('T', dbConn);
+  assert(pdb.connection.type === 'database', 'type is database');
+  const cdb = pdb.connection as DatabaseConnection;
+  assertEq(cdb.sourceName, dbConn.sourceName, 'sourceName matches');
+  assertEq(cdb.connectionInfo.server, dbConn.connectionInfo.server, 'server matches');
+  assertEq(cdb.connectionInfo.database, dbConn.connectionInfo.database, 'database matches');
+  // No sensitive fields
+  assert(!('password' in cdb.connectionInfo), 'no password field');
+  assert(!('connectionString' in cdb.connectionInfo), 'no connectionString field');
 });
 
 // ─── updateProject ────────────────────────────────────────────────────────────
@@ -232,31 +219,16 @@ test('returns empty store when last project is deleted', () => {
 
 console.log('\n── migrateProjectStore ────────────────────────────────────────');
 
-test('returns empty store for null input', () => {
-  const s = migrateProjectStore(null);
-  assertEq(s.schemaVersion, 1, 'schemaVersion 1');
-  assertEq(s.projects.length, 0, 'no projects');
-  assertEq(s.lastOpenedId, null, 'lastOpenedId null');
-});
-
-test('returns empty store for undefined input', () => {
-  const s = migrateProjectStore(undefined);
-  assertEq(s.projects.length, 0, 'no projects');
-});
-
-test('returns empty store for non-object input', () => {
-  const s = migrateProjectStore('string-value');
-  assertEq(s.projects.length, 0, 'no projects');
-});
-
-test('returns empty store for unknown schemaVersion', () => {
-  const s = migrateProjectStore({ schemaVersion: 99, projects: [], lastOpenedId: null });
-  assertEq(s.projects.length, 0, 'no projects (version unknown)');
-});
-
-test('returns empty store when projects is not an array', () => {
-  const s = migrateProjectStore({ schemaVersion: 1, projects: 'oops', lastOpenedId: null });
-  assertEq(s.projects.length, 0, 'no projects');
+test('returns empty store for invalid inputs', () => {
+  for (const input of [
+    null, undefined, 'string-value',
+    { schemaVersion: 99, projects: [], lastOpenedId: null },
+    { schemaVersion: 1, projects: 'oops', lastOpenedId: null },
+  ]) {
+    const s = migrateProjectStore(input);
+    assertEq(s.schemaVersion, 1, `schemaVersion 1 for ${JSON.stringify(input)}`);
+    assertEq(s.projects.length, 0, `no projects for ${JSON.stringify(input)}`);
+  }
 });
 
 test('returns identity for valid v1 data with dacpac project', () => {
@@ -277,78 +249,43 @@ test('returns identity for valid v1 data with database project', () => {
   assertEq(c.sourceName, dbConn.sourceName, 'sourceName preserved');
 });
 
-test('filters out malformed project entries (missing id)', () => {
+test('filters out malformed project entries', () => {
   const valid = createProject('OK', dacpacConn);
-  const bad = { name: 'Missing id', createdAt: 'x', updatedAt: 'x', connection: dacpacConn };
-  const raw = { schemaVersion: 1, projects: [valid, bad], lastOpenedId: null };
+  const badNoId = { name: 'Missing id', createdAt: 'x', updatedAt: 'x', connection: dacpacConn };
+  const badConnType = { id: 'x', name: 'Bad conn', createdAt: 'x', updatedAt: 'x', connection: { type: 'ftp', host: 'foo' } };
+  const badNoPath = { id: 'bad', name: 'Bad', createdAt: 'x', updatedAt: 'x', connection: { type: 'dacpac', displayName: 'AW', schemas: [] } };
+  const raw = { schemaVersion: 1, projects: [valid, badNoId, badConnType, badNoPath], lastOpenedId: null };
   const s = migrateProjectStore(raw);
   assertEq(s.projects.length, 1, 'only valid project retained');
   assertEq(s.projects[0].id, valid.id, 'valid project preserved');
 });
 
-test('filters out malformed project entries (invalid connection type)', () => {
-  const valid = createProject('OK', dacpacConn);
-  const bad = { id: 'x', name: 'Bad conn', createdAt: 'x', updatedAt: 'x', connection: { type: 'ftp', host: 'foo' } };
-  const raw = { schemaVersion: 1, projects: [valid, bad], lastOpenedId: null };
-  const s = migrateProjectStore(raw);
-  assertEq(s.projects.length, 1, 'only valid project retained');
-});
-
-test('filters out malformed project entries (dacpac missing path)', () => {
-  const bad = {
-    id: 'bad', name: 'Bad', createdAt: 'x', updatedAt: 'x',
-    connection: { type: 'dacpac', displayName: 'AW', schemas: [] },  // no path
-  };
-  const raw = { schemaVersion: 1, projects: [bad], lastOpenedId: null };
-  const s = migrateProjectStore(raw);
-  assertEq(s.projects.length, 0, 'malformed dacpac filtered out');
-});
-
-test('treats null lastOpenedId gracefully', () => {
-  const s = migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: null });
-  assertEq(s.lastOpenedId, null, 'null preserved');
-});
-
-test('ignores non-string lastOpenedId', () => {
-  const s = migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: 42 });
-  assertEq(s.lastOpenedId, null, 'non-string lastOpenedId becomes null');
+test('handles lastOpenedId edge cases', () => {
+  const s1 = migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: null });
+  assertEq(s1.lastOpenedId, null, 'null preserved');
+  const s2 = migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: 42 });
+  assertEq(s2.lastOpenedId, null, 'non-string lastOpenedId becomes null');
 });
 
 // ─── generateProjectName ──────────────────────────────────────────────────────
 
 console.log('\n── generateProjectName ────────────────────────────────────────');
 
-test('dacpac name uses displayName as prefix', () => {
-  const name = generateProjectName(dacpacConn);
-  assert(name.startsWith('AdventureWorks '), 'starts with displayName');
+test('uses connection display name as prefix', () => {
+  const dacName = generateProjectName(dacpacConn);
+  assert(dacName.startsWith('AdventureWorks '), 'dacpac: starts with displayName');
+  const dbName = generateProjectName(dbConn);
+  assert(dbName.startsWith('SalesDB (myserver) '), 'database: starts with sourceName');
 });
 
-test('database name uses sourceName as prefix', () => {
-  const name = generateProjectName(dbConn);
-  assert(name.startsWith('SalesDB (myserver) '), 'starts with sourceName');
-});
-
-test('name contains a timestamp in YYYY-MM-DD HH:mm format', () => {
-  const name = generateProjectName(dacpacConn);
-  // Timestamp pattern: " 2026-03-24 14:35"
-  assert(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(name), 'ends with timestamp');
-});
-
-test('two calls within same minute produce identical timestamp suffix', () => {
-  // Both calls happen within the same second, so same minute
+test('timestamp format is YYYY-MM-DD HH:mm without seconds', () => {
   const n1 = generateProjectName(dacpacConn);
   const n2 = generateProjectName(dacpacConn);
-  const tsMatch1 = n1.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/);
-  const tsMatch2 = n2.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/);
-  assert(tsMatch1 !== null, 'n1 ends with YYYY-MM-DD HH:mm timestamp');
-  assert(tsMatch2 !== null, 'n2 ends with YYYY-MM-DD HH:mm timestamp');
-  assertEq(tsMatch1![1], tsMatch2![1], 'same-minute calls share timestamp');
-});
-
-test('does not include seconds in timestamp', () => {
-  const name = generateProjectName(dacpacConn);
-  // HH:mm:ss would be 19 chars after the date separator; HH:mm is 16
-  assert(!/\d{2}:\d{2}:\d{2}/.test(name), 'no seconds in timestamp');
+  assert(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(n1), 'ends with YYYY-MM-DD HH:mm');
+  assert(!/\d{2}:\d{2}:\d{2}/.test(n1), 'no seconds in timestamp');
+  const ts1 = n1.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/)![1];
+  const ts2 = n2.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/)![1];
+  assertEq(ts1, ts2, 'same-minute calls share timestamp');
 });
 
 // ─── serializeFilter / deserializeFilter ──────────────────────────────────────
@@ -364,16 +301,14 @@ const sampleFilter: FilterState = {
   exclusionPatterns: ['%tmp%', '^etl\\.'],
 };
 
-test('serializeFilter converts Sets to arrays', () => {
+test('serializeFilter converts Sets to arrays and preserves values', () => {
   const s = serializeFilter(sampleFilter);
+  // Structure: Sets become arrays
   assert(Array.isArray(s.schemas), 'schemas is array');
   assert(Array.isArray(s.types), 'types is array');
   assert(Array.isArray(s.focusSchemas), 'focusSchemas is array');
   assert(Array.isArray(s.externalRefTypes), 'externalRefTypes is array');
-});
-
-test('serializeFilter preserves values', () => {
-  const s = serializeFilter(sampleFilter);
+  // Values preserved
   assertEq([...s.schemas].sort().join(','), 'Sales,dbo', 'schemas preserved');
   assertEq([...s.types].sort().join(','), 'table,view', 'types preserved');
   assertEq(s.searchTerm, 'Order', 'searchTerm preserved');
@@ -382,10 +317,7 @@ test('serializeFilter preserves values', () => {
   assertEq(s.showExternalRefs, true, 'showExternalRefs preserved');
   assertEq(s.externalRefTypes.join(','), 'file', 'externalRefTypes preserved');
   assertEq(s.exclusionPatterns?.join(','), '%tmp%,^etl\\.', 'exclusionPatterns preserved');
-});
-
-test('deserializeFilter restores Sets', () => {
-  const s = serializeFilter(sampleFilter);
+  // Deserialize restores Sets
   const restored = deserializeFilter(s);
   assert(restored.schemas instanceof Set, 'schemas is Set');
   assert(restored.types instanceof Set, 'types is Set');

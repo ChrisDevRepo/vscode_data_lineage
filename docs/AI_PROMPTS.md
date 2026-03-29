@@ -125,4 +125,3 @@ Same pattern as [Parse Rules](PARSE_RULES.md) and [DMV Queries](DMV_QUERIES.md):
 2. Validate: all 5 required keys (`summary`, `description`, `badges`, `highlights`, `notes`) present with non-empty `instruction`
 3. Missing keys: warn in Output channel, use built-in default for that key
 4. Custom file fails entirely: warn, fall back to built-in `assets/aiOutputTemplates.yaml`
-5. Built-in also fails: use hardcoded defaults in extension code

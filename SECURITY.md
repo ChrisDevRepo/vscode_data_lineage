@@ -21,6 +21,6 @@ Include:
 
 - The extension parses SQL but does not execute it
 - Only reads .dacpac and .sql files — no write operations to user code
-- No network access — operates entirely offline
+- No direct network access — dacpac parsing is fully offline; database import delegates to the MSSQL extension's connection API
 - Strict Content Security Policy on the webview
 - Custom YAML parse rules execute regex patterns — avoid loading untrusted rule files

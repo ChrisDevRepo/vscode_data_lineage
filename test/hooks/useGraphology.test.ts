@@ -78,10 +78,13 @@ const MODEL = makeModel(
 // ─── Suite A — Schema filter ──────────────────────────────────────────────────
 
 describe('Suite A — schema filter', () => {
-  it('all schemas selected → all nodes visible', () => {
+  it('all schemas → all nodes; case-insensitive', () => {
     const { result } = renderHook(() => useGraphology());
     act(() => { result.current.buildFromModel(MODEL, makeFilter()); });
     expect(result.current.flowNodes.length).toBe(4);
+    // Case-insensitive: 'DBO' matches 'dbo'
+    act(() => { result.current.buildFromModel(MODEL, makeFilter({ schemas: new Set(['DBO']) })); });
+    expect(result.current.flowNodes.length).toBe(3);
   });
 
   it('only dbo selected → sales.t2 excluded', () => {
@@ -97,23 +100,11 @@ describe('Suite A — schema filter', () => {
     expect(result.current.flowNodes.length).toBe(1);
     expect(result.current.flowNodes[0].id).toBe(SALES_T2.id);
   });
-
-  it('schema filter is case-insensitive', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter({ schemas: new Set(['DBO']) })); });
-    expect(result.current.flowNodes.length).toBe(3);
-  });
 });
 
 // ─── Suite B — Type filter ────────────────────────────────────────────────────
 
 describe('Suite B — type filter', () => {
-  it('all types → 4 nodes', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter()); });
-    expect(result.current.flowNodes.length).toBe(4);
-  });
-
   it('tables only → 2 nodes (t1 + t2)', () => {
     const { result } = renderHook(() => useGraphology());
     act(() => { result.current.buildFromModel(MODEL, makeFilter({ types: new Set(['table']) })); });
@@ -138,24 +129,16 @@ describe('Suite B — type filter', () => {
 // ─── Suite C — Isolation filter ───────────────────────────────────────────────
 
 describe('Suite C — isolation filter (hideIsolated)', () => {
-  it('hideIsolated=false → all 4 nodes', () => {
+  it('hideIsolated=false → all 4 nodes; true → only connected nodes', () => {
     const { result } = renderHook(() => useGraphology());
     act(() => { result.current.buildFromModel(MODEL, makeFilter({ hideIsolated: false })); });
     expect(result.current.flowNodes.length).toBe(4);
-  });
 
-  it('hideIsolated=true → only nodes with at least one edge (sp1 + t1)', () => {
-    const { result } = renderHook(() => useGraphology());
     act(() => { result.current.buildFromModel(MODEL, makeFilter({ hideIsolated: true })); });
     expect(result.current.flowNodes.length).toBe(2);
     const ids = result.current.flowNodes.map(n => n.id);
     expect(ids).toContain(DBO_SP1.id);
     expect(ids).toContain(DBO_T1.id);
-  });
-
-  it('hideIsolated=true removes v1 (no edges)', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter({ hideIsolated: true })); });
     expect(result.current.flowNodes.some(n => n.id === DBO_V1.id)).toBe(false);
   });
 
@@ -331,26 +314,13 @@ describe('Suite G — external ref filter (virtual nodes)', () => {
 // ─── Suite H — graph and metrics state ───────────────────────────────────────
 
 describe('Suite H — graph and metrics state', () => {
-  it('graph is null before first buildFromModel call', () => {
+  it('graph/metrics lifecycle: null before build, populated after', () => {
     const { result } = renderHook(() => useGraphology());
     expect(result.current.graph).toBeNull();
-  });
 
-  it('graph is not null after buildFromModel', () => {
-    const { result } = renderHook(() => useGraphology());
     act(() => { result.current.buildFromModel(MODEL, makeFilter()); });
     expect(result.current.graph).not.toBeNull();
-  });
-
-  it('graph.order matches number of visible nodes', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter()); });
     expect(result.current.graph!.order).toBe(4);
-  });
-
-  it('metrics is not null after buildFromModel', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter()); });
     expect(result.current.metrics).not.toBeNull();
   });
 

@@ -165,20 +165,38 @@ function testBuildModelFromDmv() {
 
   // No warnings for valid data
   assert(model.warnings === undefined, 'No warnings for valid data');
-}
 
-function testEmptyDatabase() {
-  console.log('\n── DMV Extractor: Empty Database ──');
-  const results: DmvResults = {
+  // ── Empty database ──
+  const emptyResults: DmvResults = {
     nodes: makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), []),
     columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
     dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []),
   };
+  const emptyModel = buildModelFromDmv(emptyResults);
+  assertEq(emptyModel.nodes.length, 0, 'Empty DB has 0 nodes');
+  assertEq(emptyModel.edges.length, 0, 'Empty DB has 0 edges');
+  assert(emptyModel.warnings !== undefined && emptyModel.warnings.length > 0, 'Empty DB produces warning');
 
-  const model = buildModelFromDmv(results);
-  assertEq(model.nodes.length, 0, 'Empty DB has 0 nodes');
-  assertEq(model.edges.length, 0, 'Empty DB has 0 edges');
-  assert(model.warnings !== undefined && model.warnings.length > 0, 'Empty DB produces warning');
+  // ── Duplicate node handling ──
+  const nodeCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const dupResults: DmvResults = {
+    nodes: makeResult(nodeCols, [
+      [cell('dbo'), cell('Customers'), cell('U '), nullCell()],
+      [cell('dbo'), cell('Customers'), cell('U '), nullCell()],
+    ]),
+    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
+    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []),
+  };
+  assertEq(buildModelFromDmv(dupResults).nodes.length, 1, 'Duplicate nodes are deduplicated');
+
+  // ── Self-reference exclusion ──
+  const selfRefResults: DmvResults = {
+    nodes: makeResult(nodeCols, [[cell('dbo'), cell('MyTable'), cell('U '), nullCell()]]),
+    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
+    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'),
+      [[cell('dbo'), cell('MyTable'), cell('dbo'), cell('MyTable')]]),
+  };
+  assertEq(buildModelFromDmv(selfRefResults).edges.length, 0, 'Self-references produce no edges');
 }
 
 function testValidateQueryResult() {
@@ -221,6 +239,16 @@ function testValidateQueryResult() {
   // Unknown query name
   const unknownMissing = validateQueryResult('unknown', validResult);
   assertEq(unknownMissing.length, 0, 'Unknown query name returns no missing columns');
+
+  // Constraints validation
+  const constraintValidCols = cols(
+    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
+    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
+  );
+  const constraintValid = makeResult(constraintValidCols, []);
+  assertEq(validateQueryResult('constraints', constraintValid).length, 0, 'No missing columns for valid constraints result');
+  const constraintIncomplete = makeResult(cols('schema_name', 'table_name'), []);
+  assert(validateQueryResult('constraints', constraintIncomplete).length > 0, 'Missing columns detected for incomplete constraints result');
 }
 
 function testFormatColumnType() {
@@ -251,45 +279,6 @@ function testFormatColumnType() {
   // Date types (no size)
   assertEq(formatColumnType('datetime', '8', '23', '3'), 'datetime', 'datetime has no size');
   assertEq(formatColumnType('date', '3', '10', '0'), 'date', 'date has no size');
-}
-
-function testDuplicateNodes() {
-  console.log('\n── DMV Extractor: Duplicate Node Handling ──');
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Customers'), cell('U '), nullCell()],
-    [cell('dbo'), cell('Customers'), cell('U '), nullCell()], // duplicate
-  ];
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
-    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []),
-  };
-
-  const model = buildModelFromDmv(results);
-  assertEq(model.nodes.length, 1, 'Duplicate nodes are deduplicated');
-}
-
-function testSelfReferenceExcluded() {
-  console.log('\n── DMV Extractor: Self-Reference Exclusion ──');
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('MyTable'), cell('U '), nullCell()],
-  ];
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('MyTable'), cell('dbo'), cell('MyTable')], // self-reference
-  ];
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results);
-  assertEq(model.edges.length, 0, 'Self-references produce no edges');
 }
 
 function testFallbackBodyDirection() {
@@ -640,37 +629,15 @@ function testConstraintMapsEnrichColumns() {
   const productsNode = model.nodes.find(n => n.name === 'Products');
   assert(productsNode !== undefined, 'Products node found');
   assert(productsNode?.columns?.some(c => c.check !== undefined && c.check !== ''), 'Products has CK flag on column');
-}
 
-function testConstraintsMissingResultGraceful() {
-  console.log('\n── DMV Extractor: no constraints result (dacpac-path compat) ──');
-
-  const results = buildSyntheticResults();  // no constraints field
-  const model = buildModelFromDmv(results);
-
-  const ordersNode = model.nodes.find(n => n.name === 'Orders');
-  assert(ordersNode !== undefined, 'Orders node found without constraints');
-  assert(ordersNode?.fks === undefined || ordersNode.fks.length === 0, 'No FKs when constraints absent');
-  assert(!ordersNode?.columns?.some(c => c.unique !== undefined && c.unique !== ''), 'No UQ flags when constraints absent');
-
-  // Columns still present
-  assert(ordersNode?.columns?.some(c => c.name === 'OrderId'), 'Columns still present without constraints');
-}
-
-function testValidateQueryResultConstraints() {
-  console.log('\n── DMV Extractor: validateQueryResult — constraints ──');
-
-  const constraintCols = cols(
-    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
-    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
-  );
-  const result = makeResult(constraintCols, []);
-  const missing = validateQueryResult('constraints', result);
-  assertEq(missing.length, 0, 'No missing columns for valid constraints result');
-
-  const incomplete = makeResult(cols('schema_name', 'table_name'), []);
-  const missingCols = validateQueryResult('constraints', incomplete);
-  assert(missingCols.length > 0, 'Missing columns detected for incomplete constraints result');
+  // ── No constraints result (dacpac-path compat) ──
+  const noConstraintResults = buildSyntheticResults();  // no constraints field
+  const noConstraintModel = buildModelFromDmv(noConstraintResults);
+  const ordersNoConst = noConstraintModel.nodes.find(n => n.name === 'Orders');
+  assert(ordersNoConst !== undefined, 'Orders node found without constraints');
+  assert(ordersNoConst?.fks === undefined || ordersNoConst.fks.length === 0, 'No FKs when constraints absent');
+  assert(!ordersNoConst?.columns?.some(c => c.unique !== undefined && c.unique !== ''), 'No UQ flags when constraints absent');
+  assert(ordersNoConst?.columns?.some(c => c.name === 'OrderId'), 'Columns still present without constraints');
 }
 
 // ─── Test: Cross-DB Dependencies via referenced_database ─────────────────────
@@ -802,11 +769,8 @@ function testETInAllObjectsCatalog() {
 // ─── Run ────────────────────────────────────────────────────────────────────
 
 testBuildModelFromDmv();
-testEmptyDatabase();
 testValidateQueryResult();
 testFormatColumnType();
-testDuplicateNodes();
-testSelfReferenceExcluded();
 testFallbackBodyDirection();
 testCrossSchemaNeighborIndex();
 testCrossSchemaUnresolvedWhenNoAllObjects();
@@ -816,8 +780,6 @@ testCrossDbDepsFromDmv();
 testCrossDbSameDbSuppression();
 testETInAllObjectsCatalog();
 testConstraintMapsEnrichColumns();
-testConstraintsMissingResultGraceful();
-testValidateQueryResultConstraints();
 
 // ─── expandSchemaPlaceholder ──────────────────────────────────────────────────
 

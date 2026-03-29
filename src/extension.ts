@@ -150,7 +150,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
 
   // Load AI output templates at activation (async, non-blocking)
-  loadAiOutputTemplates(outputChannel, context.extensionUri).then(t => { _aiOutputTemplates = t; });
+  loadAiOutputTemplates(outputChannel, context.extensionUri)
+    .then(t => { _aiOutputTemplates = t; })
+    .catch(err => logWarn(outputChannel, 'Config', `Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)}`));
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {

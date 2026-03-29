@@ -51,28 +51,12 @@ const CHAIN_EDGES: [string, string][] = [['A', 'B'], ['B', 'C']];
 // ─── Suite A — Initial state ──────────────────────────────────────────────────
 
 describe('Suite A — initial state', () => {
-  it('mode starts as none', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    expect(result.current.trace.mode).toBe('none');
-  });
-
-  it('selectedNodeId is null', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    expect(result.current.trace.selectedNodeId).toBeNull();
-  });
-
-  it('targetNodeId is null', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    expect(result.current.trace.targetNodeId).toBeNull();
-  });
-
-  it('tracedNodeIds is empty', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    expect(result.current.trace.tracedNodeIds.size).toBe(0);
-  });
-
-  it('levels match config defaults', () => {
+  it('has correct initial state', () => {
     const { result } = renderHook(() => useInteractiveTrace(null, [], [], DEFAULT_CONFIG));
+    expect(result.current.trace.mode).toBe('none');
+    expect(result.current.trace.selectedNodeId).toBeNull();
+    expect(result.current.trace.targetNodeId).toBeNull();
+    expect(result.current.trace.tracedNodeIds.size).toBe(0);
     expect(result.current.trace.upstreamLevels).toBe(DEFAULT_CONFIG.trace.defaultUpstreamLevels);
     expect(result.current.trace.downstreamLevels).toBe(DEFAULT_CONFIG.trace.defaultDownstreamLevels);
   });
@@ -87,21 +71,11 @@ describe('Suite A — initial state', () => {
 // ─── Suite B — startTraceConfig ──────────────────────────────────────────────
 
 describe('Suite B — startTraceConfig', () => {
-  it('sets mode to configuring', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startTraceConfig('A'); });
-    expect(result.current.trace.mode).toBe('configuring');
-  });
-
-  it('sets selectedNodeId', () => {
+  it('sets configuring mode with selectedNodeId and empty tracedNodeIds', () => {
     const { result } = renderHook(() => useInteractiveTrace(null, [], []));
     act(() => { result.current.startTraceConfig('node-42'); });
+    expect(result.current.trace.mode).toBe('configuring');
     expect(result.current.trace.selectedNodeId).toBe('node-42');
-  });
-
-  it('resets tracedNodeIds to empty', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startTraceConfig('A'); });
     expect(result.current.trace.tracedNodeIds.size).toBe(0);
   });
 
@@ -128,32 +102,14 @@ describe('Suite C — startTraceImmediate', () => {
     expect(result.current.trace.mode).toBe('none');
   });
 
-  it('sets mode to filtered when graph is available', () => {
+  it('sets filtered mode with selectedNodeId and traces neighbors', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
     const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
     act(() => { result.current.startTraceImmediate('B'); });
     expect(result.current.trace.mode).toBe('filtered');
-  });
-
-  it('always includes the origin node in tracedNodeIds', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceImmediate('B'); });
+    expect(result.current.trace.selectedNodeId).toBe('B');
     expect(result.current.trace.tracedNodeIds.has('B')).toBe(true);
-  });
-
-  it('traces neighbors (tracedNodeIds > 1 for a connected node)', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceImmediate('B'); });
     expect(result.current.trace.tracedNodeIds.size).toBeGreaterThan(1);
-  });
-
-  it('sets selectedNodeId to the traced node', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceImmediate('C'); });
-    expect(result.current.trace.selectedNodeId).toBe('C');
   });
 
   it('an isolated node produces tracedNodeIds of size 1', () => {
@@ -233,28 +189,13 @@ describe('Suite D — applyTrace', () => {
 // ─── Suite E — startPathFinding ───────────────────────────────────────────────
 
 describe('Suite E — startPathFinding', () => {
-  it('sets mode to pathfinding', () => {
+  it('sets pathfinding state correctly', () => {
     const { result } = renderHook(() => useInteractiveTrace(null, [], []));
     act(() => { result.current.startPathFinding('A'); });
     expect(result.current.trace.mode).toBe('pathfinding');
-  });
-
-  it('sets selectedNodeId to the source node', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startPathFinding('A'); });
     expect(result.current.trace.selectedNodeId).toBe('A');
-  });
-
-  it('resets both levels to 0', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startPathFinding('A'); });
     expect(result.current.trace.upstreamLevels).toBe(0);
     expect(result.current.trace.downstreamLevels).toBe(0);
-  });
-
-  it('targetNodeId is null', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startPathFinding('A'); });
     expect(result.current.trace.targetNodeId).toBeNull();
   });
 
@@ -295,36 +236,15 @@ describe('Suite F — applyPath', () => {
     expect(result.current.trace.mode).toBe('pathfinding');
   });
 
-  it('returns true when a path exists', () => {
+  it('on success: returns true, sets path-applied mode, targetNodeId, and path nodes', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
     const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
     act(() => { result.current.startPathFinding('A'); });
     let found = false;
     act(() => { found = result.current.applyPath('C'); });
     expect(found).toBe(true);
-  });
-
-  it('sets mode to path-applied on success', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startPathFinding('A'); });
-    act(() => { result.current.applyPath('C'); });
     expect(result.current.trace.mode).toBe('path-applied');
-  });
-
-  it('sets targetNodeId on success', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startPathFinding('A'); });
-    act(() => { result.current.applyPath('C'); });
     expect(result.current.trace.targetNodeId).toBe('C');
-  });
-
-  it('path nodes are in tracedNodeIds', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startPathFinding('A'); });
-    act(() => { result.current.applyPath('C'); });
     expect(result.current.trace.tracedNodeIds.has('A')).toBe(true);
     expect(result.current.trace.tracedNodeIds.has('C')).toBe(true);
   });
@@ -343,28 +263,16 @@ describe('Suite F — applyPath', () => {
 // ─── Suite G — applyAnalysisSubset ───────────────────────────────────────────
 
 describe('Suite G — applyAnalysisSubset', () => {
-  it('sets mode to analysis', () => {
+  it('sets analysis state with origin, type, and nodeIds', () => {
     const { result } = renderHook(() => useInteractiveTrace(null, [], []));
+    const nodeIds = new Set(['A', 'B']);
     act(() => {
-      result.current.applyAnalysisSubset(new Set(['A', 'B']), new Set(['A→B']), 'A', 'hubs');
+      result.current.applyAnalysisSubset(nodeIds, new Set(['A→B']), 'A', 'hubs');
     });
     expect(result.current.trace.mode).toBe('analysis');
-  });
-
-  it('stores analysisType', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => {
-      result.current.applyAnalysisSubset(new Set(['A']), new Set(), 'A', 'orphans');
-    });
-    expect(result.current.trace.analysisType).toBe('orphans');
-  });
-
-  it('origin is stored as selectedNodeId', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => {
-      result.current.applyAnalysisSubset(new Set(['B']), new Set(), 'B', 'hubs');
-    });
-    expect(result.current.trace.selectedNodeId).toBe('B');
+    expect(result.current.trace.analysisType).toBe('hubs');
+    expect(result.current.trace.selectedNodeId).toBe('A');
+    expect(result.current.trace.tracedNodeIds).toEqual(nodeIds);
   });
 
   it('undefined origin → selectedNodeId is null', () => {
@@ -373,15 +281,6 @@ describe('Suite G — applyAnalysisSubset', () => {
       result.current.applyAnalysisSubset(new Set(['A', 'B']), new Set(), undefined, 'islands');
     });
     expect(result.current.trace.selectedNodeId).toBeNull();
-  });
-
-  it('stores the exact nodeIds set', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    const nodeIds = new Set(['X', 'Y', 'Z']);
-    act(() => {
-      result.current.applyAnalysisSubset(nodeIds, new Set(), undefined, 'islands');
-    });
-    expect(result.current.trace.tracedNodeIds).toEqual(nodeIds);
   });
 
   it('works without a graph', () => {
@@ -395,29 +294,15 @@ describe('Suite G — applyAnalysisSubset', () => {
 // ─── Suite H — endTrace / clearTrace ─────────────────────────────────────────
 
 describe('Suite H — endTrace / clearTrace', () => {
-  it('endTrace resets mode to none from filtered', () => {
+  it('endTrace resets all state from filtered mode', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
     const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
     act(() => { result.current.startTraceImmediate('B'); });
     expect(result.current.trace.mode).toBe('filtered');
-    act(() => { result.current.endTrace(); });
-    expect(result.current.trace.mode).toBe('none');
-  });
-
-  it('endTrace clears selectedNodeId', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceImmediate('B'); });
-    act(() => { result.current.endTrace(); });
-    expect(result.current.trace.selectedNodeId).toBeNull();
-  });
-
-  it('endTrace clears tracedNodeIds', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceImmediate('B'); });
     expect(result.current.trace.tracedNodeIds.size).toBeGreaterThan(0);
     act(() => { result.current.endTrace(); });
+    expect(result.current.trace.mode).toBe('none');
+    expect(result.current.trace.selectedNodeId).toBeNull();
     expect(result.current.trace.tracedNodeIds.size).toBe(0);
   });
 
@@ -430,36 +315,34 @@ describe('Suite H — endTrace / clearTrace', () => {
     expect(result.current.trace.selectedNodeId).toBeNull();
   });
 
-  it('resets from configuring mode', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startTraceConfig('A'); });
-    act(() => { result.current.endTrace(); });
-    expect(result.current.trace.mode).toBe('none');
-  });
+  it('resets from every mode: configuring, analysis, pathfinding, path-applied', () => {
+    // Configuring
+    const { result: r1 } = renderHook(() => useInteractiveTrace(null, [], []));
+    act(() => { r1.current.startTraceConfig('A'); });
+    act(() => { r1.current.endTrace(); });
+    expect(r1.current.trace.mode).toBe('none');
 
-  it('resets from analysis mode', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.applyAnalysisSubset(new Set(['A']), new Set(), 'A', 'hubs'); });
-    act(() => { result.current.endTrace(); });
-    expect(result.current.trace.mode).toBe('none');
-  });
+    // Analysis
+    const { result: r2 } = renderHook(() => useInteractiveTrace(null, [], []));
+    act(() => { r2.current.applyAnalysisSubset(new Set(['A']), new Set(), 'A', 'hubs'); });
+    act(() => { r2.current.endTrace(); });
+    expect(r2.current.trace.mode).toBe('none');
 
-  it('resets from pathfinding mode', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startPathFinding('A'); });
-    act(() => { result.current.endTrace(); });
-    expect(result.current.trace.mode).toBe('none');
-  });
+    // Pathfinding
+    const { result: r3 } = renderHook(() => useInteractiveTrace(null, [], []));
+    act(() => { r3.current.startPathFinding('A'); });
+    act(() => { r3.current.endTrace(); });
+    expect(r3.current.trace.mode).toBe('none');
 
-  it('resets from path-applied mode', () => {
+    // Path-applied
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startPathFinding('A'); });
-    act(() => { result.current.applyPath('C'); });
-    expect(result.current.trace.mode).toBe('path-applied');
-    act(() => { result.current.endTrace(); });
-    expect(result.current.trace.mode).toBe('none');
-    expect(result.current.trace.targetNodeId).toBeNull();
+    const { result: r4 } = renderHook(() => useInteractiveTrace(graph, [], []));
+    act(() => { r4.current.startPathFinding('A'); });
+    act(() => { r4.current.applyPath('C'); });
+    expect(r4.current.trace.mode).toBe('path-applied');
+    act(() => { r4.current.endTrace(); });
+    expect(r4.current.trace.mode).toBe('none');
+    expect(r4.current.trace.targetNodeId).toBeNull();
   });
 });
 
@@ -472,22 +355,19 @@ describe('Suite I — tracedNodes/tracedEdges memoization', () => {
     { id: 'B→C', source: 'B', target: 'C', type: 'lineageEdge' },
   ];
 
-  it('in none mode returns all flow nodes unchanged', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, FLOW_NODES, FLOW_EDGES));
-    expect(result.current.tracedNodes).toEqual(FLOW_NODES);
-    expect(result.current.tracedEdges).toEqual(FLOW_EDGES);
-  });
-
-  it('in configuring mode returns all flow nodes unchanged', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, FLOW_NODES, FLOW_EDGES));
-    act(() => { result.current.startTraceConfig('B'); });
-    expect(result.current.tracedNodes).toEqual(FLOW_NODES);
-  });
-
-  it('in pathfinding mode returns all flow nodes unchanged', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, FLOW_NODES, FLOW_EDGES));
-    act(() => { result.current.startPathFinding('A'); });
-    expect(result.current.tracedNodes).toEqual(FLOW_NODES);
+  it('passthrough modes (none, configuring, pathfinding) return all flow nodes', () => {
+    // None
+    const { result: r1 } = renderHook(() => useInteractiveTrace(null, FLOW_NODES, FLOW_EDGES));
+    expect(r1.current.tracedNodes).toEqual(FLOW_NODES);
+    expect(r1.current.tracedEdges).toEqual(FLOW_EDGES);
+    // Configuring
+    const { result: r2 } = renderHook(() => useInteractiveTrace(null, FLOW_NODES, FLOW_EDGES));
+    act(() => { r2.current.startTraceConfig('B'); });
+    expect(r2.current.tracedNodes).toEqual(FLOW_NODES);
+    // Pathfinding
+    const { result: r3 } = renderHook(() => useInteractiveTrace(null, FLOW_NODES, FLOW_EDGES));
+    act(() => { r3.current.startPathFinding('A'); });
+    expect(r3.current.tracedNodes).toEqual(FLOW_NODES);
   });
 
   it('in filtered mode returns a subset — upstream-1 from C excludes A', () => {

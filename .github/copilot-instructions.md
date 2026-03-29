@@ -31,11 +31,11 @@ source format into the shared intermediate types and nothing more.
 | `src/engine/dmvExtractor.ts` | Build DacpacModel from database import via DMV queries |
 | `src/types/mssql.d.ts` | Type declarations for MSSQL extension API |
 | `assets/defaultParseRules.yaml` | Built-in parse rules (17 rules, 5 categories) |
-| `assets/dmvQueries.yaml` | Built-in DMV queries (6 queries) |
+| `assets/dmvQueries.yaml` | Built-in DMV queries (7 queries) |
 | `docs/PARSE_RULES.md` | Custom parse rules guide |
 | `docs/DMV_QUERIES.md` | Custom DMV queries guide |
 | `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
-| `src/ai/tools.ts` | AI tool pure functions (9 tools): 8 read-only queries + `validateCreateAiView`. `AI_CAPS` defaults, `AiCapsOverride` type. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
+| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateCreateAiView`. `AI_CAPS` defaults, `AiCapsOverride` type. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
 | `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()` (explicit type map with 'read' fallback). Zero business logic, zero VS Code imports. |
 | `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
 
@@ -53,31 +53,34 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 110 | Dacpac extraction, filtering, edge integrity, Fabric SDK, direction, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
+| `test/dacpacExtractor.test.ts` | 108 | Dacpac extraction, filtering, edge integrity, Fabric SDK, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
 | `test/graphBuilder.test.ts` | 218 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
 | `test/parser-edge-cases.test.ts` | 197 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/projectStore.test.ts` | 153 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `test/ai-tools.test.ts` | 95 | AI tool pure functions: getContext, getSchemasSummary, searchObjects (incl. include_body), getObjectDetail (incl. inline neighbors), runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, validateSaveView, safeRegex |
-| `test/hooks/useInteractiveTrace.test.ts` | 56 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
-| `test/hooks/useGraphology.test.ts` | 34 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
+| `test/projectStore.test.ts` | 136 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
+| `test/ai-tools.test.ts` | 270 | AI tool pure functions: getContext, searchObjects (incl. include_body), getObjectDetail (incl. inline neighbors), runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, getDdlBatch, validateCreateAiView, autoFixCreateAiView, validateQuery, safeRegex |
+| `test/hooks/useInteractiveTrace.test.ts` | 31 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
+| `test/hooks/useGraphology.test.ts` | 27 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
+| `test/hooks/useOverviewMode.test.ts` | 18 | Overview mode state machine: auto-trigger, manual toggle, threshold guards, resetUserChoice |
 | `test/hooks/useDacpacLoader.routing.test.tsx` | 30 | useDacpacLoader state machine: message routing (dacpac vs DB path), state transitions, callbacks, isDemo flag |
+| `test/hooks/CreateFlow.save.test.tsx` | 3 | CreateFlow: save-project passes DacpacConnection to onVisualize |
+| `test/hooks/App.save.test.tsx` | 3 | App-level save-project routing |
 | `test/snapshot-aw-baseline.ts` | — | Parser regression baseline: diffs all 31 AW SPs against committed `test/aw-baseline.tsv` — run via `npm run test:snapshot` |
 | `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                            # All unit tests (1086 tsx + 126 vitest + snapshot)
+npm test                            # All unit tests (1258 tsx + 112 vitest + snapshot)
 npm run test:snapshot               # Parser baseline check only
 npm run test:snapshot:update        # Regenerate test/aw-baseline.tsv after parser changes
 npm run test:coverage               # Vitest with v8 coverage (requires @vitest/coverage-v8)
 ```
 
-**tsx tests** (1086 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
+**tsx tests** (1258 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
 
-**Vitest tests** (126 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
+**Vitest tests** (112 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
 
 Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers must never appear in public source code, test files, or comments. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
 
@@ -207,20 +210,19 @@ npm test                               # all suites must pass
 
 ## AI Chat Participant (`@lineage`)
 
-**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 9 language model tools via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
+**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 8 language model tools via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
 
 **Key files:**
-- `src/ai/tools.ts` — 9 pure tool functions (8 read-only queries + `validateCreateAiView` write tool). `AI_CAPS` (SEARCH=50, BFS_N=200, BFS_E=300, GROUPS=100, DDL=10000, BATCH=20), `AiCapsOverride` type. Zero VS Code imports. Imports `strip()` and all presenters from `aiPresenter.ts`. Soft errors `{ error: 'not_found' }` (no throw). DDL too large → `{ ddl: null, ddl_too_large: true, ddl_chars: N }` (never partial DDL).
+- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateCreateAiView` write tool). `AI_CAPS` (SEARCH=50, BFS_N=200, BFS_E=300, GROUPS=100, DDL=10000, BATCH=20), `AiCapsOverride` type. Zero VS Code imports. Imports `strip()` and all presenters from `aiPresenter.ts`. Soft errors `{ error: 'not_found' }` (no throw). DDL too large → `{ ddl: null, ddl_too_large: true, ddl_chars: N }` (never partial DDL).
 - `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
 - `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
-- `src/extension.ts` — chat participant registration, 9 tool registrations, `readAiCaps()`, `autoScaleTier()`, `isAiEnabled()`, participant handler. Write tool (`create_ai_view`) uses `confirmationMessages` in `prepareInvocation`.
+- `src/extension.ts` — chat participant registration, 8 tool registrations, `readAiCaps()`, `autoScaleTier()`, `isAiEnabled()`, participant handler. Write tool (`create_ai_view`) uses `confirmationMessages` in `prepareInvocation`.
 
-**9 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
+**8 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
 
 | Tool | Kind | Purpose |
 |------|------|---------|
 | `lineage_get_context` | read | Active project, platform, filter state, model stats — call first each conversation |
-| `lineage_get_schema_summary` | read | All schemas with per-type object counts |
 | `lineage_search_objects` | read | Name/body search, returns IDs for other tools. `scope=visible` restricts to screen |
 | `lineage_get_object_detail` | read | Full metadata + DDL body for one object; inline up/dn neighbors |
 | `lineage_run_bfs_trace` | read | Multi-hop BFS lineage trace; `incomplete=true` means capped — narrow scope or reduce hops |
@@ -245,4 +247,4 @@ Explicit `dataLineageViz.ai.*` VS Code settings override auto-scale (detected vi
 
 **`ai.enabled` guard:** `isAiEnabled()` checked at both the chat participant level (returns disabled message) and in every tool `invoke()` handler (returns `{ error: 'disabled' }`).
 
-**Unit tests:** `test/ai-tools.test.ts` (156 tests) covers all 9 pure tool functions (`getContext`, `getSchemasSummary`, `searchObjects` incl. `include_body`, `getObjectDetail` incl. inline neighbors, `runBfsTrace` incl. truncation, `runAnalysis`, `searchDdl`, `getDdlBatch`, `validateCreateAiView`, `safeRegex`). Does not test `extension.ts` wiring (VS Code dependency).
+**Unit tests:** `test/ai-tools.test.ts` (270 tests) covers all 8 pure tool functions (`getContext`, `searchObjects` incl. `include_body`, `getObjectDetail` incl. inline neighbors, `runBfsTrace` incl. truncation, `runAnalysis`, `searchDdl`, `getDdlBatch`, `validateCreateAiView`, `autoFixCreateAiView`, `validateQuery`, `safeRegex`). Does not test `extension.ts` wiring (VS Code dependency).
