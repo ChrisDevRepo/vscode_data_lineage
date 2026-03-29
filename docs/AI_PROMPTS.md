@@ -1,103 +1,128 @@
 # AI Output Templates
 
-The `@lineage` chat participant creates views with five output fields: **summary**, **description**, **badges**, **highlights**, and **notes**. Each field has an instruction that tells the AI what to write. Customize these instructions to change the AI's output style.
+Customize how the `@lineage` chat participant formats its analysis views.
 
-## Setup
+## Quick Start
 
-1. Open the **Command Palette** (`Ctrl+Shift+P`) and run **Data Lineage: Create AI Output Templates** -- this copies the built-in YAML into your workspace as `aiOutputTemplates.yaml`
-2. Set `dataLineageViz.ai.outputTemplateFile` to `aiOutputTemplates.yaml` in VS Code Settings (`Ctrl+,`, search "dataLineageViz")
-3. Edit the `instruction` fields in the YAML to change how the AI formats its output
-4. Changes take effect on the next `@lineage` conversation (no reload needed)
+1. **Command Palette** (`Ctrl+Shift+P`) > **Data Lineage: Create AI Output Templates** -- copies the built-in YAML to your workspace
+2. **Settings** (`Ctrl+,`) > search `dataLineageViz.ai.outputTemplateFile` > set to the YAML filename
+3. Edit the `instruction` fields -- changes take effect on the next `@lineage` conversation
 
-## Two Layers: Visual + Analytical
+## How It Works
 
-The AI view has two complementary layers that should not duplicate each other:
+The YAML file defines five output fields. Only the `instruction` value of each field is injected into the AI prompt. The `example`, `bad_example`, and `good_example` values are for you -- they help you understand what each field should produce.
 
-| Layer | Fields | Shows |
-|-------|--------|-------|
-| **Visual** (graph) | badges, highlights, notes | Structure -- what connects to what, step order, node roles |
-| **Analytical** (overlay) | summary, description | Meaning -- business logic, formulas, column mappings |
-
-The graph shows structure. The description explains meaning.
-
-## Field Reference
-
-### summary
-One-line graph purpose shown in the info card (max 120 chars).
-
-**Example:** "Revenue lineage from SAP invoices through EV calculation to FactFinance."
-
-### description
-Full structured answer shown in the expandable overlay. Supports markdown: headings, lists, tables, code blocks, LaTeX math (`$formula$`).
-
-**Good:** Explains business logic, formulas, column-level mappings. References badges/highlights.
 ```
-## Revenue Calculation
-Revenue uses the **Earned Value (EV) methodology**:
-$$Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}$$
-
-`spCalcEV` (badge 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`...
+aiOutputTemplates.yaml
+  ├── summary.instruction      → injected into system prompt (rule 5)
+  ├── description.instruction  → injected into system prompt (rule 5)
+  ├── badges.instruction       → injected into create_ai_view tool description
+  ├── highlights.instruction   → injected into create_ai_view tool description
+  └── notes.instruction        → injected into create_ai_view tool description
 ```
 
-**Bad:** Re-describes the graph topology (the user can already see that).
+## The Five Fields -- A Layered Hierarchy
+
+The fields work together like a magazine article about a diagram:
+
+| Layer | Field | Role | Where shown |
+|-------|-------|------|-------------|
+| **Headline** | `summary` | One-line purpose (max 120 chars) | Info card |
+| **Callouts** | `badges` | Numbered step markers on 5-8 key nodes | On graph nodes |
+| **Captions** | `notes` | One-line role of each badged node | Below graph nodes |
+| **Article** | `description` | Full step-by-step answer referencing badge numbers | Expandable overlay |
+| **Emphasis** | `highlights` | Color glow on 2-3 critical nodes | Graph node borders |
+
+**Badges** are numbered navigation anchors (e.g., "1 Source", "3 FX Convert"). **Notes** caption each badged node so the graph alone tells the story. **Description** is the deep read -- each `##` heading references badge step numbers to connect text to graph.
+
+## YAML Format
+
+```yaml
+# Only 'instruction' is injected into the AI prompt.
+# example / bad_example / good_example are documentation for you.
+
+summary:
+  instruction: >
+    One-line graph purpose (max 120 chars). Shown in the info card.
+  example: "Revenue lineage from SAP invoices through EV calculation to FactFinance."
+
+description:
+  instruction: >
+    The detailed answer -- structured markdown with ## headings.
+    Each heading covers one or more badge steps: "## Revenue Calculation (steps 3-4)".
+    Under each heading, explain the business logic -- formulas, column mappings, WHY it matters.
+    The graph shows structure; you explain meaning.
+    Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$ / $$block$$), code blocks.
+    Not supported: mermaid, HTML, images, footnotes.
+  bad_example: "Data flows from staging through transformation to consumption."
+  good_example: |
+    ## Revenue Calculation (steps 3-4)
+    Revenue uses **Earned Value methodology**:
+    $$Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}$$
+    `spCalcEV` (step 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
+    then `vw_Revenue` (step 4) applies the Swiss filter: `WHERE CountryCode = 'CH'`.
+
+badges:
+  instruction: >
+    Numbered navigation anchors on 5-8 KEY nodes -- not every node.
+    Format: "1 Source", "3 FX Convert". Number = logical step in the description.
+    Only badge a node if the description explains what happens there.
+
+highlights:
+  instruction: >
+    Glow 2-3 critical nodes only. Pick ONE scheme:
+    Lineage (source/transform/target) or Diagnostic (good/warn/fail).
+
+notes:
+  instruction: >
+    One-line caption under each BADGED node -- what it does in this flow.
+    First line visible, rest on hover via \n.
+  example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"
 ```
-Data flows from staging through transformation to consumption.
-```
 
-### badges
-Numbered step labels on nodes (e.g., "1 Source", "2 Load", "3 Calc"). Plain text.
+## Writing Effective Instructions
 
-### highlights
-Glow on 2-3 critical nodes. One scheme per view: **Lineage** (source/transform/target) or **Diagnostic** (good/warn/fail).
+These tips apply to any `instruction` field you customize.
 
-### notes
-Short plain text below each node. First line visible, rest on hover via `\n`.
+| Tip | Why |
+|-----|-----|
+| **State what, not how** | The AI knows markdown -- tell it what content you want, not how to format it |
+| **Include BAD/GOOD contrast** | Models follow examples more reliably than rules ([Anthropic](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/be-direct)) |
+| **Keep under 3 sentences** | Longer instructions get partially ignored; move details to `good_example` |
+| **Explain WHY** | "The graph shows structure; you explain meaning" works better than "don't describe topology" |
+| **Reference other fields** | "Reference badge step numbers in ## headings" connects the hierarchy |
 
-**Example:** `"Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month"`
+### Audience Adaptation
 
-## Audience Adaptation
+Edit the `description.instruction` to match your audience:
 
-Edit the `instruction` fields to match your audience:
-
-| Audience | Description instruction style |
-|----------|------------------------------|
+| Audience | Instruction style |
+|----------|-------------------|
 | **Senior engineer** | "Concise. Column mappings and formulas only. No basics." |
 | **Junior analyst** | "Step-by-step. Explain what each SP does and what SQL patterns mean." |
 | **Manager** | "Business language. No SQL. Focus on what the numbers mean." |
-| **DBA/compliance** | "Technical detail. Include data types, constraints, audit trail." |
+| **DBA / compliance** | "Technical detail. Include data types, constraints, audit trail." |
+
+## VS Code Settings
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `dataLineageViz.ai.enabled` | `true` | Enable/disable the `@lineage` chat participant |
+| `dataLineageViz.ai.outputTemplateFile` | *(empty)* | Path to custom YAML (relative to workspace root) |
+| `dataLineageViz.ai.searchMaxResults` | *(auto)* | Override search result cap |
+| `dataLineageViz.ai.bfsMaxNodes` | *(auto)* | Override BFS node cap |
+| `dataLineageViz.ai.bfsMaxEdges` | *(auto)* | Override BFS edge cap |
+| `dataLineageViz.ai.analysisMaxGroups` | *(auto)* | Override analysis group cap |
+| `dataLineageViz.ai.maxDdlChars` | *(auto)* | Override DDL size cap per object |
+
+Settings marked *(auto)* scale automatically based on the Copilot model's context window. Set them explicitly only if you need to override the auto-scaled value.
 
 ## Failsafe Chain
 
 Same pattern as [Parse Rules](PARSE_RULES.md) and [DMV Queries](DMV_QUERIES.md):
 
-1. Custom YAML file (if setting points to one)
-2. Validate: required keys present and non-empty
+1. Custom YAML file (from `outputTemplateFile` setting)
+2. Validate: all 5 required keys (`summary`, `description`, `badges`, `highlights`, `notes`) present with non-empty `instruction`
 3. Missing keys: warn in Output channel, use built-in default for that key
 4. Custom file fails entirely: warn, fall back to built-in `assets/aiOutputTemplates.yaml`
-
-## YAML Format
-
-```yaml
-summary:
-  instruction: "One-line graph purpose (max 120 chars)."
-  example: "Revenue lineage from SAP invoices through EV calculation to FactFinance."
-
-description:
-  instruction: "Your full answer -- structured markdown with formulas and column mappings."
-  bad_example: "Data flows from staging through transformation to consumption."
-  good_example: |
-    ## Revenue Calculation
-    Revenue uses EV methodology: $Revenue = PV \times EH/PH$
-
-badges:
-  instruction: "Numbered step labels (1 Source, 2 Load, 3 Calc). Plain text."
-
-highlights:
-  instruction: "Glow 2-3 critical nodes. ONE scheme only."
-
-notes:
-  instruction: "Short text below each node. First line visible, rest on hover."
-  example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month"
-```
-
-Only the `instruction` fields are injected into the AI prompt. The `example`, `bad_example`, and `good_example` fields are documentation for you -- they help you understand what each field does.
+5. Built-in also fails: use hardcoded defaults in extension code

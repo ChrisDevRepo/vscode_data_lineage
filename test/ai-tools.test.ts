@@ -647,6 +647,7 @@ async function testPromptRegression() {
   const schema = createTool.inputSchema as Record<string, unknown>;
   const required = schema.required as string[];
   assert(required.includes('summary'), 'summary is required in schema');
+  assert(required.includes('description'), 'description is required in schema');
   assert(required.includes('name'), 'name is required in schema');
   assert(required.includes('node_ids'), 'node_ids is required in schema');
 

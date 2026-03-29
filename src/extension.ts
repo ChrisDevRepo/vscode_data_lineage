@@ -64,15 +64,9 @@ interface AiOutputTemplates {
   notes: string;
 }
 
-const AI_OUTPUT_TEMPLATE_DEFAULTS: AiOutputTemplates = {
-  summary: 'One-line graph purpose (max 120 chars). Shown in the info card.',
-  description: 'Your full answer to the user\'s question -- structured markdown. Reference step numbers from badges (step 1, step 2) to cross-reference nodes. Explain business logic, formulas, column mappings, data transformations. Supported formats: ## headings, **bold**, `code`, numbered/bulleted lists, | tables |, LaTeX math ($inline$ and $$block$$), code blocks. NOT supported: mermaid diagrams, HTML, images, footnotes. Do NOT re-describe the graph topology -- the user can see that.',
-  badges: 'Cross-references between description and graph. Only badge nodes the description explains -- not every node. Numbered as "Step 1", "Step 2" in the logical reasoning order of the description.',
-  highlights: 'Glow 2-3 critical nodes only. Pick ONE scheme: Lineage (source/transform/target) or Diagnostic (good/warn/fail). Do NOT mix schemes.',
-  notes: 'Short plain text below each node -- what it does. First line visible, rest on hover via \\n.',
-};
+const EMPTY_AI_TEMPLATES: AiOutputTemplates = { summary: '', description: '', badges: '', highlights: '', notes: '' };
 
-let _aiOutputTemplates: AiOutputTemplates = { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+let _aiOutputTemplates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
 
 function isAiEnabled(): boolean {
   return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
@@ -107,7 +101,7 @@ function readAiCaps(): AiCapsOverride {
     BFS_MAX_EDGES:       resolve('BFS_MAX_EDGES',       'bfsMaxEdges'),
     ANALYSIS_MAX_GROUPS: resolve('ANALYSIS_MAX_GROUPS', 'analysisMaxGroups'),
     MAX_DDL_CHARS:       resolve('MAX_DDL_CHARS',       'maxDdlChars'),
-    DDL_BATCH_CAP:       resolve('DDL_BATCH_CAP',       'ddlBatchCap'),
+    DDL_BATCH_CAP:       tier.DDL_BATCH_CAP ?? AI_CAPS.DDL_BATCH_CAP,
   };
 }
 
@@ -632,7 +626,8 @@ export function activate(context: vscode.ExtensionContext) {
           '4. COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
-          '5. VIEW OUTPUT — summary + description are REQUIRED and VALIDATED.\n' +
+          '5. VIEW OUTPUT — fields form a layered hierarchy (headline → callouts → captions → article).\n' +
+          '   Badges (5-8 key nodes) are numbered anchors. Notes caption each badged node. Description references badge step numbers.\n' +
           `   summary: ${_aiOutputTemplates.summary}\n` +
           `   description: ${_aiOutputTemplates.description}\n` +
           `   badges: ${_aiOutputTemplates.badges}\n` +
@@ -939,66 +934,68 @@ async function loadAiOutputTemplates(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
 ): Promise<AiOutputTemplates> {
-  if (!isAiEnabled()) return { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+  if (!isAiEnabled()) return { ...EMPTY_AI_TEMPLATES };
 
-  const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-  const customPath = cfg.get<string>('outputTemplateFile', '');
+  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'badges', 'highlights', 'notes'];
 
-  if (customPath) {
-    const resolved = resolveWorkspacePath(customPath);
-    if (resolved) {
-      try {
-        const fileUri = vscode.Uri.file(resolved);
-        const data = await vscode.workspace.fs.readFile(fileUri);
-        const content = new TextDecoder().decode(data);
-        const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
-
-        const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'badges', 'highlights', 'notes'];
-        const result = { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
-        const missing: string[] = [];
-
-        for (const key of REQUIRED_KEYS) {
-          const entry = parsed?.[key];
-          if (entry?.instruction && typeof entry.instruction === 'string' && entry.instruction.trim().length > 0) {
-            result[key] = entry.instruction.trim();
-          } else {
-            missing.push(key);
-          }
-        }
-
-        if (missing.length > 0) {
-          logWarn(outputChannel, 'Config', `Custom AI templates missing keys: ${missing.join(', ')} — using built-in defaults for those`);
-        }
-        await persistAbsolutePath('ai.outputTemplateFile', customPath, resolved);
-        logInfo(outputChannel, 'Config', `AI output templates loaded from ${path.basename(customPath)}${missing.length > 0 ? ` (${missing.length} key(s) using defaults)` : ''}`);
-        return result;
-      } catch (err) {
-        logWarn(outputChannel, 'Config', `Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using built-in defaults`);
-        vscode.window.showWarningMessage('Data Lineage: Failed to load custom AI output templates — using built-in defaults.');
-      }
-    } else {
-      logWarn(outputChannel, 'Config', `Cannot resolve AI templates path "${customPath}" — using built-in defaults`);
-    }
-  }
-
-  // Built-in fallback: load from assets/aiOutputTemplates.yaml
+  // Load built-in YAML first — serves as base and fallback for missing custom keys
+  const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   try {
     const builtInUri = vscode.Uri.joinPath(extensionUri, 'assets', 'aiOutputTemplates.yaml');
     const data = await vscode.workspace.fs.readFile(builtInUri);
     const content = new TextDecoder().decode(data);
     const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
-    const result = { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
-    for (const key of Object.keys(AI_OUTPUT_TEMPLATE_DEFAULTS) as (keyof AiOutputTemplates)[]) {
+    for (const key of REQUIRED_KEYS) {
       const entry = parsed?.[key];
       if (entry?.instruction && typeof entry.instruction === 'string') {
-        result[key] = entry.instruction.trim();
+        builtIn[key] = entry.instruction.trim();
       }
     }
     logDebug(outputChannel, 'Config', 'AI output templates loaded from built-in defaults');
+  } catch (err) {
+    logError(outputChannel, 'Config', 'load built-in AI templates', err instanceof Error ? err : new Error(String(err)));
+  }
+
+  // Overlay custom YAML if configured
+  const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
+  const customPath = cfg.get<string>('outputTemplateFile', '');
+
+  if (!customPath) return builtIn;
+
+  const resolved = resolveWorkspacePath(customPath);
+  if (!resolved) {
+    logWarn(outputChannel, 'Config', `Cannot resolve AI templates path "${customPath}" — using built-in defaults`);
+    return builtIn;
+  }
+
+  try {
+    const fileUri = vscode.Uri.file(resolved);
+    const data = await vscode.workspace.fs.readFile(fileUri);
+    const content = new TextDecoder().decode(data);
+    const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
+
+    const result = { ...builtIn };
+    const missing: string[] = [];
+
+    for (const key of REQUIRED_KEYS) {
+      const entry = parsed?.[key];
+      if (entry?.instruction && typeof entry.instruction === 'string' && entry.instruction.trim().length > 0) {
+        result[key] = entry.instruction.trim();
+      } else {
+        missing.push(key);
+      }
+    }
+
+    if (missing.length > 0) {
+      logWarn(outputChannel, 'Config', `Custom AI templates missing keys: ${missing.join(', ')} — using built-in defaults for those`);
+    }
+    await persistAbsolutePath('ai.outputTemplateFile', customPath, resolved);
+    logInfo(outputChannel, 'Config', `AI output templates loaded from ${path.basename(customPath)}${missing.length > 0 ? ` (${missing.length} key(s) using defaults)` : ''}`);
     return result;
   } catch (err) {
-    logWarn(outputChannel, 'Config', `Failed to load built-in AI templates: ${err instanceof Error ? err.message : String(err)} — using hardcoded defaults`);
-    return { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+    logWarn(outputChannel, 'Config', `Failed to load custom AI templates: ${err instanceof Error ? err.message : String(err)} — using built-in defaults`);
+    vscode.window.showWarningMessage('Data Lineage: Failed to load custom AI output templates — using built-in defaults.');
+    return builtIn;
   }
 }
 

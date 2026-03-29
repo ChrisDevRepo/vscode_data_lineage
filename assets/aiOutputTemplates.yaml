@@ -1,6 +1,12 @@
 # AI Output Templates -- how @lineage formats its analysis.
 # Edit 'instruction' fields to change the AI's output style.
 # Full documentation: docs/AI_PROMPTS.md
+#
+# Fields form a layered information hierarchy -- like a magazine article:
+#   summary     = headline
+#   badges      = numbered callouts on the diagram (5-8 key nodes only)
+#   notes       = figure captions under each badged node
+#   description = the article body, referencing callout numbers
 
 summary:
   instruction: >
@@ -9,29 +15,29 @@ summary:
 
 description:
   instruction: >
-    Your full answer to the user's question -- structured markdown.
-    Reference step numbers from badges (step 1, step 2) to cross-reference nodes.
-    Explain business logic, formulas, column mappings, data transformations.
-    Supported formats: ## headings, **bold**, `code`, numbered/bulleted lists,
-    | tables |, LaTeX math ($inline$ and $$block$$), code blocks.
-    NOT supported: mermaid diagrams, HTML, images, footnotes.
-    Do NOT re-describe the graph topology -- the user can see that.
+    The detailed answer -- structured markdown with ## headings.
+    Each heading covers one or more badge steps: "## Revenue Calculation (steps 3-4)".
+    Under each heading, explain the business logic at those nodes -- formulas, column mappings, WHY it matters.
+    The graph shows structure; you explain meaning.
+    Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$ / $$block$$), code blocks.
+    Not supported: mermaid, HTML, images, footnotes.
+    BAD: A standalone essay that never mentions step numbers.
+    GOOD: "## FX Conversion (step 4)\n`spConvertFX` multiplies Amount by DimRate.Rate where CurrencyCode = 'CHF'..."
   bad_example: "Data flows from staging through transformation to consumption."
   good_example: |
-    ## Revenue Calculation
+    ## Revenue Calculation (steps 3-4)
     Revenue uses the **Earned Value (EV) methodology**:
     $$Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}$$
-
-    `spCalcEV` (badge 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`...
-
-    ## Switzerland Allocation
-    `vw_Revenue` (badge 5) applies country filter: `WHERE CountryCode = 'CH'`
+    `spCalcEV` (step 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
+    then `vw_Revenue` (step 4) applies the Swiss filter: `WHERE CountryCode = 'CH'`.
 
 badges:
   instruction: >
-    Cross-references between description and graph. Only badge nodes
-    the description explains -- not every node. Numbered as "Step 1",
-    "Step 2" in the logical reasoning order of the description.
+    Numbered navigation anchors on 5-8 KEY nodes -- not every node.
+    Format: "1 Source", "3 FX Convert". Number = logical step in the description.
+    Only badge a node if the description explains what happens there.
+    BAD: 14 badges on 14 nodes (every node badged).
+    GOOD: 6 badges on the nodes where business logic lives -- sources, key transforms, final target.
 
 highlights:
   instruction: >
@@ -41,6 +47,9 @@ highlights:
 
 notes:
   instruction: >
-    Short plain text below each node -- what it does.
+    One-line caption under each BADGED node -- what it does in this flow.
+    Glancing at graph + notes should tell the story without opening the description.
     First line visible, rest on hover via \n.
+    BAD: Generic note unrelated to the description ("Stores project data").
+    GOOD: "Multiplies Amount x Rate for CHF conversion\nJoins FactSales.CurrencyKey -> DimRate.CurrencyKey"
   example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"
