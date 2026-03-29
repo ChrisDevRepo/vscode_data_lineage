@@ -601,9 +601,11 @@ export function activate(context: vscode.ExtensionContext) {
           '5. VIEW OUTPUT — ALWAYS include in create_ai_view:\n' +
           '   - summary: 1-2 sentence plain text overview of what was traced and why.\n' +
           '   - description: Detailed markdown — column mappings per SP, bullet lists, source→target flow.\n' +
-          '   - badges: Label relevant nodes sequentially (1 Source, 2 Load, 3 Calc, etc.).\n' +
-          '   - highlight_groups: Glow effect — use ONLY on 2-3 critical nodes (data source, key calculation, final output). NOT on every node.\n' +
-          '   - notes: Column mapping details on key SPs. "Revenue ← Amount × Rate via spCalc" — not generic descriptions.',
+          '   - badges: Label relevant nodes (1 Source, 2 Load, 3 Calc…). Use badge colors sparingly.\n' +
+          '   - highlight_groups: Glow on 2-3 critical nodes only. Pick ONE scheme:\n' +
+          '     Lineage: source (blue, data origin), transform (orange, calc SP), target (green, output).\n' +
+          '     Diagnostic: good (green), warn (yellow), fail (red). Do NOT mix schemes.\n' +
+          '   - notes: Column mapping on key SPs. "Revenue ← Amount × Rate via spCalc" — not generic.',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),

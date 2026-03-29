@@ -489,8 +489,8 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   const { input: fixedHl, fixes: hlFixes } = autoFixCreateAiView(model, {
     name: 'Test', node_ids: [node.id, '[ghost].[x]'],
     highlight_groups: [
-      { label: 'All ghosts', color: 'bu', node_ids: ['[ghost].[x]'] },
-      { label: 'Valid', color: 'gn', node_ids: [node.id] },
+      { label: 'All ghosts', color: 'source', node_ids: ['[ghost].[x]'] },
+      { label: 'Valid', color: 'target', node_ids: [node.id] },
     ],
   });
   assert(hlFixes.length > 0, 'highlight prune: fixes reported');

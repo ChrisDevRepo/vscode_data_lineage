@@ -89,6 +89,19 @@ export const AI_COLOR_HEX: Record<string, string> = {
   gy: 'var(--ln-ai-gy)',
 };
 
+// ─── Semantic Role → Color Code Mapping ─────────────────────────────────────
+// AI uses semantic roles; the app maps them to existing two-letter color codes.
+export const AI_ROLE_TO_COLOR: Record<string, string> = {
+  source: 'bu', transform: 'or', target: 'gn',
+  good: 'gn', warn: 'ye', fail: 'rd',
+  gy: 'gy',
+};
+
+/** Resolve a semantic role (or legacy color code) to a two-letter color code. */
+export function resolveAiColor(role: string): string {
+  return AI_ROLE_TO_COLOR[role] ?? role;
+}
+
 // AI glow/shadow for boxShadow — CSS vars with alpha baked in (theme-aware).
 export const AI_COLOR_GLOW: Record<string, { glow: string; shadow: string }> = {
   bu: { glow: 'var(--ln-ai-bu-glow)', shadow: 'var(--ln-ai-bu-shadow)' },

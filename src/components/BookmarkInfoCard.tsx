@@ -1,6 +1,5 @@
 import { memo, useState } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
-import { AI_COLOR_HEX } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
 
 interface BookmarkInfoCardProps {
@@ -32,7 +31,6 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
 
   const source = profile.source ?? 'user';
   const hasSummary = !!profile.aiMetadata?.summary;
-  const hasGroups = (profile.aiMetadata?.highlightGroups?.length ?? 0) > 0;
   const hasStale = staleNodeNames.length > 0;
 
   return (
@@ -92,27 +90,6 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
                   {profile.aiMetadata!.summary}
                 </span>
               </Tooltip>
-            </div>
-          )}
-
-          {/* Highlight groups legend (AI views) */}
-          {hasGroups && (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] ln-text-muted uppercase tracking-wide">Groups</span>
-              {profile.aiMetadata!.highlightGroups.map((g, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: AI_COLOR_HEX[g.color] ?? AI_COLOR_HEX.gy,
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Tooltip content={g.label} asChild><span className="text-[10px] ln-text truncate">{g.label}</span></Tooltip>
-                </div>
-              ))}
             </div>
           )}
 

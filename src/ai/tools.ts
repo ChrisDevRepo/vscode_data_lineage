@@ -542,8 +542,9 @@ export function searchDdl(
 
 // ─── Tool 7: lineage_create_ai_view ──────────────────────────────────────────
 
-export type AIHighlightColor = 'bu' | 'gn' | 'rd' | 'ye' | 'or';
-export type AiBadgeColor = AIHighlightColor | 'gy';
+export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
+export type AIHighlightColor = AIHighlightRole;
+export type AiBadgeColor = AIHighlightRole | 'gy';
 
 export type CreateAiViewInput = {
   name: string;
@@ -581,8 +582,8 @@ export type CreateAiViewRequest = {
 
 export type CreateAiViewError = { success: false; errors: string[]; hint: string };
 
-const AI_HIGHLIGHT_COLORS = new Set<string>(['bu', 'gn', 'rd', 'ye', 'or']);
-const AI_BADGE_COLORS = new Set<string>(['bu', 'gn', 'rd', 'ye', 'or', 'gy']);
+const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
+const AI_BADGE_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail', 'gy']);
 
 export function autoFixCreateAiView(
   model: DatabaseModel,
@@ -657,14 +658,14 @@ export function validateCreateAiView(
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
       if (!g.label) errors.push('Group label is required');
-      if (!AI_HIGHLIGHT_COLORS.has(g.color)) errors.push(`Group "${g.label}" has invalid color "${g.color}"`);
+      if (!AI_HIGHLIGHT_ROLES.has(g.color)) errors.push(`Group "${g.label}" has invalid role "${g.color}"`);
     }
   }
 
   // Color validity only — text length and orphan checks handled by autoFix
   if (input.badges) {
     for (const b of input.badges) {
-      if (b.color && !AI_BADGE_COLORS.has(b.color)) errors.push(`Badge color "${b.color}" is invalid`);
+      if (b.color && !AI_BADGE_ROLES.has(b.color)) errors.push(`Badge role "${b.color}" is invalid`);
     }
   }
   if (errors.length > 0) {

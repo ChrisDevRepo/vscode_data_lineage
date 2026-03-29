@@ -431,6 +431,20 @@ body {
   color: var(--ln-text-link);
 }
 
+/* Clickable node reference in AI description */
+.ln-ai-node-link {
+  color: var(--ln-text-link);
+  cursor: pointer;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  background: var(--ln-input-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.ln-ai-node-link:hover {
+  text-decoration: underline;
+}
+
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,
 body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-overlay {
   border-color: var(--vscode-contrastBorder);

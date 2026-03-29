@@ -32,8 +32,8 @@ export interface SerializedFilterState {
   allowlistNodeIds?: string[];
 }
 
-/** Named color group for AI-authored view highlight groups. Two-letter codes (BU=blue, GN=green, RD=red, YE=yellow, OR=orange). */
-export type AIHighlightColor = 'bu' | 'gn' | 'rd' | 'ye' | 'or';
+/** Semantic highlight role. Mapped to CSS colors by resolveAiColor(). */
+export type AIHighlightColor = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
 /** Metadata attached to AI-authored advanced bookmarks. */
 export interface AIViewMetadata {

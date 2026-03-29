@@ -724,7 +724,7 @@
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, summary, detailed description, color groups, badges, and text annotations. The user receives a VS Code notification and sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark. ALWAYS include: summary (1-2 sentence overview, ≤200 chars) + description (detailed markdown: column mappings, bullet lists, source→target). Badges label nodes (1 Source, 2 Calc…). highlight_groups glow on 2-3 critical nodes only (origin, calc, output) — NOT all nodes. Notes: per-SP column mapping. Requires active project.",
+        "modelDescription": "Saves a named bookmark. ALWAYS include: summary (≤200 chars) + description (markdown: column mappings, bullet lists). highlight_groups: pick ONE scheme — Lineage (source/transform/target) or Diagnostic (good/warn/fail). Glow 2-3 critical nodes only. Badges: label nodes, use colors sparingly. Notes: per-SP column mapping. Requires active project.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -765,7 +765,7 @@
             },
             "highlight_groups": {
               "type": "array",
-              "description": "Color groups for visual clustering (max 5)",
+              "description": "Glow on 2-3 critical nodes only. Pick ONE scheme: Lineage (source/transform/target) or Diagnostic (good/warn/fail).",
               "items": {
                 "type": "object",
                 "properties": {
@@ -776,12 +776,14 @@
                   "color": {
                     "type": "string",
                     "enum": [
-                      "bu",
-                      "gn",
-                      "rd",
-                      "ye",
-                      "or"
-                    ]
+                      "source",
+                      "transform",
+                      "target",
+                      "good",
+                      "warn",
+                      "fail"
+                    ],
+                    "description": "Semantic role. Lineage: source (blue), transform (orange), target (green). Diagnostic: good (green), warn (yellow), fail (red)."
                   },
                   "node_ids": {
                     "type": "array",
@@ -815,13 +817,15 @@
                   "color": {
                     "type": "string",
                     "enum": [
-                      "bu",
-                      "gn",
-                      "rd",
-                      "ye",
-                      "or",
+                      "source",
+                      "transform",
+                      "target",
+                      "good",
+                      "warn",
+                      "fail",
                       "gy"
-                    ]
+                    ],
+                    "description": "Badge color role — use sparingly. Match the active highlight scheme."
                   }
                 },
                 "required": [
@@ -929,7 +933,9 @@
     "monaco-editor": "^0.55.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

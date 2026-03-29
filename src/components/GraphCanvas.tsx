@@ -38,7 +38,7 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
-import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX, AI_COLOR_GLOW } from '../utils/schemaColors';
+import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 // IMPORTANT: nodeTypes must be defined at module level — not inside the component.
@@ -446,6 +446,8 @@ export function GraphCanvas({
 
   const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
 
+  const graphNodeIds = useMemo(() => new Set(localNodes.map(n => n.id)), [localNodes]);
+
   // Build AI highlight + badge lookups from active AI profile OR transient AI preview
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
 
@@ -454,7 +456,7 @@ export function GraphCanvas({
     const groups = activeAiMetadata?.highlightGroups;
     if (!groups) return m;
     for (const g of groups) {
-      const code = g.color && AI_COLOR_HEX[g.color] ? g.color : 'bu';
+      const code = resolveAiColor(g.color || 'bu');
       const entry = { color: AI_COLOR_HEX[code], glow: AI_COLOR_GLOW[code].glow, shadow: AI_COLOR_GLOW[code].shadow };
       for (const id of g.nodeIds) m.set(id, entry);
     }
@@ -465,7 +467,10 @@ export function GraphCanvas({
     const m = new Map<string, { text: string; color: string }>();
     const badges = activeAiMetadata?.badges;
     if (!badges) return m;
-    for (const b of badges) m.set(b.nodeId, { text: b.text, color: (b.color && AI_COLOR_HEX[b.color]) ?? AI_COLOR_HEX.gy });
+    for (const b of badges) {
+      const code = resolveAiColor(b.color || 'gy');
+      m.set(b.nodeId, { text: b.text, color: AI_COLOR_HEX[code] ?? AI_COLOR_HEX.gy });
+    }
     return m;
   }, [activeAiMetadata]);
 
@@ -794,6 +799,8 @@ export function GraphCanvas({
           <AiDescriptionOverlay
             viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
             description={activeAiMetadata.description}
+            nodeIds={graphNodeIds}
+            onNodeClick={onNodeClick}
           />
         )}
         </div>
