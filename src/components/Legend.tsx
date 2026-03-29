@@ -6,8 +6,11 @@ interface LegendProps {
   isSidebarOpen?: boolean;
 }
 
+const SCHEMA_DISPLAY_LIMIT = 10;
+
 export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
 
   useEffect(() => {
@@ -39,7 +42,7 @@ export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendPro
           {/* Schema Colors */}
           <div>
             <div className="space-y-1.5">
-              {schemas.map((schema) => {
+              {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT)).map((schema) => {
                 const color = getSchemaColor(schema);
                 return (
                   <div key={schema} className="flex items-center gap-2">
@@ -51,6 +54,14 @@ export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendPro
                   </div>
                 );
               })}
+              {schemas.length > SCHEMA_DISPLAY_LIMIT && (
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className="text-[11px] ln-text-link mt-1 hover:underline cursor-pointer bg-transparent border-none p-0"
+                >
+                  {expanded ? 'Show less' : `+${schemas.length - SCHEMA_DISPLAY_LIMIT} more…`}
+                </button>
+              )}
             </div>
           </div>
         </div>

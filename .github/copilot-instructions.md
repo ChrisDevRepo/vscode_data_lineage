@@ -227,7 +227,7 @@ npm test                               # all suites must pass
 | `lineage_run_analysis` | read | Structural analysis: hubs/islands/orphans/longest-path/cycles |
 | `lineage_search_ddl` | read | Full-text regex search across SP/view/function DDL bodies |
 | `lineage_get_ddl_batch` | read | Batch DDL retrieval for multiple objects by ID array |
-| `lineage_create_ai_view` | write | Create named AI bookmark: node set, highlight groups (up to 5), badges (up to 50), narrative |
+| `lineage_create_ai_view` | write | Create named AI bookmark: node set, summary, description, highlight groups (up to 5), badges (up to 50), notes |
 
 **Auto-scaling caps** — set via `request.model.maxInputTokens` per request → `autoScaleTier()`:
 

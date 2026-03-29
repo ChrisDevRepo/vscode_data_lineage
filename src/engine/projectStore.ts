@@ -37,7 +37,9 @@ export type AIHighlightColor = 'source' | 'transform' | 'target' | 'good' | 'war
 
 /** Metadata attached to AI-authored advanced bookmarks. */
 export interface AIViewMetadata {
-  /** Graph purpose and scope — shown in the expandable overlay panel. */
+  /** One-line graph purpose (≤120 chars) — shown in the info card. */
+  summary?: string;
+  /** Full analytical answer — markdown with formulas, column mappings, business logic — shown in the expandable overlay. */
   description?: string;
   /** ISO timestamp when the view was created. Auto-populated. */
   createdAt: string;

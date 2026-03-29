@@ -119,6 +119,11 @@
         "icon": "$(database)"
       },
       {
+        "command": "dataLineageViz.createAiOutputTemplates",
+        "title": "Data Lineage: Create AI Output Templates",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "dataLineageViz.toggleOverviewMode",
         "title": "Data Lineage: Toggle Schema Overview Mode",
         "icon": "$(graph)"
@@ -447,6 +452,11 @@
             "minimum": 1000,
             "maximum": 500000,
             "markdownDescription": "Maximum DDL body characters per object (per single `getObjectDetail` call). When exceeded, an error is returned instead of partial DDL. Synapse/DWH stored procedures are typically 15,000–80,000 chars — raise to `500000` to effectively disable the limit. Auto-scales to `500000` when the selected model's context exceeds 128K tokens (e.g. Claude Sonnet)."
+          },
+          "dataLineageViz.ai.outputTemplateFile": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Path to custom AI output templates YAML. Controls how `@lineage` formats summary, description, badges, highlights, and notes. Leave empty for built-in defaults. Use Command Palette → *Create AI Output Templates* to scaffold. See [AI Prompts Guide](docs/AI_PROMPTS.md)."
           }
         }
       }
@@ -724,7 +734,7 @@
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark. ALWAYS include: description (graph purpose and scope — NOT analysis results). highlight_groups: pick ONE scheme — Lineage (source/transform/target) or Diagnostic (good/warn/fail). Glow 2-3 critical nodes only. Badges: plain text labels (1 Source, 2 Load). Notes: analysis findings on nodes — first line = visible title, after \\n = hover detail. Requires active project.",
+        "modelDescription": "Saves a named bookmark. ALWAYS include summary (one-liner for info card) and description (full structured answer — markdown with formulas, column mappings, business logic; graph is the visual reference). Badges: step labels. Highlights: glow 2-3 nodes. Notes: short text below nodes. Requires active project.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -746,9 +756,14 @@
               },
               "description": "Exact node IDs to show (1–200, validated against catalog)"
             },
+            "summary": {
+              "type": "string",
+              "maxLength": 120,
+              "description": "One-line graph purpose for the info card (max 120 chars)"
+            },
             "description": {
               "type": "string",
-              "description": "Graph purpose and scope — what this view shows and why. NOT analysis results. Shown in expandable overlay."
+              "description": "Full structured answer — markdown with headings, formulas, column mappings, business logic. The graph is a visual reference for this explanation."
             },
             "layout_direction": {
               "type": "string",

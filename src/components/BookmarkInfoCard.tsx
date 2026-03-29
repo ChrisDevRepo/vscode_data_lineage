@@ -82,6 +82,14 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
             <span className="text-[10px] ln-text">{SOURCE_DESCRIPTIONS[source]}</span>
           </div>
 
+          {/* Summary (AI views) */}
+          {ai?.summary && (
+            <div className="flex flex-col">
+              <span className="text-[9px] ln-text-muted uppercase tracking-wide">Summary</span>
+              <span className="text-[10px] ln-text">{ai.summary}</span>
+            </div>
+          )}
+
           {/* Created + Model — AI views show model name, others show date only */}
           <div className="flex flex-col">
             <span className="text-[9px] ln-text-muted uppercase tracking-wide">Created</span>

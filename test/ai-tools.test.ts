@@ -323,7 +323,8 @@ async function testValidateCreateAiView(model: DatabaseModel) {
     const richInput: CreateAiViewInput = {
       name: 'EmailAddress Full Lineage',
       node_ids: lineageIds,
-      description: 'Traces how EmailAddress dependencies flow through the Person schema.',
+      summary: 'EmailAddress dependency chain in Person schema.',
+      description: '## Data Flow\nTraces how EmailAddress dependencies flow through the Person schema.',
     };
     const aiResult = validateCreateAiView(model, richInput) as Record<string, unknown>;
     assert(aiResult.success === true, 'EmailAddress lineage: validateCreateAiView succeeds');
@@ -495,6 +496,30 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assert(hlFixes.length > 0, 'highlight prune: fixes reported');
   assertEq(fixedHl.highlight_groups!.length, 1, 'highlight prune: ghost group removed');
   assertEq(fixedHl.highlight_groups![0].label, 'Valid', 'highlight prune: valid group kept');
+
+  // Summary passthrough in validate
+  const withSummary = validateCreateAiView(model, {
+    name: 'Test', node_ids: [node.id],
+    summary: 'Revenue lineage from SAP invoices.',
+    description: '## Revenue Calculation\nDetailed explanation...',
+  }) as Record<string, unknown>;
+  assert(withSummary.success === true, 'summary+description: success');
+  assertEq(withSummary.summary as string, 'Revenue lineage from SAP invoices.', 'summary: passed through');
+  assert((withSummary.description as string).startsWith('## Revenue'), 'description: passed through');
+
+  // Summary truncation in autoFix
+  const longSummary = 'x'.repeat(150);
+  const { input: fixedSummary, fixes: summaryFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id], summary: longSummary,
+  });
+  assert(summaryFixes.length > 0, 'long summary: fixes reported');
+  assertEq(fixedSummary.summary!.length, 120, 'long summary: truncated to 120');
+
+  // Short summary: no truncation
+  const { fixes: noSummaryFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id], summary: 'Short summary.',
+  });
+  assertEq(noSummaryFixes.length, 0, 'short summary: no fixes');
 
   // End-to-end: auto-fix cleans input, validate passes
   const rawBadInput: CreateAiViewInput = {

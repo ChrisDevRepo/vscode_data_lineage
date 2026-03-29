@@ -547,6 +547,7 @@ export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn
 export type CreateAiViewInput = {
   name: string;
   node_ids: string[];
+  summary?: string;
   description?: string;
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
@@ -568,6 +569,7 @@ export type CreateAiViewRequest = {
   success: true;
   name: string;
   node_ids: string[];
+  summary?: string;
   description?: string;
   layout_direction: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
@@ -596,9 +598,15 @@ export function autoFixCreateAiView(
     }
   }
 
+  // 2. Truncate summary at 120 chars
+  if (fixed.summary && fixed.summary.length > 120) {
+    fixes.push(`Truncated summary from ${fixed.summary.length} to 120 chars`);
+    fixed = { ...fixed, summary: fixed.summary.slice(0, 120) };
+  }
+
   const nodeIdSet = new Set(fixed.node_ids ?? []);
 
-  // 2. Drop empty badges & badges for removed nodes (no text truncation — UI handles overflow)
+  // 3. Drop empty badges & badges for removed nodes (no text truncation — UI handles overflow)
   if (fixed.badges) {
     const before = fixed.badges.length;
     const filtered = fixed.badges.filter(b => nodeIdSet.has(b.node_id) && b.text && b.text.trim().length > 0);
@@ -607,7 +615,7 @@ export function autoFixCreateAiView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned badge(s)`);
   }
 
-  // 3. Drop empty notes & notes for removed nodes (no text truncation or cap — UI handles overflow)
+  // 4. Drop empty notes & notes for removed nodes (no text truncation or cap — UI handles overflow)
   if (fixed.notes) {
     const before = fixed.notes.length;
     const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
@@ -616,7 +624,7 @@ export function autoFixCreateAiView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 4. Prune highlight_groups referencing removed nodes
+  // 5. Prune highlight_groups referencing removed nodes
   if (fixed.highlight_groups) {
     fixed = {
       ...fixed,
@@ -668,6 +676,7 @@ export function validateCreateAiView(
     success: true,
     name: input.name.trim(),
     node_ids: input.node_ids,
+    summary: input.summary,
     description: input.description,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],

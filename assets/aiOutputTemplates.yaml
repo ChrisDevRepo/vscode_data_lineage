@@ -1,0 +1,41 @@
+# AI Output Templates -- how @lineage formats its analysis.
+# Edit 'instruction' fields to change the AI's output style.
+# Full documentation: docs/AI_PROMPTS.md
+
+summary:
+  instruction: >
+    One-line graph purpose (max 120 chars). Shown in the info card.
+  example: "Revenue lineage from SAP invoices through EV calculation to FactFinance."
+
+description:
+  instruction: >
+    Your full answer to the user's question -- structured markdown.
+    Reference badges and highlights to point at specific nodes.
+    Explain business logic, formulas, column mappings, data transformations.
+    Use ## headings, numbered lists, tables, LaTeX math ($formula$).
+    Do NOT re-describe the graph topology -- the user can see that.
+  bad_example: "Data flows from staging through transformation to consumption."
+  good_example: |
+    ## Revenue Calculation
+    Revenue uses the **Earned Value (EV) methodology**:
+    $$Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}$$
+
+    `spCalcEV` (badge 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`...
+
+    ## Switzerland Allocation
+    `vw_Revenue` (badge 5) applies country filter: `WHERE CountryCode = 'CH'`
+
+badges:
+  instruction: "Numbered step labels on nodes (1 Source, 2 Load, 3 Calc). Plain text."
+
+highlights:
+  instruction: >
+    Glow 2-3 critical nodes only. Pick ONE scheme:
+    Lineage (source/transform/target) or Diagnostic (good/warn/fail).
+    Do NOT mix schemes.
+
+notes:
+  instruction: >
+    Short plain text below each node -- what it does.
+    First line visible, rest on hover via \n.
+  example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"

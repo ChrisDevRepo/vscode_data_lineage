@@ -53,6 +53,25 @@ let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; con
 let _aiCaps:           AiCapsOverride = {};  // refreshed once per @lineage request; avoids re-reading config per tool call
 let _aiModelName:      string = '';          // display name of the current Copilot model (e.g., "Claude Sonnet 4.6")
 
+/** AI output template instructions — loaded once at activation, cached for system prompt injection. */
+interface AiOutputTemplates {
+  summary: string;
+  description: string;
+  badges: string;
+  highlights: string;
+  notes: string;
+}
+
+const AI_OUTPUT_TEMPLATE_DEFAULTS: AiOutputTemplates = {
+  summary: 'One-line graph purpose (max 120 chars). Shown in the info card.',
+  description: 'Your full answer to the user\'s question -- structured markdown. Reference badges and highlights to point at specific nodes. Explain business logic, formulas, column mappings, data transformations. Use ## headings, numbered lists, tables, LaTeX math ($formula$). Do NOT re-describe the graph topology -- the user can see that.',
+  badges: 'Numbered step labels on nodes (1 Source, 2 Load, 3 Calc). Plain text.',
+  highlights: 'Glow 2-3 critical nodes only. Pick ONE scheme: Lineage (source/transform/target) or Diagnostic (good/warn/fail). Do NOT mix schemes.',
+  notes: 'Short plain text below each node -- what it does. First line visible, rest on hover via \\n.',
+};
+
+let _aiOutputTemplates: AiOutputTemplates = { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+
 function isAiEnabled(): boolean {
   return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
 }
@@ -134,8 +153,16 @@ export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
 
+  // Load AI output templates at activation (async, non-blocking)
+  loadAiOutputTemplates(outputChannel, context.extensionUri).then(t => { _aiOutputTemplates = t; });
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
+      // Reload AI templates when setting changes (independent of panel)
+      if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
+        _aiOutputTemplates = await loadAiOutputTemplates(outputChannel, context.extensionUri);
+      }
+
       if (!activePanel) return;
 
       try {
@@ -178,13 +205,16 @@ export function activate(context: vscode.ExtensionContext) {
     ),
   );
 
-  // Commands: Create YAML scaffold files (parse rules + DMV queries)
+  // Commands: Create YAML scaffold files (parse rules + DMV queries + AI output templates)
   context.subscriptions.push(
     vscode.commands.registerCommand('dataLineageViz.createParseRules', () =>
       createYamlScaffold(context, 'parseRules.yaml', 'defaultParseRules.yaml', 'parseRulesFile')
     ),
     vscode.commands.registerCommand('dataLineageViz.createDmvQueries', () =>
       createYamlScaffold(context, 'dmvQueries.yaml', 'dmvQueries.yaml', 'dmvQueriesFile')
+    ),
+    vscode.commands.registerCommand('dataLineageViz.createAiOutputTemplates', () =>
+      createYamlScaffold(context, 'aiOutputTemplates.yaml', 'aiOutputTemplates.yaml', 'ai.outputTemplateFile')
     ),
   );
 
@@ -391,6 +421,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         // Build aiMetadata for the transient preview (NOT saved yet — user decides)
         const aiMetadata: AIViewMetadata = {
+          summary: validation.summary,
           description: validation.description,
           createdAt: new Date().toISOString(),
           modelName: _aiModelName,
@@ -410,11 +441,12 @@ export function activate(context: vscode.ExtensionContext) {
           layoutDirection: validation.layout_direction,
         };
         const preview = { name: validation.name, nodeIds: validation.node_ids, aiMetadata };
+        const sumLen = validation.summary?.length ?? 0;
         const descLen = validation.description?.length ?? 0;
         const groups = validation.highlight_groups.length;
         const badges = validation.badges.length;
         const notes = validation.notes.length;
-        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes, desc=${descLen}ch, model=${_aiModelName} → preview`);
+        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes, summary=${sumLen}ch, desc=${descLen}ch, model=${_aiModelName} → preview`);
         logDebug(outputChannel, 'AI', `lineage_create_ai_view detail: ${groups} groups, ${badges} badges, ${notes} notes, layout=${validation.layout_direction}`);
 
         if (activePanel) {
@@ -598,14 +630,14 @@ export function activate(context: vscode.ExtensionContext) {
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
           '5. VIEW OUTPUT — ALWAYS include in create_ai_view:\n' +
-          '   - description: The graph\'s purpose and scope — what it shows and why. NOT analysis results.\n' +
-          '     Example: "Traces how Revenue flows from staging sources through calculation SPs to the FactFinance reporting table."\n' +
-          '   - badges: Label relevant nodes (1 Source, 2 Load, 3 Calc…). Plain text, no color.\n' +
-          '   - highlight_groups: Glow on 2-3 critical nodes only. Pick ONE scheme:\n' +
-          '     Lineage: source (blue, data origin), transform (orange, calc SP), target (green, output).\n' +
-          '     Diagnostic: good (green), warn (yellow), fail (red). Do NOT mix schemes.\n' +
-          '   - notes: Analysis findings on individual nodes. First line = visible title. After \\n = detail on hover.\n' +
-          '     Example: "Revenue ← Amount × Rate\\nSELECT src.Amount * rate.Rate FROM staging JOIN rates"',
+          `   - summary: ${_aiOutputTemplates.summary}\n` +
+          `   - description: ${_aiOutputTemplates.description}\n` +
+          '     BAD: "Data flows from staging through transformation to consumption."\n' +
+          '     GOOD: "## Revenue Calculation\\nRevenue uses EV methodology: $Revenue = PV \\\\times EH/PH$\\n' +
+          '     `spCalcEV` (badge 3) reads DimProject.PlannedValue and FactTimesheet.Hours…"\n' +
+          `   - badges: ${_aiOutputTemplates.badges}\n` +
+          `   - highlight_groups: ${_aiOutputTemplates.highlights}\n` +
+          `   - notes: ${_aiOutputTemplates.notes}`,
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),
@@ -899,6 +931,75 @@ async function createYamlScaffold(
   vscode.window.showInformationMessage(
     `Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`
   );
+}
+
+// ─── AI Output Templates ────────────────────────────────────────────────────
+
+async function loadAiOutputTemplates(
+  outputChannel: vscode.LogOutputChannel,
+  extensionUri: vscode.Uri,
+): Promise<AiOutputTemplates> {
+  if (!isAiEnabled()) return { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+
+  const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
+  const customPath = cfg.get<string>('outputTemplateFile', '');
+
+  if (customPath) {
+    const resolved = resolveWorkspacePath(customPath);
+    if (resolved) {
+      try {
+        const fileUri = vscode.Uri.file(resolved);
+        const data = await vscode.workspace.fs.readFile(fileUri);
+        const content = new TextDecoder().decode(data);
+        const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
+
+        const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'badges', 'highlights', 'notes'];
+        const result = { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+        const missing: string[] = [];
+
+        for (const key of REQUIRED_KEYS) {
+          const entry = parsed?.[key];
+          if (entry?.instruction && typeof entry.instruction === 'string' && entry.instruction.trim().length > 0) {
+            result[key] = entry.instruction.trim();
+          } else {
+            missing.push(key);
+          }
+        }
+
+        if (missing.length > 0) {
+          logWarn(outputChannel, 'Config', `Custom AI templates missing keys: ${missing.join(', ')} — using built-in defaults for those`);
+        }
+        await persistAbsolutePath('ai.outputTemplateFile', customPath, resolved);
+        logInfo(outputChannel, 'Config', `AI output templates loaded from ${path.basename(customPath)}${missing.length > 0 ? ` (${missing.length} key(s) using defaults)` : ''}`);
+        return result;
+      } catch (err) {
+        logWarn(outputChannel, 'Config', `Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using built-in defaults`);
+        vscode.window.showWarningMessage('Data Lineage: Failed to load custom AI output templates — using built-in defaults.');
+      }
+    } else {
+      logWarn(outputChannel, 'Config', `Cannot resolve AI templates path "${customPath}" — using built-in defaults`);
+    }
+  }
+
+  // Built-in fallback: load from assets/aiOutputTemplates.yaml
+  try {
+    const builtInUri = vscode.Uri.joinPath(extensionUri, 'assets', 'aiOutputTemplates.yaml');
+    const data = await vscode.workspace.fs.readFile(builtInUri);
+    const content = new TextDecoder().decode(data);
+    const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
+    const result = { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+    for (const key of Object.keys(AI_OUTPUT_TEMPLATE_DEFAULTS) as (keyof AiOutputTemplates)[]) {
+      const entry = parsed?.[key];
+      if (entry?.instruction && typeof entry.instruction === 'string') {
+        result[key] = entry.instruction.trim();
+      }
+    }
+    logDebug(outputChannel, 'Config', 'AI output templates loaded from built-in defaults');
+    return result;
+  } catch (err) {
+    logWarn(outputChannel, 'Config', `Failed to load built-in AI templates: ${err instanceof Error ? err.message : String(err)} — using hardcoded defaults`);
+    return { ...AI_OUTPUT_TEMPLATE_DEFAULTS };
+  }
 }
 
 // ─── Project Store Helpers ───────────────────────────────────────────────────
