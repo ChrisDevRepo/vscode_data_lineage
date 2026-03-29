@@ -654,6 +654,27 @@ export function validateCreateAiView(
     errors.push('node_ids exceeds maximum of 30 IDs — create multiple focused views instead');
   }
 
+  // summary required
+  if (!input.summary || input.summary.trim().length === 0) {
+    errors.push('summary is required — one-line graph purpose (max 120 chars)');
+  }
+
+  // description required + content quality checks
+  if (!input.description || input.description.trim().length === 0) {
+    errors.push('description is required — structured markdown answer with ## headings');
+  } else {
+    // Must have structure: ## headings or multiple paragraphs
+    if (!input.description.includes('##') && !input.description.includes('\n\n')) {
+      errors.push('description must use ## headings or multiple paragraphs — not a single block of text');
+    }
+    // Must not be a graph walkthrough
+    const descLower = input.description.trimStart().toLowerCase();
+    const WALKTHROUGH_PREFIXES = ['traces how', 'shows the', 'data flows', 'this view shows', 'visualizes'];
+    if (WALKTHROUGH_PREFIXES.some(p => descLower.startsWith(p))) {
+      errors.push('description re-describes the graph — explain business logic, formulas, column mappings instead');
+    }
+  }
+
   // highlight_groups validation (structural + color validity — autoFix does not normalize colors)
   const nodeIdSet = new Set(input.node_ids ?? []);
   if (input.highlight_groups) {

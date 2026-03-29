@@ -4,7 +4,8 @@
  * Requires: test/AdventureWorks.dacpac
  */
 
-import { assert, assertEq, testPath, printSummary, loadAdventureWorksModel } from './testUtils';
+import { readFileSync } from 'fs';
+import { assert, assertEq, testPath, rootPath, printSummary, loadAdventureWorksModel } from './testUtils';
 import { buildBareGraph } from '../src/ai/graphUtils';
 import {
   AI_CAPS,
@@ -290,27 +291,61 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   console.log('\n── validateCreateAiView ──');
   const node = model.nodes[0];
 
-  // Valid minimal: name + node_ids only (no description, highlights, or badges)
-  const ok = validateCreateAiView(model, { name: 'My View', node_ids: [node.id] }) as Record<string, unknown>;
+  const VALID_SUMMARY = 'Test graph purpose.';
+  const VALID_DESC = '## Analysis\nStructured answer.\n\n## Details\nMore content.';
+
+  // Valid minimal: name + node_ids + summary + description
+  const ok = validateCreateAiView(model, { name: 'My View', node_ids: [node.id], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
   assert(ok.success === true, 'minimal create: success true');
   assertEq(ok.name as string, 'My View', 'minimal create: name matches');
   assert(Array.isArray(ok.node_ids), 'minimal create: node_ids is array');
 
   // Empty name
-  const noName = validateCreateAiView(model, { name: '', node_ids: [node.id] }) as Record<string, unknown>;
+  const noName = validateCreateAiView(model, { name: '', node_ids: [node.id], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
   assert(noName.success === false, 'empty name: success false');
 
   // Name too long
-  const longName = validateCreateAiView(model, { name: 'x'.repeat(61), node_ids: [node.id] }) as Record<string, unknown>;
+  const longName = validateCreateAiView(model, { name: 'x'.repeat(61), node_ids: [node.id], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
   assert(longName.success === false, 'name >60 chars: success false');
 
   // Empty node_ids
-  const noIds = validateCreateAiView(model, { name: 'Test', node_ids: [] }) as Record<string, unknown>;
+  const noIds = validateCreateAiView(model, { name: 'Test', node_ids: [], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
   assert(noIds.success === false, 'empty node_ids: success false');
 
   // Unknown node id — validation no longer rejects (auto-fix handles it upstream)
-  const badIds = validateCreateAiView(model, { name: 'Ghost', node_ids: ['[ghost].[nothing]'] }) as Record<string, unknown>;
+  const badIds = validateCreateAiView(model, { name: 'Ghost', node_ids: ['[ghost].[nothing]'], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
   assert(badIds.success === true, 'unknown id: validation passes (auto-fix handles upstream)');
+
+  // ── Content validation: summary + description ──
+
+  // Missing summary → rejected
+  const noSummary = validateCreateAiView(model, { name: 'Test', node_ids: [node.id], description: VALID_DESC }) as Record<string, unknown>;
+  assert(noSummary.success === false, 'missing summary: rejected');
+
+  // Missing description → rejected
+  const noDesc = validateCreateAiView(model, { name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY }) as Record<string, unknown>;
+  assert(noDesc.success === false, 'missing description: rejected');
+
+  // Single paragraph (no ## or \n\n) → rejected
+  const singleParagraph = validateCreateAiView(model, {
+    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+    description: 'Revenue flows from staging through transformation to the fact table.',
+  }) as Record<string, unknown>;
+  assert(singleParagraph.success === false, 'single paragraph description: rejected');
+
+  // Walkthrough prefix → rejected
+  const walkthrough = validateCreateAiView(model, {
+    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+    description: 'Traces how Revenue is calculated\n\n## Details\nMore...',
+  }) as Record<string, unknown>;
+  assert(walkthrough.success === false, 'walkthrough prefix: rejected');
+
+  // Multi-paragraph without headings → passes (has \n\n)
+  const multiPara = validateCreateAiView(model, {
+    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+    description: 'Revenue uses EV methodology.\n\nThe formula applies PlannedValue × EH/PH.',
+  }) as Record<string, unknown>;
+  assert(multiPara.success === true, 'multi-paragraph without ##: passes');
 
   // Realistic: Person.EmailAddress + neighbors with description
   const emailNode = model.nodes.find(n => n.schema === 'Person' && n.name === 'EmailAddress');
@@ -525,6 +560,8 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   const rawBadInput: CreateAiViewInput = {
     name: 'Revenue Pipeline',
     node_ids: [node.id, '[ghost].[missing]'],
+    summary: 'Revenue pipeline from staging to fact tables.',
+    description: '## Revenue Flow\nStructured answer.\n\n## Details\nMore.',
     badges: [{ node_id: node.id, text: 'Step 1 – Source Table' }],
     notes: [{ node_id: node.id, text: '' }],
   };
@@ -596,6 +633,43 @@ async function testSchemaMismatchDetection(model: DatabaseModel) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+async function testPromptRegression() {
+  console.log('\n── Prompt Regression (package.json) ──');
+  const pkg = JSON.parse(readFileSync(rootPath('package.json'), 'utf8'));
+  const tools = pkg.contributes.languageModelTools as Array<Record<string, unknown>>;
+  assert(Array.isArray(tools), 'languageModelTools is array');
+
+  const createTool = tools.find(t => t.name === 'lineage_create_ai_view') as Record<string, unknown>;
+  assert(createTool !== undefined, 'lineage_create_ai_view tool found');
+
+  // summary is required in schema
+  const schema = createTool.inputSchema as Record<string, unknown>;
+  const required = schema.required as string[];
+  assert(required.includes('summary'), 'summary is required in schema');
+  assert(required.includes('name'), 'name is required in schema');
+  assert(required.includes('node_ids'), 'node_ids is required in schema');
+
+  // modelDescription contains BAD/GOOD and validation warning
+  const desc = createTool.modelDescription as string;
+  assert(desc.includes('BAD'), 'modelDescription has BAD example');
+  assert(desc.includes('GOOD'), 'modelDescription has GOOD example');
+  assert(desc.includes('VALIDATED') || desc.includes('REJECTED'), 'modelDescription warns about validation');
+  assert(desc.includes('summary'), 'modelDescription mentions summary');
+  assert(desc.includes('description'), 'modelDescription mentions description');
+
+  // All tools have tags and when clause
+  for (const tool of tools) {
+    const tags = tool.tags as string[];
+    assert(tags?.includes('lineage'), `${tool.name}: has lineage tag`);
+    assertEq(tool.when as string, 'dataLineageViz.modelLoaded', `${tool.name}: has when clause`);
+  }
+
+  // summary parameter exists in schema properties
+  const props = (schema.properties as Record<string, unknown>);
+  assert('summary' in props, 'summary in schema properties');
+  assert('description' in props, 'description in schema properties');
+}
+
   console.log('═══ AI Tools Tests ═══');
   try {
     const model = await loadAdventureWorksModel();
@@ -614,6 +688,7 @@ async function main() {
     await testValidateQuery();
     await testSearchWithSchemas(model);
     await testSchemaMismatchDetection(model);
+    await testPromptRegression();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+
+declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
@@ -191,7 +193,8 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
-  logInfo(outputChannel, 'Config', 'Extension activated');
+  const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
+  logInfo(outputChannel, 'Config', `Extension activated — built ${buildStamp}`);
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', new SidebarProvider())
@@ -629,7 +632,10 @@ export function activate(context: vscode.ExtensionContext) {
           '4. COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
-          `5. VIEW OUTPUT — create_ai_view has two layers. Graph shows structure (badges, highlights, notes). Description explains meaning — ${_aiOutputTemplates.description}`,
+          '5. VIEW OUTPUT — summary + description are REQUIRED and VALIDATED.\n' +
+          '   Single paragraphs and graph walkthroughs are rejected. Use ## headings.\n' +
+          '   BAD: "Traces how Revenue flows from staging to consumption."\n' +
+          '   GOOD: "## Revenue Calculation\\n$Revenue = PV \\\\times EH/PH$\\n`spCalcEV` (badge 3) reads…"',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),

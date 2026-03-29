@@ -734,7 +734,7 @@
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark. Requires active project. ALWAYS include: summary (one-liner for info card), description (full structured answer — markdown with ## headings, formulas via LaTeX, column mappings; the graph is the visual reference — do NOT re-describe topology). badges: numbered step labels (1 Source, 2 Load). highlights: glow 2-3 critical nodes, ONE scheme only (source/transform/target OR good/warn/fail). notes: short text below node, first line visible. BAD description: 'Data flows from A to B.' GOOD description: '## Revenue\\n$Revenue = PV \\\\times EH/PH$\\n`spCalcEV` (badge 3) reads DimProject.PlannedValue…'",
+        "modelDescription": "Saves a named bookmark. Requires active project. summary and description are VALIDATED — single-paragraph descriptions without ## headings or graph walkthroughs will be REJECTED. summary: one-line graph purpose (required, max 120 chars). description: structured markdown with ## headings, LaTeX formulas, column mappings — the graph already shows structure, so explain business logic instead. BAD: 'Traces how Revenue flows from staging to consumption.' GOOD: '## Revenue Calculation\\n$Revenue = PV \\\\times EH/PH$\\n`spCalcEV` (badge 3) reads DimProject.PlannedValue…'",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -855,7 +855,8 @@
           },
           "required": [
             "name",
-            "node_ids"
+            "node_ids",
+            "summary"
           ]
         }
       },

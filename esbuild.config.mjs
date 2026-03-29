@@ -13,6 +13,9 @@ const config = {
   target: 'node20',
   sourcemap: true,
   minify: !watch,
+  define: {
+    '__BUILD_TIMESTAMP__': JSON.stringify(new Date().toISOString()),
+  },
 };
 
 if (watch) {
