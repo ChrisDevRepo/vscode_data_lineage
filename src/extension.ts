@@ -53,7 +53,6 @@ let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; con
 let _aiCaps:           AiCapsOverride = {};  // refreshed once per @lineage request; avoids re-reading config per tool call
 
 /** Pending AI view preview — queued when webview is in a locked mode. */
-let _pendingAiPreview: { name: string; nodeIds: string[]; aiMetadata: AIViewMetadata } | null = null;
 
 function isAiEnabled(): boolean {
   return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
@@ -420,29 +419,9 @@ export function activate(context: vscode.ExtensionContext) {
         logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes, summary=${summaryLen}ch, desc=${descLen}ch → preview`);
         logDebug(outputChannel, 'AI', `lineage_create_ai_view detail: ${groups} groups, ${badges} badges, ${notes} notes, layout=${validation.layout_direction}`);
 
-        // Check if webview is in a locked mode (allowlist active = trace/analysis/bookmark)
-        const isWebviewLocked = (_aiFilter?.allowlistNodeIds?.length ?? 0) > 0;
-
-        if (activePanel && !isWebviewLocked) {
-          // Send preview directly — webview shows it as transient view
+        if (activePanel) {
           activePanel.webview.postMessage({ type: 'ai-view-preview', ...preview });
           activePanel.reveal(vscode.ViewColumn.One);
-          _pendingAiPreview = null;
-        } else {
-          // Queue the preview and notify user
-          _pendingAiPreview = preview;
-          const selected = await vscode.window.showInformationMessage(
-            `Data Lineage: AI view "${validation.name}" is ready.`,
-            'Show Now',
-            'Dismiss',
-          );
-          if (selected === 'Show Now' && activePanel && _pendingAiPreview) {
-            activePanel.webview.postMessage({ type: 'ai-view-preview', ..._pendingAiPreview });
-            activePanel.reveal(vscode.ViewColumn.One);
-            _pendingAiPreview = null;
-          } else if (selected === 'Dismiss') {
-            _pendingAiPreview = null;
-          }
         }
         return toolResult({
           success: true, view_name: validation.name, node_count: validation.node_ids.length,
@@ -533,16 +512,27 @@ export function activate(context: vscode.ExtensionContext) {
             );
 
             for (const round of meta.toolCallRounds) {
-              // Re-inject assistant turn: response text + tool call parts
+              // Determine which tool calls have results (skip merged/missing)
+              const keepCallIds = new Set<string>();
+              for (const tc of round.toolCalls) {
+                const { callId } = extractToolCallFields(tc);
+                if (!mergeDropIds.has(callId) && meta.toolCallResults[callId]) {
+                  keepCallIds.add(callId);
+                }
+              }
+
+              // Re-inject assistant turn: response text + tool call parts (only those with results)
               const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
               if (round.response) assistantParts.push(new vscode.LanguageModelTextPart(round.response));
               for (const tc of round.toolCalls) {
                 const f = extractToolCallFields(tc);
+                if (!keepCallIds.has(f.callId)) continue;
                 const part = tc instanceof vscode.LanguageModelToolCallPart
                   ? tc
                   : new vscode.LanguageModelToolCallPart(f.callId, f.name, f.input);
                 assistantParts.push(part);
               }
+              if (assistantParts.length === 0) continue; // skip empty rounds
               historyMessages.push(new vscode.LanguageModelChatMessage(
                 vscode.LanguageModelChatMessageRole.Assistant, assistantParts,
               ));
@@ -551,12 +541,9 @@ export function activate(context: vscode.ExtensionContext) {
               const resultParts = round.toolCalls
                 .map(tc => {
                   const { callId, name: toolName } = extractToolCallFields(tc);
-
-                  // MERGE: skip results for dropped (subset/duplicate) calls
-                  if (mergeDropIds.has(callId)) return null;
+                  if (!keepCallIds.has(callId)) return null;
 
                   const r = meta.toolCallResults[callId];
-                  if (!r) return null;
 
                   // Serialize the content to a string for processing
                   let contentStr = (r.content as any[]).map((c: any) =>

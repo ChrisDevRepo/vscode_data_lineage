@@ -431,14 +431,13 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assertEq(noFixes.length, 0, 'clean input: 0 fixes');
   assertEq(clean.node_ids.length, 1, 'clean input: node_ids unchanged');
 
-  // Badge text > 15 chars: truncated
+  // Long badge text: passed through (no truncation — UI handles overflow)
   const { input: fixedBadge, fixes: badgeFixes } = autoFixCreateAiView(model, {
     name: 'Test', node_ids: [node.id],
     badges: [{ node_id: node.id, text: 'Step 10 – Aggregate' }],
   });
-  assert(badgeFixes.length > 0, 'long badge: fixes reported');
-  assert(badgeFixes.some(f => f.includes('Truncated badge')), 'long badge: truncation fix');
-  assertEq(fixedBadge.badges![0].text.length, 15, 'long badge: text truncated to 15');
+  assertEq(badgeFixes.length, 0, 'long badge: no fixes (no truncation)');
+  assertEq(fixedBadge.badges![0].text, 'Step 10 – Aggregate', 'long badge: text unchanged');
 
   // Empty notes: dropped
   const { input: fixedNote, fixes: noteFixes } = autoFixCreateAiView(model, {
@@ -452,14 +451,14 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assert(noteFixes.length > 0, 'empty notes: fixes reported');
   assertEq(fixedNote.notes!.length, 1, 'empty notes: 2 dropped, 1 kept');
 
-  // Note truncation at 200 chars
+  // Long note text: passed through (no truncation — UI handles overflow)
   const longNoteText = 'x'.repeat(250);
   const { input: fixedLongNote, fixes: longNoteFixes } = autoFixCreateAiView(model, {
     name: 'Test', node_ids: [node.id],
     notes: [{ node_id: node.id, text: longNoteText }],
   });
-  assertEq(fixedLongNote.notes![0].text.length, 200, 'long note: truncated to 200');
-  assert(longNoteFixes.some(f => f.includes('200')), 'long note: fix mentions 200');
+  assertEq(fixedLongNote.notes![0].text.length, 250, 'long note: text unchanged');
+  assertEq(longNoteFixes.length, 0, 'long note: no fixes');
 
   // Unknown IDs (minority): removed
   const { input: fixedIds, fixes: idFixes } = autoFixCreateAiView(model, {
@@ -483,7 +482,7 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
       { node_id: '[ghost].[x]', text: 'Drop' },
     ],
   });
-  assert(orphanFixes.some(f => f.includes('Dropped badge')), 'orphan badge: dropped');
+  assert(orphanFixes.some(f => f.includes('badge')), 'orphan badge: dropped');
   assertEq(fixedOrphan.badges!.length, 1, 'orphan badge: only valid badge kept');
 
   // Highlight groups pruned after ID removal

@@ -603,44 +603,21 @@ export function autoFixCreateAiView(
 
   const nodeIdSet = new Set(fixed.node_ids ?? []);
 
-  // 2. Truncate badge text > 15 chars, drop empty badges & badges for removed nodes
+  // 2. Drop empty badges & badges for removed nodes (no text truncation — UI handles overflow)
   if (fixed.badges) {
-    fixed = {
-      ...fixed,
-      badges: fixed.badges
-        .filter(b => {
-          if (!nodeIdSet.has(b.node_id)) { fixes.push(`Dropped badge for removed node "${b.node_id}"`); return false; }
-          if (!b.text || b.text.trim().length === 0) { fixes.push('Dropped empty badge'); return false; }
-          return true;
-        })
-        .map(b => {
-          if (b.text.length > 15) {
-            fixes.push(`Truncated badge "${b.text}" → "${b.text.slice(0, 15)}"`);
-            return { ...b, text: b.text.slice(0, 15) };
-          }
-          return b;
-        }),
-    };
+    const before = fixed.badges.length;
+    const filtered = fixed.badges.filter(b => nodeIdSet.has(b.node_id) && b.text && b.text.trim().length > 0);
+    fixed = { ...fixed, badges: filtered };
+    const dropped = before - filtered.length;
+    if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned badge(s)`);
   }
 
-  // 3. Drop empty notes, truncate > 200 chars, drop notes for removed nodes, cap at 10
+  // 3. Drop empty notes & notes for removed nodes (no text truncation or cap — UI handles overflow)
   if (fixed.notes) {
     const before = fixed.notes.length;
-    let filtered = fixed.notes
-      .filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0)
-      .map(n => {
-        if (n.text.length > 200) {
-          fixes.push(`Truncated note for "${n.node_id}" to 200 chars`);
-          return { node_id: n.node_id, text: n.text.slice(0, 200) };
-        }
-        return n;
-      });
-    if (filtered.length > 10) {
-      fixes.push(`Capped notes from ${filtered.length} to 10 (max per view)`);
-      filtered = filtered.slice(0, 10);
-    }
+    const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
     fixed = { ...fixed, notes: filtered };
-    const dropped = before - (fixed.notes?.length ?? 0);
+    const dropped = before - filtered.length;
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
