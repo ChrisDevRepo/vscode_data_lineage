@@ -575,6 +575,13 @@ body[data-vscode-theme-kind="vscode-high-contrast"] .ln-tooltip,
 body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
   border-color: var(--vscode-contrastBorder);
 }
+/* Wizard tooltip — forced dark (FloatingPortal escapes wizard DOM) */
+.ln-tooltip--wizard {
+  background: var(--ln-wizard-input-bg);
+  color: var(--ln-wizard-fg);
+  border-color: var(--ln-wizard-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
 
 /* Popover — theme-aware hover list (matches tooltip look) */
 .ln-popover {

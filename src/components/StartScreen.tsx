@@ -1,9 +1,9 @@
-import { memo, useState } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
-import type { Project } from '../engine/projectStore';
+import type { Project, FilterProfile } from '../engine/projectStore';
 
 interface StartScreenProps {
   projects: Project[];
@@ -20,26 +20,81 @@ interface StartScreenProps {
   onWizardViewChange?: (view: 'main' | 'projects') => void;
 }
 
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) +
-      ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return iso;
-  }
-}
-
-function projectDetail(project: Project): string {
-  if (project.connection.type === 'dacpac') return project.connection.path;
-  const ci = project.connection.connectionInfo;
-  return `${ci.server} · ${ci.database}`;
-}
 
 function schemaLine(schemas: string[]): string {
   if (schemas.length === 0) return '';
   if (schemas.length <= 3) return `Schemas: ${schemas.join(', ')}`;
   return `Schemas: ${schemas.slice(0, 3).join(', ')} +${schemas.length - 3} more`;
+}
+
+function truncatePath(path: string, maxLen = 45): string {
+  if (path.length <= maxLen) return path;
+  const sep = path.includes('\\') ? '\\' : '/';
+  const parts = path.split(/[\\/]/);
+  // Always keep at least filename + parent dir
+  for (let keep = 2; keep < parts.length; keep++) {
+    const tail = parts.slice(parts.length - keep).join(sep);
+    if (tail.length + 4 > maxLen && keep > 2) {
+      const prev = parts.slice(parts.length - (keep - 1)).join(sep);
+      return `...${sep}${prev}`;
+    }
+  }
+  return `...${sep}${parts.slice(-2).join(sep)}`;
+}
+
+function bookmarkSummary(profiles: FilterProfile[] | undefined): string | null {
+  if (!profiles?.length) return null;
+  const total = profiles.length;
+  const aiCount = profiles.filter(p => p.source === 'ai').length;
+  const traceCount = profiles.filter(p => p.source === 'trace').length;
+  const analysisCount = profiles.filter(p => p.source === 'analysis').length;
+  const extras: string[] = [];
+  if (aiCount) extras.push(`${aiCount} AI`);
+  if (traceCount) extras.push(`${traceCount} trace`);
+  if (analysisCount) extras.push(`${analysisCount} analysis`);
+  const label = total === 1 ? '1 saved view' : `${total} saved views`;
+  return extras.length > 0 ? `${label} (${extras.join(', ')})` : label;
+}
+
+function sourceLabel(project: Project): string {
+  return project.connection.type === 'dacpac' ? 'Dacpac' : 'Database';
+}
+
+function smartDetail(project: Project): string {
+  if (project.connection.type === 'dacpac') return truncatePath(project.connection.path);
+  const ci = project.connection.connectionInfo;
+  return `${ci.database} on ${ci.server}`;
+}
+
+function projectTooltip(project: Project): ReactNode {
+  const schemas = schemaLine(project.connection.schemas);
+  const bm = bookmarkSummary(project.filterProfiles);
+  const detail = project.connection.type === 'dacpac'
+    ? truncatePath(project.connection.path, 50)
+    : `${project.connection.connectionInfo.database} on ${project.connection.connectionInfo.server}`;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '2px 0' }}>
+      <div style={{ fontWeight: 600, fontSize: 12 }}>{project.name}</div>
+      <div style={{ borderTop: '1px solid var(--ln-wizard-border)', margin: '0 -4px' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+        <span style={{
+          background: 'var(--ln-wizard-btn-bg)',
+          borderRadius: 3,
+          padding: '1px 5px',
+          fontSize: 10,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          flexShrink: 0,
+        }}>
+          {sourceLabel(project)}
+        </span>
+        <span style={{ opacity: 0.7 }}>{detail}</span>
+      </div>
+      {schemas && <div style={{ opacity: 0.55, fontSize: 11 }}>{schemas}</div>}
+      {bm && <div style={{ opacity: 0.55, fontSize: 11 }}>{bm}</div>}
+    </div>
+  );
 }
 
 export const StartScreen = memo(function StartScreen({
@@ -86,7 +141,7 @@ export const StartScreen = memo(function StartScreen({
       <WizardPanel footer={footer}>
         {/* Header */}
         <div className="flex items-center gap-2">
-          <Tooltip content="Back">
+          <Tooltip content="Back" className="ln-tooltip--wizard">
             <button
               className="ln-list-item rounded p-1 flex-shrink-0"
               onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
@@ -130,9 +185,9 @@ export const StartScreen = memo(function StartScreen({
           {sorted.map((project) => {
             const isLoading = loadingProjectId === project.id;
             const isConfirming = confirmDeleteId === project.id;
-            const icon = project.connection.type === 'dacpac' ? '📄' : '🗄';
-            const detail = projectDetail(project);
+            const detail = smartDetail(project);
             const schemas = schemaLine(project.connection.schemas);
+            const bm = bookmarkSummary(project.filterProfiles);
 
             if (isConfirming) {
               return (
@@ -162,7 +217,19 @@ export const StartScreen = memo(function StartScreen({
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenProject(project.id); }}
               >
                 <span className="text-base flex-shrink-0" aria-hidden="true">
-                  {isLoading ? <Spinner className="w-4 h-4" /> : icon}
+                  {isLoading ? <Spinner className="w-4 h-4" /> : (
+                    <span style={{
+                      background: 'var(--ln-wizard-btn-bg)',
+                      borderRadius: 3,
+                      padding: '1px 4px',
+                      fontSize: 9,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                      opacity: 0.7,
+                    }}>
+                      {project.connection.type === 'dacpac' ? 'DAC' : 'DB'}
+                    </span>
+                  )}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{project.name}</div>
@@ -170,9 +237,12 @@ export const StartScreen = memo(function StartScreen({
                   {schemas && (
                     <div className="text-xs truncate" style={{ opacity: 0.40 }}>{schemas}</div>
                   )}
+                  {bm && (
+                    <div className="text-xs truncate" style={{ opacity: 0.40 }}>{bm}</div>
+                  )}
                 </div>
                 {!isLoading && (
-                  <Tooltip content={`Delete "${project.name}"`}>
+                  <Tooltip content={`Delete "${project.name}"`} className="ln-tooltip--wizard">
                     <Button
                       variant="icon"
                       style={{ width: 28, height: 28 }}
@@ -201,9 +271,12 @@ export const StartScreen = memo(function StartScreen({
       </Button>
 
       {/* Latest quick-action — always visible, grayed when no recent project */}
-      <Tooltip content={latestProject
-          ? [latestProject.name, projectDetail(latestProject), schemaLine(latestProject.connection.schemas)].filter(Boolean).join('\n')
-          : 'No recent project'} multiline asChild>
+      <Tooltip
+        content={latestProject ? projectTooltip(latestProject) : 'No recent project'}
+        maxWidth={320}
+        className="ln-tooltip--wizard"
+        asChild
+      >
         <button
           className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
           onClick={onOpenLatest}

@@ -13,7 +13,7 @@ import {
 import { FloatingPortal } from '@floating-ui/react';
 
 interface TooltipProps {
-  content: string;
+  content: string | ReactNode;
   children: ReactNode;
   /** Delay before showing tooltip in ms. Default: 600 */
   delay?: number;
@@ -25,6 +25,8 @@ interface TooltipProps {
   placement?: 'top' | 'bottom' | 'left' | 'right';
   /** Merge ref + props onto the single child element (no wrapper span). Default: false */
   asChild?: boolean;
+  /** Extra CSS class on the floating tooltip element (e.g. 'ln-tooltip--wizard'). */
+  className?: string;
 }
 
 /**
@@ -39,6 +41,7 @@ export const Tooltip = memo(function Tooltip({
   maxWidth = 220,
   placement = 'bottom',
   asChild = false,
+  className: extraClass,
 }: TooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -78,8 +81,13 @@ export const Tooltip = memo(function Tooltip({
         {isOpen && (
           <div
             ref={refs.setFloating}
-            style={{ ...floatingStyles, ...(multiline ? { whiteSpace: 'pre-wrap', maxWidth } : {}) }}
-            className="ln-tooltip"
+            style={{
+              ...floatingStyles,
+              ...(typeof content !== 'string'
+                ? { maxWidth }
+                : multiline ? { whiteSpace: 'pre-wrap', maxWidth } : {}),
+            }}
+            className={`ln-tooltip${extraClass ? ` ${extraClass}` : ''}`}
             {...getFloatingProps()}
           >
             {content}
