@@ -258,6 +258,7 @@ export function applyTraceToFlow(
   const filteredNodes = flowNodes.filter((n) => trace.tracedNodeIds.has(n.id));
 
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
+    // Pure utility — no outputChannel available; console.warn is the allowed exception per CLAUDE.md §4
     console.warn(`[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`);
   }
 

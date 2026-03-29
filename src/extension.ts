@@ -686,7 +686,7 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             inputTokenEstimate = await request.model.countTokens(serializeMessages(messages));
             lastInputTokenEstimate = inputTokenEstimate;
-          } catch { /* countTokens may not be available on all models */ }
+          } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable on this model — skipping input estimate'); }
 
           logInfo(outputChannel, 'AI', `Round ${roundCount}/${MAX_ROUNDS} — sending request`);
 
@@ -711,7 +711,7 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             outputTokenEstimate = await request.model.countTokens(responseText);
             totalOutputTokens += outputTokenEstimate;
-          } catch { /* best effort */ }
+          } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable — skipping output estimate'); }
 
           // C4: Log model reasoning between tool calls
           if (responseText.length > 0) {

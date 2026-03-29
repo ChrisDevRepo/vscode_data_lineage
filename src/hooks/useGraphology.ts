@@ -104,7 +104,7 @@ function applyExclusionFilter(model: DatabaseModel, patterns: string[]): Databas
 
   const regexes: RegExp[] = [];
   for (const p of patterns) {
-    try { regexes.push(compileExclusionPattern(p)); } catch { /* skip invalid — UI validates before add */ }
+    try { regexes.push(compileExclusionPattern(p)); } catch { console.debug(`[Exclusion] Skipping invalid pattern: ${p}`); }
   }
   if (regexes.length === 0) return model;
 

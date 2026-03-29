@@ -179,7 +179,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
               : `[${schema}].[${nodeName}]`;
             (navigator.clipboard?.writeText(copyText) ?? Promise.reject(new Error('Clipboard unavailable')))
               .then(() => onClose())
-              .catch(() => { setCopyFailed(true); setTimeout(() => setCopyFailed(false), 2000); });
+              .catch((_err) => { setCopyFailed(true); setTimeout(() => setCopyFailed(false), 2000); });
           }}
           className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
         >
