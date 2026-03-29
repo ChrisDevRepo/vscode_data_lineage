@@ -189,27 +189,27 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                           {profile.name}
                         </span>
                       </Tooltip>
-                      {isModified && onUpdateView && (
-                        <Tooltip content={`Update "${profile.name}" with current filters`}>
+                      <span className="ml-auto flex gap-1 flex-shrink-0">
+                        {isModified && onUpdateView && (
+                          <Tooltip content={`Update "${profile.name}" with current filters`}>
+                            <button
+                              type="button"
+                              className="px-1.5 py-0 text-[10px] rounded font-medium"
+                              style={{
+                                background: 'var(--ln-warning-fg)',
+                                color: 'var(--vscode-button-foreground, #fff)',
+                                lineHeight: '18px',
+                              }}
+                              onClick={() => { onUpdateView(profile.id); }}
+                            >
+                              Update
+                            </button>
+                          </Tooltip>
+                        )}
+                        <Tooltip content={isActive ? `Reapply "${profile.name}"` : `Apply "${profile.name}"`}>
                           <button
                             type="button"
-                            className="flex-shrink-0 px-1.5 py-0 text-[10px] rounded font-medium"
-                            style={{
-                              background: 'var(--ln-warning-fg)',
-                              color: 'var(--vscode-button-foreground, #fff)',
-                              lineHeight: '18px',
-                            }}
-                            onClick={() => { onUpdateView(profile.id); }}
-                          >
-                            Update
-                          </button>
-                        </Tooltip>
-                      )}
-                      {!isActive && (
-                        <Tooltip content={`Apply "${profile.name}"`}>
-                          <button
-                            type="button"
-                            className="flex-shrink-0 px-1.5 py-0 text-[10px] rounded font-medium"
+                            className="px-1.5 py-0 text-[10px] rounded font-medium"
                             style={{
                               background: 'var(--ln-button-bg)',
                               color: 'var(--ln-button-fg)',
@@ -220,7 +220,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                             Apply
                           </button>
                         </Tooltip>
-                      )}
+                      </span>
                       <Tooltip content={`Delete "${profile.name}"`}>
                         <button
                           type="button"

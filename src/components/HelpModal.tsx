@@ -198,8 +198,11 @@ function TabAnalysis() {
           <p className="text-xs ln-text-muted mt-1"><span className="font-medium ln-text">Tip:</span> {tip}</p>
         </div>
       ))}
-      <p className="text-xs ln-text-muted pt-1">
-        Click any group in the sidebar to zoom into that subset. Thresholds are configurable — search <code>dataLineageViz.analysis</code> in VS Code Settings.
+      <p className="text-xs ln-text-muted pt-2">
+        Click any group in the sidebar to zoom into that subset.
+      </p>
+      <p className="text-xs ln-text-muted mt-1">
+        Thresholds are configurable — search <code className="font-mono px-1 py-0.5 rounded ln-kbd">dataLineageViz.analysis</code> in VS Code Settings.
       </p>
     </div>
   );
@@ -242,7 +245,10 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           title="Table Profiling"
         />
         <p className="text-sm ln-text-muted">
-          On-demand column statistics (min, max, nulls, distinct counts, top values) via a separate database connection. Runs only on explicit click — no automatic queries. Large tables are sampled. External tables are skipped by default.
+          On-demand column statistics — min, max, nulls, distinct counts, top values.
+        </p>
+        <p className="text-xs ln-text-muted mt-1.5">
+          Runs only on explicit click via a separate database connection. Large tables are sampled. External tables are skipped by default.
         </p>
         <p className="text-xs ln-text-muted mt-2">
           All generated SQL is logged to the Output channel (<code>View → Output → Data Lineage Viz</code>).{' '}
@@ -280,7 +286,7 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           </div>
         </div>
         <p className="mt-2 text-xs ln-text-muted">
-          Search <code>dataLineageViz</code> in VS Code Settings for all options including import caps, timeouts, layout, and trace depth.
+          Search <code className="font-mono px-1 py-0.5 rounded ln-kbd">dataLineageViz</code> in VS Code Settings for all options including import caps, timeouts, layout, and trace depth.
         </p>
       </section>
     </div>
@@ -333,12 +339,10 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
       <div className="rounded-lg p-3 ln-help-analysis-card">
         <p className="text-xs font-semibold ln-text mb-1.5">Tips</p>
         <ul className="text-xs ln-text-muted space-y-1 list-disc pl-4">
-          <li><span className="font-medium ln-text">Start a new chat for each topic.</span> The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press <kbd className="font-mono">Ctrl+L</kbd> to start fresh.</li>
           <li><span className="font-medium ln-text">Ask the AI to create a view.</span> Say &quot;show me the full lineage for dbo.udfLeadingZeros in the app&quot; — it builds a filtered graph view you can bookmark.</li>
           <li><span className="font-medium ln-text">Context-aware.</span> The assistant knows your active filters, visible schemas, and current graph state. Ask &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
           <li><span className="font-medium ln-text">Be specific with object names.</span> Use <code>Sales.SalesOrderDetail</code> rather than &quot;the sales order table&quot;.</li>
-          <li><span className="font-medium ln-text">Try a bigger model for large databases.</span> 128K+ context models auto-scale to show more results.</li>
-          <li><span className="font-medium ln-text">Customize output style.</span> Command Palette → <em>Create AI Output Templates</em> scaffolds a YAML file where you can tailor summary, description, badges, highlights, and notes to your audience. <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md" openExternal={openExternal}>Guide ↗</ExtLink></li>
+          <li><span className="font-medium ln-text">Customize output.</span> Command Palette → <em>Create AI Output Templates</em> to tailor the AI&apos;s response format. <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md" openExternal={openExternal}>Guide ↗</ExtLink></li>
         </ul>
       </div>
 

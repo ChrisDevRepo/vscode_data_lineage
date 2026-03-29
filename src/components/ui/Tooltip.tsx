@@ -38,7 +38,7 @@ export const Tooltip = memo(function Tooltip({
   children,
   delay = 600,
   multiline = false,
-  maxWidth = 220,
+  maxWidth = 320,
   placement = 'bottom',
   asChild = false,
   className: extraClass,

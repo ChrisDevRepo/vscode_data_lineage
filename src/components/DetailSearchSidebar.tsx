@@ -94,30 +94,40 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
 
       {term.length >= 2 && (
         <>
-          <div className="px-3 pb-1">
-            {[...grouped.entries()].map(([label, items]) => (
-              <details key={label} open>
-                <summary>{label} ({items.length})</summary>
-                {items.map(r => (
-                  <div
-                    key={r.node.id}
-                    className="ln-detail-search-result"
-                    onClick={() => onResultClick(r.node.id, term)}
-                  >
-                    <div className="text-xs font-medium" style={{ color: 'var(--ln-fg)' }}>
-                      [{r.node.schema}].{r.node.name}
+          {results.length === 0 ? (
+            <div className="px-3 py-4 text-xs text-center" style={{ color: 'var(--ln-fg-muted)' }}>
+              No results found. Ensure a graph is loaded.
+            </div>
+          ) : (
+            <>
+              <div className="px-3 pb-1">
+                {[...grouped.entries()].map(([label, items]) => (
+                  <div key={label} className="mb-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide py-1.5 mb-1" style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}>
+                      {label} ({items.length})
                     </div>
-                    <div className="ln-detail-search-snippet">
-                      {highlightSnippet(r.snippet)}
-                    </div>
+                    {items.map(r => (
+                      <div
+                        key={r.node.id}
+                        className="ln-detail-search-result"
+                        onClick={() => onResultClick(r.node.id, term)}
+                      >
+                        <div className="text-xs font-medium" style={{ color: 'var(--ln-fg)' }}>
+                          [{r.node.schema}].{r.node.name}
+                        </div>
+                        <div className="ln-detail-search-snippet">
+                          {highlightSnippet(r.snippet)}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ))}
-              </details>
-            ))}
-          </div>
-          <div className="px-3 py-2 text-[11px] border-t" style={{ color: 'var(--ln-fg-muted)', borderColor: 'var(--ln-border-light)' }}>
-            {results.length} result{results.length !== 1 ? 's' : ''}
-          </div>
+              </div>
+              <div className="px-3 py-2 text-[11px] border-t" style={{ color: 'var(--ln-fg-muted)', borderColor: 'var(--ln-border-light)' }}>
+                {results.length} result{results.length !== 1 ? 's' : ''}
+              </div>
+            </>
+          )}
         </>
       )}
     </SidePanel>

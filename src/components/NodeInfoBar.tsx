@@ -119,7 +119,7 @@ export const NodeInfoBar = memo(function NodeInfoBar({
   const icon = TYPE_COLORS[entry.type]?.icon ?? '?';
 
   return (
-    <div className="flex items-center gap-4 px-3 py-1.5 text-xs ln-infobar">
+    <div className="flex items-center gap-4 px-3 py-1.5 text-xs ln-infobar w-full">
       <span className="font-medium ln-text truncate">
         {icon} {entry.schema ? `${entry.schema}.${entry.name}` : entry.name}
       </span>

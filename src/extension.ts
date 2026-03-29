@@ -1602,11 +1602,12 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         logInfo(outputChannel, 'Project', `View deleted: ${msg.profileId}`);
       },
       'rebuild': async () => {
+        logInfo(outputChannel, 'Bridge', 'Rebuild requested — re-reading extension settings');
         const config = await readExtensionConfig();
         if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
         panel.webview.postMessage({ type: 'rebuild-config', config });
         const { layout, excludePatterns, maxNodes, analysis, externalRefs } = config;
-        logDebug(outputChannel, 'Bridge',
+        logInfo(outputChannel, 'Bridge',
           `Rebuild: direction=${layout.direction}, edgeStyle=${layout.edgeStyle}, ` +
           `nodeSep=${layout.nodeSeparation}, rankSep=${layout.rankSeparation}, ` +
           `maxNodes=${maxNodes}, excludePatterns=${excludePatterns.length ? excludePatterns.join(';') : '(none)'}, ` +
@@ -1615,12 +1616,16 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         );
         const nodeCount = currentModel?.nodes.length ?? 0;
         const edgeCount = currentModel?.edges.length ?? 0;
-        logDebug(outputChannel, 'Bridge', `Rebuilding dagre layout for ${nodeCount} nodes, ${edgeCount} edges`);
+        logInfo(outputChannel, 'Bridge', `Rebuilding dagre layout for ${nodeCount} nodes, ${edgeCount} edges`);
       },
       'reload': () => {
         logInfo(outputChannel, 'Bridge', 'Panel reload requested');
         panel.dispose();
         openPanel(context, title, loadDemo);
+      },
+      'request-projects': () => {
+        const store = loadProjectStore(context);
+        panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
       },
     };
 
@@ -1683,7 +1688,8 @@ type WebviewMessage =
   | { type: 'db-visualize'; schemas: string[]; projectName?: string }
   | { type: 'filter-changed'; filter: import('./engine/projectStore').SerializedFilterState; savedViews: import('./engine/projectStore').FilterProfile[] }
   | { type: 'export-file'; data: string; defaultName: string }
-  | { type: 'overview-mode-changed'; mode: 'full' | 'overview'; enteredFocusFromOverview: boolean };
+  | { type: 'overview-mode-changed'; mode: 'full' | 'overview'; enteredFocusFromOverview: boolean }
+  | { type: 'request-projects' };
 
 // ─── DB Progress Helper ─────────────────────────────────────────────────────
 

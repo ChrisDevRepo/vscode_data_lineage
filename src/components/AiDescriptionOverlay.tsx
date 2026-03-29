@@ -8,13 +8,16 @@ import 'katex/dist/katex.min.css';
 interface AiDescriptionOverlayProps {
   viewName: string;
   description: string;
+  /** Start expanded (e.g. text-only AI response with no graph nodes). */
+  defaultExpanded?: boolean;
 }
 
 export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   viewName,
   description,
+  defaultExpanded = false,
 }: AiDescriptionOverlayProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
 
   return (
     <div className="ln-ai-description-anchor">

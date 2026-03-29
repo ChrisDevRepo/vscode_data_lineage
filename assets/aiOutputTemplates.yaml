@@ -4,8 +4,8 @@
 #
 # Fields form a layered information hierarchy -- like a magazine article:
 #   summary     = headline
-#   badges      = numbered callouts on the diagram (5-8 key nodes only)
-#   notes       = figure captions under each badged node
+#   badges      = numbered step callouts on the diagram (5-8 key nodes only)
+#   notes       = figure captions under each step node
 #   description = the article body, referencing callout numbers
 
 summary:
@@ -16,7 +16,7 @@ summary:
 description:
   instruction: >
     The detailed answer -- structured markdown with ## headings.
-    Each heading covers one or more badge steps: "## Revenue Calculation (steps 3-4)".
+    Each heading covers one or more steps: "## Revenue Calculation (steps 3-4)".
     Under each heading, explain the business logic at those nodes -- formulas, column mappings, WHY it matters.
     The graph shows structure; you explain meaning.
     Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$ / $$block$$), code blocks.
@@ -35,9 +35,9 @@ badges:
   instruction: >
     Numbered navigation anchors on 5-8 KEY nodes -- not every node.
     Format: "1 Source", "3 FX Convert". Number = logical step in the description.
-    Only badge a node if the description explains what happens there.
-    BAD: 14 badges on 14 nodes (every node badged).
-    GOOD: 6 badges on the nodes where business logic lives -- sources, key transforms, final target.
+    Only mark a node as a step if the description explains what happens there.
+    BAD: 14 steps on 14 nodes (every node marked).
+    GOOD: 6 steps on the nodes where business logic lives -- sources, key transforms, final target.
 
 highlights:
   instruction: >
@@ -47,7 +47,7 @@ highlights:
 
 notes:
   instruction: >
-    One-line caption under each BADGED node -- what it does in this flow.
+    One-line caption under each step node -- what it does in this flow.
     Glancing at graph + notes should tell the story without opening the description.
     First line visible, rest on hover via \n.
     BAD: Generic note unrelated to the description ("Stores project data").

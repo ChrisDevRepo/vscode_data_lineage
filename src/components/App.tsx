@@ -290,7 +290,9 @@ export function App() {
     setStartScreenMessage(null);
     setActiveProjectId(null);
     setActiveViewId(null);
-  }, [dacpacLoader.resetToStart, clearTrace]);
+    // Re-request projects so the start screen always shows fresh data
+    vscodeApi.postMessage({ type: 'request-projects' });
+  }, [dacpacLoader.resetToStart, clearTrace, vscodeApi]);
 
   const handleCancelVisualizing = useCallback(() => {
     dacpacLoader.cancelLoading();
@@ -425,8 +427,12 @@ export function App() {
     }
   }, [model, config, rebuild, clearTrace]);
 
+  const rebuildStartRef = useRef(0);
   const handleRebuild = useCallback(() => {
-    if (model) setIsRebuilding(true);
+    if (model) {
+      setIsRebuilding(true);
+      rebuildStartRef.current = Date.now();
+    }
     vscodeApi.postMessage({ type: 'rebuild' });
   }, [vscodeApi, model]);
 
@@ -678,10 +684,13 @@ export function App() {
     if (type === 'orphans' && filter.hideIsolated) {
       // Pre-save filter (with hideIsolated: true) before we change it,
       // so the mode-lock useEffect restores the correct value on exit.
-      preModFilterRef.current = filter;
+      // When switching from another analysis type, preModFilterRef is already set — don't overwrite it.
+      if (!preModFilterRef.current) preModFilterRef.current = filter;
       const nextFilter = { ...filter, hideIsolated: false };
       setFilter(nextFilter);
-      setAnalysisMode(null);
+      // When switching analysis types, don't null analysisMode (which would trigger mode-lock exit
+      // and restore the old filter, undoing hideIsolated:false). Just set pending and rebuild.
+      if (!analysisMode) setAnalysisMode(null);
       pendingAnalysisRef.current = 'orphans';
       if (model) buildFromModel(model, nextFilter, config);
     } else {
@@ -774,11 +783,18 @@ export function App() {
     // Mode-lock restore triggers automatically via isModeLocked → false
   }, []);
 
+  const handleExitAdvancedBookmark = useCallback(() => {
+    // Filter restore is handled by the isModeLocked useEffect when activeAdvancedProfile → null
+    setActiveAdvancedProfile(null);
+  }, []);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (aiPreview) {
           handleDiscardAiPreview();
+        } else if (activeAdvancedProfile) {
+          handleExitAdvancedBookmark();
         } else if (analysisMode) {
           if (analysisMode.activeGroupId) clearAnalysisGroup();
           else closeAnalysis();
@@ -789,7 +805,7 @@ export function App() {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup, aiPreview, handleDiscardAiPreview]);
+  }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup, aiPreview, handleDiscardAiPreview, activeAdvancedProfile, handleExitAdvancedBookmark]);
 
   const handleApplyView = useCallback((profile: FilterProfile) => {
     overviewActionsRef.current.resetUserChoice();
@@ -856,7 +872,14 @@ export function App() {
             rebuildRef.current(modelRef.current, filterRef.current, merged);
           }
         }
-        setIsRebuilding(false);
+        // Ensure spinner shows for at least 2s so user sees visual feedback
+        const elapsed = Date.now() - rebuildStartRef.current;
+        const MIN_REBUILD_SPINNER_MS = 2000;
+        if (elapsed >= MIN_REBUILD_SPINNER_MS) {
+          setIsRebuilding(false);
+        } else {
+          setTimeout(() => setIsRebuilding(false), MIN_REBUILD_SPINNER_MS - elapsed);
+        }
       } else if (msg?.type === 'ai-view-preview') {
         // AI created a transient view — show as preview, user decides whether to save
         const preview: AiPreview = {
@@ -959,11 +982,6 @@ export function App() {
     });
     vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: updated });
   }, [activeProjectId, filter, filterProfiles, lastOpenedId, vscodeApi]);
-
-  const handleExitAdvancedBookmark = useCallback(() => {
-    // Filter restore is handled by the isModeLocked useEffect when activeAdvancedProfile → null
-    setActiveAdvancedProfile(null);
-  }, []);
 
   const handlePendingPositionsApplied = useCallback(() => {
     setPendingPositions(undefined);

@@ -588,6 +588,7 @@ export function GraphCanvas({
         onUpdateView={onUpdateView}
         isFilterDirty={isFilterDirty}
         isModeLocked={isModeLocked}
+        isOverview={graphMode === 'overview'}
       />
 
       {/* Advanced bookmark banner — shown whenever an allowlist view is active */}
@@ -799,6 +800,11 @@ export function GraphCanvas({
           <AiDescriptionOverlay
             viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
             description={activeAiMetadata.description}
+            defaultExpanded={
+              (aiPreview && aiPreview.nodeIds.size === 0) ||
+              (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
+              ? true : false
+            }
           />
         )}
         </div>

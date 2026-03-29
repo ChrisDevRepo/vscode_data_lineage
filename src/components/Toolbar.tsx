@@ -60,6 +60,8 @@ interface ToolbarProps {
   isFilterDirty?: boolean;
   /** When true, analysis and trace-start buttons are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
+  /** When true, graph is in schema overview mode — export is disabled. */
+  isOverview?: boolean;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   metrics: {
     totalNodes: number;
@@ -129,6 +131,7 @@ export const Toolbar = memo(function Toolbar({
   onUpdateView,
   isFilterDirty = false,
   isModeLocked = false,
+  isOverview = false,
   allNodes = [],
   metrics,
 }: ToolbarProps) {
@@ -299,8 +302,8 @@ export const Toolbar = memo(function Toolbar({
         )}
 
         {/* Export & Help */}
-        <Tooltip content="Export as Draw.io">
-          <Button onClick={onExportDrawio} variant="icon" aria-label="Export as Draw.io">
+        <Tooltip content={isOverview ? 'Export not available in schema view' : 'Export as Draw.io'}>
+          <Button onClick={onExportDrawio} variant="icon" aria-label="Export as Draw.io" disabled={isOverview}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
             </svg>
