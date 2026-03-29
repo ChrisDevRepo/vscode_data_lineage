@@ -1,9 +1,12 @@
 import { memo, useState } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
-import { Tooltip } from './ui/Tooltip';
 
 interface BookmarkInfoCardProps {
   profile: FilterProfile;
+  /** Number of nodes currently in the graph for this view. */
+  nodeCount: number;
+  /** Number of distinct schemas in the current view. */
+  schemaCount: number;
   staleNodeNames: string[];
 }
 
@@ -14,23 +17,24 @@ const SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['source']>, string> 
   user: 'Saved view',
 };
 
+/** Format ISO date to short locale string — "Mar 29, 2026, 12:15" */
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
 
 export const BookmarkInfoCard = memo(function BookmarkInfoCard({
   profile,
+  nodeCount,
+  schemaCount,
   staleNodeNames,
 }: BookmarkInfoCardProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  const createdAt = new Date(profile.createdAt).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
   const source = profile.source ?? 'user';
-  const hasSummary = !!profile.aiMetadata?.summary;
+  const ai = profile.aiMetadata;
   const hasStale = staleNodeNames.length > 0;
 
   return (
@@ -66,10 +70,10 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
 
       {!collapsed && (
         <div className="px-3 pb-3 flex flex-col gap-1.5">
-          {/* Created */}
+          {/* Stats — auto-generated */}
           <div className="flex flex-col">
-            <span className="text-[9px] ln-text-muted uppercase tracking-wide">Created</span>
-            <span className="text-[10px] ln-text">{createdAt}</span>
+            <span className="text-[9px] ln-text-muted uppercase tracking-wide">Scope</span>
+            <span className="text-[10px] ln-text">{nodeCount} objects, {schemaCount} schemas</span>
           </div>
 
           {/* Source */}
@@ -78,20 +82,14 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
             <span className="text-[10px] ln-text">{SOURCE_DESCRIPTIONS[source]}</span>
           </div>
 
-          {/* Summary (AI views) */}
-          {hasSummary && (
-            <div className="flex flex-col">
-              <span className="text-[9px] ln-text-muted uppercase tracking-wide">Summary</span>
-              <Tooltip content={profile.aiMetadata!.summary} placement="right" multiline maxWidth={400} delay={300}>
-                <span
-                  className="text-[10px] ln-text ln-narrative-clamp"
-                  style={{ lineHeight: 1.4 }}
-                >
-                  {profile.aiMetadata!.summary}
-                </span>
-              </Tooltip>
-            </div>
-          )}
+          {/* Created + Model — AI views show model name, others show date only */}
+          <div className="flex flex-col">
+            <span className="text-[9px] ln-text-muted uppercase tracking-wide">Created</span>
+            <span className="text-[10px] ln-text">
+              {formatDate(ai?.createdAt ?? profile.createdAt)}
+              {ai?.modelName && <span className="ln-text-muted"> by {ai.modelName}</span>}
+            </span>
+          </div>
 
           {/* Stale objects warning */}
           {hasStale && (
@@ -103,7 +101,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
                 color: 'var(--ln-validation-warning-fg)',
               }}
             >
-              <span className="font-semibold">⚠ Not found: </span>
+              <span className="font-semibold">Not found: </span>
               {staleNodeNames.join(', ')}
             </div>
           )}

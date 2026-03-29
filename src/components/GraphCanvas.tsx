@@ -446,8 +446,6 @@ export function GraphCanvas({
 
   const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
 
-  const graphNodeIds = useMemo(() => new Set(localNodes.map(n => n.id)), [localNodes]);
-
   // Build AI highlight + badge lookups from active AI profile OR transient AI preview
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
 
@@ -457,20 +455,18 @@ export function GraphCanvas({
     if (!groups) return m;
     for (const g of groups) {
       const code = resolveAiColor(g.color || 'bu');
-      const entry = { color: AI_COLOR_HEX[code], glow: AI_COLOR_GLOW[code].glow, shadow: AI_COLOR_GLOW[code].shadow };
+      const glowEntry = AI_COLOR_GLOW[code] ?? AI_COLOR_GLOW.gy;
+      const entry = { color: AI_COLOR_HEX[code] ?? AI_COLOR_HEX.gy, glow: glowEntry.glow, shadow: glowEntry.shadow };
       for (const id of g.nodeIds) m.set(id, entry);
     }
     return m;
   }, [activeAiMetadata]);
 
-  const aiBadgeMap = useMemo((): Map<string, { text: string; color: string }> => {
-    const m = new Map<string, { text: string; color: string }>();
+  const aiBadgeMap = useMemo((): Map<string, { text: string }> => {
+    const m = new Map<string, { text: string }>();
     const badges = activeAiMetadata?.badges;
     if (!badges) return m;
-    for (const b of badges) {
-      const code = resolveAiColor(b.color || 'gy');
-      m.set(b.nodeId, { text: b.text, color: AI_COLOR_HEX[code] ?? AI_COLOR_HEX.gy });
-    }
+    for (const b of badges) m.set(b.nodeId, { text: b.text });
     return m;
   }, [activeAiMetadata]);
 
@@ -778,6 +774,8 @@ export function GraphCanvas({
         {activeAdvancedProfile && isBookmarkMode && (
           <BookmarkInfoCard
             profile={activeAdvancedProfile}
+            nodeCount={localNodes.length}
+            schemaCount={(renderedSchemas || []).length}
             staleNodeNames={bookmarkStaleNames ?? []}
           />
         )}
@@ -791,6 +789,8 @@ export function GraphCanvas({
               filter: { schemas: [], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: true, externalRefTypes: [], exclusionPatterns: [] },
               aiMetadata: aiPreview.aiMetadata,
             }}
+            nodeCount={localNodes.length}
+            schemaCount={(renderedSchemas || []).length}
             staleNodeNames={[]}
           />
         )}
@@ -799,8 +799,6 @@ export function GraphCanvas({
           <AiDescriptionOverlay
             viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
             description={activeAiMetadata.description}
-            nodeIds={graphNodeIds}
-            onNodeClick={onNodeClick}
           />
         )}
         </div>

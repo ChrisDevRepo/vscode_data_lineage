@@ -290,7 +290,7 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   console.log('\n── validateCreateAiView ──');
   const node = model.nodes[0];
 
-  // Valid minimal: name + node_ids only (no summary, highlights, or badges)
+  // Valid minimal: name + node_ids only (no description, highlights, or badges)
   const ok = validateCreateAiView(model, { name: 'My View', node_ids: [node.id] }) as Record<string, unknown>;
   assert(ok.success === true, 'minimal create: success true');
   assertEq(ok.name as string, 'My View', 'minimal create: name matches');
@@ -312,7 +312,7 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   const badIds = validateCreateAiView(model, { name: 'Ghost', node_ids: ['[ghost].[nothing]'] }) as Record<string, unknown>;
   assert(badIds.success === true, 'unknown id: validation passes (auto-fix handles upstream)');
 
-  // Realistic: Person.EmailAddress + neighbors with summary + description
+  // Realistic: Person.EmailAddress + neighbors with description
   const emailNode = model.nodes.find(n => n.schema === 'Person' && n.name === 'EmailAddress');
   assert(emailNode !== undefined, 'Person.EmailAddress node found in model');
   if (emailNode) {
@@ -323,8 +323,7 @@ async function testValidateCreateAiView(model: DatabaseModel) {
     const richInput: CreateAiViewInput = {
       name: 'EmailAddress Full Lineage',
       node_ids: lineageIds,
-      summary: 'Traces all dependencies of the EmailAddress table.',
-      description: '## Column Mapping\n- EmailAddressID → Person.BusinessEntityID\n- **Primary path** through Person schema',
+      description: 'Traces how EmailAddress dependencies flow through the Person schema.',
     };
     const aiResult = validateCreateAiView(model, richInput) as Record<string, unknown>;
     assert(aiResult.success === true, 'EmailAddress lineage: validateCreateAiView succeeds');
@@ -510,13 +509,6 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   const fixedValidation = validateCreateAiView(model, autoFixed) as Record<string, unknown>;
   assert(fixedValidation.success === true, 'e2e: auto-fixed input passes validation');
 
-  // Structural error (invalid color) still fails validation even after auto-fix
-  const colorBadInput: CreateAiViewInput = {
-    name: 'Test', node_ids: [node.id],
-    badges: [{ node_id: node.id, text: 'OK', color: 'invalid' as any }],
-  };
-  const colorValidation = validateCreateAiView(model, colorBadInput) as Record<string, unknown>;
-  assert(colorValidation.success === false, 'e2e: invalid color fails validation');
 }
 
 async function testValidateQuery() {

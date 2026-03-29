@@ -51,8 +51,7 @@ let _aiProjectName:    string | null = null;
 let _aiCurrentProjectId: string | null = null;
 let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; conservative fallback
 let _aiCaps:           AiCapsOverride = {};  // refreshed once per @lineage request; avoids re-reading config per tool call
-
-/** Pending AI view preview — queued when webview is in a locked mode. */
+let _aiModelName:      string = '';          // display name of the current Copilot model (e.g., "Claude Sonnet 4.6")
 
 function isAiEnabled(): boolean {
   return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
@@ -357,7 +356,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.lm.registerTool('lineage_create_ai_view', {
       prepareInvocation(options, _token) {
         const input = options.input as CreateAiViewInput;
-        const isRich = !!(input.summary || input.description || input.highlight_groups?.length);
+        const isRich = !!(input.description || input.highlight_groups?.length);
         return {
           invocationMessage: isRich
             ? `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects`
@@ -392,8 +391,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
         // Build aiMetadata for the transient preview (NOT saved yet — user decides)
         const aiMetadata: AIViewMetadata = {
-          summary: validation.summary ?? '',
           description: validation.description,
+          createdAt: new Date().toISOString(),
+          modelName: _aiModelName,
           highlightGroups: validation.highlight_groups.map(g => ({
             label: g.label,
             color: g.color,
@@ -402,7 +402,6 @@ export function activate(context: vscode.ExtensionContext) {
           badges: validation.badges.map(b => ({
             nodeId: b.node_id,
             text: b.text,
-            color: b.color,
           })),
           notes: validation.notes.map(n => ({
             nodeId: n.node_id,
@@ -411,12 +410,11 @@ export function activate(context: vscode.ExtensionContext) {
           layoutDirection: validation.layout_direction,
         };
         const preview = { name: validation.name, nodeIds: validation.node_ids, aiMetadata };
-        const summaryLen = validation.summary?.length ?? 0;
         const descLen = validation.description?.length ?? 0;
         const groups = validation.highlight_groups.length;
         const badges = validation.badges.length;
         const notes = validation.notes.length;
-        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes, summary=${summaryLen}ch, desc=${descLen}ch → preview`);
+        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes, desc=${descLen}ch, model=${_aiModelName} → preview`);
         logDebug(outputChannel, 'AI', `lineage_create_ai_view detail: ${groups} groups, ${badges} badges, ${notes} notes, layout=${validation.layout_direction}`);
 
         if (activePanel) {
@@ -461,6 +459,7 @@ export function activate(context: vscode.ExtensionContext) {
     async (request, context, stream, token): Promise<vscode.ChatResult> => {
       // Update model context window and refresh caps once per request
       _aiMaxInputTokens = request.model.maxInputTokens;
+      _aiModelName = request.model.name || request.model.id;
       _aiCaps = readAiCaps();
 
       if (!isAiEnabled()) {
@@ -599,13 +598,14 @@ export function activate(context: vscode.ExtensionContext) {
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
           '5. VIEW OUTPUT — ALWAYS include in create_ai_view:\n' +
-          '   - summary: 1-2 sentence plain text overview of what was traced and why.\n' +
-          '   - description: Detailed markdown — column mappings per SP, bullet lists, source→target flow.\n' +
-          '   - badges: Label relevant nodes (1 Source, 2 Load, 3 Calc…). Use badge colors sparingly.\n' +
+          '   - description: The graph\'s purpose and scope — what it shows and why. NOT analysis results.\n' +
+          '     Example: "Traces how Revenue flows from staging sources through calculation SPs to the FactFinance reporting table."\n' +
+          '   - badges: Label relevant nodes (1 Source, 2 Load, 3 Calc…). Plain text, no color.\n' +
           '   - highlight_groups: Glow on 2-3 critical nodes only. Pick ONE scheme:\n' +
           '     Lineage: source (blue, data origin), transform (orange, calc SP), target (green, output).\n' +
           '     Diagnostic: good (green), warn (yellow), fail (red). Do NOT mix schemes.\n' +
-          '   - notes: Column mapping on key SPs. "Revenue ← Amount × Rate via spCalc" — not generic.',
+          '   - notes: Analysis findings on individual nodes. First line = visible title. After \\n = detail on hover.\n' +
+          '     Example: "Revenue ← Amount × Rate\\nSELECT src.Amount * rate.Rate FROM staging JOIN rates"',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),

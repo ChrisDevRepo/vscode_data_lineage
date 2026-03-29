@@ -543,24 +543,20 @@ export function searchDdl(
 // ─── Tool 7: lineage_create_ai_view ──────────────────────────────────────────
 
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
-export type AIHighlightColor = AIHighlightRole;
-export type AiBadgeColor = AIHighlightRole | 'gy';
 
 export type CreateAiViewInput = {
   name: string;
   node_ids: string[];
-  summary?: string;
   description?: string;
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;
-    color: AIHighlightColor;
+    color: AIHighlightRole;
     node_ids: string[];
   }>;
   badges?: Array<{
     node_id: string;
     text: string;
-    color?: AiBadgeColor;
   }>;
   notes?: Array<{
     node_id: string;
@@ -572,18 +568,16 @@ export type CreateAiViewRequest = {
   success: true;
   name: string;
   node_ids: string[];
-  summary?: string;
   description?: string;
   layout_direction: 'LR' | 'TB';
-  highlight_groups: Array<{ label: string; color: AIHighlightColor; node_ids: string[] }>;
-  badges: Array<{ node_id: string; text: string; color?: AiBadgeColor }>;
+  highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
+  badges: Array<{ node_id: string; text: string }>;
   notes: Array<{ node_id: string; text: string }>;
 };
 
 export type CreateAiViewError = { success: false; errors: string[]; hint: string };
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
-const AI_BADGE_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail', 'gy']);
 
 export function autoFixCreateAiView(
   model: DatabaseModel,
@@ -662,12 +656,6 @@ export function validateCreateAiView(
     }
   }
 
-  // Color validity only — text length and orphan checks handled by autoFix
-  if (input.badges) {
-    for (const b of input.badges) {
-      if (b.color && !AI_BADGE_ROLES.has(b.color)) errors.push(`Badge role "${b.color}" is invalid`);
-    }
-  }
   if (errors.length > 0) {
     return {
       success: false,
@@ -680,7 +668,6 @@ export function validateCreateAiView(
     success: true,
     name: input.name.trim(),
     node_ids: input.node_ids,
-    summary: input.summary,
     description: input.description,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],

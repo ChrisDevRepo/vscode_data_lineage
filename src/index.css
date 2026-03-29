@@ -255,28 +255,32 @@ body {
 
 /* #region Tooltips */
 
-/* AI narrative — clamped with tooltip for overflow */
-.ln-narrative-clamp {
-  display: -webkit-box;
-  -webkit-line-clamp: 8;
-  -webkit-box-orient: vertical;
+/* AI badge — monochrome chip above node */
+.ln-ai-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 4px;
+  max-width: 160px;
   overflow: hidden;
-  word-break: break-word;
-  cursor: default;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--ln-bg-elevated);
+  color: var(--ln-fg);
+  border: 1px solid var(--ln-border-light);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
-/* AI note — plain text annotation below node */
+/* AI note — title line visible below node, full text on hover */
 .ln-ai-note-label {
   font-size: 9px;
   line-height: 1.3;
-  color: var(--ln-fg);
-  max-width: 180px;
+  color: var(--ln-fg-muted);
+  max-width: 220px;
   text-align: center;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
   overflow: hidden;
-  word-break: break-word;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: default;
 }
 
@@ -327,8 +331,8 @@ body {
 
 /* Expanded overlay */
 .ln-ai-description-overlay {
-  width: 66vw;
-  max-width: 800px;
+  width: 90vw;
+  max-width: 1400px;
   min-width: 320px;
   max-height: 60vh;
   display: flex;
@@ -429,20 +433,6 @@ body {
 }
 .ln-ai-description-md a {
   color: var(--ln-text-link);
-}
-
-/* Clickable node reference in AI description */
-.ln-ai-node-link {
-  color: var(--ln-text-link);
-  cursor: pointer;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 11px;
-  background: var(--ln-input-bg);
-  padding: 1px 5px;
-  border-radius: 3px;
-}
-.ln-ai-node-link:hover {
-  text-decoration: underline;
 }
 
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,

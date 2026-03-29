@@ -99,7 +99,7 @@ export const AI_ROLE_TO_COLOR: Record<string, string> = {
 
 /** Resolve a semantic role (or legacy color code) to a two-letter color code. */
 export function resolveAiColor(role: string): string {
-  return AI_ROLE_TO_COLOR[role] ?? role;
+  return AI_ROLE_TO_COLOR[role] ?? 'gy';
 }
 
 // AI glow/shadow for boxShadow — CSS vars with alpha baked in (theme-aware).

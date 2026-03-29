@@ -37,15 +37,17 @@ export type AIHighlightColor = 'source' | 'transform' | 'target' | 'good' | 'war
 
 /** Metadata attached to AI-authored advanced bookmarks. */
 export interface AIViewMetadata {
-  /** Short plain text overview shown in the VIEW INFO card. */
-  summary: string;
-  /** Detailed markdown description shown in the expandable overlay panel. */
+  /** Graph purpose and scope — shown in the expandable overlay panel. */
   description?: string;
+  /** ISO timestamp when the view was created. Auto-populated. */
+  createdAt: string;
+  /** Display name of the model that authored the view (e.g., "Claude Sonnet 4.6"). Auto-populated. */
+  modelName: string;
   /** Up to 5 color-coded node groups shown as legend in the info card. */
   highlightGroups: Array<{ label: string; color: AIHighlightColor; nodeIds: string[] }>;
-  /** Up to 50 per-node text badges (e.g., "Step 1", "Hub", "⚠ Cycle"). */
-  badges: Array<{ nodeId: string; text: string; color?: AIHighlightColor | 'gy' }>;
-  /** Up to 50 per-node text annotations — calc explanations, step descriptions (max 200 chars, \n for line breaks). */
+  /** Per-node text badges (e.g., "1 Source", "2 Load"). */
+  badges: Array<{ nodeId: string; text: string }>;
+  /** Per-node text annotations. First line = visible title below node; rest on hover (max 400 chars, \n for line breaks). */
   notes?: Array<{ nodeId: string; text: string }>;
   /** Dagre layout direction hint. Default: 'TB'. */
   layoutDirection?: 'LR' | 'TB';

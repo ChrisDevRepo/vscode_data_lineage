@@ -19,8 +19,8 @@ export type CustomNodeData = {
   externalType?: 'et' | 'file' | 'db';
   externalUrl?: string;
   externalDatabase?: string;
-  /** Badge chip shown on the node (top-center, overlapping). Set by advanced bookmarks / AI views. */
-  aiBadge?: { text: string; color: string };
+  /** Badge chip shown on the node (top-center). Set by advanced bookmarks / AI views. */
+  aiBadge?: { text: string };
   /** Text annotation shown below the node — description of calcs, logic, business rules. */
   aiNote?: { text: string };
   /** AI highlight — color for border, glow/shadow for boxShadow (CSS var references). */
@@ -59,32 +59,22 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
 
   return (
     <>
-      {/* AI badge — above node via NodeToolbar, no overlap with content */}
+      {/* AI badge — monochrome chip above node */}
       {data.aiBadge && (
         <NodeToolbar position={Position.Top} align="center" offset={2} isVisible>
           <Tooltip content={data.aiBadge.text} placement="top">
-            <div
-              className="text-[10px] font-semibold px-2 py-0.5 rounded"
-              style={{
-                maxWidth: 160,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                background: data.aiBadge.color,
-                color: 'var(--vscode-button-foreground, #fff)',
-              }}
-            >
+            <div className="ln-ai-badge">
               {data.aiBadge.text}
             </div>
           </Tooltip>
         </NodeToolbar>
       )}
-      {/* AI text annotation — plain text below node, tooltip for overflow */}
+      {/* AI note — title line visible, full text on hover */}
       {data.aiNote && (
         <NodeToolbar position={Position.Bottom} align="center" offset={2} isVisible>
-          <Tooltip content={data.aiNote.text} placement="bottom" multiline maxWidth={280} delay={300}>
+          <Tooltip content={data.aiNote.text} placement="bottom" multiline maxWidth={400} delay={300}>
             <div className="ln-ai-note-label">
-              {data.aiNote.text}
+              {data.aiNote.text.split('\n')[0]}
             </div>
           </Tooltip>
         </NodeToolbar>
