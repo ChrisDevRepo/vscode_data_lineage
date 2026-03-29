@@ -32,12 +32,13 @@ import { AnalysisSidebar } from './AnalysisSidebar';
 import { AiViewBanner } from './AiViewBanner';
 import { BookmarkBanner } from './BookmarkBanner';
 import { BookmarkInfoCard } from './BookmarkInfoCard';
+import { AiDescriptionOverlay } from './AiDescriptionOverlay';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
-import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX } from '../utils/schemaColors';
+import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX, AI_COLOR_GLOW } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 
 // IMPORTANT: nodeTypes must be defined at module level — not inside the component.
@@ -75,6 +76,8 @@ interface GraphCanvasProps {
   onAddExclusionPattern?: (pattern: string) => void;
   onRemoveExclusionPattern?: (pattern: string) => void;
   availableSchemas?: string[];
+  /** Schemas with at least one node after all filters — for legend display. */
+  renderedSchemas?: string[];
   onRefresh: () => void;
   onRebuild?: () => void;
   onBack: () => void;
@@ -175,6 +178,7 @@ export function GraphCanvas({
   onAddExclusionPattern,
   onRemoveExclusionPattern,
   availableSchemas,
+  renderedSchemas,
   onRefresh,
   onRebuild,
   onBack,
@@ -445,13 +449,14 @@ export function GraphCanvas({
   // Build AI highlight + badge lookups from active AI profile OR transient AI preview
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
 
-  const aiHighlightMap = useMemo((): Map<string, string> => {
-    const m = new Map<string, string>();
+  const aiHighlightMap = useMemo((): Map<string, { color: string; glow: string; shadow: string }> => {
+    const m = new Map<string, { color: string; glow: string; shadow: string }>();
     const groups = activeAiMetadata?.highlightGroups;
     if (!groups) return m;
     for (const g of groups) {
-      const hex = AI_COLOR_HEX[g.color] ?? AI_COLOR_HEX.bu;
-      for (const id of g.nodeIds) m.set(id, hex);
+      const code = g.color && AI_COLOR_HEX[g.color] ? g.color : 'bu';
+      const entry = { color: AI_COLOR_HEX[code], glow: AI_COLOR_GLOW[code].glow, shadow: AI_COLOR_GLOW[code].shadow };
+      for (const id of g.nodeIds) m.set(id, entry);
     }
     return m;
   }, [activeAiMetadata]);
@@ -464,11 +469,11 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  const aiNoteMap = useMemo((): Map<string, { text: string; color: string }> => {
-    const m = new Map<string, { text: string; color: string }>();
+  const aiNoteMap = useMemo((): Map<string, { text: string }> => {
+    const m = new Map<string, { text: string }>();
     const notes = activeAiMetadata?.notes;
     if (!notes) return m;
-    for (const n of notes) m.set(n.nodeId, { text: n.text, color: (n.color && AI_COLOR_HEX[n.color]) ?? AI_COLOR_HEX.gy });
+    for (const n of notes) m.set(n.nodeId, { text: n.text });
     return m;
   }, [activeAiMetadata]);
 
@@ -762,7 +767,7 @@ export function GraphCanvas({
           </div>
         )}
 
-        <Legend schemas={(availableSchemas || []).filter(s => filter.schemas.has(s))} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        <Legend schemas={renderedSchemas || []} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (
@@ -782,6 +787,13 @@ export function GraphCanvas({
               aiMetadata: aiPreview.aiMetadata,
             }}
             staleNodeNames={[]}
+          />
+        )}
+        {/* AI description overlay — collapsible markdown panel at top-center */}
+        {activeAiMetadata?.description && (
+          <AiDescriptionOverlay
+            viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
+            description={activeAiMetadata.description}
           />
         )}
         </div>

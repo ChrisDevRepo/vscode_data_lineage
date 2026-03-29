@@ -16,6 +16,8 @@ interface UseGraphologyReturn {
   renderLimitHit: number;
   /** Node count after all filters — available before dagre, used by useOverviewMode for threshold decisions. */
   filteredCount: number;
+  /** Unique schema names from nodes that survived all filters — for legend display. */
+  renderedSchemas: string[];
   buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => void;
 }
 
@@ -26,6 +28,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
   const [renderLimitHit, setRenderLimitHit] = useState(0);
   const [filteredCount, setFilteredCount] = useState(0);
+  const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false) => {
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
@@ -51,6 +54,10 @@ export function useGraphology(): UseGraphologyReturn {
 
     const count = allowlistFiltered.nodes.length;
     setFilteredCount(count);
+
+    // Derive visible schemas from filtered nodes
+    const schemas = [...new Set(allowlistFiltered.nodes.map(n => n.schema))].sort();
+    setRenderedSchemas(schemas);
 
     // Guard 1: hard render limit — skip everything
     if (count > config.renderLimit) {
@@ -83,7 +90,7 @@ export function useGraphology(): UseGraphologyReturn {
     setMetrics(getGraphMetrics(result.graph));
   }, []);
 
-  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, buildFromModel };
+  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel };
 }
 
 // ─── Exclusion Filter (interactive / render-time) ────────────────────────────

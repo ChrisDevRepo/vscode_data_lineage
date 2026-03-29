@@ -31,7 +31,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
   });
 
   const source = profile.source ?? 'user';
-  const hasNarrative = !!profile.aiMetadata?.narrative;
+  const hasSummary = !!profile.aiMetadata?.summary;
   const hasGroups = (profile.aiMetadata?.highlightGroups?.length ?? 0) > 0;
   const hasStale = staleNodeNames.length > 0;
 
@@ -43,9 +43,12 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
         bottom: 40,
         left: 12,
         zIndex: 5,
-        width: 220,
+        minWidth: 180,
+        maxWidth: 320,
+        width: 'fit-content',
         maxHeight: 'min(60vh, 400px)',
         overflowY: 'auto',
+        overflowX: 'hidden',
         pointerEvents: 'auto',
       }}
     >
@@ -77,16 +80,18 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
             <span className="text-[10px] ln-text">{SOURCE_DESCRIPTIONS[source]}</span>
           </div>
 
-          {/* Narrative (AI views) */}
-          {hasNarrative && (
+          {/* Summary (AI views) */}
+          {hasSummary && (
             <div className="flex flex-col">
               <span className="text-[9px] ln-text-muted uppercase tracking-wide">Summary</span>
-              <span
-                className="text-[10px] ln-text"
-                style={{ lineHeight: 1.4 }}
-              >
-                {profile.aiMetadata!.narrative}
-              </span>
+              <Tooltip content={profile.aiMetadata!.summary} placement="right" multiline maxWidth={400} delay={300}>
+                <span
+                  className="text-[10px] ln-text ln-narrative-clamp"
+                  style={{ lineHeight: 1.4 }}
+                >
+                  {profile.aiMetadata!.summary}
+                </span>
+              </Tooltip>
             </div>
           )}
 

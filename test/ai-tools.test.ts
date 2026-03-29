@@ -290,7 +290,7 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   console.log('\n── validateCreateAiView ──');
   const node = model.nodes[0];
 
-  // Valid minimal: name + node_ids only (no narrative, highlights, or badges)
+  // Valid minimal: name + node_ids only (no summary, highlights, or badges)
   const ok = validateCreateAiView(model, { name: 'My View', node_ids: [node.id] }) as Record<string, unknown>;
   assert(ok.success === true, 'minimal create: success true');
   assertEq(ok.name as string, 'My View', 'minimal create: name matches');
@@ -312,7 +312,7 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   const badIds = validateCreateAiView(model, { name: 'Ghost', node_ids: ['[ghost].[nothing]'] }) as Record<string, unknown>;
   assert(badIds.success === true, 'unknown id: validation passes (auto-fix handles upstream)');
 
-  // Realistic: Person.EmailAddress + neighbors with narrative
+  // Realistic: Person.EmailAddress + neighbors with summary + description
   const emailNode = model.nodes.find(n => n.schema === 'Person' && n.name === 'EmailAddress');
   assert(emailNode !== undefined, 'Person.EmailAddress node found in model');
   if (emailNode) {
@@ -323,7 +323,8 @@ async function testValidateCreateAiView(model: DatabaseModel) {
     const richInput: CreateAiViewInput = {
       name: 'EmailAddress Full Lineage',
       node_ids: lineageIds,
-      narrative: 'Traces all dependencies of the EmailAddress table.',
+      summary: 'Traces all dependencies of the EmailAddress table.',
+      description: '## Column Mapping\n- EmailAddressID → Person.BusinessEntityID\n- **Primary path** through Person schema',
     };
     const aiResult = validateCreateAiView(model, richInput) as Record<string, unknown>;
     assert(aiResult.success === true, 'EmailAddress lineage: validateCreateAiView succeeds');
@@ -450,6 +451,15 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   });
   assert(noteFixes.length > 0, 'empty notes: fixes reported');
   assertEq(fixedNote.notes!.length, 1, 'empty notes: 2 dropped, 1 kept');
+
+  // Note truncation at 200 chars
+  const longNoteText = 'x'.repeat(250);
+  const { input: fixedLongNote, fixes: longNoteFixes } = autoFixCreateAiView(model, {
+    name: 'Test', node_ids: [node.id],
+    notes: [{ node_id: node.id, text: longNoteText }],
+  });
+  assertEq(fixedLongNote.notes![0].text.length, 200, 'long note: truncated to 200');
+  assert(longNoteFixes.some(f => f.includes('200')), 'long note: fix mentions 200');
 
   // Unknown IDs (minority): removed
   const { input: fixedIds, fixes: idFixes } = autoFixCreateAiView(model, {

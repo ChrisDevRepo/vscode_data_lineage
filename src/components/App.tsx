@@ -82,7 +82,7 @@ export function App() {
     exclusionPatterns: [],
   });
 
-  const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, buildFromModel } = useGraphology();
+  const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
   const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
@@ -1182,6 +1182,7 @@ export function App() {
         onAddExclusionPattern={handleAddExclusionPattern}
         onRemoveExclusionPattern={handleRemoveExclusionPattern}
         availableSchemas={model?.schemas.map(s => s.name) || []}
+        renderedSchemas={renderedSchemas}
         analysisMode={analysisMode}
         onOpenAnalysis={openAnalysis}
         onCloseAnalysis={closeAnalysis}

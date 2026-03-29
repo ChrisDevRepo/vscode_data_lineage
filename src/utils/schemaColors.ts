@@ -89,6 +89,16 @@ export const AI_COLOR_HEX: Record<string, string> = {
   gy: 'var(--ln-ai-gy)',
 };
 
+// AI glow/shadow for boxShadow — CSS vars with alpha baked in (theme-aware).
+export const AI_COLOR_GLOW: Record<string, { glow: string; shadow: string }> = {
+  bu: { glow: 'var(--ln-ai-bu-glow)', shadow: 'var(--ln-ai-bu-shadow)' },
+  gn: { glow: 'var(--ln-ai-gn-glow)', shadow: 'var(--ln-ai-gn-shadow)' },
+  rd: { glow: 'var(--ln-ai-rd-glow)', shadow: 'var(--ln-ai-rd-shadow)' },
+  ye: { glow: 'var(--ln-ai-ye-glow)', shadow: 'var(--ln-ai-ye-shadow)' },
+  or: { glow: 'var(--ln-ai-or-glow)', shadow: 'var(--ln-ai-or-shadow)' },
+  gy: { glow: 'var(--ln-ai-gy-glow)', shadow: 'var(--ln-ai-gy-shadow)' },
+};
+
 /** Detect if VS Code is running a dark theme */
 export function isDarkTheme(): boolean {
   if (typeof document === 'undefined') return false;

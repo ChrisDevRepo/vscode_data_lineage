@@ -123,6 +123,20 @@
   --ln-ai-or: var(--vscode-charts-orange, #f97316);
   --ln-ai-gy: var(--ln-fg-muted);
 
+  /* AI glow/shadow — pre-computed rgba for boxShadow (can't append alpha to var()) */
+  --ln-ai-bu-glow: rgba(55, 148, 255, 0.5);
+  --ln-ai-bu-shadow: rgba(55, 148, 255, 0.35);
+  --ln-ai-gn-glow: rgba(34, 197, 94, 0.5);
+  --ln-ai-gn-shadow: rgba(34, 197, 94, 0.35);
+  --ln-ai-rd-glow: rgba(190, 17, 0, 0.5);
+  --ln-ai-rd-shadow: rgba(190, 17, 0, 0.35);
+  --ln-ai-ye-glow: rgba(204, 167, 0, 0.5);
+  --ln-ai-ye-shadow: rgba(204, 167, 0, 0.35);
+  --ln-ai-or-glow: rgba(249, 115, 22, 0.5);
+  --ln-ai-or-shadow: rgba(249, 115, 22, 0.35);
+  --ln-ai-gy-glow: rgba(107, 114, 128, 0.5);
+  --ln-ai-gy-shadow: rgba(107, 114, 128, 0.35);
+
   /* Minimap mask (viewport highlight) */
   --ln-minimap-mask: rgba(0, 0, 0, 0.15);
   --ln-minimap-mask-stroke: transparent;
@@ -143,6 +157,18 @@ body[data-vscode-theme-kind="vscode-dark"] {
   --ln-highlight-blue: #60a5fa;
   --ln-highlight-blue-glow: rgba(96, 165, 250, 0.5);
   --ln-highlight-blue-shadow: rgba(96, 165, 250, 0.35);
+  --ln-ai-bu-glow: rgba(55, 148, 255, 0.65);
+  --ln-ai-bu-shadow: rgba(55, 148, 255, 0.45);
+  --ln-ai-gn-glow: rgba(34, 197, 94, 0.65);
+  --ln-ai-gn-shadow: rgba(34, 197, 94, 0.45);
+  --ln-ai-rd-glow: rgba(239, 68, 68, 0.65);
+  --ln-ai-rd-shadow: rgba(239, 68, 68, 0.45);
+  --ln-ai-ye-glow: rgba(234, 179, 8, 0.65);
+  --ln-ai-ye-shadow: rgba(234, 179, 8, 0.45);
+  --ln-ai-or-glow: rgba(249, 115, 22, 0.65);
+  --ln-ai-or-shadow: rgba(249, 115, 22, 0.45);
+  --ln-ai-gy-glow: rgba(156, 163, 175, 0.65);
+  --ln-ai-gy-shadow: rgba(156, 163, 175, 0.45);
   --ln-minimap-mask: rgba(255, 255, 255, 0.12);
 }
 
@@ -160,6 +186,18 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-highlight-blue: #93c5fd;
   --ln-highlight-blue-glow: rgba(147, 197, 253, 0.6);
   --ln-highlight-blue-shadow: rgba(147, 197, 253, 0.4);
+  --ln-ai-bu-glow: rgba(96, 165, 250, 0.6);
+  --ln-ai-bu-shadow: rgba(96, 165, 250, 0.4);
+  --ln-ai-gn-glow: rgba(74, 222, 128, 0.6);
+  --ln-ai-gn-shadow: rgba(74, 222, 128, 0.4);
+  --ln-ai-rd-glow: rgba(248, 113, 113, 0.6);
+  --ln-ai-rd-shadow: rgba(248, 113, 113, 0.4);
+  --ln-ai-ye-glow: rgba(250, 204, 21, 0.6);
+  --ln-ai-ye-shadow: rgba(250, 204, 21, 0.4);
+  --ln-ai-or-glow: rgba(251, 146, 60, 0.6);
+  --ln-ai-or-shadow: rgba(251, 146, 60, 0.4);
+  --ln-ai-gy-glow: rgba(209, 213, 219, 0.6);
+  --ln-ai-gy-shadow: rgba(209, 213, 219, 0.4);
   --ln-minimap-mask: rgba(255, 255, 255, 0.2);
   --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
   --ln-minimap-mask-stroke-width: 2;
@@ -177,6 +215,18 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-highlight-blue: #1d4ed8;
   --ln-highlight-blue-glow: rgba(29, 78, 216, 0.5);
   --ln-highlight-blue-shadow: rgba(29, 78, 216, 0.35);
+  --ln-ai-bu-glow: rgba(37, 99, 235, 0.5);
+  --ln-ai-bu-shadow: rgba(37, 99, 235, 0.35);
+  --ln-ai-gn-glow: rgba(22, 163, 74, 0.5);
+  --ln-ai-gn-shadow: rgba(22, 163, 74, 0.35);
+  --ln-ai-rd-glow: rgba(190, 17, 0, 0.5);
+  --ln-ai-rd-shadow: rgba(190, 17, 0, 0.35);
+  --ln-ai-ye-glow: rgba(161, 98, 7, 0.5);
+  --ln-ai-ye-shadow: rgba(161, 98, 7, 0.35);
+  --ln-ai-or-glow: rgba(234, 88, 12, 0.5);
+  --ln-ai-or-shadow: rgba(234, 88, 12, 0.35);
+  --ln-ai-gy-glow: rgba(75, 85, 99, 0.5);
+  --ln-ai-gy-shadow: rgba(75, 85, 99, 0.35);
   --ln-minimap-mask: rgba(0, 0, 0, 0.2);
   --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
   --ln-minimap-mask-stroke-width: 2;
@@ -205,60 +255,185 @@ body {
 
 /* #region Tooltips */
 
-/* AI sticky note — truncated on-node view */
-.ln-ai-note {
-  font-size: 10px;
-  padding: 3px 6px;
-  border-radius: 4px;
+/* AI narrative — clamped with tooltip for overflow */
+.ln-narrative-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  cursor: default;
+}
+
+/* AI note — plain text annotation below node */
+.ln-ai-note-label {
+  font-size: 9px;
   line-height: 1.3;
+  color: var(--ln-fg);
+  max-width: 180px;
+  text-align: center;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
-}
-
-/* Hover wrapper — positions the full-text overlay */
-.ln-ai-note-wrap {
-  position: relative;
-}
-
-/* Full-text overlay — hidden by default, shown on hover */
-.ln-ai-note-full {
-  display: none;
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--ln-widget-bg);
-  color: var(--ln-fg);
-  border: 1px solid var(--ln-border);
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  width: max-content;
-  min-width: 200px;
-  max-width: 420px;
-  max-height: 200px;
-  overflow-y: auto;
   word-break: break-word;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  z-index: 10002;
-}
-.ln-ai-note-wrap:hover .ln-ai-note-full {
-  display: block;
-}
-
-body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-note-full,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-note-full {
-  border-color: var(--vscode-contrastBorder);
+  cursor: default;
 }
 
 /* Override dimmed node opacity on hover so node content is readable */
 .ln-node-card:hover {
   opacity: 1 !important;
+}
+
+/* #endregion */
+
+/* #region AI Description Overlay */
+
+/* Anchor — positioned at top-center of the graph canvas */
+.ln-ai-description-anchor {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: auto;
+}
+
+/* Collapsed bar — clickable chip */
+.ln-ai-description-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--ln-border-light);
+  background: var(--ln-widget-bg);
+  box-shadow: var(--ln-node-shadow);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ln-ai-description-bar:hover {
+  background: var(--ln-hover-bg);
+}
+.ln-ai-description-bar-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ln-fg);
+}
+.ln-ai-description-bar-toggle {
+  font-size: 9px;
+  color: var(--ln-fg-muted);
+}
+
+/* Expanded overlay */
+.ln-ai-description-overlay {
+  width: 66vw;
+  max-width: 800px;
+  min-width: 320px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ln-widget-bg);
+  border: 1px solid var(--ln-widget-border);
+  border-radius: 8px;
+  box-shadow: var(--ln-dropdown-shadow);
+}
+.ln-ai-description-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ln-border-light);
+}
+.ln-ai-description-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--ln-fg-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.ln-ai-description-close:hover {
+  background: var(--ln-hover-bg);
+}
+.ln-ai-description-body {
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+/* Markdown content styling */
+.ln-ai-description-md {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ln-fg);
+  word-break: break-word;
+}
+.ln-ai-description-md h1,
+.ln-ai-description-md h2,
+.ln-ai-description-md h3 {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  color: var(--ln-fg);
+}
+.ln-ai-description-md h1 { font-size: 16px; }
+.ln-ai-description-md h2 { font-size: 14px; }
+.ln-ai-description-md h3 { font-size: 13px; }
+.ln-ai-description-md p {
+  margin: 6px 0;
+}
+.ln-ai-description-md ul,
+.ln-ai-description-md ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.ln-ai-description-md li {
+  margin: 3px 0;
+}
+.ln-ai-description-md code {
+  background: var(--ln-input-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+.ln-ai-description-md pre {
+  background: var(--ln-input-bg);
+  padding: 10px 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.ln-ai-description-md pre code {
+  background: none;
+  padding: 0;
+}
+.ln-ai-description-md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+.ln-ai-description-md th,
+.ln-ai-description-md td {
+  border: 1px solid var(--ln-border);
+  padding: 4px 8px;
+  font-size: 11px;
+  text-align: left;
+}
+.ln-ai-description-md th {
+  background: var(--ln-bg-secondary);
+  font-weight: 600;
+}
+.ln-ai-description-md strong {
+  font-weight: 600;
+}
+.ln-ai-description-md a {
+  color: var(--ln-text-link);
+}
+
+body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-overlay {
+  border-color: var(--vscode-contrastBorder);
 }
 
 /* #endregion */

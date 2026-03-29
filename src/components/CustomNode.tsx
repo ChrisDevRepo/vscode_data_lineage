@@ -21,10 +21,10 @@ export type CustomNodeData = {
   externalDatabase?: string;
   /** Badge chip shown on the node (top-center, overlapping). Set by advanced bookmarks / AI views. */
   aiBadge?: { text: string; color: string };
-  /** Sticky note shown below the node — longer description of calcs, logic, business rules. */
-  aiNote?: { text: string; color: string };
-  /** Hex color override for border and glow — overrides schema color when set. */
-  aiHighlight?: string;
+  /** Text annotation shown below the node — description of calcs, logic, business rules. */
+  aiNote?: { text: string };
+  /** AI highlight — color for border, glow/shadow for boxShadow (CSS var references). */
+  aiHighlight?: { color: string; glow: string; shadow: string };
   /** When true, shows the "×" remove-from-view button (advanced bookmark mode only). */
   showRemoveButton?: boolean;
   /** Callback fired when user clicks the "×" remove-from-view button. */
@@ -42,7 +42,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const isYellowHighlight = data.highlighted === 'yellow';
 
   const highlightColor = data.aiHighlight
-    ? data.aiHighlight
+    ? data.aiHighlight.color
     : isYellowHighlight ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
 
   const tooltipLines = [];
@@ -79,27 +79,14 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           </Tooltip>
         </NodeToolbar>
       )}
-      {/* AI sticky note — below node, truncated with hover overlay */}
+      {/* AI text annotation — plain text below node, tooltip for overflow */}
       {data.aiNote && (
-        <NodeToolbar position={Position.Bottom} align="center" offset={4} isVisible>
-          <div className="ln-ai-note-wrap">
-            <div
-              className="ln-ai-note"
-              style={{
-                maxWidth: 200,
-                borderLeft: `3px solid ${data.aiNote.color}`,
-                background: 'var(--ln-widget-bg)',
-                color: 'var(--ln-fg)',
-              }}
-            >
+        <NodeToolbar position={Position.Bottom} align="center" offset={2} isVisible>
+          <Tooltip content={data.aiNote.text} placement="bottom" multiline maxWidth={280} delay={300}>
+            <div className="ln-ai-note-label">
               {data.aiNote.text}
             </div>
-            <div className="ln-ai-note-full">
-              {data.aiNote.text.split('\n').map((line, i) => (
-                <div key={i}>{line}</div>
-              ))}
-            </div>
-          </div>
+          </Tooltip>
         </NodeToolbar>
       )}
       <Tooltip content={tooltipText} placement="top" multiline maxWidth={300} asChild>
@@ -118,10 +105,10 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             ? (isYellowHighlight
                 ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
                 : data.aiHighlight
-                  ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
+                  ? `0 0 0 5px ${data.aiHighlight.glow}, 0 8px 20px ${data.aiHighlight.shadow}`
                   : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
             : data.aiHighlight
-            ? `0 0 0 3px ${data.aiHighlight}55, 0 6px 16px ${data.aiHighlight}44`
+            ? `0 0 0 5px ${data.aiHighlight.glow}, 0 8px 20px ${data.aiHighlight.shadow}`
             : dimmed
             ? 'var(--ln-node-shadow-dimmed)'
             : 'var(--ln-node-shadow)',

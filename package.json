@@ -723,8 +723,8 @@
         "name": "lineage_create_ai_view",
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
-        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, narrative explanation, color groups, badges, and sticky notes. The user receives a VS Code notification and sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark and applies it in the graph. Supports simple (name + node_ids) or rich views (narrative, highlight_groups, badges, notes). Annotation tiers (all optional): badge ≤15 chars (numbering/labels); note ≤200 chars (per-node logic/rules, \\n for breaks); highlight_groups = color-code paths (bu/gn/rd/ye/or); narrative ≤500 chars (overall summary). Requires active project.",
+        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, summary, detailed description, color groups, badges, and text annotations. The user receives a VS Code notification and sees the view applied in the lineage graph.",
+        "modelDescription": "Saves a named bookmark. ALWAYS include: summary (1-2 sentence overview, ≤200 chars) + description (detailed markdown: column mappings, bullet lists, source→target). Badges label nodes (1 Source, 2 Calc…). highlight_groups glow on 2-3 critical nodes only (origin, calc, output) — NOT all nodes. Notes: per-SP column mapping. Requires active project.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -746,10 +746,14 @@
               },
               "description": "Exact node IDs to show (1–200, validated against catalog)"
             },
-            "narrative": {
+            "summary": {
               "type": "string",
-              "maxLength": 500,
-              "description": "Plain text explanation of why these nodes matter (max 500 chars)"
+              "maxLength": 200,
+              "description": "1-2 sentence plain text overview shown in the view info card (max 200 chars)"
+            },
+            "description": {
+              "type": "string",
+              "description": "Detailed markdown — column mappings, logic, bullet lists. Shown in expandable overlay panel."
             },
             "layout_direction": {
               "type": "string",
@@ -828,7 +832,7 @@
             },
             "notes": {
               "type": "array",
-              "description": "Sticky-note annotations — describe calcs, logic, or what each node does (max 50). Use \\n for line breaks.",
+              "description": "Text annotations below nodes — describe calcs, logic, or what each node does (max 50). Use \\n for line breaks.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -839,17 +843,6 @@
                     "type": "string",
                     "maxLength": 200,
                     "description": "Note text (max 200 chars, \\n for line breaks)"
-                  },
-                  "color": {
-                    "type": "string",
-                    "enum": [
-                      "bu",
-                      "gn",
-                      "rd",
-                      "ye",
-                      "or",
-                      "gy"
-                    ]
                   }
                 },
                 "required": [
@@ -935,7 +928,8 @@
     "jszip": "^3.10.1",
     "monaco-editor": "^0.55.1",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

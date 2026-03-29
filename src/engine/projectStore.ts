@@ -37,14 +37,16 @@ export type AIHighlightColor = 'bu' | 'gn' | 'rd' | 'ye' | 'or';
 
 /** Metadata attached to AI-authored advanced bookmarks. */
 export interface AIViewMetadata {
-  /** Plain text explanation of the view, max 500 chars. */
-  narrative: string;
+  /** Short plain text overview shown in the VIEW INFO card. */
+  summary: string;
+  /** Detailed markdown description shown in the expandable overlay panel. */
+  description?: string;
   /** Up to 5 color-coded node groups shown as legend in the info card. */
   highlightGroups: Array<{ label: string; color: AIHighlightColor; nodeIds: string[] }>;
   /** Up to 50 per-node text badges (e.g., "Step 1", "Hub", "⚠ Cycle"). */
   badges: Array<{ nodeId: string; text: string; color?: AIHighlightColor | 'gy' }>;
-  /** Up to 50 per-node sticky notes — calc explanations, step descriptions (max 200 chars, \n for line breaks). */
-  notes?: Array<{ nodeId: string; text: string; color?: AIHighlightColor | 'gy' }>;
+  /** Up to 50 per-node text annotations — calc explanations, step descriptions (max 200 chars, \n for line breaks). */
+  notes?: Array<{ nodeId: string; text: string }>;
   /** Dagre layout direction hint. Default: 'TB'. */
   layoutDirection?: 'LR' | 'TB';
 }

@@ -548,7 +548,8 @@ export type AiBadgeColor = AIHighlightColor | 'gy';
 export type CreateAiViewInput = {
   name: string;
   node_ids: string[];
-  narrative?: string;
+  summary?: string;
+  description?: string;
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;
@@ -563,7 +564,6 @@ export type CreateAiViewInput = {
   notes?: Array<{
     node_id: string;
     text: string;
-    color?: AiBadgeColor;
   }>;
 };
 
@@ -571,11 +571,12 @@ export type CreateAiViewRequest = {
   success: true;
   name: string;
   node_ids: string[];
-  narrative?: string;
+  summary?: string;
+  description?: string;
   layout_direction: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightColor; node_ids: string[] }>;
   badges: Array<{ node_id: string; text: string; color?: AiBadgeColor }>;
-  notes: Array<{ node_id: string; text: string; color?: AiBadgeColor }>;
+  notes: Array<{ node_id: string; text: string }>;
 };
 
 export type CreateAiViewError = { success: false; errors: string[]; hint: string };
@@ -622,15 +623,15 @@ export function autoFixCreateAiView(
     };
   }
 
-  // 3. Drop empty notes, truncate > 120 chars, drop notes for removed nodes, cap at 10
+  // 3. Drop empty notes, truncate > 200 chars, drop notes for removed nodes, cap at 10
   if (fixed.notes) {
     const before = fixed.notes.length;
     let filtered = fixed.notes
       .filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0)
       .map(n => {
-        if (n.text.length > 120) {
-          fixes.push(`Truncated note for "${n.node_id}" to 120 chars`);
-          return { ...n, text: n.text.slice(0, 120) };
+        if (n.text.length > 200) {
+          fixes.push(`Truncated note for "${n.node_id}" to 200 chars`);
+          return { node_id: n.node_id, text: n.text.slice(0, 200) };
         }
         return n;
       });
@@ -643,13 +644,7 @@ export function autoFixCreateAiView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 4. Truncate narrative > 500 chars
-  if (fixed.narrative && fixed.narrative.length > 500) {
-    fixes.push(`Truncated narrative from ${fixed.narrative.length} to 500 chars`);
-    fixed = { ...fixed, narrative: fixed.narrative.slice(0, 500) };
-  }
-
-  // 5. Prune highlight_groups referencing removed nodes
+  // 4. Prune highlight_groups referencing removed nodes
   if (fixed.highlight_groups) {
     fixed = {
       ...fixed,
@@ -695,12 +690,6 @@ export function validateCreateAiView(
       if (b.color && !AI_BADGE_COLORS.has(b.color)) errors.push(`Badge color "${b.color}" is invalid`);
     }
   }
-  if (input.notes) {
-    for (const n of input.notes) {
-      if (n.color && !AI_BADGE_COLORS.has(n.color)) errors.push(`Note color "${n.color}" is invalid`);
-    }
-  }
-
   if (errors.length > 0) {
     return {
       success: false,
@@ -713,7 +702,8 @@ export function validateCreateAiView(
     success: true,
     name: input.name.trim(),
     node_ids: input.node_ids,
-    narrative: input.narrative,
+    summary: input.summary,
+    description: input.description,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
     badges: input.badges ?? [],

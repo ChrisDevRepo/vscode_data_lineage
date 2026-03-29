@@ -358,7 +358,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.lm.registerTool('lineage_create_ai_view', {
       prepareInvocation(options, _token) {
         const input = options.input as CreateAiViewInput;
-        const isRich = !!(input.narrative || input.highlight_groups?.length);
+        const isRich = !!(input.summary || input.description || input.highlight_groups?.length);
         return {
           invocationMessage: isRich
             ? `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects`
@@ -393,7 +393,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
         // Build aiMetadata for the transient preview (NOT saved yet — user decides)
         const aiMetadata: AIViewMetadata = {
-          narrative: validation.narrative ?? '',
+          summary: validation.summary ?? '',
+          description: validation.description,
           highlightGroups: validation.highlight_groups.map(g => ({
             label: g.label,
             color: g.color,
@@ -407,12 +408,17 @@ export function activate(context: vscode.ExtensionContext) {
           notes: validation.notes.map(n => ({
             nodeId: n.node_id,
             text: n.text,
-            color: n.color,
           })),
           layoutDirection: validation.layout_direction,
         };
         const preview = { name: validation.name, nodeIds: validation.node_ids, aiMetadata };
-        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes → preview`);
+        const summaryLen = validation.summary?.length ?? 0;
+        const descLen = validation.description?.length ?? 0;
+        const groups = validation.highlight_groups.length;
+        const badges = validation.badges.length;
+        const notes = validation.notes.length;
+        logInfo(outputChannel, 'AI', `lineage_create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes, summary=${summaryLen}ch, desc=${descLen}ch → preview`);
+        logDebug(outputChannel, 'AI', `lineage_create_ai_view detail: ${groups} groups, ${badges} badges, ${notes} notes, layout=${validation.layout_direction}`);
 
         // Check if webview is in a locked mode (allowlist active = trace/analysis/bookmark)
         const isWebviewLocked = (_aiFilter?.allowlistNodeIds?.length ?? 0) > 0;
@@ -605,7 +611,12 @@ export function activate(context: vscode.ExtensionContext) {
           '4. COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
-          '5. VIEW NOTES: Column mappings on key SPs. "Revenue ← Amount × Rate via spCalc" — not generic descriptions.',
+          '5. VIEW OUTPUT — ALWAYS include in create_ai_view:\n' +
+          '   - summary: 1-2 sentence plain text overview of what was traced and why.\n' +
+          '   - description: Detailed markdown — column mappings per SP, bullet lists, source→target flow.\n' +
+          '   - badges: Label relevant nodes sequentially (1 Source, 2 Load, 3 Calc, etc.).\n' +
+          '   - highlight_groups: Glow effect — use ONLY on 2-3 critical nodes (data source, key calculation, final output). NOT on every node.\n' +
+          '   - notes: Column mapping details on key SPs. "Revenue ← Amount × Rate via spCalc" — not generic descriptions.',
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),
