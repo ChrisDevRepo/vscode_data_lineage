@@ -629,15 +629,7 @@ export function activate(context: vscode.ExtensionContext) {
           '4. COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
-          '5. VIEW OUTPUT — ALWAYS include in create_ai_view:\n' +
-          `   - summary: ${_aiOutputTemplates.summary}\n` +
-          `   - description: ${_aiOutputTemplates.description}\n` +
-          '     BAD: "Data flows from staging through transformation to consumption."\n' +
-          '     GOOD: "## Revenue Calculation\\nRevenue uses EV methodology: $Revenue = PV \\\\times EH/PH$\\n' +
-          '     `spCalcEV` (badge 3) reads DimProject.PlannedValue and FactTimesheet.Hours…"\n' +
-          `   - badges: ${_aiOutputTemplates.badges}\n` +
-          `   - highlight_groups: ${_aiOutputTemplates.highlights}\n` +
-          `   - notes: ${_aiOutputTemplates.notes}`,
+          `5. VIEW OUTPUT — create_ai_view has two layers. Graph shows structure (badges, highlights, notes). Description explains meaning — ${_aiOutputTemplates.description}`,
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),

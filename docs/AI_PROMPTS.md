@@ -100,4 +100,4 @@ notes:
   example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month"
 ```
 
-Only the `instruction` fields are injected into the AI's system prompt. The `example`, `bad_example`, and `good_example` fields are documentation for you -- they help you understand what each field does.
+Only the `instruction` fields are injected into the AI prompt. The `example`, `bad_example`, and `good_example` fields are documentation for you -- they help you understand what each field does.

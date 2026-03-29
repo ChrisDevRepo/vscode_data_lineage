@@ -734,7 +734,7 @@
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark. ALWAYS include summary (one-liner for info card) and description (full structured answer — markdown with formulas, column mappings, business logic; graph is the visual reference). Badges: step labels. Highlights: glow 2-3 nodes. Notes: short text below nodes. Requires active project.",
+        "modelDescription": "Saves a named bookmark. Requires active project. ALWAYS include: summary (one-liner for info card), description (full structured answer — markdown with ## headings, formulas via LaTeX, column mappings; the graph is the visual reference — do NOT re-describe topology). badges: numbered step labels (1 Source, 2 Load). highlights: glow 2-3 critical nodes, ONE scheme only (source/transform/target OR good/warn/fail). notes: short text below node, first line visible. BAD description: 'Data flows from A to B.' GOOD description: '## Revenue\\n$Revenue = PV \\\\times EH/PH$\\n`spCalcEV` (badge 3) reads DimProject.PlannedValue…'",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
