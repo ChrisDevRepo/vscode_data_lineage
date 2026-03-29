@@ -371,10 +371,10 @@ body {
   font-size: 12px;
   line-height: 1.6;
   color: var(--ln-fg);
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 .ln-ai-description-md .katex {
-  word-break: normal;
+  overflow-wrap: normal;
   overflow-x: auto;
 }
 .ln-ai-description-md h1,

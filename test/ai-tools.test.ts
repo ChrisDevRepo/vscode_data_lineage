@@ -692,7 +692,7 @@ async function testYamlTemplates() {
 
   // Badge instruction must mention "Step" format
   const badgeInstr = parsed.badges.instruction!;
-  assert(badgeInstr.includes('Step'), 'YAML: badges mention Step format');
+  assert(badgeInstr.toLowerCase().includes('step'), 'YAML: badges mention step format');
 }
 
   console.log('═══ AI Tools Tests ═══');

@@ -338,6 +338,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
           <li><span className="font-medium ln-text">Context-aware.</span> The assistant knows your active filters, visible schemas, and current graph state. Ask &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
           <li><span className="font-medium ln-text">Be specific with object names.</span> Use <code>Sales.SalesOrderDetail</code> rather than &quot;the sales order table&quot;.</li>
           <li><span className="font-medium ln-text">Try a bigger model for large databases.</span> 128K+ context models auto-scale to show more results.</li>
+          <li><span className="font-medium ln-text">Customize output style.</span> Command Palette → <em>Create AI Output Templates</em> scaffolds a YAML file where you can tailor summary, description, badges, highlights, and notes to your audience.</li>
         </ul>
       </div>
 

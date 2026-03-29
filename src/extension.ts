@@ -66,8 +66,8 @@ interface AiOutputTemplates {
 
 const AI_OUTPUT_TEMPLATE_DEFAULTS: AiOutputTemplates = {
   summary: 'One-line graph purpose (max 120 chars). Shown in the info card.',
-  description: 'Your full answer to the user\'s question -- structured markdown. Reference badges and highlights to point at specific nodes. Explain business logic, formulas, column mappings, data transformations. Use ## headings, numbered lists, tables, LaTeX math ($formula$). Do NOT re-describe the graph topology -- the user can see that.',
-  badges: 'Numbered step labels on nodes (1 Source, 2 Load, 3 Calc). Plain text.',
+  description: 'Your full answer to the user\'s question -- structured markdown. Reference step numbers from badges (step 1, step 2) to cross-reference nodes. Explain business logic, formulas, column mappings, data transformations. Supported formats: ## headings, **bold**, `code`, numbered/bulleted lists, | tables |, LaTeX math ($inline$ and $$block$$), code blocks. NOT supported: mermaid diagrams, HTML, images, footnotes. Do NOT re-describe the graph topology -- the user can see that.',
+  badges: 'Cross-references between description and graph. Only badge nodes the description explains -- not every node. Numbered as "Step 1", "Step 2" in the logical reasoning order of the description.',
   highlights: 'Glow 2-3 critical nodes only. Pick ONE scheme: Lineage (source/transform/target) or Diagnostic (good/warn/fail). Do NOT mix schemes.',
   notes: 'Short plain text below each node -- what it does. First line visible, rest on hover via \\n.',
 };
