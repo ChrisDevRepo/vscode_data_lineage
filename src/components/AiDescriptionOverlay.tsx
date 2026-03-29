@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
@@ -44,7 +45,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           <div className="ln-ai-description-body">
             <div className="ln-ai-description-md">
               <Markdown
-                remarkPlugins={[remarkMath]}
+                remarkPlugins={[remarkGfm, remarkMath]}
                 rehypePlugins={[rehypeKatex]}
               >{description}</Markdown>
             </div>

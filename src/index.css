@@ -373,6 +373,10 @@ body {
   color: var(--ln-fg);
   word-break: break-word;
 }
+.ln-ai-description-md .katex {
+  word-break: normal;
+  overflow-x: auto;
+}
 .ln-ai-description-md h1,
 .ln-ai-description-md h2,
 .ln-ai-description-md h3 {

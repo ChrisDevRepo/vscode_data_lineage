@@ -10,9 +10,11 @@ summary:
 description:
   instruction: >
     Your full answer to the user's question -- structured markdown.
-    Reference badges and highlights to point at specific nodes.
+    Reference step numbers from badges (step 1, step 2) to cross-reference nodes.
     Explain business logic, formulas, column mappings, data transformations.
-    Use ## headings, numbered lists, tables, LaTeX math ($formula$).
+    Supported formats: ## headings, **bold**, `code`, numbered/bulleted lists,
+    | tables |, LaTeX math ($inline$ and $$block$$), code blocks.
+    NOT supported: mermaid diagrams, HTML, images, footnotes.
     Do NOT re-describe the graph topology -- the user can see that.
   bad_example: "Data flows from staging through transformation to consumption."
   good_example: |

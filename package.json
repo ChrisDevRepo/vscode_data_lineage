@@ -734,7 +734,7 @@
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark. Requires active project. summary and description are VALIDATED — single-paragraph descriptions without ## headings or graph walkthroughs will be REJECTED. summary: one-line graph purpose (required, max 120 chars). description: structured markdown with ## headings, LaTeX formulas, column mappings — the graph already shows structure, so explain business logic instead. BAD: 'Traces how Revenue flows from staging to consumption.' GOOD: '## Revenue Calculation\\n$Revenue = PV \\\\times EH/PH$\\n`spCalcEV` (badge 3) reads DimProject.PlannedValue…'",
+        "modelDescription": "Saves a named bookmark. Requires active project. summary and description are VALIDATED — single-paragraph descriptions without ## headings or graph walkthroughs will be REJECTED. summary: one-line graph purpose (required, max 120 chars). description: structured markdown with ## headings, LaTeX formulas, column mappings — the graph already shows structure, so explain business logic instead. Reference badge step numbers (step 1, step 2) to cross-reference nodes in the graph. BAD: 'Traces how Revenue flows from staging to consumption.' GOOD: '## Revenue Calculation\\n$Revenue = PV \\\\times EH/PH$\\n`spCalcEV` (step 3) reads DimProject.PlannedValue…'",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -933,6 +933,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
