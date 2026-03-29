@@ -28,7 +28,10 @@ description:
     `vw_Revenue` (badge 5) applies country filter: `WHERE CountryCode = 'CH'`
 
 badges:
-  instruction: "Numbered step labels on nodes (1 Source, 2 Load, 3 Calc). Plain text."
+  instruction: >
+    Cross-references between description and graph. Only badge nodes
+    the description explains -- not every node. Numbered as "Step 1",
+    "Step 2" in the logical reasoning order of the description.
 
 highlights:
   instruction: >

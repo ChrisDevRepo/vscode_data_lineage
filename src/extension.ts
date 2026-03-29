@@ -633,9 +633,11 @@ export function activate(context: vscode.ExtensionContext) {
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
           '5. VIEW OUTPUT — summary + description are REQUIRED and VALIDATED.\n' +
-          '   Single paragraphs and graph walkthroughs are rejected. Use ## headings.\n' +
-          '   BAD: "Traces how Revenue flows from staging to consumption."\n' +
-          '   GOOD: "## Revenue Calculation\\n$Revenue = PV \\\\times EH/PH$\\n`spCalcEV` (badge 3) reads…"',
+          `   summary: ${_aiOutputTemplates.summary}\n` +
+          `   description: ${_aiOutputTemplates.description}\n` +
+          `   badges: ${_aiOutputTemplates.badges}\n` +
+          `   highlights: ${_aiOutputTemplates.highlights}\n` +
+          `   notes: ${_aiOutputTemplates.notes}`,
         ),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),

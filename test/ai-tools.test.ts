@@ -5,6 +5,7 @@
  */
 
 import { readFileSync } from 'fs';
+import * as yaml from 'js-yaml';
 import { assert, assertEq, testPath, rootPath, printSummary, loadAdventureWorksModel } from './testUtils';
 import { buildBareGraph } from '../src/ai/graphUtils';
 import {
@@ -670,6 +671,30 @@ async function testPromptRegression() {
   assert('description' in props, 'description in schema properties');
 }
 
+async function testYamlTemplates() {
+  console.log('\n── AI Output Templates (YAML) ──');
+  const content = readFileSync(rootPath('assets/aiOutputTemplates.yaml'), 'utf8');
+  const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
+  assert(parsed !== null && typeof parsed === 'object', 'YAML parses as object');
+
+  const REQUIRED_KEYS = ['summary', 'description', 'badges', 'highlights', 'notes'];
+  for (const key of REQUIRED_KEYS) {
+    assert(key in parsed, `YAML: ${key} key present`);
+    const entry = parsed[key];
+    assert(typeof entry.instruction === 'string', `YAML: ${key}.instruction is string`);
+    assert(entry.instruction.trim().length > 0, `YAML: ${key}.instruction non-empty`);
+  }
+
+  // Description instruction must mention supported formats
+  const descInstr = parsed.description.instruction!;
+  assert(descInstr.includes('##') || descInstr.includes('heading'), 'YAML: description mentions headings');
+  assert(descInstr.includes('LaTeX') || descInstr.includes('$'), 'YAML: description mentions LaTeX');
+
+  // Badge instruction must mention "Step" format
+  const badgeInstr = parsed.badges.instruction!;
+  assert(badgeInstr.includes('Step'), 'YAML: badges mention Step format');
+}
+
   console.log('═══ AI Tools Tests ═══');
   try {
     const model = await loadAdventureWorksModel();
@@ -689,6 +714,7 @@ async function testPromptRegression() {
     await testSearchWithSchemas(model);
     await testSchemaMismatchDetection(model);
     await testPromptRegression();
+    await testYamlTemplates();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }
