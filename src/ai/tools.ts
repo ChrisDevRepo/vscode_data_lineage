@@ -638,7 +638,7 @@ export function validateMarkdownFormat(md: string): string[] {
   const errors: string[] = [];
 
   // Reject \begin{...} environments (fragile in remark-math, breaks rendering)
-  const beginMatch = md.match(/\\begin\{(\w+)\}/);
+  const beginMatch = md.match(/\\begin\{([^}]+)\}/);
   if (beginMatch) {
     errors.push(
       `description contains \\begin{${beginMatch[1]}} — use a \`\`\`math block for simple formulas or rewrite as a table`,

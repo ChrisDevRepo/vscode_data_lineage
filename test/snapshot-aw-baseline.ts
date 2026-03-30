@@ -125,7 +125,7 @@ async function main() {
     return;
   }
 
-  const baseline = readFileSync(BASELINE_PATH, 'utf-8').split('\n').filter(Boolean);
+  const baseline = readFileSync(BASELINE_PATH, 'utf-8').replace(/\r/g, '').split('\n').filter(Boolean);
   const ok = reportDiff(baseline, current);
 
   if (!ok) process.exit(1);
