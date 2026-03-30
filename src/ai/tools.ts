@@ -43,7 +43,7 @@ export type AiCapsOverride = { [K in keyof typeof AI_CAPS]?: number };
 const SNIPPET_CONTEXT_LINES = 2;
 
 /** Build source→target edge type lookup for the entire model (cheap one-pass). */
-function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
+export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const m = new Map<string, string>();
   for (const e of model.edges) {
     m.set(`${e.source}→${e.target}`, edgeApiType(e.type));
@@ -52,14 +52,14 @@ function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
 }
 
 /** Build id→node lookup. */
-function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
+export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   const m = new Map<string, LineageNode>();
   for (const n of model.nodes) m.set(n.id, n);
   return m;
 }
 
 /** Build lowercase "Schema.Name" → unrelated refs lookup from parse stats. */
-function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
+export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   const m = new Map<string, string[]>();
   if (!model.parseStats?.spDetails) return m;
   for (const d of model.parseStats.spDetails) {
@@ -317,7 +317,7 @@ export function getObjectDetail(
 // types[] and schemas[] are include-only filters (no exclude).
 // BFS_MAX_NODES/BFS_MAX_EDGES caps prevent payload blow-up — no depth clamp needed.
 
-const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
+export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
 /** Run bidirectional BFS and return depth maps for each direction. */
 function executeBfs(

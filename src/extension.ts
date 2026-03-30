@@ -11,6 +11,7 @@ import {
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
   type CreateAiViewInput,
 } from './ai/tools';
+import { ColumnTraceState } from './ai/columnTraceState';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
@@ -54,6 +55,7 @@ let _aiCurrentProjectId: string | null = null;
 let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; conservative fallback
 let _aiCaps:           AiCapsOverride = {};  // refreshed once per @lineage request; avoids re-reading config per tool call
 let _aiModelName:      string = '';          // display name of the current Copilot model (e.g., "Claude Sonnet 4.6")
+let _columnTraceState: ColumnTraceState | null = null; // per-request column-trace state machine
 
 /** AI output template instructions — loaded once at activation, cached for system prompt injection. */
 interface AiOutputTemplates {
@@ -471,6 +473,78 @@ export function activate(context: vscode.ExtensionContext) {
         return toolResult(getDdlBatch(m, ids, _aiCaps));
       },
     }),
+    // ─── Column-Trace tools (hop-and-distill state machine) ─────────────────
+    vscode.lm.registerTool('lineage_start_column_trace', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Starting column-level trace…' };
+      },
+      invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
+        const m = requireModel();
+        const g = requireGraph();
+        const input = options.input as { columns?: string[]; direction?: string; origin?: string };
+        const columns = input.columns ?? [];
+        const direction = (input.direction ?? 'up') as 'up' | 'down' | 'both';
+        logInfo(outputChannel, 'AI', `lineage_start_column_trace: columns=[${columns}], direction=${direction}, origin=${input.origin ?? 'auto'}`);
+
+        _columnTraceState = new ColumnTraceState(m, (level, msg) => {
+          if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
+          else if (level === 'warn') logWarn(outputChannel, 'AI', `[CT] ${msg}`);
+          else logDebug(outputChannel, 'AI', `[CT] ${msg}`);
+        }, { maxDdlChars: (_aiCaps.MAX_DDL_CHARS ?? AI_CAPS.MAX_DDL_CHARS) });
+
+        const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
+        if ('error' in initResult) return toolResult(initResult);
+
+        const hopResult = _columnTraceState.getHopContext();
+        if ('error' in hopResult) return toolResult(hopResult);
+        if ('done' in hopResult) return toolResult({ ...initResult, status: 'complete', message: 'No neighbors to trace.' });
+
+        return toolResult({ ...initResult, ...hopResult });
+      },
+    }),
+    vscode.lm.registerTool('lineage_submit_hop_analysis', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Processing hop verdicts…' };
+      },
+      invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
+        if (!_columnTraceState) return toolResult({ error: 'no_active_trace', hint: 'Call lineage_start_column_trace first.' });
+
+        const input = options.input as {
+          focus_node_id?: string;
+          verdicts?: Array<{ neighbor_id?: string; verdict?: string; columns_to_trace?: string[]; summary?: string }>;
+        };
+        const focusNodeId = input.focus_node_id ?? '';
+        const verdicts = (input.verdicts ?? []).map(v => ({
+          nodeId: v.neighbor_id ?? '',
+          verdict: (v.verdict ?? 'remove') as 'relevant' | 'remove' | 'passthrough',
+          columnsOut: v.columns_to_trace,
+          summary: v.summary,
+        }));
+        logInfo(outputChannel, 'AI', `lineage_submit_hop_analysis: focus=${focusNodeId}, ${verdicts.length} verdict(s)`);
+
+        const submitResult = _columnTraceState.submitVerdicts({ focusNodeId, verdicts });
+        if ('error' in submitResult) return toolResult(submitResult);
+
+        const hopResult = _columnTraceState.getHopContext();
+        if ('error' in hopResult) return toolResult(hopResult);
+        if ('done' in hopResult) return toolResult({ status: 'complete', hops: _columnTraceState.hops });
+
+        return toolResult(hopResult);
+      },
+    }),
+    vscode.lm.registerTool('lineage_get_column_trace_result', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Assembling column trace result…' };
+      },
+      invoke(_options, _token) {
+        if (!isAiEnabled()) return disabled();
+        if (!_columnTraceState) return toolResult({ error: 'no_active_trace', hint: 'Call lineage_start_column_trace first.' });
+        logInfo(outputChannel, 'AI', `lineage_get_column_trace_result: hops=${_columnTraceState.hops}`);
+        return toolResult(_columnTraceState.getResult());
+      },
+    }),
   );
 
   // ─── @lineage Chat Participant ─────────────────────────────────────────────
@@ -492,6 +566,7 @@ export function activate(context: vscode.ExtensionContext) {
       _aiMaxInputTokens = request.model.maxInputTokens;
       _aiModelName = request.model.name || request.model.id;
       _aiCaps = readAiCaps();
+      _columnTraceState = null; // reset per request — each /column-trace gets a fresh state machine
 
       if (!isAiEnabled()) {
         stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
@@ -503,7 +578,14 @@ export function activate(context: vscode.ExtensionContext) {
         return {};
       }
 
-      const lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+      // Tool filtering: /column-trace → CT tools only; classic → all lineage tools
+      const isColumnTraceMode = request.command === 'column-trace';
+      const lineageTools = isColumnTraceMode
+        ? vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'))
+        : vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+      if (isColumnTraceMode) {
+        logInfo(outputChannel, 'AI', `Column-trace mode | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
+      }
 
       // Slash command routing — transform user prompt for focused intent
       let effectivePrompt = request.prompt;
@@ -513,6 +595,27 @@ export function activate(context: vscode.ExtensionContext) {
         effectivePrompt = `Search for database objects matching: ${request.prompt}. Use search_objects with smart query syntax.`;
       } else if (request.command === 'explain') {
         effectivePrompt = `Explain what this object does: ${request.prompt}. Use get_object_detail to get the DDL, then explain the logic.`;
+      } else if (isColumnTraceMode) {
+        effectivePrompt = [
+          `COLUMN TRACE MODE: ${request.prompt}`,
+          '',
+          'IMPORTANT: Do NOT ask the user for object IDs. Call lineage_start_column_trace immediately.',
+          'Call lineage_start_column_trace NOW with columns extracted from the user question and direction "up":',
+          '',
+          'After receiving the result, follow this protocol:',
+          '1. Read the focus node DDL in the result.',
+          '2. For each neighbor, determine if the target column flows through it:',
+          '   - relevant: column flows through — specify columns_to_trace (may be renamed in DDL)',
+          '   - remove: column does NOT flow through — explain why',
+          '   - passthrough: boundary node or connector',
+          '3. Call lineage_submit_hop_analysis with your verdicts array.',
+          '4. If you get invalid_columns error: re-read the DDL, correct the column name, resubmit.',
+          '5. Repeat steps 1-4 for each new hop until status is "complete".',
+          '6. When complete: call lineage_get_column_trace_result to get the assembled trace.',
+          '',
+          'Track renames: INSERT INTO T(Revenue) SELECT Amount → next hop traces "Amount" not "Revenue".',
+          'Track derivations: SELECT Amount * Rate → trace BOTH "Amount" AND "Rate".',
+        ].join('\n');
       }
 
       // Build conversation history with smart management:
@@ -616,9 +719,21 @@ export function activate(context: vscode.ExtensionContext) {
       const MAX_ROUNDS = 15;
       const BUDGET_HINT_THRESHOLD = Math.ceil(MAX_ROUNDS * 0.6); // round 9 of 15
 
-      const messages: vscode.LanguageModelChatMessage[] = [
-        vscode.LanguageModelChatMessage.User(
-          'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
+      // System prompt: CT mode gets a separate prompt referencing ONLY CT tools (POC-validated requirement)
+      const systemPrompt = isColumnTraceMode
+        ? 'Column-level lineage tracer. You have EXACTLY 3 tools: ' +
+          'lineage_start_column_trace, lineage_submit_hop_analysis, lineage_get_column_trace_result.\n' +
+          'You MUST call tools to answer — never ask the user for IDs or parameters.\n\n' +
+          'PROTOCOL (follow exactly):\n' +
+          '1. Call lineage_start_column_trace with columns and direction. Origin is optional.\n' +
+          '2. Read the DDL in the result. For each neighbor, decide: relevant / remove / passthrough.\n' +
+          '3. Call lineage_submit_hop_analysis with your verdicts.\n' +
+          '4. If you get invalid_columns error: re-read the DDL, fix the column name, resubmit.\n' +
+          '5. Repeat 2-4 for each hop until status is "complete".\n' +
+          '6. Call lineage_get_column_trace_result to get the final chain.\n' +
+          '7. Present the column flow to the user.\n\n' +
+          'NEVER ask the user for object IDs. ALWAYS call lineage_start_column_trace as your first action.'
+        : 'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
           `Budget: ${MAX_ROUNDS} rounds.\n\n` +
           'RULES:\n' +
           '1. VALIDATE FIRST: If search returns 0 results or schema_mismatch, STOP and ask user before proceeding.\n' +
@@ -641,8 +756,10 @@ export function activate(context: vscode.ExtensionContext) {
           `   description: ${_aiOutputTemplates.description}\n` +
           `   badges: ${_aiOutputTemplates.badges}\n` +
           `   highlights: ${_aiOutputTemplates.highlights}\n` +
-          `   notes: ${_aiOutputTemplates.notes}`,
-        ),
+          `   notes: ${_aiOutputTemplates.notes}`;
+
+      const messages: vscode.LanguageModelChatMessage[] = [
+        vscode.LanguageModelChatMessage.User(systemPrompt),
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),
       ];
@@ -684,6 +801,9 @@ export function activate(context: vscode.ExtensionContext) {
 
       const runWithTools = async (): Promise<void> => {
         let lastBudgetHintIdx = -1;
+        // Column-trace context control (POC-validated patterns)
+        const ctToolResults: Array<{ msgIdx: number; callId: string }> = [];
+        let ctWhatNextIdx = -1;
 
         while (roundCount < MAX_ROUNDS) {
           roundCount++;
@@ -789,6 +909,54 @@ export function activate(context: vscode.ExtensionContext) {
 
           toolCallRounds.push({ response: responseText, toolCalls });
           totalToolCallsMade += toolCalls.length;
+
+          // ─── Column-trace context control (POC-validated) ──────────────────
+          if (isColumnTraceMode) {
+            const hasCtStart = toolCalls.some(tc => tc.name === 'lineage_start_column_trace');
+            const hasCtSubmit = toolCalls.some(tc => tc.name === 'lineage_submit_hop_analysis');
+            const hasCtResult = toolCalls.some(tc => tc.name === 'lineage_get_column_trace_result');
+
+            // Track tool result message index + original callId
+            if (hasCtStart || hasCtSubmit) {
+              const ctCall = toolCalls.find(tc => tc.name === 'lineage_start_column_trace' || tc.name === 'lineage_submit_hop_analysis');
+              if (ctCall) ctToolResults.push({ msgIdx: messages.length - 1, callId: ctCall.callId });
+            }
+
+            // In-place replacement: compact ALL previous CT tool result messages
+            if (hasCtSubmit && ctToolResults.length > 1) {
+              for (let i = 0; i < ctToolResults.length - 1; i++) {
+                const { msgIdx, callId } = ctToolResults[i];
+                const compactJson = JSON.stringify({ _ct_compacted: true, hop: i + 1, status: 'processed' });
+                messages[msgIdx] = vscode.LanguageModelChatMessage.User(
+                  [new vscode.LanguageModelToolResultPart(callId,
+                    [new vscode.LanguageModelTextPart(compactJson)])]
+                );
+                logDebug(outputChannel, 'AI', `[CT] Replaced message[${msgIdx}] (hop ${i + 1})`);
+              }
+            }
+
+            // "What next" injection: guide model to next step
+            const lastResultText = resultParts.length > 0
+              ? JSON.stringify((resultParts[resultParts.length - 1] as { content: unknown }).content ?? '')
+              : '';
+            const isTraceComplete = lastResultText.includes('"complete"') || lastResultText.includes('"done"');
+
+            if ((hasCtStart || hasCtSubmit) && !isTraceComplete) {
+              const whatNextMsg = `COLUMN TRACE: Hop data received. Read the focus node DDL in the tool result. ` +
+                `Determine which neighbors carry the active columns. Submit your verdicts via lineage_submit_hop_analysis.`;
+              if (ctWhatNextIdx >= 0) {
+                messages[ctWhatNextIdx] = vscode.LanguageModelChatMessage.User(whatNextMsg);
+              } else {
+                messages.push(vscode.LanguageModelChatMessage.User(whatNextMsg));
+                ctWhatNextIdx = messages.length - 1;
+              }
+            }
+
+            // Summary logging on completion
+            if (hasCtResult && _columnTraceState) {
+              logInfo(outputChannel, 'AI', `[CT] === SUMMARY === hops=${_columnTraceState.hops}, status=${_columnTraceState.status}`);
+            }
+          }
 
           // H3: Budget hints — replace previous hint instead of accumulating
           if (lastBudgetHintIdx >= 0) {

@@ -480,6 +480,10 @@
           {
             "name": "explain",
             "description": "Explain what a stored procedure or view does"
+          },
+          {
+            "name": "column-trace",
+            "description": "Trace column-level data lineage through the graph (hop-and-distill)"
           }
         ],
         "disambiguation": [
@@ -733,11 +737,12 @@
         "name": "lineage_create_ai_view",
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
-        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph.",
+        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph. Also used by /column-trace to create a view from the trace result.",
         "modelDescription": "Create a visual bookmark ONLY when the graph genuinely aids understanding (lineage path, data flow, object relationships). For text answers (explain, document, optimize, compare, list, generate SQL), respond in chat instead — user can click 'Show in Graph' afterward. Saves a named bookmark. summary + description are VALIDATED (REJECTED if flat). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers ('step 3', 'step 4') under ## headings with business logic. BAD: 14 badges on all nodes, essay description with no step refs. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…', notes like 'Multiplies Amount × Rate'.",
         "canBeReferencedInPrompt": true,
         "tags": [
-          "lineage"
+          "lineage",
+          "lineage-ct"
         ],
         "icon": "$(sparkle)",
         "when": "dataLineageViz.modelLoaded",
@@ -888,6 +893,71 @@
             "ids"
           ]
         }
+      },
+      {
+        "name": "lineage_start_column_trace",
+        "toolReferenceName": "lineage_start_column_trace",
+        "displayName": "Start Column Trace",
+        "userDescription": "Start a column-level lineage trace through the dependency graph.",
+        "modelDescription": "Start a column-level lineage trace. Call when the user asks WHERE a column comes from, HOW a value is calculated, or what FEEDS a specific column.\n\nCall with the column name(s) to trace. Origin is optional — omit if unknown.\nReturns: scope preview + first hop context with focus node DDL + neighbor list with columns.\n\nYOUR TASK: Read the focus node DDL. For each neighbor, determine if the target column flows through it:\n- relevant: column flows through — specify columns_to_trace (may be renamed)\n- remove: column does NOT flow through — explain why\n- passthrough: boundary node, no transform\n\nThen call lineage_submit_hop_analysis with your verdicts.",
+        "canBeReferencedInPrompt": true,
+        "tags": ["lineage", "lineage-ct"],
+        "icon": "$(search)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "columns": { "type": "array", "items": { "type": "string" }, "description": "Column names to trace, e.g. [\"SalesAmount\"]" },
+            "direction": { "type": "string", "enum": ["up", "down", "both"], "description": "Trace direction: up=find sources, down=find consumers" },
+            "origin": { "type": "string", "description": "Starting object ID. Optional — omit if unknown, the tool will auto-discover." }
+          }
+        }
+      },
+      {
+        "name": "lineage_submit_hop_analysis",
+        "toolReferenceName": "lineage_submit_hop_analysis",
+        "displayName": "Submit Hop Analysis",
+        "userDescription": "Submit column trace analysis for the current hop.",
+        "modelDescription": "Submit your analysis of the current hop and receive the next hop's data.\n\nInput: focus_node_id (from the hop context), verdicts array — per neighbor:\n- neighbor_id: exact ID from the neighbors list\n- verdict: relevant | remove | passthrough\n- columns_to_trace: for relevant — which columns carry forward (may be renamed in DDL)\n- summary: one-line description of what happens to the column at this node\n\nReturns: next hop context OR {status: \"complete\"} when all branches explored.\nIf you receive invalid_columns error: re-read the DDL and correct the column name, then resubmit.\nWhen status is \"complete\": call lineage_get_column_trace_result.",
+        "canBeReferencedInPrompt": true,
+        "tags": ["lineage", "lineage-ct"],
+        "icon": "$(check)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "focus_node_id": { "type": "string", "description": "ID of the focus node from the hop context" },
+            "verdicts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "neighbor_id": { "type": "string", "description": "Exact neighbor ID from the hop context" },
+                  "verdict": { "type": "string", "enum": ["relevant", "remove", "passthrough"] },
+                  "columns_to_trace": { "type": "array", "items": { "type": "string" }, "description": "For relevant: which column(s) to trace next (may be renamed)" },
+                  "summary": { "type": "string", "description": "One-line: what happens to the column at this node" }
+                },
+                "required": ["neighbor_id", "verdict"]
+              }
+            }
+          },
+          "required": ["focus_node_id", "verdicts"]
+        }
+      },
+      {
+        "name": "lineage_get_column_trace_result",
+        "toolReferenceName": "lineage_get_column_trace_result",
+        "displayName": "Get Column Trace Result",
+        "userDescription": "Get the assembled column trace result after all hops are complete.",
+        "modelDescription": "Get the assembled column trace result after all hops are complete. Returns the full chain with column flow mappings, DDL for relevant nodes, column metadata for boundary nodes, out-of-scope notes, and a human-readable column flow string. Use this to present the lineage to the user.",
+        "canBeReferencedInPrompt": true,
+        "tags": ["lineage", "lineage-ct"],
+        "icon": "$(output)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
       }
     ]
   },
@@ -899,7 +969,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",

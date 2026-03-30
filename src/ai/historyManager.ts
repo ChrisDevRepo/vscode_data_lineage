@@ -20,6 +20,8 @@ const FIELD_TTL: Record<string, number> = {
   edges:        8,   // aligned with up/dn — model can reference full BFS at same age
   up:           8,   // neighbor arrays — useful, small
   dn:           8,
+  ct_ddl:       1,   // column-trace DDL — aggressive cross-request cleanup (state machine owns within-request)
+  ct_neighbors: 1,   // column-trace neighbor data — same
 };
 
 // ─── DROP: remove noise results ─────────────────────────────────────────────
