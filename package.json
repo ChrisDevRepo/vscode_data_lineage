@@ -734,7 +734,7 @@
         "toolReferenceName": "lineage_create_ai_view",
         "displayName": "Create AI View",
         "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph.",
-        "modelDescription": "Saves a named bookmark. summary + description are VALIDATED (REJECTED if flat). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers ('step 3', 'step 4') under ## headings with business logic. BAD: 14 badges on all nodes, essay description with no step refs. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…', notes like 'Multiplies Amount × Rate'.",
+        "modelDescription": "Create a visual bookmark ONLY when the graph genuinely aids understanding (lineage path, data flow, object relationships). For text answers (explain, document, optimize, compare, list, generate SQL), respond in chat instead — user can click 'Show in Graph' afterward. Saves a named bookmark. summary + description are VALIDATED (REJECTED if flat). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers ('step 3', 'step 4') under ## headings with business logic. BAD: 14 badges on all nodes, essay description with no step refs. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…', notes like 'Multiplies Amount × Rate'.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -758,8 +758,8 @@
             },
             "summary": {
               "type": "string",
-              "maxLength": 120,
-              "description": "One-line graph purpose for the info card (max 120 chars)"
+              "maxLength": 300,
+              "description": "One-line graph purpose for the info card (~120 chars, max 300)"
             },
             "description": {
               "type": "string",

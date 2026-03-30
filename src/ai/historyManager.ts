@@ -31,14 +31,17 @@ const FIELD_TTL: Record<string, number> = {
 export function compactNoiseResult(toolName: string, resultJson: string): string | null {
   try {
     const parsed = JSON.parse(resultJson);
+    const shortName = toolName.replace('lineage_', '');
     // Error responses
     if (parsed.error) {
-      const shortName = toolName.replace('lineage_', '');
       return JSON.stringify({ summary: `${shortName} → error: ${parsed.error}` });
+    }
+    // Validation rejections (success: false with errors array)
+    if (parsed.success === false && Array.isArray(parsed.errors)) {
+      return JSON.stringify({ summary: `${shortName} → rejected: ${parsed.errors.length} error(s)` });
     }
     // Empty search results
     if (parsed.results && Array.isArray(parsed.results) && parsed.results.length === 0) {
-      const shortName = toolName.replace('lineage_', '');
       return JSON.stringify({ summary: `${shortName} → 0 matches` });
     }
   } catch { /* not JSON or parse error — keep as-is */ }

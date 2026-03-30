@@ -12,7 +12,7 @@ import {
   AI_CAPS,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
-  validateQuery,
+  validateQuery, validateMarkdownFormat,
   type CreateAiViewInput,
 } from '../src/ai/tools';
 import { safeRegex } from '../src/utils/modelSearch';
@@ -348,6 +348,21 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   }) as Record<string, unknown>;
   assert(multiPara.success === true, 'multi-paragraph without ##: passes');
 
+  // Markdown format validation (validateMarkdownFormat)
+  assertEq(validateMarkdownFormat('## Heading\nNormal markdown with $x^2$ inline math.').length, 0, 'clean markdown: no errors');
+  assertEq(validateMarkdownFormat('## Heading\n```math\nRevenue = PV \\times \\frac{EH}{PH}\n```').length, 0, 'valid ```math fence: no errors');
+  assert(validateMarkdownFormat('## Heading\n\\begin{cases} 0 \\\\ 1 \\end{cases}').length > 0, '\\begin{cases}: rejected');
+  assert(validateMarkdownFormat('## Heading\n$$formula$$\n$$orphan').length > 0, 'unbalanced $$: rejected');
+  assert(validateMarkdownFormat('## Heading\n```math\nformula').length > 0, 'unclosed ```math fence: rejected');
+  assertEq(validateMarkdownFormat('## Heading\n```sql\nSELECT 1\n```').length, 0, 'closed ```sql fence: no errors');
+
+  // Validate rejects description with \begin{cases} via validateCreateAiView
+  const beginCases = validateCreateAiView(model, {
+    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+    description: '## Formula\nThe result is:\n\\begin{cases} 0 & \\text{if x=0} \\\\ 1 & \\text{otherwise} \\end{cases}',
+  }) as Record<string, unknown>;
+  assert(beginCases.success === false, 'description with \\begin{cases}: rejected');
+
   // Realistic: Person.EmailAddress + neighbors with description
   const emailNode = model.nodes.find(n => n.schema === 'Person' && n.name === 'EmailAddress');
   assert(emailNode !== undefined, 'Person.EmailAddress node found in model');
@@ -543,15 +558,22 @@ async function testAutoFixCreateAiView(model: DatabaseModel) {
   assertEq(withSummary.summary as string, 'Revenue lineage from SAP invoices.', 'summary: passed through');
   assert((withSummary.description as string).startsWith('## Revenue'), 'description: passed through');
 
-  // Summary truncation in autoFix
+  // Summary length: autoFix passes through (no truncation), validate rejects >300
   const longSummary = 'x'.repeat(150);
   const { input: fixedSummary, fixes: summaryFixes } = autoFixCreateAiView(model, {
     name: 'Test', node_ids: [node.id], summary: longSummary,
   });
-  assert(summaryFixes.length > 0, 'long summary: fixes reported');
-  assertEq(fixedSummary.summary!.length, 120, 'long summary: truncated to 120');
+  assertEq(summaryFixes.length, 0, 'long summary: no auto-fix (validation handles length)');
+  assertEq(fixedSummary.summary!.length, 150, 'long summary: passed through unchanged');
 
-  // Short summary: no truncation
+  // Summary >300 chars: hard rejected by validate
+  const tooLongSummary = validateCreateAiView(model, {
+    name: 'Test', node_ids: [node.id], summary: 'x'.repeat(301),
+    description: '## Analysis\nStructured answer.\n\n## Details\nMore content.',
+  }) as Record<string, unknown>;
+  assert(tooLongSummary.success === false, 'summary >300 chars: rejected');
+
+  // Short summary: no fixes
   const { fixes: noSummaryFixes } = autoFixCreateAiView(model, {
     name: 'Test', node_ids: [node.id], summary: 'Short summary.',
   });

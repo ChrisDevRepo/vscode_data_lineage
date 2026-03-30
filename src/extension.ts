@@ -623,12 +623,19 @@ export function activate(context: vscode.ExtensionContext) {
           'RULES:\n' +
           '1. VALIDATE FIRST: If search returns 0 results or schema_mismatch, STOP and ask user before proceeding.\n' +
           '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-          '3. PRUNE: BFS returns many objects. Your view must include ONLY nodes in the target column\'s path.\n' +
+          '3. OUTPUT MODE — decide whether a graph adds value:\n' +
+          '   • Graph helps (lineage path, data flow, object relationships) → create_ai_view\n' +
+          '   • Graph doesn\'t help (generate SQL, list names, compare options) → answer in chat text\n' +
+          '   • Could go either way (explain SP, performance review) → default to chat text;\n' +
+          '     user can click "Show in Graph" afterward.\n' +
+          '   Default: text. Only create a view when the visual graph genuinely aids understanding.\n' +
+          '4. WHEN CREATING A VIEW:\n' +
+          '   PRUNE: BFS returns many objects. Include ONLY nodes in the target column\'s path.\n' +
           '   Skip dimension lookups, utility SPs, and branches feeding other columns. 10-15 nodes, not 30+.\n' +
-          '4. COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
+          '   COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
           '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
           '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
-          '5. VIEW OUTPUT — fields form a layered hierarchy (headline → callouts → captions → article).\n' +
+          '5. VIEW OUTPUT (only when creating a view) — fields form a layered hierarchy (headline → callouts → captions → article).\n' +
           '   Badges (5-8 key nodes) are numbered anchors. Notes caption each badged node. Description references badge step numbers.\n' +
           `   summary: ${_aiOutputTemplates.summary}\n` +
           `   description: ${_aiOutputTemplates.description}\n` +

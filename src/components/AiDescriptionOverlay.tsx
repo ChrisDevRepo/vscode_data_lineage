@@ -1,9 +1,31 @@
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+
+/** Convert ```math fenced blocks to $$ delimiters that remark-math understands. */
+function mathFenceToDelimiters(md: string): string {
+  const lines = md.split('\n');
+  const result: string[] = [];
+  let insideMathFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!insideMathFence && trimmed === '```math') {
+      insideMathFence = true;
+      result.push('$$');
+    } else if (insideMathFence && trimmed === '```') {
+      insideMathFence = false;
+      result.push('$$');
+    } else {
+      result.push(line);
+    }
+  }
+
+  return result.join('\n');
+}
 
 interface AiDescriptionOverlayProps {
   viewName: string;
@@ -18,6 +40,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   defaultExpanded = false,
 }: AiDescriptionOverlayProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const sanitized = useMemo(() => mathFenceToDelimiters(description), [description]);
 
   return (
     <div className="ln-ai-description-anchor">
@@ -49,8 +72,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             <div className="ln-ai-description-md">
               <Markdown
                 remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeKatex]}
-              >{description}</Markdown>
+                rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+              >{sanitized}</Markdown>
             </div>
           </div>
         </div>

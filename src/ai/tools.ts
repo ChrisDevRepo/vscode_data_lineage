@@ -598,11 +598,7 @@ export function autoFixCreateAiView(
     }
   }
 
-  // 2. Truncate summary at 120 chars
-  if (fixed.summary && fixed.summary.length > 120) {
-    fixes.push(`Truncated summary from ${fixed.summary.length} to 120 chars`);
-    fixed = { ...fixed, summary: fixed.summary.slice(0, 120) };
-  }
+  // 2. Summary length is validated (not auto-fixed) — AI should learn to write concise summaries
 
   const nodeIdSet = new Set(fixed.node_ids ?? []);
 
@@ -637,6 +633,45 @@ export function autoFixCreateAiView(
   return { input: fixed, fixes };
 }
 
+/** Validate markdown format — returns error strings (empty = valid). */
+export function validateMarkdownFormat(md: string): string[] {
+  const errors: string[] = [];
+
+  // Reject \begin{...} environments (fragile in remark-math, breaks rendering)
+  const beginMatch = md.match(/\\begin\{(\w+)\}/);
+  if (beginMatch) {
+    errors.push(
+      `description contains \\begin{${beginMatch[1]}} — use a \`\`\`math block for simple formulas or rewrite as a table`,
+    );
+  }
+
+  // Reject unbalanced $$ delimiters (odd count → unclosed block corrupts all subsequent markdown)
+  const ddCount = (md.match(/\$\$/g) || []).length;
+  if (ddCount % 2 !== 0) {
+    errors.push(
+      'description has unbalanced $$ delimiters — use ```math fenced blocks for display math',
+    );
+  }
+
+  // Reject unclosed fenced blocks (walk lines, track open/close state)
+  let insideFence = false;
+  for (const line of md.split('\n')) {
+    const trimmed = line.trim();
+    if (!insideFence && trimmed.startsWith('```')) {
+      insideFence = true;
+    } else if (insideFence && trimmed === '```') {
+      insideFence = false;
+    }
+  }
+  if (insideFence) {
+    errors.push(
+      'description has an unclosed fenced block — ensure closing ``` is present',
+    );
+  }
+
+  return errors;
+}
+
 export function validateCreateAiView(
   model: DatabaseModel,
   input: CreateAiViewInput,
@@ -654,9 +689,11 @@ export function validateCreateAiView(
     errors.push('node_ids exceeds maximum of 30 IDs — create multiple focused views instead');
   }
 
-  // summary required
+  // summary required + length: soft 120 (instructed), hard 300 (rejected)
   if (!input.summary || input.summary.trim().length === 0) {
-    errors.push('summary is required — one-line graph purpose (max 120 chars)');
+    errors.push('summary is required — one-line graph purpose (~120 chars, max 300)');
+  } else if (input.summary.length > 300) {
+    errors.push('summary exceeds hard limit (300 chars) — aim for ~120 chars');
   }
 
   // description required + content quality checks
@@ -673,6 +710,8 @@ export function validateCreateAiView(
     if (WALKTHROUGH_PREFIXES.some(p => descLower.startsWith(p))) {
       errors.push('description re-describes the graph — explain business logic, formulas, column mappings instead');
     }
+    // Markdown format validation (LaTeX delimiters, math blocks)
+    errors.push(...validateMarkdownFormat(input.description));
   }
 
   // highlight_groups validation (structural + color validity — autoFix does not normalize colors)
@@ -686,11 +725,11 @@ export function validateCreateAiView(
   }
 
   if (errors.length > 0) {
-    return {
-      success: false,
-      errors,
-      hint: 'Fix the listed errors and retry.',
-    };
+    // Context-efficient hint: tell AI to fix only the broken fields, keep the rest unchanged
+    const hint = errors.length === 1 && errors[0].includes('summary')
+      ? 'Shorten the summary to ~120 chars (hard limit 300) and retry with the same input otherwise.'
+      : 'Fix the listed errors and retry. Do NOT change fields that passed validation.';
+    return { success: false, errors, hint };
   }
 
   return {
