@@ -311,11 +311,11 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         </p>
         <div className="rounded p-3 space-y-1.5 font-mono text-xs ln-help-code-block">
           {[
-            'what schemas are loaded?',
-            'find tables with Employee in the name',
-            'what does HumanResources.Employee depend on?',
-            'trace 3 levels upstream from Sales.SalesOrderDetail',
-            'which objects have more than 10 connections?',
+            'trace from Sales.SalesOrderDetail upstream to the source tables',
+            'how is sales calculated — show me the lineage up to source in the app',
+            'which objects are hubs with the most connections?',
+            'what downstream objects depend on Sales.SalesTerritory?',
+            'explain the SQL of Sales.vSalesPerson — any performance or logic issues?',
           ].map(q => (
             <div key={q}><span className="font-bold ln-text-link">@lineage </span><span className="ln-text">{q}</span></div>
           ))}
@@ -339,7 +339,8 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
       <div className="rounded-lg p-3 ln-help-analysis-card">
         <p className="text-xs font-semibold ln-text mb-1.5">Tips</p>
         <ul className="text-xs ln-text-muted space-y-1 list-disc pl-4">
-          <li><span className="font-medium ln-text">Ask the AI to create a view.</span> Say &quot;show me the full lineage for dbo.udfLeadingZeros in the app&quot; — it builds a filtered graph view you can bookmark.</li>
+          <li><span className="font-medium ln-text">AI column-level analysis.</span> With Copilot Chat, the <code>@lineage</code> AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Results depend on DDL completeness — always verify against your database.</li>
+          <li><span className="font-medium ln-text">Ask the AI to create a view.</span> Say &quot;show me the full lineage for dbo.udfLeadingZeros in the app&quot; — it builds a filtered graph view with annotated nodes, saved as a bookmark. You can then explore the view interactively, trace further, or export it.</li>
           <li><span className="font-medium ln-text">Context-aware.</span> The assistant knows your active filters, visible schemas, and current graph state. Ask &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
           <li><span className="font-medium ln-text">Be specific with object names.</span> Use <code>Sales.SalesOrderDetail</code> rather than &quot;the sales order table&quot;.</li>
           <li><span className="font-medium ln-text">Customize output.</span> Command Palette → <em>Create AI Output Templates</em> to tailor the AI&apos;s response format. <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md" openExternal={openExternal}>Guide ↗</ExtLink></li>

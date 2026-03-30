@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.7] - 2026-03-30
+
+### Changed
+- Disable DDL viewer button in schema overview mode
+- Revised documentation across README, product page, help modal, and features guide with lineage-focused examples and AI capability descriptions
+
 ## [0.9.6] - 2026-03-27
 
 ### Added
