@@ -247,6 +247,9 @@ export class ColumnTraceState {
   // ─── getHopContext ─────────────────────────────────────────────────────────
 
   getHopContext(): {
+    trace_status: 'in_progress';
+    action_required: 'submit_hop_analysis';
+    verdicts_expected: number;
     ct_mode: 'hop_and_distill';
     hop: number;
     frontier_remaining: number;
@@ -395,6 +398,9 @@ export class ColumnTraceState {
 
     this._status = 'awaiting_verdicts';
     return {
+      trace_status: 'in_progress' as const,
+      action_required: 'submit_hop_analysis' as const,
+      verdicts_expected: neighbors.length,
       ct_mode: 'hop_and_distill',
       hop: this.hopCount,
       frontier_remaining: this.frontier.length,
