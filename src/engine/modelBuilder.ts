@@ -76,8 +76,8 @@ export function buildModel(
 
 /**
  * Index columns and DDL from LineageNode into ColumnStore for fast lookup.
- * Inline data on nodes is PRESERVED (webview detail search needs it).
- * ColumnStore adds O(1) indexed access for AI tools and column-trace auto-discover.
+ * ColumnStore provides O(1) indexed access for AI tools + column-trace auto-discover.
+ * Inline data on nodes is preserved until detail search is migrated to extension host.
  */
 export function populateColumnStore(model: DatabaseModel, store: ColumnStore): void {
   for (const node of model.nodes) {

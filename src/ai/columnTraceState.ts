@@ -99,6 +99,7 @@ export class ColumnTraceState {
   private removedSet = new Set<string>();
   private outOfScope: OutOfScopeEntry[] = [];
   private hopCount = 0;
+  private scopeSize = 0;
 
   // Current hop context (for submitVerdicts validation)
   private currentFocusNodeId: string | null = null;
@@ -139,6 +140,7 @@ export class ColumnTraceState {
     this.removedSet.clear();
     this.outOfScope = [];
     this.hopCount = 0;
+    this.scopeSize = 0;
     this.currentFocusNodeId = null;
     this.currentFocusActiveColumns = [];
     this.currentFocusDepth = 0;
@@ -202,6 +204,7 @@ export class ColumnTraceState {
 
     // Compute scope via NeighborIndex BFS (direction-aware)
     const scopeIds = this.bfsScope(originNode.id);
+    this.scopeSize = scopeIds.size;
 
     // Seed frontier with directional neighbors of origin
     const neighbors = this.getDirectionalNeighbors(originNode.id);
@@ -229,7 +232,7 @@ export class ColumnTraceState {
     });
 
     this._status = 'initialized';
-    this.log('info', `Column trace init: origin=${originNode.id}, columns=[${targetColumns}], direction=${direction}, scope=${scopeIds.size}, frontier=${this.frontier.length}`);
+    this.log('info', `INIT | origin=${originNode.id} | columns=[${targetColumns}] | direction=${direction} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
 
     return {
       ok: true,
@@ -373,9 +376,10 @@ export class ColumnTraceState {
       }));
 
     const subQuestion = `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`;
-    this.log('info', `Hop ${this.hopCount}: focus=${node.id}, active_columns=[${entry.activeColumns}], neighbors=${neighbors.length}, depth=${entry.depth}`);
+    const pct = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
+    this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeSize} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
     if (entry.depth >= 10) {
-      this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}`);
+      this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeSize}`);
     }
 
     this._status = 'awaiting_verdicts';
@@ -494,7 +498,11 @@ export class ColumnTraceState {
     }
 
     this._status = 'hopping'; // ready for next getHopContext()
-    this.log('info', `Verdicts processed: ${params.verdicts.length} (advanced ${advanced} to frontier, frontier=${this.frontier.length})`);
+    const relevant = params.verdicts.filter(v => v.verdict === 'relevant').length;
+    const removed = params.verdicts.filter(v => v.verdict === 'remove').length;
+    const passthrough = params.verdicts.filter(v => v.verdict === 'passthrough').length;
+    const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
+    this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
     return { ok: true, advanced, frontierSize: this.frontier.length };
   }
 
@@ -570,7 +578,8 @@ export class ColumnTraceState {
       passthrough: this.passthroughSet.size,
     };
 
-    this.log('info', `Column trace complete: ${stats.hops} hops, ${stats.examined} examined, chain=${stats.relevant} relevant + ${stats.passthrough} passthrough, ${stats.removed} removed`);
+    const pruneRate = this.scopeSize > 0 ? Math.round(((this.scopeSize - stats.examined) / this.scopeSize) * 100) : 0;
+    this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeSize} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
 
     return { status: 'complete', chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats, columnFlow };
   }
@@ -583,6 +592,10 @@ export class ColumnTraceState {
   get isAwaitingVerdicts(): boolean { return this._status === 'awaiting_verdicts'; }
   get hops(): number { return this.hopCount; }
   get frontierSize(): number { return this.frontier.length; }
+  get scope(): number { return this.scopeSize; }
+  get visited_count(): number { return this.visited.size; }
+  get removedCount(): number { return this.removedSet.size; }
+  get chainSize(): number { return this.chain.size; }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
 

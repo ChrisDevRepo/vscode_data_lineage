@@ -919,32 +919,40 @@ export function activate(context: vscode.ExtensionContext) {
             const hasCtSubmit = toolCalls.some(tc => tc.name === 'lineage_submit_hop_analysis');
             const hasCtResult = toolCalls.some(tc => tc.name === 'lineage_get_column_trace_result');
 
-            // Track tool result message index + original callId
-            if (hasCtStart || hasCtSubmit) {
+            // Detect success vs failure from tool result
+            const lastResultText = resultParts.length > 0
+              ? JSON.stringify((resultParts[resultParts.length - 1] as { content: unknown }).content ?? '')
+              : '';
+            const isCtSuccess = lastResultText.includes('ct_mode') || lastResultText.includes('"ok"');
+            const isTraceComplete = lastResultText.includes('"complete"') || lastResultText.includes('"done"');
+
+            // Track tool result message index + original callId (only successful CT calls)
+            if ((hasCtStart || hasCtSubmit) && isCtSuccess) {
               const ctCall = toolCalls.find(tc => tc.name === 'lineage_start_column_trace' || tc.name === 'lineage_submit_hop_analysis');
-              if (ctCall) ctToolResults.push({ msgIdx: messages.length - 1, callId: ctCall.callId });
+              if (ctCall) {
+                ctToolResults.push({ msgIdx: messages.length - 1, callId: ctCall.callId });
+                logDebug(outputChannel, 'AI', `[CT] Tracked tool result: msg[${messages.length - 1}], callId=${ctCall.callId.slice(-8)}, total tracked=${ctToolResults.length}`);
+              }
+            } else if ((hasCtStart || hasCtSubmit) && !isCtSuccess) {
+              logDebug(outputChannel, 'AI', `[CT] Skipped tracking failed CT call (error in result)`);
             }
 
             // In-place replacement: compact ALL previous CT tool result messages
             if (hasCtSubmit && ctToolResults.length > 1) {
-              for (let i = 0; i < ctToolResults.length - 1; i++) {
+              const compacted = ctToolResults.length - 1;
+              for (let i = 0; i < compacted; i++) {
                 const { msgIdx, callId } = ctToolResults[i];
                 const compactJson = JSON.stringify({ _ct_compacted: true, hop: i + 1, status: 'processed' });
                 messages[msgIdx] = vscode.LanguageModelChatMessage.User(
                   [new vscode.LanguageModelToolResultPart(callId,
                     [new vscode.LanguageModelTextPart(compactJson)])]
                 );
-                logDebug(outputChannel, 'AI', `[CT] Replaced message[${msgIdx}] (hop ${i + 1})`);
               }
+              logDebug(outputChannel, 'AI', `[CT] Compacted ${compacted} previous hop message(s)`);
             }
 
             // "What next" injection: guide model to next step
-            const lastResultText = resultParts.length > 0
-              ? JSON.stringify((resultParts[resultParts.length - 1] as { content: unknown }).content ?? '')
-              : '';
-            const isTraceComplete = lastResultText.includes('"complete"') || lastResultText.includes('"done"');
-
-            if ((hasCtStart || hasCtSubmit) && !isTraceComplete) {
+            if ((hasCtStart || hasCtSubmit) && !isTraceComplete && isCtSuccess) {
               const whatNextMsg = `COLUMN TRACE: Hop data received. Read the focus node DDL in the tool result. ` +
                 `Determine which neighbors carry the active columns. Submit your verdicts via lineage_submit_hop_analysis.`;
               if (ctWhatNextIdx >= 0) {
@@ -955,17 +963,19 @@ export function activate(context: vscode.ExtensionContext) {
               }
             }
 
-            // Summary logging on completion
-            if (hasCtResult && _columnTraceState) {
-              logInfo(outputChannel, 'AI', `[CT] === SUMMARY === hops=${_columnTraceState.hops}, status=${_columnTraceState.status}`);
+            // Progress logging
+            if (_columnTraceState) {
+              const st = _columnTraceState;
+              if (hasCtStart && isCtSuccess) {
+                logInfo(outputChannel, 'AI', `[CT] STARTED | scope=${st.scope} nodes | frontier=${st.frontierSize}`);
+              }
+              if (hasCtResult) {
+                logInfo(outputChannel, 'AI', `[CT] COMPLETE | ${st.hops} hops | visited=${st.visited_count}/${st.scope} | frontier drained`);
+              }
             }
           }
 
-          // H3: Budget hints — replace previous hint instead of accumulating
-          if (lastBudgetHintIdx >= 0) {
-            messages.splice(lastBudgetHintIdx, 1);
-            lastBudgetHintIdx = -1;
-          }
+          // H3: Budget hints — in-place replacement, NEVER splice (splice shifts CT message indices)
           const budgetUsedPct = _aiMaxInputTokens > 0 ? inputTokenEstimate / _aiMaxInputTokens : 0;
           let budgetMsg: string | null = null;
           if (budgetUsedPct >= 0.8) {
@@ -979,8 +989,12 @@ export function activate(context: vscode.ExtensionContext) {
               : `SYSTEM: Round ${roundCount}/${MAX_ROUNDS}. ${remaining} round(s) remaining. Prioritize essential work.`;
           }
           if (budgetMsg) {
-            messages.push(vscode.LanguageModelChatMessage.User(budgetMsg));
-            lastBudgetHintIdx = messages.length - 1;
+            if (lastBudgetHintIdx >= 0) {
+              messages[lastBudgetHintIdx] = vscode.LanguageModelChatMessage.User(budgetMsg);
+            } else {
+              messages.push(vscode.LanguageModelChatMessage.User(budgetMsg));
+              lastBudgetHintIdx = messages.length - 1;
+            }
             logDebug(outputChannel, 'AI', `Budget hint — ${budgetMsg}`);
           }
 
