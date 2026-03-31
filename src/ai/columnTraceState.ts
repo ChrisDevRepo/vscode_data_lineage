@@ -265,7 +265,11 @@ export class ColumnTraceState {
     while (this.frontier.length > 0) {
       const candidate = this.frontier.shift()!;
       if (this.visited.has(candidate.nodeId)) {
-        this.log('debug', `Skipped visited node in frontier: ${candidate.nodeId}`);
+        this.log('debug', `Frontier skip: ${candidate.nodeId} — already visited`);
+        continue;
+      }
+      if (this.removedSet.has(candidate.nodeId)) {
+        this.log('debug', `Frontier skip: ${candidate.nodeId} — pruned (parent removed)`);
         continue;
       }
       const n = this.nodeMap.get(candidate.nodeId);
@@ -281,6 +285,7 @@ export class ColumnTraceState {
 
     if (!entry || !node) {
       this._status = 'complete';
+      this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeSize} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughSet.size}`);
       return { done: true };
     }
 
@@ -471,14 +476,16 @@ export class ColumnTraceState {
         this.passthroughSet.add(v.nodeId);
         // Passthrough uses verdict columnsOut if provided, else inherits current active columns
         const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
-        this.log('debug', `Verdict: ${v.nodeId} = passthrough, columns=[${passColumns}]`);
         if (boundary === 'none') {
           advanced += this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth);
+          this.log('debug', `Verdict: ${v.nodeId} = passthrough, columns=[${passColumns}] → queued ${advanced} children`);
+        } else {
+          this.log('debug', `Verdict: ${v.nodeId} = passthrough (boundary=${boundary}), columns=[${passColumns}] → terminal`);
         }
         continue;
       }
 
-      // relevant
+      // relevant — push the node ITSELF to frontier as next focus hop (not its children)
       this.chain.set(v.nodeId, {
         nodeId: v.nodeId,
         schema: neighbor?.schema ?? '',
@@ -489,11 +496,18 @@ export class ColumnTraceState {
         summary: v.summary ?? '',
         boundaryFlag: boundary,
       });
-      this.log('debug', `Verdict: ${v.nodeId} = relevant, trace columns [${v.columnsOut}]`);
 
-      // Advance frontier if not a terminal boundary
       if (boundary === 'none') {
-        advanced += this.advanceFrontier(v.nodeId, v.columnsOut ?? [], this.currentFocusDepth);
+        this.frontier.push({
+          nodeId: v.nodeId,
+          activeColumns: v.columnsOut ?? [],
+          depth: this.currentFocusDepth + 1,
+          parentNodeId: this.currentFocusNodeId ?? '',
+        });
+        advanced++;
+        this.log('debug', `Verdict: ${v.nodeId} = relevant, trace columns [${v.columnsOut}] → queued as next focus hop`);
+      } else {
+        this.log('debug', `Verdict: ${v.nodeId} = relevant (boundary=${boundary}), trace columns [${v.columnsOut}] → terminal, not queued`);
       }
     }
 
@@ -515,7 +529,6 @@ export class ColumnTraceState {
     edges: [string, string, string][];
     outOfScope: OutOfScopeEntry[];
     stats: { hops: number; examined: number; relevant: number; removed: number; passthrough: number };
-    columnFlow: string;
   } | { error: string; hint?: string } {
 
     if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
@@ -563,13 +576,6 @@ export class ColumnTraceState {
       }
     }
 
-    // Build column flow string
-    const columnFlow = chainArr
-      .map(e => e.columnsIn.length > 0
-        ? `${e.name}(${e.columnsIn.join(',')})`
-        : `${e.name}`)
-      .join(' ← ');
-
     const stats = {
       hops: this.hopCount,
       examined: this.visited.size,
@@ -581,7 +587,7 @@ export class ColumnTraceState {
     const pruneRate = this.scopeSize > 0 ? Math.round(((this.scopeSize - stats.examined) / this.scopeSize) * 100) : 0;
     this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeSize} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
 
-    return { status: 'complete', chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats, columnFlow };
+    return { status: 'complete', chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats };
   }
 
   // ─── Accessors ─────────────────────────────────────────────────────────────

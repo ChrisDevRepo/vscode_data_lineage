@@ -532,20 +532,13 @@ export function activate(context: vscode.ExtensionContext) {
 
         const hopResult = _columnTraceState.getHopContext();
         if ('error' in hopResult) return toolResult(hopResult);
-        if ('done' in hopResult) return toolResult({ status: 'complete', hops: _columnTraceState.hops });
+        if ('done' in hopResult) {
+          // Frontier drained — return full result inline (no separate get_result call needed)
+          const fullResult = _columnTraceState.getResult();
+          return toolResult(fullResult);
+        }
 
         return toolResult(hopResult);
-      },
-    }),
-    vscode.lm.registerTool('lineage_get_column_trace_result', {
-      prepareInvocation(_options, _token) {
-        return { invocationMessage: 'Assembling column trace result…' };
-      },
-      invoke(_options, _token) {
-        if (!isAiEnabled()) return disabled();
-        if (!_columnTraceState) return toolResult({ error: 'no_active_trace', hint: 'Call lineage_start_column_trace first.' });
-        logInfo(outputChannel, 'AI', `lineage_get_column_trace_result: hops=${_columnTraceState.hops}`);
-        return toolResult(_columnTraceState.getResult());
       },
     }),
   );
@@ -608,16 +601,16 @@ export function activate(context: vscode.ExtensionContext) {
           'After receiving the result, follow this protocol:',
           '1. Read the focus node DDL in the result.',
           '2. For each neighbor, determine if the target column flows through it:',
-          '   - relevant: column flows through — specify columns_to_trace (may be renamed in DDL)',
-          '   - remove: column does NOT flow through — explain why',
-          '   - passthrough: boundary node or connector',
+          '   - relevant: column carries the traced data — specify columns_to_trace (the INPUT columns in the neighbor\'s upstream, not the output)',
+          '   - remove: column does NOT flow through — node and all its descendants are pruned',
+          '   - passthrough: data passes through unchanged (e.g., staging table between two SPs)',
           '3. Call lineage_submit_hop_analysis with your verdicts array.',
           '4. If you get invalid_columns error: re-read the DDL, correct the column name, resubmit.',
-          '5. Repeat steps 1-4 for each new hop until status is "complete".',
-          '6. When complete: call lineage_get_column_trace_result to get the assembled trace.',
+          '5. Repeat steps 1-4 for each new hop. When all paths are exhausted, the final submit returns the complete result.',
+          '6. Present the result to the user.',
           '',
-          'Track renames: INSERT INTO T(Revenue) SELECT Amount → next hop traces "Amount" not "Revenue".',
-          'Track derivations: SELECT Amount * Rate → trace BOTH "Amount" AND "Rate".',
+          'Track renames: INSERT INTO T(Revenue) SELECT Amount → columns_to_trace: [Amount] not [Revenue].',
+          'Track derivations: SELECT Amount * Rate AS Total → columns_to_trace: [Amount, Rate] (both INPUTS, not [Total]).',
         ].join('\n');
       }
 
@@ -719,22 +712,23 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      const MAX_ROUNDS = 15;
-      const BUDGET_HINT_THRESHOLD = Math.ceil(MAX_ROUNDS * 0.6); // round 9 of 15
+      const MAX_ROUNDS = 25;
+      const BUDGET_HINT_THRESHOLD = Math.ceil(MAX_ROUNDS * 0.6); // round 15 of 25
 
       // System prompt: CT mode gets a separate prompt referencing ONLY CT tools (POC-validated requirement)
       const systemPrompt = isColumnTraceMode
-        ? 'Column-level lineage tracer. You have EXACTLY 3 tools: ' +
-          'lineage_start_column_trace, lineage_submit_hop_analysis, lineage_get_column_trace_result.\n' +
+        ? 'Column-level lineage tracer. You have EXACTLY 2 tools: ' +
+          'lineage_start_column_trace, lineage_submit_hop_analysis.\n' +
           'You MUST call tools to answer — never ask the user for IDs or parameters.\n\n' +
           'PROTOCOL (follow exactly):\n' +
           '1. Call lineage_start_column_trace with columns and direction. Origin is optional.\n' +
-          '2. Read the DDL in the result. For each neighbor, decide: relevant / remove / passthrough.\n' +
+          '2. Read the focus node DDL. For each neighbor, decide: relevant / remove / passthrough.\n' +
           '3. Call lineage_submit_hop_analysis with your verdicts.\n' +
           '4. If you get invalid_columns error: re-read the DDL, fix the column name, resubmit.\n' +
-          '5. Repeat 2-4 for each hop until status is "complete".\n' +
-          '6. Call lineage_get_column_trace_result to get the final chain.\n' +
-          '7. Present the column flow to the user.\n\n' +
+          '5. Repeat 2-4 for each hop. The final submit returns the complete result when all paths are exhausted.\n' +
+          '6. Present the column flow to the user.\n\n' +
+          'IMPORTANT — columns_to_trace must be INPUT columns, not output:\n' +
+          '  SP computes ListPrice = CostPrice * (1+MarkupPct) → columns_to_trace: [CostPrice, MarkupPct]\n\n' +
           'NEVER ask the user for object IDs. ALWAYS call lineage_start_column_trace as your first action.'
         : 'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
           `Budget: ${MAX_ROUNDS} rounds.\n\n` +
@@ -917,7 +911,6 @@ export function activate(context: vscode.ExtensionContext) {
           if (isColumnTraceMode) {
             const hasCtStart = toolCalls.some(tc => tc.name === 'lineage_start_column_trace');
             const hasCtSubmit = toolCalls.some(tc => tc.name === 'lineage_submit_hop_analysis');
-            const hasCtResult = toolCalls.some(tc => tc.name === 'lineage_get_column_trace_result');
 
             // Detect success vs failure from tool result
             const lastResultText = resultParts.length > 0
@@ -969,7 +962,7 @@ export function activate(context: vscode.ExtensionContext) {
               if (hasCtStart && isCtSuccess) {
                 logInfo(outputChannel, 'AI', `[CT] STARTED | scope=${st.scope} nodes | frontier=${st.frontierSize}`);
               }
-              if (hasCtResult) {
+              if (hasCtSubmit && isTraceComplete) {
                 logInfo(outputChannel, 'AI', `[CT] COMPLETE | ${st.hops} hops | visited=${st.visited_count}/${st.scope} | frontier drained`);
               }
             }

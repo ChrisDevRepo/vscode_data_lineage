@@ -404,7 +404,6 @@ async function testGetResultStructure(model: DatabaseModel) {
     edges: unknown[];
     outOfScope: unknown[];
     stats: { hops: number; examined: number; relevant: number; removed: number; passthrough: number };
-    columnFlow: string;
   };
 
   assertEq(r.status, 'complete', 'Result status is complete');
@@ -415,7 +414,6 @@ async function testGetResultStructure(model: DatabaseModel) {
   assert(typeof r.stats === 'object', 'stats is object');
   assert(typeof r.stats.hops === 'number', 'stats.hops is number');
   assert(typeof r.stats.examined === 'number', 'stats.examined is number');
-  assert(typeof r.columnFlow === 'string', 'columnFlow is string');
   assert(r.chain.length >= 1, 'Chain has at least origin node');
 }
 
