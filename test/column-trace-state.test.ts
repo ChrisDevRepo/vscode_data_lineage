@@ -219,7 +219,7 @@ async function testVerdictRemove(model: DatabaseModel) {
   // Remove ALL neighbors
   const verdicts = ctx.neighbors.map(nb => ({
     nodeId: nb.id,
-    verdict: 'remove' as const,
+    verdict: 'prune' as const,
     summary: 'Test removal',
   }));
 
@@ -262,7 +262,7 @@ async function testVerdictRelevantWithValidation(model: DatabaseModel) {
     focusNodeId: focusId,
     verdicts: [{
       nodeId: tableNb.id,
-      verdict: 'relevant',
+      verdict: 'trace',
       columnsOut: ['__NONEXISTENT_COLUMN__'],
       summary: 'Test bad column',
     }],
@@ -278,7 +278,7 @@ async function testVerdictRelevantWithValidation(model: DatabaseModel) {
     focusNodeId: focusId,
     verdicts: [{
       nodeId: tableNb.id,
-      verdict: 'relevant',
+      verdict: 'trace',
       columnsOut: [validCol],
       summary: 'Test valid column',
     }],
@@ -313,15 +313,15 @@ async function testRejectionCap(model: DatabaseModel) {
   if (!tableNb) { console.log('  (skipping: no table neighbor)'); return; }
 
   // Reject #1
-  const r1 = state.submitVerdicts({ focusNodeId: focusId, verdicts: [{ nodeId: tableNb.id, verdict: 'relevant', columnsOut: ['__BAD1__'] }] });
+  const r1 = state.submitVerdicts({ focusNodeId: focusId, verdicts: [{ nodeId: tableNb.id, verdict: 'trace', columnsOut: ['__BAD1__'] }] });
   assert('error' in r1 && (r1 as { error: string }).error === 'invalid_columns', 'Rejection #1');
 
   // Reject #2
-  const r2 = state.submitVerdicts({ focusNodeId: focusId, verdicts: [{ nodeId: tableNb.id, verdict: 'relevant', columnsOut: ['__BAD2__'] }] });
+  const r2 = state.submitVerdicts({ focusNodeId: focusId, verdicts: [{ nodeId: tableNb.id, verdict: 'trace', columnsOut: ['__BAD2__'] }] });
   assert('error' in r2 && (r2 as { error: string }).error === 'invalid_columns', 'Rejection #2');
 
   // Reject #3 → cap reached, should accept on trust
-  const r3 = state.submitVerdicts({ focusNodeId: focusId, verdicts: [{ nodeId: tableNb.id, verdict: 'relevant', columnsOut: ['__BAD3__'], summary: 'cap test' }] });
+  const r3 = state.submitVerdicts({ focusNodeId: focusId, verdicts: [{ nodeId: tableNb.id, verdict: 'trace', columnsOut: ['__BAD3__'], summary: 'cap test' }] });
   assert('ok' in r3, 'Rejection #3 accepted (cap reached)');
   assert(logs.some(l => l.includes('Rejection cap reached')), 'Cap warning logged');
 }
@@ -353,7 +353,7 @@ async function testCycleDetection(model: DatabaseModel) {
     // Remove all neighbors to drain frontier quickly
     state.submitVerdicts({
       focusNodeId: ctx.focus_node.id as string,
-      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
     });
   }
 
@@ -378,7 +378,7 @@ async function testGetResultStructure(model: DatabaseModel) {
     const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string }> };
     state.submitVerdicts({
       focusNodeId: ctx.focus_node.id as string,
-      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'test' })),
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'test' })),
     });
   }
 
@@ -390,7 +390,7 @@ async function testGetResultStructure(model: DatabaseModel) {
     const c = h as { focus_node: { id: string }; neighbors: Array<{ id: string }> };
     state.submitVerdicts({
       focusNodeId: c.focus_node.id as string,
-      verdicts: c.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+      verdicts: c.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
     });
   }
 
@@ -550,7 +550,7 @@ async function testPassthroughVerdict(model: DatabaseModel) {
   const frontierBefore = state.frontierSize;
   const result = state.submitVerdicts({
     focusNodeId: focusId,
-    verdicts: [{ nodeId: nb.id, verdict: 'passthrough', summary: 'test passthrough' }],
+    verdicts: [{ nodeId: nb.id, verdict: 'pass', summary: 'test passthrough' }],
   });
 
   assert('ok' in result, 'Passthrough verdict accepted');
@@ -588,7 +588,7 @@ async function testRelevantColumnRename(model: DatabaseModel) {
     focusNodeId: ctx.focus_node.id as string,
     verdicts: [{
       nodeId: spNeighbor.id,
-      verdict: 'relevant',
+      verdict: 'trace',
       columnsOut: ['RenamedCol'],  // different from 'OriginalCol'
       summary: 'Column renamed from OriginalCol to RenamedCol',
     }],
@@ -731,7 +731,7 @@ async function testPassthroughSynthetic() {
   const nb = ctx.neighbors[0];
   const result = state.submitVerdicts({
     focusNodeId: ctx.focus_node.id as string,
-    verdicts: [{ nodeId: nb.id, verdict: 'passthrough', summary: 'test passthrough' }],
+    verdicts: [{ nodeId: nb.id, verdict: 'pass', summary: 'test passthrough' }],
   });
   assert('ok' in result, 'Syn: passthrough accepted');
   assert(true, 'Syn: passthrough verdict processed');
@@ -755,7 +755,7 @@ async function testRelevantColumnRenameSynthetic() {
       // Submit relevant with valid column 'Amount' (renamed from OrderQty)
       const result = state.submitVerdicts({
         focusNodeId: ctx.focus_node.id as string,
-        verdicts: [{ nodeId: rawData.id, verdict: 'relevant', columnsOut: ['Amount'], summary: 'OrderQty ← Amount' }],
+        verdicts: [{ nodeId: rawData.id, verdict: 'trace', columnsOut: ['Amount'], summary: 'OrderQty ← Amount' }],
       });
       assert('ok' in result, 'Syn: relevant verdict with valid renamed column accepted');
       found = true;
@@ -764,7 +764,7 @@ async function testRelevantColumnRenameSynthetic() {
     // Remove all neighbors to advance
     state.submitVerdicts({
       focusNodeId: ctx.focus_node.id as string,
-      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
     });
   }
   assert(found, 'Syn: found RawData as neighbor for column rename test');
@@ -804,7 +804,7 @@ async function testExternalBoundarySynthetic() {
     // Submit remove for all neighbors, get next hop
     state.submitVerdicts({
       focusNodeId: currentCtx.focus_node.id as string,
-      verdicts: currentCtx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+      verdicts: currentCtx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
     });
     const next = state.getHopContext();
     if ('done' in next || 'error' in next) break;
@@ -832,7 +832,7 @@ async function testSPtoSPExecEdgeSynthetic() {
       // Submit relevant with arbitrary column — SP→SP should accept on trust
       const result = state.submitVerdicts({
         focusNodeId: ctx.focus_node.id as string,
-        verdicts: [{ nodeId: spNb.id, verdict: 'relevant', columnsOut: ['ArbitraryCol'], summary: 'SP→SP, no validation' }],
+        verdicts: [{ nodeId: spNb.id, verdict: 'trace', columnsOut: ['ArbitraryCol'], summary: 'SP→SP, no validation' }],
       });
       assert('ok' in result, 'Syn: SP→SP relevant verdict accepted (no column validation)');
       found = true;
@@ -840,7 +840,7 @@ async function testSPtoSPExecEdgeSynthetic() {
     }
     state.submitVerdicts({
       focusNodeId: ctx.focus_node.id as string,
-      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
     });
   }
   assert(found, 'Syn: found SP→SP exec edge in hop neighbors');
@@ -894,7 +894,7 @@ async function testDirectionBothEdgeLabelingSynthetic() {
     // Remove all neighbors to advance
     state.submitVerdicts({
       focusNodeId: ctx.focus_node.id as string,
-      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
     });
   }
 
@@ -933,7 +933,7 @@ async function testGetResultFieldsSynthetic() {
     const c = h as { focus_node: { id: string }; neighbors: Array<{ id: string }> };
     state.submitVerdicts({
       focusNodeId: c.focus_node.id as string,
-      verdicts: c.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+      verdicts: c.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
     });
   }
 

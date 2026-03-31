@@ -491,6 +491,22 @@
           {
             "name": "column-trace",
             "description": "Trace column-level data lineage through the graph (hop-and-distill)"
+          },
+          {
+            "name": "impact",
+            "description": "Analyze what breaks if you change a column or object"
+          },
+          {
+            "name": "biz",
+            "description": "Analyze business logic, rules, and domain concepts across a data flow"
+          },
+          {
+            "name": "doc",
+            "description": "Generate documentation for a schema or data flow"
+          },
+          {
+            "name": "sql",
+            "description": "Generate SQL using actual schema types, PK/FK, and distribution"
           }
         ],
         "disambiguation": [
@@ -905,7 +921,7 @@
         "toolReferenceName": "lineage_route_mode",
         "displayName": "Route Mode",
         "userDescription": "Classify the question type to select the best analysis mode.",
-        "modelDescription": "Classify the user question into a mode. Call this FIRST before any other action.\n\n- column_trace: user asks about a SPECIFIC COLUMN — where it comes from, what feeds it, column-level data flow, how a value is calculated\n- classic: everything else — show lineage graph, explain object, search, general questions\n\nExamples:\n  \"where does AdjustedRevenue come from\" → column_trace\n  \"how is revenue calculated in FactSalesReport\" → column_trace\n  \"what feeds the Qty column\" → column_trace\n  \"show lineage for FactSalesReport\" → classic\n  \"what does spBuildSalesReport do\" → classic\n  \"search for tables with Sales\" → classic",
+        "modelDescription": "Classify the user question into a mode. Call this FIRST before any other action.\n\n- hop: question needs multi-hop graph analysis — business logic, impact analysis, documentation, SQL generation, or complex data flow questions that span multiple objects\n- classic: everything else — show lineage graph, explain a single object, search, simple questions\n\nExamples:\n  \"what breaks if I rename CustomerKey\" → hop\n  \"what's affected if I drop DimProduct\" → hop\n  \"explain the revenue business logic\" → hop\n  \"what business rules apply to the sales pipeline\" → hop\n  \"document the sales schema\" → hop\n  \"write a query joining Sales and Customer\" → hop\n  \"where does AdjustedRevenue come from\" → hop\n  \"how is revenue calculated\" → hop\n  \"show lineage for FactSalesReport\" → classic\n  \"what does spBuildSalesReport do\" → classic\n  \"search for tables with Sales\" → classic",
         "canBeReferencedInPrompt": false,
         "tags": ["lineage-router"],
         "icon": "$(compass)",
@@ -913,7 +929,7 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "mode": { "type": "string", "enum": ["column_trace", "classic"], "description": "The analysis mode that best fits the user question" },
+            "mode": { "type": "string", "enum": ["hop", "classic"], "description": "hop = multi-hop graph analysis needed, classic = simple question" },
             "reason": { "type": "string", "description": "Brief reason for the classification" }
           },
           "required": ["mode"]
@@ -924,7 +940,7 @@
         "toolReferenceName": "lineage_start_column_trace",
         "displayName": "Start Column Trace",
         "userDescription": "Start a column-level lineage trace through the dependency graph.",
-        "modelDescription": "Start a column-level lineage trace. Call when the user asks WHERE a column comes from, HOW a value is calculated, or what FEEDS a specific column.\n\nCall with the column name(s) to trace. Origin is optional — omit if unknown.\nReturns: scope preview + first hop context with focus node DDL + neighbor list with columns.\n\nYOUR TASK: Read the focus node DDL. For each neighbor, determine if the target column flows through it:\n- relevant: column flows through — specify columns_to_trace (may be renamed)\n- remove: column does NOT flow through — explain why\n- passthrough: boundary node, no transform\n\nThen call lineage_submit_hop_analysis with your verdicts.",
+        "modelDescription": "Start a column-level lineage trace. Call when the user asks WHERE a column comes from, HOW a value is calculated, or what FEEDS a specific column.\n\nCall with the column name(s) to trace. Origin is optional — omit if unknown.\nReturns: scope preview + first hop context with focus node DDL + neighbor list with columns.\n\nYOUR TASK: Read the focus node DDL. For each neighbor, determine if the target column flows through it:\n- trace: column flows through — specify columns_to_trace (may be renamed) + question for this neighbor\n- prune: column does NOT flow through — explain why\n- pass: boundary node, no transform\n\nThen call lineage_submit_hop_analysis with your notes and verdicts.",
         "canBeReferencedInPrompt": true,
         "tags": ["lineage", "lineage-ct"],
         "icon": "$(search)",
@@ -943,7 +959,7 @@
         "toolReferenceName": "lineage_submit_hop_analysis",
         "displayName": "Submit Hop Analysis",
         "userDescription": "Submit column trace analysis for the current hop.",
-        "modelDescription": "Submit your analysis of the current hop and receive the next hop's data.\n\nInput: focus_node_id (from the hop context), verdicts array — per neighbor:\n- neighbor_id: exact ID from the neighbors list\n- verdict: relevant | remove | passthrough\n- columns_to_trace: for relevant — the INPUT column names to trace upstream (not the output column name)\n- summary: one-line description of what happens to the column at this node\n\nVerdicts:\n- relevant: neighbor carries the traced column → it becomes the next focus hop\n- remove: neighbor does NOT carry the column → pruned with all descendants\n- passthrough: data passes through unchanged (staging table, simple view)\n\nIMPORTANT — columns_to_trace must be INPUT columns:\n  BAD: SP computes ListPrice = CostPrice * (1+MarkupPct) → [ListPrice]\n  GOOD: → [CostPrice, MarkupPct]\n\nReturns: next hop context OR complete result with full chain when all paths exhausted.\nIf you receive invalid_columns error: re-read the DDL and correct the column name, then resubmit.",
+        "modelDescription": "Submit your analysis of the current hop and receive the next hop's data.\n\nInput:\n- focus_node_id: from the hop context\n- notes: free-form text — your findings for this focus node (what you observed in the DDL)\n- verdicts: array — per neighbor:\n  - neighbor_id: exact ID from the neighbors list\n  - verdict: trace | prune | pass\n  - columns_to_trace: for trace — the INPUT column names to trace upstream (not the output column name)\n  - summary: one-line description of what happens at this node\n  - question: for trace — what to look for at this neighbor (specific, not vague)\n\nVerdicts:\n- trace: follow this path — neighbor carries the traced column or is relevant to the analysis\n- prune: cut this branch — neighbor and all descendants removed from the graph\n- pass: data passes through unchanged (staging table, simple view) — children queued automatically\n\nIMPORTANT — columns_to_trace must be INPUT columns:\n  BAD: SP computes ListPrice = CostPrice * (1+MarkupPct) → [ListPrice]\n  GOOD: → [CostPrice, MarkupPct]\n\nBAD question: \"check this node\"\nGOOD question: \"Does vwSalesData transform Amount or pass it through from staging?\"\n\nReturns: next hop context OR complete result with full chain when all paths exhausted.\nIf you receive invalid_columns error: re-read the DDL and correct the column name, then resubmit.",
         "canBeReferencedInPrompt": true,
         "tags": ["lineage", "lineage-ct"],
         "icon": "$(check)",
@@ -952,15 +968,17 @@
           "type": "object",
           "properties": {
             "focus_node_id": { "type": "string", "description": "ID of the focus node from the hop context" },
+            "notes": { "type": "string", "description": "Your findings for the focus node — free-form text describing what you observed in the DDL" },
             "verdicts": {
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
                   "neighbor_id": { "type": "string", "description": "Exact neighbor ID from the hop context" },
-                  "verdict": { "type": "string", "enum": ["relevant", "remove", "passthrough"] },
-                  "columns_to_trace": { "type": "array", "items": { "type": "string" }, "description": "For relevant: INPUT column names to trace in upstream sources (not the output column)" },
-                  "summary": { "type": "string", "description": "One-line: what happens to the column at this node" }
+                  "verdict": { "type": "string", "enum": ["trace", "prune", "pass"] },
+                  "columns_to_trace": { "type": "array", "items": { "type": "string" }, "description": "For trace: INPUT column names to trace in upstream sources (not the output column)" },
+                  "summary": { "type": "string", "description": "One-line: what happens to the column at this node" },
+                  "question": { "type": "string", "description": "For trace: what to look for at this neighbor (specific question, not vague)" }
                 },
                 "required": ["neighbor_id", "verdict"]
               }

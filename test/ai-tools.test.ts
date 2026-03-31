@@ -695,6 +695,57 @@ async function testPromptRegression() {
   assert('description' in props, 'description in schema properties');
 }
 
+async function testMultiModeSchema() {
+  console.log('\n── Multi-Mode Schema (package.json) ──');
+  const pkg = JSON.parse(readFileSync(rootPath('package.json'), 'utf8'));
+  const tools = pkg.contributes.languageModelTools as Array<Record<string, unknown>>;
+
+  // route_mode enum is binary: hop | classic
+  const routeTool = tools.find(t => t.name === 'lineage_route_mode') as Record<string, unknown>;
+  assert(routeTool !== undefined, 'lineage_route_mode tool found');
+  const routeSchema = routeTool.inputSchema as Record<string, { properties: Record<string, { enum?: string[] }> }>;
+  const modeEnum = routeSchema.properties.mode.enum!;
+  assert(modeEnum.includes('hop'), 'route_mode enum includes hop');
+  assert(modeEnum.includes('classic'), 'route_mode enum includes classic');
+  assert(!modeEnum.includes('column_trace'), 'route_mode enum does NOT include column_trace (user-initiated only)');
+
+  // submit_hop_analysis has notes + question + trace/prune/pass verdicts
+  const submitTool = tools.find(t => t.name === 'lineage_submit_hop_analysis') as Record<string, unknown>;
+  assert(submitTool !== undefined, 'lineage_submit_hop_analysis tool found');
+  const submitSchema = submitTool.inputSchema as Record<string, unknown>;
+  const submitProps = (submitSchema.properties as Record<string, unknown>);
+  assert('notes' in submitProps, 'submit schema has notes field');
+  assert('verdicts' in submitProps, 'submit schema has verdicts field');
+
+  // Verdict enum is trace/prune/pass
+  const verdictItems = ((submitProps.verdicts as Record<string, unknown>).items as Record<string, unknown>);
+  const verdictProps = (verdictItems.properties as Record<string, { enum?: string[] }>);
+  const verdictEnum = verdictProps.verdict.enum!;
+  assertEq(verdictEnum.length, 3, 'verdict enum has 3 values');
+  assert(verdictEnum.includes('trace'), 'verdict enum includes trace');
+  assert(verdictEnum.includes('prune'), 'verdict enum includes prune');
+  assert(verdictEnum.includes('pass'), 'verdict enum includes pass');
+  assert(!verdictEnum.includes('relevant'), 'verdict enum does NOT include old name "relevant"');
+  assert('question' in verdictProps, 'verdict item has question field');
+
+  // Chat participant has new slash commands
+  const participants = pkg.contributes.chatParticipants as Array<Record<string, unknown>>;
+  const lineageParticipant = participants.find(p => p.name === 'lineage') as Record<string, unknown>;
+  const commands = lineageParticipant.commands as Array<{ name: string }>;
+  const cmdNames = commands.map(c => c.name);
+  assert(cmdNames.includes('impact'), 'chat commands include /impact');
+  assert(cmdNames.includes('biz'), 'chat commands include /biz');
+  assert(cmdNames.includes('doc'), 'chat commands include /doc');
+  assert(cmdNames.includes('sql'), 'chat commands include /sql');
+  assert(cmdNames.includes('column-trace'), 'chat commands include /column-trace');
+
+  // modelDescription mentions BAD/GOOD question examples
+  const submitDesc = submitTool.modelDescription as string;
+  assert(submitDesc.includes('BAD question'), 'submit modelDescription has BAD question example');
+  assert(submitDesc.includes('GOOD question'), 'submit modelDescription has GOOD question example');
+  assert(submitDesc.includes('notes'), 'submit modelDescription mentions notes');
+}
+
 async function testYamlTemplates() {
   console.log('\n── AI Output Templates (YAML) ──');
   const content = readFileSync(rootPath('assets/aiOutputTemplates.yaml'), 'utf8');
@@ -738,6 +789,7 @@ async function testYamlTemplates() {
     await testSearchWithSchemas(model);
     await testSchemaMismatchDetection(model);
     await testPromptRegression();
+    await testMultiModeSchema();
     await testYamlTemplates();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);

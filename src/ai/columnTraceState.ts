@@ -13,12 +13,12 @@
 import type { DatabaseModel, LineageNode, ColumnDef, NeighborIndex, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, AI_CAPS } from './tools';
-import { presentNode, presentColumn, strip, edgeApiType } from './aiPresenter';
+import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
 export type ColumnTraceDirection = 'up' | 'down' | 'both';
-export type HopVerdict = 'relevant' | 'remove' | 'passthrough';
+export type HopVerdict = 'trace' | 'prune' | 'pass';
 export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 
 export interface FrontierEntry {
@@ -26,6 +26,7 @@ export interface FrontierEntry {
   activeColumns: string[];
   depth: number;
   parentNodeId: string | null;
+  question?: string;           // AI's sub-question for this node (self-ask routing)
 }
 
 export interface ChainEntry {
@@ -36,6 +37,7 @@ export interface ChainEntry {
   columnsIn: string[];
   columnsOut: string[];
   summary: string;
+  notes?: string;            // free-form AI findings for this node (AI-read only)
   index?: string;
   boundaryFlag: BoundaryFlag;
 }
@@ -63,7 +65,8 @@ interface HopNeighbor {
   edge_type: string;
   boundary: BoundaryFlag;
   boundary_reason?: string;
-  cols?: Record<string, unknown>[];
+  cols?: string[];                 // compact column strings: "Amount decimal(18,2), not null, PK"
+  fks?: string[];                  // compact FK strings: "CustomerKey → dbo.DimCustomer"
   hasDdl: boolean;
 }
 
@@ -254,7 +257,7 @@ export class ColumnTraceState {
     hop: number;
     frontier_remaining: number;
     sub_question: string;
-    path_so_far: Array<{ node_id: string; summary: string; columns_in: string[]; columns_out: string[] }>;
+    path_so_far: Array<{ node_id: string; summary: string; columns_in: string[]; columns_out: string[]; notes?: string }>;
     focus_node: Record<string, unknown>;
     active_columns: string[];
     neighbors: HopNeighbor[];
@@ -323,7 +326,13 @@ export class ColumnTraceState {
         focusNode.ddl_truncated = true;
       }
     } else if (nodeCols?.length) {
-      focusNode.cols = nodeCols.map(c => strip(presentColumn(c)));
+      focusNode.cols = nodeCols.map(c => presentColumnCompact(c));
+    }
+
+    // FK info on focus node
+    const focusNodeObj = this.nodeMap.get(node.id);
+    if (focusNodeObj?.fks?.length) {
+      focusNode.fks = focusNodeObj.fks.map(fk => presentFkCompact(fk));
     }
 
     // Attach unresolved refs
@@ -373,23 +382,30 @@ export class ColumnTraceState {
 
       const nCols = this.getNodeColumns(nid);
       if (nCols?.length) {
-        neighbor.cols = nCols.map(c => strip(presentColumn(c)));
+        neighbor.cols = nCols.map(c => presentColumnCompact(c));
+      }
+
+      // FK info on neighbor
+      if (nNode.fks?.length) {
+        neighbor.fks = nNode.fks.map(fk => presentFkCompact(fk));
       }
 
       neighbors.push(neighbor);
     }
 
-    // Build path summary (compact, from chain + passthrough)
-    const pathSoFar: Array<{ node_id: string; summary: string; columns_in: string[]; columns_out: string[] }> = [];
+    // Build path summary (two-level: summary for scan, notes for detail)
+    const pathSoFar: Array<{ node_id: string; summary: string; columns_in: string[]; columns_out: string[]; notes?: string }> = [];
     for (const e of this.chain.values()) {
       if (e.nodeId === this.originNodeId && e.columnsOut.length === 0) continue;
-      pathSoFar.push({ node_id: e.nodeId, summary: e.summary, columns_in: e.columnsIn, columns_out: e.columnsOut });
+      pathSoFar.push({ node_id: e.nodeId, summary: e.summary, columns_in: e.columnsIn, columns_out: e.columnsOut, notes: e.notes });
     }
     for (const [ptId, ptCols] of this.passthroughMap) {
-      pathSoFar.push({ node_id: ptId, summary: 'passthrough', columns_in: ptCols, columns_out: [] });
+      pathSoFar.push({ node_id: ptId, summary: 'pass', columns_in: ptCols, columns_out: [] });
     }
 
-    const subQuestion = `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`;
+    // sub_question: AI's own question from previous hop (self-ask) or default phrasing
+    const subQuestion = entry.question
+      ?? `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`;
     const pct = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
     this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeSize} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
     if (entry.depth >= 10) {
@@ -419,11 +435,13 @@ export class ColumnTraceState {
 
   submitVerdicts(params: {
     focusNodeId: string;
+    notes?: string;              // free-form AI findings for the focus node
     verdicts: Array<{
       nodeId: string;
       verdict: HopVerdict;
       columnsOut?: string[];
       summary?: string;
+      question?: string;         // AI's sub-question for this neighbor (self-ask)
     }>;
   }): { ok: true; advanced: number; frontierSize: number }
      | { error: 'invalid_columns'; nodeId: string; invalid: string[]; valid: string[] }
@@ -438,12 +456,12 @@ export class ColumnTraceState {
 
     // Validate all verdicts before committing (transactional)
     for (const v of params.verdicts) {
-      if (v.verdict === 'relevant') {
-        if (!v.columnsOut?.length) {
-          return { error: 'missing_columns', hint: `Verdict "relevant" for ${v.nodeId} requires columnsOut.` };
+      if (v.verdict === 'trace') {
+        if (!v.columnsOut?.length && this.targetColumns.length > 0) {
+          return { error: 'missing_columns', hint: `Verdict "trace" for ${v.nodeId} requires columnsOut (column mode).` };
         }
-        // Column validation (skip if rejection cap reached)
-        if (this.rejectionsThisHop < MAX_REJECTIONS_PER_HOP) {
+        // Column validation (skip if no columns to validate or rejection cap reached)
+        if (v.columnsOut?.length && this.rejectionsThisHop < MAX_REJECTIONS_PER_HOP) {
           const neighbor = this.nodeMap.get(v.nodeId);
           const neighborCols = this.getNodeColumns(v.nodeId);
           if (neighborCols?.length) {
@@ -474,32 +492,37 @@ export class ColumnTraceState {
     }
 
     // All validations passed — commit mutations
+    // Store notes on focus node's chain entry (blackboard pattern)
+    if (params.notes && this.currentFocusNodeId) {
+      const focusChain = this.chain.get(this.currentFocusNodeId);
+      if (focusChain) focusChain.notes = params.notes;
+    }
     let advanced = 0;
     for (const v of params.verdicts) {
       const boundary = this.detectBoundary(v.nodeId);
       const neighbor = this.nodeMap.get(v.nodeId);
 
-      if (v.verdict === 'remove') {
+      if (v.verdict === 'prune') {
         this.removedSet.add(v.nodeId);
-        this.outOfScope.push({ nodeId: v.nodeId, reason: v.summary ?? 'Removed by AI' });
-        this.log('debug', `Verdict: ${v.nodeId} = remove ("${v.summary ?? ''}")`);
+        this.outOfScope.push({ nodeId: v.nodeId, reason: v.summary ?? 'Pruned by AI' });
+        this.log('debug', `Verdict: ${v.nodeId} = prune ("${v.summary ?? ''}")`);
         continue;
       }
 
-      if (v.verdict === 'passthrough') {
+      if (v.verdict === 'pass') {
         // Passthrough uses verdict columnsOut if provided, else inherits current active columns
         const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
         this.passthroughMap.set(v.nodeId, [...passColumns]);
         if (boundary === 'none') {
           advanced += this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth);
-          this.log('debug', `Verdict: ${v.nodeId} = passthrough, columns=[${passColumns}] → queued ${advanced} children`);
+          this.log('debug', `Verdict: ${v.nodeId} = pass, columns=[${passColumns}] → queued ${advanced} children`);
         } else {
-          this.log('debug', `Verdict: ${v.nodeId} = passthrough (boundary=${boundary}), columns=[${passColumns}] → terminal`);
+          this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}), columns=[${passColumns}] → terminal`);
         }
         continue;
       }
 
-      // relevant — push the node ITSELF to frontier as next focus hop (not its children)
+      // trace — push the node ITSELF to frontier as next focus hop (not its children)
       this.chain.set(v.nodeId, {
         nodeId: v.nodeId,
         schema: neighbor?.schema ?? '',
@@ -517,19 +540,20 @@ export class ColumnTraceState {
           activeColumns: v.columnsOut ?? [],
           depth: this.currentFocusDepth + 1,
           parentNodeId: this.currentFocusNodeId ?? '',
+          question: v.question,
         });
         this.frontierIds.add(v.nodeId);
         advanced++;
-        this.log('debug', `Verdict: ${v.nodeId} = relevant, trace columns [${v.columnsOut}] → queued as next focus hop`);
+        this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
       } else {
-        this.log('debug', `Verdict: ${v.nodeId} = relevant (boundary=${boundary}), trace columns [${v.columnsOut}] → terminal, not queued`);
+        this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
       }
     }
 
     this._status = 'hopping'; // ready for next getHopContext()
-    const relevant = params.verdicts.filter(v => v.verdict === 'relevant').length;
-    const removed = params.verdicts.filter(v => v.verdict === 'remove').length;
-    const passthrough = params.verdicts.filter(v => v.verdict === 'passthrough').length;
+    const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
+    const removed = params.verdicts.filter(v => v.verdict === 'prune').length;
+    const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
     this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
     return { ok: true, advanced, frontierSize: this.frontier.length };

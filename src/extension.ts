@@ -512,6 +512,25 @@ export function activate(context: vscode.ExtensionContext) {
         const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
         if ('error' in initResult) return toolResult(initResult);
 
+        // Depth gate: if scope is small enough, fall back to classic BFS (all DDL at once)
+        const DEPTH_GATE_THRESHOLD = 5; // nodes — roughly ~8K tokens of DDL
+        if (initResult.scopeSize <= DEPTH_GATE_THRESHOLD) {
+          const originId = (initResult.originNode as { id?: string }).id;
+          if (originId && g) {
+            logInfo(outputChannel, 'AI', `[CT] Scope ≤ ${DEPTH_GATE_THRESHOLD} (${initResult.scopeSize} nodes), classic fallback`);
+            const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _aiCaps, _columnStore ?? undefined);
+            _columnTraceState = null; // release state machine — not needed
+            return toolResult({
+              status: 'classic_fallback',
+              reason: 'scope_shallow',
+              scope_size: initResult.scopeSize,
+              origin: initResult.originNode,
+              bfs_result: bfsResult,
+              hint: 'Scope is small — all DDL provided in one shot. Analyze directly without hop-by-hop.',
+            });
+          }
+        }
+
         const hopResult = _columnTraceState.getHopContext();
         if ('error' in hopResult) return toolResult(hopResult);
         if ('done' in hopResult) return toolResult({ ...initResult, status: 'complete', message: 'No neighbors to trace.' });
@@ -529,18 +548,20 @@ export function activate(context: vscode.ExtensionContext) {
 
         const input = options.input as {
           focus_node_id?: string;
-          verdicts?: Array<{ neighbor_id?: string; verdict?: string; columns_to_trace?: string[]; summary?: string }>;
+          notes?: string;
+          verdicts?: Array<{ neighbor_id?: string; verdict?: string; columns_to_trace?: string[]; summary?: string; question?: string }>;
         };
         const focusNodeId = input.focus_node_id ?? '';
         const verdicts = (input.verdicts ?? []).map(v => ({
           nodeId: v.neighbor_id ?? '',
-          verdict: (v.verdict ?? 'remove') as 'relevant' | 'remove' | 'passthrough',
+          verdict: (v.verdict ?? 'prune') as 'trace' | 'prune' | 'pass',
           columnsOut: v.columns_to_trace,
           summary: v.summary,
+          question: v.question,
         }));
         logInfo(outputChannel, 'AI', `lineage_submit_hop_analysis: focus=${focusNodeId}, ${verdicts.length} verdict(s)`);
 
-        const submitResult = _columnTraceState.submitVerdicts({ focusNodeId, verdicts });
+        const submitResult = _columnTraceState.submitVerdicts({ focusNodeId, notes: input.notes, verdicts });
         if ('error' in submitResult) return toolResult(submitResult);
 
         const hopResult = _columnTraceState.getHopContext();
@@ -588,22 +609,41 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       // ─── Mode detection: slash command → direct mode; free-form → routing round ───
-      let resolvedMode: 'column_trace' | 'classic' | null = null;
+      // Modes: 'column_trace' (user-initiated only), 'hop' (auto-routable), 'classic'
+      // promptVariant: which system prompt to use (column-trace, impact, biz, doc, sql, classic)
+      let resolvedMode: 'column_trace' | 'hop' | 'classic' | null = null;
+      let promptVariant: 'column-trace' | 'impact' | 'biz' | 'doc' | 'sql' | 'classic' = 'classic';
 
       // Slash commands set mode directly (no routing round needed)
       if (request.command === 'column-trace') {
         resolvedMode = 'column_trace';
+        promptVariant = 'column-trace';
+      } else if (request.command === 'impact') {
+        // /impact can be column mode (if column name in prompt) or hop mode (if object name only)
+        // Heuristic: if the prompt looks like a column name (no dots, no brackets), use column mode
+        // Otherwise, use hop mode. The AI will resolve via start_column_trace.
+        resolvedMode = 'hop';
+        promptVariant = 'impact';
+      } else if (request.command === 'biz') {
+        resolvedMode = 'hop';
+        promptVariant = 'biz';
+      } else if (request.command === 'doc') {
+        resolvedMode = 'hop';
+        promptVariant = 'doc';
+      } else if (request.command === 'sql') {
+        resolvedMode = 'hop';
+        promptVariant = 'sql';
       } else if (request.command === 'trace' || request.command === 'search' || request.command === 'explain') {
         resolvedMode = 'classic';
       }
 
-      // Free-form: run routing round — AI classifies via route_mode tool
+      // Free-form: run routing round — AI classifies via route_mode tool (binary: hop vs classic)
       if (!resolvedMode) {
         const routerTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-router'));
         if (routerTools.length > 0) {
           const routerPrompt = [
             'Classify this user question by calling lineage_route_mode. Do NOT answer the question yet.',
-            'Choose column_trace if the user asks about a specific column\'s data flow. Choose classic for everything else.',
+            'Choose hop if the question needs multi-hop graph analysis (business logic, impact, documentation, SQL, complex data flow). Choose classic for everything else.',
           ].join('\n');
           const routerMessages = [
             vscode.LanguageModelChatMessage.User(routerPrompt),
@@ -614,12 +654,12 @@ export function activate(context: vscode.ExtensionContext) {
             for await (const part of routerResponse.stream) {
               if (part instanceof vscode.LanguageModelToolCallPart) {
                 const input = part.input as { mode?: string; reason?: string };
-                if (input.mode === 'column_trace') {
-                  resolvedMode = 'column_trace';
+                if (input.mode === 'hop') {
+                  resolvedMode = 'hop';
+                  promptVariant = 'biz'; // default hop variant for free-form — AI will adapt
                 } else {
                   resolvedMode = 'classic';
                 }
-                // Invoke the tool so the handler logs the classification
                 await vscode.lm.invokeTool(part.name, { input: part.input, toolInvocationToken: request.toolInvocationToken }, token);
               }
             }
@@ -630,11 +670,16 @@ export function activate(context: vscode.ExtensionContext) {
         if (!resolvedMode) resolvedMode = 'classic'; // fallback
       }
 
-      const isColumnTraceMode = resolvedMode === 'column_trace';
+      // Early feedback — user can course-correct on auto-routed questions
+      if (!request.command && resolvedMode === 'hop') {
+        stream.markdown('*Routing: hop-by-hop analysis. For column-level tracing, use `/column-trace [column]`. For impact analysis, use `/impact [column or object]`.*\n\n');
+      }
+
+      const isColumnTraceMode = resolvedMode === 'column_trace' || resolvedMode === 'hop';
       const lineageTools = isColumnTraceMode
         ? vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'))
         : vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-      logInfo(outputChannel, 'AI', `Mode: ${resolvedMode}${request.command ? ` (/${request.command})` : ' (auto-routed)'} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
+      logInfo(outputChannel, 'AI', `Mode: ${resolvedMode} (${promptVariant})${request.command ? ` /${request.command}` : ' auto-routed'} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
       // Slash command routing — transform user prompt for focused intent
       let effectivePrompt = request.prompt;
@@ -644,7 +689,7 @@ export function activate(context: vscode.ExtensionContext) {
         effectivePrompt = `Search for database objects matching: ${request.prompt}. Use search_objects with smart query syntax.`;
       } else if (request.command === 'explain') {
         effectivePrompt = `Explain what this object does: ${request.prompt}. Use get_object_detail to get the DDL, then explain the logic.`;
-      } else if (isColumnTraceMode) {
+      } else if (promptVariant === 'column-trace') {
         effectivePrompt = [
           `COLUMN TRACE MODE: ${request.prompt}`,
           '',
@@ -654,16 +699,86 @@ export function activate(context: vscode.ExtensionContext) {
           'After receiving the result, follow this protocol:',
           '1. Read the focus node DDL in the result.',
           '2. For each neighbor, determine if the target column flows through it:',
-          '   - relevant: column carries the traced data — specify columns_to_trace (the INPUT columns in the neighbor\'s upstream, not the output)',
-          '   - remove: column does NOT flow through — node and all its descendants are pruned',
-          '   - passthrough: data passes through unchanged (e.g., staging table between two SPs)',
-          '3. Call lineage_submit_hop_analysis with your verdicts array.',
+          '   - trace: column flows through — specify columns_to_trace (INPUT columns, not output) + question (what to look for there)',
+          '   - prune: column does NOT flow through — node and all its descendants are cut',
+          '   - pass: data passes through unchanged (e.g., staging table between two SPs)',
+          '3. Call lineage_submit_hop_analysis with your notes (what you found at this node) and verdicts.',
           '4. If you get invalid_columns error: re-read the DDL, correct the column name, resubmit.',
           '5. Repeat steps 1-4 for each new hop. When all paths are exhausted, the final submit returns the complete result.',
           '6. Present the result to the user.',
           '',
           'Track renames: INSERT INTO T(Revenue) SELECT Amount → columns_to_trace: [Amount] not [Revenue].',
           'Track derivations: SELECT Amount * Rate AS Total → columns_to_trace: [Amount, Rate] (both INPUTS, not [Total]).',
+        ].join('\n');
+      } else if (promptVariant === 'impact') {
+        effectivePrompt = [
+          `IMPACT ANALYSIS MODE: ${request.prompt}`,
+          '',
+          'IMPORTANT: Do NOT ask the user for object IDs. Call lineage_start_column_trace immediately.',
+          'Call lineage_start_column_trace NOW with direction "down".',
+          'If the user mentions a specific column, include it in "columns". Otherwise omit columns.',
+          '',
+          'PROTOCOL:',
+          '1. Read the focus node DDL.',
+          '2. For each neighbor: is it affected by the change?',
+          '   - trace: this node IS affected — provide a question about what to check there',
+          '   - prune: this node is NOT affected — cut this branch',
+          '   - pass: data passes through unchanged',
+          '3. Submit with notes (describe the impact type and reasoning) and verdicts.',
+          '4. Repeat for each hop. Present the impact analysis when done.',
+          '',
+          'In notes, describe: impact type (FK break, calculation dependency, filter-only, passthrough, conditional) and reasoning.',
+        ].join('\n');
+      } else if (promptVariant === 'biz') {
+        effectivePrompt = [
+          `BUSINESS LOGIC ANALYSIS: ${request.prompt}`,
+          '',
+          'IMPORTANT: Call lineage_start_column_trace immediately with direction "up". Omit columns.',
+          '',
+          'PROTOCOL:',
+          '1. Read the focus node DDL.',
+          '2. For each neighbor: does it contain business logic relevant to the question?',
+          '   - trace: contains business logic — provide a question about what rules to look for',
+          '   - prune: infrastructure noise (audit SPs, utility functions, date lookups) — cut this branch',
+          '   - pass: data passes through unchanged',
+          '3. Submit with notes (capture business rules, domain terms, calculations) and verdicts.',
+          '4. Repeat for each hop. Present the business logic analysis when done.',
+          '',
+          'In notes, capture: business rules found, domain terms, calculations, filters.',
+        ].join('\n');
+      } else if (promptVariant === 'doc') {
+        effectivePrompt = [
+          `DOCUMENTATION MODE: ${request.prompt}`,
+          '',
+          'IMPORTANT: Call lineage_start_column_trace immediately with direction "both". Omit columns.',
+          '',
+          'PROTOCOL:',
+          '1. Read the focus node DDL.',
+          '2. For each neighbor: is it relevant to the documentation scope?',
+          '   - trace: relevant — provide a question about what to document there',
+          '   - prune: clearly outside the documentation scope — cut this branch',
+          '   - pass: data passes through unchanged',
+          '3. Submit with notes (describe purpose, key column behaviors, data quality patterns) and verdicts.',
+          '4. Repeat for each hop. Present the documentation when done.',
+          '',
+          'In notes, describe: object purpose, key columns and their behaviors, NULL handling, dedup, validation.',
+        ].join('\n');
+      } else if (promptVariant === 'sql') {
+        effectivePrompt = [
+          `SQL GENERATION MODE: ${request.prompt}`,
+          '',
+          'IMPORTANT: Call lineage_start_column_trace immediately with direction "both". Omit columns.',
+          '',
+          'PROTOCOL:',
+          '1. Read the focus node DDL.',
+          '2. For each neighbor: does it provide relevant schema context for the query?',
+          '   - trace: relevant schema context — provide a question about what types/keys to collect',
+          '   - prune: not needed for the query — cut this branch',
+          '   - pass: data passes through unchanged',
+          '3. Submit with notes (capture column types, PK/FK relationships, distribution, SQL patterns) and verdicts.',
+          '4. Repeat for each hop. Generate the SQL using the collected schema context.',
+          '',
+          'In notes, capture: column types, PK/FK relationships, distribution keys, JOIN strategies, existing SQL patterns.',
         ].join('\n');
       }
 
@@ -767,21 +882,69 @@ export function activate(context: vscode.ExtensionContext) {
 
       const MAX_ROUNDS = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 25);
 
-      // System prompt: CT mode gets a separate prompt referencing ONLY CT tools (POC-validated requirement)
+      // System prompt: state machine modes get a separate prompt referencing ONLY 2 tools (POC-validated)
+      const smSharedProtocol =
+        'You have EXACTLY 2 tools: lineage_start_column_trace, lineage_submit_hop_analysis.\n' +
+        'You MUST call tools to answer — never ask the user for IDs or parameters.\n\n' +
+        'PROTOCOL (follow exactly):\n' +
+        '1. Call lineage_start_column_trace. Origin is optional.\n' +
+        '2. Read the focus node DDL. For each neighbor, decide: trace / prune / pass.\n' +
+        '3. Call lineage_submit_hop_analysis with your notes and verdicts.\n' +
+        '   For each traced neighbor, provide a specific question (what to look for there).\n' +
+        '4. If you get invalid_columns error: re-read the DDL, fix the column name, resubmit.\n' +
+        '5. Repeat 2-4 for each hop. The final submit returns the complete result when all paths are exhausted.\n' +
+        '6. Present the findings to the user.\n\n' +
+        'VERDICTS:\n' +
+        '- trace: follow this path. Provide question for what to look for at this neighbor.\n' +
+        '- prune: cut this branch and all descendants. When uncertain, prefer trace over prune.\n' +
+        '- pass: data passes through unchanged → children queued automatically.\n\n' +
+        'BAD question: "check this node"\n' +
+        'GOOD question: "Does vwSalesData transform Amount or pass it through from staging?"\n\n' +
+        'NEVER ask the user for object IDs. ALWAYS call lineage_start_column_trace as your first action.\n\n';
+
+      const smVariantPrompts: Record<string, string> = {
+        'column-trace':
+          'Column-level lineage tracer. ' + smSharedProtocol +
+          'MODE-SPECIFIC:\n' +
+          '- trace = column flows through → provide columns_to_trace (INPUT columns, not output).\n' +
+          '- Prune aggressively — only follow paths that carry the target column.\n' +
+          '- columns_to_trace must be INPUT columns:\n' +
+          '  SP computes ListPrice = CostPrice * (1+MarkupPct) → [CostPrice, MarkupPct]\n' +
+          '- Track renames: INSERT INTO T(Revenue) SELECT Amount → trace [Amount] not [Revenue].\n' +
+          '- In notes: describe column mappings and transformations found in the DDL.',
+        'impact':
+          'Impact analysis tracer. ' + smSharedProtocol +
+          'MODE-SPECIFIC:\n' +
+          '- trace = this node IS affected by the change.\n' +
+          '- Prune aggressively — only follow nodes affected by the change.\n' +
+          '- If columns provided: provide columns_to_trace for affected columns.\n' +
+          '- In notes: describe impact type (FK break / calculation dependency / filter-only / passthrough / conditional) and reasoning.',
+        'biz':
+          'Business logic analyzer. ' + smSharedProtocol +
+          'MODE-SPECIFIC:\n' +
+          '- trace = this node contains business logic relevant to the question.\n' +
+          '- Prune infrastructure noise (audit SPs, utility functions, date/company lookups).\n' +
+          '- In notes: capture business rules, domain terms, calculations, filters.\n' +
+          '- Omit columns from start call (concept-level, not column-level).',
+        'doc':
+          'Documentation generator. ' + smSharedProtocol +
+          'MODE-SPECIFIC:\n' +
+          '- trace = this node is relevant to the documentation scope.\n' +
+          '- Prune only nodes clearly outside the documentation scope.\n' +
+          '- In notes: describe purpose, key column behaviors, data quality patterns (NULL handling, dedup, validation).\n' +
+          '- Omit columns from start call.',
+        'sql':
+          'SQL context collector. ' + smSharedProtocol +
+          'MODE-SPECIFIC:\n' +
+          '- trace = this node provides relevant schema context for the query.\n' +
+          '- Prune only nodes not needed for the query.\n' +
+          '- In notes: capture column types, PK/FK relationships, distribution keys, JOIN strategies.\n' +
+          '- Omit columns from start call.\n' +
+          '- For Synapse: co-locate JOINs on distribution key. Avoid cursors, MERGE, recursive CTEs.',
+      };
+
       const systemPrompt = isColumnTraceMode
-        ? 'Column-level lineage tracer. You have EXACTLY 2 tools: ' +
-          'lineage_start_column_trace, lineage_submit_hop_analysis.\n' +
-          'You MUST call tools to answer — never ask the user for IDs or parameters.\n\n' +
-          'PROTOCOL (follow exactly):\n' +
-          '1. Call lineage_start_column_trace with columns and direction. Origin is optional.\n' +
-          '2. Read the focus node DDL. For each neighbor, decide: relevant / remove / passthrough.\n' +
-          '3. Call lineage_submit_hop_analysis with your verdicts.\n' +
-          '4. If you get invalid_columns error: re-read the DDL, fix the column name, resubmit.\n' +
-          '5. Repeat 2-4 for each hop. The final submit returns the complete result when all paths are exhausted.\n' +
-          '6. Present the column flow to the user.\n\n' +
-          'IMPORTANT — columns_to_trace must be INPUT columns, not output:\n' +
-          '  SP computes ListPrice = CostPrice * (1+MarkupPct) → columns_to_trace: [CostPrice, MarkupPct]\n\n' +
-          'NEVER ask the user for object IDs. ALWAYS call lineage_start_column_trace as your first action.'
+        ? (smVariantPrompts[promptVariant] ?? smVariantPrompts['column-trace'])
         : 'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
           `Budget: ${MAX_ROUNDS} rounds.\n\n` +
           'RULES:\n' +

@@ -71,6 +71,31 @@ export function presentColumn(col: ColumnDef): Record<string, unknown> {
 }
 
 /**
+ * One-line compact column string for hop context (AI parses naturally).
+ * E.g. "CustomerKey int, not null, PK" or "CalcTotal COMPUTED"
+ */
+export function presentColumnCompact(col: ColumnDef): string {
+  const parts = [col.name];
+  if (col.extra === 'COMPUTED') {
+    parts.push('COMPUTED');
+    return parts.join(' ');
+  }
+  if (col.type) parts.push(col.type);
+  parts.push(col.nullable === 'true' || col.nullable === 'True' ? 'nullable' : 'not null');
+  if (col.pkOrdinal) parts.push('PK');
+  if (col.unique) parts.push('UQ');
+  if (col.check) parts.push('CK');
+  return parts.join(', ');
+}
+
+/**
+ * Compact FK string for hop context. E.g. "CustomerKey → dbo.DimCustomer"
+ */
+export function presentFkCompact(fk: { columns: string[]; refSchema: string; refTable: string }): string {
+  return `${fk.columns.join(', ')} → ${fk.refSchema}.${fk.refTable}`;
+}
+
+/**
  * Compact schema shape used in getContext.
  * Type counts stripped when zero.
  */
