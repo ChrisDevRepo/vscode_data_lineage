@@ -210,7 +210,9 @@ export function buildColumnDef(
 ): ColumnDef {
   return {
     name,
-    type: isComputed ? '(computed)' : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? ''),
+    type: isComputed
+      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '') : '—')
+      : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? ''),
     nullable: nullable ? 'NULL' : 'NOT NULL',
     extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
   };

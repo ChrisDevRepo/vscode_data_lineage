@@ -75,21 +75,19 @@ export function buildModel(
 }
 
 /**
- * Move columns and DDL from LineageNode into ColumnStore.
- * After this call, nodes carry only lightweight flags (hasColumns, hasDdl).
- * Call once after buildModel(), before sending model to webview.
+ * Index columns and DDL from LineageNode into ColumnStore for fast lookup.
+ * Inline data on nodes is PRESERVED (webview detail search needs it).
+ * ColumnStore adds O(1) indexed access for AI tools and column-trace auto-discover.
  */
 export function populateColumnStore(model: DatabaseModel, store: ColumnStore): void {
   for (const node of model.nodes) {
     if (node.columns && node.columns.length > 0) {
       store.setColumns(node.id, node.columns);
       node.hasColumns = true;
-      node.columns = undefined;
     }
     if (node.bodyScript) {
       store.setDdl(node.id, node.bodyScript);
       node.hasDdl = true;
-      node.bodyScript = undefined;
     }
   }
 }

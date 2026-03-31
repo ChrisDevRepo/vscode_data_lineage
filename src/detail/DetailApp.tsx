@@ -55,7 +55,7 @@ export function DetailApp() {
   const nodeIdRef  = useRef<string | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
-  const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('columns');
+  const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('ddl');
 
   // Keep ref in sync so the stable message handler can read the current node id.
   nodeIdRef.current = detail?.node?.id;
@@ -90,8 +90,8 @@ export function DetailApp() {
     return () => window.removeEventListener('message', handler);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset toggle to columns view when switching to a different node
-  useEffect(() => { setDetailMode('columns'); }, [detail?.node?.id]);
+  // Reset toggle to DDL view when switching to a different node
+  useEffect(() => { setDetailMode('ddl'); }, [detail?.node?.id]);
 
   if (!detail) {
     return (
@@ -159,14 +159,6 @@ export function DetailApp() {
           background: 'var(--vscode-editor-background)',
         }}>
           <button
-            onClick={() => setDetailMode('columns')}
-            style={{
-              padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 3,
-              background: detailMode === 'columns' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)',
-              color: detailMode === 'columns' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)',
-            }}
-          >Columns</button>
-          <button
             onClick={() => setDetailMode('ddl')}
             style={{
               padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 3,
@@ -174,6 +166,14 @@ export function DetailApp() {
               color: detailMode === 'ddl' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)',
             }}
           >DDL</button>
+          <button
+            onClick={() => setDetailMode('columns')}
+            style={{
+              padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 3,
+              background: detailMode === 'columns' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)',
+              color: detailMode === 'columns' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)',
+            }}
+          >Columns</button>
         </div>
         <div style={{ flex: 1, overflow: 'hidden' }}>
           {detailMode === 'columns' ? (
@@ -192,6 +192,7 @@ export function DetailApp() {
               standardModeEnabled={false}
               fillContainer
               findQuery={findQuery}
+              compactColumns
             />
           ) : (
             <MonacoSqlView node={node} findQuery={findQuery} />

@@ -6,9 +6,11 @@ interface ColumnTableProps {
   columns: ColumnDef[];
   isVirtualExt: boolean;
   findQuery?: string;
+  /** Hide Null and Flags columns (used for views/functions where these are meaningless). */
+  compact?: boolean;
 }
 
-export function ColumnTable({ columns, isVirtualExt, findQuery }: ColumnTableProps) {
+export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: ColumnTableProps) {
   if (columns.length === 0) {
     return (
       <div className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>
@@ -23,10 +25,10 @@ export function ColumnTable({ columns, isVirtualExt, findQuery }: ColumnTablePro
     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '38%' }}>Name</th>
-          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '30%' }}>Type</th>
-          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '18%' }}>Null</th>
-          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Flags</th>
+          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: compact ? '50%' : '38%' }}>Name</th>
+          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: compact ? '50%' : '30%' }}>Type</th>
+          {!compact && <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '18%' }}>Null</th>}
+          {!compact && <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Flags</th>}
         </tr>
       </thead>
       <tbody>
@@ -50,12 +52,12 @@ export function ColumnTable({ columns, isVirtualExt, findQuery }: ColumnTablePro
                   {col.type}
                 </td>
               </Tooltip>
-              <td className="py-0.5 text-xs" style={{ color: col.nullable === 'NULL' ? 'var(--ln-fg-dim)' : 'var(--ln-fg-muted)' }}>
+              {!compact && <td className="py-0.5 text-xs" style={{ color: col.nullable === 'NULL' ? 'var(--ln-fg-dim)' : 'var(--ln-fg-muted)' }}>
                 {col.nullable === 'NULL' ? 'null' : ''}
-              </td>
-              <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
+              </td>}
+              {!compact && <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
                 {flags}
-              </td>
+              </td>}
             </tr>
           );
         })}

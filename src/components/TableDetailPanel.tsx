@@ -34,6 +34,8 @@ export interface TableDetailPanelProps {
   fillContainer?: boolean;
   /** Highlight this search term in column names and FK references */
   findQuery?: string;
+  /** Hide Null/Flags columns (views/functions — meaningless metadata). */
+  compactColumns?: boolean;
 }
 
 const MIN_WIDTH = 320;
@@ -58,6 +60,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
   standardModeEnabled,
   fillContainer,
   findQuery,
+  compactColumns,
 }: TableDetailPanelProps) {
   const typeIcon = TYPE_COLORS[objectType as ObjectType]?.icon ?? '■';
   const typeLabel = externalType === 'file' ? 'FILE SOURCE'
@@ -179,7 +182,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
           </div>
 
           {/* Column table */}
-          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} findQuery={findQuery} />
+          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} findQuery={findQuery} compact={compactColumns} />
 
           {/* Foreign Keys section */}
           {fks.length > 0 && <ForeignKeysSection fks={fks} findQuery={findQuery} />}
