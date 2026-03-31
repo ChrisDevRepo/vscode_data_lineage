@@ -418,6 +418,13 @@
             "default": true,
             "description": "Enable the @lineage chat participant and AI lineage tools. Disable for users who do not use VS Code Copilot or want to remove AI features entirely."
           },
+          "dataLineageViz.ai.maxRounds": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 5,
+            "maximum": 50,
+            "markdownDescription": "Maximum tool-call rounds per `@lineage` request. Increase for complex column traces on deep graphs. Each round is one AI reasoning step + tool call."
+          },
           "dataLineageViz.ai.searchMaxResults": {
             "type": "integer",
             "default": 50,
@@ -741,8 +748,7 @@
         "modelDescription": "Create a visual bookmark ONLY when the graph genuinely aids understanding (lineage path, data flow, object relationships). For text answers (explain, document, optimize, compare, list, generate SQL), respond in chat instead — user can click 'Show in Graph' afterward. Saves a named bookmark. summary + description are VALIDATED (REJECTED if flat). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers ('step 3', 'step 4') under ## headings with business logic. BAD: 14 badges on all nodes, essay description with no step refs. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…', notes like 'Multiplies Amount × Rate'.",
         "canBeReferencedInPrompt": true,
         "tags": [
-          "lineage",
-          "lineage-ct"
+          "lineage"
         ],
         "icon": "$(sparkle)",
         "when": "dataLineageViz.modelLoaded",
@@ -892,6 +898,25 @@
           "required": [
             "ids"
           ]
+        }
+      },
+      {
+        "name": "lineage_route_mode",
+        "toolReferenceName": "lineage_route_mode",
+        "displayName": "Route Mode",
+        "userDescription": "Classify the question type to select the best analysis mode.",
+        "modelDescription": "Classify the user question into a mode. Call this FIRST before any other action.\n\n- column_trace: user asks about a SPECIFIC COLUMN — where it comes from, what feeds it, column-level data flow, how a value is calculated\n- classic: everything else — show lineage graph, explain object, search, general questions\n\nExamples:\n  \"where does AdjustedRevenue come from\" → column_trace\n  \"how is revenue calculated in FactSalesReport\" → column_trace\n  \"what feeds the Qty column\" → column_trace\n  \"show lineage for FactSalesReport\" → classic\n  \"what does spBuildSalesReport do\" → classic\n  \"search for tables with Sales\" → classic",
+        "canBeReferencedInPrompt": false,
+        "tags": ["lineage-router"],
+        "icon": "$(compass)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "mode": { "type": "string", "enum": ["column_trace", "classic"], "description": "The analysis mode that best fits the user question" },
+            "reason": { "type": "string", "description": "Brief reason for the classification" }
+          },
+          "required": ["mode"]
         }
       },
       {

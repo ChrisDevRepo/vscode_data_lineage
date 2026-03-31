@@ -685,7 +685,7 @@ async function testPromptRegression() {
   // All tools have tags and when clause
   for (const tool of tools) {
     const tags = tool.tags as string[];
-    assert(tags?.includes('lineage'), `${tool.name}: has lineage tag`);
+    assert(tags?.includes('lineage') || tags?.includes('lineage-router'), `${tool.name}: has lineage or lineage-router tag`);
     assertEq(tool.when as string, 'dataLineageViz.modelLoaded', `${tool.name}: has when clause`);
   }
 

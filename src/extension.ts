@@ -476,6 +476,19 @@ export function activate(context: vscode.ExtensionContext) {
         return toolResult(getDdlBatch(m, ids, _aiCaps, _columnStore));
       },
     }),
+    // ─── Route Mode tool (auto-classification gate) ────────────────────────
+    vscode.lm.registerTool('lineage_route_mode', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Classifying question type…' };
+      },
+      invoke(options, _token) {
+        const input = options.input as { mode?: string; reason?: string };
+        const mode = input.mode ?? 'classic';
+        const reason = input.reason ?? '';
+        logInfo(outputChannel, 'AI', `[Route] Auto-routed: ${mode}${reason ? ` — ${reason}` : ''}`);
+        return toolResult({ routed: mode, message: `Mode set to ${mode}. Proceed with your analysis.` });
+      },
+    }),
     // ─── Column-Trace tools (hop-and-distill state machine) ─────────────────
     vscode.lm.registerTool('lineage_start_column_trace', {
       prepareInvocation(_options, _token) {
@@ -574,14 +587,54 @@ export function activate(context: vscode.ExtensionContext) {
         return {};
       }
 
-      // Tool filtering: /column-trace → CT tools only; classic → all lineage tools
-      const isColumnTraceMode = request.command === 'column-trace';
+      // ─── Mode detection: slash command → direct mode; free-form → routing round ───
+      let resolvedMode: 'column_trace' | 'classic' | null = null;
+
+      // Slash commands set mode directly (no routing round needed)
+      if (request.command === 'column-trace') {
+        resolvedMode = 'column_trace';
+      } else if (request.command === 'trace' || request.command === 'search' || request.command === 'explain') {
+        resolvedMode = 'classic';
+      }
+
+      // Free-form: run routing round — AI classifies via route_mode tool
+      if (!resolvedMode) {
+        const routerTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-router'));
+        if (routerTools.length > 0) {
+          const routerPrompt = [
+            'Classify this user question by calling lineage_route_mode. Do NOT answer the question yet.',
+            'Choose column_trace if the user asks about a specific column\'s data flow. Choose classic for everything else.',
+          ].join('\n');
+          const routerMessages = [
+            vscode.LanguageModelChatMessage.User(routerPrompt),
+            vscode.LanguageModelChatMessage.User(request.prompt),
+          ];
+          try {
+            const routerResponse = await request.model.sendRequest(routerMessages, { tools: routerTools }, token);
+            for await (const part of routerResponse.stream) {
+              if (part instanceof vscode.LanguageModelToolCallPart) {
+                const input = part.input as { mode?: string; reason?: string };
+                if (input.mode === 'column_trace') {
+                  resolvedMode = 'column_trace';
+                } else {
+                  resolvedMode = 'classic';
+                }
+                // Invoke the tool so the handler logs the classification
+                await vscode.lm.invokeTool(part.name, { input: part.input, toolInvocationToken: request.toolInvocationToken }, token);
+              }
+            }
+          } catch (err) {
+            logWarn(outputChannel, 'AI', `Route classification failed, defaulting to classic — ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        if (!resolvedMode) resolvedMode = 'classic'; // fallback
+      }
+
+      const isColumnTraceMode = resolvedMode === 'column_trace';
       const lineageTools = isColumnTraceMode
         ? vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'))
         : vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-      if (isColumnTraceMode) {
-        logInfo(outputChannel, 'AI', `Column-trace mode | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
-      }
+      logInfo(outputChannel, 'AI', `Mode: ${resolvedMode}${request.command ? ` (/${request.command})` : ' (auto-routed)'} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
       // Slash command routing — transform user prompt for focused intent
       let effectivePrompt = request.prompt;
@@ -712,8 +765,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      const MAX_ROUNDS = 25;
-      const BUDGET_HINT_THRESHOLD = Math.ceil(MAX_ROUNDS * 0.6); // round 15 of 25
+      const MAX_ROUNDS = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 25);
 
       // System prompt: CT mode gets a separate prompt referencing ONLY CT tools (POC-validated requirement)
       const systemPrompt = isColumnTraceMode
@@ -797,7 +849,6 @@ export function activate(context: vscode.ExtensionContext) {
       };
 
       const runWithTools = async (): Promise<void> => {
-        let lastBudgetHintIdx = -1;
         // Column-trace context control (POC-validated patterns)
         const ctToolResults: Array<{ msgIdx: number; callId: string }> = [];
         let ctWhatNextIdx = -1;
@@ -968,37 +1019,12 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
 
-          // H3: Budget hints — in-place replacement, NEVER splice (splice shifts CT message indices)
-          const budgetUsedPct = _aiMaxInputTokens > 0 ? inputTokenEstimate / _aiMaxInputTokens : 0;
-          let budgetMsg: string | null = null;
-          if (budgetUsedPct >= 0.8) {
-            budgetMsg = `SYSTEM: ~${Math.round(budgetUsedPct * 100)}% of context window used. Present your findings now.`;
-          } else if (budgetUsedPct >= 0.6) {
-            budgetMsg = `SYSTEM: ~${Math.round(budgetUsedPct * 100)}% of context window used. Batch remaining calls.`;
-          } else if (roundCount >= BUDGET_HINT_THRESHOLD) {
-            const remaining = MAX_ROUNDS - roundCount;
-            budgetMsg = remaining <= 2
-              ? `SYSTEM: Round ${roundCount}/${MAX_ROUNDS}. Only ${remaining} round(s) left. Present your findings now.`
-              : `SYSTEM: Round ${roundCount}/${MAX_ROUNDS}. ${remaining} round(s) remaining. Prioritize essential work.`;
-          }
-          if (budgetMsg) {
-            if (lastBudgetHintIdx >= 0) {
-              messages[lastBudgetHintIdx] = vscode.LanguageModelChatMessage.User(budgetMsg);
-            } else {
-              messages.push(vscode.LanguageModelChatMessage.User(budgetMsg));
-              lastBudgetHintIdx = messages.length - 1;
-            }
-            logDebug(outputChannel, 'AI', `Budget hint — ${budgetMsg}`);
-          }
-
-          // Hard stop at 90% context window — prevent API errors from context overflow
-          if (budgetUsedPct >= 0.9) {
-            stream.markdown('\n\n> Context window nearly full — presenting available results.');
-            logWarn(outputChannel, 'AI', `Hard stop at ${Math.round(budgetUsedPct * 100)}% context usage`);
-            return;
-          }
+          // No budget hints or hard stops — let the model run until round limit or natural completion.
+          // Budget hints were proven to corrupt AI reasoning (premature termination, hallucinated summaries).
+          // The round limit (MAX_ROUNDS) is the only guardrail.
         }
-        stream.markdown(`\n\n> Reached the ${MAX_ROUNDS} tool-call round limit.`);
+        logError(outputChannel, 'AI', `Round limit reached (${MAX_ROUNDS})`, new Error('MAX_ROUNDS exceeded'));
+        stream.markdown(`\n\n**Error:** Reached the ${MAX_ROUNDS}-round limit. Increase \`dataLineageViz.ai.maxRounds\` in settings if needed.`);
       };
 
       try {
