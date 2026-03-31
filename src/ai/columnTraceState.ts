@@ -494,7 +494,24 @@ export class ColumnTraceState {
     // All validations passed — commit mutations
     // Store notes on focus node's chain entry (blackboard pattern)
     if (params.notes && this.currentFocusNodeId) {
-      const focusChain = this.chain.get(this.currentFocusNodeId);
+      let focusChain = this.chain.get(this.currentFocusNodeId);
+      if (!focusChain) {
+        // Focus node not yet in chain (e.g., first hop — auto-seeded by init, not verdicted)
+        const focusNode = this.nodeMap.get(this.currentFocusNodeId);
+        if (focusNode) {
+          focusChain = {
+            nodeId: this.currentFocusNodeId,
+            schema: focusNode.schema,
+            name: focusNode.name,
+            type: focusNode.type,
+            columnsIn: [...this.currentFocusActiveColumns],
+            columnsOut: [],
+            summary: '',
+            boundaryFlag: this.detectBoundary(this.currentFocusNodeId),
+          };
+          this.chain.set(this.currentFocusNodeId, focusChain);
+        }
+      }
       if (focusChain) focusChain.notes = params.notes;
     }
     let advanced = 0;
@@ -535,16 +552,26 @@ export class ColumnTraceState {
       });
 
       if (boundary === 'none') {
-        this.frontier.push({
-          nodeId: v.nodeId,
-          activeColumns: v.columnsOut ?? [],
-          depth: this.currentFocusDepth + 1,
-          parentNodeId: this.currentFocusNodeId ?? '',
-          question: v.question,
-        });
-        this.frontierIds.add(v.nodeId);
+        // If already in frontier (e.g., seeded by init), update existing entry with question + columns
+        const existingIdx = this.frontierIds.has(v.nodeId)
+          ? this.frontier.findIndex(f => f.nodeId === v.nodeId)
+          : -1;
+        if (existingIdx >= 0) {
+          this.frontier[existingIdx].activeColumns = v.columnsOut ?? this.frontier[existingIdx].activeColumns;
+          this.frontier[existingIdx].question = v.question;
+          this.log('debug', `Verdict: ${v.nodeId} = trace, updated existing frontier entry${v.question ? ` Q: "${v.question}"` : ''}`);
+        } else {
+          this.frontier.push({
+            nodeId: v.nodeId,
+            activeColumns: v.columnsOut ?? [],
+            depth: this.currentFocusDepth + 1,
+            parentNodeId: this.currentFocusNodeId ?? '',
+            question: v.question,
+          });
+          this.frontierIds.add(v.nodeId);
+          this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
+        }
         advanced++;
-        this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
       } else {
         this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
       }

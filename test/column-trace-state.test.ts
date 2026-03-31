@@ -945,6 +945,60 @@ async function testGetResultFieldsSynthetic() {
   assertEq(r.direction, 'down', 'Syn: direction in result');
 }
 
+// ─── Notes + Question Routing Test ──────────────────────────────────────────
+
+async function testNotesAndQuestionRoutingSynthetic() {
+  console.log('\n── Syn: Notes + Question Routing ──');
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  state.init({ targetColumns: ['Amount'], origin: '[staging].[rawdata]', direction: 'down' });
+
+  // Hop 1: submit with notes + question on first traced neighbor
+  const hop1 = state.getHopContext();
+  assert(!('done' in hop1) && !('error' in hop1), 'Syn notes: hop 1 not done/error');
+  const ctx1 = hop1 as { focus_node: { id: string }; neighbors: Array<{ id: string }> };
+  const tracedNb = ctx1.neighbors[0];
+  state.submitVerdicts({
+    focusNodeId: ctx1.focus_node.id as string,
+    notes: 'SP loads Amount from external source.',
+    verdicts: [
+      { nodeId: tracedNb.id, verdict: 'trace', columnsOut: ['Amount'], summary: 'Amount flows', question: 'Does this transform Amount?' },
+      // Prune rest
+      ...ctx1.neighbors.slice(1).map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
+    ],
+  });
+
+  // Drain remaining hops, collecting path_so_far data
+  let foundNotesInPath = false;
+  let foundSubQuestion = false;
+  for (let i = 0; i < 20; i++) {
+    const hop = state.getHopContext();
+    if ('done' in hop || 'error' in hop) break;
+    const ctx = hop as { focus_node: { id: string }; sub_question: string; neighbors: Array<{ id: string }>; path_so_far: Array<{ notes?: string }> };
+
+    // Check if notes appeared in path_so_far
+    if (ctx.path_so_far.some(p => p.notes === 'SP loads Amount from external source.')) foundNotesInPath = true;
+    // Check if our question was routed as sub_question to the traced neighbor
+    if (ctx.focus_node.id === tracedNb.id && ctx.sub_question === 'Does this transform Amount?') foundSubQuestion = true;
+
+    state.submitVerdicts({
+      focusNodeId: ctx.focus_node.id as string,
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'prune' as const, summary: 'drain' })),
+    });
+  }
+
+  assert(foundNotesInPath, 'Syn notes: notes from hop 1 appeared in later path_so_far');
+  assert(foundSubQuestion, 'Syn notes: question routed as sub_question to traced neighbor');
+
+  // Verify notes in final result chain
+  const result = state.getResult();
+  assert(!('error' in result), 'Syn notes: result not error');
+  const r = result as { chain: Array<{ nodeId: string; notes?: string }> };
+  const withNotes = r.chain.filter(e => e.notes);
+  assert(withNotes.length > 0, 'Syn notes: chain entry has notes in result');
+  assertEq(withNotes[0].notes!, 'SP loads Amount from external source.', 'Syn notes: notes content matches in result');
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -988,6 +1042,7 @@ async function main() {
     await testGetResultAwaitingVerdictsSynthetic();
     await testDirectionBothEdgeLabelingSynthetic();
     await testGetResultFieldsSynthetic();
+    await testNotesAndQuestionRoutingSynthetic();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }
