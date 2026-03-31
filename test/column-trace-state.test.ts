@@ -860,6 +860,91 @@ async function testGetResultAwaitingVerdictsSynthetic() {
   assert('error' in result, 'Syn: getResult in awaiting_verdicts → error');
 }
 
+async function testDirectionBothEdgeLabelingSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  // vwClean has upstream (staging.RawData, dbo.spTransform) and downstream (dbo.FactSales)
+  // Origin = vwClean, direction = both. Frontier gets all 3 neighbors.
+  // First focus = staging.rawdata (FIFO). rawdata has no in, only out → all neighbors downstream.
+  // To test mixed directions, drain until we hit spTransform which has both in and out.
+  state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[vwclean]', direction: 'both' });
+
+  // Find a focus node with both upstream and downstream neighbors
+  let found = false;
+  for (let i = 0; i < 10; i++) {
+    const hop = state.getHopContext();
+    if ('done' in hop || 'error' in hop) break;
+    const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string; edge_direction: string }> };
+
+    // Check if this focus node has neighbors in both directions
+    const dirs = new Set(ctx.neighbors.map(nb => nb.edge_direction));
+    if (dirs.has('upstream') && dirs.has('downstream')) {
+      // Verify each neighbor is correctly labeled
+      const focusId = ctx.focus_node.id as string;
+      const nb = model.neighborIndex[focusId] ?? { in: [], out: [] };
+      const inSet = new Set(nb.in);
+      for (const n of ctx.neighbors) {
+        const expected = inSet.has(n.id) ? 'upstream' : 'downstream';
+        assertEq(n.edge_direction, expected, `Syn both: ${n.id} is ${expected} of ${focusId}`);
+      }
+      found = true;
+      break;
+    }
+    // Remove all neighbors to advance
+    state.submitVerdicts({
+      focusNodeId: ctx.focus_node.id as string,
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+    });
+  }
+
+  if (!found) {
+    // Fallback: just verify the per-neighbor labeling logic is consistent on any hop
+    // Re-init and verify first hop neighbors match their actual edge direction
+    const state2 = new ColumnTraceState(model, log);
+    state2.init({ targetColumns: ['OrderQty'], origin: '[dbo].[vwclean]', direction: 'both' });
+    const hop = state2.getHopContext();
+    if (!('done' in hop) && !('error' in hop)) {
+      const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string; edge_direction: string }> };
+      const focusId = ctx.focus_node.id as string;
+      const nb = model.neighborIndex[focusId] ?? { in: [], out: [] };
+      const inSet = new Set(nb.in);
+      for (const n of ctx.neighbors) {
+        const expected = inSet.has(n.id) ? 'upstream' : 'downstream';
+        assertEq(n.edge_direction, expected, `Syn both fallback: ${n.id} is ${expected} of ${focusId}`);
+      }
+      found = true;
+    }
+  }
+  assert(found, 'Syn both: edge_direction correctly labeled per-neighbor');
+}
+
+async function testGetResultFieldsSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  state.init({ targetColumns: ['Amount'], origin: '[staging].[rawdata]', direction: 'down' });
+
+  // Drain all hops
+  while (true) {
+    const h = state.getHopContext();
+    if ('done' in h) break;
+    if ('error' in h) break;
+    const c = h as { focus_node: { id: string }; neighbors: Array<{ id: string }> };
+    state.submitVerdicts({
+      focusNodeId: c.focus_node.id as string,
+      verdicts: c.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+    });
+  }
+
+  const result = state.getResult();
+  assert(!('error' in result), 'Syn: getResult succeeds');
+  const r = result as { targetColumns: string[]; originNodeId: string; direction: string };
+  assertEq(JSON.stringify(r.targetColumns), '["Amount"]', 'Syn: targetColumns in result');
+  assertEq(r.originNodeId, '[staging].[rawdata]', 'Syn: originNodeId in result');
+  assertEq(r.direction, 'down', 'Syn: direction in result');
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -901,6 +986,8 @@ async function main() {
     await testExternalBoundarySynthetic();
     await testSPtoSPExecEdgeSynthetic();
     await testGetResultAwaitingVerdictsSynthetic();
+    await testDirectionBothEdgeLabelingSynthetic();
+    await testGetResultFieldsSynthetic();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

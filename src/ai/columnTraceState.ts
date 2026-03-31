@@ -93,9 +93,10 @@ export class ColumnTraceState {
   private targetColumns: string[] = [];
   private originNodeId: string | null = null;
   private frontier: FrontierEntry[] = [];
+  private frontierIds = new Set<string>(); // dedup: prevent same node queued twice
   private visited = new Set<string>();
   private chain = new Map<string, ChainEntry>();
-  private passthroughSet = new Set<string>();
+  private passthroughMap = new Map<string, string[]>(); // nodeId → columns at time of passthrough
   private removedSet = new Set<string>();
   private outOfScope: OutOfScopeEntry[] = [];
   private hopCount = 0;
@@ -134,9 +135,10 @@ export class ColumnTraceState {
 
     // Reset all mutable state (safe to call init() again on same instance)
     this.frontier = [];
+    this.frontierIds.clear();
     this.visited.clear();
     this.chain.clear();
-    this.passthroughSet.clear();
+    this.passthroughMap.clear();
     this.removedSet.clear();
     this.outOfScope = [];
     this.hopCount = 0;
@@ -216,6 +218,7 @@ export class ColumnTraceState {
         depth: 1,
         parentNodeId: originNode.id,
       });
+      this.frontierIds.add(nid);
     }
 
     // Add origin to visited + chain (root entry)
@@ -252,7 +255,7 @@ export class ColumnTraceState {
     focus_node: Record<string, unknown>;
     active_columns: string[];
     neighbors: HopNeighbor[];
-    out_of_scope_so_far: OutOfScopeEntry[];
+    out_of_scope_so_far: OutOfScopeEntry[] | { count: number; recent: OutOfScopeEntry[] };
   } | { done: true } | { error: string } {
 
     if (this._status !== 'initialized' && this._status !== 'hopping') {
@@ -285,7 +288,7 @@ export class ColumnTraceState {
 
     if (!entry || !node) {
       this._status = 'complete';
-      this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeSize} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughSet.size}`);
+      this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeSize} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
       return { done: true };
     }
 
@@ -327,13 +330,16 @@ export class ColumnTraceState {
 
     // Build neighbor list
     const neighborIds = this.getDirectionalNeighbors(entry.nodeId);
+    const nb = this.model.neighborIndex[entry.nodeId] ?? { in: [], out: [] };
+    const inSet = new Set(nb.in);
     const neighbors: HopNeighbor[] = [];
 
     for (const nid of neighborIds) {
       const nNode = this.nodeMap.get(nid);
       if (!nNode) continue;
 
-      const isUpstream = this.direction === 'up' || this.direction === 'both';
+      // Per-neighbor direction: check whether this neighbor is in the focus node's in-set or out-set
+      const isUpstream = inSet.has(nid);
       const primaryKey = isUpstream ? `${nid}→${entry.nodeId}` : `${entry.nodeId}→${nid}`;
       const reverseKey = isUpstream ? `${entry.nodeId}→${nid}` : `${nid}→${entry.nodeId}`;
       let edgeType = this.edgeTypeMap.get(primaryKey);
@@ -370,15 +376,15 @@ export class ColumnTraceState {
       neighbors.push(neighbor);
     }
 
-    // Build path summary (compact, from chain)
-    const pathSoFar = [...this.chain.values()]
-      .filter(e => e.nodeId !== this.originNodeId || e.columnsOut.length > 0)
-      .map(e => ({
-        node_id: e.nodeId,
-        summary: e.summary,
-        columns_in: e.columnsIn,
-        columns_out: e.columnsOut,
-      }));
+    // Build path summary (compact, from chain + passthrough)
+    const pathSoFar: Array<{ node_id: string; summary: string; columns_in: string[]; columns_out: string[] }> = [];
+    for (const e of this.chain.values()) {
+      if (e.nodeId === this.originNodeId && e.columnsOut.length === 0) continue;
+      pathSoFar.push({ node_id: e.nodeId, summary: e.summary, columns_in: e.columnsIn, columns_out: e.columnsOut });
+    }
+    for (const [ptId, ptCols] of this.passthroughMap) {
+      pathSoFar.push({ node_id: ptId, summary: 'passthrough', columns_in: ptCols, columns_out: [] });
+    }
 
     const subQuestion = `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`;
     const pct = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
@@ -397,7 +403,9 @@ export class ColumnTraceState {
       focus_node: strip(focusNode) as Record<string, unknown>,
       active_columns: entry.activeColumns,
       neighbors,
-      out_of_scope_so_far: this.outOfScope,
+      out_of_scope_so_far: this.outOfScope.length <= 10
+        ? this.outOfScope
+        : { count: this.outOfScope.length, recent: this.outOfScope.slice(-5) },
     };
   }
 
@@ -473,9 +481,9 @@ export class ColumnTraceState {
       }
 
       if (v.verdict === 'passthrough') {
-        this.passthroughSet.add(v.nodeId);
         // Passthrough uses verdict columnsOut if provided, else inherits current active columns
         const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
+        this.passthroughMap.set(v.nodeId, [...passColumns]);
         if (boundary === 'none') {
           advanced += this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth);
           this.log('debug', `Verdict: ${v.nodeId} = passthrough, columns=[${passColumns}] → queued ${advanced} children`);
@@ -504,6 +512,7 @@ export class ColumnTraceState {
           depth: this.currentFocusDepth + 1,
           parentNodeId: this.currentFocusNodeId ?? '',
         });
+        this.frontierIds.add(v.nodeId);
         advanced++;
         this.log('debug', `Verdict: ${v.nodeId} = relevant, trace columns [${v.columnsOut}] → queued as next focus hop`);
       } else {
@@ -524,6 +533,9 @@ export class ColumnTraceState {
 
   getResult(): {
     status: 'complete';
+    targetColumns: string[];
+    originNodeId: string;
+    direction: ColumnTraceDirection;
     chain: ChainEntry[];
     fullNodes: Record<string, unknown>[];
     edges: [string, string, string][];
@@ -537,6 +549,7 @@ export class ColumnTraceState {
     if (this._status !== 'complete' && this.frontier.length > 0) {
       return { error: 'frontier_not_empty', hint: `${this.frontier.length} entries remain. Call getHopContext/submitVerdicts until done.` };
     }
+    this._status = 'complete'; // E1: ensure status is complete when returning results
 
     // Build chain array (Map insertion order = BFS order)
     const chainArr = [...this.chain.values()];
@@ -546,7 +559,7 @@ export class ColumnTraceState {
 
     // Build fullNodes: DDL for relevant, columns for passthrough
     const relevantIds = new Set(this.chain.keys());
-    const allIds = new Set([...relevantIds, ...this.passthroughSet]);
+    const allIds = new Set([...relevantIds, ...this.passthroughMap.keys()]);
     const fullNodes: Record<string, unknown>[] = [];
 
     for (const id of allIds) {
@@ -581,13 +594,19 @@ export class ColumnTraceState {
       examined: this.visited.size,
       relevant: this.chain.size,
       removed: this.removedSet.size,
-      passthrough: this.passthroughSet.size,
+      passthrough: this.passthroughMap.size,
     };
 
     const pruneRate = this.scopeSize > 0 ? Math.round(((this.scopeSize - stats.examined) / this.scopeSize) * 100) : 0;
     this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeSize} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
 
-    return { status: 'complete', chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats };
+    return {
+      status: 'complete',
+      targetColumns: this.targetColumns,
+      originNodeId: this.originNodeId ?? '',
+      direction: this.direction,
+      chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats,
+    };
   }
 
   // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -649,7 +668,7 @@ export class ColumnTraceState {
     const neighbors = this.getDirectionalNeighbors(nodeId);
     let added = 0;
     for (const nid of neighbors) {
-      if (this.visited.has(nid) || this.removedSet.has(nid)) continue;
+      if (this.visited.has(nid) || this.removedSet.has(nid) || this.frontierIds.has(nid)) continue;
       if (this.frontier.length >= this.maxFrontierSize) {
         this.outOfScope.push({ nodeId: nid, reason: 'Frontier size cap reached' });
         this.log('warn', `Frontier cap (${this.maxFrontierSize}) — ${nid} added to outOfScope`);
@@ -661,6 +680,7 @@ export class ColumnTraceState {
         depth: parentDepth + 1,
         parentNodeId: nodeId,
       });
+      this.frontierIds.add(nid);
       added++;
     }
     return added;
