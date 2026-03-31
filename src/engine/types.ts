@@ -8,8 +8,10 @@ export interface LineageNode {
   name: string;          // object name without brackets/schema
   fullName: string;      // "[schema].[name]" as in dacpac
   type: ObjectType;
-  bodyScript?: string;   // SQL body for SPs/Views/UDFs
-  columns?: ColumnDef[]; // column metadata (tables/externals only, for profiling)
+  hasDdl?: boolean;       // true when ColumnStore holds DDL for this node
+  bodyScript?: string;   // SQL body for SPs/Views/UDFs — populated during extraction, moved to ColumnStore after model build
+  hasColumns?: boolean;  // true when ColumnStore holds columns for this node
+  columns?: ColumnDef[]; // column metadata — populated during extraction, moved to ColumnStore after model build
   fks?: ForeignKeyInfo[];// FK constraints (tables/externals only)
   externalType?: 'et' | 'file' | 'db'; // set for type === 'external'
   externalUrl?: string;       // full URL for file virtual nodes (tooltip)

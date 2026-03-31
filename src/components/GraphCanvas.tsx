@@ -740,6 +740,8 @@ export function GraphCanvas({
                   ) : onToggleDetailSearch ? (
                     <DetailSearchSidebar
                       onClose={onToggleDetailSearch}
+                      // TODO: After ColumnStore, bodyScript/columns are on extension host only.
+                      // DDL/column text search degrades to empty. Move search to extension host in separate PR.
                       allNodes={allNodes.map(n => ({
                         id: n.id,
                         name: n.name,

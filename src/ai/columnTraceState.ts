@@ -11,6 +11,7 @@
  */
 
 import type { DatabaseModel, LineageNode, ColumnDef, NeighborIndex, ObjectType } from '../engine/types';
+import type { ColumnStore } from '../engine/columnStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, AI_CAPS } from './tools';
 import { presentNode, presentColumn, strip, edgeApiType } from './aiPresenter';
 
@@ -45,7 +46,7 @@ export interface OutOfScopeEntry {
 }
 
 export interface ColumnTraceConfig {
-  maxFrontierSize?: number;   // default 500
+  maxFrontierSize?: number;   // default 200
   maxDdlChars?: number;       // default AI_CAPS.MAX_DDL_CHARS
 }
 
@@ -68,11 +69,13 @@ interface HopNeighbor {
 
 const MAX_REJECTIONS_PER_HOP = 2;
 const DEFAULT_MAX_FRONTIER = 200;
+const BFS_SCOPE_CAP = 10_000; // cap scope computation (not frontier) — just for perf safety
 
 // ─── Class ─────────────────────────────────────────────────────────────────────
 
 export class ColumnTraceState {
   private readonly model: DatabaseModel;
+  private readonly store: ColumnStore | null;
   private readonly log: LogFn;
   private readonly maxFrontierSize: number;
   private readonly maxDdlChars: number;
@@ -107,8 +110,10 @@ export class ColumnTraceState {
     model: DatabaseModel,
     log: LogFn,
     config?: ColumnTraceConfig,
+    store?: ColumnStore | null,
   ) {
     this.model = model;
+    this.store = store ?? null;
     this.log = log;
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
     this.maxDdlChars = config?.maxDdlChars ?? AI_CAPS.MAX_DDL_CHARS;
@@ -161,9 +166,16 @@ export class ColumnTraceState {
     } else {
       // Auto-discover: find tables/views with a matching column
       const colLower = new Set(targetColumns.map(c => c.toLowerCase()));
-      const candidates = this.model.nodes.filter(n =>
-        n.columns?.some(c => colLower.has(c.name.toLowerCase())),
-      );
+      // Auto-discover: use ColumnStore reverse index (O(1)) or scan nodes (fallback for tests)
+      const candidates = this.store
+        ? targetColumns.flatMap(col => this.store!.findByColumnName(col))
+            .filter((id, i, arr) => arr.indexOf(id) === i)  // deduplicate
+            .map(id => this.nodeMap.get(id))
+            .filter((n): n is LineageNode => !!n)
+        : this.model.nodes.filter(n => {
+            const cols = n.columns;
+            return cols?.some(c => colLower.has(c.name.toLowerCase()));
+          });
       if (candidates.length === 0) {
         this._status = 'error';
         return { error: 'column_not_found', hint: `No object contains column(s): ${targetColumns.join(', ')}.` };
@@ -244,27 +256,34 @@ export class ColumnTraceState {
       return { error: `invalid_status: expected 'initialized' or 'hopping', got '${this._status}'` };
     }
 
-    // Skip already-visited nodes in frontier
-    while (this.frontier.length > 0 && this.visited.has(this.frontier[0].nodeId)) {
-      const skipped = this.frontier.shift()!;
-      this.log('debug', `Skipped visited node in frontier: ${skipped.nodeId}`);
+    // Pop next valid frontier entry (skip visited + missing nodes without recursion)
+    let entry: FrontierEntry | undefined;
+    let node: LineageNode | undefined;
+    while (this.frontier.length > 0) {
+      const candidate = this.frontier.shift()!;
+      if (this.visited.has(candidate.nodeId)) {
+        this.log('debug', `Skipped visited node in frontier: ${candidate.nodeId}`);
+        continue;
+      }
+      const n = this.nodeMap.get(candidate.nodeId);
+      if (!n) {
+        this.log('warn', `Node not in model: ${candidate.nodeId} — skipped`);
+        this.visited.add(candidate.nodeId); // prevent re-encounter
+        continue;
+      }
+      entry = candidate;
+      node = n;
+      break;
     }
 
-    if (this.frontier.length === 0) {
+    if (!entry || !node) {
       this._status = 'complete';
       return { done: true };
     }
 
-    const entry = this.frontier.shift()!;
     this.visited.add(entry.nodeId);
     this.hopCount++;
     this.rejectionsThisHop = 0; // reset rejection counter for new hop
-
-    const node = this.nodeMap.get(entry.nodeId);
-    if (!node) {
-      this.log('warn', `Node not in model: ${entry.nodeId}`);
-      return this.getHopContext(); // skip, try next
-    }
 
     this.currentFocusNodeId = entry.nodeId;
     this.currentFocusActiveColumns = entry.activeColumns;
@@ -279,16 +298,18 @@ export class ColumnTraceState {
       active_columns: entry.activeColumns,
     };
 
-    if (SCRIPT_TYPES.has(node.type) && node.bodyScript) {
-      const ddl = node.bodyScript.length > this.maxDdlChars
-        ? node.bodyScript.slice(0, this.maxDdlChars) + `\n-- [truncated at ${this.maxDdlChars} chars]`
-        : node.bodyScript;
+    const nodeDdl = this.getNodeDdl(node.id);
+    const nodeCols = this.getNodeColumns(node.id);
+    if (SCRIPT_TYPES.has(node.type) && nodeDdl) {
+      const ddl = nodeDdl.length > this.maxDdlChars
+        ? nodeDdl.slice(0, this.maxDdlChars) + `\n-- [truncated at ${this.maxDdlChars} chars]`
+        : nodeDdl;
       focusNode.ct_ddl = ddl;
-      if (node.bodyScript.length > this.maxDdlChars) {
+      if (nodeDdl.length > this.maxDdlChars) {
         focusNode.ddl_truncated = true;
       }
-    } else if (node.columns?.length) {
-      focusNode.cols = node.columns.map(c => strip(presentColumn(c)));
+    } else if (nodeCols?.length) {
+      focusNode.cols = nodeCols.map(c => strip(presentColumn(c)));
     }
 
     // Attach unresolved refs
@@ -305,11 +326,17 @@ export class ColumnTraceState {
       if (!nNode) continue;
 
       const isUpstream = this.direction === 'up' || this.direction === 'both';
-      const edgeKey = isUpstream ? `${nid}→${entry.nodeId}` : `${entry.nodeId}→${nid}`;
-      const edgeType = this.edgeTypeMap.get(edgeKey)
-        ?? this.edgeTypeMap.get(`${entry.nodeId}→${nid}`)
-        ?? this.edgeTypeMap.get(`${nid}→${entry.nodeId}`)
-        ?? 'read';
+      const primaryKey = isUpstream ? `${nid}→${entry.nodeId}` : `${entry.nodeId}→${nid}`;
+      const reverseKey = isUpstream ? `${entry.nodeId}→${nid}` : `${nid}→${entry.nodeId}`;
+      let edgeType = this.edgeTypeMap.get(primaryKey);
+      if (!edgeType) {
+        edgeType = this.edgeTypeMap.get(reverseKey);
+        if (edgeType) {
+          this.log('debug', `Edge ${primaryKey} not found, used reverse ${reverseKey} (${edgeType})`);
+        } else {
+          edgeType = 'read';
+        }
+      }
 
       const boundary = this.detectBoundary(nid);
       const neighbor: HopNeighbor = {
@@ -320,15 +347,16 @@ export class ColumnTraceState {
         edge_direction: isUpstream ? 'upstream' : 'downstream',
         edge_type: edgeType,
         boundary,
-        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!nNode.bodyScript,
+        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!this.getNodeDdl(nid),
       };
 
       if (boundary !== 'none') {
         neighbor.boundary_reason = this.boundaryReason(boundary, nNode);
       }
 
-      if (nNode.columns?.length) {
-        neighbor.cols = nNode.columns.map(c => strip(presentColumn(c)));
+      const nCols = this.getNodeColumns(nid);
+      if (nCols?.length) {
+        neighbor.cols = nCols.map(c => strip(presentColumn(c)));
       }
 
       neighbors.push(neighbor);
@@ -391,20 +419,21 @@ export class ColumnTraceState {
         if (!v.columnsOut?.length) {
           return { error: 'missing_columns', hint: `Verdict "relevant" for ${v.nodeId} requires columnsOut.` };
         }
-        // Column validation for tables (skip if rejection cap reached)
+        // Column validation (skip if rejection cap reached)
         if (this.rejectionsThisHop < MAX_REJECTIONS_PER_HOP) {
           const neighbor = this.nodeMap.get(v.nodeId);
-          if (neighbor?.columns?.length) {
-            const validSet = new Set(neighbor.columns.map(c => c.name.toLowerCase()));
+          const neighborCols = this.getNodeColumns(v.nodeId);
+          if (neighborCols?.length) {
+            const validSet = new Set(neighborCols.map(c => c.name.toLowerCase()));
             const invalid = v.columnsOut.filter(c => !validSet.has(c.toLowerCase()));
             if (invalid.length > 0) {
               this.rejectionsThisHop++;
-              this.log('warn', `REJECT (${this.rejectionsThisHop}/${MAX_REJECTIONS_PER_HOP}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighbor.columns.map(c => c.name)}]`);
+              this.log('warn', `REJECT (${this.rejectionsThisHop}/${MAX_REJECTIONS_PER_HOP}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
               return {
                 error: 'invalid_columns',
                 nodeId: v.nodeId,
                 invalid,
-                valid: neighbor.columns.map(c => c.name),
+                valid: neighborCols.map(c => c.name),
               };
             }
           } else if (neighbor?.type === 'procedure') {
@@ -481,7 +510,7 @@ export class ColumnTraceState {
     columnFlow: string;
   } | { error: string; hint?: string } {
 
-    if (this._status === 'created' || this._status === 'error') {
+    if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
       return { error: `invalid_status: cannot get result in '${this._status}' state` };
     }
     if (this._status !== 'complete' && this.frontier.length > 0) {
@@ -505,13 +534,15 @@ export class ColumnTraceState {
       const out: Record<string, unknown> = {
         id: node.id, s: node.schema, n: node.name, t: node.type,
       };
-      if (relevantIds.has(id) && SCRIPT_TYPES.has(node.type) && node.bodyScript) {
-        out.ddl = node.bodyScript.length > this.maxDdlChars
-          ? node.bodyScript.slice(0, this.maxDdlChars) + `\n-- [truncated]`
-          : node.bodyScript;
+      const idDdl = this.getNodeDdl(id);
+      if (relevantIds.has(id) && SCRIPT_TYPES.has(node.type) && idDdl) {
+        out.ddl = idDdl.length > this.maxDdlChars
+          ? idDdl.slice(0, this.maxDdlChars) + `\n-- [truncated]`
+          : idDdl;
       }
-      if (node.columns?.length) {
-        out.cols = node.columns.map(c => strip(presentColumn(c)));
+      const idCols = this.getNodeColumns(id);
+      if (idCols?.length) {
+        out.cols = idCols.map(c => strip(presentColumn(c)));
       }
       fullNodes.push(strip(out) as Record<string, unknown>);
     }
@@ -554,6 +585,16 @@ export class ColumnTraceState {
   get frontierSize(): number { return this.frontier.length; }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
+
+  /** Get columns from ColumnStore (preferred) or inline node.columns (fallback for tests). */
+  private getNodeColumns(nodeId: string): ColumnDef[] | undefined {
+    return this.store?.getColumns(nodeId) ?? this.nodeMap.get(nodeId)?.columns;
+  }
+
+  /** Get DDL from ColumnStore (preferred) or inline node.bodyScript (fallback for tests). */
+  private getNodeDdl(nodeId: string): string | undefined {
+    return this.store?.getDdl(nodeId) ?? this.nodeMap.get(nodeId)?.bodyScript;
+  }
 
   private getDirectionalNeighbors(nodeId: string): string[] {
     const nb = this.model.neighborIndex[nodeId] ?? { in: [], out: [] };
@@ -617,7 +658,7 @@ export class ColumnTraceState {
         if (!seen.has(nid)) {
           seen.add(nid);
           queue.push(nid);
-          if (seen.size >= this.maxFrontierSize) return seen; // cap scope computation
+          if (seen.size >= BFS_SCOPE_CAP) return seen;
         }
       }
     }

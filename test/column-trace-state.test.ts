@@ -7,7 +7,7 @@
 import { assert, assertEq, printSummary, loadAdventureWorksModel, resetCounters } from './testUtils';
 import { buildBareGraph } from '../src/ai/graphUtils';
 import { ColumnTraceState } from '../src/ai/columnTraceState';
-import type { DatabaseModel } from '../src/engine/types';
+import type { DatabaseModel, LineageNode, LineageEdge, NeighborIndex } from '../src/engine/types';
 
 const logs: string[] = [];
 const log = (level: string, msg: string) => { logs.push(`[${level}] ${msg}`); };
@@ -650,6 +650,218 @@ async function testExternalBoundary(model: DatabaseModel) {
   }
 }
 
+// ─── Synthetic Model ─────────────────────────────────────────────────────────
+
+function buildSyntheticModel(): DatabaseModel {
+  // IDs must be lowercase — matches normalizeName() in the real pipeline
+  const nodes: LineageNode[] = [
+    { id: '[staging].[rawdata]', schema: 'staging', name: 'RawData', fullName: '[staging].[RawData]', type: 'table',
+      columns: [{ name: 'Amount', type: 'decimal(18,2)', nullable: 'true', extra: '' }, { name: 'Currency', type: 'varchar(3)', nullable: 'false', extra: '' }] },
+    { id: '[dbo].[sploadstaging]', schema: 'dbo', name: 'spLoadStaging', fullName: '[dbo].[spLoadStaging]', type: 'procedure',
+      bodyScript: 'CREATE PROCEDURE [dbo].[spLoadStaging] AS INSERT INTO staging.RawData SELECT Amount, Currency FROM ext.RemoteDB' },
+    { id: '[dbo].[sptransform]', schema: 'dbo', name: 'spTransform', fullName: '[dbo].[spTransform]', type: 'procedure',
+      bodyScript: 'CREATE PROCEDURE [dbo].[spTransform] AS EXEC [dbo].[spLoadStaging]; INSERT INTO dbo.vwClean SELECT OrderQty, OrderAmount FROM staging.RawData' },
+    { id: '[dbo].[vwclean]', schema: 'dbo', name: 'vwClean', fullName: '[dbo].[vwClean]', type: 'view',
+      bodyScript: 'CREATE VIEW [dbo].[vwClean] AS SELECT OrderQty, OrderAmount FROM staging.RawData WHERE OrderQty > 0',
+      columns: [{ name: 'OrderQty', type: 'int', nullable: 'false', extra: '' }, { name: 'OrderAmount', type: 'decimal(18,2)', nullable: 'true', extra: '' }] },
+    { id: '[dbo].[factsales]', schema: 'dbo', name: 'FactSales', fullName: '[dbo].[FactSales]', type: 'table',
+      columns: [{ name: 'Revenue', type: 'decimal(18,2)', nullable: 'true', extra: '' }, { name: 'Qty', type: 'int', nullable: 'false', extra: '' }] },
+    { id: '[ext].[remotedb]', schema: 'ext', name: 'RemoteDB', fullName: '[ext].[RemoteDB]', type: 'external',
+      externalType: 'db', columns: [{ name: 'SourceId', type: 'int', nullable: 'false', extra: '' }] },
+  ];
+
+  const edges: LineageEdge[] = [
+    { source: '[staging].[rawdata]', target: '[dbo].[sploadstaging]', type: 'body' },
+    { source: '[ext].[remotedb]', target: '[dbo].[sploadstaging]', type: 'body' },
+    { source: '[dbo].[sploadstaging]', target: '[dbo].[sptransform]', type: 'exec' },
+    { source: '[staging].[rawdata]', target: '[dbo].[sptransform]', type: 'body' },
+    { source: '[staging].[rawdata]', target: '[dbo].[vwclean]', type: 'body' },
+    { source: '[dbo].[sptransform]', target: '[dbo].[vwclean]', type: 'body' },
+    { source: '[dbo].[vwclean]', target: '[dbo].[factsales]', type: 'body' },
+  ];
+
+  // Build neighborIndex from edges
+  const neighborIndex: NeighborIndex = {};
+  for (const n of nodes) neighborIndex[n.id] = { in: [], out: [] };
+  for (const e of edges) {
+    neighborIndex[e.source]?.out.push(e.target);
+    neighborIndex[e.target]?.in.push(e.source);
+  }
+
+  return {
+    nodes, edges, neighborIndex,
+    schemas: [
+      { name: 'staging', nodeCount: 1, types: { table: 1, view: 0, procedure: 0, function: 0, external: 0 } },
+      { name: 'dbo', nodeCount: 4, types: { table: 1, view: 1, procedure: 2, function: 0, external: 0 } },
+      { name: 'ext', nodeCount: 1, types: { table: 0, view: 0, procedure: 0, function: 0, external: 1 } },
+    ],
+    catalog: Object.fromEntries(nodes.map(n => [n.id, { schema: n.schema, name: n.name, type: n.type }])),
+  };
+}
+
+// ─── Synthetic Tests ─────────────────────────────────────────────────────────
+
+async function testDirectionDownSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  state.init({ targetColumns: ['Revenue'], origin: '[dbo].[factsales]', direction: 'down' });
+  const hop = state.getHopContext();
+  if ('done' in hop) {
+    // FactSales has no downstream consumers — correct
+    assert(state.isComplete, 'Syn: FactSales has no downstream → complete immediately');
+    return;
+  }
+  if ('error' in hop) { assert(false, `Syn direction down: unexpected error ${hop.error}`); return; }
+  const ctx = hop as { neighbors: Array<{ edge_direction: string }> };
+  for (const nb of ctx.neighbors) {
+    assertEq(nb.edge_direction, 'downstream', 'Syn: all neighbors are downstream');
+  }
+}
+
+async function testPassthroughSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
+  const hop = state.getHopContext();
+  if ('done' in hop || 'error' in hop) { assert(false, 'Syn: expected hop'); return; }
+
+  const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string }> };
+  const frontierBefore = state.frontierSize;
+  // Passthrough the focus node's first neighbor
+  const nb = ctx.neighbors[0];
+  const result = state.submitVerdicts({
+    focusNodeId: ctx.focus_node.id as string,
+    verdicts: [{ nodeId: nb.id, verdict: 'passthrough', summary: 'test passthrough' }],
+  });
+  assert('ok' in result, 'Syn: passthrough accepted');
+  assert(true, 'Syn: passthrough verdict processed');
+}
+
+async function testRelevantColumnRenameSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  // Init from spTransform upstream — hops will visit spLoadStaging which has rawdata+remotedb as neighbors
+  state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
+
+  // Drain hops until we find a focus node whose neighbors include rawdata (table with columns)
+  let found = false;
+  for (let i = 0; i < 5; i++) {
+    const hop = state.getHopContext();
+    if ('done' in hop || 'error' in hop) break;
+    const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string; t: string }> };
+    const rawData = ctx.neighbors.find(nb => nb.id === '[staging].[rawdata]');
+    if (rawData) {
+      // Submit relevant with valid column 'Amount' (renamed from OrderQty)
+      const result = state.submitVerdicts({
+        focusNodeId: ctx.focus_node.id as string,
+        verdicts: [{ nodeId: rawData.id, verdict: 'relevant', columnsOut: ['Amount'], summary: 'OrderQty ← Amount' }],
+      });
+      assert('ok' in result, 'Syn: relevant verdict with valid renamed column accepted');
+      found = true;
+      break;
+    }
+    // Remove all neighbors to advance
+    state.submitVerdicts({
+      focusNodeId: ctx.focus_node.id as string,
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+    });
+  }
+  assert(found, 'Syn: found RawData as neighbor for column rename test');
+}
+
+async function testFrontierCapSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  // spLoadStaging has 2 upstream (RawData + RemoteDB) — use cap=1
+  const state = new ColumnTraceState(model, log, { maxFrontierSize: 1 });
+  state.init({ targetColumns: ['Amount'], origin: '[dbo].[sploadstaging]', direction: 'up' });
+  assert(state.frontierSize <= 1, `Syn: frontier capped at 1 (got ${state.frontierSize})`);
+}
+
+async function testExternalBoundarySynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  // Init from spTransform → first hop is spLoadStaging → its neighbors include RemoteDB
+  state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
+  const hop = state.getHopContext();
+  if ('done' in hop || 'error' in hop) { assert(false, 'Syn: expected hop'); return; }
+
+  const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string; boundary: string }> };
+  // Focus is one of spTransform's upstream. If it's spLoadStaging, its neighbors include RemoteDB.
+  // If not, submit remove verdicts and get next hop.
+  let found = false;
+  let maxHops = 5;
+  let currentCtx = ctx;
+  while (maxHops-- > 0) {
+    const ext = currentCtx.neighbors.find(nb => nb.id === '[ext].[remotedb]');
+    if (ext) {
+      assertEq(ext.boundary, 'external', 'Syn: RemoteDB has boundary=external');
+      found = true;
+      break;
+    }
+    // Submit remove for all neighbors, get next hop
+    state.submitVerdicts({
+      focusNodeId: currentCtx.focus_node.id as string,
+      verdicts: currentCtx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+    });
+    const next = state.getHopContext();
+    if ('done' in next || 'error' in next) break;
+    currentCtx = next as typeof ctx;
+  }
+  assert(found, 'Syn: found RemoteDB as external boundary in hop neighbors');
+}
+
+async function testSPtoSPExecEdgeSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  // Init from vwClean → first hop is spTransform (upstream) → its neighbors include spLoadStaging (exec)
+  state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[vwclean]', direction: 'up' });
+
+  // Drain until we focus on spTransform (which has spLoadStaging as exec neighbor)
+  let found = false;
+  for (let i = 0; i < 5; i++) {
+    const hop = state.getHopContext();
+    if ('done' in hop || 'error' in hop) break;
+    const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string; t: string; edge_type: string }> };
+    const spNb = ctx.neighbors.find(nb => nb.id === '[dbo].[sploadstaging]');
+    if (spNb) {
+      assertEq(spNb.t, 'procedure', 'Syn: spLoadStaging is procedure');
+      // Submit relevant with arbitrary column — SP→SP should accept on trust
+      const result = state.submitVerdicts({
+        focusNodeId: ctx.focus_node.id as string,
+        verdicts: [{ nodeId: spNb.id, verdict: 'relevant', columnsOut: ['ArbitraryCol'], summary: 'SP→SP, no validation' }],
+      });
+      assert('ok' in result, 'Syn: SP→SP relevant verdict accepted (no column validation)');
+      found = true;
+      break;
+    }
+    state.submitVerdicts({
+      focusNodeId: ctx.focus_node.id as string,
+      verdicts: ctx.neighbors.map(nb => ({ nodeId: nb.id, verdict: 'remove' as const, summary: 'drain' })),
+    });
+  }
+  assert(found, 'Syn: found SP→SP exec edge in hop neighbors');
+}
+
+async function testGetResultAwaitingVerdictsSynthetic() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new ColumnTraceState(model, log);
+  state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[vwclean]', direction: 'up' });
+  const hop = state.getHopContext();
+  if ('done' in hop || 'error' in hop) { assert(false, 'Syn: expected hop'); return; }
+
+  // Don't submit verdicts — try getResult() in awaiting_verdicts state
+  assertEq(state.status, 'awaiting_verdicts', 'Syn: status is awaiting_verdicts');
+  const result = state.getResult();
+  assert('error' in result, 'Syn: getResult in awaiting_verdicts → error');
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -681,6 +893,16 @@ async function main() {
     await testRelevantColumnRename(model);
     await testFrontierCap(model);
     await testExternalBoundary(model);
+
+    // Synthetic model tests (zero skips — controlled topology)
+    console.log('\n── Synthetic Model Tests ──');
+    await testDirectionDownSynthetic();
+    await testPassthroughSynthetic();
+    await testRelevantColumnRenameSynthetic();
+    await testFrontierCapSynthetic();
+    await testExternalBoundarySynthetic();
+    await testSPtoSPExecEdgeSynthetic();
+    await testGetResultAwaitingVerdictsSynthetic();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

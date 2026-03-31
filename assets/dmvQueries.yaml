@@ -117,7 +117,7 @@ queries:
       LEFT JOIN sys.index_columns ic ON ic.object_id = i.object_id
                                     AND ic.index_id   = i.index_id
                                     AND ic.column_id  = c.column_id
-      WHERE o.type IN ('U', 'ET')
+      WHERE o.type IN ('U', 'V', 'IF', 'TF', 'ET')
         AND o.is_ms_shipped = 0
         AND s.name IN ({{SCHEMAS}})
         AND NOT EXISTS (

@@ -12,6 +12,8 @@ import {
   type CreateAiViewInput,
 } from './ai/tools';
 import { ColumnTraceState } from './ai/columnTraceState';
+import { ColumnStore } from './engine/columnStore';
+import { populateColumnStore } from './engine/modelBuilder';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
@@ -56,6 +58,7 @@ let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; con
 let _aiCaps:           AiCapsOverride = {};  // refreshed once per @lineage request; avoids re-reading config per tool call
 let _aiModelName:      string = '';          // display name of the current Copilot model (e.g., "Claude Sonnet 4.6")
 let _columnTraceState: ColumnTraceState | null = null; // per-request column-trace state machine
+let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage — populated on model load, cleared on reload
 
 /** AI output template instructions — loaded once at activation, cached for system prompt injection. */
 interface AiOutputTemplates {
@@ -299,7 +302,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         logDebug(outputChannel, 'AI', 'lineage_get_context');
-        return toolResult(getContext(m, _aiFilter, _aiProjectName, _aiViews));
+        return toolResult(getContext(m, _aiFilter, _aiProjectName, _aiViews, _columnStore));
       },
     }),
     vscode.lm.registerTool('lineage_search_objects', {
@@ -329,7 +332,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { id } = options.input as { id: string };
         logDebug(outputChannel, 'AI', `lineage_get_object_detail: id="${id}"`);
-        return toolResult(getObjectDetail(m, id, _aiCaps));
+        return toolResult(getObjectDetail(m, id, _aiCaps, _columnStore));
       },
     }),
     vscode.lm.registerTool('lineage_run_bfs_trace', {
@@ -352,7 +355,7 @@ export function activate(context: vscode.ExtensionContext) {
           };
         logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
         return toolResult(runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
-          types as ObjectType[] | undefined, schemas, include_ddl ?? true, _aiCaps));
+          types as ObjectType[] | undefined, schemas, include_ddl ?? true, _aiCaps, _columnStore));
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
@@ -381,7 +384,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { query, types } = options.input as { query: string; types?: string[] };
         logDebug(outputChannel, 'AI', `lineage_search_ddl: query="${query.slice(0, 60)}"`);
-        return toolResult(searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _aiCaps));
+        return toolResult(searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _aiCaps, _columnStore));
       },
     }),
     vscode.lm.registerTool('lineage_create_ai_view', {
@@ -470,7 +473,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { ids } = options.input as { ids: string[] };
         logDebug(outputChannel, 'AI', `lineage_get_ddl_batch: ${ids.length} ids`);
-        return toolResult(getDdlBatch(m, ids, _aiCaps));
+        return toolResult(getDdlBatch(m, ids, _aiCaps, _columnStore));
       },
     }),
     // ─── Column-Trace tools (hop-and-distill state machine) ─────────────────
@@ -491,7 +494,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
           else if (level === 'warn') logWarn(outputChannel, 'AI', `[CT] ${msg}`);
           else logDebug(outputChannel, 'AI', `[CT] ${msg}`);
-        }, { maxDdlChars: (_aiCaps.MAX_DDL_CHARS ?? AI_CAPS.MAX_DDL_CHARS) });
+        }, { maxDdlChars: (_aiCaps.MAX_DDL_CHARS ?? AI_CAPS.MAX_DDL_CHARS) }, _columnStore);
 
         const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
         if ('error' in initResult) return toolResult(initResult);
@@ -1290,6 +1293,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       currentGraph = null;
       _aiModel = null;
       _aiGraph = null;
+      _columnStore.clear();
       _aiFilter = null;
       _aiViews = [];
       _aiProjectName = null;
@@ -1323,11 +1327,31 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     let cachedElements: XmlElement[] | null = null;   // dacpac Phase 1 cache
     let cachedDspName = '';                            // dacpac DSP name from Phase 1
 
+    /** Centralized model assignment — populates ColumnStore, strips nodes, syncs AI state. */
+    function setCurrentModel(m: DatabaseModel): void {
+      _columnStore.clear();
+      populateColumnStore(m, _columnStore);
+      currentModel = m;
+      currentGraph = buildBareGraph(m);
+      _aiModel = m;
+      _aiGraph = currentGraph;
+      const stats = _columnStore.size;
+      logDebug(outputChannel, 'Bridge', `ColumnStore: ${stats.objects} objects with columns, ${stats.totalColumns} total columns, ${stats.ddlCount} DDL entries`);
+    }
+
     // ─── Detail Panel Helper ─────────────────────────────────────────────────
     // Holds the first detail-update payload until the webview signals detail-ready.
     // The webview's message listener (useEffect) is set up after React's first render,
     // so any postMessage sent during panel creation would be lost.
     let pendingDetailUpdate: { node: import('./engine/types').LineageNode; findQuery?: string; config: object } | undefined;
+
+    /** Re-attach columns + DDL from ColumnStore before sending to detail webview. */
+    function enrichNodeForDetail(node: import('./engine/types').LineageNode): import('./engine/types').LineageNode {
+      const cols = _columnStore.getColumns(node.id);
+      const ddl = _columnStore.getDdl(node.id);
+      if (!cols && !ddl) return node;
+      return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
+    }
 
     function openOrRevealDetailPanel(node: import('./engine/types').LineageNode, findQuery?: string): void {
       const cfg = vscode.workspace.getConfiguration('dataLineageViz');
@@ -1340,7 +1364,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       const panelTitle = node.schema ? `[${node.schema}].[${node.name}]` : node.name;
       if (!detailPanel) {
         // Store the payload — send it only after the webview signals detail-ready.
-        pendingDetailUpdate = { node, findQuery, config: detailConfig };
+        pendingDetailUpdate = { node: enrichNodeForDetail(node), findQuery, config: detailConfig };
         detailPanel = vscode.window.createWebviewPanel(
           'dataLineageDetail',
           panelTitle,
@@ -1394,7 +1418,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         // Panel already loaded — postMessage is safe, webview is listening.
         detailPanel.title = panelTitle;
         detailPanel.reveal(undefined, /*preserveFocus*/ true);
-        detailPanel.webview.postMessage({ type: 'detail-update', node, findQuery, config: detailConfig });
+        detailPanel.webview.postMessage({ type: 'detail-update', node: enrichNodeForDetail(node), findQuery, config: detailConfig });
       }
     }
 
@@ -1402,10 +1426,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'ready': async () => {
         if (loadDemo) {
           await handleLoadDemo(panel, context, true, (m) => {
-            currentModel = m;
-            currentGraph = buildBareGraph(m);
-            _aiModel = m;
-            _aiGraph = currentGraph;
+            setCurrentModel(m);
             _aiProjectName = 'Demo';
             vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
           });
@@ -1448,6 +1469,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             currentGraph = null;
             _aiModel = null;
             _aiGraph = null;
+            _columnStore.clear();
             currentProjectId = null;
             _aiCurrentProjectId = null;
             vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
@@ -1491,10 +1513,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
               const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
               const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
-              currentModel = model;
-              currentGraph = buildBareGraph(model);
-              _aiModel = model;
-              _aiGraph = currentGraph;
+              setCurrentModel(model);
               _aiProjectName = conn.displayName;
               cachedElements = null;
               cachedDspName = '';
@@ -1512,6 +1531,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               currentGraph = null;
               _aiModel = null;
               _aiGraph = null;
+              _columnStore.clear();
               vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
               panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: conn.displayName });
             }
@@ -1558,10 +1578,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               }
               await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName, platformInfoCache,
                 (m) => {
-                  currentModel = m;
-                  currentGraph = buildBareGraph(m);
-                  _aiModel = m;
-                  _aiGraph = currentGraph;
+                  setCurrentModel(m);
                   _aiProjectName = project.name;
                   vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
                   logInfo(outputChannel, 'Bridge', `Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
@@ -1599,10 +1616,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       },
       'load-demo': async () => {
         await handleLoadDemo(panel, context, true, (m) => {
-          currentModel = m;
-          currentGraph = buildBareGraph(m);
-          _aiModel = m;
-          _aiGraph = currentGraph;
+          setCurrentModel(m);
           _aiProjectName = 'Demo';
           currentProjectId = null;
           _aiCurrentProjectId = null;
@@ -1624,10 +1638,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         try {
           if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
           const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
-          currentModel = model;
-          currentGraph = buildBareGraph(model);
-          _aiModel = model;
-          _aiGraph = currentGraph;
+          setCurrentModel(model);
           _aiProjectName = msg.projectName ?? null;
           cachedElements = null;
           cachedDspName = '';
@@ -1724,10 +1735,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
             panel, conn.connectionUri, msg.schemas, progress, token, allObjectsCache,
             conn.connectionInfo.database, sourceName, platformInfoCache,
             (m) => {
-              currentModel = m;
-              currentGraph = buildBareGraph(m);
-              _aiModel = m;
-              _aiGraph = currentGraph;
+              setCurrentModel(m);
               _aiProjectName = msg.projectName ?? sourceName;
               vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
               logInfo(outputChannel, 'Bridge', `Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);

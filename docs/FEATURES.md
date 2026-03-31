@@ -101,7 +101,7 @@ Right-click any node and select **Show Details** to open the detail bar at the b
 - **Unresolved** — SQL references not found in the data source (e.g. dynamic SQL, cross-server refs)
 - **Excluded** — nodes hidden by your exclusion patterns
 
-For **tables and external tables**, the detail panel shows column metadata: name, data type, nullability, primary key, and foreign key constraints.
+For **tables, views, external tables, and table-valued functions**, the detail panel shows column metadata: name, data type, nullability, primary key, and foreign key constraints. Views and TVFs show a **Columns / DDL toggle** to switch between the column table and SQL source code.
 
 ---
 

@@ -224,14 +224,14 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     ? buildConstraintMaps(results.constraints)
     : null;
 
-  // Pre-build column data for tables (grouped by schema.table, lowercase key)
+  // Pre-build column data for all column-bearing objects (grouped by schema.name, lowercase key)
   const isTruthy = (v: string) => v === '1' || v.toLowerCase() === 'true';
-  const tableColumns = new Map<string, ColumnDef[]>();
+  const objectColumns = new Map<string, ColumnDef[]>();
   for (const row of results.columns.rows) {
     const schema = cellValue(row, colColIdx, 'schema_name');
     const table = cellValue(row, colColIdx, 'table_name');
     const key = `${schema}.${table}`.toLowerCase();
-    if (!tableColumns.has(key)) tableColumns.set(key, []);
+    if (!objectColumns.has(key)) objectColumns.set(key, []);
     const col = buildColumnDef(
       cellValue(row, colColIdx, 'column_name'),
       cellValue(row, colColIdx, 'type_name'),
@@ -247,7 +247,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       const pk = parseInt(pkOrdinalRaw, 10);
       if (pk > 0) col.pkOrdinal = pk;
     }
-    tableColumns.get(key)!.push(col);
+    objectColumns.get(key)!.push(col);
   }
 
   const objects: ExtractedObject[] = [];
@@ -267,15 +267,16 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     if (seen.has(id)) continue;
     seen.add(id);
 
-    // For tables (and external tables) without body: attach column metadata for design view
+    // Attach column metadata for column-bearing types (tables, views, TVFs)
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
-    if (!bodyScript && (objType === 'table' || objType === 'external')) {
-      const tableKey = `${schemaName}.${objectName}`.toLowerCase();
-      columns = tableColumns.get(tableKey);
-
-      if (columns && constraintMaps) {
-        fks = enrichColumnsWithConstraints(columns, tableKey, constraintMaps);
+    const objectKey = `${schemaName}.${objectName}`.toLowerCase();
+    const cols = objectColumns.get(objectKey);
+    if (cols) {
+      columns = cols;
+      // FK enrichment applies to tables/externals only (views/functions have no FK constraints)
+      if (constraintMaps && (objType === 'table' || objType === 'external')) {
+        fks = enrichColumnsWithConstraints(columns, objectKey, constraintMaps);
       }
     }
 

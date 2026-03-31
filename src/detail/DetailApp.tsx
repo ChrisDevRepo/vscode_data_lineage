@@ -55,6 +55,7 @@ export function DetailApp() {
   const nodeIdRef  = useRef<string | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
+  const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('columns');
 
   // Keep ref in sync so the stable message handler can read the current node id.
   nodeIdRef.current = detail?.node?.id;
@@ -89,6 +90,9 @@ export function DetailApp() {
     return () => window.removeEventListener('message', handler);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reset toggle to columns view when switching to a different node
+  useEffect(() => { setDetailMode('columns'); }, [detail?.node?.id]);
+
   if (!detail) {
     return (
       <div
@@ -105,6 +109,7 @@ export function DetailApp() {
 
   const { node, findQuery, config } = detail;
   const isTable = node.type === 'table' || node.type === 'external';
+  const hasColumnsAndDdl = !!(node.columns?.length && node.bodyScript);
 
   function handleRequestStats(mode: StatsMode) {
     vscodeApi.current.postMessage({
@@ -121,6 +126,7 @@ export function DetailApp() {
     vscodeApi.current.postMessage({ type: 'close-detail' });
   }
 
+  // Tables/externals: always show columns (no DDL toggle)
   if (isTable) {
     return (
       <TableDetailPanel
@@ -143,5 +149,58 @@ export function DetailApp() {
     );
   }
 
+  // Views/TVFs with both columns and DDL: show toggle bar
+  if (hasColumnsAndDdl) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{
+          display: 'flex', gap: 4, padding: '6px 10px',
+          borderBottom: '1px solid var(--vscode-panel-border, var(--vscode-widget-border, #444))',
+          background: 'var(--vscode-editor-background)',
+        }}>
+          <button
+            onClick={() => setDetailMode('columns')}
+            style={{
+              padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 3,
+              background: detailMode === 'columns' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)',
+              color: detailMode === 'columns' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)',
+            }}
+          >Columns</button>
+          <button
+            onClick={() => setDetailMode('ddl')}
+            style={{
+              padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 3,
+              background: detailMode === 'ddl' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)',
+              color: detailMode === 'ddl' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)',
+            }}
+          >DDL</button>
+        </div>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          {detailMode === 'columns' ? (
+            <TableDetailPanel
+              schema={node.schema}
+              objectName={node.name}
+              objectType={node.type as 'view' | 'function'}
+              columns={node.columns ?? []}
+              fks={[]}
+              statsState={{ phase: 'idle' }}
+              onClose={handleClose}
+              onRequestStats={() => {}}
+              isDbMode={false}
+              statsEnabled={false}
+              excludeExternalTables={false}
+              standardModeEnabled={false}
+              fillContainer
+              findQuery={findQuery}
+            />
+          ) : (
+            <MonacoSqlView node={node} findQuery={findQuery} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Procedures, scalar functions: DDL only
   return <MonacoSqlView node={node} findQuery={findQuery} />;
 }

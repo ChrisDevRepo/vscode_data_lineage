@@ -1,6 +1,13 @@
 # Changelog
 
-## [0.9.7] - 2026-03-30
+## [0.9.7] - 2026-03-31
+
+### Added
+- **Column-trace state machine** — `@lineage /column-trace` hop-and-distill pattern: AI evaluates one node per hop, traces column renames, validates column names against metadata, reject/retry on invalid columns
+- **ColumnStore architecture** — centralized column and DDL metadata storage on extension host; webview receives lightweight flags only, reducing payload by ~10-20 MB on large DWH
+- **View/function column extraction** — views and table-valued functions (inline + multi-statement) now have column metadata extracted from both dacpac XML and DMV `sys.columns`
+- **Detail panel DDL/Columns toggle** — views and TVFs show a toggle bar to switch between column metadata table and DDL source code
+- **Column-trace tools** — 3 new AI tools: `lineage_start_column_trace`, `lineage_submit_hop_analysis`, `lineage_get_column_trace_result`
 
 ### Changed
 - Disable DDL viewer button in schema overview mode

@@ -85,6 +85,7 @@ export function getContext(
   activeFilter: SerializedFilterState | null,
   projectName: string | null,
   savedViews: FilterProfile[],
+  store?: import('../engine/columnStore').ColumnStore,
 ) {
   const visibleNodes = activeFilter
     ? model.nodes.filter(n => {
@@ -114,13 +115,15 @@ export function getContext(
       objects: model.nodes.map(n => {
         const base = presentNode(n, model.neighborIndex);
         // Add DDL for scriptable nodes (procedure/view/function)
-        if (SCRIPT_TYPES.has(n.type) && n.bodyScript) {
-          const ddl = normalizeBodyScript(n.bodyScript);
+        const ddlBody = store?.getDdl(n.id) ?? n.bodyScript;
+        if (SCRIPT_TYPES.has(n.type) && ddlBody) {
+          const ddl = normalizeBodyScript(ddlBody);
           return { ...base, ddl };
         }
         // Add columns + FK for table/external nodes
-        if (n.columns && n.columns.length > 0) {
-          const enriched: Record<string, unknown> = { ...base, cols: n.columns.map(c => presentColumn(c)) };
+        const cols = store?.getColumns(n.id) ?? n.columns;
+        if (cols && cols.length > 0) {
+          const enriched: Record<string, unknown> = { ...base, cols: cols.map(c => presentColumn(c)) };
           if (n.fks && n.fks.length > 0) {
             enriched.fks = n.fks.map(fk => ({
               name: fk.name, columns: fk.columns,
@@ -244,6 +247,7 @@ export function getObjectDetail(
   model: DatabaseModel,
   id: string,
   caps?: AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
 
@@ -263,7 +267,8 @@ export function getObjectDetail(
   const upMore = Math.max(0, upRaw.length - NEIGHBOR_CAP);
   const dnMore = Math.max(0, dnRaw.length - NEIGHBOR_CAP);
 
-  const columns    = node.columns?.map(c => presentColumn(c)) ?? undefined;
+  const rawCols    = store?.getColumns(node.id) ?? node.columns;
+  const columns    = rawCols?.map(c => presentColumn(c)) ?? undefined;
   const foreignKeys = node.fks?.map(fk => ({
     name:        fk.name,
     columns:     fk.columns,
@@ -288,7 +293,8 @@ export function getObjectDetail(
     dn_more:       dnMore > 0 ? dnMore : undefined,
   } as Record<string, unknown>);
 
-  const ddl = node.bodyScript ? normalizeBodyScript(node.bodyScript) : null;
+  const rawDdl = store?.getDdl(node.id) ?? node.bodyScript;
+  const ddl = rawDdl ? normalizeBodyScript(rawDdl) : null;
 
   // Attach unresolved refs for scriptable nodes
   const unrelMap = buildUnrelatedMap(model);
@@ -365,17 +371,18 @@ function attachDdl(
   includeDdl: boolean,
   maxDdlChars: number,
   unrelMap?: Map<string, string[]>,
+  store?: import('../engine/columnStore').ColumnStore,
 ): Record<string, unknown> {
   if (!includeDdl || !node) return base;
   let result = base;
-  if (SCRIPT_TYPES.has(node.type) && node.bodyScript) {
-    const ddl = normalizeBodyScript(node.bodyScript);
+  const ddlBody = store?.getDdl(node.id) ?? node.bodyScript;
+  if (SCRIPT_TYPES.has(node.type) && ddlBody) {
+    const ddl = normalizeBodyScript(ddlBody);
     if (ddl.length > maxDdlChars) {
       result = { ...result, ddl_too_large: true, ddl_chars: ddl.length };
     } else {
       result = { ...result, ddl };
     }
-    // Attach unresolved refs for scriptable nodes — tells AI which DDL refs are outside the model
     if (unrelMap) {
       const key = `${node.schema}.${node.name}`.toLowerCase();
       const unrel = unrelMap.get(key);
@@ -383,8 +390,9 @@ function attachDdl(
     }
     return result;
   }
-  if (node.columns && node.columns.length > 0) {
-    return { ...result, cols: node.columns.map(c => presentColumn(c)) };
+  const cols = store?.getColumns(node.id) ?? node.columns;
+  if (cols && cols.length > 0) {
+    return { ...result, cols: cols.map(c => presentColumn(c)) };
   }
   return result;
 }
@@ -399,6 +407,7 @@ export function runBfsTrace(
   schemas?:        string[],
   includeDdl:      boolean = true,
   caps?:           AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   if (!graph.hasNode(id)) {
@@ -444,7 +453,7 @@ export function runBfsTrace(
       up:  upDepth.get(nid),
       dn:  downDepth.get(nid),
     } as Record<string, unknown>);
-    return attachDdl(base, n, includeDdl, effectiveCaps.MAX_DDL_CHARS, unrelMap);
+    return attachDdl(base, n, includeDdl, effectiveCaps.MAX_DDL_CHARS, unrelMap, store);
   });
 
   return {
@@ -497,6 +506,7 @@ export function searchDdl(
   query: string,
   types?: ('view' | 'procedure' | 'function')[],
   caps?: AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
@@ -513,8 +523,13 @@ export function searchDdl(
     : ['view', 'procedure', 'function'];
   const typeSet = new Set<ObjectType>(ddlTypes);
 
+  // Build searchable nodes with DDL from ColumnStore (or inline fallback for tests)
+  const searchableNodes: SearchableNode[] = model.nodes.map(n => ({
+    ...n,
+    bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
+  }));
   const matches = searchBodyScripts(
-    model.nodes as SearchableNode[],
+    searchableNodes,
     query,
     typeSet,
     SNIPPET_CONTEXT_LINES,
@@ -751,6 +766,7 @@ export function getDdlBatch(
   model: DatabaseModel,
   ids: string[],
   caps?: AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
 ): object {
   const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   const cappedIds = ids.slice(0, effectiveCaps.DDL_BATCH_CAP);
@@ -761,11 +777,11 @@ export function getDdlBatch(
     if (!node) {
       return strip({ id, error: 'not_found' } as Record<string, unknown>);
     }
-    if (!node.bodyScript) {
-      // Tables and external nodes have no DDL body — return type only
+    const rawDdl = store?.getDdl(id) ?? node.bodyScript;
+    if (!rawDdl) {
       return strip({ id, t: node.type } as Record<string, unknown>);
     }
-    const ddl = normalizeBodyScript(node.bodyScript);
+    const ddl = normalizeBodyScript(rawDdl);
     if (ddl.length > effectiveCaps.MAX_DDL_CHARS) {
       return strip({
         id, t: node.type,

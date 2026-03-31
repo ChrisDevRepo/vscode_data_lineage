@@ -19,7 +19,7 @@ export type TableStatsState =
 export interface TableDetailPanelProps {
   schema: string;
   objectName: string;
-  objectType: 'table' | 'external';
+  objectType: 'table' | 'external' | 'view' | 'function';
   externalType?: 'et' | 'file' | 'db';
   columns: ColumnDef[];
   fks: ForeignKeyInfo[];
@@ -62,7 +62,10 @@ export const TableDetailPanel = memo(function TableDetailPanel({
   const typeIcon = TYPE_COLORS[objectType as ObjectType]?.icon ?? '■';
   const typeLabel = externalType === 'file' ? 'FILE SOURCE'
     : externalType === 'db' ? 'CROSS-DATABASE'
-    : objectType === 'external' ? 'EXTERNAL TABLE' : 'TABLE';
+    : objectType === 'external' ? 'EXTERNAL TABLE'
+    : objectType === 'view' ? 'VIEW'
+    : objectType === 'function' ? 'FUNCTION'
+    : 'TABLE';
   const isVirtualExt = externalType === 'file' || externalType === 'db';
 
   const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
