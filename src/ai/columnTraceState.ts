@@ -12,7 +12,7 @@
 
 import type { DatabaseModel, LineageNode, ColumnDef, NeighborIndex, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
-import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, AI_CAPS } from './tools';
+import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, deriveCaps } from './tools';
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ export interface OutOfScopeEntry {
 
 export interface ColumnTraceConfig {
   maxFrontierSize?: number;   // default 200
-  maxDdlChars?: number;       // default AI_CAPS.MAX_DDL_CHARS
+  maxDdlChars?: number;       // default deriveCaps().MAX_DDL_CHARS
 }
 
 export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
@@ -121,7 +121,7 @@ export class ColumnTraceState {
     this.store = store ?? null;
     this.log = log;
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
-    this.maxDdlChars = config?.maxDdlChars ?? AI_CAPS.MAX_DDL_CHARS;
+    this.maxDdlChars = config?.maxDdlChars ?? deriveCaps().MAX_DDL_CHARS;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -154,11 +154,6 @@ export class ColumnTraceState {
 
     const { targetColumns, origin, direction = 'up' } = params;
 
-    if (!targetColumns.length) {
-      this._status = 'error';
-      return { error: 'no_columns', hint: 'Provide at least one column name to trace.' };
-    }
-
     this.direction = direction;
     this.targetColumns = targetColumns;
 
@@ -170,6 +165,10 @@ export class ColumnTraceState {
         this._status = 'error';
         return { error: 'origin_not_found', hint: `Object "${origin}" not found in loaded model.` };
       }
+    } else if (!targetColumns.length) {
+      // No columns AND no origin — can't auto-discover
+      this._status = 'error';
+      return { error: 'no_origin', hint: 'Provide origin object when tracing without columns.' };
     } else {
       // Auto-discover: find tables/views with a matching column
       const colLower = new Set(targetColumns.map(c => c.toLowerCase()));
@@ -192,7 +191,7 @@ export class ColumnTraceState {
         this._status = 'error';
         return {
           error: 'ambiguous_origin',
-          hint: `${candidates.length} objects contain column "${targetColumns[0]}". Provide the origin object ID.`,
+          hint: `${candidates.length} objects contain column(s) "${targetColumns.join(', ')}". Provide the origin object ID.`,
           candidates: candidates.slice(0, 10).map(c => ({ id: c.id, name: c.name, type: c.type })),
         };
       }
@@ -400,6 +399,7 @@ export class ColumnTraceState {
       pathSoFar.push({ node_id: e.nodeId, summary: e.summary, columns_in: e.columnsIn, columns_out: e.columnsOut, notes: e.notes });
     }
     for (const [ptId, ptCols] of this.passthroughMap) {
+      if (this.chain.has(ptId)) continue; // Bug #7 fix: already in chain, skip duplicate
       pathSoFar.push({ node_id: ptId, summary: 'pass', columns_in: ptCols, columns_out: [] });
     }
 
@@ -507,7 +507,7 @@ export class ColumnTraceState {
             columnsIn: [...this.currentFocusActiveColumns],
             columnsOut: [],
             summary: '',
-            boundaryFlag: this.detectBoundary(this.currentFocusNodeId),
+            boundaryFlag: 'none', // Bug #2 fix: focus node is active, not a cycle
           };
           this.chain.set(this.currentFocusNodeId, focusChain);
         }
@@ -530,9 +530,11 @@ export class ColumnTraceState {
         // Passthrough uses verdict columnsOut if provided, else inherits current active columns
         const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
         this.passthroughMap.set(v.nodeId, [...passColumns]);
+        this.visited.add(v.nodeId); // Bug #1 fix: prevent re-encounter as neighbor of later focus
         if (boundary === 'none') {
-          advanced += this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth);
-          this.log('debug', `Verdict: ${v.nodeId} = pass, columns=[${passColumns}] → queued ${advanced} children`);
+          const delta = this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth + 1); // Bug #3 fix: passthrough is +1 depth
+          advanced += delta;
+          this.log('debug', `Verdict: ${v.nodeId} = pass, columns=[${passColumns}] → queued ${delta} children`); // Bug #6 fix: log delta
         } else {
           this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}), columns=[${passColumns}] → terminal`);
         }
@@ -540,16 +542,29 @@ export class ColumnTraceState {
       }
 
       // trace — push the node ITSELF to frontier as next focus hop (not its children)
-      this.chain.set(v.nodeId, {
-        nodeId: v.nodeId,
-        schema: neighbor?.schema ?? '',
-        name: neighbor?.name ?? '',
-        type: neighbor?.type ?? '',
-        columnsIn: [...this.currentFocusActiveColumns],
-        columnsOut: v.columnsOut ?? [],
-        summary: v.summary ?? '',
-        boundaryFlag: boundary,
-      });
+      // Bug #4 fix: merge into existing chain entry for diamond/merge patterns instead of clobbering
+      const existingChain = this.chain.get(v.nodeId);
+      if (existingChain) {
+        // Merge columnsIn (union of all incoming paths)
+        const mergedIn = new Set([...existingChain.columnsIn, ...this.currentFocusActiveColumns]);
+        existingChain.columnsIn = [...mergedIn];
+        if (v.columnsOut?.length) {
+          const mergedOut = new Set([...existingChain.columnsOut, ...v.columnsOut]);
+          existingChain.columnsOut = [...mergedOut];
+        }
+        this.log('debug', `Verdict: ${v.nodeId} = trace (merge into existing chain entry), columnsIn=[${existingChain.columnsIn}]`);
+      } else {
+        this.chain.set(v.nodeId, {
+          nodeId: v.nodeId,
+          schema: neighbor?.schema ?? '',
+          name: neighbor?.name ?? '',
+          type: neighbor?.type ?? '',
+          columnsIn: [...this.currentFocusActiveColumns],
+          columnsOut: v.columnsOut ?? [],
+          summary: v.summary ?? '',
+          boundaryFlag: boundary,
+        });
+      }
 
       if (boundary === 'none') {
         // If already in frontier (e.g., seeded by init), update existing entry with question + columns
@@ -678,6 +693,27 @@ export class ColumnTraceState {
   get visited_count(): number { return this.visited.size; }
   get removedCount(): number { return this.removedSet.size; }
   get chainSize(): number { return this.chain.size; }
+
+  /** Estimate total DDL chars for all scriptable nodes in scope (for inline vs state machine decision). */
+  estimateScopeDdlChars(): number {
+    let total = 0;
+    for (const nid of this.visited) {
+      const node = this.nodeMap.get(nid);
+      if (node && SCRIPT_TYPES.has(node.type)) {
+        const ddl = this.getNodeDdl(nid);
+        if (ddl) total += ddl.length;
+      }
+    }
+    // Also include frontier nodes (not yet visited but in scope)
+    for (const entry of this.frontier) {
+      const node = this.nodeMap.get(entry.nodeId);
+      if (node && SCRIPT_TYPES.has(node.type)) {
+        const ddl = this.getNodeDdl(entry.nodeId);
+        if (ddl) total += ddl.length;
+      }
+    }
+    return total;
+  }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
 

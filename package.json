@@ -430,35 +430,35 @@
             "default": 50,
             "minimum": 10,
             "maximum": 500,
-            "markdownDescription": "Maximum results per `@lineage` object or DDL search. Auto-scales with the selected model's context window when not explicitly set. Raise for large projects with high-capacity models (Claude max tier, strong local LLMs)."
+            "markdownDescription": "Maximum results per `@lineage` object or DDL search. Derived from the internal token budget when not explicitly set."
           },
           "dataLineageViz.ai.bfsMaxNodes": {
             "type": "integer",
             "default": 200,
             "minimum": 50,
             "maximum": 750,
-            "markdownDescription": "Maximum nodes returned by `@lineage` BFS trace queries. Auto-scales with the selected model's context window when not explicitly set."
+            "markdownDescription": "Maximum nodes returned by `@lineage` BFS trace queries. Derived from the internal token budget when not explicitly set."
           },
           "dataLineageViz.ai.bfsMaxEdges": {
             "type": "integer",
             "default": 300,
             "minimum": 50,
             "maximum": 2000,
-            "markdownDescription": "Maximum edges returned by `@lineage` BFS trace queries. Auto-scales with the selected model's context window when not explicitly set."
+            "markdownDescription": "Maximum edges returned by `@lineage` BFS trace queries. Derived from the internal token budget when not explicitly set."
           },
           "dataLineageViz.ai.analysisMaxGroups": {
             "type": "integer",
             "default": 100,
             "minimum": 20,
             "maximum": 500,
-            "markdownDescription": "Maximum groups returned by `@lineage` analysis queries (hubs, islands, orphans, cycles). Auto-scales with the selected model's context window when not explicitly set."
+            "markdownDescription": "Maximum groups returned by `@lineage` analysis queries (hubs, islands, orphans, cycles). Derived from the internal token budget when not explicitly set."
           },
           "dataLineageViz.ai.maxDdlChars": {
             "type": "integer",
             "default": 10000,
             "minimum": 1000,
             "maximum": 500000,
-            "markdownDescription": "Maximum DDL body characters per object (per single `getObjectDetail` call). When exceeded, an error is returned instead of partial DDL. Synapse/DWH stored procedures are typically 15,000–80,000 chars — raise to `500000` to effectively disable the limit. Auto-scales to `500000` when the selected model's context exceeds 128K tokens (e.g. Claude Sonnet)."
+            "markdownDescription": "Maximum DDL body characters per object (per single `getObjectDetail` call). When exceeded, an error is returned instead of partial DDL. Synapse/DWH stored procedures are typically 15,000–80,000 chars — raise to `500000` to effectively disable the limit."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
@@ -495,18 +495,6 @@
           {
             "name": "impact",
             "description": "Analyze what breaks if you change a column or object"
-          },
-          {
-            "name": "biz",
-            "description": "Analyze business logic, rules, and domain concepts across a data flow"
-          },
-          {
-            "name": "doc",
-            "description": "Generate documentation for a schema or data flow"
-          },
-          {
-            "name": "sql",
-            "description": "Generate SQL using actual schema types, PK/FK, and distribution"
           }
         ],
         "disambiguation": [
@@ -940,7 +928,7 @@
         "toolReferenceName": "lineage_start_column_trace",
         "displayName": "Start Column Trace",
         "userDescription": "Start a column-level lineage trace through the dependency graph.",
-        "modelDescription": "Start a column-level lineage trace. Call when the user asks WHERE a column comes from, HOW a value is calculated, or what FEEDS a specific column.\n\nCall with the column name(s) to trace. Origin is optional — omit if unknown.\nReturns: scope preview + first hop context with focus node DDL + neighbor list with columns.\n\nYOUR TASK: Read the focus node DDL. For each neighbor, determine if the target column flows through it:\n- trace: column flows through — specify columns_to_trace (may be renamed) + question for this neighbor\n- prune: column does NOT flow through — explain why\n- pass: boundary node, no transform\n\nThen call lineage_submit_hop_analysis with your notes and verdicts.",
+        "modelDescription": "Start a hop-by-hop lineage trace. Call as first action — origin is optional.\n\nReturns: scope preview + first hop context with focus node DDL + neighbor list.\n\nAfter receiving: read DDL, verdict each neighbor:\n- trace: follow this path. Provide columns_to_trace (INPUT columns) + question.\n- prune: cut branch and descendants. Explain why.\n- pass: data passes through unchanged, children queued automatically.\nThen call lineage_submit_hop_analysis. Repeat until all paths exhausted.\n\ncolumns_to_trace must be INPUT columns:\n  SP computes ListPrice = CostPrice * (1+MarkupPct) → [CostPrice, MarkupPct]\nIf no columns provided (concept-level trace): omit columns_to_trace from verdicts.",
         "canBeReferencedInPrompt": true,
         "tags": ["lineage", "lineage-ct"],
         "icon": "$(search)",
@@ -997,7 +985,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/chat-loop.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",

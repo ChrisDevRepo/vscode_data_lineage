@@ -81,7 +81,7 @@ export function presentColumnCompact(col: ColumnDef): string {
     return parts.join(' ');
   }
   if (col.type) parts.push(col.type);
-  parts.push(col.nullable === 'true' || col.nullable === 'True' ? 'nullable' : 'not null');
+  parts.push(col.nullable === 'true' || col.nullable === 'True' || col.nullable === 'NULL' ? 'nullable' : 'not null');
   if (col.pkOrdinal) parts.push('PK');
   if (col.unique) parts.push('UQ');
   if (col.check) parts.push('CK');

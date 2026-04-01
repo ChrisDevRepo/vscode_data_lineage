@@ -3,7 +3,7 @@
 ## Running Tests
 
 ```bash
-npm test                                       # All unit tests (1344 tsx + 112 vitest + snapshot)
+npm test                                       # All unit tests (1452 tsx + 112 vitest + snapshot)
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (108 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (218 tests)
 npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (197 tests)
@@ -11,8 +11,8 @@ npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (81 tests)
 npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (193 tests)
 npx tsx test/tsql-complex.test.ts              # SQL pattern tests (55 tests)
 npx tsx test/projectStore.test.ts              # Project store tests (136 tests)
-npx tsx test/ai-tools.test.ts                  # AI tool function tests (285 tests)
-npx tsx test/column-trace-state.test.ts        # Column-trace state machine tests (70 tests)
+npx tsx test/ai-tools.test.ts                  # AI tool function tests (311 tests)
+npx tsx test/column-trace-state.test.ts        # Column-trace state machine tests (152 tests)
 npx vitest run --config vitest.config.ts       # Hook tests (112 tests, vitest + React Testing Library)
 npm run test:snapshot                          # Parser baseline check (31 AW SPs vs committed TSV)
 npm run test:snapshot:update                   # Regenerate test/aw-baseline.tsv after parser changes
@@ -30,8 +30,8 @@ npm run test:coverage                          # Hook tests with v8 coverage rep
 | `dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `tsql-complex.test.ts` | 55 | **SQL pattern tests** — targeted SQL files covering each parser pattern; expected results embedded as `-- EXPECT` comments |
 | `projectStore.test.ts` | 136 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `ai-tools.test.ts` | 285 | AI tool pure functions: getContext, searchObjects (schemas/types/regex/mismatch), getObjectDetail, runBfsTrace (ddl/schema/type filters, truncation), runAnalysis, searchDdl, getDdlBatch, validateCreateAiView, autoFixCreateAiView, validateQuery, safeRegex, validateMarkdownFormat |
-| `column-trace-state.test.ts` | 70 | Column-trace state machine: lifecycle, init, hop context, verdict processing, rejection/retry, column validation, frontier cap, boundary detection, synthetic model tests |
+| `ai-tools.test.ts` | 311 | AI tool pure functions: getContext, searchObjects (schemas/types/regex/mismatch), getObjectDetail, runBfsTrace (ddl/schema/type filters, truncation), runAnalysis, searchDdl, getDdlBatch, validateCreateAiView, autoFixCreateAiView, validateQuery, safeRegex, validateMarkdownFormat |
+| `column-trace-state.test.ts` | 152 | Column-trace state machine: lifecycle, init, hop context, verdict processing, rejection/retry, column validation, frontier cap, boundary detection, synthetic model tests, bug regression (diamond merge, passthrough visited, depth tracking, focus boundary) |
 | `hooks/useInteractiveTrace.test.ts` | 31 | **Trace state machine** — mode transitions (none/configuring/filtered/applied/pathfinding/path-applied/analysis), depth limits (upstream-only, downstream-only), path finding success/failure, analysis subset, endTrace/clearTrace reset from all modes, tracedNodes memoization |
 | `hooks/useGraphology.test.ts` | 27 | **Graph filter pipeline** — schema filter (case-insensitive), type filter, isolation (hideIsolated), exclusion patterns, focus schema + cross-schema neighbors, allowlist, external ref visibility, graph/metrics state, rebuild behavior |
 | `hooks/useDacpacLoader.routing.test.tsx` | 30 | useDacpacLoader: message routing (dacpac vs DB paths), state transitions, callbacks, isDemo flag |

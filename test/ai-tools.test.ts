@@ -9,12 +9,13 @@ import * as yaml from 'js-yaml';
 import { assert, assertEq, testPath, rootPath, printSummary, loadAdventureWorksModel } from './testUtils';
 import { buildBareGraph } from '../src/ai/graphUtils';
 import {
-  AI_CAPS,
+  deriveCaps,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
   validateQuery, validateMarkdownFormat,
   type CreateAiViewInput,
 } from '../src/ai/tools';
+import { INLINE_TOKEN_BUDGET, estimateTokens, shouldInline } from '../src/ai/tokenBudget';
 import { safeRegex } from '../src/utils/modelSearch';
 import { addFilterProfile, createProject } from '../src/engine/projectStore';
 import type { FilterProfile, ProjectStore } from '../src/engine/projectStore';
@@ -45,30 +46,45 @@ async function testContextTool(model: DatabaseModel) {
   assert(ctx.filter === null, 'filter null when none passed');
   assert(Array.isArray(ctx.saved_views), 'saved_views is array');
 
-  // Small model (AW has 112 nodes < 150 threshold): objects[] includes DDL + columns + edges
-  assertEq(ctx.model_size as string, 'small', 'AW is a small model');
-  const objects = ctx.objects as Array<Record<string, unknown>>;
-  assert(Array.isArray(objects), 'small model: objects[] present');
-  assert(objects.length > 0, 'small model: objects not empty');
+  // Token budget gate: model_size + decision depend on catalog size vs INLINE_TOKEN_BUDGET
+  const tokenEst = ctx._token_estimate as Record<string, unknown>;
+  assert(tokenEst !== undefined, 'token estimate present');
+  assert(typeof tokenEst.catalog_chars === 'number', 'catalog_chars is number');
+  assert(typeof tokenEst.estimated_tokens === 'number', 'estimated_tokens is number');
+  assert(tokenEst.decision === 'inline' || tokenEst.decision === 'on_demand', 'decision is inline or on_demand');
+  const isInline = tokenEst.decision === 'inline';
+  assertEq(ctx.model_size as string, isInline ? 'small' : 'large', 'model_size consistent with decision');
 
-  // SPs/views/functions should have DDL
-  const spObj = objects.find(o => o.t === 'procedure');
-  assert(spObj !== undefined, 'small model: has a procedure object');
-  assert(typeof spObj?.ddl === 'string' && (spObj.ddl as string).length > 0,
-    'small model: procedure has non-empty DDL');
+  if (isInline) {
+    assert((tokenEst.estimated_tokens as number) <= INLINE_TOKEN_BUDGET, 'inline: tokens within budget');
+    const objects = ctx.objects as Array<Record<string, unknown>>;
+    assert(Array.isArray(objects), 'inline: objects[] present');
+    assert(objects.length > 0, 'inline: objects not empty');
 
-  // Tables should have columns
-  const tblObj = objects.find(o => o.t === 'table');
-  assert(tblObj !== undefined, 'small model: has a table object');
-  assert(Array.isArray(tblObj?.cols), 'small model: table has cols[]');
-  const cols = tblObj?.cols as Array<Record<string, unknown>>;
-  assert(cols.length > 0, 'small model: table cols not empty');
-  assert(cols[0].n !== undefined, 'small model: column has name');
+    // SPs/views/functions should have DDL
+    const spObj = objects.find(o => o.t === 'procedure');
+    assert(spObj !== undefined, 'inline: has a procedure object');
+    assert(typeof spObj?.ddl === 'string' && (spObj.ddl as string).length > 0,
+      'inline: procedure has non-empty DDL');
 
-  // Edges included for small model
-  const edges = ctx.edges as Array<unknown>;
-  assert(Array.isArray(edges), 'small model: edges[] present');
-  assert(edges.length > 0, 'small model: edges not empty');
+    // Tables should have columns
+    const tblObj = objects.find(o => o.t === 'table');
+    assert(tblObj !== undefined, 'inline: has a table object');
+    assert(Array.isArray(tblObj?.cols), 'inline: table has cols[]');
+    const cols = tblObj?.cols as Array<Record<string, unknown>>;
+    assert(cols.length > 0, 'inline: table cols not empty');
+    assert(cols[0].n !== undefined, 'inline: column has name');
+
+    // Edges included for inline model
+    const edges = ctx.edges as Array<unknown>;
+    assert(Array.isArray(edges), 'inline: edges[] present');
+    assert(edges.length > 0, 'inline: edges not empty');
+  } else {
+    // On-demand: no objects/edges, just summary
+    assert(ctx.objects === undefined, 'on_demand: no objects[]');
+    assert(ctx.edges === undefined, 'on_demand: no edges[]');
+    assert(Array.isArray(ctx.schemas), 'on_demand: schemas[] present for tool navigation');
+  }
 }
 
 async function testSearchObjects(model: DatabaseModel) {
@@ -255,8 +271,8 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   }
   const rHub = runBfsTrace(model, graph, hubId, 10, 10, undefined, undefined, false) as Record<string, unknown>;
   assert(!isError(rHub), 'large BFS: no error');
-  assert((rHub.nodes as unknown[]).length <= AI_CAPS.BFS_MAX_NODES, `nodes capped at ${AI_CAPS.BFS_MAX_NODES}`);
-  assert((rHub.edges as unknown[]).length <= AI_CAPS.BFS_MAX_EDGES, `edges capped at ${AI_CAPS.BFS_MAX_EDGES}`);
+  assert((rHub.nodes as unknown[]).length <= deriveCaps().BFS_MAX_NODES, `nodes capped at ${deriveCaps().BFS_MAX_NODES}`);
+  assert((rHub.edges as unknown[]).length <= deriveCaps().BFS_MAX_EDGES, `edges capped at ${deriveCaps().BFS_MAX_EDGES}`);
   assert(typeof rHub.truncated === 'boolean', 'truncated is boolean');
 }
 
@@ -459,8 +475,8 @@ async function testGetDdlBatch(model: DatabaseModel) {
   const allIds = model.nodes.map(n => n.id);
   const bigResult = getDdlBatch(model, allIds) as Record<string, unknown>;
   const bigResults = bigResult.results as unknown[];
-  assert(bigResults.length <= AI_CAPS.DDL_BATCH_CAP, `results capped at ${AI_CAPS.DDL_BATCH_CAP}`);
-  if (allIds.length > AI_CAPS.DDL_BATCH_CAP) {
+  assert(bigResults.length <= deriveCaps().DDL_BATCH_CAP, `results capped at ${deriveCaps().DDL_BATCH_CAP}`);
+  if (allIds.length > deriveCaps().DDL_BATCH_CAP) {
     assert(bigResult.truncated === true, 'truncated=true when ids exceed cap');
     assert(typeof bigResult.truncation_note === 'string', 'truncation_note present when truncated');
   }
@@ -734,10 +750,10 @@ async function testMultiModeSchema() {
   const commands = lineageParticipant.commands as Array<{ name: string }>;
   const cmdNames = commands.map(c => c.name);
   assert(cmdNames.includes('impact'), 'chat commands include /impact');
-  assert(cmdNames.includes('biz'), 'chat commands include /biz');
-  assert(cmdNames.includes('doc'), 'chat commands include /doc');
-  assert(cmdNames.includes('sql'), 'chat commands include /sql');
   assert(cmdNames.includes('column-trace'), 'chat commands include /column-trace');
+  assert(!cmdNames.includes('biz'), 'chat commands do NOT include /biz (consolidated to free-form)');
+  assert(!cmdNames.includes('doc'), 'chat commands do NOT include /doc (consolidated to free-form)');
+  assert(!cmdNames.includes('sql'), 'chat commands do NOT include /sql (consolidated to free-form)');
 
   // modelDescription mentions BAD/GOOD question examples
   const submitDesc = submitTool.modelDescription as string;

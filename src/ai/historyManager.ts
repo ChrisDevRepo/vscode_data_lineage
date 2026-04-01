@@ -1,28 +1,14 @@
 /**
- * Smart history management for @lineage chat participant.
+ * History management for @lineage chat participant.
  *
- * Three operations on tool results re-injected into conversation history:
+ * Two operations on tool results re-injected into conversation history:
  * 1. DROP — remove error/empty results, replace with 1-line summary
  * 2. MERGE — deduplicate overlapping search results (keep superset)
- * 3. FIELD-STRIP — remove heavy fields (ddl, columns) from old results by TTL
  *
- * NEVER truncates JSON strings. Operates on parsed objects, re-serializes valid JSON.
+ * Token budget decisions (inline vs on-demand) are made at tool call time
+ * by shouldInline() in tokenBudget.ts. History manager never truncates data.
  * Zero VS Code imports — pure functions for testability.
  */
-
-// ─── TTL configuration (in response turns) ──────────────────────────────────
-
-/** Fields and their TTL in response turns. After TTL, the field is stripped. */
-const FIELD_TTL: Record<string, number> = {
-  ddl:          4,   // 80%+ of token cost — AI can re-fetch via get_ddl_batch
-  columns:      6,   // medium cost — AI can re-fetch via get_object_detail
-  foreign_keys: 6,
-  edges:        8,   // aligned with up/dn — model can reference full BFS at same age
-  up:           8,   // neighbor arrays — useful, small
-  dn:           8,
-  ct_ddl:       1,   // column-trace DDL — aggressive cross-request cleanup (state machine owns within-request)
-  ct_neighbors: 1,   // column-trace neighbor data — same
-};
 
 // ─── DROP: remove noise results ─────────────────────────────────────────────
 
@@ -145,42 +131,3 @@ export function findMergeableCallIds(rounds: Array<{ toolCalls: ToolCallInfo[] }
   return dropIds;
 }
 
-// ─── FIELD-STRIP: remove heavy fields by TTL ────────────────────────────────
-
-/**
- * Strip expired fields from a tool result JSON string based on turn age.
- * Returns the modified JSON string with expired fields removed.
- * Never truncates — only removes complete JSON fields.
- */
-export function stripExpiredFields(resultJson: string, turnAge: number): string {
-  if (turnAge < 4) return resultJson; // nothing expires before turn 4
-  try {
-    const parsed = JSON.parse(resultJson);
-    if (typeof parsed !== 'object' || parsed === null) return resultJson;
-    stripFieldsRecursive(parsed, turnAge);
-    return JSON.stringify(parsed);
-  } catch {
-    return resultJson; // not valid JSON — return as-is
-  }
-}
-
-function stripFieldsRecursive(obj: Record<string, unknown>, age: number): void {
-  for (const field of Object.keys(obj)) {
-    const ttl = FIELD_TTL[field];
-    if (ttl !== undefined && age >= ttl) {
-      delete obj[field];
-      continue;
-    }
-    // Recurse into nested objects and arrays
-    const val = obj[field];
-    if (Array.isArray(val)) {
-      for (const item of val) {
-        if (typeof item === 'object' && item !== null) {
-          stripFieldsRecursive(item as Record<string, unknown>, age);
-        }
-      }
-    } else if (typeof val === 'object' && val !== null) {
-      stripFieldsRecursive(val as Record<string, unknown>, age);
-    }
-  }
-}

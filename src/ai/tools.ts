@@ -22,20 +22,13 @@ import {
   presentNode, presentColumn, presentSchema, presentNeighbor, presentFilter,
 } from './aiPresenter';
 
-// ─── Caps ────────────────────────────────────────────────────────────────────
+// ─── Caps (derived from INLINE_TOKEN_BUDGET) ────────────────────────────────
 
-export const AI_CAPS = {
-  BFS_MAX_NODES:       200,
-  BFS_MAX_EDGES:       300,
-  SEARCH_MAX_RESULTS:   50,
-  REGEX_MAX_LENGTH:    200,
-  ANALYSIS_MAX_GROUPS: 100,
-  MAX_DDL_CHARS:     10000,   // per object; 500000 = effectively unlimited
-  DDL_BATCH_CAP:        20,   // max IDs per getDdlBatch call
-} as const;
+import { deriveCaps, shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, type DerivedCaps } from './tokenBudget';
+export { deriveCaps, shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, type DerivedCaps } from './tokenBudget';
 
-/** Mutable override type for per-request cap tuning (auto-scale + VS Code settings). */
-export type AiCapsOverride = { [K in keyof typeof AI_CAPS]?: number };
+/** Resolved caps for a request — derived defaults + optional VS Code setting overrides. */
+export type ResolvedCaps = DerivedCaps;
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -77,9 +70,6 @@ export type InvalidRegex  = { error: 'invalid_regex'; hint: string };
 
 // ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
 
-/** Threshold: models at or below this size include full object catalog in get_context. */
-const SMALL_MODEL_THRESHOLD = 150;
-
 export function getContext(
   model: DatabaseModel,
   activeFilter: SerializedFilterState | null,
@@ -97,50 +87,48 @@ export function getContext(
       }).length
     : model.nodes.length;
 
-  const isSmall = model.nodes.length <= SMALL_MODEL_THRESHOLD;
+  // Build full catalog payload, then measure — token budget decides inline vs on-demand
+  const catalog = model.nodes.map(n => {
+    const base = presentNode(n, model.neighborIndex);
+    const ddlBody = store?.getDdl(n.id) ?? n.bodyScript;
+    if (SCRIPT_TYPES.has(n.type) && ddlBody) {
+      const ddl = normalizeBodyScript(ddlBody);
+      return { ...base, ddl };
+    }
+    const cols = store?.getColumns(n.id) ?? n.columns;
+    if (cols && cols.length > 0) {
+      const enriched: Record<string, unknown> = { ...base, cols: cols.map(c => presentColumn(c)) };
+      if (n.fks && n.fks.length > 0) {
+        enriched.fks = n.fks.map(fk => ({
+          name: fk.name, columns: fk.columns,
+          ref_schema: fk.refSchema, ref_table: fk.refTable,
+          ref_columns: fk.refColumns, on_delete: fk.onDelete,
+        }));
+      }
+      return strip(enriched);
+    }
+    return base;
+  });
+  const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]);
+  const catalogChars = JSON.stringify(catalog).length + JSON.stringify(edges).length;
+  const isInline = shouldInline(catalogChars);
 
   return {
     project_name:  projectName,
     source_type:   model.dbPlatform ? 'database' : 'dacpac',
     db_platform:   model.dbPlatform ?? null,
-    model_size:    isSmall ? 'small' as const : 'large' as const,
+    model_size:    isInline ? 'small' as const : 'large' as const,
     model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
     schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
     saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
-    // Small model: include full catalog WITH DDL + columns — AI can answer column questions
-    // without any additional tool calls (no search, no BFS needed)
-    ...(isSmall && {
-      objects: model.nodes.map(n => {
-        const base = presentNode(n, model.neighborIndex);
-        // Add DDL for scriptable nodes (procedure/view/function)
-        const ddlBody = store?.getDdl(n.id) ?? n.bodyScript;
-        if (SCRIPT_TYPES.has(n.type) && ddlBody) {
-          const ddl = normalizeBodyScript(ddlBody);
-          return { ...base, ddl };
-        }
-        // Add columns + FK for table/external nodes
-        const cols = store?.getColumns(n.id) ?? n.columns;
-        if (cols && cols.length > 0) {
-          const enriched: Record<string, unknown> = { ...base, cols: cols.map(c => presentColumn(c)) };
-          if (n.fks && n.fks.length > 0) {
-            enriched.fks = n.fks.map(fk => ({
-              name: fk.name, columns: fk.columns,
-              ref_schema: fk.refSchema, ref_table: fk.refTable,
-              ref_columns: fk.refColumns, on_delete: fk.onDelete,
-            }));
-          }
-          return strip(enriched);
-        }
-        return base;
-      }),
-      edges: model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]),
-    }),
-    // Large model: tell AI how many refs are outside the loaded model
-    ...(!isSmall && model.parseStats && {
+    // Token budget check: inline full catalog when payload fits, otherwise summary only
+    ...(isInline && { objects: catalog, edges }),
+    ...(!isInline && model.parseStats && {
       unresolved_ref_count: model.parseStats.droppedRefs?.length ?? 0,
     }),
+    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars), budget: INLINE_TOKEN_BUDGET, decision: isInline ? 'inline' : 'on_demand' },
   };
 }
 
@@ -166,9 +154,9 @@ export function searchObjects(
   types?: ObjectType[],
   schemas?: string[],
   mode: 'substring' | 'regex' = 'substring',
-  caps?: AiCapsOverride,
+  caps?: Partial<DerivedCaps>,
 ) {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  const effectiveCaps = { ...deriveCaps(), ...caps };
   if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
   }
@@ -246,10 +234,10 @@ const NEIGHBOR_CAP = 25;
 export function getObjectDetail(
   model: DatabaseModel,
   id: string,
-  caps?: AiCapsOverride,
+  caps?: Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  const effectiveCaps = { ...deriveCaps(), ...caps };
 
   const nodeMap   = buildNodeMap(model);
   const node      = nodeMap.get(id);
@@ -406,10 +394,10 @@ export function runBfsTrace(
   types?:          ObjectType[],
   schemas?:        string[],
   includeDdl:      boolean = true,
-  caps?:           AiCapsOverride,
+  caps?:           Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  const effectiveCaps = { ...deriveCaps(), ...caps };
   if (!graph.hasNode(id)) {
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
@@ -475,9 +463,9 @@ export function runAnalysis(
   type: AnalysisType,
   minDegree?: number,
   maxSize?: number,
-  caps?: AiCapsOverride,
+  caps?: Partial<DerivedCaps>,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  const effectiveCaps = { ...deriveCaps(), ...caps };
   const analysisConfig = {
     hubMinDegree:         minDegree ?? DEFAULT_CONFIG.analysis.hubMinDegree,
     islandMaxSize:        maxSize   ?? DEFAULT_CONFIG.analysis.islandMaxSize,
@@ -505,10 +493,10 @@ export function searchDdl(
   model: DatabaseModel,
   query: string,
   types?: ('view' | 'procedure' | 'function')[],
-  caps?: AiCapsOverride,
+  caps?: Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  const effectiveCaps = { ...deriveCaps(), ...caps };
   if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
   }
@@ -765,10 +753,10 @@ export function validateCreateAiView(
 export function getDdlBatch(
   model: DatabaseModel,
   ids: string[],
-  caps?: AiCapsOverride,
+  caps?: Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
+  const effectiveCaps = { ...deriveCaps(), ...caps };
   const cappedIds = ids.slice(0, effectiveCaps.DDL_BATCH_CAP);
   const nodeMap   = buildNodeMap(model);
 
