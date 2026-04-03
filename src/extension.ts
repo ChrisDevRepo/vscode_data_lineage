@@ -1212,6 +1212,7 @@ export function activate(context: vscode.ExtensionContext) {
           messages.push(new vscode.LanguageModelChatMessage(
             vscode.LanguageModelChatMessageRole.User, resultParts,
           ));
+          const toolResultMsgIdx = messages.length - 1;
 
           // action_required gate: scan tool results and inject blocking message
           const actionGates: string[] = [];
@@ -1286,8 +1287,8 @@ export function activate(context: vscode.ExtensionContext) {
           if ((hasCtStart || hasCtSubmit) && isCtSuccess) {
             const ctCall = toolCalls.find(tc => tc.name === 'lineage_start_column_trace' || tc.name === 'lineage_submit_hop_analysis');
             if (ctCall) {
-              ctToolResults.push({ msgIdx: messages.length - 1, callId: ctCall.callId });
-              logDebug(outputChannel, 'AI', `[CT] Tracked tool result: msg[${messages.length - 1}], callId=${ctCall.callId.slice(-8)}, total tracked=${ctToolResults.length}`);
+              ctToolResults.push({ msgIdx: toolResultMsgIdx, callId: ctCall.callId });
+              logDebug(outputChannel, 'AI', `[CT] Tracked tool result: msg[${toolResultMsgIdx}], callId=${ctCall.callId.slice(-8)}, total tracked=${ctToolResults.length}`);
             }
           }
 
@@ -1359,8 +1360,8 @@ export function activate(context: vscode.ExtensionContext) {
           if ((hasExplStart || hasSubFindings) && isBbSuccess) {
             const bbCall = toolCalls.find(tc => tc.name === 'lineage_start_exploration' || tc.name === 'lineage_submit_findings');
             if (bbCall) {
-              bbToolResults.push({ msgIdx: messages.length - 1, callId: bbCall.callId });
-              logDebug(outputChannel, 'AI', `[BB] Tracked tool result: msg[${messages.length - 1}], callId=${bbCall.callId.slice(-8)}, total tracked=${bbToolResults.length}`);
+              bbToolResults.push({ msgIdx: toolResultMsgIdx, callId: bbCall.callId });
+              logDebug(outputChannel, 'AI', `[BB] Tracked tool result: msg[${toolResultMsgIdx}], callId=${bbCall.callId.slice(-8)}, total tracked=${bbToolResults.length}`);
             }
           }
 
