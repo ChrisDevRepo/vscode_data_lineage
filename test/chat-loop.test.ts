@@ -26,7 +26,7 @@ async function testExploreFirstDesign() {
 // ─── Classic Mode: Search → Detail → BFS → Create View ─────────────────────
 
 async function testClassicSearchDetailBfsView(model: DatabaseModel, graph: Graph) {
-  console.log('\n── Classic: search → detail → BFS → create_ai_view ──');
+  console.log('\n── Classic: search → detail → BFS → enrich_view ──');
 
   // Script what a correct Copilot would do for "/trace Employee"
   const empNode = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
@@ -52,12 +52,11 @@ async function testClassicSearchDetailBfsView(model: DatabaseModel, graph: Graph
     // Round 4: AI creates a view
     {
       toolCalls: [{
-        name: 'lineage_create_ai_view',
+        name: 'lineage_enrich_view',
         input: {
           name: 'Employee Lineage',
           node_ids: [empId],
           summary: 'Employee table dependencies.',
-          description: '## Data Flow\nShows Employee dependencies.\n\n## Details\nTraced 2 hops.',
         },
       }],
     },
@@ -81,7 +80,7 @@ async function testClassicSearchDetailBfsView(model: DatabaseModel, graph: Graph
   assertEq(result.toolSequence[0], 'search_objects', 'First tool: search');
   assertEq(result.toolSequence[1], 'get_object_detail', 'Second tool: detail');
   assertEq(result.toolSequence[2], 'run_bfs_trace', 'Third tool: BFS');
-  assertEq(result.toolSequence[3], 'create_ai_view', 'Fourth tool: create view');
+  assertEq(result.toolSequence[3], 'enrich_view', 'Fourth tool: enrich view');
 
   // Tool results are valid JSON
   for (const tr of result.toolResults) {

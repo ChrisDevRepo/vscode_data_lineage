@@ -16,9 +16,9 @@ The YAML file defines five output fields. Only the `instruction` value of each f
 aiOutputTemplates.yaml
   ├── summary.instruction      → injected into system prompt (rule 5)
   ├── description.instruction  → injected into system prompt (rule 5)
-  ├── badges.instruction       → injected into create_ai_view tool description
-  ├── highlights.instruction   → injected into create_ai_view tool description
-  └── notes.instruction        → injected into create_ai_view tool description
+  ├── badges.instruction       → injected into enrich_view tool description
+  ├── highlights.instruction   → injected into enrich_view tool description
+  └── notes.instruction        → injected into enrich_view tool description
 ```
 
 ## The Five Fields -- A Layered Hierarchy
@@ -109,7 +109,7 @@ The YAML controls the **presentation layer** only — how the AI formats its fin
 
 | Layer | Customizable? | Mechanism | Examples |
 |-------|:---:|-----------|----------|
-| **Output formatting** (create_ai_view) | **Yes — YAML** | `aiOutputTemplates.yaml` | Summary length, description style, badge count, audience tone |
+| **Output formatting** (enrich_view) | **Yes — YAML** | `aiOutputTemplates.yaml` | Summary length, description style, badge count, audience tone |
 | System prompt (rules 1-4) | No — hardcoded | `extension.ts` | "Never fabricate IDs", validation stops, routing logic |
 | Mode prompts (CT/BB) | No — hardcoded | `extension.ts` | Verdict instructions, column tracking, findings format |
 | Tool descriptions | No — hardcoded | `package.json` | When/what/format for each tool |

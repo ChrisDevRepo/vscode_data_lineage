@@ -8,9 +8,9 @@ import { buildBareGraph } from './ai/graphUtils';
 import {
   shouldInline, estimateTokens, INLINE_TOKEN_BUDGET,
   getContext, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView,
   validateToolInput,
-  type CreateAiViewInput,
+  type EnrichViewInput,
 } from './ai/tools';
 import { ColumnTraceState } from './ai/columnTraceState';
 import { BlackboardState } from './ai/blackboardState';
@@ -61,6 +61,30 @@ let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; inf
 let _aiModelName:      string = '';          // display name of the current Copilot model (e.g., "Claude Sonnet 4.6")
 let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
+
+/** Stored result graph — populated by CT/BB/BFS/inline, consumed by enrich_view. */
+type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bfs';
+interface ResultGraph {
+  nodeIds: string[];
+  edges: [string, string, string][];
+  verdicts: Record<string, NodeRole>;
+  source: 'column_trace' | 'blackboard' | 'bfs_trace' | 'inline';
+}
+let _resultGraph: ResultGraph | null = null;
+
+/** Build ResultGraph from a BFS trace result (nodes + edges). */
+function buildResultGraphFromBfs(
+  result: Record<string, unknown>,
+  source: 'bfs_trace' | 'inline',
+): ResultGraph | null {
+  const nodes = result.nodes as Array<{ id: string }> | undefined;
+  const edges = result.edges as [string, string, string][] | undefined;
+  if (!nodes?.length) return null;
+  const verdicts: Record<string, NodeRole> = {};
+  for (const n of nodes) verdicts[n.id] = 'bfs';
+  return { nodeIds: nodes.map(n => n.id), edges: edges ?? [], verdicts, source };
+}
+
 let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage — populated on model load, cleared on reload
 
 /** AI output template instructions — loaded once at activation, cached for system prompt injection. */
@@ -351,8 +375,14 @@ export function activate(context: vscode.ExtensionContext) {
               include_ddl?: boolean; target?: string;
             };
           logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}"${target ? ` → target="${target}"` : `, up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}`}, ddl=${include_ddl ?? true}`);
-          return logAndReturn('run_bfs_trace', runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
-            types as ObjectType[] | undefined, schemas, include_ddl ?? true, _columnStore, target));
+          const bfsResult = runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
+            types as ObjectType[] | undefined, schemas, include_ddl ?? true, _columnStore, target) as Record<string, unknown>;
+          // Store result graph for enrich_view (skip error results)
+          if (!('error' in bfsResult)) {
+            _resultGraph = buildResultGraphFromBfs(bfsResult, 'bfs_trace');
+            if (_resultGraph) logDebug(outputChannel, 'AI', `[ResultGraph] stored from BFS: ${_resultGraph.nodeIds.length} nodes, ${_resultGraph.edges.length} edges`);
+          }
+          return logAndReturn('run_bfs_trace', bfsResult);
         } catch (err) { return toolError('run_bfs_trace', err); }
       },
     }),
@@ -389,18 +419,17 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (err) { return toolError('search_ddl', err); }
       },
     }),
-    vscode.lm.registerTool('lineage_create_ai_view', {
+    vscode.lm.registerTool('lineage_enrich_view', {
       prepareInvocation(options, _token) {
-        const input = options.input as CreateAiViewInput;
-        const isRich = !!(input.description || input.highlight_groups?.length);
+        const input = options.input as EnrichViewInput;
+        const source = _resultGraph ? _resultGraph.source : 'manual';
+        const nodeCount = _resultGraph ? _resultGraph.nodeIds.length : (input.node_ids?.length ?? 0);
         return {
-          invocationMessage: isRich
-            ? `Create AI view "${input.name}" with ${input.node_ids?.length ?? 0} objects`
-            : `Save view "${input.name}" with ${input.node_ids?.length ?? 0} objects`,
+          invocationMessage: `Enrich view "${input.name}" (${nodeCount} nodes from ${source})`,
           confirmationMessages: {
             title: 'Create AI lineage view?',
             message: new vscode.MarkdownString(
-              `**${input.name ?? 'Unnamed'}** · ${input.node_ids?.length ?? 0} nodes\n\nSaved to project and applied.`
+              `**${input.name ?? 'Unnamed'}** · ${nodeCount} nodes\n\nSaved to project and applied.`
             ),
           },
         };
@@ -409,30 +438,64 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
-          const inputErr = validateToolInput(options.input, { name: 'string', node_ids: 'array' });
-          if (inputErr) { logWarn(outputChannel, 'AI', `create_ai_view: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
-          const rawInput = options.input as CreateAiViewInput;
-          logDebug(outputChannel, 'AI', `create_ai_view: entry — name="${rawInput.name}", ids=${rawInput.node_ids?.length ?? 0}, summary=${rawInput.summary?.length ?? 0}ch, desc=${rawInput.description?.length ?? 0}ch`);
+          const inputErr = validateToolInput(options.input, { name: 'string' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `enrich_view: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
+          const rawInput = options.input as EnrichViewInput;
+          logDebug(outputChannel, 'AI', `enrich_view: entry — name="${rawInput.name}", summary=${rawInput.summary?.length ?? 0}ch, desc=${rawInput.description?.length ?? 0}ch, stored_graph=${!!_resultGraph}`);
 
-          // Auto-fix common issues (long badge text, unknown IDs, empty notes) before validation
-          const { input, fixes } = autoFixCreateAiView(m, rawInput);
+          // ── 1. Resolve node set: stored graph > fallback node_ids > error ──
+          let resolvedNodeIds: string[];
+          let resolvedEdges: [string, string, string][];
+          let graphSource: string;
+
+          if (_resultGraph) {
+            resolvedNodeIds = [..._resultGraph.nodeIds];
+            resolvedEdges = [..._resultGraph.edges];
+            graphSource = _resultGraph.source;
+
+            // Apply prune_node_ids if provided
+            if (rawInput.prune_node_ids?.length) {
+              const pruneSet = new Set(rawInput.prune_node_ids);
+              const unknownPrunes = rawInput.prune_node_ids.filter(id => !new Set(resolvedNodeIds).has(id));
+              if (unknownPrunes.length > 0) {
+                logWarn(outputChannel, 'AI', `enrich_view: ${unknownPrunes.length} prune ID(s) not in result graph — ${unknownPrunes.slice(0, 3).join(', ')}`);
+              }
+              const beforeCount = resolvedNodeIds.length;
+              resolvedNodeIds = resolvedNodeIds.filter(id => !pruneSet.has(id));
+              resolvedEdges = resolvedEdges.filter(([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt));
+              logInfo(outputChannel, 'AI', `enrich_view: pruned ${beforeCount - resolvedNodeIds.length} node(s), ${resolvedNodeIds.length} remaining`);
+            }
+            logInfo(outputChannel, 'AI', `enrich_view: using stored graph (${graphSource}, ${resolvedNodeIds.length} nodes, ${resolvedEdges.length} edges)`);
+          } else if (rawInput.node_ids?.length) {
+            resolvedNodeIds = rawInput.node_ids;
+            resolvedEdges = [];
+            graphSource = 'fallback';
+            logWarn(outputChannel, 'AI', `enrich_view: no stored graph — using AI-provided node_ids (${resolvedNodeIds.length})`);
+          } else {
+            logWarn(outputChannel, 'AI', `enrich_view: no stored graph and no node_ids`);
+            return logAndReturn('enrich_view', { success: false, errors: ['No graph available — run a trace, BFS, or provide node_ids'], hint: 'Call run_bfs_trace or start_column_trace first, then retry enrich_view.' });
+          }
+
+          // ── 2. Auto-fix orphaned badges/notes/highlights ──
+          const { input, fixes } = autoFixEnrichView(m, rawInput, graphSource !== 'fallback' ? resolvedNodeIds : undefined);
           if (fixes.length > 0) {
-            logInfo(outputChannel, 'AI', `create_ai_view: auto-fixed ${fixes.length} issue(s) — ${fixes.join('; ')}`);
+            logInfo(outputChannel, 'AI', `enrich_view: auto-fixed ${fixes.length} issue(s) — ${fixes.join('; ')}`);
           }
-          logDebug(outputChannel, 'AI', `create_ai_view: path=autoFix done, ids after fix=${input.node_ids?.length ?? 0}`);
 
-          const validation = validateCreateAiView(m, input);
+          // ── 3. Validate mandatory fields ──
+          const validation = validateEnrichView(input, resolvedNodeIds);
           if (!validation.success) {
-            logWarn(outputChannel, 'AI', `create_ai_view: validation failed — ${validation.errors?.join(', ')}`);
-            return logAndReturn('create_ai_view', validation);
+            logWarn(outputChannel, 'AI', `enrich_view: validation failed — ${validation.errors?.join(', ')}`);
+            return logAndReturn('enrich_view', validation);
           }
-          logDebug(outputChannel, 'AI', `create_ai_view: path=validation passed`);
+          logDebug(outputChannel, 'AI', `enrich_view: validation passed`);
 
           if (!_aiCurrentProjectId) {
-            logWarn(outputChannel, 'AI', `create_ai_view: no active project — _aiCurrentProjectId is null`);
-            return logAndReturn('create_ai_view', { success: false, errors: ['No active project'], hint: 'Open a saved project before using lineage_create_ai_view.' });
+            logWarn(outputChannel, 'AI', `enrich_view: no active project — _aiCurrentProjectId is null`);
+            return logAndReturn('enrich_view', { success: false, errors: ['No active project'], hint: 'Open a saved project before using enrich_view.' });
           }
-          // Build aiMetadata for the transient preview (NOT saved yet — user decides)
+
+          // ── 4. Build aiMetadata for transient preview ──
           const aiMetadata: AIViewMetadata = {
             summary: validation.summary,
             description: validation.description,
@@ -454,27 +517,20 @@ export function activate(context: vscode.ExtensionContext) {
             layoutDirection: validation.layout_direction,
           };
           const preview = { name: validation.name, nodeIds: validation.node_ids, aiMetadata };
-          const sumLen = validation.summary?.length ?? 0;
-          const descLen = validation.description?.length ?? 0;
-          const groups = validation.highlight_groups.length;
-          const badges = validation.badges.length;
-          const notes = validation.notes.length;
-          logInfo(outputChannel, 'AI', `create_ai_view: "${validation.name}", ${validation.node_ids.length} nodes, summary=${sumLen}ch, desc=${descLen}ch, model=${_aiModelName} → preview`);
-          logDebug(outputChannel, 'AI', `create_ai_view detail: ${groups} groups, ${badges} badges, ${notes} notes, layout=${validation.layout_direction}`);
+          logInfo(outputChannel, 'AI', `enrich_view: "${validation.name}", ${validation.node_ids.length} nodes, summary=${validation.summary?.length ?? 0}ch, desc=${validation.description?.length ?? 0}ch, model=${_aiModelName} → preview`);
 
           if (activePanel) {
             activePanel.webview.postMessage({ type: 'ai-view-preview', ...preview });
             activePanel.reveal(vscode.ViewColumn.One);
-            logDebug(outputChannel, 'AI', `create_ai_view: path=postMessage sent to activePanel`);
           } else {
-            logWarn(outputChannel, 'AI', `create_ai_view: activePanel is null — view created but NOT displayed. Open the lineage graph first.`);
+            logWarn(outputChannel, 'AI', `enrich_view: activePanel is null — view enriched but NOT displayed. Open the lineage graph first.`);
           }
-          return logAndReturn('create_ai_view', {
-            success: true, view_name: validation.name, node_count: validation.node_ids.length,
+          return logAndReturn('enrich_view', {
+            success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource,
             ...(fixes.length > 0 ? { auto_fixes: fixes } : {}),
             ...(!activePanel ? { warning: 'View created but graph panel is not open. Open the lineage graph to see it.' } : {}),
           });
-        } catch (err) { return toolError('create_ai_view', err); }
+        } catch (err) { return toolError('enrich_view', err); }
       },
     }),
     vscode.lm.registerTool('lineage_get_ddl_batch', {
@@ -526,8 +582,13 @@ export function activate(context: vscode.ExtensionContext) {
             const originId = (initResult.originNode as { id?: string }).id;
             if (originId && g) {
               logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${INLINE_TOKEN_BUDGET} → inline (all DDL at once)`);
-              const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined);
+              const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined) as Record<string, unknown>;
               _columnTraceState = null; // release state machine — not needed
+              // Store result graph for enrich_view
+              if (!('error' in bfsResult)) {
+                _resultGraph = buildResultGraphFromBfs(bfsResult, 'inline');
+                if (_resultGraph) logDebug(outputChannel, 'AI', `[ResultGraph] stored from inline CT: ${_resultGraph.nodeIds.length} nodes`);
+              }
               return logAndReturn('start_column_trace', {
                 status: 'inline',
                 action_required: 'analyze_and_respond',
@@ -589,6 +650,16 @@ export function activate(context: vscode.ExtensionContext) {
           if ('done' in hopResult) {
             // Frontier drained — return full result inline (no separate get_result call needed)
             const fullResult = _columnTraceState.getResult();
+            // Store result graph for enrich_view
+            if (!('error' in fullResult)) {
+              const chainIds = new Set((fullResult.chain as Array<{ nodeId: string }>).map(c => c.nodeId));
+              const allNodeIds = (fullResult.fullNodes as Array<{ id: string }>).map(n => n.id);
+              const v: Record<string, NodeRole> = {};
+              for (const id of allNodeIds) v[id] = chainIds.has(id) ? 'trace' : 'pass';
+              for (const o of fullResult.outOfScope as Array<{ nodeId: string }>) v[o.nodeId] = 'prune';
+              _resultGraph = { nodeIds: allNodeIds, edges: fullResult.edges, verdicts: v, source: 'column_trace' };
+              logDebug(outputChannel, 'AI', `[ResultGraph] stored from CT: ${allNodeIds.length} nodes (${chainIds.size} traced, ${allNodeIds.length - chainIds.size} passthrough), ${fullResult.edges.length} edges`);
+            }
             return logAndReturn('submit_hop_analysis', fullResult);
           }
 
@@ -627,8 +698,13 @@ export function activate(context: vscode.ExtensionContext) {
             const originId = (initResult.originNode as { id?: string }).id;
             if (originId && g) {
               logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars → inline`);
-              const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined);
+              const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined) as Record<string, unknown>;
               _blackboardState = null;
+              // Store result graph for enrich_view
+              if (!('error' in bfsResult)) {
+                _resultGraph = buildResultGraphFromBfs(bfsResult, 'inline');
+                if (_resultGraph) logDebug(outputChannel, 'AI', `[ResultGraph] stored from inline BB: ${_resultGraph.nodeIds.length} nodes`);
+              }
               return logAndReturn('start_exploration', {
                 status: 'inline',
                 action_required: 'analyze_and_respond',
@@ -695,6 +771,14 @@ export function activate(context: vscode.ExtensionContext) {
           if ('error' in hopResult) return logAndReturn('submit_findings', hopResult);
           if ('done' in hopResult) {
             const fullResult = _blackboardState.getResult();
+            // Store result graph for enrich_view
+            if (!('error' in fullResult)) {
+              const noteNodeIds = (fullResult.notes as Array<{ nodeId: string }>).map(n => n.nodeId);
+              const v: Record<string, NodeRole> = {};
+              for (const id of noteNodeIds) v[id] = 'noted';
+              _resultGraph = { nodeIds: noteNodeIds, edges: fullResult.edges, verdicts: v, source: 'blackboard' };
+              logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${noteNodeIds.length} nodes, ${fullResult.edges.length} edges`);
+            }
             return logAndReturn('submit_findings', fullResult);
           }
 
@@ -724,6 +808,7 @@ export function activate(context: vscode.ExtensionContext) {
       _aiModelName = request.model.name || request.model.id;
       _columnTraceState = null; // reset per request — each trace gets a fresh state machine
       _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
+      _resultGraph = null;      // reset per request — each enrich_view uses fresh graph
 
       if (!isAiEnabled()) {
         stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
@@ -860,7 +945,7 @@ export function activate(context: vscode.ExtensionContext) {
         '   Prefer trace over prune when uncertain.\n' +
         '   For broad exploration (business rules, documentation, patterns, investigations):\n' +
         '   use start_exploration to explore objects hop-by-hop with persistent memory.\n' +
-        '4. OUTPUT: create_ai_view when graph aids understanding (lineage path, data flow).\n' +
+        '4. OUTPUT: enrich_view when graph aids understanding (lineage path, data flow).\n' +
         '   Chat text otherwise (explain, SQL, list, compare). Default: text.\n' +
         '5. VIEW OUTPUT — fields form a layered hierarchy (headline → callouts → captions → article).\n' +
         '   Badges (5-8 key nodes) are numbered anchors. Notes caption each badged node.\n' +
@@ -1103,7 +1188,7 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'ct_done';
             phaseTransitions.push(`ct_active→ct_done@R${roundCount}`);
             lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-            logInfo(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (create_ai_view available)`);
+            logInfo(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (enrich_view available)`);
           }
 
           // CT success detection via typed state machine accessors (not string parsing)
@@ -1177,7 +1262,7 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'bb_done';
             phaseTransitions.push(`bb_active→bb_done@R${roundCount}`);
             lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-            logInfo(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (create_ai_view available)`);
+            logInfo(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (enrich_view available)`);
           }
 
           // BB success detection

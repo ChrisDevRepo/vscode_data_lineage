@@ -10,9 +10,9 @@ import { assert, assertEq, testPath, rootPath, printSummary, loadAdventureWorksM
 import { buildBareGraph } from '../src/ai/graphUtils';
 import {
   getContext, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView,
   validateQuery, validateMarkdownFormat,
-  type CreateAiViewInput,
+  type EnrichViewInput,
 } from '../src/ai/tools';
 import { INLINE_TOKEN_BUDGET, estimateTokens, shouldInline } from '../src/ai/tokenBudget';
 import { safeRegex } from '../src/utils/modelSearch';
@@ -299,64 +299,60 @@ async function testSearchDdl(model: DatabaseModel) {
   assert('hint' in empty, 'empty DDL result includes hint');
 }
 
-async function testValidateCreateAiView(model: DatabaseModel) {
-  console.log('\n── validateCreateAiView ──');
+async function testValidateEnrichView(model: DatabaseModel) {
+  console.log('\n── validateEnrichView ──');
   const node = model.nodes[0];
 
   const VALID_SUMMARY = 'Test graph purpose.';
   const VALID_DESC = '## Analysis\nStructured answer.\n\n## Details\nMore content.';
 
-  // Valid minimal: name + node_ids + summary + description
-  const ok = validateCreateAiView(model, { name: 'My View', node_ids: [node.id], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
-  assert(ok.success === true, 'minimal create: success true');
-  assertEq(ok.name as string, 'My View', 'minimal create: name matches');
-  assert(Array.isArray(ok.node_ids), 'minimal create: node_ids is array');
+  // Valid minimal: name + summary (description is optional now)
+  const ok = validateEnrichView({ name: 'My View', summary: VALID_SUMMARY, description: VALID_DESC }, [node.id]) as Record<string, unknown>;
+  assert(ok.success === true, 'minimal enrich: success true');
+  assertEq(ok.name as string, 'My View', 'minimal enrich: name matches');
+  assert(Array.isArray(ok.node_ids), 'minimal enrich: node_ids is array');
 
   // Empty name
-  const noName = validateCreateAiView(model, { name: '', node_ids: [node.id], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
+  const noName = validateEnrichView({ name: '', summary: VALID_SUMMARY }, [node.id]) as Record<string, unknown>;
   assert(noName.success === false, 'empty name: success false');
 
   // Name too long
-  const longName = validateCreateAiView(model, { name: 'x'.repeat(61), node_ids: [node.id], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
+  const longName = validateEnrichView({ name: 'x'.repeat(61), summary: VALID_SUMMARY }, [node.id]) as Record<string, unknown>;
   assert(longName.success === false, 'name >60 chars: success false');
 
-  // Empty node_ids
-  const noIds = validateCreateAiView(model, { name: 'Test', node_ids: [], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
-  assert(noIds.success === false, 'empty node_ids: success false');
-
-  // Unknown node id — validation no longer rejects (auto-fix handles it upstream)
-  const badIds = validateCreateAiView(model, { name: 'Ghost', node_ids: ['[ghost].[nothing]'], summary: VALID_SUMMARY, description: VALID_DESC }) as Record<string, unknown>;
-  assert(badIds.success === true, 'unknown id: validation passes (auto-fix handles upstream)');
+  // Empty resolved node set
+  const noIds = validateEnrichView({ name: 'Test', summary: VALID_SUMMARY }, []) as Record<string, unknown>;
+  assert(noIds.success === false, 'empty resolved nodes: success false');
 
   // ── Content validation: summary + description ──
 
   // Missing summary → rejected
-  const noSummary = validateCreateAiView(model, { name: 'Test', node_ids: [node.id], description: VALID_DESC }) as Record<string, unknown>;
+  const noSummary = validateEnrichView({ name: 'Test', summary: '' }, [node.id]) as Record<string, unknown>;
   assert(noSummary.success === false, 'missing summary: rejected');
 
-  // Missing description → rejected
-  const noDesc = validateCreateAiView(model, { name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY }) as Record<string, unknown>;
-  assert(noDesc.success === false, 'missing description: rejected');
+  // Missing description → accepted (optional now)
+  const noDesc = validateEnrichView({ name: 'Test', summary: VALID_SUMMARY }, [node.id]) as Record<string, unknown>;
+  assert(noDesc.success === true, 'missing description: accepted (optional)');
 
-  // Single paragraph (no ## or \n\n) → rejected
-  const singleParagraph = validateCreateAiView(model, {
-    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+  // Single paragraph description (no ## or \n\n) → rejected when provided
+  const singleParagraph = validateEnrichView({
+    name: 'Test', summary: VALID_SUMMARY,
     description: 'Revenue flows from staging through transformation to the fact table.',
-  }) as Record<string, unknown>;
+  }, [node.id]) as Record<string, unknown>;
   assert(singleParagraph.success === false, 'single paragraph description: rejected');
 
   // Walkthrough prefix → rejected
-  const walkthrough = validateCreateAiView(model, {
-    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+  const walkthrough = validateEnrichView({
+    name: 'Test', summary: VALID_SUMMARY,
     description: 'Traces how Revenue is calculated\n\n## Details\nMore...',
-  }) as Record<string, unknown>;
+  }, [node.id]) as Record<string, unknown>;
   assert(walkthrough.success === false, 'walkthrough prefix: rejected');
 
   // Multi-paragraph without headings → passes (has \n\n)
-  const multiPara = validateCreateAiView(model, {
-    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+  const multiPara = validateEnrichView({
+    name: 'Test', summary: VALID_SUMMARY,
     description: 'Revenue uses EV methodology.\n\nThe formula applies PlannedValue × EH/PH.',
-  }) as Record<string, unknown>;
+  }, [node.id]) as Record<string, unknown>;
   assert(multiPara.success === true, 'multi-paragraph without ##: passes');
 
   // Markdown format validation (validateMarkdownFormat)
@@ -368,14 +364,14 @@ async function testValidateCreateAiView(model: DatabaseModel) {
   assert(validateMarkdownFormat('## Heading\n```math\nformula').length > 0, 'unclosed ```math fence: rejected');
   assertEq(validateMarkdownFormat('## Heading\n```sql\nSELECT 1\n```').length, 0, 'closed ```sql fence: no errors');
 
-  // Validate rejects description with \begin{cases} via validateCreateAiView
-  const beginCases = validateCreateAiView(model, {
-    name: 'Test', node_ids: [node.id], summary: VALID_SUMMARY,
+  // Validate rejects description with \begin{cases}
+  const beginCases = validateEnrichView({
+    name: 'Test', summary: VALID_SUMMARY,
     description: '## Formula\nThe result is:\n\\begin{cases} 0 & \\text{if x=0} \\\\ 1 & \\text{otherwise} \\end{cases}',
-  }) as Record<string, unknown>;
+  }, [node.id]) as Record<string, unknown>;
   assert(beginCases.success === false, 'description with \\begin{cases}: rejected');
 
-  // Realistic: Person.EmailAddress + neighbors with description
+  // Realistic: Person.EmailAddress + neighbors
   const emailNode = model.nodes.find(n => n.schema === 'Person' && n.name === 'EmailAddress');
   assert(emailNode !== undefined, 'Person.EmailAddress node found in model');
   if (emailNode) {
@@ -383,14 +379,13 @@ async function testValidateCreateAiView(model: DatabaseModel) {
     const neighborIds = [...(nb?.in ?? []), ...(nb?.out ?? [])].slice(0, 4);
     const lineageIds = [emailNode.id, ...neighborIds];
 
-    const richInput: CreateAiViewInput = {
+    const richInput: EnrichViewInput = {
       name: 'EmailAddress Full Lineage',
-      node_ids: lineageIds,
       summary: 'EmailAddress dependency chain in Person schema.',
       description: '## Data Flow\nTraces how EmailAddress dependencies flow through the Person schema.',
     };
-    const aiResult = validateCreateAiView(model, richInput) as Record<string, unknown>;
-    assert(aiResult.success === true, 'EmailAddress lineage: validateCreateAiView succeeds');
+    const aiResult = validateEnrichView(richInput, lineageIds) as Record<string, unknown>;
+    assert(aiResult.success === true, 'EmailAddress lineage: validateEnrichView succeeds');
     assertEq(aiResult.name as string, 'EmailAddress Full Lineage', 'EmailAddress lineage: name returned');
     const resultIds = aiResult.node_ids as string[];
     assertEq(resultIds.length, lineageIds.length, `EmailAddress lineage: all ${lineageIds.length} node_ids returned`);
@@ -476,129 +471,124 @@ async function testGetDdlBatch(model: DatabaseModel) {
   assertEq((emptyResult.results as unknown[]).length, 0, 'empty ids: 0 results');
 }
 
-async function testAutoFixCreateAiView(model: DatabaseModel) {
-  console.log('\n── autoFixCreateAiView ──');
+async function testAutoFixEnrichView(model: DatabaseModel) {
+  console.log('\n── autoFixEnrichView ──');
   const node = model.nodes[0];
   const node2 = model.nodes[1];
 
-  // Clean input: 0 fixes
-  const { input: clean, fixes: noFixes } = autoFixCreateAiView(model, {
-    name: 'Clean', node_ids: [node.id],
-  });
-  assertEq(noFixes.length, 0, 'clean input: 0 fixes');
-  assertEq(clean.node_ids.length, 1, 'clean input: node_ids unchanged');
+  // ── With resolvedNodeIds (stored graph path) ──
+
+  // Clean input with resolved graph: 0 fixes
+  const { fixes: noFixes } = autoFixEnrichView(model, {
+    name: 'Clean', summary: 'Test.',
+    badges: [{ node_id: node.id, text: 'Keep' }],
+  }, [node.id]);
+  assertEq(noFixes.length, 0, 'clean input (resolved): 0 fixes');
 
   // Long badge text: passed through (no truncation — UI handles overflow)
-  const { input: fixedBadge, fixes: badgeFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id],
+  const { input: fixedBadge, fixes: badgeFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: 'Test.',
     badges: [{ node_id: node.id, text: 'Step 10 – Aggregate' }],
-  });
+  }, [node.id]);
   assertEq(badgeFixes.length, 0, 'long badge: no fixes (no truncation)');
   assertEq(fixedBadge.badges![0].text, 'Step 10 – Aggregate', 'long badge: text unchanged');
 
   // Empty notes: dropped
-  const { input: fixedNote, fixes: noteFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id],
+  const { input: fixedNote, fixes: noteFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: 'Test.',
     notes: [
       { node_id: node.id, text: 'Valid note' },
       { node_id: node.id, text: '' },
       { node_id: node.id, text: '   ' },
     ],
-  });
+  }, [node.id]);
   assert(noteFixes.length > 0, 'empty notes: fixes reported');
   assertEq(fixedNote.notes!.length, 1, 'empty notes: 2 dropped, 1 kept');
 
-  // Long note text: passed through (no truncation — UI handles overflow)
-  const longNoteText = 'x'.repeat(250);
-  const { input: fixedLongNote, fixes: longNoteFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id],
-    notes: [{ node_id: node.id, text: longNoteText }],
-  });
-  assertEq(fixedLongNote.notes![0].text.length, 250, 'long note: text unchanged');
-  assertEq(longNoteFixes.length, 0, 'long note: no fixes');
-
-  // Unknown IDs (minority): removed
-  const { input: fixedIds, fixes: idFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id, node2.id, '[ghost].[nothing]'],
-  });
-  assert(idFixes.length > 0, 'unknown ID minority: fixes reported');
-  assertEq(fixedIds.node_ids.length, 2, 'unknown ID minority: ghost removed');
-
-  // Unknown IDs (majority): now removed as long as >= 1 valid ID remains
-  const { input: majorityFixed, fixes: majorityFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: ['[ghost].[a]', '[ghost].[b]', node.id],
-  });
-  assert(majorityFixes.length > 0, 'unknown ID majority: fixes applied');
-  assertEq(majorityFixed.node_ids.length, 1, 'unknown ID majority: only valid ID kept');
-
-  // Badges for removed nodes: dropped
-  const { input: fixedOrphan, fixes: orphanFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id, '[ghost].[x]'],
+  // Orphaned badges (reference node not in resolved set): dropped
+  const { input: fixedOrphan, fixes: orphanFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: 'Test.',
     badges: [
       { node_id: node.id, text: 'Keep' },
       { node_id: '[ghost].[x]', text: 'Drop' },
     ],
-  });
+  }, [node.id]);
   assert(orphanFixes.some(f => f.includes('badge')), 'orphan badge: dropped');
   assertEq(fixedOrphan.badges!.length, 1, 'orphan badge: only valid badge kept');
 
-  // Highlight groups pruned after ID removal
-  const { input: fixedHl, fixes: hlFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id, '[ghost].[x]'],
+  // Highlight groups pruned against resolved node set
+  const { input: fixedHl, fixes: hlFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: 'Test.',
     highlight_groups: [
       { label: 'All ghosts', color: 'source', node_ids: ['[ghost].[x]'] },
       { label: 'Valid', color: 'target', node_ids: [node.id] },
     ],
-  });
+  }, [node.id]);
   assert(hlFixes.length > 0, 'highlight prune: fixes reported');
   assertEq(fixedHl.highlight_groups!.length, 1, 'highlight prune: ghost group removed');
   assertEq(fixedHl.highlight_groups![0].label, 'Valid', 'highlight prune: valid group kept');
 
-  // Summary passthrough in validate
-  const withSummary = validateCreateAiView(model, {
-    name: 'Test', node_ids: [node.id],
-    summary: 'Revenue lineage from SAP invoices.',
+  // ── Fallback path (no resolvedNodeIds — uses input.node_ids) ──
+
+  // Unknown IDs (minority): removed via catalog check in fallback
+  const { input: fixedIds, fixes: idFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: 'Test.', node_ids: [node.id, node2.id, '[ghost].[nothing]'],
+  });
+  assert(idFixes.length > 0, 'fallback unknown ID minority: fixes reported');
+  assertEq(fixedIds.node_ids!.length, 2, 'fallback unknown ID minority: ghost removed');
+
+  // Unknown IDs (majority): removed as long as >= 1 valid ID remains
+  const { input: majorityFixed, fixes: majorityFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: 'Test.', node_ids: ['[ghost].[a]', '[ghost].[b]', node.id],
+  });
+  assert(majorityFixes.length > 0, 'fallback unknown ID majority: fixes applied');
+  assertEq(majorityFixed.node_ids!.length, 1, 'fallback unknown ID majority: only valid ID kept');
+
+  // ── Validate integration ──
+
+  // Summary passthrough
+  const withSummary = validateEnrichView({
+    name: 'Test', summary: 'Revenue lineage from SAP invoices.',
     description: '## Revenue Calculation\nDetailed explanation...',
-  }) as Record<string, unknown>;
+  }, [node.id]) as Record<string, unknown>;
   assert(withSummary.success === true, 'summary+description: success');
   assertEq(withSummary.summary as string, 'Revenue lineage from SAP invoices.', 'summary: passed through');
   assert((withSummary.description as string).startsWith('## Revenue'), 'description: passed through');
 
   // Summary length: autoFix passes through (no truncation), validate rejects >300
   const longSummary = 'x'.repeat(150);
-  const { input: fixedSummary, fixes: summaryFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id], summary: longSummary,
-  });
+  const { input: fixedSummary, fixes: summaryFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: longSummary,
+  }, [node.id]);
   assertEq(summaryFixes.length, 0, 'long summary: no auto-fix (validation handles length)');
   assertEq(fixedSummary.summary!.length, 150, 'long summary: passed through unchanged');
 
   // Summary >300 chars: hard rejected by validate
-  const tooLongSummary = validateCreateAiView(model, {
-    name: 'Test', node_ids: [node.id], summary: 'x'.repeat(301),
-    description: '## Analysis\nStructured answer.\n\n## Details\nMore content.',
-  }) as Record<string, unknown>;
+  const tooLongSummary = validateEnrichView({
+    name: 'Test', summary: 'x'.repeat(301),
+  }, [node.id]) as Record<string, unknown>;
   assert(tooLongSummary.success === false, 'summary >300 chars: rejected');
 
   // Short summary: no fixes
-  const { fixes: noSummaryFixes } = autoFixCreateAiView(model, {
-    name: 'Test', node_ids: [node.id], summary: 'Short summary.',
-  });
+  const { fixes: noSummaryFixes } = autoFixEnrichView(model, {
+    name: 'Test', summary: 'Short summary.',
+  }, [node.id]);
   assertEq(noSummaryFixes.length, 0, 'short summary: no fixes');
 
-  // End-to-end: auto-fix cleans input, validate passes
-  const rawBadInput: CreateAiViewInput = {
+  // End-to-end fallback: auto-fix cleans input, validate passes
+  const rawBadInput: EnrichViewInput = {
     name: 'Revenue Pipeline',
-    node_ids: [node.id, '[ghost].[missing]'],
     summary: 'Revenue pipeline from staging to fact tables.',
     description: '## Revenue Flow\nStructured answer.\n\n## Details\nMore.',
+    node_ids: [node.id, '[ghost].[missing]'],
     badges: [{ node_id: node.id, text: 'Step 1 – Source Table' }],
     notes: [{ node_id: node.id, text: '' }],
   };
-  const { input: autoFixed, fixes: e2eFixes } = autoFixCreateAiView(model, rawBadInput);
-  assert(e2eFixes.length > 0, 'e2e: auto-fix applied changes');
-  assertEq(autoFixed.node_ids.length, 1, 'e2e: ghost ID removed');
-  const fixedValidation = validateCreateAiView(model, autoFixed) as Record<string, unknown>;
-  assert(fixedValidation.success === true, 'e2e: auto-fixed input passes validation');
+  const { input: autoFixed, fixes: e2eFixes } = autoFixEnrichView(model, rawBadInput);
+  assert(e2eFixes.length > 0, 'e2e fallback: auto-fix applied changes');
+  assertEq(autoFixed.node_ids!.length, 1, 'e2e fallback: ghost ID removed');
+  const fixedValidation = validateEnrichView(autoFixed, autoFixed.node_ids!) as Record<string, unknown>;
+  assert(fixedValidation.success === true, 'e2e fallback: auto-fixed input passes validation');
 
 }
 
@@ -668,24 +658,23 @@ async function testPromptRegression() {
   const tools = pkg.contributes.languageModelTools as Array<Record<string, unknown>>;
   assert(Array.isArray(tools), 'languageModelTools is array');
 
-  const createTool = tools.find(t => t.name === 'lineage_create_ai_view') as Record<string, unknown>;
-  assert(createTool !== undefined, 'lineage_create_ai_view tool found');
+  const enrichTool = tools.find(t => t.name === 'lineage_enrich_view') as Record<string, unknown>;
+  assert(enrichTool !== undefined, 'lineage_enrich_view tool found');
 
-  // summary is required in schema
-  const schema = createTool.inputSchema as Record<string, unknown>;
+  // summary is required in schema, description is optional
+  const schema = enrichTool.inputSchema as Record<string, unknown>;
   const required = schema.required as string[];
   assert(required.includes('summary'), 'summary is required in schema');
-  assert(required.includes('description'), 'description is required in schema');
+  assert(!required.includes('description'), 'description is NOT required in schema (optional)');
   assert(required.includes('name'), 'name is required in schema');
-  assert(required.includes('node_ids'), 'node_ids is required in schema');
+  assert(!required.includes('node_ids'), 'node_ids is NOT required in schema (fallback only)');
 
-  // modelDescription contains BAD/GOOD and validation warning
-  const desc = createTool.modelDescription as string;
+  // modelDescription contains BAD/GOOD and mentions enrichment
+  const desc = enrichTool.modelDescription as string;
   assert(desc.includes('BAD'), 'modelDescription has BAD example');
   assert(desc.includes('GOOD'), 'modelDescription has GOOD example');
-  assert(desc.includes('VALIDATED') || desc.includes('REJECTED'), 'modelDescription warns about validation');
   assert(desc.includes('summary'), 'modelDescription mentions summary');
-  assert(desc.includes('description'), 'modelDescription mentions description');
+  assert(desc.includes('prune_node_ids'), 'modelDescription mentions prune_node_ids');
 
   // All tools have tags and when clause
   for (const tool of tools) {
@@ -694,10 +683,12 @@ async function testPromptRegression() {
     assertEq(tool.when as string, 'dataLineageViz.modelLoaded', `${tool.name}: has when clause`);
   }
 
-  // summary parameter exists in schema properties
+  // Key parameters exist in schema properties
   const props = (schema.properties as Record<string, unknown>);
   assert('summary' in props, 'summary in schema properties');
   assert('description' in props, 'description in schema properties');
+  assert('prune_node_ids' in props, 'prune_node_ids in schema properties');
+  assert('node_ids' in props, 'node_ids in schema properties (fallback)');
 }
 
 async function testMultiModeSchema() {
@@ -783,8 +774,8 @@ async function testYamlTemplates() {
     await testRunAnalysis(model, graph);
     await testSearchDdl(model);
     await testGetDdlBatch(model);
-    await testValidateCreateAiView(model);
-    await testAutoFixCreateAiView(model);
+    await testValidateEnrichView(model);
+    await testAutoFixEnrichView(model);
     await testSafeRegex();
     await testValidateQuery();
     await testSearchWithSchemas(model);

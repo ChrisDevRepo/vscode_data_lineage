@@ -587,15 +587,15 @@ export function searchDdl(
   return { results, total: results.length };
 }
 
-// ─── Tool 7: lineage_create_ai_view ──────────────────────────────────────────
+// ─── Tool 7: lineage_enrich_view ─────────────────────────────────────────────
 
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
-export type CreateAiViewInput = {
+export type EnrichViewInput = {
   name: string;
-  node_ids: string[];
-  summary?: string;
+  summary: string;
   description?: string;
+  prune_node_ids?: string[];
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;
@@ -610,13 +610,14 @@ export type CreateAiViewInput = {
     node_id: string;
     text: string;
   }>;
+  node_ids?: string[];  // fallback only: used when no stored result graph exists
 };
 
-export type CreateAiViewRequest = {
+export type EnrichViewRequest = {
   success: true;
   name: string;
   node_ids: string[];
-  summary?: string;
+  summary: string;
   description?: string;
   layout_direction: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
@@ -624,19 +625,26 @@ export type CreateAiViewRequest = {
   notes: Array<{ node_id: string; text: string }>;
 };
 
-export type CreateAiViewError = { success: false; errors: string[]; hint: string };
+export type EnrichViewError = { success: false; errors: string[]; hint: string };
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
-export function autoFixCreateAiView(
+/**
+ * Auto-fix common issues in enrich_view input.
+ * @param model — database model (only used for fallback catalog validation)
+ * @param input — raw AI input
+ * @param resolvedNodeIds — canonical node set from stored result graph (if available)
+ */
+export function autoFixEnrichView(
   model: DatabaseModel,
-  input: CreateAiViewInput,
-): { input: CreateAiViewInput; fixes: string[] } {
+  input: EnrichViewInput,
+  resolvedNodeIds?: string[],
+): { input: EnrichViewInput; fixes: string[] } {
   const fixes: string[] = [];
   let fixed = { ...input };
 
-  // 1. Filter out unknown node_ids (as long as at least 1 valid ID remains)
-  if (fixed.node_ids?.length > 0) {
+  // 1. Filter unknown node_ids — only for fallback mode (no stored graph)
+  if (!resolvedNodeIds && fixed.node_ids?.length) {
     const unknown = fixed.node_ids.filter(id => !model.catalog[id]);
     const valid = fixed.node_ids.filter(id => model.catalog[id]);
     if (unknown.length > 0 && valid.length >= 1) {
@@ -645,11 +653,10 @@ export function autoFixCreateAiView(
     }
   }
 
-  // 2. Summary length is validated (not auto-fixed) — AI should learn to write concise summaries
+  // Use resolved graph node set or fallback to input.node_ids
+  const nodeIdSet = new Set(resolvedNodeIds ?? fixed.node_ids ?? []);
 
-  const nodeIdSet = new Set(fixed.node_ids ?? []);
-
-  // 3. Drop empty badges & badges for removed nodes (no text truncation — UI handles overflow)
+  // 2. Drop empty badges & badges for nodes not in the resolved set
   if (fixed.badges) {
     const before = fixed.badges.length;
     const filtered = fixed.badges.filter(b => nodeIdSet.has(b.node_id) && b.text && b.text.trim().length > 0);
@@ -658,7 +665,7 @@ export function autoFixCreateAiView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned badge(s)`);
   }
 
-  // 4. Drop empty notes & notes for removed nodes (no text truncation or cap — UI handles overflow)
+  // 3. Drop empty notes & notes for nodes not in the resolved set
   if (fixed.notes) {
     const before = fixed.notes.length;
     const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
@@ -667,14 +674,15 @@ export function autoFixCreateAiView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 5. Prune highlight_groups referencing removed nodes
+  // 4. Prune highlight_groups referencing nodes not in the resolved set
   if (fixed.highlight_groups) {
-    fixed = {
-      ...fixed,
-      highlight_groups: fixed.highlight_groups
-        .map(g => ({ ...g, node_ids: g.node_ids.filter(id => nodeIdSet.has(id)) }))
-        .filter(g => g.node_ids.length > 0),
-    };
+    const before = fixed.highlight_groups.length;
+    const pruned = fixed.highlight_groups
+      .map(g => ({ ...g, node_ids: g.node_ids.filter(id => nodeIdSet.has(id)) }))
+      .filter(g => g.node_ids.length > 0);
+    fixed = { ...fixed, highlight_groups: pruned };
+    const dropped = before - pruned.length;
+    if (dropped > 0) fixes.push(`Dropped ${dropped} orphaned highlight group(s)`);
   }
 
   return { input: fixed, fixes };
@@ -719,21 +727,24 @@ export function validateMarkdownFormat(md: string): string[] {
   return errors;
 }
 
-export function validateCreateAiView(
-  model: DatabaseModel,
-  input: CreateAiViewInput,
-): CreateAiViewRequest | CreateAiViewError {
+/**
+ * Validate enrich_view input.
+ * @param input — auto-fixed AI input
+ * @param resolvedNodeIds — canonical node set (from stored graph or fallback)
+ */
+export function validateEnrichView(
+  input: EnrichViewInput,
+  resolvedNodeIds: string[],
+): EnrichViewRequest | EnrichViewError {
   const errors: string[] = [];
 
   // Name validation
   if (!input.name || input.name.trim().length === 0) errors.push('name is required');
   else if (input.name.length > 60) errors.push('name exceeds 60 characters');
 
-  // node_ids validation (structural only — unknown IDs handled by autoFix)
-  if (!input.node_ids || input.node_ids.length === 0) {
-    errors.push('node_ids must contain at least 1 ID');
-  } else if (input.node_ids.length > 30) {
-    errors.push('node_ids exceeds maximum of 30 IDs — create multiple focused views instead');
+  // Node set must be non-empty (after resolve + prune)
+  if (resolvedNodeIds.length === 0) {
+    errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
   // summary required + length: soft 120 (instructed), hard 300 (rejected)
@@ -743,10 +754,8 @@ export function validateCreateAiView(
     errors.push('summary exceeds hard limit (300 chars) — aim for ~120 chars');
   }
 
-  // description required + content quality checks
-  if (!input.description || input.description.trim().length === 0) {
-    errors.push('description is required — structured markdown answer with ## headings');
-  } else {
+  // description optional — if provided, validate structure + markdown format
+  if (input.description && input.description.trim().length > 0) {
     // Must have structure: ## headings or multiple paragraphs
     if (!input.description.includes('##') && !input.description.includes('\n\n')) {
       errors.push('description must use ## headings or multiple paragraphs — not a single block of text');
@@ -761,8 +770,7 @@ export function validateCreateAiView(
     errors.push(...validateMarkdownFormat(input.description));
   }
 
-  // highlight_groups validation (structural + color validity — autoFix does not normalize colors)
-  const nodeIdSet = new Set(input.node_ids ?? []);
+  // highlight_groups validation (structural + color validity)
   if (input.highlight_groups) {
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
@@ -772,7 +780,6 @@ export function validateCreateAiView(
   }
 
   if (errors.length > 0) {
-    // Context-efficient hint: tell AI to fix only the broken fields, keep the rest unchanged
     const hint = errors.length === 1 && errors[0].includes('summary')
       ? 'Shorten the summary to ~120 chars (hard limit 300) and retry with the same input otherwise.'
       : 'Fix the listed errors and retry. Do NOT change fields that passed validation.';
@@ -782,7 +789,7 @@ export function validateCreateAiView(
   return {
     success: true,
     name: input.name.trim(),
-    node_ids: input.node_ids,
+    node_ids: resolvedNodeIds,
     summary: input.summary,
     description: input.description,
     layout_direction: input.layout_direction ?? 'TB',

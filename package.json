@@ -571,7 +571,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY tool for lineage questions. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. Use schemas[] on large models. DDL contains INSERT/SELECT — read it to identify which nodes carry the target column. Only include those nodes in create_ai_view (10-15, not all BFS nodes).",
+        "modelDescription": "PRIMARY tool for lineage questions. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. The result graph is automatically stored — use enrich_view to annotate it. Use prune_node_ids in enrich_view to remove irrelevant nodes. Use schemas[] on large models.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -706,11 +706,11 @@
         }
       },
       {
-        "name": "lineage_create_ai_view",
-        "toolReferenceName": "lineage_create_ai_view",
-        "displayName": "Create AI View",
-        "userDescription": "Create an AI-authored advanced bookmark with a curated set of nodes, description, highlight groups, badges, and text annotations. The user sees the view applied in the lineage graph. Also used by /column-trace to create a view from the trace result.",
-        "modelDescription": "Create a visual bookmark ONLY when the graph genuinely aids understanding (lineage path, data flow, object relationships). For text answers (explain, document, optimize, compare, list, generate SQL), respond in chat instead — user can click 'Show in Graph' afterward. Saves a named bookmark. summary + description are VALIDATED (REJECTED if flat). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers ('step 3', 'step 4') under ## headings with business logic. BAD: 14 badges on all nodes, essay description with no step refs. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…', notes like 'Multiplies Amount × Rate'.",
+        "name": "lineage_enrich_view",
+        "toolReferenceName": "lineage_enrich_view",
+        "displayName": "Enrich View",
+        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, badges, and text annotations. The graph comes from a prior trace, BFS, or exploration — you provide the presentation layer.",
+        "modelDescription": "Enrich the stored result graph from your last trace/BFS/exploration. The node set is already stored — you provide presentation: name (mandatory), summary (mandatory), optional description/badges/notes/highlight_groups. Use prune_node_ids to remove irrelevant nodes. Only provide node_ids if you haven't run any trace or BFS (discovery-only mode). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers under ## headings with business logic. BAD: 14 badges on all nodes, essay description. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…'.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -725,13 +725,6 @@
               "maxLength": 60,
               "description": "Display name for the view (max 60 chars)"
             },
-            "node_ids": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Exact node IDs to show (1–30, validated against catalog)"
-            },
             "summary": {
               "type": "string",
               "maxLength": 300,
@@ -739,7 +732,21 @@
             },
             "description": {
               "type": "string",
-              "description": "Full structured answer — markdown with headings, formulas, column mappings, business logic. The graph is a visual reference for this explanation."
+              "description": "Optional structured answer — markdown with headings, formulas, column mappings, business logic."
+            },
+            "prune_node_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Node IDs to remove from the stored result graph. Use to prune irrelevant nodes."
+            },
+            "node_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Fallback only — exact node IDs when no stored result graph exists (discovery-only mode). Ignored when a stored graph is available."
             },
             "layout_direction": {
               "type": "string",
@@ -776,7 +783,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Node IDs in this group (must be subset of top-level node_ids)"
+                    "description": "Node IDs in this group (must reference nodes in the stored result graph)"
                   }
                 },
                 "required": [
@@ -831,9 +838,7 @@
           },
           "required": [
             "name",
-            "node_ids",
-            "summary",
-            "description"
+            "summary"
           ]
         }
       },

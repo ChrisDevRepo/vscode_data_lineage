@@ -196,6 +196,7 @@ export async function executeDmvQueries(
 
     onProgress?.(step, total, query.name);
     logInfo(outputChannel, 'DB', `Executing query: ${query.name} (${step}/${total})...`);
+    logTrace(outputChannel, 'DB', `SQL for '${query.name}':\n${query.sql}`);
 
     const start = Date.now();
     const queryPromise = sharing.executeSimpleQuery(connectionUri, query.sql);

@@ -11,7 +11,7 @@ import type Graph from 'graphology';
 import {
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
-  autoFixCreateAiView, validateCreateAiView,
+  autoFixEnrichView, validateEnrichView,
 } from '../src/ai/tools';
 import { ColumnTraceState } from '../src/ai/columnTraceState';
 import { BlackboardState } from '../src/ai/blackboardState';
@@ -100,9 +100,12 @@ export function dispatchTool(
     case 'lineage_get_ddl_batch':
       return JSON.stringify(getDdlBatch(model, input.ids as string[]));
 
-    case 'lineage_create_ai_view': {
-      const { input: fixed } = autoFixCreateAiView(model, input as any);
-      return JSON.stringify(validateCreateAiView(model, fixed));
+    case 'lineage_enrich_view': {
+      const rawInput = input as any;
+      // Simulate stored graph: use node_ids from input as fallback
+      const resolvedNodeIds = rawInput.node_ids as string[] | undefined;
+      const { input: fixed } = autoFixEnrichView(model, rawInput, resolvedNodeIds);
+      return JSON.stringify(validateEnrichView(fixed, resolvedNodeIds ?? []));
     }
 
     case 'lineage_start_column_trace': {
@@ -201,7 +204,7 @@ export function runChatLoop(params: RunLoopParams): LoopResult {
   const ALL_TOOLS = new Set([
     'lineage_get_context', 'lineage_search_objects', 'lineage_get_object_detail',
     'lineage_run_bfs_trace', 'lineage_run_analysis', 'lineage_search_ddl',
-    'lineage_get_ddl_batch', 'lineage_create_ai_view',
+    'lineage_get_ddl_batch', 'lineage_enrich_view',
     'lineage_start_column_trace', 'lineage_submit_hop_analysis',
     'lineage_start_exploration', 'lineage_submit_findings',
   ]);

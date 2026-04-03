@@ -35,7 +35,7 @@ source format into the shared intermediate types and nothing more.
 | `docs/PARSE_RULES.md` | Custom parse rules guide |
 | `docs/DMV_QUERIES.md` | Custom DMV queries guide |
 | `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
-| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateCreateAiView`. Zero per-tool caps — delivery mode via `shouldInline()`. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
+| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateEnrichView`. Zero per-tool caps — delivery mode via `shouldInline()`. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
 | `src/ai/tokenBudget.ts` | Single source of truth for token budget: `INLINE_TOKEN_BUDGET` (10K tokens), `shouldInline()`, `estimateTokens()`, `REGEX_MAX_LENGTH`. Gate for inline vs on-demand delivery. Zero VS Code imports. |
 | `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()` (explicit type map with 'read' fallback). Zero business logic, zero VS Code imports. |
 | `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
@@ -61,7 +61,7 @@ Press F5 to launch Extension Development Host.
 | `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/projectStore.test.ts` | 136 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `test/ai-tools.test.ts` | 294 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateCreateAiView, autoFixCreateAiView, validateQuery, safeRegex, validateMarkdownFormat |
+| `test/ai-tools.test.ts` | 294 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
 | `test/column-trace-state.test.ts` | 156 | Column-trace state machine: lifecycle, init, hop context, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), inline fallback, synthetic model tests, golden scenarios (multi-branch CT, hop mode, impact downstream), bug regression |
 | `test/blackboard-state.test.ts` | 82 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases |
 | `test/chat-loop.test.ts` | 45 | Orchestration loop: explore-first design, tool visibility, dedup, round limit, history DROP, CT context compaction, BB exploration flow. Uses fake Copilot responses via `chatLoopTestHarness.ts` |
@@ -222,17 +222,17 @@ npm test                               # all suites must pass
 |-------|-----------|---------------|------------|
 | **discover** | `lineage` | All 12 tools | AI explores freely; `/trace`, `/search`, `/explain` are intent shortcuts |
 | **ct_active** | `lineage-ct` | 2 CT tools only | Entered when `start_column_trace` activates state machine |
-| **ct_done** | `lineage` | All 12 tools restored | Entered when CT state machine completes; AI can `create_ai_view` |
+| **ct_done** | `lineage` | All 12 tools restored | Entered when CT state machine completes; AI can `enrich_view` |
 | **bb_active** | `lineage` minus `lineage-ct` | Classic 8 + BB 2 (CT excluded) | Entered when `start_exploration` activates state machine; CT mutual exclusion |
-| **bb_done** | `lineage` | All 12 tools restored | Entered when BB state machine completes; AI can `create_ai_view` |
+| **bb_done** | `lineage` | All 12 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
 
 **Key files:**
 - `src/ai/tokenBudget.ts` — Single source of truth: `INLINE_TOKEN_BUDGET` (10K tokens, ~40K chars). Gate for delivery mode: inline (all data at once) vs on-demand (state machine hop-by-hop). Zero per-tool caps — only delivery mode changes. Zero VS Code imports.
-- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateCreateAiView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates delivery mode, not data size. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
+- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates delivery mode, not data size. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
 - `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
 - `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
 - `src/ai/blackboardState.ts` — Type 1 Blackboard state machine: free-form exploration with two-tier memory (MemGPT pattern). Passive SM: AI drives traversal via sub-questions, SM stores findings, manages agenda priority. Zero VS Code imports.
-- `src/extension.ts` — chat participant registration, 12 tool registrations (8 classic + 2 CT + 2 BB), `isAiEnabled()`, participant handler, dynamic tool filtering (5 phase transitions). Write tool (`create_ai_view`) uses `confirmationMessages` in `prepareInvocation`.
+- `src/extension.ts` — chat participant registration, 12 tool registrations (8 classic + 2 CT + 2 BB), `isAiEnabled()`, participant handler, dynamic tool filtering (5 phase transitions). Write tool (`enrich_view`) uses `confirmationMessages` in `prepareInvocation`.
 
 **12 registered tools:**
 
@@ -245,7 +245,7 @@ npm test                               # all suites must pass
 | `lineage_run_analysis` | lineage | read | Structural analysis: hubs/islands/orphans/longest-path/cycles |
 | `lineage_search_ddl` | lineage | read | Regex search across SP/view/function DDL bodies |
 | `lineage_get_ddl_batch` | lineage | read | Batch DDL retrieval for multiple objects by ID array |
-| `lineage_create_ai_view` | lineage | write | Create named AI bookmark with annotations |
+| `lineage_enrich_view` | lineage | write | Create named AI bookmark with annotations |
 | `lineage_start_column_trace` | lineage, lineage-ct | read | Init hop-by-hop CT state machine trace |
 | `lineage_submit_hop_analysis` | lineage, lineage-ct | read | Submit verdicts, get next hop or final result |
 | `lineage_start_exploration` | lineage, lineage-bb | read | Init BB state machine: free-form exploration with two-tier memory |
