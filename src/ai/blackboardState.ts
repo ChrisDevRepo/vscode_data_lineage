@@ -16,6 +16,7 @@
 
 import type { DatabaseModel, LineageNode, ColumnDef, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
+import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES } from './tools';
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import { normalizeBodyScript } from '../utils/sql';
@@ -46,6 +47,7 @@ export interface BlackboardConfig {
   maxAgendaSize?: number;         // default 200 — cap, not truncation
   findingsHardLimit?: number;     // default 5000 chars — reject, never truncate
   summaryHardLimit?: number;      // default 500 chars — reject, never truncate
+  activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
 }
 
 export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
@@ -63,6 +65,8 @@ interface HopNeighbor {
   edge_type: string;
   boundary: BoundaryFlag;
   boundary_reason?: string;
+  scope: 'in_scope' | 'available' | 'pruned' | 'external' | 'visited';
+  in_filter: boolean;
   cols?: string[];
   fks?: string[];
   hasDdl: boolean;
@@ -97,6 +101,8 @@ export class BlackboardState {
   private readonly maxAgendaSize: number;
   private readonly findingsHardLimit: number;
   private readonly summaryHardLimit: number;
+  private readonly activeFilter: SerializedFilterState | null;
+  private readonly filterSchemas: Set<string> | null;  // lowercased schema names from active filter
 
   // Lookup caches (built once in constructor)
   private readonly nodeMap: Map<string, LineageNode>;
@@ -117,6 +123,7 @@ export class BlackboardState {
   private userQuestion = '';
   private currentFocusNodeId: string | null = null;
   private hopCount = 0;
+  private removedSet = new Set<string>();  // pruned + cascade-removed nodes
 
   constructor(
     model: DatabaseModel,
@@ -130,6 +137,10 @@ export class BlackboardState {
     this.maxAgendaSize = config?.maxAgendaSize ?? DEFAULT_MAX_AGENDA;
     this.findingsHardLimit = config?.findingsHardLimit ?? DEFAULT_FINDINGS_HARD_LIMIT;
     this.summaryHardLimit = config?.summaryHardLimit ?? DEFAULT_SUMMARY_HARD_LIMIT;
+    this.activeFilter = config?.activeFilter ?? null;
+    this.filterSchemas = this.activeFilter?.schemas?.length
+      ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
+      : null;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -195,9 +206,10 @@ export class BlackboardState {
 
   getHopContext():
     | { bb_mode: 'exploring'; hop: number; focus_node: Record<string, unknown>;
-        neighbors: HopNeighbor[]; current_task: string; working_memory: WorkingMemory;
+        cascade_if_irrelevant: number; neighbors: HopNeighbor[];
+        current_task: string; working_memory: WorkingMemory;
         agenda_remaining: number }
-    | { done: true }
+    | { done: true; nodes_outside_scope?: number; hint?: string }
     | { error: string } {
 
     if (this._status !== 'initialized' && this._status !== 'exploring') {
@@ -211,8 +223,15 @@ export class BlackboardState {
       entry = this.popNextAgendaEntry();
       if (!entry) {
         this._status = 'complete';
-        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.notes.size} | visited=${this.visited.size}`);
-        return { done: true };
+        const outsideScope = this.scopeNodeIds.size - this.visited.size - this.removedSet.size;
+        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.notes.size} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
+        return {
+          done: true,
+          ...(outsideScope > 0 && {
+            nodes_outside_scope: outsideScope,
+            hint: 'All agenda nodes explored. More nodes available in the model — ask a question to explore further.',
+          }),
+        };
       }
       node = this.nodeMap.get(entry.nodeId);
       if (node) break;
@@ -241,10 +260,14 @@ export class BlackboardState {
       ? Math.round((this.notes.size / this.scopeNodeIds.size) * 100) : 0;
     this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | notes=${this.notes.size}/${this.scopeNodeIds.size} (${pct}%) | agenda=${this.agenda.length}`);
 
+    // Cascade preview: show consequence of marking this node irrelevant
+    const cascadePreview = this.countCascadeIfIrrelevant(entry.nodeId);
+
     return {
       bb_mode: 'exploring',
       hop: this.hopCount,
       focus_node: focusNode,
+      cascade_if_irrelevant: cascadePreview,
       neighbors,
       current_task: currentTask,
       working_memory: workingMemory,
@@ -260,19 +283,24 @@ export class BlackboardState {
     summary: string;
     tags?: string[];
     questions?: Array<{ nodeId: string; question: string }>;
-    skipIds?: string[];
-  }): { ok: true; advanced: number; agendaSize: number }
-     | { error: string; limit?: number } {
+    verdict: 'relevant' | 'noted' | 'irrelevant';
+  }): { ok: true; advanced: number; agendaSize: number; pruned?: number }
+     | { error: string; limit?: number; hint?: string } {
 
     if (this._status !== 'awaiting_findings') {
       return { error: `Cannot submit findings in status "${this._status}"` };
     }
 
-    const { focusNodeId, findings, summary, tags, questions, skipIds } = params;
+    const { focusNodeId, findings, summary, tags, questions, verdict } = params;
 
     // Validate focus node
     if (focusNodeId !== this.currentFocusNodeId) {
       return { error: `Focus node mismatch: expected "${this.currentFocusNodeId}", got "${focusNodeId}"` };
+    }
+
+    // Reject if node was already pruned (cascade edge case)
+    if (this.removedSet.has(focusNodeId)) {
+      return { error: 'node_pruned', hint: `${focusNodeId} was cascade-removed. It cannot be analyzed.` };
     }
 
     // Hard limits — reject, never truncate
@@ -283,7 +311,7 @@ export class BlackboardState {
       return { error: 'summary_too_long', limit: this.summaryHardLimit };
     }
 
-    // Store note (long-term memory slot)
+    // Store note (long-term memory slot) — even for 'irrelevant' (minimal note)
     const node = this.nodeMap.get(focusNodeId);
     if (node) {
       this.notes.set(focusNodeId, {
@@ -291,7 +319,7 @@ export class BlackboardState {
         schema: node.schema,
         name: node.name,
         type: node.type,
-        findings,
+        findings: verdict === 'irrelevant' ? summary : findings,
         summary,
         tags,
       });
@@ -305,31 +333,31 @@ export class BlackboardState {
     }
 
     let advanced = 0;
+    let pruned = 0;
 
-    // Process skip_ids (lightweight prune)
-    if (skipIds?.length) {
-      for (const sid of skipIds) {
-        const idx = this.agenda.findIndex(e => e.nodeId === sid);
-        if (idx !== -1) {
-          this.agenda.splice(idx, 1);
-          this.agendaIds.delete(sid);
-          this.log('debug', `BB skip: ${sid} removed from agenda`);
-        }
-      }
+    // Verdict: cascade-prune on 'irrelevant'
+    if (verdict === 'irrelevant') {
+      pruned = this.cascadePrune(focusNodeId);
+      this.log('info', `BB PRUNE | ${focusNodeId} | verdict=irrelevant | cascade=${pruned} | agenda=${this.agenda.length}`);
     }
 
     // Process questions (Self-Ask: boost/add nodes to agenda)
     if (questions?.length) {
       for (const q of questions) {
+        // Reject questions targeting pruned nodes
+        if (this.removedSet.has(q.nodeId)) {
+          this.log('debug', `BB question for pruned ${q.nodeId}, ignoring`);
+          continue;
+        }
         this.addQuestion(q.nodeId, q.question);
         advanced++;
       }
     }
 
     this._status = 'exploring';
-    this.log('debug', `BB submit | ${focusNodeId} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | skipped=${skipIds?.length ?? 0} | agenda=${this.agenda.length}`);
+    this.log('info', `BB submit | ${focusNodeId} | verdict=${verdict} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | pruned=${pruned} | agenda=${this.agenda.length}`);
 
-    return { ok: true, advanced, agendaSize: this.agenda.length };
+    return { ok: true, advanced, agendaSize: this.agenda.length, ...(pruned > 0 && { pruned }) };
   }
 
   // ─── getResult ─────────────────────────────────────────────────────────────
@@ -586,6 +614,15 @@ export class BlackboardState {
       let edgeType = this.edgeTypeMap.get(primaryKey) ?? this.edgeTypeMap.get(reverseKey) ?? 'read';
 
       const boundary = this.detectBoundary(nid);
+
+      // Scope status: what is this neighbor's status in the exploration?
+      const scopeStatus: HopNeighbor['scope'] =
+        this.visited.has(nid)       ? 'visited' :
+        this.removedSet.has(nid)    ? 'pruned' :
+        this.agendaIds.has(nid)     ? 'in_scope' :
+        !this.nodeMap.has(nid)      ? 'external' :
+                                      'available';
+
       const neighbor: HopNeighbor = {
         id: nid,
         s: nNode.schema,
@@ -594,6 +631,8 @@ export class BlackboardState {
         edge_direction: isUpstream ? 'upstream' : 'downstream',
         edge_type: edgeType,
         boundary,
+        scope: scopeStatus,
+        in_filter: this.isInFilter(nid),
         hasDdl: SCRIPT_TYPES.has(nNode.type) && !!this.getNodeDdl(nid),
       };
 
@@ -690,5 +729,87 @@ export class BlackboardState {
     }
 
     return { nodes, edges };
+  }
+
+  // ─── Cascade pruning via BFS reachability ──────────────────────────────────
+
+  /** Cascade-remove agenda nodes unreachable from origin after pruning a node. */
+  private cascadePrune(prunedId: string): number {
+    this.removedSet.add(prunedId);
+    // BFS from origin through live nodes (not removed, in scope)
+    const reachable = new Set<string>();
+    const queue = [this.originNodeId!];
+    reachable.add(this.originNodeId!);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
+      for (const nid of [...new Set([...nb.in, ...nb.out])]) {
+        if (!reachable.has(nid) && !this.removedSet.has(nid) && this.scopeNodeIds.has(nid)) {
+          reachable.add(nid);
+          queue.push(nid);
+        }
+      }
+    }
+    // Remove unreachable agenda nodes
+    let cascaded = 0;
+    for (let i = this.agenda.length - 1; i >= 0; i--) {
+      if (!reachable.has(this.agenda[i].nodeId)) {
+        this.removedSet.add(this.agenda[i].nodeId);
+        this.agendaIds.delete(this.agenda[i].nodeId);
+        this.agenda.splice(i, 1);
+        cascaded++;
+      }
+    }
+    return cascaded;
+  }
+
+  /** Preview: how many agenda nodes would be cascade-removed if this node were pruned. */
+  countCascadeIfIrrelevant(nodeId: string): number {
+    // Simulate: temporarily add nodeId to removed, BFS, count unreachable agenda nodes
+    const tempRemoved = new Set(this.removedSet);
+    tempRemoved.add(nodeId);
+    const reachable = new Set<string>();
+    const queue = [this.originNodeId!];
+    reachable.add(this.originNodeId!);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
+      for (const nid of [...new Set([...nb.in, ...nb.out])]) {
+        if (!reachable.has(nid) && !tempRemoved.has(nid) && this.scopeNodeIds.has(nid)) {
+          reachable.add(nid);
+          queue.push(nid);
+        }
+      }
+    }
+    return this.agenda.filter(e => !reachable.has(e.nodeId)).length;
+  }
+
+  // ─── Scope reporting (information only — never filters or constrains) ────────
+
+  /** Check if a node's schema matches the user's active filter. */
+  isInFilter(nodeId: string): boolean {
+    if (!this.filterSchemas) return true; // no filter = everything matches
+    const node = this.nodeMap.get(nodeId);
+    return !!node && this.filterSchemas.has(node.schema.toLowerCase());
+  }
+
+  /** Count agenda/scope nodes per schema — for scope preview. */
+  schemaBreakdown(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const id of this.scopeNodeIds) {
+      const node = this.nodeMap.get(id);
+      if (node) counts[node.schema] = (counts[node.schema] || 0) + 1;
+    }
+    return counts;
+  }
+
+  /** Count scope nodes matching vs outside user filter — for scope preview. */
+  get filterBreakdown(): { in_filter: number; outside_filter: number; total: number } {
+    if (!this.filterSchemas) return { in_filter: this.scopeNodeIds.size, outside_filter: 0, total: this.scopeNodeIds.size };
+    let inFilter = 0;
+    for (const id of this.scopeNodeIds) {
+      if (this.isInFilter(id)) inFilter++;
+    }
+    return { in_filter: inFilter, outside_filter: this.scopeNodeIds.size - inFilter, total: this.scopeNodeIds.size };
   }
 }

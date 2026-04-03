@@ -27,6 +27,9 @@ import {
 import { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, REGEX_MAX_LENGTH } from './tokenBudget';
 export { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET } from './tokenBudget';
 
+/** Max nodes for inline BFS delivery — above this, recommend state machine. */
+const BFS_INLINE_NODE_CAP = 200;
+
 // ─── Input validation ────────────────────────────────────────────────────────
 
 type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
@@ -482,6 +485,42 @@ export function runBfsTrace(
     }
   }
 
+  // Large scope → recommend state machine delivery (same data, different delivery mode)
+  if (filteredIds.length > BFS_INLINE_NODE_CAP) {
+    const schemaBreakdown: Record<string, number> = {};
+    for (const nid of filteredIds) {
+      const n = nodeMap.get(nid);
+      if (n) schemaBreakdown[n.schema] = (schemaBreakdown[n.schema] || 0) + 1;
+    }
+    return {
+      delivery: 'state_machine_recommended' as const,
+      origin: id, ...(target ? { target } : {}),
+      total_nodes: filteredIds.length,
+      total_edges: allEdges.length,
+      schemas: schemaBreakdown,
+      hint: `BFS result has ${filteredIds.length} nodes (>${BFS_INLINE_NODE_CAP}). Use start_exploration for hop-by-hop analysis with verdicts, or narrow with schema/type filters.`,
+    };
+  }
+
+  // Detect depth-limited boundary nodes (level mode only, not path mode)
+  const depthLimitedNodes: Array<{ id: string; direction: string; connections_beyond: number }> = [];
+  if (!target) {
+    for (const nid of filteredIds) {
+      // Check upstream boundary: node at max upstream depth with more inbound neighbors beyond
+      if (upstreamHops > 0 && upDepth.get(nid) === upstreamHops) {
+        const beyondCount = (graph.hasNode(nid) ? graph.inboundNeighbors(nid) : [])
+          .filter(n => !filteredSet.has(n)).length;
+        if (beyondCount > 0) depthLimitedNodes.push({ id: nid, direction: 'upstream', connections_beyond: beyondCount });
+      }
+      // Check downstream boundary: node at max downstream depth with more outbound neighbors beyond
+      if (downstreamHops > 0 && downDepth.get(nid) === downstreamHops) {
+        const beyondCount = (graph.hasNode(nid) ? graph.outboundNeighbors(nid) : [])
+          .filter(n => !filteredSet.has(n)).length;
+        if (beyondCount > 0) depthLimitedNodes.push({ id: nid, direction: 'downstream', connections_beyond: beyondCount });
+      }
+    }
+  }
+
   const unrelMap = includeDdl ? buildUnrelatedMap(model) : undefined;
 
   // Build node metadata (always complete — no slicing)
@@ -507,7 +546,8 @@ export function runBfsTrace(
     const baseResult = { origin: id, ...(target ? { target } : {}), mode: target ? 'path' as const : 'level' as const };
 
     if (shouldInline(totalChars)) {
-      return { ...baseResult, nodes: nodesWithDdl, edges: allEdges, delivery: 'inline' as const };
+      return { ...baseResult, nodes: nodesWithDdl, edges: allEdges, delivery: 'inline' as const,
+        ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
     }
 
     // Exceeds budget — return without DDL, hint to use follow-up tools or start_trace
@@ -523,6 +563,7 @@ export function runBfsTrace(
       scope_ddl_chars: totalChars,
       budget_tokens: INLINE_TOKEN_BUDGET,
       action_required: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_trace for hop-by-hop analysis.',
+      ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }),
     };
   }
 
@@ -530,7 +571,8 @@ export function runBfsTrace(
   const baseResult = { origin: id, ...(target ? { target } : {}), mode: target ? 'path' as const : 'level' as const };
   const nodes = filteredIds.map(nid =>
     attachDdl(buildNodeBase(nid), nodeMap.get(nid), false, undefined, store));
-  return { ...baseResult, nodes, edges: allEdges, delivery: 'inline' as const };
+  return { ...baseResult, nodes, edges: allEdges, delivery: 'inline' as const,
+    ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
 }
 
 // ─── Tool 5: lineage_run_analysis ─────────────────────────────────────────────

@@ -12,6 +12,7 @@
 
 import type { DatabaseModel, LineageNode, ColumnDef, NeighborIndex, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
+import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES } from './tools';
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import { normalizeBodyScript } from '../utils/sql';
@@ -50,6 +51,7 @@ export interface OutOfScopeEntry {
 
 export interface ColumnTraceConfig {
   maxFrontierSize?: number;   // default 200
+  activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
 }
 
 export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
@@ -82,6 +84,8 @@ export class ColumnTraceState {
   private readonly store: ColumnStore | null;
   private readonly log: LogFn;
   private readonly maxFrontierSize: number;
+  private readonly activeFilter: SerializedFilterState | null;
+  private readonly filterSchemas: Set<string> | null;
 
   // Lookup caches (built once in constructor)
   private readonly nodeMap: Map<string, LineageNode>;
@@ -123,6 +127,10 @@ export class ColumnTraceState {
     this.store = store ?? null;
     this.log = log;
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
+    this.activeFilter = config?.activeFilter ?? null;
+    this.filterSchemas = this.activeFilter?.schemas?.length
+      ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
+      : null;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -648,12 +656,19 @@ export class ColumnTraceState {
       }
     }
 
+    // Cascade prune: remove frontier entries unreachable from origin after prunes
+    const removed = params.verdicts.filter(v => v.verdict === 'prune').length;
+    let cascaded = 0;
+    if (removed > 0) {
+      cascaded = this.cascadePruneFrontier();
+      if (cascaded > 0) this.log('info', `CT cascade: ${cascaded} frontier nodes removed (unreachable after prune)`);
+    }
+
     this._status = 'hopping'; // ready for next getHopContext()
     const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
-    const removed = params.verdicts.filter(v => v.verdict === 'prune').length;
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
-    this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
+    this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
     return { ok: true, advanced, frontierSize: this.frontier.length };
   }
 
@@ -811,6 +826,35 @@ export class ColumnTraceState {
       case 'cycle': return 'Already visited — cycle detected';
       default: return '';
     }
+  }
+
+  /** Cascade: remove frontier nodes unreachable from origin after prunes. BFS-based, diamond-safe. */
+  private cascadePruneFrontier(): number {
+    if (!this.originNodeId) return 0;
+    const reachable = new Set<string>();
+    const queue = [this.originNodeId];
+    reachable.add(this.originNodeId);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      const neighbors = this.getDirectionalNeighbors(id);
+      for (const nid of neighbors) {
+        if (!reachable.has(nid) && !this.removedSet.has(nid)) {
+          reachable.add(nid);
+          queue.push(nid);
+        }
+      }
+    }
+    let cascaded = 0;
+    for (let i = this.frontier.length - 1; i >= 0; i--) {
+      if (!reachable.has(this.frontier[i].nodeId)) {
+        this.removedSet.add(this.frontier[i].nodeId);
+        this.outOfScope.push({ nodeId: this.frontier[i].nodeId, reason: 'Cascade-removed (unreachable after prune)' });
+        this.frontierIds.delete(this.frontier[i].nodeId);
+        this.frontier.splice(i, 1);
+        cascaded++;
+      }
+    }
+    return cascaded;
   }
 
   private advanceFrontier(nodeId: string, activeColumns: string[], parentDepth: number): number {

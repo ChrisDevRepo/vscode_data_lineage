@@ -290,7 +290,7 @@ export function activate(context: vscode.ExtensionContext) {
   function logAndReturn(toolName: string, data: object): vscode.LanguageModelToolResult {
     const json = JSON.stringify(data);
     const chars = json.length;
-    const preview = chars > 200 ? json.slice(0, 200) + '…' : json;
+    const preview = chars > 200 ? json.slice(0, 200) + ` [TRUNCATED ${chars} chars]` : json;
     const isError = 'error' in data || ('success' in data && !(data as any).success);
     if (isError) logWarn(outputChannel, 'AI', `${toolName}: ${preview}`);
     logDebug(outputChannel, 'AI', `${toolName} → ${chars} chars: ${preview}`);
@@ -570,7 +570,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[CT] ${msg}`);
             else logDebug(outputChannel, 'AI', `[CT] ${msg}`);
-          }, undefined, _columnStore);
+          }, { activeFilter: _aiFilter }, _columnStore);
 
           const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
           if ('error' in initResult) return logAndReturn('start_column_trace', initResult);
@@ -686,7 +686,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[BB] ${msg}`);
             else logDebug(outputChannel, 'AI', `[BB] ${msg}`);
-          }, undefined, _columnStore);
+          }, { activeFilter: _aiFilter }, _columnStore);
 
           const initResult = _blackboardState.init({ question, origin });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);
@@ -723,7 +723,18 @@ export function activate(context: vscode.ExtensionContext) {
           if ('error' in hopResult) return logAndReturn('start_exploration', hopResult);
           if ('done' in hopResult) return logAndReturn('start_exploration', { ...initResult, status: 'complete', message: 'No neighbors to explore.' });
 
-          return logAndReturn('start_exploration', { ...initResult, ...hopResult });
+          // Scope preview: include breakdown so AI can present to user before exploring
+          const scopePreview = {
+            total_scope_nodes: _blackboardState.filterBreakdown.total,
+            in_user_filter: _blackboardState.filterBreakdown.in_filter,
+            outside_filter: _blackboardState.filterBreakdown.outside_filter,
+            schemas: _blackboardState.schemaBreakdown(),
+          };
+          return logAndReturn('start_exploration', {
+            ...initResult, ...hopResult,
+            scope_preview: scopePreview,
+            action_required: `Scope: ${scopePreview.total_scope_nodes} nodes (${scopePreview.in_user_filter} match user filter). Present scope to user and confirm before analyzing.`,
+          });
         } catch (err) { return toolError('start_exploration', err); }
       },
     }),
@@ -748,22 +759,26 @@ export function activate(context: vscode.ExtensionContext) {
             summary?: string;
             tags?: string[];
             questions?: Array<{ node_id?: string; question?: string }>;
-            skip_ids?: string[];
+            verdict?: string;
           };
           const focusNodeId = input.focus_node_id ?? '';
           const findings = input.findings ?? '';
           const summary = input.summary ?? '';
+          const verdict = input.verdict as 'relevant' | 'noted' | 'irrelevant' | undefined;
+          if (!verdict || !['relevant', 'noted', 'irrelevant'].includes(verdict)) {
+            return logAndReturn('submit_findings', { error: 'verdict_required', hint: 'verdict must be "relevant", "noted", or "irrelevant".' });
+          }
           const questions = (input.questions ?? []).map(q => ({
             nodeId: q.node_id ?? '',
             question: q.question ?? '',
           }));
-          logInfo(outputChannel, 'AI', `submit_findings: focus=${focusNodeId}, findings=${findings.length}ch, questions=${questions.length}`);
+          logInfo(outputChannel, 'AI', `submit_findings: focus=${focusNodeId}, verdict=${verdict}, findings=${findings.length}ch, questions=${questions.length}`);
 
           const submitResult = _blackboardState.submitFindings({
             focusNodeId, findings, summary,
             tags: input.tags,
             questions,
-            skipIds: input.skip_ids,
+            verdict,
           });
           if ('error' in submitResult) return logAndReturn('submit_findings', submitResult);
 
@@ -808,7 +823,9 @@ export function activate(context: vscode.ExtensionContext) {
       _aiModelName = request.model.name || request.model.id;
       _columnTraceState = null; // reset per request — each trace gets a fresh state machine
       _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
-      _resultGraph = null;      // reset per request — each enrich_view uses fresh graph
+      // _resultGraph intentionally NOT reset — it persists across turns so the
+      // "Show in Graph" button (which opens a new chat turn) can consume the
+      // last BFS result.  It is overwritten whenever a new trace runs.
 
       if (!isAiEnabled()) {
         stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
@@ -824,6 +841,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Dynamic tool filtering: classic tools during discovery, CT tools during state machine.
       let activePhase: 'discover' | 'ct_active' | 'ct_done' | 'bb_active' | 'bb_done' = 'discover';
       let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+      logInfo(outputChannel, 'AI', `Session start — model=${request.model.id}, prompt="${request.prompt.slice(0, 80)}${request.prompt.length > 80 ? '…' : ''}"`);
       logInfo(outputChannel, 'AI', `Phase: discover${request.command ? ` /${request.command}` : ''} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
       // Slash commands = shortcuts (intent context only, no mode switching)
@@ -1030,6 +1048,9 @@ export function activate(context: vscode.ExtensionContext) {
         const ctToolResults: Array<{ msgIdx: number; callId: string }> = [];
         // Blackboard context control (same compaction pattern as CT)
         const bbToolResults: Array<{ msgIdx: number; callId: string }> = [];
+        // action_required gate: blocks non-search tools until AI responds to user
+        let actionRequiredPending = false;
+        const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
 
         while (roundCount < MAX_ROUNDS) {
           roundCount++;
@@ -1068,18 +1089,32 @@ export function activate(context: vscode.ExtensionContext) {
 
           // C4: Log model reasoning between tool calls
           if (responseText.length > 0) {
-            logDebug(outputChannel, 'AI', `Model reasoning: ${responseText.slice(0, 200)}${responseText.length > 200 ? '…' : ''}`);
+            const flat = responseText.replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+            logDebug(outputChannel, 'AI', `"${flat.slice(0, 500)}"${flat.length > 500 ? ` [TRUNCATED ${flat.length} chars]` : ''}`);
           }
 
           if (!toolCalls.length) return; // done — no more tool calls
+
+          // Clear action_required gate if AI produced text (= responded to user)
+          if (actionRequiredPending && responseText.length > 0) {
+            actionRequiredPending = false;
+            logInfo(outputChannel, 'AI', `[Gate] action_required cleared — AI responded`);
+          }
 
           messages.push(new vscode.LanguageModelChatMessage(
             vscode.LanguageModelChatMessageRole.Assistant, assistantParts,
           ));
 
           const resultParts: vscode.LanguageModelToolResultPart[] = [];
+          const processedCallIds = new Set<string>();
           let roundToolResultChars = 0;
           for (const call of toolCalls) {
+            // Guard: prevent duplicate tool_result blocks for the same callId (causes API 400 errors)
+            if (processedCallIds.has(call.callId)) {
+              logWarn(outputChannel, 'AI', `Duplicate callId ${call.callId} for ${call.name} — skipping`);
+              continue;
+            }
+            processedCallIds.add(call.callId);
             // Dedup: skip if identical tool+params already called this request
             // Normalize: sort keys + strip undefined/null values for consistent cache keys
             const normalizeInput = (input: Record<string, unknown>): string => {
@@ -1114,6 +1149,17 @@ export function activate(context: vscode.ExtensionContext) {
               resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, rejection));
               continue;
             }
+            // action_required gate: block non-search tools until AI addresses the user
+            if (actionRequiredPending && !SEARCH_TOOLS.has(call.name)) {
+              rejectedCount++;
+              logWarn(outputChannel, 'AI', `[Gate] REJECTED ${call.name.replace('lineage_', '')} — action_required pending`);
+              const gateReject = [new vscode.LanguageModelTextPart(JSON.stringify({
+                error: 'action_required_pending',
+                hint: 'You must present the previous action_required message to the user and wait for their response before calling tools.',
+              }))];
+              resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, gateReject));
+              continue;
+            }
             stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
             const t0 = performance.now();
             try {
@@ -1130,7 +1176,7 @@ export function activate(context: vscode.ExtensionContext) {
               roundToolResultChars += chars;
               // C5: Per-tool timing + result size + content preview
               logDebug(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} — ${Math.round(performance.now() - t0)}ms, ${chars} chars`);
-              logTrace(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} result: ${resultJson.slice(0, 500)}${chars > 500 ? '…' : ''}`);
+              logTrace(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} result: ${resultJson.slice(0, 500)}${chars > 500 ? ` [TRUNCATED ${chars} chars]` : ''}`);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               errorCount++;
@@ -1151,6 +1197,31 @@ export function activate(context: vscode.ExtensionContext) {
           messages.push(new vscode.LanguageModelChatMessage(
             vscode.LanguageModelChatMessageRole.User, resultParts,
           ));
+
+          // action_required gate: scan tool results and inject blocking message
+          const actionGates: string[] = [];
+          for (const call of toolCalls) {
+            const result = accumulatedToolResults[call.callId];
+            if (!result) continue;
+            for (const part of result.content) {
+              if (part instanceof vscode.LanguageModelTextPart) {
+                try {
+                  const parsed = JSON.parse(part.value);
+                  if (parsed.action_required && typeof parsed.action_required === 'string') {
+                    actionGates.push(parsed.action_required);
+                  }
+                } catch { /* not JSON */ }
+              }
+            }
+          }
+          if (actionGates.length > 0) {
+            actionRequiredPending = true;
+            const gate = `STOP: ${actionGates.join(' | ')} — You MUST address this with the user before calling any more tools.`;
+            messages.push(new vscode.LanguageModelChatMessage(
+              vscode.LanguageModelChatMessageRole.User, gate,
+            ));
+            logInfo(outputChannel, 'AI', `[Gate] action_required: ${actionGates[0].slice(0, 120)}`);
+          }
 
           toolCallRounds.push({ response: responseText, toolCalls });
           totalToolCallsMade += toolCalls.length;
@@ -1339,6 +1410,7 @@ export function activate(context: vscode.ExtensionContext) {
           logInfo(outputChannel, 'AI', `KPIs — ${kpiParts.join(', ')}`);
         }
         logDebug(outputChannel, 'AI', `Prompt: "${request.prompt.slice(0, 100)}${request.prompt.length > 100 ? '…' : ''}"`);
+        logInfo(outputChannel, 'AI', `Session end`);
         // B3: "Show in Graph" button after BFS trace — triggers AI to create an annotated view
         if (activePanel && toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'))) {
           stream.button({
