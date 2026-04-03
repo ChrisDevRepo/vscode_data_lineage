@@ -233,6 +233,7 @@ export function searchObjects(
   types?: ObjectType[],
   schemas?: string[],
   mode: 'substring' | 'regex' = 'substring',
+  activeFilter?: { schemas?: string[] } | null,
 ) {
   if (query.length > REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
@@ -283,12 +284,27 @@ export function searchObjects(
       })),
   ];
 
-  const base = {
-    results,
-    total: results.length,
+  // Tag each result with in_user_filter so AI knows what the user currently sees
+  const filterSchemaSet = activeFilter?.schemas?.length
+    ? new Set(activeFilter.schemas.map(s => s.toLowerCase()))
+    : null;
+  const taggedResults = results.map(r => ({
+    ...r,
+    in_user_filter: filterSchemaSet ? filterSchemaSet.has(((r as any).s ?? '').toLowerCase()) : true,
+  }));
+
+  const filterContext = {
+    active_schemas: activeFilter?.schemas ?? null,
+    all_schemas: [...new Set(model.nodes.map(n => n.schema))],
   };
 
-  if (results.length === 0) {
+  const base = {
+    results: taggedResults,
+    total: taggedResults.length,
+    filter_context: filterContext,
+  };
+
+  if (taggedResults.length === 0) {
     // Schema mismatch detection: schema-filtered search empty, but name exists elsewhere?
     if (appliedSchemaFilter) {
       const fallbackHits = searchCatalog(
@@ -301,21 +317,27 @@ export function searchObjects(
       );
       if (fallbackHits.length > 0) {
         const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
+        // Return fallback results as primary — AI can proceed immediately
+        const fallbackResults = fallbackHits.slice(0, 10).map(n => ({
+          ...presentNode(n, model.neighborIndex),
+          match: 'name' as const,
+          in_user_filter: filterSchemaSet ? filterSchemaSet.has(n.schema.toLowerCase()) : true,
+        }));
         return {
-          ...base,
-          action_required: `SCHEMA MISMATCH: 0 results for "${effectiveQuery}" in ${appliedSchemaFilter.join(', ')}. ` +
-            `Found in: ${foundSchemas.join(', ')}. Ask the user which schema they mean before calling any other tool.`,
-          schema_mismatch: {
+          results: fallbackResults,
+          total: fallbackResults.length,
+          filter_context: filterContext,
+          ai_hint: `0 results in schemas [${appliedSchemaFilter.join(', ')}]. Found "${effectiveQuery}" in [${foundSchemas.join(', ')}]. Results shown from matched schemas.`,
+          schema_correction: {
             requested_schemas: appliedSchemaFilter,
-            found_in_schemas: foundSchemas,
-            fallback_results: fallbackHits.slice(0, 5).map(n => presentNode(n, model.neighborIndex)),
+            actual_schemas: foundSchemas,
           },
         };
       }
     }
     return {
       ...base,
-      action_required: `NO RESULTS for "${effectiveQuery}". Try search_ddl for DDL body matches, or ask the user to verify the name.`,
+      ai_hint: `No results for "${effectiveQuery}". Try search_ddl for DDL body matches, try regex mode, or broaden with fewer filters.`,
     };
   }
   return base;

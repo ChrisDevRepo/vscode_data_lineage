@@ -805,7 +805,7 @@ async function testQuestionUnknownNodeIgnored() {
   }
 
   // Verify debug log captured the rejection
-  assert(logs.some(l => l.includes('unknown node')), 'Debug log captures unknown-node rejection');
+  assert(logs.some(l => l.includes('QUESTION REJECTED')), 'Log captures unknown-node rejection via validateNodeIds');
 }
 
 // ─── Runner ──────────────────────────────────────────────────────────────────

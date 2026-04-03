@@ -15,6 +15,8 @@ import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
+import type Graph from 'graphology';
+import { wouldOrphanNotedNode } from './smGuards';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -83,6 +85,7 @@ const DEPTH_WARNING_THRESHOLD = 10;     // log warning when trace depth exceeds 
 
 export class ColumnTraceState {
   private readonly model: DatabaseModel;
+  private readonly graph: Graph;
   private readonly store: ColumnStore | null;
   private readonly log: LogFn;
   private readonly maxFrontierSize: number;
@@ -121,11 +124,13 @@ export class ColumnTraceState {
 
   constructor(
     model: DatabaseModel,
+    graph: Graph,
     log: LogFn,
     config?: ColumnTraceConfig,
     store?: ColumnStore | null,
   ) {
     this.model = model;
+    this.graph = graph;
     this.store = store ?? null;
     this.log = log;
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
@@ -169,6 +174,7 @@ export class ColumnTraceState {
     const VALID_DIRECTIONS: ColumnTraceDirection[] = ['up', 'down', 'both'];
     if (!VALID_DIRECTIONS.includes(direction)) {
       this._status = 'error';
+      this.log('debug', `INIT ERROR: invalid direction "${direction}"`);
       return { error: 'invalid_direction', hint: `direction must be 'up', 'down', or 'both'` };
     }
     this.direction = direction;
@@ -180,11 +186,13 @@ export class ColumnTraceState {
       originNode = this.nodeMap.get(origin.toLowerCase());
       if (!originNode) {
         this._status = 'error';
+        this.log('debug', `INIT ERROR: origin "${origin}" not found`);
         return { error: 'origin_not_found', hint: `Object "${origin}" not found in loaded model.` };
       }
     } else if (!this.targetColumns.length) {
       // No columns AND no origin — can't auto-discover
       this._status = 'error';
+      this.log('debug', 'INIT ERROR: no origin and no columns');
       return { error: 'no_origin', hint: 'Provide origin object when tracing without columns.' };
     } else {
       // Auto-discover: find tables/views with a matching column
@@ -204,11 +212,13 @@ export class ColumnTraceState {
       }
       if (candidates.length === 0) {
         this._status = 'error';
+        this.log('debug', `INIT ERROR: no object contains columns [${this.targetColumns}]`);
         return { error: 'column_not_found', hint: `No object contains column(s): ${this.targetColumns.join(', ')}.` };
       }
       if (candidates.length > MAX_AUTODISCOVER_CANDIDATES) {
         // Too many candidates — ask for clarification
         this._status = 'error';
+        this.log('debug', `INIT ERROR: ${candidates.length} candidates for columns [${this.targetColumns}] — ambiguous`);
         return {
           error: 'ambiguous_origin',
           hint: `${candidates.length} objects contain column(s) "${this.targetColumns.join(', ')}". Provide the origin object ID.`,
@@ -260,6 +270,7 @@ export class ColumnTraceState {
 
     this._status = 'initialized';
     this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
+    this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
 
     return {
       ok: true,
@@ -287,6 +298,7 @@ export class ColumnTraceState {
   } | { done: true } | { error: string } {
 
     if (this._status !== 'initialized' && this._status !== 'hopping') {
+      this.log('debug', `getHopContext: invalid status "${this._status}"`);
       return { error: `invalid_status: expected 'initialized' or 'hopping', got '${this._status}'` };
     }
 
@@ -401,6 +413,7 @@ export class ColumnTraceState {
       ?? `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`;
     const pct = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
     this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeSize} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
+    this.log('debug', `Hop ${this.hopCount} detail | ${node.id} (${node.type}) | task=${entry.question ? 'self-ask' : 'default'} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
     if (entry.depth >= DEPTH_WARNING_THRESHOLD) {
       this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeSize}`);
     }
@@ -446,9 +459,11 @@ export class ColumnTraceState {
      | { error: string; hint?: string } {
 
     if (this._status !== 'awaiting_verdicts') {
+      this.log('debug', `submitVerdicts: invalid status "${this._status}"`);
       return { error: `invalid_status: expected 'awaiting_verdicts', got '${this._status}'` };
     }
     if (params.focusNodeId !== this.currentFocusNodeId) {
+      this.log('debug', `submitVerdicts: focus mismatch — expected=${this.currentFocusNodeId}, got=${params.focusNodeId}`);
       return { error: 'focus_mismatch', hint: `Expected focus ${this.currentFocusNodeId}, got ${params.focusNodeId}` };
     }
 
@@ -456,9 +471,11 @@ export class ColumnTraceState {
     for (const v of params.verdicts) {
       if (v.verdict === 'revisit') {
         if (!this.prunedEntries.has(v.nodeId)) {
+          this.log('debug', `submitVerdicts: revisit invalid — ${v.nodeId} was not pruned`);
           return { error: 'revisit_invalid', hint: `${v.nodeId} was not previously pruned — only pruned nodes can be revisited.` };
         }
         if (this.revisitCount >= MAX_REVISITS) {
+          this.log('debug', `submitVerdicts: revisit cap (${MAX_REVISITS}) reached`);
           return { error: 'revisit_cap_reached', hint: `Maximum ${MAX_REVISITS} revisits per trace. Remaining revisits: 0.` };
         }
         continue; // no further validation needed for revisit
@@ -527,6 +544,15 @@ export class ColumnTraceState {
       const neighbor = this.nodeMap.get(v.nodeId);
 
       if (v.verdict === 'prune') {
+        // Guard: reject prune if it would disconnect any chain node from origin
+        const chainIds = new Set(this.chain.keys());
+        if (chainIds.size > 0) {
+          const orphanedId = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, chainIds, v.nodeId);
+          if (orphanedId) {
+            this.log('info', `CT PRUNE REJECTED | ${v.nodeId} | would orphan chain node ${orphanedId}`);
+            continue;
+          }
+        }
         this.removedSet.add(v.nodeId);
         this.outOfScope.push({ nodeId: v.nodeId, reason: v.summary ?? 'Pruned by AI' });
         // Store enough data to support revisit (shallow undo buffer)
@@ -665,9 +691,11 @@ export class ColumnTraceState {
   } | { error: string; hint?: string } {
 
     if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
+      this.log('debug', `getResult: invalid status "${this._status}"`);
       return { error: `invalid_status: cannot get result in '${this._status}' state` };
     }
     if (this._status !== 'complete' && this.frontier.length > 0) {
+      this.log('debug', `getResult: frontier not empty (${this.frontier.length} remaining)`);
       return { error: 'frontier_not_empty', hint: `${this.frontier.length} entries remain. Call getHopContext/submitVerdicts until done.` };
     }
     this._status = 'complete'; // E1: ensure status is complete when returning results
@@ -718,6 +746,7 @@ export class ColumnTraceState {
 
     const pruneRate = this.scopeSize > 0 ? Math.round(((this.scopeSize - stats.examined) / this.scopeSize) * 100) : 0;
     this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeSize} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
+    this.log('debug', `COMPLETE detail | fullNodes=${fullNodes.length} | edges=${edges.length} | outOfScope=${this.outOfScope.length} | revisits=${this.revisitCount}`);
 
     return {
       status: 'complete',

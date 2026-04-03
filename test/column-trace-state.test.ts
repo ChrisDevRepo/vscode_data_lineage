@@ -17,7 +17,7 @@ const clearLogs = () => { logs.length = 0; };
 
 async function testLifecycleStatus(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   assertEq(state.status, 'created', 'Initial status is created');
   assert(!state.isInitialized, 'Not initialized before init()');
@@ -40,7 +40,7 @@ async function testLifecycleStatus(model: DatabaseModel) {
 
 async function testInitWithOrigin(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find a table with columns in AdventureWorks
   const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
@@ -59,7 +59,7 @@ async function testInitWithOrigin(model: DatabaseModel) {
 
 async function testInitInvalidOrigin(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const result = state.init({ targetColumns: ['FakeCol'], origin: '[fake].[nonexistent]' });
   assert('error' in result, 'Init with invalid origin returns error');
@@ -71,7 +71,7 @@ async function testInitInvalidOrigin(model: DatabaseModel) {
 
 async function testInitNoColumnsNoOrigin(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const result = state.init({ targetColumns: [] });
   assert('error' in result, 'Init with empty columns + no origin returns error');
@@ -82,7 +82,7 @@ async function testInitNoColumnsNoOrigin(model: DatabaseModel) {
 
 async function testInitInvalidDirection(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
   assert(!!table, 'Found a table');
@@ -98,7 +98,7 @@ async function testInitInvalidDirection(model: DatabaseModel) {
 
 async function testInitColumnsNormalized(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
   assert(!!table, 'Found a table');
@@ -120,7 +120,7 @@ async function testInitColumnsNormalized(model: DatabaseModel) {
 
 async function testInitNoColumnsWithOrigin(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Pick any node with neighbors
   const node = model.nodes.find(n => {
@@ -139,7 +139,7 @@ async function testInitNoColumnsWithOrigin(model: DatabaseModel) {
 
 async function testGraphModeHopCycle(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Pick a node with neighbors
   const node = model.nodes.find(n => {
@@ -177,7 +177,7 @@ async function testGraphModeHopCycle(model: DatabaseModel) {
 
 async function testAutoDiscoverOrigin(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find a column that exists on exactly one table
   const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
@@ -195,7 +195,7 @@ async function testAutoDiscoverOrigin(model: DatabaseModel) {
 
 async function testHopContextStructure(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find a procedure with upstream deps (likely has neighbors)
   const sp = model.nodes.find(n => n.type === 'procedure' && n.bodyScript);
@@ -235,7 +235,7 @@ async function testHopContextStructure(model: DatabaseModel) {
 
 async function testFocusNodeContent(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find an SP that has upstream table neighbors
   const sp = model.nodes.find(n =>
@@ -268,7 +268,7 @@ async function testFocusNodeContent(model: DatabaseModel) {
 
 async function testBoundaryDetection(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find a table with no upstream (source boundary)
   const sourceTable = model.nodes.find(n => {
@@ -301,7 +301,7 @@ async function testBoundaryDetection(model: DatabaseModel) {
 
 async function testVerdictRemove(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find SP with multiple upstream neighbors
   const sp = model.nodes.find(n =>
@@ -334,7 +334,7 @@ async function testVerdictRemove(model: DatabaseModel) {
 
 async function testVerdictRelevantWithValidation(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find SP with upstream table neighbor that has columns
   const sp = model.nodes.find(n => {
@@ -391,7 +391,7 @@ async function testVerdictRelevantWithValidation(model: DatabaseModel) {
 
 async function testRejectionCap(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Same setup as above — find SP with upstream table
   const sp = model.nodes.find(n => {
@@ -431,7 +431,7 @@ async function testRejectionCap(model: DatabaseModel) {
 
 async function testCycleDetection(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Init from any node with neighbors
   const node = model.nodes.find(n =>
@@ -466,7 +466,7 @@ async function testCycleDetection(model: DatabaseModel) {
 
 async function testGetResultStructure(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const node = model.nodes.find(n => n.columns?.length && (model.neighborIndex[n.id]?.in.length ?? 0) > 0);
   if (!node) { console.log('  (skipping: no node with upstream)'); return; }
@@ -522,7 +522,7 @@ async function testGetResultStructure(model: DatabaseModel) {
 
 async function testGetResultTooEarly(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find node with upstream neighbors so frontier is not empty
   const sp = model.nodes.find(n =>
@@ -542,7 +542,7 @@ async function testGetResultTooEarly(model: DatabaseModel) {
 
 async function testFocusMismatch(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const sp = model.nodes.find(n =>
     n.type === 'procedure' && n.bodyScript &&
@@ -564,7 +564,7 @@ async function testFocusMismatch(model: DatabaseModel) {
 
 async function testReInit(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
   if (!table) { console.log('  (skipping: no table)'); return; }
@@ -586,7 +586,7 @@ async function testReInit(model: DatabaseModel) {
 
 async function testDirectionDown(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find a table that has downstream consumers
   const table = model.nodes.find(n =>
@@ -610,7 +610,7 @@ async function testDirectionDown(model: DatabaseModel) {
 
 async function testDirectionBoth(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find a node with both upstream and downstream
   const node = model.nodes.find(n =>
@@ -629,7 +629,7 @@ async function testDirectionBoth(model: DatabaseModel) {
 
 async function testPassthroughVerdict(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   const sp = model.nodes.find(n =>
     n.type === 'procedure' && n.bodyScript &&
@@ -666,7 +666,7 @@ async function testPassthroughVerdict(model: DatabaseModel) {
 
 async function testRelevantColumnRename(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find SP with upstream SP neighbor (exec edge, no column validation)
   const sp = model.nodes.find(n => {
@@ -704,7 +704,7 @@ async function testRelevantColumnRename(model: DatabaseModel) {
 async function testFrontierCap(model: DatabaseModel) {
   clearLogs();
   // Use a very small frontier cap to trigger it
-  const state = new ColumnTraceState(model, log, { maxFrontierSize: 2 });
+  const state = new ColumnTraceState(model, buildBareGraph(model), log, { maxFrontierSize: 2 });
 
   // Find a node with many connections
   const hub = model.nodes.find(n =>
@@ -723,7 +723,7 @@ async function testFrontierCap(model: DatabaseModel) {
 
 async function testExternalBoundary(model: DatabaseModel) {
   clearLogs();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
 
   // Find an external node
   const ext = model.nodes.find(n => n.type === 'external');
@@ -803,7 +803,7 @@ function buildSyntheticModel(): DatabaseModel {
 async function testDirectionDownSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   state.init({ targetColumns: ['Revenue'], origin: '[dbo].[factsales]', direction: 'down' });
   const hop = state.getHopContext();
   if ('done' in hop) {
@@ -821,7 +821,7 @@ async function testDirectionDownSynthetic() {
 async function testPassthroughSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
   const hop = state.getHopContext();
   if ('done' in hop || 'error' in hop) { assert(false, 'Syn: expected hop'); return; }
@@ -841,7 +841,7 @@ async function testPassthroughSynthetic() {
 async function testRelevantColumnRenameSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   // Init from spTransform upstream — hops will visit spLoadStaging which has rawdata+remotedb as neighbors
   state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
 
@@ -875,7 +875,7 @@ async function testFrontierCapSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
   // spLoadStaging has 2 upstream (RawData + RemoteDB) — use cap=1
-  const state = new ColumnTraceState(model, log, { maxFrontierSize: 1 });
+  const state = new ColumnTraceState(model, buildBareGraph(model), log, { maxFrontierSize: 1 });
   state.init({ targetColumns: ['Amount'], origin: '[dbo].[sploadstaging]', direction: 'up' });
   assert(state.frontierSize <= 1, `Syn: frontier capped at 1 (got ${state.frontierSize})`);
 }
@@ -883,7 +883,7 @@ async function testFrontierCapSynthetic() {
 async function testExternalBoundarySynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   // Init from spTransform → first hop is spLoadStaging → its neighbors include RemoteDB
   state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
   const hop = state.getHopContext();
@@ -917,7 +917,7 @@ async function testExternalBoundarySynthetic() {
 async function testSPtoSPExecEdgeSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   // Init from vwClean → first hop is spTransform (upstream) → its neighbors include spLoadStaging (exec)
   state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[vwclean]', direction: 'up' });
 
@@ -950,7 +950,7 @@ async function testSPtoSPExecEdgeSynthetic() {
 async function testGetResultAwaitingVerdictsSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[vwclean]', direction: 'up' });
   const hop = state.getHopContext();
   if ('done' in hop || 'error' in hop) { assert(false, 'Syn: expected hop'); return; }
@@ -964,7 +964,7 @@ async function testGetResultAwaitingVerdictsSynthetic() {
 async function testDirectionBothEdgeLabelingSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   // vwClean has upstream (staging.RawData, dbo.spTransform) and downstream (dbo.FactSales)
   // Origin = vwClean, direction = both. Frontier gets all 3 neighbors.
   // First focus = staging.rawdata (FIFO). rawdata has no in, only out → all neighbors downstream.
@@ -1002,7 +1002,7 @@ async function testDirectionBothEdgeLabelingSynthetic() {
   if (!found) {
     // Fallback: just verify the per-neighbor labeling logic is consistent on any hop
     // Re-init and verify first hop neighbors match their actual edge direction
-    const state2 = new ColumnTraceState(model, log);
+    const state2 = new ColumnTraceState(model, buildBareGraph(model), log);
     state2.init({ targetColumns: ['OrderQty'], origin: '[dbo].[vwclean]', direction: 'both' });
     const hop = state2.getHopContext();
     if (!('done' in hop) && !('error' in hop)) {
@@ -1023,7 +1023,7 @@ async function testDirectionBothEdgeLabelingSynthetic() {
 async function testGetResultFieldsSynthetic() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   state.init({ targetColumns: ['Amount'], origin: '[staging].[rawdata]', direction: 'down' });
 
   // Drain all hops
@@ -1051,7 +1051,7 @@ async function testGetResultFieldsSynthetic() {
 async function testNotesAndQuestionRoutingSynthetic() {
   console.log('\n── Syn: Notes + Question Routing ──');
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   state.init({ targetColumns: ['Amount'], origin: '[staging].[rawdata]', direction: 'down' });
 
   // Hop 1: submit with notes + question on first traced neighbor
@@ -1139,7 +1139,7 @@ async function testDiamondMergeChainSynthetic() {
   console.log('\n── Syn: Diamond Merge Chain (Bug #4) ──');
   clearLogs();
   const model = buildDiamondModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   // Trace downstream from Origin to see both SP_A and SP_B feed into MergeTable
   state.init({ targetColumns: ['Amount'], origin: '[dbo].[origin]', direction: 'down' });
 
@@ -1213,7 +1213,7 @@ async function testPassthroughVisitedSynthetic() {
   // Direction down: pass SP_A, trace SP_B — both share MergeTable as neighbor
   // After pass, SP_A should be in visited, preventing re-encounter issues
   const model = buildDiamondModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   state.init({ targetColumns: ['Amount'], origin: '[dbo].[origin]', direction: 'down' });
 
   const hop1 = state.getHopContext();
@@ -1255,7 +1255,7 @@ async function testPassthroughDepthSynthetic() {
   console.log('\n── Syn: Passthrough Depth (Bug #3) ──');
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   // Up from spTransform(depth=0): spLoadStaging(depth=1) is neighbor
   // If spLoadStaging is pass → its children (rawdata, remotedb) should be depth=3 (not 2)
   state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
@@ -1307,7 +1307,7 @@ async function testFocusNodeBoundaryNotCycleSynthetic() {
   console.log('\n── Syn: Focus Node Boundary (Bug #2) ──');
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   state.init({ targetColumns: ['OrderQty'], origin: '[dbo].[sptransform]', direction: 'up' });
 
   const hop1 = state.getHopContext();
@@ -1441,7 +1441,7 @@ function buildGoldenModel(): DatabaseModel {
 async function testGoldenMultiBranchColumnTrace() {
   console.log('\n── Golden: Multi-branch column trace (Revenue upstream) ──');
   const model = buildGoldenModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   clearLogs();
 
   // Init: trace Revenue from FactSales upstream
@@ -1612,7 +1612,7 @@ async function testGoldenMultiBranchColumnTrace() {
 async function testGoldenHopMode() {
   console.log('\n── Golden: Hop mode (no columns, object-level) ──');
   const model = buildGoldenModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   clearLogs();
 
   // Hop mode uses a wildcard column — state machine requires non-empty targetColumns.
@@ -1678,7 +1678,7 @@ async function testGoldenHopMode() {
 async function testGoldenImpactDownstream() {
   console.log('\n── Golden: Impact mode (downstream from Staging) ──');
   const model = buildGoldenModel();
-  const state = new ColumnTraceState(model, log);
+  const state = new ColumnTraceState(model, buildBareGraph(model), log);
   clearLogs();
 
   // Impact: "what breaks if I drop Staging?" → direction=down

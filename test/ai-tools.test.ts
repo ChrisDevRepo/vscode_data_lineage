@@ -97,9 +97,10 @@ async function testSearchObjects(model: DatabaseModel) {
   assert(results1.every(n => n.deg === undefined || typeof n.deg === 'number'), 'all results have numeric deg or undefined');
   assert(results1.every(n => n.match === 'name' || n.match === 'column'), 'all results have match=name or match=column');
 
-  // empty result → hint present
+  // empty result → ai_hint present (B8: no action_required gate for search)
   const r2 = searchObjects(model, 'xyznosuchthing12345') as Record<string, unknown>;
-  assert('action_required' in r2, 'empty result includes action_required');
+  assert('ai_hint' in r2, 'empty result includes ai_hint');
+  assert(!('action_required' in r2), 'empty result has no action_required gate');
   assertEq((r2.results as unknown[]).length, 0, 'empty result has 0 results');
 
   // schemas[] filter — include only HumanResources
@@ -621,15 +622,16 @@ async function testSchemaMismatchDetection(model: DatabaseModel) {
   console.log('\n── Schema Mismatch Detection ──');
 
   // Schema mismatch: SalesOrderDetail is in Sales, not HumanResources
+  // B8 fix: fallback results returned as PRIMARY (no action_required gate, ai_hint instead)
   const mismatch = searchObjects(model, 'SalesOrderDetail', undefined, ['HumanResources']) as Record<string, unknown>;
   assert(!isError(mismatch), 'mismatch: no error');
-  assertEq(mismatch.total, 0, 'mismatch: 0 results in HumanResources');
-  assert('schema_mismatch' in mismatch, 'mismatch: schema_mismatch present');
-  assert('action_required' in mismatch, 'mismatch: action_required present');
-  assert((mismatch.action_required as string).includes('SCHEMA MISMATCH'), 'mismatch: action_required contains directive');
-  const mm = mismatch.schema_mismatch as Record<string, unknown>;
-  assert((mm.found_in_schemas as string[]).includes('Sales'), 'mismatch: found in Sales');
-  assert((mm.fallback_results as unknown[]).length > 0, 'mismatch: fallback results returned');
+  assert((mismatch.total as number) > 0, 'mismatch: fallback results returned as primary');
+  assert('ai_hint' in mismatch, 'mismatch: ai_hint present (not action_required)');
+  assert(!('action_required' in mismatch), 'mismatch: no action_required gate');
+  assert('schema_correction' in mismatch, 'mismatch: schema_correction present');
+  const sc = mismatch.schema_correction as Record<string, unknown>;
+  assert((sc.actual_schemas as string[]).includes('Sales'), 'mismatch: found in Sales');
+  assert('filter_context' in mismatch, 'mismatch: filter_context present');
 
   // No mismatch when object IS in stated schema
   const noMismatch = searchObjects(model, 'Employee', undefined, ['HumanResources']) as Record<string, unknown>;
@@ -643,10 +645,12 @@ async function testSchemaMismatchDetection(model: DatabaseModel) {
   assert((noFilter.results as unknown[]).length > 0, 'no filter: found results');
   assert(!('schema_mismatch' in noFilter), 'no filter: no mismatch');
 
-  // No mismatch when name doesn't exist anywhere
+  // No mismatch when name doesn't exist anywhere — should have ai_hint, not action_required
   const nowhere = searchObjects(model, 'xyznonexistent', undefined, ['HumanResources']) as Record<string, unknown>;
   assertEq(nowhere.total, 0, 'nowhere: 0 results');
-  assert(!('schema_mismatch' in nowhere), 'nowhere: no mismatch when name not found anywhere');
+  assert(!('schema_correction' in nowhere), 'nowhere: no schema_correction when name not found anywhere');
+  assert('ai_hint' in nowhere, 'nowhere: ai_hint present for guidance');
+  assert(!('action_required' in nowhere), 'nowhere: no action_required gate');
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────

@@ -111,7 +111,7 @@ export function dispatchTool(
     case 'lineage_start_column_trace': {
       const columns = (input.columns ?? []) as string[];
       const direction = (input.direction ?? 'up') as 'up' | 'down' | 'both';
-      const state = new ColumnTraceState(model, (l, m) => { /* silent */ }, undefined, columnStore ?? undefined);
+      const state = new ColumnTraceState(model, buildBareGraph(model), (l, m) => { /* silent */ }, undefined, columnStore ?? undefined);
       columnTraceState.current = state;
       const initResult = state.init({ targetColumns: columns, origin: input.origin as string | undefined, direction });
       if ('error' in initResult) return JSON.stringify(initResult);

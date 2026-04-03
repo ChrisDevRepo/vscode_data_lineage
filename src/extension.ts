@@ -59,16 +59,18 @@ let _aiProjectName:    string | null = null;
 let _aiCurrentProjectId: string | null = null;
 let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; informational only
 let _aiModelName:      string = '';          // display name of the current Copilot model (e.g., "Claude Sonnet 4.6")
+let _aiSessionCount = 0;                     // monotonic session counter for log correlation
 let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
 
 /** Stored result graph — populated by CT/BB/BFS/inline, consumed by enrich_view. */
-type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bfs';
+type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs';
 interface ResultGraph {
   nodeIds: string[];
   edges: [string, string, string][];
   verdicts: Record<string, NodeRole>;
   source: 'column_trace' | 'blackboard' | 'bfs_trace' | 'inline';
+  notes?: Array<{ nodeId: string; summary: string }>;  // BB/CT note summaries for enrich_view auto-populate
 }
 let _resultGraph: ResultGraph | null = null;
 
@@ -338,7 +340,7 @@ export function activate(context: vscode.ExtensionContext) {
             mode?: 'substring' | 'regex';
           };
           logDebug(outputChannel, 'AI', `lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, schemas=${JSON.stringify(schemas ?? null)}${mode === 'regex' ? ', mode=regex' : ''}`);
-          return logAndReturn('search_objects', searchObjects(m, query, types as ObjectType[] | undefined, schemas, mode ?? 'substring'));
+          return logAndReturn('search_objects', searchObjects(m, query, types as ObjectType[] | undefined, schemas, mode ?? 'substring', _aiFilter));
         } catch (err) { return toolError('search_objects', err); }
       },
     }),
@@ -486,6 +488,22 @@ export function activate(context: vscode.ExtensionContext) {
             return logAndReturn('enrich_view', { success: false, errors: ['No graph available — run a trace, BFS, or provide node_ids'], hint: 'Call run_bfs_trace or start_column_trace first, then retry enrich_view.' });
           }
 
+          // ── 1b. Auto-populate notes from BB/CT note summaries for unannotated nodes ──
+          if (_resultGraph?.notes?.length) {
+            const userNoteIds = new Set((rawInput.notes ?? []).map(n => (n as any).node_id as string));
+            const autoNotes: Array<{ node_id: string; text: string }> = [];
+            const resolvedSet = new Set(resolvedNodeIds);
+            for (const { nodeId, summary } of _resultGraph.notes) {
+              if (resolvedSet.has(nodeId) && !userNoteIds.has(nodeId) && summary) {
+                autoNotes.push({ node_id: nodeId, text: summary });
+              }
+            }
+            if (autoNotes.length > 0) {
+              rawInput.notes = [...(rawInput.notes ?? []), ...autoNotes];
+              logDebug(outputChannel, 'AI', `enrich_view: auto-populated ${autoNotes.length} note(s) from SM summaries`);
+            }
+          }
+
           // ── 2. Auto-fix orphaned badges/notes/highlights ──
           const { input, fixes } = autoFixEnrichView(m, rawInput, graphSource !== 'fallback' ? resolvedNodeIds : undefined);
           if (fixes.length > 0) {
@@ -578,7 +596,7 @@ export function activate(context: vscode.ExtensionContext) {
           const direction = (input.direction ?? 'up') as 'up' | 'down' | 'both';
           logInfo(outputChannel, 'AI', `start_column_trace: columns=[${columns}], direction=${direction}, origin=${input.origin ?? 'auto'}`);
 
-          _columnTraceState = new ColumnTraceState(m, (level, msg) => {
+          _columnTraceState = new ColumnTraceState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[CT] ${msg}`);
             else logDebug(outputChannel, 'AI', `[CT] ${msg}`);
@@ -699,6 +717,7 @@ export function activate(context: vscode.ExtensionContext) {
           _blackboardState = new BlackboardState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[BB] ${msg}`);
+            else if (level === 'trace') logTrace(outputChannel, 'AI', `[BB] ${msg}`);
             else logDebug(outputChannel, 'AI', `[BB] ${msg}`);
           }, { activeFilter: _aiFilter }, _columnStore);
 
@@ -805,11 +824,18 @@ export function activate(context: vscode.ExtensionContext) {
             const fullResult = _blackboardState.getResult();
             // Store result graph for enrich_view
             if (!('error' in fullResult)) {
-              const noteNodeIds = (fullResult.notes as Array<{ nodeId: string }>).map(n => n.nodeId);
+              const bbNotes = fullResult.notes as Array<{ nodeId: string; summary: string }>;
+              const noteNodeIds = bbNotes.map(n => n.nodeId);
               const v: Record<string, NodeRole> = {};
               for (const id of noteNodeIds) v[id] = 'noted';
-              _resultGraph = { nodeIds: noteNodeIds, edges: fullResult.edges, verdicts: v, source: 'blackboard' };
-              logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${noteNodeIds.length} nodes, ${fullResult.edges.length} edges`);
+              _resultGraph = {
+                nodeIds: noteNodeIds,
+                edges: fullResult.edges,
+                verdicts: v,
+                source: 'blackboard',
+                notes: bbNotes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
+              };
+              logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${noteNodeIds.length} nodes, ${fullResult.edges.length} edges, ${bbNotes.length} notes`);
             }
             return logAndReturn('submit_findings', fullResult);
           }
@@ -845,11 +871,13 @@ export function activate(context: vscode.ExtensionContext) {
       // last BFS result.  It is overwritten whenever a new trace runs.
 
       if (!isAiEnabled()) {
+        logInfo(outputChannel, 'AI', 'Session rejected — AI disabled');
         stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
         return {};
       }
 
       if (!_aiModel) {
+        logInfo(outputChannel, 'AI', 'Session rejected — no model loaded');
         stream.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first, then ask your question.');
         return {};
       }
@@ -858,7 +886,8 @@ export function activate(context: vscode.ExtensionContext) {
       // Dynamic tool filtering: classic tools during discovery, CT tools during state machine.
       let activePhase: 'discover' | 'ct_active' | 'ct_done' | 'bb_active' | 'bb_done' = 'discover';
       let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-      logInfo(outputChannel, 'AI', `Session start — model=${request.model.id}, prompt="${request.prompt.slice(0, 80)}${request.prompt.length > 80 ? '…' : ''}"`);
+      _aiSessionCount++;
+      logInfo(outputChannel, 'AI', `[S${_aiSessionCount}] Session start — model=${request.model.id}, prompt="${request.prompt.slice(0, 80)}${request.prompt.length > 80 ? '…' : ''}"`);
       logInfo(outputChannel, 'AI', `Phase: discover${request.command ? ` /${request.command}` : ''} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
       // Slash commands = shortcuts (intent context only, no mode switching)
@@ -869,6 +898,10 @@ export function activate(context: vscode.ExtensionContext) {
         effectivePrompt = `Search for database objects matching: ${request.prompt}.`;
       } else if (request.command === 'explain') {
         effectivePrompt = `Explain what this database object does: ${request.prompt}.`;
+      }
+      if (request.command) {
+        logInfo(outputChannel, 'AI', `Slash /${request.command} — prompt rewritten`);
+        logDebug(outputChannel, 'AI', `Effective prompt: "${effectivePrompt.slice(0, 150)}"`);
       }
 
       // Build conversation history with smart management:
@@ -929,6 +962,10 @@ export function activate(context: vscode.ExtensionContext) {
                   if (!keepCallIds.has(callId)) return null;
 
                   const r = meta.toolCallResults[callId];
+                  if (!r) {
+                    logDebug(outputChannel, 'AI', `[History] Missing result for callId=${callId.slice(-8)} (${toolName}), skipping`);
+                    return null;
+                  }
 
                   // Serialize the content to a string for processing
                   let contentStr = (r.content as any[]).map((c: any) =>
@@ -965,6 +1002,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
       }
+      logInfo(outputChannel, 'AI', `History: ${context.history.length} turns → ${historyMessages.length} messages`);
 
       const MAX_ROUNDS = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 50);
 
@@ -1039,6 +1077,7 @@ export function activate(context: vscode.ExtensionContext) {
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),
       ];
+      logDebug(outputChannel, 'AI', `Messages: ${messages.length} total (1 system + ${historyMessages.length} history + 1 prompt)`);
 
       // Accumulators for this request's tool call rounds (persisted in ChatResult metadata)
       const toolCallRounds: ToolCallRound[] = [];
@@ -1081,6 +1120,7 @@ export function activate(context: vscode.ExtensionContext) {
           } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable on this model — skipping input estimate'); }
 
           logInfo(outputChannel, 'AI', `Round ${roundCount}/${MAX_ROUNDS} [${activePhase}] — sending request`);
+          const roundT0 = performance.now();
 
           const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
           const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
@@ -1098,6 +1138,8 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
 
+          const roundMs = Math.round(performance.now() - roundT0);
+
           // Token estimation: output
           let outputTokenEstimate = 0;
           try {
@@ -1111,7 +1153,11 @@ export function activate(context: vscode.ExtensionContext) {
             logDebug(outputChannel, 'AI', `"${flat.slice(0, 500)}"${flat.length > 500 ? ` [TRUNCATED ${flat.length} chars]` : ''}`);
           }
 
-          if (!toolCalls.length) return; // done — no more tool calls
+          if (!toolCalls.length) {
+            logInfo(outputChannel, 'AI', `Round ${roundCount} complete — model responded without tool calls (${roundMs}ms)`);
+            logDebug(outputChannel, 'AI', `Exit: phase=${activePhase}, responseText=${responseText.length}ch`);
+            return;
+          }
 
           // Clear action_required gate if AI produced text (= responded to user)
           if (actionRequiredPending && responseText.length > 0) {
@@ -1179,6 +1225,7 @@ export function activate(context: vscode.ExtensionContext) {
               continue;
             }
             stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
+            logDebug(outputChannel, 'AI', `Invoking ${call.name.replace('lineage_', '')} — input: ${JSON.stringify(call.input).slice(0, 300)}`);
             const t0 = performance.now();
             try {
               const result = await vscode.lm.invokeTool(
@@ -1199,6 +1246,7 @@ export function activate(context: vscode.ExtensionContext) {
               const msg = err instanceof Error ? err.message : String(err);
               errorCount++;
               logWarn(outputChannel, 'AI', `Tool call failed: ${call.name} — ${msg}`);
+              logDebug(outputChannel, 'AI', `Error context: phase=${activePhase}, elapsed=${Math.round(performance.now() - t0)}ms, input=${JSON.stringify(call.input).slice(0, 200)}`);
               const errContent = [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: msg }))];
               resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, errContent));
               accumulatedToolResults[call.callId] = new vscode.LanguageModelToolResult(errContent);
@@ -1209,8 +1257,9 @@ export function activate(context: vscode.ExtensionContext) {
           // Track tool sequence for structured summary
           const toolNames = toolCalls.map(c => c.name.replace('lineage_', '')).join(', ');
           toolSequence.push(toolCalls.length > 1 ? `[${toolNames}]` : toolNames);
-          logInfo(outputChannel, 'AI', `Round ${roundCount} — ${toolCalls.length} tool call(s): ${toolNames}`);
-          logDebug(outputChannel, 'AI', `Round ${roundCount} tokens — in: ~${inputTokenEstimate}, out: ~${outputTokenEstimate}, tool results: ~${Math.round(roundToolResultChars / 4)} (est)`);
+          logInfo(outputChannel, 'AI', `Round ${roundCount} — ${toolCalls.length} tool call(s): ${toolNames} (${roundMs}ms)`);
+          const budgetPctRound = _aiMaxInputTokens > 0 ? Math.round((inputTokenEstimate / _aiMaxInputTokens) * 100) : 0;
+          logDebug(outputChannel, 'AI', `Round ${roundCount} tokens — in: ~${inputTokenEstimate} (${budgetPctRound}% of ${_aiMaxInputTokens}), out: ~${outputTokenEstimate}, tool results: ~${Math.round(roundToolResultChars / 4)} (est)`);
 
           messages.push(new vscode.LanguageModelChatMessage(
             vscode.LanguageModelChatMessageRole.User, resultParts,
@@ -1257,6 +1306,7 @@ export function activate(context: vscode.ExtensionContext) {
               phaseTransitions.push(`discover→ct_active@R${roundCount}`);
               lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'));
               logInfo(outputChannel, 'AI', `[CT] Phase → ct_active | Tools: ${lineageTools.map(t => t.name).join(', ')}`);
+              logDebug(outputChannel, 'AI', `[CT] Activation: status=${_columnTraceState.status}, columns=${_columnTraceState.columns.length}, scope=${_columnTraceState.scope}`);
 
               // Inject mode-specific prompt ONCE when entering CT mode
               const hasColumns = _columnTraceState.columns.length > 0;
@@ -1272,13 +1322,16 @@ export function activate(context: vscode.ExtensionContext) {
                   'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
                   'The sub_question field contains your own question from the previous hop — answer it.';
               messages.push(vscode.LanguageModelChatMessage.User(modePrompt));
+            } else {
+              logDebug(outputChannel, 'AI', `[CT] Not activated: status=${_columnTraceState?.status}, phase=${activePhase}`);
             }
           }
           if (_columnTraceState?.status === 'complete' && activePhase === 'ct_active') {
             activePhase = 'ct_done';
             phaseTransitions.push(`ct_active→ct_done@R${roundCount}`);
-            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-            logInfo(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (enrich_view available)`);
+            // SM result is authoritative — exclude BFS which would overwrite _resultGraph
+            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_run_bfs_trace');
+            logInfo(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
           // CT success detection via typed state machine accessors (not string parsing)
@@ -1333,6 +1386,7 @@ export function activate(context: vscode.ExtensionContext) {
               // BB keeps classic tools visible + adds BB tools, but hides CT tools (mutual exclusion)
               lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && !t.tags.includes('lineage-ct'));
               logInfo(outputChannel, 'AI', `[BB] Phase → bb_active | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
+              logDebug(outputChannel, 'AI', `[BB] Activation: status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
 
               // Inject mode-specific prompt ONCE
               const bbPrompt =
@@ -1346,13 +1400,16 @@ export function activate(context: vscode.ExtensionContext) {
                 'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
                 'The current_task field contains your own question from a previous hop — answer it.';
               messages.push(vscode.LanguageModelChatMessage.User(bbPrompt));
+            } else {
+              logDebug(outputChannel, 'AI', `[BB] Not activated: status=${_blackboardState?.status}, phase=${activePhase}`);
             }
           }
           if (_blackboardState?.status === 'complete' && activePhase === 'bb_active') {
             activePhase = 'bb_done';
             phaseTransitions.push(`bb_active→bb_done@R${roundCount}`);
-            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-            logInfo(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (enrich_view available)`);
+            // SM result is authoritative — exclude BFS which would overwrite _resultGraph
+            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_run_bfs_trace');
+            logInfo(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
           // BB success detection
@@ -1396,6 +1453,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Budget hints were proven to corrupt AI reasoning (premature termination, hallucinated summaries).
           // The round limit (MAX_ROUNDS) is the only guardrail.
         }
+        logDebug(outputChannel, 'AI', `Max rounds state: phase=${activePhase}, ct=${_columnTraceState?.status ?? 'none'}, bb=${_blackboardState?.status ?? 'none'}`);
         logError(outputChannel, 'AI', `Round limit reached (${MAX_ROUNDS})`, new Error('MAX_ROUNDS exceeded'));
         stream.markdown(`\n\n**Error:** Reached the ${MAX_ROUNDS}-round limit. Increase \`dataLineageViz.ai.maxRounds\` in settings if needed.`);
       };
@@ -1441,6 +1499,8 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Behavioral hint: if no tools were called, the model likely doesn't support function calling
         if (totalToolCallsMade === 0 && lineageTools.length > 0) {
+          logInfo(outputChannel, 'AI', `No tools called in ${roundCount} round(s) — model may lack function calling`);
+
           stream.markdown(
             '\n\n> **Tip:** @lineage needs a model with tool/function calling support. ' +
             'Switch to **GPT-4o**, **Claude Sonnet**, or **Gemini** in the model picker.',
