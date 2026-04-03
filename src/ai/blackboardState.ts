@@ -14,6 +14,7 @@
  * @see tmp/ai-dataflow.md §3 SM Types
  */
 
+import type Graph from 'graphology';
 import type { DatabaseModel, LineageNode, ColumnDef, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
@@ -47,7 +48,7 @@ export interface BlackboardConfig {
   maxAgendaSize?: number;         // default 200 — cap, not truncation
   findingsHardLimit?: number;     // default 5000 chars — reject, never truncate
   summaryHardLimit?: number;      // default 500 chars — reject, never truncate
-  activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
+  activeFilter?: SerializedFilterState | null;  // user's active filter — constrains BFS scope to matching schemas
 }
 
 export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
@@ -97,6 +98,7 @@ const COVERAGE_HINT_THRESHOLD = 80;  // % — suggest finishing exploration abov
 
 export class BlackboardState {
   private readonly model: DatabaseModel;
+  private readonly graph: Graph;
   private readonly store: ColumnStore | null;
   private readonly log: LogFn;
   private readonly maxAgendaSize: number;
@@ -128,11 +130,13 @@ export class BlackboardState {
 
   constructor(
     model: DatabaseModel,
+    graph: Graph,
     log: LogFn,
     config?: BlackboardConfig,
     store?: ColumnStore | null,
   ) {
     this.model = model;
+    this.graph = graph;
     this.store = store ?? null;
     this.log = log;
     this.maxAgendaSize = config?.maxAgendaSize ?? DEFAULT_MAX_AGENDA;
@@ -464,16 +468,17 @@ export class BlackboardState {
     return raw ? normalizeBodyScript(raw) : undefined;
   }
 
-  /** Bidirectional BFS from origin to compute reachable scope. */
+  /** Bidirectional BFS from origin to compute reachable scope.
+   *  Uses graphology Graph (built from model.edges — filtered to selected schemas).
+   *  neighborIndex is NOT used here — it contains cross-schema phantom edges. */
   private bfsScope(startId: string): Set<string> {
+    if (!this.graph.hasNode(startId)) return new Set([startId]);
     const seen = new Set<string>([startId]);
     const queue = [startId];
     let idx = 0;
     while (idx < queue.length) {
       const id = queue[idx++];
-      const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
-      const allNeighbors = [...new Set([...nb.in, ...nb.out])];
-      for (const nid of allNeighbors) {
+      for (const nid of this.graph.neighbors(id)) {
         if (!seen.has(nid)) {
           seen.add(nid);
           queue.push(nid);
@@ -486,13 +491,12 @@ export class BlackboardState {
 
   /** Seed agenda with BFS-ordered nodes from origin (bidirectional). */
   private seedAgenda(originId: string): void {
+    if (!this.graph.hasNode(originId)) return;
     const queue: Array<{ id: string; depth: number }> = [];
     const seen = new Set<string>([originId]);
 
     // Start with origin's neighbors
-    const nb = this.model.neighborIndex[originId] ?? { in: [], out: [] };
-    const neighbors = [...new Set([...nb.in, ...nb.out])];
-    for (const nid of neighbors) {
+    for (const nid of this.graph.neighbors(originId)) {
       if (!seen.has(nid) && this.scopeNodeIds.has(nid)) {
         seen.add(nid);
         queue.push({ id: nid, depth: 1 });
@@ -510,9 +514,7 @@ export class BlackboardState {
       this.agenda.push({ nodeId: id, priority: 0, depth });
       this.agendaIds.add(id);
 
-      const nbInner = this.model.neighborIndex[id] ?? { in: [], out: [] };
-      const innerNeighbors = [...new Set([...nbInner.in, ...nbInner.out])];
-      for (const nid of innerNeighbors) {
+      for (const nid of this.graph.neighbors(id)) {
         if (!seen.has(nid) && this.scopeNodeIds.has(nid)) {
           seen.add(nid);
           queue.push({ id: nid, depth: depth + 1 });
@@ -607,16 +609,17 @@ export class BlackboardState {
 
   /** Build neighbor list with edge info, boundary detection, compact cols/FKs. */
   private buildNeighborList(focusId: string): HopNeighbor[] {
-    const nb = this.model.neighborIndex[focusId] ?? { in: [], out: [] };
-    const allNeighborIds = [...new Set([...nb.in, ...nb.out])];
-    const inSet = new Set(nb.in);
+    if (!this.graph.hasNode(focusId)) return [];
+    const inIds = new Set(this.graph.inNeighbors(focusId));
+    const outIds = new Set(this.graph.outNeighbors(focusId));
+    const allNeighborIds = [...new Set([...inIds, ...outIds])];
     const neighbors: HopNeighbor[] = [];
 
     for (const nid of allNeighborIds) {
       const nNode = this.nodeMap.get(nid);
       if (!nNode) continue;
 
-      const isUpstream = inSet.has(nid);
+      const isUpstream = inIds.has(nid);
       const primaryKey = isUpstream ? `${nid}→${focusId}` : `${focusId}→${nid}`;
       const reverseKey = isUpstream ? `${focusId}→${nid}` : `${nid}→${focusId}`;
       let edgeType = this.edgeTypeMap.get(primaryKey) ?? this.edgeTypeMap.get(reverseKey) ?? 'read';
@@ -668,10 +671,10 @@ export class BlackboardState {
     if (!node) return 'external';
     if (node.type === 'external') return 'external';
     if (this.visited.has(nodeId)) return 'cycle';
-    const nb = this.model.neighborIndex[nodeId] ?? { in: [], out: [] };
+    if (!this.graph.hasNode(nodeId)) return 'external';
     // Bidirectional: source = no incoming, sink = no outgoing
-    if (nb.in.length === 0) return 'source';
-    if (nb.out.length === 0) return 'sink';
+    if (this.graph.inDegree(nodeId) === 0) return 'source';
+    if (this.graph.outDegree(nodeId) === 0) return 'sink';
     return 'none';
   }
 
@@ -746,8 +749,8 @@ export class BlackboardState {
     let idx = 0;
     while (idx < queue.length) {
       const id = queue[idx++];
-      const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
-      for (const nid of [...new Set([...nb.in, ...nb.out])]) {
+      if (!this.graph.hasNode(id)) continue;
+      for (const nid of this.graph.neighbors(id)) {
         if (!reachable.has(nid) && !this.removedSet.has(nid) && this.scopeNodeIds.has(nid)) {
           reachable.add(nid);
           queue.push(nid);
@@ -778,8 +781,8 @@ export class BlackboardState {
     let idx = 0;
     while (idx < queue.length) {
       const id = queue[idx++];
-      const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
-      for (const nid of [...new Set([...nb.in, ...nb.out])]) {
+      if (!this.graph.hasNode(id)) continue;
+      for (const nid of this.graph.neighbors(id)) {
         if (!reachable.has(nid) && !tempRemoved.has(nid) && this.scopeNodeIds.has(nid)) {
           reachable.add(nid);
           queue.push(nid);
@@ -789,7 +792,7 @@ export class BlackboardState {
     return this.agenda.filter(e => !reachable.has(e.nodeId)).length;
   }
 
-  // ─── Scope reporting (information only — never filters or constrains) ────────
+  // ─── Scope reporting ────────────────────────────────────────────────────────
 
   /** Check if a node's schema matches the user's active filter. */
   isInFilter(nodeId: string): boolean {

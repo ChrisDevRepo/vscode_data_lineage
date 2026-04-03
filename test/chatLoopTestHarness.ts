@@ -144,7 +144,7 @@ export function dispatchTool(
 
     case 'lineage_start_exploration': {
       const bb = blackboardState ?? { current: null };
-      const state = new BlackboardState(model, () => {}, undefined, columnStore ?? undefined);
+      const state = new BlackboardState(model, graph, () => {}, undefined, columnStore ?? undefined);
       bb.current = state;
       const initResult = state.init({ question: input.question as string ?? '', origin: input.origin as string ?? '' });
       if ('error' in initResult) return JSON.stringify(initResult);

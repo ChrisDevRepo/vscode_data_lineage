@@ -696,7 +696,7 @@ export function activate(context: vscode.ExtensionContext) {
           const origin = input.origin ?? '';
           logInfo(outputChannel, 'AI', `start_exploration: origin=${origin}, question="${question.slice(0, 80)}"`);
 
-          _blackboardState = new BlackboardState(m, (level, msg) => {
+          _blackboardState = new BlackboardState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[BB] ${msg}`);
             else logDebug(outputChannel, 'AI', `[BB] ${msg}`);
@@ -747,7 +747,7 @@ export function activate(context: vscode.ExtensionContext) {
           return logAndReturn('start_exploration', {
             ...initResult, ...hopResult,
             scope_preview: scopePreview,
-            action_required: `Scope: ${scopePreview.total_scope_nodes} nodes (${scopePreview.in_user_filter} match user filter). Present scope to user and confirm before analyzing.`,
+            ai_hint: `Scope: ${scopePreview.total_scope_nodes} nodes (${scopePreview.in_user_filter} match user filter). Proceed with exploration.`,
           });
         } catch (err) { return toolError('start_exploration', err); }
       },
@@ -970,7 +970,8 @@ export function activate(context: vscode.ExtensionContext) {
         'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
         `Budget: ${MAX_ROUNDS} rounds.\n\n` +
         'RULES:\n' +
-        '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user.\n' +
+        '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user which object they mean.\n' +
+        '   For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
         '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
         '3. For column questions: start_column_trace directly (it discovers scope internally). For other complex questions: search → BFS.\n' +
         '   When tracing columns: provide INPUT column names, not output. Track renames.\n' +

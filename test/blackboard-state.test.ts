@@ -4,9 +4,21 @@
  * Uses synthetic model for deterministic tests.
  */
 
+import Graph from 'graphology';
 import { assert, assertEq, printSummary, resetCounters } from './testUtils';
 import { BlackboardState } from '../src/ai/blackboardState';
 import type { DatabaseModel, LineageNode, LineageEdge, NeighborIndex } from '../src/engine/types';
+
+function buildGraphFromModel(model: DatabaseModel): Graph {
+  const g = new Graph({ type: 'directed', multi: false });
+  for (const n of model.nodes) g.addNode(n.id, { type: n.type, schema: n.schema });
+  for (const e of model.edges) {
+    if (g.hasNode(e.source) && g.hasNode(e.target) && !g.hasEdge(e.source, e.target)) {
+      g.addEdge(e.source, e.target, { type: e.type });
+    }
+  }
+  return g;
+}
 
 const logs: string[] = [];
 const log = (level: string, msg: string) => { logs.push(`[${level}] ${msg}`); };
@@ -72,7 +84,7 @@ function buildSyntheticModel(): DatabaseModel {
 async function testLifecycleStatus() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
 
   assertEq(state.status, 'created', 'Initial status is created');
 
@@ -94,7 +106,7 @@ async function testLifecycleStatus() {
 async function testInitValid() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
 
   const result = state.init({
     question: 'Document all business rules',
@@ -112,7 +124,7 @@ async function testInitValid() {
 async function testInitInvalidOrigin() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
 
   const result = state.init({ question: 'test', origin: '[nonexistent].[table]' });
   assert('error' in result, 'Init with invalid origin returns error');
@@ -124,7 +136,7 @@ async function testInitInvalidOrigin() {
 async function testHopContextStructure() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop = state.getHopContext();
@@ -160,7 +172,7 @@ async function testHopContextStructure() {
 async function testFocusNodeDdl() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Drain until we find a procedure with DDL
@@ -190,7 +202,7 @@ async function testFocusNodeDdl() {
 async function testFocusNodeColumns() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[staging].[rawdata]' });
 
   // rawdata is origin (visited), so first hop is a neighbor
@@ -224,7 +236,7 @@ async function testFocusNodeColumns() {
 async function testSubmitFindings() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop = state.getHopContext();
@@ -246,7 +258,7 @@ async function testSubmitFindings() {
 async function testSubmitFocusMismatch() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
   state.getHopContext();
 
@@ -260,7 +272,7 @@ async function testSubmitFocusMismatch() {
 async function testFindingsHardLimit() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log, { findingsHardLimit: 50 });
+  const state = new BlackboardState(model, buildGraphFromModel(model), log, { findingsHardLimit: 50 });
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop = state.getHopContext();
@@ -278,7 +290,7 @@ async function testFindingsHardLimit() {
 async function testSummaryHardLimit() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log, { summaryHardLimit: 20 });
+  const state = new BlackboardState(model, buildGraphFromModel(model), log, { summaryHardLimit: 20 });
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop = state.getHopContext();
@@ -298,7 +310,7 @@ async function testSummaryHardLimit() {
 async function testWorkingMemoryGrows() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Hop 1: submit findings
@@ -325,7 +337,7 @@ async function testWorkingMemoryGrows() {
 async function testQuestionBoostsPriority() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop1 = state.getHopContext();
@@ -351,7 +363,7 @@ async function testQuestionBoostsPriority() {
 async function testQuestionShowsInPendingQuestions() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop1 = state.getHopContext();
@@ -383,7 +395,7 @@ async function testQuestionShowsInPendingQuestions() {
 async function testQuestionAnsweredOnSubmit() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop1 = state.getHopContext();
@@ -419,7 +431,7 @@ async function testQuestionAnsweredOnSubmit() {
 async function testSkipIds() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop1 = state.getHopContext();
@@ -446,7 +458,7 @@ async function testSkipIds() {
 async function testCoverageTracking() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Drain all hops, recording findings
@@ -487,7 +499,7 @@ async function testCoverageTracking() {
 async function testAgendaExhaustion() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Drain ALL hops
@@ -513,7 +525,7 @@ async function testAgendaExhaustion() {
 async function testGetResultStructure() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Document business rules', origin: '[dbo].[sptransform]' });
 
   // Drain all hops with findings
@@ -553,7 +565,7 @@ async function testGetResultStructure() {
 async function testGetResultTooEarly() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
   state.getHopContext();
 
@@ -593,7 +605,7 @@ async function testAutoExpandScope() {
     catalog: Object.fromEntries(nodes.map(n => [n.id, { schema: n.schema, name: n.name, type: n.type }])),
   };
 
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   const initResult = state.init({ question: 'Test', origin: '[a].[t1]' });
   assert('ok' in initResult, 'Init ok');
   // Scope = 2 (T1 + T2, T3 is disconnected)
@@ -622,7 +634,7 @@ async function testAgendaCap() {
   clearLogs();
   const model = buildSyntheticModel();
   // Cap agenda at 2 — only 2 nodes queued
-  const state = new BlackboardState(model, log, { maxAgendaSize: 2 });
+  const state = new BlackboardState(model, buildGraphFromModel(model), log, { maxAgendaSize: 2 });
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Count available hops
@@ -643,7 +655,7 @@ async function testAgendaCap() {
 async function testBoundaryDetection() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Look for external boundary (RemoteDB) and source/sink boundaries
@@ -671,7 +683,7 @@ async function testBoundaryDetection() {
 async function testNeighborMetadata() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Find a hop with neighbors that have cols or fks
@@ -700,7 +712,7 @@ async function testNeighborMetadata() {
 async function testReInit() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
 
   // First init + some hops
   state.init({ question: 'First', origin: '[dbo].[sptransform]' });
@@ -738,7 +750,7 @@ async function testHighCoverageHint() {
     catalog: Object.fromEntries(nodes.map(n => [n.id, { schema: n.schema, name: n.name, type: n.type }])),
   };
 
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[a].[t1]' });
 
   // Only 1 node on agenda (SP1), origin already visited
@@ -760,7 +772,7 @@ async function testHighCoverageHint() {
 async function testQuestionUnknownNodeIgnored() {
   clearLogs();
   const model = buildSyntheticModel();
-  const state = new BlackboardState(model, log);
+  const state = new BlackboardState(model, buildGraphFromModel(model), log);
   state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   const hop = state.getHopContext();

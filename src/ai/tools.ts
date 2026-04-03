@@ -565,7 +565,7 @@ export function runBfsTrace(
       total_edges: allEdges.length,
       scope_ddl_chars: totalChars,
       budget_tokens: INLINE_TOKEN_BUDGET,
-      action_required: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_trace for hop-by-hop analysis.',
+      ai_hint: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_exploration for hop-by-hop analysis. Do NOT ask the user — pick the best approach.',
       ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }),
     };
   }
