@@ -157,7 +157,7 @@ export class BlackboardState {
   init(params: {
     question: string;
     origin: string;
-  }): { ok: true; scopeSize: number; originNode: Record<string, unknown>; map: MapOverview }
+  }): { ok: true; scopeSize: number; agendaSize: number; originNode: Record<string, unknown>; map: MapOverview }
      | { error: string; hint?: string } {
 
     // Reset all mutable state (safe to re-init)
@@ -205,6 +205,7 @@ export class BlackboardState {
     return {
       ok: true,
       scopeSize: scopeIds.size,
+      agendaSize: this.agenda.length,
       originNode: strip(presentNode(originNode, this.model.neighborIndex)),
       map,
     };
@@ -296,9 +297,11 @@ export class BlackboardState {
     questions?: Array<{ nodeId: string; question: string }>;
     verdict: 'relevant' | 'noted' | 'irrelevant';
     pruneIds?: string[];
+    complete?: boolean;
   }): { ok: true; advanced: number; agendaSize: number; pruned?: number;
         rejected_prune_ids?: Array<{ id: string; reason: string }>;
-        invalid_questions?: Array<{ node_id: string; question: string; reason: string }> }
+        invalid_questions?: Array<{ node_id: string; question: string; reason: string }>;
+        early_complete?: ReturnType<BlackboardState['getResult']> }
      | { error: string; limit?: number; hint?: string } {
 
     if (this._status !== 'awaiting_findings') {
@@ -306,7 +309,15 @@ export class BlackboardState {
       return { error: `Cannot submit findings in status "${this._status}"` };
     }
 
-    const { focusNodeId, findings, summary, tags, questions, verdict } = params;
+    const { focusNodeId, findings, summary, questions, verdict } = params;
+
+    // Coerce AI inputs — VS Code doesn't enforce JSON Schema types on tool inputs
+    const tags = Array.isArray(params.tags) ? params.tags
+      : typeof params.tags === 'string' ? (params.tags as string).split(',').map(t => t.trim())
+      : undefined;
+    const pruneIds = Array.isArray(params.pruneIds) ? params.pruneIds
+      : typeof params.pruneIds === 'string' ? [params.pruneIds as string]
+      : undefined;
 
     // Validate focus node
     if (focusNodeId !== this.currentFocusNodeId) {
@@ -383,9 +394,9 @@ export class BlackboardState {
 
     // Prune specific neighbor nodes from agenda (+ cascade downstream) — with guards
     const rejectedPrunes: Array<{ id: string; reason: string }> = [];
-    if (params.pruneIds?.length) {
+    if (pruneIds?.length) {
       const notedIdSet = new Set(this.notes.keys());
-      for (const pruneId of params.pruneIds) {
+      for (const pruneId of pruneIds) {
         if (pruneId === this.originNodeId) continue;
         if (this.visited.has(pruneId)) continue;
         if (this.removedSet.has(pruneId)) continue;
@@ -416,12 +427,20 @@ export class BlackboardState {
     this.log('info', `BB submit | ${focusNodeId} | verdict=${verdict} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | pruned=${pruned} | agenda=${this.agenda.length}`);
     this.log('debug', `BB submit detail | ${focusNodeId} | summary=${summary.length}ch | tags=[${tags?.join(',') ?? ''}] | advanced=${advanced} | notes_total=${this.notes.size} | coverage=${this.coveragePct}%`);
 
-    return {
-      ok: true, advanced, agendaSize: this.agenda.length,
+    const base = {
+      ok: true as const, advanced, agendaSize: this.agenda.length,
       ...(pruned > 0 && { pruned }),
       ...(rejectedPrunes.length > 0 && { rejected_prune_ids: rejectedPrunes }),
       ...(invalidQuestions.length > 0 && { invalid_questions: invalidQuestions }),
     };
+
+    // Early completion: AI signals it has enough findings to answer the question
+    if (params.complete) {
+      this.log('info', `BB EARLY COMPLETE | notes=${this.notes.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
+      return { ...base, early_complete: this.getResult() };
+    }
+
+    return base;
   }
 
   // ─── getResult ─────────────────────────────────────────────────────────────

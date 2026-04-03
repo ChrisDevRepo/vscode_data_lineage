@@ -87,6 +87,21 @@ function buildResultGraphFromBfs(
   return { nodeIds: nodes.map(n => n.id), edges: edges ?? [], verdicts, source };
 }
 
+/** Store BB result graph for enrich_view — shared by normal completion and early completion. */
+function storeBbResultGraph(fullResult: { notes: Array<{ nodeId: string; summary: string }>; edges: [string, string, string][] }) {
+  const noteNodeIds = fullResult.notes.map(n => n.nodeId);
+  const v: Record<string, NodeRole> = {};
+  for (const id of noteNodeIds) v[id] = 'noted';
+  _resultGraph = {
+    nodeIds: noteNodeIds,
+    edges: fullResult.edges,
+    verdicts: v,
+    source: 'blackboard',
+    notes: fullResult.notes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
+  };
+  logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${noteNodeIds.length} nodes, ${fullResult.edges.length} edges, ${fullResult.notes.length} notes`);
+}
+
 let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage — populated on model load, cleared on reload
 
 /** AI output template instructions — loaded once at activation, cached for system prompt injection. */
@@ -763,9 +778,21 @@ export function activate(context: vscode.ExtensionContext) {
             outside_filter: _blackboardState.filterBreakdown.outside_filter,
             schemas: _blackboardState.schemaBreakdown(),
           };
+
+          // Scope guidance: warn AI if agenda exceeds round budget
+          const maxRounds = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 50);
+          const agendaSize = initResult.agendaSize ?? 0;
+          const estimatedHops = Math.floor(maxRounds * 0.8); // leave 20% for search/detail calls
+          const scopeGuidance = agendaSize > estimatedHops ? {
+            agenda_size: agendaSize,
+            estimated_max_hops: estimatedHops,
+            recommendation: `Agenda (${agendaSize}) exceeds round budget (~${estimatedHops} hops). Prune aggressively and use complete:true in submit_findings when you have enough findings to answer the question.`,
+          } : undefined;
+
           return logAndReturn('start_exploration', {
             ...initResult, ...hopResult,
             scope_preview: scopePreview,
+            ...(scopeGuidance && { scope_guidance: scopeGuidance }),
             ai_hint: `Scope: ${scopePreview.total_scope_nodes} nodes (${scopePreview.in_user_filter} match user filter). Proceed with exploration.`,
           });
         } catch (err) { return toolError('start_exploration', err); }
@@ -809,33 +836,30 @@ export function activate(context: vscode.ExtensionContext) {
           const pruneIds = input.prune_ids ?? [];
           logInfo(outputChannel, 'AI', `submit_findings: focus=${focusNodeId}, verdict=${verdict}, findings=${findings.length}ch, questions=${questions.length}${pruneIds.length ? `, prune=${pruneIds.length}` : ''}`);
 
+          const complete = !!(input as Record<string, unknown>).complete;
           const submitResult = _blackboardState.submitFindings({
             focusNodeId, findings, summary,
             tags: input.tags,
             questions,
             verdict,
             pruneIds,
+            complete,
           });
           if ('error' in submitResult) return logAndReturn('submit_findings', submitResult);
+
+          // Early completion or normal agenda drain — same result graph storage
+          const bbResult = submitResult.early_complete ?? null;
+          if (bbResult && !('error' in bbResult)) {
+            storeBbResultGraph(bbResult);
+            return logAndReturn('submit_findings', bbResult);
+          }
 
           const hopResult = _blackboardState.getHopContext();
           if ('error' in hopResult) return logAndReturn('submit_findings', hopResult);
           if ('done' in hopResult) {
             const fullResult = _blackboardState.getResult();
-            // Store result graph for enrich_view
             if (!('error' in fullResult)) {
-              const bbNotes = fullResult.notes as Array<{ nodeId: string; summary: string }>;
-              const noteNodeIds = bbNotes.map(n => n.nodeId);
-              const v: Record<string, NodeRole> = {};
-              for (const id of noteNodeIds) v[id] = 'noted';
-              _resultGraph = {
-                nodeIds: noteNodeIds,
-                edges: fullResult.edges,
-                verdicts: v,
-                source: 'blackboard',
-                notes: bbNotes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
-              };
-              logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${noteNodeIds.length} nodes, ${fullResult.edges.length} edges, ${bbNotes.length} notes`);
+              storeBbResultGraph(fullResult);
             }
             return logAndReturn('submit_findings', fullResult);
           }
@@ -885,6 +909,8 @@ export function activate(context: vscode.ExtensionContext) {
       // ─── Explore-first: no upfront routing. AI discovers intent via tools. ───
       // Dynamic tool filtering: classic tools during discovery, CT tools during state machine.
       let activePhase: 'discover' | 'ct_active' | 'ct_done' | 'bb_active' | 'bb_done' = 'discover';
+      // Shared filter: SM-done phases restore classic tools but exclude BFS (SM result is authoritative)
+      const smDoneTools = () => vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_run_bfs_trace');
       let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
       _aiSessionCount++;
       logInfo(outputChannel, 'AI', `[S${_aiSessionCount}] Session start — model=${request.model.id}, prompt="${request.prompt.slice(0, 80)}${request.prompt.length > 80 ? '…' : ''}"`);
@@ -1329,8 +1355,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (_columnTraceState?.status === 'complete' && activePhase === 'ct_active') {
             activePhase = 'ct_done';
             phaseTransitions.push(`ct_active→ct_done@R${roundCount}`);
-            // SM result is authoritative — exclude BFS which would overwrite _resultGraph
-            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_run_bfs_trace');
+            lineageTools = smDoneTools();
             logInfo(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
@@ -1383,8 +1408,8 @@ export function activate(context: vscode.ExtensionContext) {
             if (smActive) {
               activePhase = 'bb_active';
               phaseTransitions.push(`discover→bb_active@R${roundCount}`);
-              // BB keeps classic tools visible + adds BB tools, but hides CT tools (mutual exclusion)
-              lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && !t.tags.includes('lineage-ct'));
+              // BB tools + research tools only — no BFS, enrich_view, or DDL batch (SM owns the graph)
+              lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-bb') || t.tags.includes('lineage-research'));
               logInfo(outputChannel, 'AI', `[BB] Phase → bb_active | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
               logDebug(outputChannel, 'AI', `[BB] Activation: status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
 
@@ -1397,6 +1422,9 @@ export function activate(context: vscode.ExtensionContext) {
                 '3. Write a one-line summary (~100 chars) — shown in your working memory for ALL future hops\n' +
                 '4. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
                 '5. prune_ids: neighbor IDs to prune (utility UDFs, unrelated objects) — cascades downstream\n\n' +
+                'EARLY COMPLETION: Set complete:true in submit_findings when you have enough findings to answer the question. ' +
+                'Do NOT try to drain the entire agenda — prune aggressively, focus on the most relevant nodes, and complete early.\n' +
+                'If scope_guidance is present in the init response, check estimated_max_hops to plan your exploration budget.\n\n' +
                 'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
                 'The current_task field contains your own question from a previous hop — answer it.';
               messages.push(vscode.LanguageModelChatMessage.User(bbPrompt));
@@ -1407,8 +1435,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (_blackboardState?.status === 'complete' && activePhase === 'bb_active') {
             activePhase = 'bb_done';
             phaseTransitions.push(`bb_active→bb_done@R${roundCount}`);
-            // SM result is authoritative — exclude BFS which would overwrite _resultGraph
-            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_run_bfs_trace');
+            lineageTools = smDoneTools();
             logInfo(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
