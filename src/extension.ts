@@ -9,6 +9,7 @@ import {
   shouldInline, estimateTokens, INLINE_TOKEN_BUDGET,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
+  validateToolInput,
   type CreateAiViewInput,
 } from './ai/tools';
 import { ColumnTraceState } from './ai/columnTraceState';
@@ -39,7 +40,8 @@ import {
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
 import { logInfo, logDebug, logWarn, logError, logTrace } from './utils/log';
-import { compactNoiseResult, findMergeableCallIds } from './ai/historyManager';
+import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
+import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -377,6 +379,8 @@ export function activate(context: vscode.ExtensionContext) {
       async invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
+        const inputErr = validateToolInput(options.input, { name: 'string', node_ids: 'array', summary: 'string', description: 'string' });
+        if (inputErr) return toolResult(inputErr);
         const rawInput = options.input as CreateAiViewInput;
         logDebug(outputChannel, 'AI', `lineage_create_ai_view: name="${rawInput.name}", ids=${rawInput.node_ids?.length ?? 0}`);
 
@@ -442,7 +446,10 @@ export function activate(context: vscode.ExtensionContext) {
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
+        const inputErr = validateToolInput(options.input, { ids: 'array' });
+        if (inputErr) return toolResult(inputErr);
         const { ids } = options.input as { ids: string[] };
+        if (ids.length >= 100) logWarn(outputChannel, 'AI', `lineage_get_ddl_batch: ${ids.length} ids — unusually large batch`);
         logDebug(outputChannel, 'AI', `lineage_get_ddl_batch: ${ids.length} ids`);
         return toolResult(getDdlBatch(m, ids, _columnStore));
       },
@@ -509,6 +516,9 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         if (!_columnTraceState) return toolResult({ error: 'no_active_trace', action_required: 'analyze_and_respond', hint: 'No active state machine. If you received an inline result, analyze that data and respond to the user. Do NOT call any more tools.' });
 
+        const inputErr = validateToolInput(options.input, { focus_node_id: 'string', verdicts: 'array' });
+        if (inputErr) return toolResult(inputErr);
+
         const input = options.input as {
           focus_node_id?: string;
           notes?: string;
@@ -517,7 +527,7 @@ export function activate(context: vscode.ExtensionContext) {
         const focusNodeId = input.focus_node_id ?? '';
         const verdicts = (input.verdicts ?? []).map(v => ({
           nodeId: v.neighbor_id ?? '',
-          verdict: (v.verdict ?? 'prune') as 'trace' | 'prune' | 'pass',
+          verdict: (v.verdict ?? 'prune') as 'trace' | 'prune' | 'pass' | 'revisit',
           columnsOut: v.columns_to_trace,
           summary: v.summary,
           question: v.question,
@@ -598,6 +608,9 @@ export function activate(context: vscode.ExtensionContext) {
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         if (!_blackboardState) return toolResult({ error: 'no_active_exploration', hint: 'No active exploration. Call start_exploration first.' });
+
+        const inputErr = validateToolInput(options.input, { focus_node_id: 'string', findings: 'string', summary: 'string' });
+        if (inputErr) return toolResult(inputErr);
 
         const input = options.input as {
           focus_node_id?: string;
@@ -802,6 +815,49 @@ export function activate(context: vscode.ExtensionContext) {
         `   highlights: ${_aiOutputTemplates.highlights}\n` +
         `   notes: ${_aiOutputTemplates.notes}`;
 
+      /** Serialize messages to a single string for countTokens (string overload only — message overload has known bugs). */
+      const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
+        const parts: string[] = [];
+        for (const m of msgs) {
+          if (typeof m.content === 'string') { parts.push(m.content); continue; }
+          if (!Array.isArray(m.content)) continue;
+          for (const p of m.content as unknown[]) {
+            if (p instanceof vscode.LanguageModelTextPart) parts.push(p.value);
+            else if (p instanceof vscode.LanguageModelToolCallPart) parts.push(JSON.stringify(p.input));
+            else if (p instanceof vscode.LanguageModelToolResultPart) {
+              for (const c of (p as { content: unknown[] }).content) {
+                if (c instanceof vscode.LanguageModelTextPart) parts.push(c.value);
+              }
+            }
+          }
+        }
+        return parts.join('\n');
+      };
+
+      // EVICT: drop oldest history turns if total context exceeds pressure threshold
+      const budgetTokens = Math.floor(_aiMaxInputTokens * CONTEXT_PRESSURE_THRESHOLD);
+      if (historyMessages.length > MIN_HISTORY_MESSAGES) {
+        try {
+          const fullText = `${systemPrompt}\n${serializeMessages(historyMessages)}\n${effectivePrompt}`;
+          const totalTokens = await request.model.countTokens(fullText);
+
+          if (totalTokens > budgetTokens) {
+            let evicted = 0;
+            while (historyMessages.length > MIN_HISTORY_MESSAGES) {
+              historyMessages.shift();
+              evicted++;
+              const newText = `${systemPrompt}\n${serializeMessages(historyMessages)}\n${effectivePrompt}`;
+              const newTokens = await request.model.countTokens(newText);
+              if (newTokens <= budgetTokens) break;
+            }
+            if (evicted > 0) {
+              historyMessages.unshift(vscode.LanguageModelChatMessage.User(buildEvictionStub(evicted)));
+              logWarn(outputChannel, 'AI', `[History] Evicted ${evicted} oldest message(s) — context pressure (${totalTokens} tokens > ${budgetTokens} budget)`);
+            }
+          }
+        } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable — skipping context-pressure check'); }
+      }
+
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(systemPrompt),
         ...historyMessages,
@@ -823,25 +879,6 @@ export function activate(context: vscode.ExtensionContext) {
       let lastInputTokenEstimate = 0;
       let totalOutputTokens = 0;
       let totalToolResultChars = 0;
-
-      /** Serialize messages to a single string for countTokens (string overload only — message overload has known bugs). */
-      const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
-        const parts: string[] = [];
-        for (const m of msgs) {
-          if (typeof m.content === 'string') { parts.push(m.content); continue; }
-          if (!Array.isArray(m.content)) continue;
-          for (const p of m.content as unknown[]) {
-            if (p instanceof vscode.LanguageModelTextPart) parts.push(p.value);
-            else if (p instanceof vscode.LanguageModelToolCallPart) parts.push(JSON.stringify(p.input));
-            else if (p instanceof vscode.LanguageModelToolResultPart) {
-              for (const c of (p as { content: unknown[] }).content) {
-                if (c instanceof vscode.LanguageModelTextPart) parts.push(c.value);
-              }
-            }
-          }
-        }
-        return parts.join('\n');
-      };
 
       const runWithTools = async (): Promise<void> => {
         // Column-trace context control (POC-validated patterns)
@@ -972,10 +1009,12 @@ export function activate(context: vscode.ExtensionContext) {
                 ? 'COLUMN TRACE MODE: For each hop, read the focus node DDL. ' +
                   'Verdict each neighbor: trace (provide INPUT column names — track renames), prune, or pass. ' +
                   'Write notes about what you found. Prefer trace over prune when uncertain. ' +
+                  'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
                   'The sub_question field contains your own question from the previous hop — answer it.'
                 : 'DEPENDENCY TRACE MODE: For each hop, read the focus node DDL. ' +
                   'Verdict each neighbor: trace (follow this path), prune (cut), or pass (skip detail). ' +
                   'Write notes about dependencies, business logic, or impact you observe. ' +
+                  'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
                   'The sub_question field contains your own question from the previous hop — answer it.';
               messages.push(vscode.LanguageModelChatMessage.User(modePrompt));
             }

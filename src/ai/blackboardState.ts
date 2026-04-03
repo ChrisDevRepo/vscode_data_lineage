@@ -69,6 +69,7 @@ interface HopNeighbor {
 }
 
 interface WorkingMemory {
+  user_question: string;
   all_summaries: Array<{ nodeId: string; summary: string }>;
   pending_questions: Array<{ nodeId: string; question: string }>;
   checklist: { noted: number; total: number; open: number; coveragePct: number };
@@ -203,19 +204,19 @@ export class BlackboardState {
       return { error: `Cannot get hop context in status "${this._status}"` };
     }
 
-    // Pop highest-priority unvisited entry from agenda
-    const entry = this.popNextAgendaEntry();
-    if (!entry) {
-      this._status = 'complete';
-      this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.notes.size} | visited=${this.visited.size}`);
-      return { done: true };
-    }
-
-    const node = this.nodeMap.get(entry.nodeId);
-    if (!node) {
-      // Skip missing node, try next
+    // Pop highest-priority unvisited entry from agenda (iterative — no recursion)
+    let entry: AgendaEntry | undefined;
+    let node: LineageNode | undefined;
+    while (true) {
+      entry = this.popNextAgendaEntry();
+      if (!entry) {
+        this._status = 'complete';
+        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.notes.size} | visited=${this.visited.size}`);
+        return { done: true };
+      }
+      node = this.nodeMap.get(entry.nodeId);
+      if (node) break;
       this.log('warn', `BB node ${entry.nodeId} missing from model, skipping`);
-      return this.getHopContext();
     }
 
     this.visited.add(entry.nodeId);
@@ -508,6 +509,11 @@ export class BlackboardState {
   private addQuestion(nodeId: string, question: string): void {
     this.questionLog.push({ nodeId, question, answered: false });
 
+    if (!this.nodeMap.has(nodeId)) {
+      this.log('debug', `BB question for unknown node ${nodeId}, ignoring`);
+      return;
+    }
+
     if (this.visited.has(nodeId)) {
       this.log('debug', `BB question for already-visited ${nodeId}, skipping agenda boost`);
       return;
@@ -652,6 +658,7 @@ export class BlackboardState {
     const coveragePct = total > 0 ? Math.round((noted / total) * 100) : 0;
 
     const wm: WorkingMemory = {
+      user_question: this.userQuestion,
       all_summaries: allSummaries,
       pending_questions: pendingQuestions,
       checklist: { noted, total, open, coveragePct },

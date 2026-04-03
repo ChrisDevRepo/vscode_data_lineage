@@ -209,6 +209,8 @@ When the AI creates a view in the app (e.g., *"show me the lineage in the app"*)
 
 When DDL is loaded, the AI assistant can attempt column-level dependency tracing — returning column mappings, join paths, and formula breakdowns. Results depend on the completeness of available metadata. The AI can create an annotated graph view you can save as a bookmark for further interactive exploration.
 
+For broader investigations — business rules, documentation, or pattern discovery across many objects — the assistant uses an exploration mode with persistent two-tier memory: detailed findings stored per node plus one-line summaries visible in every subsequent step. This keeps the assistant focused on your original question even across large scopes.
+
 **SQL understanding**
 
 ```
@@ -240,7 +242,7 @@ When DDL is loaded, the AI assistant can attempt column-level dependency tracing
 
 ### How it works
 
-- Built-in tools: search objects, trace dependencies, get DDL, run analysis, and more
+- Built-in tools: search objects, trace dependencies, explore business rules, get DDL, run analysis, and more
 - Works with any model in your Copilot chat dropdown
 - Auto-scales context limits based on the model's context window
 - Tools are only active when a lineage graph is loaded
@@ -278,7 +280,7 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 | **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |
 | **Trace** | `trace.defaultUpstreamLevels`, `trace.defaultDownstreamLevels` |
 | **Analysis** | `analysis.hubMinDegree`, `analysis.islandMaxSize`, `analysis.longestPathMinNodes` |
-| **AI Assistant** | `ai.enabled`, `ai.searchMaxResults`, `ai.maxDdlChars` |
+| **AI Assistant** | `ai.enabled`, `ai.maxRounds`, `ai.outputTemplateFile` |
 
 ### Customization guides
 

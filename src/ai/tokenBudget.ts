@@ -1,18 +1,23 @@
 /**
- * Token budget — single source of truth for all AI data-inclusion decisions.
+ * Token budget — single source of truth for all AI delivery-mode decisions.
  *
- * Two numbers drive the entire system:
- *   1. INLINE_TOKEN_BUDGET (this file) — max estimated tokens for inline payloads
- *   2. ai.maxRounds (VS Code setting)  — hard stop on tool rounds
+ * Two guards drive the entire system:
+ *   1. INLINE_TOKEN_BUDGET (this file) — delivery mode gate: inline vs state machine
+ *   2. ai.maxRounds (VS Code setting)  — hard stop on tool rounds (user-configurable)
  *
- * Every per-tool cap is derived as a proportion of INLINE_TOKEN_BUDGET.
+ * ZERO-TRUNCATION GUARANTEE:
+ *   No tool response is ever truncated, capped, or sliced.
+ *   - Fits budget → return full data inline
+ *   - Exceeds budget → state machine delivers per-hop, or lightweight response with follow-up hint
+ *   No data is ever lost. Only delivery mode changes.
+ *
  * Zero VS Code imports — pure functions for testability.
  */
 
 // ─── The single budget constant ─────────────────────────────────────────────
 
-/** Max estimated tokens for an inline data payload (getContext catalog, CT classic fallback). */
-export const INLINE_TOKEN_BUDGET = 20_000; // ~80K chars — exercises on-demand path for most real DBs; large schemas (59K+) always on-demand
+/** Delivery mode gate: max estimated tokens for inline delivery. */
+export const INLINE_TOKEN_BUDGET = 10_000; // ~40K chars
 
 // ─── Estimation ─────────────────────────────────────────────────────────────
 
@@ -21,37 +26,26 @@ export function estimateTokens(chars: number): number {
   return Math.ceil(chars / 4);
 }
 
-/** Should this payload be provided inline or fetched on demand (state machine / tools)? */
-export function shouldInline(payloadChars: number): boolean {
-  return estimateTokens(payloadChars) <= INLINE_TOKEN_BUDGET;
+/**
+ * Should this payload be delivered inline (one-shot) or on-demand (state machine / follow-up tools)?
+ *
+ * @param payloadChars  Character count of the payload (used for heuristic estimation)
+ * @param precomputedTokens  Optional: accurate token count from countTokens() API. Overrides heuristic when available.
+ */
+export function shouldInline(payloadChars: number, precomputedTokens?: number): boolean {
+  const tokens = precomputedTokens ?? estimateTokens(payloadChars);
+  return tokens <= INLINE_TOKEN_BUDGET;
 }
 
-// ─── Derived caps ───────────────────────────────────────────────────────────
-
-/** All per-tool caps derived from INLINE_TOKEN_BUDGET. */
-export interface DerivedCaps {
-  BFS_MAX_NODES:       number;
-  BFS_MAX_EDGES:       number;
-  SEARCH_MAX_RESULTS:  number;
-  REGEX_MAX_LENGTH:    number;
-  ANALYSIS_MAX_GROUPS: number;
-  MAX_DDL_CHARS:       number;
-  DDL_BATCH_CAP:       number;
-}
+// ─── Context pressure ──────────────────────────────────────────────────────
 
 /**
- * Derive all per-tool caps from INLINE_TOKEN_BUDGET.
- * Changing the budget scales everything proportionally.
+ * History eviction threshold: evict oldest turns when input tokens exceed
+ * this fraction of the model's maxInputTokens.
  */
-export function deriveCaps(): DerivedCaps {
-  const B = INLINE_TOKEN_BUDGET;
-  return {
-    BFS_MAX_NODES:       Math.floor(B / 100),      // ~200 at 20K
-    BFS_MAX_EDGES:       Math.floor(B / 66),       // ~300 at 20K
-    SEARCH_MAX_RESULTS:  Math.floor(B / 400),      // ~50 at 20K
-    REGEX_MAX_LENGTH:    200,                       // fixed — query validation, not payload
-    ANALYSIS_MAX_GROUPS: Math.floor(B / 200),       // ~100 at 20K
-    MAX_DDL_CHARS:       Math.floor(B * 0.5 * 4),  // ~40K chars at 20K
-    DDL_BATCH_CAP:       Math.floor(B / 1000),     // ~20 at 20K
-  };
-}
+export const CONTEXT_PRESSURE_THRESHOLD = 0.75;
+
+// ─── Input validation (not response truncation) ────────────────────────────
+
+/** Max regex query length — prevents catastrophic backtracking. Input validation only. */
+export const REGEX_MAX_LENGTH = 200;

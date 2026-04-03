@@ -22,13 +22,43 @@ import {
   presentNode, presentColumn, presentSchema, presentNeighbor, presentFilter,
 } from './aiPresenter';
 
-// ─── Caps (derived from INLINE_TOKEN_BUDGET) ────────────────────────────────
+// ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
 
-import { deriveCaps, shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, type DerivedCaps } from './tokenBudget';
-export { deriveCaps, shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, type DerivedCaps } from './tokenBudget';
+import { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, REGEX_MAX_LENGTH } from './tokenBudget';
+export { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET } from './tokenBudget';
 
-/** Resolved caps for a request — derived defaults + optional VS Code setting overrides. */
-export type ResolvedCaps = DerivedCaps;
+// ─── Input validation ────────────────────────────────────────────────────────
+
+type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
+
+/**
+ * Lightweight runtime validation for LLM tool inputs. Returns null if valid,
+ * or a structured error if any required field is missing or has the wrong type.
+ * No external dependencies (not Zod) — keeps the extension lean.
+ */
+export function validateToolInput(
+  input: unknown,
+  required: Record<string, FieldType>,
+): { error: string; hint: string } | null {
+  if (input === null || input === undefined || typeof input !== 'object') {
+    return { error: 'invalid_input', hint: 'Tool input must be an object.' };
+  }
+  const obj = input as Record<string, unknown>;
+  for (const [field, expectedType] of Object.entries(required)) {
+    const val = obj[field];
+    if (val === undefined || val === null) {
+      return { error: 'missing_field', hint: `Required field "${field}" is missing.` };
+    }
+    if (expectedType === 'array') {
+      if (!Array.isArray(val)) {
+        return { error: 'wrong_type', hint: `Field "${field}" must be an array, got ${typeof val}.` };
+      }
+    } else if (typeof val !== expectedType) {
+      return { error: 'wrong_type', hint: `Field "${field}" must be ${expectedType}, got ${typeof val}.` };
+    }
+  }
+  return null;
+}
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -62,11 +92,6 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   }
   return m;
 }
-
-// ─── Result types ─────────────────────────────────────────────────────────────
-
-export type NotFoundError = { error: 'not_found'; id: string; hint: string };
-export type InvalidRegex  = { error: 'invalid_regex'; hint: string };
 
 // ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
 
@@ -154,11 +179,9 @@ export function searchObjects(
   types?: ObjectType[],
   schemas?: string[],
   mode: 'substring' | 'regex' = 'substring',
-  caps?: Partial<DerivedCaps>,
 ) {
-  const effectiveCaps = { ...deriveCaps(), ...caps };
-  if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
+  if (query.length > REGEX_MAX_LENGTH) {
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   // Validate query (reject garbage)
@@ -179,7 +202,7 @@ export function searchObjects(
     effectiveQuery,
     typeSet,
     schemaSet,
-    effectiveCaps.SEARCH_MAX_RESULTS,
+    Number.MAX_SAFE_INTEGER,
     mode,
   );
 
@@ -190,8 +213,7 @@ export function searchObjects(
 
   const base = {
     results,
-    total:     results.length,
-    truncated: nameHits.length >= effectiveCaps.SEARCH_MAX_RESULTS,
+    total: results.length,
   };
 
   if (results.length === 0) {
@@ -234,11 +256,8 @@ const NEIGHBOR_CAP = 25;
 export function getObjectDetail(
   model: DatabaseModel,
   id: string,
-  caps?: Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = { ...deriveCaps(), ...caps };
-
   const nodeMap   = buildNodeMap(model);
   const node      = nodeMap.get(id);
   if (!node) {
@@ -289,29 +308,40 @@ export function getObjectDetail(
   const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
   const unresolved_refs = unrelMap.get(unrelKey) ?? undefined;
 
-  if (ddl && ddl.length > effectiveCaps.MAX_DDL_CHARS) {
-    return {
-      ...base,
-      ddl: null,
-      ddl_too_large: true,
-      ddl_chars: ddl.length,
-      ddl_hint: `DDL is ${ddl.length} chars, limit is ${effectiveCaps.MAX_DDL_CHARS}. ` +
-                `Raise dataLineageViz.ai.maxDdlChars (max 500000) or use a large-context model (auto-scales).`,
-      unresolved_refs,
-    };
-  }
-
+  // Never truncate DDL — zero-truncation guarantee
   return { ...base, ddl, unresolved_refs };
 }
 
 // ─── Tool 4: lineage_run_bfs_trace ────────────────────────────────────────────
-// Compound tool: BFS + DDL/columns per node (include_ddl=true default).
-// For scriptable nodes (procedure/view/function): includes normalized DDL.
-// For table/external nodes: includes compact column list instead.
+// Two modes:
+//   Level BFS:  origin + upstream_hops + downstream_hops → explore by depth
+//   Path BFS:   origin + target → all nodes on paths between start and end
+// shouldInline() gates delivery mode: fits → full DDL, exceeds → on_demand hint.
 // types[] and schemas[] are include-only filters (no exclude).
-// BFS_MAX_NODES/BFS_MAX_EDGES caps prevent payload blow-up — no depth clamp needed.
 
 export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
+
+/** Find all node IDs on any path between start and end (BFS from both sides, intersect). */
+function findPathNodes(
+  graph: Graph, startId: string, endId: string,
+): Set<string> {
+  // BFS downstream from start — collect all reachable nodes
+  const fromStart = new Set<string>();
+  bfsFromNode(graph, startId, (node) => { fromStart.add(node); }, { mode: 'outbound' });
+  fromStart.add(startId);
+
+  // BFS upstream from end — collect all reachable nodes
+  const fromEnd = new Set<string>();
+  bfsFromNode(graph, endId, (node) => { fromEnd.add(node); }, { mode: 'inbound' });
+  fromEnd.add(endId);
+
+  // Intersect: nodes reachable downstream from start AND upstream from end
+  const pathNodes = new Set<string>();
+  for (const nid of fromStart) {
+    if (fromEnd.has(nid)) pathNodes.add(nid);
+  }
+  return pathNodes;
+}
 
 /** Run bidirectional BFS and return depth maps for each direction. */
 function executeBfs(
@@ -352,12 +382,11 @@ function applyBfsFilters(
   });
 }
 
-/** Attach DDL or column list to a BFS node base object, plus unresolved_refs when available. */
+/** Attach DDL or column list to a BFS node, plus unresolved_refs. Never truncates DDL. */
 function attachDdl(
   base: Record<string, unknown>,
   node: LineageNode | undefined,
   includeDdl: boolean,
-  maxDdlChars: number,
   unrelMap?: Map<string, string[]>,
   store?: import('../engine/columnStore').ColumnStore,
 ): Record<string, unknown> {
@@ -366,11 +395,7 @@ function attachDdl(
   const ddlBody = store?.getDdl(node.id) ?? node.bodyScript;
   if (SCRIPT_TYPES.has(node.type) && ddlBody) {
     const ddl = normalizeBodyScript(ddlBody);
-    if (ddl.length > maxDdlChars) {
-      result = { ...result, ddl_too_large: true, ddl_chars: ddl.length };
-    } else {
-      result = { ...result, ddl };
-    }
+    result = { ...result, ddl };
     if (unrelMap) {
       const key = `${node.schema}.${node.name}`.toLowerCase();
       const unrel = unrelMap.get(key);
@@ -394,23 +419,43 @@ export function runBfsTrace(
   types?:          ObjectType[],
   schemas?:        string[],
   includeDdl:      boolean = true,
-  caps?:           Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
+  target?: string,
 ): object {
-  const effectiveCaps = { ...deriveCaps(), ...caps };
   if (!graph.hasNode(id)) {
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
+  if (target && !graph.hasNode(target)) {
+    return { error: 'not_found' as const, id: target, hint: 'Target node not found. Call lineage_search_objects to find the exact object ID.' };
+  }
 
-  const { upDepth, downDepth } = executeBfs(graph, id, upstreamHops, downstreamHops);
-  const allNodeIds    = new Set([...upDepth.keys(), ...downDepth.keys()]);
+  // Path BFS (start→end) or Level BFS (depth-based)
+  let allNodeIds: Set<string>;
+  let upDepth: Map<string, number>;
+  let downDepth: Map<string, number>;
+
+  if (target) {
+    // Path mode: find all nodes on paths between start and end
+    allNodeIds = findPathNodes(graph, id, target);
+    if (allNodeIds.size === 0) {
+      return { error: 'no_path' as const, origin: id, target, hint: `No path found from ${id} to ${target}. They may not be connected.` };
+    }
+    // No depth info in path mode — set both to 0
+    upDepth = new Map(); downDepth = new Map();
+    for (const nid of allNodeIds) { upDepth.set(nid, 0); downDepth.set(nid, 0); }
+  } else {
+    // Level mode: explore by depth from origin
+    const bfs = executeBfs(graph, id, upstreamHops, downstreamHops);
+    upDepth = bfs.upDepth; downDepth = bfs.downDepth;
+    allNodeIds = new Set([...upDepth.keys(), ...downDepth.keys()]);
+  }
   const nodeMap       = buildNodeMap(model);
   const typeSet       = types   ? new Set<ObjectType>(types)   : null;
   const schemaSet     = schemas ? new Set<string>(schemas)     : null;
 
   const filteredIds = applyBfsFilters(allNodeIds, nodeMap, typeSet, schemaSet);
 
-  // Collect edges between filtered nodes
+  // Collect ALL edges between filtered nodes — no slicing
   const filteredSet = new Set(filteredIds);
   const allEdges: [string, string, string][] = [];
   for (const e of model.edges) {
@@ -419,20 +464,12 @@ export function runBfsTrace(
     }
   }
 
-  const totalNodes  = filteredIds.length;
-  const totalEdges  = allEdges.length;
-  const truncated   = totalNodes > effectiveCaps.BFS_MAX_NODES || totalEdges > effectiveCaps.BFS_MAX_EDGES;
-  const cappedIds   = filteredIds.slice(0, effectiveCaps.BFS_MAX_NODES);
-  const cappedSet   = new Set(cappedIds);
-  const cappedEdges = allEdges
-    .filter(([s, t]) => cappedSet.has(s) && cappedSet.has(t))
-    .slice(0, effectiveCaps.BFS_MAX_EDGES);
-
   const unrelMap = includeDdl ? buildUnrelatedMap(model) : undefined;
 
-  const nodes = cappedIds.map(nid => {
-    const n    = nodeMap.get(nid);
-    const base = strip({
+  // Build node metadata (always complete — no slicing)
+  const buildNodeBase = (nid: string) => {
+    const n = nodeMap.get(nid);
+    return strip({
       id:  nid,
       s:   n?.schema       || undefined,
       n:   n?.name         ?? nid,
@@ -441,18 +478,41 @@ export function runBfsTrace(
       up:  upDepth.get(nid),
       dn:  downDepth.get(nid),
     } as Record<string, unknown>);
-    return attachDdl(base, n, includeDdl, effectiveCaps.MAX_DDL_CHARS, unrelMap, store);
-  });
-
-  return {
-    origin:      id,
-    nodes,
-    edges:       cappedEdges,
-    truncated,
-    total_nodes: totalNodes,
-    total_edges: totalEdges,
-    ...(truncated ? { truncation_note: `Showing ${cappedIds.length} of ${totalNodes} nodes and ${cappedEdges.length} of ${totalEdges} edges. Narrow scope with types[]/schemas[] or reduce hops.` } : {}),
   };
+
+  // Token gate: full result with DDL vs lightweight without DDL
+  if (includeDdl) {
+    const nodesWithDdl = filteredIds.map(nid =>
+      attachDdl(buildNodeBase(nid), nodeMap.get(nid), true, unrelMap, store));
+    const totalChars = JSON.stringify({ nodes: nodesWithDdl, edges: allEdges }).length;
+
+    const baseResult = { origin: id, ...(target ? { target } : {}), mode: target ? 'path' as const : 'level' as const };
+
+    if (shouldInline(totalChars)) {
+      return { ...baseResult, nodes: nodesWithDdl, edges: allEdges, delivery: 'inline' as const };
+    }
+
+    // Exceeds budget — return without DDL, hint to use follow-up tools or start_trace
+    const nodesLight = filteredIds.map(nid =>
+      attachDdl(buildNodeBase(nid), nodeMap.get(nid), false, undefined, store));
+    return {
+      ...baseResult,
+      nodes:  nodesLight,
+      edges:  allEdges,
+      delivery: 'on_demand' as const,
+      total_nodes: filteredIds.length,
+      total_edges: allEdges.length,
+      scope_ddl_chars: totalChars,
+      budget_tokens: INLINE_TOKEN_BUDGET,
+      action_required: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_trace for hop-by-hop analysis.',
+    };
+  }
+
+  // include_ddl=false: structure only
+  const baseResult = { origin: id, ...(target ? { target } : {}), mode: target ? 'path' as const : 'level' as const };
+  const nodes = filteredIds.map(nid =>
+    attachDdl(buildNodeBase(nid), nodeMap.get(nid), false, undefined, store));
+  return { ...baseResult, nodes, edges: allEdges, delivery: 'inline' as const };
 }
 
 // ─── Tool 5: lineage_run_analysis ─────────────────────────────────────────────
@@ -463,9 +523,7 @@ export function runAnalysis(
   type: AnalysisType,
   minDegree?: number,
   maxSize?: number,
-  caps?: Partial<DerivedCaps>,
 ): object {
-  const effectiveCaps = { ...deriveCaps(), ...caps };
   const analysisConfig = {
     hubMinDegree:         minDegree ?? DEFAULT_CONFIG.analysis.hubMinDegree,
     islandMaxSize:        maxSize   ?? DEFAULT_CONFIG.analysis.islandMaxSize,
@@ -473,17 +531,11 @@ export function runAnalysis(
   };
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
-  const totalGroups = result.groups.length;
-  const truncated   = totalGroups > effectiveCaps.ANALYSIS_MAX_GROUPS;
-  const groups      = result.groups.slice(0, effectiveCaps.ANALYSIS_MAX_GROUPS);
-
   return {
     type:         result.type,
     summary:      result.summary,
-    groups,
-    total_groups: totalGroups,
-    truncated,
-    ...(truncated ? { truncation_note: `Showing ${groups.length} of ${totalGroups} groups. Use min_degree or max_size to narrow results.` } : {}),
+    groups:       result.groups,
+    total_groups: result.groups.length,
   };
 }
 
@@ -493,12 +545,10 @@ export function searchDdl(
   model: DatabaseModel,
   query: string,
   types?: ('view' | 'procedure' | 'function')[],
-  caps?: Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = { ...deriveCaps(), ...caps };
-  if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
+  if (query.length > REGEX_MAX_LENGTH) {
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   // Reject invalid / catastrophically slow regex
@@ -521,7 +571,7 @@ export function searchDdl(
     query,
     typeSet,
     SNIPPET_CONTEXT_LINES,
-    effectiveCaps.SEARCH_MAX_RESULTS,
+    Number.MAX_SAFE_INTEGER,
   );
 
   const results = matches.map(m => ({
@@ -531,16 +581,10 @@ export function searchDdl(
     matches: [m.snippet],
   }));
 
-  const base = {
-    results,
-    total:     results.length,
-    truncated: matches.length >= effectiveCaps.SEARCH_MAX_RESULTS,
-  };
-
   if (results.length === 0) {
-    return { ...base, hint: 'No matches. Try a shorter substring, check spelling, or call lineage_search_objects to confirm object names.' };
+    return { results, total: 0, hint: 'No matches. Try a shorter substring, check spelling, or call lineage_search_objects to confirm object names.' };
   }
-  return base;
+  return { results, total: results.length };
 }
 
 // ─── Tool 7: lineage_create_ai_view ──────────────────────────────────────────
@@ -753,14 +797,12 @@ export function validateCreateAiView(
 export function getDdlBatch(
   model: DatabaseModel,
   ids: string[],
-  caps?: Partial<DerivedCaps>,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = { ...deriveCaps(), ...caps };
-  const cappedIds = ids.slice(0, effectiveCaps.DDL_BATCH_CAP);
-  const nodeMap   = buildNodeMap(model);
+  const nodeMap = buildNodeMap(model);
 
-  const results = cappedIds.map(id => {
+  // Never truncate — return full DDL for all requested IDs
+  const results = ids.map(id => {
     const node = nodeMap.get(id);
     if (!node) {
       return strip({ id, error: 'not_found' } as Record<string, unknown>);
@@ -770,24 +812,9 @@ export function getDdlBatch(
       return strip({ id, t: node.type } as Record<string, unknown>);
     }
     const ddl = normalizeBodyScript(rawDdl);
-    if (ddl.length > effectiveCaps.MAX_DDL_CHARS) {
-      return strip({
-        id, t: node.type,
-        ddl_too_large: true,
-        ddl_chars: ddl.length,
-      } as Record<string, unknown>);
-    }
     return strip({ id, t: node.type, ddl } as Record<string, unknown>);
   });
 
-  const truncated = ids.length > effectiveCaps.DDL_BATCH_CAP;
-  return {
-    results,
-    total:     results.length,
-    truncated,
-    ...(truncated ? {
-      truncation_note: `Showing ${cappedIds.length} of ${ids.length} IDs. Split into multiple calls if needed.`,
-    } : {}),
-  };
+  return { results, total: results.length };
 }
 

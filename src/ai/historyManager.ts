@@ -1,12 +1,14 @@
 /**
  * History management for @lineage chat participant.
  *
- * Two operations on tool results re-injected into conversation history:
+ * Three operations on tool results re-injected into conversation history:
  * 1. DROP — remove error/empty results, replace with 1-line summary
  * 2. MERGE — deduplicate overlapping search results (keep superset)
+ * 3. EVICT — under context pressure, drop oldest turns to fit token budget
  *
  * Token budget decisions (inline vs on-demand) are made at tool call time
- * by shouldInline() in tokenBudget.ts. History manager never truncates data.
+ * by shouldInline() in tokenBudget.ts. History manager never truncates data
+ * within a single tool response — eviction operates at the turn level.
  * Zero VS Code imports — pure functions for testability.
  */
 
@@ -129,5 +131,28 @@ export function findMergeableCallIds(rounds: Array<{ toolCalls: ToolCallInfo[] }
   }
 
   return dropIds;
+}
+
+// ─── EVICT: constants for context-pressure eviction ─────────────────────────
+
+/**
+ * Minimum history messages to preserve during eviction.
+ * Each "turn" is typically 2-3 messages (user + assistant + tool results).
+ * Preserving 6 messages ≈ 2 turns minimum — enough for the model to
+ * understand current context.
+ */
+export const MIN_HISTORY_MESSAGES = 6;
+
+/**
+ * Build the stub message content inserted after eviction so the model
+ * knows earlier conversation existed.
+ */
+export function buildEvictionStub(evictedCount: number): string {
+  return JSON.stringify({
+    _evicted: true,
+    messages_dropped: evictedCount,
+    reason: 'context_pressure',
+    hint: 'Earlier conversation was removed to fit context window. Key context from those turns may be missing.',
+  });
 }
 

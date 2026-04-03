@@ -9,7 +9,6 @@ import * as yaml from 'js-yaml';
 import { assert, assertEq, testPath, rootPath, printSummary, loadAdventureWorksModel } from './testUtils';
 import { buildBareGraph } from '../src/ai/graphUtils';
 import {
-  deriveCaps,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
   validateQuery, validateMarkdownFormat,
@@ -206,9 +205,7 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
     assert(edgeType === 'read' || edgeType === 'exec', `edge type is read or exec (got ${edgeType})`);
     assert(edgeType !== 'body', "edge type is never raw 'body'");
   }
-  assert('truncated' in rStruct, 'truncated field present');
-  assert(typeof rStruct.total_nodes === 'number', 'total_nodes is number');
-  assert(typeof rStruct.total_edges === 'number', 'total_edges is number');
+  assert(rStruct.delivery === 'inline', 'small BFS delivery is inline');
 
   // ── include_ddl=true (default) — scriptable nodes get DDL, tables get cols ──
   const rDdl = runBfsTrace(model, graph, node.id, 2, 2) as Record<string, unknown>;
@@ -271,9 +268,8 @@ async function testRunBfsTrace(model: DatabaseModel, graph: Graph) {
   }
   const rHub = runBfsTrace(model, graph, hubId, 10, 10, undefined, undefined, false) as Record<string, unknown>;
   assert(!isError(rHub), 'large BFS: no error');
-  assert((rHub.nodes as unknown[]).length <= deriveCaps().BFS_MAX_NODES, `nodes capped at ${deriveCaps().BFS_MAX_NODES}`);
-  assert((rHub.edges as unknown[]).length <= deriveCaps().BFS_MAX_EDGES, `edges capped at ${deriveCaps().BFS_MAX_EDGES}`);
-  assert(typeof rHub.truncated === 'boolean', 'truncated is boolean');
+  assert((rHub.nodes as unknown[]).length > 0, 'large BFS returns nodes');
+  assert(rHub.delivery === 'inline', 'structure-only BFS (no DDL) is always inline');
 }
 
 async function testRunAnalysis(model: DatabaseModel, graph: Graph) {
@@ -284,7 +280,6 @@ async function testRunAnalysis(model: DatabaseModel, graph: Graph) {
   assert(typeof r.summary === 'string', 'summary is string');
   assert(Array.isArray(r.groups), 'groups is array');
   assert(typeof r.total_groups === 'number', 'total_groups is number');
-  assert(typeof r.truncated === 'boolean', 'truncated is boolean');
 }
 
 async function testSearchDdl(model: DatabaseModel) {
@@ -452,7 +447,6 @@ async function testGetDdlBatch(model: DatabaseModel) {
   const result = getDdlBatch(model, [spNode.id, tblNode.id, '[ghost].[nope]']) as Record<string, unknown>;
   assert(!('error' in result), 'getDdlBatch: top-level no error');
   assertEq(result.total as number, 3, 'getDdlBatch: total=3');
-  assert(typeof result.truncated === 'boolean', 'truncated is boolean');
 
   const results = result.results as Array<Record<string, unknown>>;
   assertEq(results.length, 3, 'results array has 3 entries');
@@ -471,20 +465,15 @@ async function testGetDdlBatch(model: DatabaseModel) {
   assert(ghostEntry !== undefined, 'ghost entry present');
   assertEq(ghostEntry?.error as string, 'not_found', 'ghost entry has error=not_found');
 
-  // Truncation
+  // No truncation — all IDs returned in full
   const allIds = model.nodes.map(n => n.id);
   const bigResult = getDdlBatch(model, allIds) as Record<string, unknown>;
   const bigResults = bigResult.results as unknown[];
-  assert(bigResults.length <= deriveCaps().DDL_BATCH_CAP, `results capped at ${deriveCaps().DDL_BATCH_CAP}`);
-  if (allIds.length > deriveCaps().DDL_BATCH_CAP) {
-    assert(bigResult.truncated === true, 'truncated=true when ids exceed cap');
-    assert(typeof bigResult.truncation_note === 'string', 'truncation_note present when truncated');
-  }
+  assertEq(bigResults.length, allIds.length, 'all IDs returned — no batch cap');
 
   // Empty batch
   const emptyResult = getDdlBatch(model, []) as Record<string, unknown>;
   assertEq((emptyResult.results as unknown[]).length, 0, 'empty ids: 0 results');
-  assert(emptyResult.truncated === false, 'empty ids: not truncated');
 }
 
 async function testAutoFixCreateAiView(model: DatabaseModel) {
@@ -701,7 +690,7 @@ async function testPromptRegression() {
   // All tools have tags and when clause
   for (const tool of tools) {
     const tags = tool.tags as string[];
-    assert(tags?.includes('lineage') || tags?.includes('lineage-router'), `${tool.name}: has lineage or lineage-router tag`);
+    assert(tags?.includes('lineage') || tags?.includes('lineage-ct') || tags?.includes('lineage-bb'), `${tool.name}: has lineage, lineage-ct, or lineage-bb tag`);
     assertEq(tool.when as string, 'dataLineageViz.modelLoaded', `${tool.name}: has when clause`);
   }
 
@@ -716,14 +705,8 @@ async function testMultiModeSchema() {
   const pkg = JSON.parse(readFileSync(rootPath('package.json'), 'utf8'));
   const tools = pkg.contributes.languageModelTools as Array<Record<string, unknown>>;
 
-  // route_mode enum is binary: hop | classic
-  const routeTool = tools.find(t => t.name === 'lineage_route_mode') as Record<string, unknown>;
-  assert(routeTool !== undefined, 'lineage_route_mode tool found');
-  const routeSchema = routeTool.inputSchema as Record<string, { properties: Record<string, { enum?: string[] }> }>;
-  const modeEnum = routeSchema.properties.mode.enum!;
-  assert(modeEnum.includes('hop'), 'route_mode enum includes hop');
-  assert(modeEnum.includes('classic'), 'route_mode enum includes classic');
-  assert(!modeEnum.includes('column_trace'), 'route_mode enum does NOT include column_trace (user-initiated only)');
+  // route_mode tool removed — explore-first design, no upfront routing
+  assert(!tools.find(t => t.name === 'lineage_route_mode'), 'route_mode tool removed');
 
   // submit_hop_analysis has notes + question + trace/prune/pass verdicts
   const submitTool = tools.find(t => t.name === 'lineage_submit_hop_analysis') as Record<string, unknown>;
@@ -733,14 +716,15 @@ async function testMultiModeSchema() {
   assert('notes' in submitProps, 'submit schema has notes field');
   assert('verdicts' in submitProps, 'submit schema has verdicts field');
 
-  // Verdict enum is trace/prune/pass
+  // Verdict enum is trace/prune/pass/revisit
   const verdictItems = ((submitProps.verdicts as Record<string, unknown>).items as Record<string, unknown>);
   const verdictProps = (verdictItems.properties as Record<string, { enum?: string[] }>);
   const verdictEnum = verdictProps.verdict.enum!;
-  assertEq(verdictEnum.length, 3, 'verdict enum has 3 values');
+  assertEq(verdictEnum.length, 4, 'verdict enum has 4 values');
   assert(verdictEnum.includes('trace'), 'verdict enum includes trace');
   assert(verdictEnum.includes('prune'), 'verdict enum includes prune');
   assert(verdictEnum.includes('pass'), 'verdict enum includes pass');
+  assert(verdictEnum.includes('revisit'), 'verdict enum includes revisit');
   assert(!verdictEnum.includes('relevant'), 'verdict enum does NOT include old name "relevant"');
   assert('question' in verdictProps, 'verdict item has question field');
 
@@ -749,8 +733,9 @@ async function testMultiModeSchema() {
   const lineageParticipant = participants.find(p => p.name === 'lineage') as Record<string, unknown>;
   const commands = lineageParticipant.commands as Array<{ name: string }>;
   const cmdNames = commands.map(c => c.name);
-  assert(cmdNames.includes('impact'), 'chat commands include /impact');
-  assert(cmdNames.includes('column-trace'), 'chat commands include /column-trace');
+  // /impact and /column-trace removed — merged into /trace (explore-first design)
+  assert(!cmdNames.includes('impact'), '/impact removed');
+  assert(!cmdNames.includes('column-trace'), '/column-trace removed');
   assert(!cmdNames.includes('biz'), 'chat commands do NOT include /biz (consolidated to free-form)');
   assert(!cmdNames.includes('doc'), 'chat commands do NOT include /doc (consolidated to free-form)');
   assert(!cmdNames.includes('sql'), 'chat commands do NOT include /sql (consolidated to free-form)');

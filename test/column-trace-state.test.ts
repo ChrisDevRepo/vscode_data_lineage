@@ -78,6 +78,44 @@ async function testInitNoColumnsNoOrigin(model: DatabaseModel) {
   assertEq((result as { error: string }).error, 'no_origin', 'Error is no_origin');
 }
 
+// ─── Test: Init with invalid direction → error ─────────────────────────────
+
+async function testInitInvalidDirection(model: DatabaseModel) {
+  clearLogs();
+  const state = new ColumnTraceState(model, log);
+
+  const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
+  assert(!!table, 'Found a table');
+
+  // Pass an invalid direction (simulates untyped LM API input)
+  const result = state.init({ targetColumns: ['Id'], origin: table!.id, direction: 'sideways' as any });
+  assert('error' in result, 'Init with invalid direction returns error');
+  assertEq((result as { error: string }).error, 'invalid_direction', 'Error is invalid_direction');
+  assertEq(state.status, 'error', 'Status is error');
+}
+
+// ─── Test: Target columns normalized (trim, dedupe, filter empty) ───────────
+
+async function testInitColumnsNormalized(model: DatabaseModel) {
+  clearLogs();
+  const state = new ColumnTraceState(model, log);
+
+  const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
+  assert(!!table, 'Found a table');
+
+  const colName = table!.columns![0].name;
+  // Pass columns with whitespace, dupes, and empty strings
+  const result = state.init({
+    targetColumns: [` ${colName} `, colName, '', '  '],
+    origin: table!.id,
+    direction: 'up',
+  });
+
+  assert('ok' in result, 'Init succeeded with messy columns');
+  assertEq(state.columns.length, 1, 'Duplicates and empty strings removed');
+  assertEq(state.columns[0], colName, 'Whitespace trimmed');
+}
+
 // ─── Test: Init with no columns but explicit origin → graph mode succeeds ────
 
 async function testInitNoColumnsWithOrigin(model: DatabaseModel) {
@@ -178,12 +216,18 @@ async function testHopContextStructure(model: DatabaseModel) {
   assert(!('error' in hop), 'getHopContext returns valid hop');
 
   // Verify structure
-  const ctx = hop as { ct_mode: string; hop: number; focus_node: Record<string, unknown>; neighbors: unknown[]; active_columns: string[] };
+  const ctx = hop as { ct_mode: string; hop: number; focus_node: Record<string, unknown>; neighbors: unknown[]; active_columns: string[];
+    goal: { columns: string[]; direction: string; origin: string } };
   assertEq(ctx.ct_mode, 'hop_and_distill', 'ct_mode is hop_and_distill');
   assertEq(ctx.hop, 1, 'First hop is 1');
   assert(!!ctx.focus_node, 'focus_node is present');
   assert(Array.isArray(ctx.neighbors), 'neighbors is an array');
   assert(Array.isArray(ctx.active_columns), 'active_columns is an array');
+  // Goal anchor — prevents drift on long traces
+  assert(!!ctx.goal, 'goal anchor is present');
+  assert(Array.isArray(ctx.goal.columns), 'goal.columns is an array');
+  assertEq(ctx.goal.direction, 'up', 'goal.direction matches init');
+  assertEq(ctx.goal.origin, sp!.id, 'goal.origin matches init');
   assertEq(state.status, 'awaiting_verdicts', 'Status is awaiting_verdicts');
 }
 
@@ -1572,7 +1616,7 @@ async function testGoldenHopMode() {
   clearLogs();
 
   // Hop mode uses a wildcard column — state machine requires non-empty targetColumns.
-  // In production, AI always provides at least one column. For hop mode (biz/doc/sql),
+  // In production, AI always provides at least one column. For hop mode,
   // AI typically picks a relevant column from the origin. Using '*' as a sentinel.
   const init = state.init({ targetColumns: ['Revenue'], origin: '[dbo].[factsales]', direction: 'up' });
   assert('ok' in init, 'Golden Hop: init succeeds');
@@ -1698,6 +1742,8 @@ async function main() {
     await testLifecycleStatus(model);
     await testInitWithOrigin(model);
     await testInitInvalidOrigin(model);
+    await testInitInvalidDirection(model);
+    await testInitColumnsNormalized(model);
     await testInitNoColumnsNoOrigin(model);
     await testInitNoColumnsWithOrigin(model);
     await testGraphModeHopCycle(model);

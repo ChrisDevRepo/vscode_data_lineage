@@ -145,9 +145,10 @@ async function testHopContextStructure() {
 
   // Working memory structure
   const wm = ctx.working_memory as {
-    all_summaries: unknown[]; pending_questions: unknown[];
+    user_question: string; all_summaries: unknown[]; pending_questions: unknown[];
     checklist: { noted: number; total: number; open: number; coveragePct: number };
   };
+  assertEq(wm.user_question, 'Test', 'Working memory includes user_question goal anchor');
   assertEq(wm.all_summaries.length, 0, 'No summaries initially');
   assertEq(wm.pending_questions.length, 0, 'No questions initially');
   assert(wm.checklist.total > 0, 'Checklist has total');
@@ -754,6 +755,40 @@ async function testHighCoverageHint() {
   assert('done' in hop2, 'Agenda exhausted with 2-node model');
 }
 
+// ─── Test: Question with unknown nodeId is ignored ──────────────────────────
+
+async function testQuestionUnknownNodeIgnored() {
+  clearLogs();
+  const model = buildSyntheticModel();
+  const state = new BlackboardState(model, log);
+  state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
+
+  const hop = state.getHopContext();
+  assert(!('done' in hop) && !('error' in hop), 'Got hop');
+  const ctx = hop as { focus_node: { id: string }; agenda_remaining: number };
+  const agendaBefore = ctx.agenda_remaining;
+
+  // Submit findings with question pointing to a hallucinated nodeId
+  const result = state.submitFindings({
+    focusNodeId: ctx.focus_node.id,
+    findings: 'found something',
+    summary: 'summary',
+    questions: [{ nodeId: '[fake].[hallucinated]', question: 'Does this exist?' }],
+  });
+
+  assert('ok' in result, 'Submit accepted despite hallucinated question target');
+
+  // Question logged but agenda should NOT grow from the hallucinated node
+  const hop2 = state.getHopContext();
+  if (!('done' in hop2) && !('error' in hop2)) {
+    const ctx2 = hop2 as { focus_node: { id: string } };
+    assert(ctx2.focus_node.id !== '[fake].[hallucinated]', 'Hallucinated node never becomes focus');
+  }
+
+  // Verify debug log captured the rejection
+  assert(logs.some(l => l.includes('unknown node')), 'Debug log captures unknown-node rejection');
+}
+
 // ─── Runner ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -803,6 +838,7 @@ async function main() {
 
     console.log('\n── Edge Cases ──');
     await testAutoExpandScope();
+    await testQuestionUnknownNodeIgnored();
     await testBoundaryDetection();
     await testNeighborMetadata();
     await testReInit();
