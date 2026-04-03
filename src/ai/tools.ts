@@ -10,6 +10,7 @@ import {
   DEFAULT_CONFIG,
   type DatabaseModel,
   type LineageNode,
+  type ColumnDef,
   type ObjectType,
   type AnalysisType,
 } from '../engine/types';
@@ -19,7 +20,8 @@ import { normalizeBodyScript } from '../utils/sql';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
 import {
   strip, edgeApiType,
-  presentNode, presentColumn, presentSchema, presentNeighbor, presentFilter,
+  presentNode, presentColumn, presentColumnCompact, presentFkCompact,
+  presentSchema, presentNeighbor, presentFilter,
 } from './aiPresenter';
 
 // ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
@@ -97,6 +99,52 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
     }
   }
   return m;
+}
+
+// ─── Shared SM helpers (used by CT, BB, and classical tools) ─────────────────
+
+/** Shared column access — used by classical tools, CT, and BB. */
+export function getNodeColumns(
+  nodeId: string, nodeMap: Map<string, LineageNode>,
+  store?: import('../engine/columnStore').ColumnStore,
+): ColumnDef[] | undefined {
+  return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
+}
+
+/** Shared DDL access — normalized. Used by classical tools, CT, and BB. */
+export function getNodeDdl(
+  nodeId: string, nodeMap: Map<string, LineageNode>,
+  store?: import('../engine/columnStore').ColumnStore,
+): string | undefined {
+  const raw = store?.getDdl(nodeId) ?? nodeMap.get(nodeId)?.bodyScript;
+  return raw ? normalizeBodyScript(raw) : undefined;
+}
+
+/** Build focus node detail for hop context — shared by CT and BB. */
+export function buildHopFocusNode(
+  node: LineageNode,
+  nodeMap: Map<string, LineageNode>,
+  unrelatedMap: Map<string, string[]>,
+  store?: import('../engine/columnStore').ColumnStore,
+  ddlKey = 'ddl',
+): Record<string, unknown> {
+  const focusNode: Record<string, unknown> = {
+    id: node.id, s: node.schema, n: node.name, t: node.type,
+  };
+  const ddl = getNodeDdl(node.id, nodeMap, store);
+  const cols = getNodeColumns(node.id, nodeMap, store);
+  if (SCRIPT_TYPES.has(node.type) && ddl) {
+    focusNode[ddlKey] = ddl;
+  } else if (cols?.length) {
+    focusNode.cols = cols.map(c => presentColumnCompact(c));
+  }
+  if (node.fks?.length) {
+    focusNode.fks = node.fks.map(fk => presentFkCompact(fk));
+  }
+  const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
+  const unrel = unrelatedMap.get(unrelKey);
+  if (unrel?.length) focusNode.unresolved_refs = unrel;
+  return strip(focusNode) as Record<string, unknown>;
 }
 
 // ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
@@ -298,8 +346,8 @@ export function getObjectDetail(
   const upMore = Math.max(0, upRaw.length - NEIGHBOR_CAP);
   const dnMore = Math.max(0, dnRaw.length - NEIGHBOR_CAP);
 
-  const rawCols    = store?.getColumns(node.id) ?? node.columns;
-  const columns    = rawCols?.map(c => presentColumn(c)) ?? undefined;
+  const cols = getNodeColumns(node.id, nodeMap, store);
+  const columns    = cols?.map(c => presentColumn(c)) ?? undefined;
   const foreignKeys = node.fks?.map(fk => ({
     name:        fk.name,
     columns:     fk.columns,
@@ -324,8 +372,7 @@ export function getObjectDetail(
     dn_more:       dnMore > 0 ? dnMore : undefined,
   } as Record<string, unknown>);
 
-  const rawDdl = store?.getDdl(node.id) ?? node.bodyScript;
-  const ddl = rawDdl ? normalizeBodyScript(rawDdl) : null;
+  const ddl = getNodeDdl(node.id, nodeMap, store) ?? null;
 
   // Attach unresolved refs for scriptable nodes
   const unrelMap = buildUnrelatedMap(model);

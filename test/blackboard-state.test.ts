@@ -428,7 +428,7 @@ async function testQuestionAnsweredOnSubmit() {
 
 // ─── Test: Skip IDs ──────────────────────────────────────────────────────────
 
-async function testSkipIds() {
+async function testPruneIds() {
   clearLogs();
   const model = buildSyntheticModel();
   const state = new BlackboardState(model, buildGraphFromModel(model), log);
@@ -438,19 +438,26 @@ async function testSkipIds() {
   const ctx1 = hop1 as { focus_node: { id: string }; agenda_remaining: number };
   const agendaBefore = ctx1.agenda_remaining;
 
-  // Skip all remaining agenda items except one
-  state.submitFindings({
+  // Prune ext.RemoteDB (only reachable through spLoadStaging → ext.RemoteDB)
+  const result = state.submitFindings({
     focusNodeId: ctx1.focus_node.id,
-    findings: 'test', summary: 'test',
-    skipIds: ['[dbo].[factsales]', '[ext].[remotedb]'],
+    findings: 'test', summary: 'test', verdict: 'relevant',
+    pruneIds: ['[ext].[remotedb]'],
   });
+  assert('ok' in result, 'pruneIds accepted');
+  assert((result as { pruned?: number }).pruned! > 0, 'pruneIds triggered cascade');
 
-  // Agenda should be smaller after skips
-  const hop2 = state.getHopContext();
-  if ('done' in hop2) return;
-  const ctx2 = hop2 as { agenda_remaining: number; focus_node: { id: string } };
-  assert(ctx2.focus_node.id !== '[dbo].[factsales]', 'Skipped node not presented');
-  assert(ctx2.focus_node.id !== '[ext].[remotedb]', 'Skipped node not presented');
+  // Pruned node should not appear in subsequent hops
+  for (let i = 0; i < 10; i++) {
+    const hop = state.getHopContext();
+    if ('done' in hop || 'error' in hop) break;
+    const ctx = hop as { focus_node: { id: string } };
+    assert(ctx.focus_node.id !== '[ext].[remotedb]', 'Pruned node not presented');
+    state.submitFindings({
+      focusNodeId: ctx.focus_node.id,
+      findings: 'test', summary: 'test', verdict: 'noted',
+    });
+  }
 }
 
 // ─── Test: Coverage & Termination ────────────────────────────────────────────
@@ -837,7 +844,7 @@ async function main() {
     await testQuestionAnsweredOnSubmit();
 
     console.log('\n── Skip & Agenda ──');
-    await testSkipIds();
+    await testPruneIds();
     await testAgendaCap();
 
     console.log('\n── Coverage & Termination ──');

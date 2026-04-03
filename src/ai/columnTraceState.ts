@@ -13,9 +13,8 @@
 import type { DatabaseModel, LineageNode, ColumnDef, NeighborIndex, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES } from './tools';
+import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { normalizeBodyScript } from '../utils/sql';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -329,33 +328,9 @@ export class ColumnTraceState {
     this.currentFocusActiveColumns = entry.activeColumns;
     this.currentFocusDepth = entry.depth;
 
-    // Build focus node detail
-    const focusNode: Record<string, unknown> = {
-      id: node.id,
-      s: node.schema,
-      n: node.name,
-      t: node.type,
-      active_columns: entry.activeColumns,
-    };
-
-    const nodeDdl = this.getNodeDdl(node.id);
-    const nodeCols = this.getNodeColumns(node.id);
-    if (SCRIPT_TYPES.has(node.type) && nodeDdl) {
-      focusNode.ct_ddl = nodeDdl; // Full DDL — never truncated
-    } else if (nodeCols?.length) {
-      focusNode.cols = nodeCols.map(c => presentColumnCompact(c));
-    }
-
-    // FK info on focus node
-    const focusNodeObj = this.nodeMap.get(node.id);
-    if (focusNodeObj?.fks?.length) {
-      focusNode.fks = focusNodeObj.fks.map(fk => presentFkCompact(fk));
-    }
-
-    // Attach unresolved refs
-    const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
-    const unrel = this.unrelatedMap.get(unrelKey);
-    if (unrel?.length) focusNode.unresolved_refs = unrel;
+    // Build focus node detail (shared helper + CT-specific active_columns)
+    const focusNode = buildHopFocusNode(node, this.nodeMap, this.unrelatedMap, this.store ?? undefined, 'ct_ddl');
+    focusNode.active_columns = entry.activeColumns;
 
     // Build neighbor list
     const neighborIds = this.getDirectionalNeighbors(entry.nodeId);
@@ -390,14 +365,14 @@ export class ColumnTraceState {
         edge_direction: isUpstream ? 'upstream' : 'downstream',
         edge_type: edgeType,
         boundary,
-        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!this.getNodeDdl(nid),
+        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!getNodeDdl(nid, this.nodeMap, this.store ?? undefined),
       };
 
       if (boundary !== 'none') {
         neighbor.boundary_reason = this.boundaryReason(boundary, nNode);
       }
 
-      const nCols = this.getNodeColumns(nid);
+      const nCols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined);
       if (nCols?.length) {
         neighbor.cols = nCols.map(c => presentColumnCompact(c));
       }
@@ -495,7 +470,7 @@ export class ColumnTraceState {
         // Column validation (skip if no columns to validate or rejection cap reached)
         if (v.columnsOut?.length && this.rejectionsThisHop < MAX_REJECTIONS_PER_HOP) {
           const neighbor = this.nodeMap.get(v.nodeId);
-          const neighborCols = this.getNodeColumns(v.nodeId);
+          const neighborCols = getNodeColumns(v.nodeId, this.nodeMap, this.store ?? undefined);
           if (neighborCols?.length) {
             const validSet = new Set(neighborCols.map(c => c.name.toLowerCase()));
             const invalid = v.columnsOut.filter(c => !validSet.has(c.toLowerCase()));
@@ -714,11 +689,11 @@ export class ColumnTraceState {
       const out: Record<string, unknown> = {
         id: node.id, s: node.schema, n: node.name, t: node.type,
       };
-      const idDdl = this.getNodeDdl(id);
+      const idDdl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
       if (relevantIds.has(id) && SCRIPT_TYPES.has(node.type) && idDdl) {
         out.ddl = idDdl; // Full DDL — never truncated
       }
-      const idCols = this.getNodeColumns(id);
+      const idCols = getNodeColumns(id, this.nodeMap, this.store ?? undefined);
       if (idCols?.length) {
         out.cols = idCols.map(c => strip(presentColumn(c)));
       }
@@ -773,7 +748,7 @@ export class ColumnTraceState {
     for (const nid of this.visited) {
       const node = this.nodeMap.get(nid);
       if (node && SCRIPT_TYPES.has(node.type)) {
-        const ddl = this.getNodeDdl(nid);
+        const ddl = getNodeDdl(nid, this.nodeMap, this.store ?? undefined);
         if (ddl) total += ddl.length;
       }
     }
@@ -781,7 +756,7 @@ export class ColumnTraceState {
     for (const entry of this.frontier) {
       const node = this.nodeMap.get(entry.nodeId);
       if (node && SCRIPT_TYPES.has(node.type)) {
-        const ddl = this.getNodeDdl(entry.nodeId);
+        const ddl = getNodeDdl(entry.nodeId, this.nodeMap, this.store ?? undefined);
         if (ddl) total += ddl.length;
       }
     }
@@ -789,17 +764,6 @@ export class ColumnTraceState {
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
-
-  /** Get columns from ColumnStore (preferred) or inline node.columns (fallback for tests). */
-  private getNodeColumns(nodeId: string): ColumnDef[] | undefined {
-    return this.store?.getColumns(nodeId) ?? this.nodeMap.get(nodeId)?.columns;
-  }
-
-  /** Get DDL from ColumnStore (preferred) or inline node.bodyScript (fallback for tests). */
-  private getNodeDdl(nodeId: string): string | undefined {
-    const raw = this.store?.getDdl(nodeId) ?? this.nodeMap.get(nodeId)?.bodyScript;
-    return raw ? normalizeBodyScript(raw) : undefined;
-  }
 
   private getDirectionalNeighbors(nodeId: string): string[] {
     const nb = this.model.neighborIndex[nodeId] ?? { in: [], out: [] };

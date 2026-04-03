@@ -15,12 +15,11 @@
  */
 
 import type Graph from 'graphology';
-import type { DatabaseModel, LineageNode, ColumnDef, ObjectType } from '../engine/types';
+import type { DatabaseModel, LineageNode, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES } from './tools';
+import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { normalizeBodyScript } from '../utils/sql';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -248,7 +247,7 @@ export class BlackboardState {
     this.currentFocusNodeId = entry.nodeId;
 
     // Build focus node detail (same pattern as ColumnTraceState.getHopContext)
-    const focusNode = this.buildFocusNode(node);
+    const focusNode = buildHopFocusNode(node, this.nodeMap, this.unrelatedMap, this.store ?? undefined, 'bb_ddl');
 
     // Build neighbor list
     const neighbors = this.buildNeighborList(node.id);
@@ -261,7 +260,7 @@ export class BlackboardState {
     const workingMemory = this.buildWorkingMemory();
 
     this._status = 'awaiting_findings';
-    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | notes=${this.notes.size}/${this.scopeNodeIds.size} (${this.coveragePct}%) | agenda=${this.agenda.length}`);
+    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.notes.size} | agenda=${this.agenda.length}`);
 
     // Cascade preview: show consequence of marking this node irrelevant
     const cascadePreview = this.countCascadeIfIrrelevant(entry.nodeId);
@@ -287,6 +286,7 @@ export class BlackboardState {
     tags?: string[];
     questions?: Array<{ nodeId: string; question: string }>;
     verdict: 'relevant' | 'noted' | 'irrelevant';
+    pruneIds?: string[];
   }): { ok: true; advanced: number; agendaSize: number; pruned?: number }
      | { error: string; limit?: number; hint?: string } {
 
@@ -357,6 +357,18 @@ export class BlackboardState {
       }
     }
 
+    // Prune specific neighbor nodes from agenda (+ cascade downstream)
+    if (params.pruneIds?.length) {
+      for (const pruneId of params.pruneIds) {
+        if (pruneId === this.originNodeId) continue;
+        if (this.visited.has(pruneId)) continue;
+        if (this.removedSet.has(pruneId)) continue;
+        if (!this.scopeNodeIds.has(pruneId)) continue;
+        pruned += this.cascadePrune(pruneId);
+      }
+      this.log('info', `BB PRUNE | ${params.pruneIds.length} neighbor(s) pruned | cascade=${pruned} | agenda=${this.agenda.length}`);
+    }
+
     this._status = 'exploring';
     this.log('info', `BB submit | ${focusNodeId} | verdict=${verdict} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | pruned=${pruned} | agenda=${this.agenda.length}`);
 
@@ -395,10 +407,10 @@ export class BlackboardState {
         id: node.id, s: node.schema, n: node.name, t: node.type,
       };
       if (SCRIPT_TYPES.has(node.type)) {
-        const ddl = this.getNodeDdl(node.id);
+        const ddl = getNodeDdl(node.id, this.nodeMap, this.store ?? undefined);
         if (ddl) base.ddl = ddl;
       }
-      const cols = this.getNodeColumns(node.id);
+      const cols = getNodeColumns(node.id, this.nodeMap, this.store ?? undefined);
       if (cols?.length) {
         base.cols = cols.map(c => presentColumnCompact(c));
       }
@@ -450,7 +462,7 @@ export class BlackboardState {
     for (const id of this.scopeNodeIds) {
       const node = this.nodeMap.get(id);
       if (node && SCRIPT_TYPES.has(node.type)) {
-        const ddl = this.getNodeDdl(id);
+        const ddl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
         if (ddl) total += ddl.length;
       }
     }
@@ -458,15 +470,6 @@ export class BlackboardState {
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
-
-  private getNodeColumns(nodeId: string): ColumnDef[] | undefined {
-    return this.store?.getColumns(nodeId) ?? this.nodeMap.get(nodeId)?.columns;
-  }
-
-  private getNodeDdl(nodeId: string): string | undefined {
-    const raw = this.store?.getDdl(nodeId) ?? this.nodeMap.get(nodeId)?.bodyScript;
-    return raw ? normalizeBodyScript(raw) : undefined;
-  }
 
   /** Bidirectional BFS from origin to compute reachable scope.
    *  Uses graphology Graph (built from model.edges — filtered to selected schemas).
@@ -577,36 +580,6 @@ export class BlackboardState {
     }
   }
 
-  /** Build focus node detail with DDL/cols/FKs (same data as ColumnTraceState). */
-  private buildFocusNode(node: LineageNode): Record<string, unknown> {
-    const focusNode: Record<string, unknown> = {
-      id: node.id,
-      s: node.schema,
-      n: node.name,
-      t: node.type,
-    };
-
-    const nodeDdl = this.getNodeDdl(node.id);
-    const nodeCols = this.getNodeColumns(node.id);
-    if (SCRIPT_TYPES.has(node.type) && nodeDdl) {
-      focusNode.bb_ddl = nodeDdl; // Full DDL — never truncated
-    } else if (nodeCols?.length) {
-      focusNode.cols = nodeCols.map(c => presentColumnCompact(c));
-    }
-
-    // FK info
-    if (node.fks?.length) {
-      focusNode.fks = node.fks.map(fk => presentFkCompact(fk));
-    }
-
-    // Unresolved refs
-    const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
-    const unrel = this.unrelatedMap.get(unrelKey);
-    if (unrel?.length) focusNode.unresolved_refs = unrel;
-
-    return strip(focusNode) as Record<string, unknown>;
-  }
-
   /** Build neighbor list with edge info, boundary detection, compact cols/FKs. */
   private buildNeighborList(focusId: string): HopNeighbor[] {
     if (!this.graph.hasNode(focusId)) return [];
@@ -644,14 +617,14 @@ export class BlackboardState {
         boundary,
         scope: scopeStatus,
         in_filter: this.isInFilter(nid),
-        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!this.getNodeDdl(nid),
+        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!getNodeDdl(nid, this.nodeMap, this.store ?? undefined),
       };
 
       if (boundary !== 'none') {
         neighbor.boundary_reason = this.boundaryReason(boundary, nNode);
       }
 
-      const nCols = this.getNodeColumns(nid);
+      const nCols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined);
       if (nCols?.length) {
         neighbor.cols = nCols.map(c => presentColumnCompact(c));
       }

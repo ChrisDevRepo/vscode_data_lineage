@@ -774,6 +774,7 @@ export function activate(context: vscode.ExtensionContext) {
             tags?: string[];
             questions?: Array<{ node_id?: string; question?: string }>;
             verdict?: string;
+            prune_ids?: string[];
           };
           const focusNodeId = input.focus_node_id ?? '';
           const findings = input.findings ?? '';
@@ -786,13 +787,15 @@ export function activate(context: vscode.ExtensionContext) {
             nodeId: q.node_id ?? '',
             question: q.question ?? '',
           }));
-          logInfo(outputChannel, 'AI', `submit_findings: focus=${focusNodeId}, verdict=${verdict}, findings=${findings.length}ch, questions=${questions.length}`);
+          const pruneIds = input.prune_ids ?? [];
+          logInfo(outputChannel, 'AI', `submit_findings: focus=${focusNodeId}, verdict=${verdict}, findings=${findings.length}ch, questions=${questions.length}${pruneIds.length ? `, prune=${pruneIds.length}` : ''}`);
 
           const submitResult = _blackboardState.submitFindings({
             focusNodeId, findings, summary,
             tags: input.tags,
             questions,
             verdict,
+            pruneIds,
           });
           if ('error' in submitResult) return logAndReturn('submit_findings', submitResult);
 
@@ -963,7 +966,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      const MAX_ROUNDS = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 25);
+      const MAX_ROUNDS = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 50);
 
       // Single system prompt — explore-first data provider
       const systemPrompt =
@@ -1339,7 +1342,7 @@ export function activate(context: vscode.ExtensionContext) {
                 '2. Record detailed findings (what you discovered — business rules, transforms, patterns) (~500 chars)\n' +
                 '3. Write a one-line summary (~100 chars) — shown in your working memory for ALL future hops\n' +
                 '4. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
-                '5. skip_ids for nodes that aren\'t relevant\n\n' +
+                '5. prune_ids: neighbor IDs to prune (utility UDFs, unrelated objects) — cascades downstream\n\n' +
                 'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
                 'The current_task field contains your own question from a previous hop — answer it.';
               messages.push(vscode.LanguageModelChatMessage.User(bbPrompt));
