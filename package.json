@@ -475,7 +475,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Call ONCE at start. Returns schemas, stats, active filter, saved views. If objects[] present: full dataset with DDL, columns, FKs, edges — answer directly. Otherwise: use schema names in other tools' schemas[] filters.",
+        "modelDescription": "Returns schemas, stats, active filter, saved views. If objects[] present: full dataset with DDL, columns, FKs, edges — answer directly. Otherwise: use schema names in other tools' schemas[] filters.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

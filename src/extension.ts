@@ -379,8 +379,8 @@ export function activate(context: vscode.ExtensionContext) {
       async invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
-        const inputErr = validateToolInput(options.input, { name: 'string', node_ids: 'array', summary: 'string', description: 'string' });
-        if (inputErr) return toolResult(inputErr);
+        const inputErr = validateToolInput(options.input, { name: 'string', node_ids: 'array' });
+        if (inputErr) { logWarn(outputChannel, 'AI', `create_ai_view: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
         const rawInput = options.input as CreateAiViewInput;
         logDebug(outputChannel, 'AI', `lineage_create_ai_view: name="${rawInput.name}", ids=${rawInput.node_ids?.length ?? 0}`);
 
@@ -447,7 +447,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const inputErr = validateToolInput(options.input, { ids: 'array' });
-        if (inputErr) return toolResult(inputErr);
+        if (inputErr) { logWarn(outputChannel, 'AI', `get_ddl_batch: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
         const { ids } = options.input as { ids: string[] };
         if (ids.length >= 100) logWarn(outputChannel, 'AI', `lineage_get_ddl_batch: ${ids.length} ids — unusually large batch`);
         logDebug(outputChannel, 'AI', `lineage_get_ddl_batch: ${ids.length} ids`);
@@ -517,7 +517,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!_columnTraceState) return toolResult({ error: 'no_active_trace', action_required: 'analyze_and_respond', hint: 'No active state machine. If you received an inline result, analyze that data and respond to the user. Do NOT call any more tools.' });
 
         const inputErr = validateToolInput(options.input, { focus_node_id: 'string', verdicts: 'array' });
-        if (inputErr) return toolResult(inputErr);
+        if (inputErr) { logWarn(outputChannel, 'AI', `submit_hop_analysis: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
 
         const input = options.input as {
           focus_node_id?: string;
@@ -610,7 +610,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!_blackboardState) return toolResult({ error: 'no_active_exploration', hint: 'No active exploration. Call start_exploration first.' });
 
         const inputErr = validateToolInput(options.input, { focus_node_id: 'string', findings: 'string', summary: 'string' });
-        if (inputErr) return toolResult(inputErr);
+        if (inputErr) { logWarn(outputChannel, 'AI', `submit_findings: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
 
         const input = options.input as {
           focus_node_id?: string;
@@ -800,7 +800,7 @@ export function activate(context: vscode.ExtensionContext) {
         'RULES:\n' +
         '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user.\n' +
         '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-        '3. For complex questions: discover scope (search → BFS), then start_column_trace if needed.\n' +
+        '3. For column questions: start_column_trace directly (it discovers scope internally). For other complex questions: search → BFS.\n' +
         '   When tracing columns: provide INPUT column names, not output. Track renames.\n' +
         '   Prefer trace over prune when uncertain.\n' +
         '   For broad exploration (business rules, documentation, patterns, investigations):\n' +
