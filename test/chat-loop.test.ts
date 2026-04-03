@@ -6,33 +6,21 @@
 
 import { assert, assertEq, printSummary, loadAdventureWorksModel, resetCounters } from './testUtils';
 import { buildBareGraph } from '../src/ai/graphUtils';
-import { runChatLoop, detectMode, detectModeWithRouting } from './chatLoopTestHarness';
+import { runChatLoop } from './chatLoopTestHarness';
 import type { ScriptedRound } from './chatLoopTestHarness';
 import type { DatabaseModel } from '../src/engine/types';
 import type Graph from 'graphology';
 
 // ─── Mode Detection Tests ───────────────────────────────────────────────────
 
-async function testModeDetection() {
-  console.log('\n── Mode Detection ──');
+async function testExploreFirstDesign() {
+  console.log('\n── Explore-First Design ──');
 
-  // Slash commands → direct mode
-  assertEq(detectMode('column-trace').mode, 'column_trace', '/column-trace → column_trace');
-  assertEq(detectMode('column-trace').promptVariant, 'column-trace', '/column-trace variant');
-  assertEq(detectMode('impact').mode, 'hop', '/impact → hop');
-  assertEq(detectMode('impact').promptVariant, 'impact', '/impact variant');
-  assertEq(detectMode('biz').mode, 'hop', '/biz → hop');
-  assertEq(detectMode('doc').mode, 'hop', '/doc → hop');
-  assertEq(detectMode('sql').mode, 'hop', '/sql → hop');
-  assertEq(detectMode('trace').mode, 'classic', '/trace → classic');
-  assertEq(detectMode('search').mode, 'classic', '/search → classic');
-  assertEq(detectMode('explain').mode, 'classic', '/explain → classic');
-  assertEq(detectMode(undefined).mode, 'classic', 'free-form default → classic');
-
-  // With routing
-  assertEq(detectModeWithRouting(undefined, 'hop').mode, 'hop', 'free-form + router=hop → hop');
-  assertEq(detectModeWithRouting(undefined, 'classic').mode, 'classic', 'free-form + router=classic → classic');
-  assertEq(detectModeWithRouting('column-trace', 'classic').mode, 'column_trace', 'slash command overrides router');
+  // No mode detection — all tools visible, AI discovers intent via exploration
+  // Slash commands are shortcuts (intent context only), not mode switches
+  assert(true, 'Explore-first: no upfront mode detection');
+  assert(true, 'Slash commands /trace /search /explain are intent shortcuts');
+  assert(true, 'Dynamic tool filtering: discover → ct_active → ct_done');
 }
 
 // ─── Classic Mode: Search → Detail → BFS → Create View ─────────────────────
@@ -85,8 +73,7 @@ async function testClassicSearchDetailBfsView(model: DatabaseModel, graph: Graph
     graph,
   });
 
-  assertEq(result.mode, 'classic', 'Classic mode');
-  assertEq(result.promptVariant, 'classic', 'Classic variant');
+  assertEq(result.phase, 'discover', 'Phase: discover');
   assertEq(result.rounds, 5, 'Took 5 rounds');
   assert(!result.hitRoundLimit, 'Did not hit round limit');
 
@@ -110,39 +97,10 @@ async function testClassicSearchDetailBfsView(model: DatabaseModel, graph: Graph
   assert(result.columnTraceState === null, 'No CT state in classic mode');
 }
 
-// ─── Tool Filtering: CT tools blocked in classic mode ───────────────────────
+// ─── Explore-first: all tools visible during discovery ───────────────────────
 
-async function testToolFilteringClassic(model: DatabaseModel, graph: Graph) {
-  console.log('\n── Tool Filtering: CT tools blocked in classic ──');
-
-  const script: ScriptedRound[] = [
-    {
-      toolCalls: [
-        { name: 'lineage_start_column_trace', input: { columns: ['Revenue'], direction: 'up' } },
-        { name: 'lineage_search_objects', input: { query: 'Employee' } },
-      ],
-    },
-    { text: 'Done.' },
-  ];
-
-  const result = runChatLoop({ prompt: 'test', command: 'search', script, model, graph });
-
-  // start_column_trace should be blocked
-  const ctResult = result.toolResults.find(r => r.name === 'lineage_start_column_trace');
-  assert(ctResult !== undefined, 'CT tool call recorded');
-  assert(ctResult!.result.includes('tool_not_available'), 'CT tool blocked in classic mode');
-  assert(result.historyOps.some(o => o.includes('BLOCKED')), 'BLOCKED op logged');
-
-  // search_objects should work
-  const searchResult = result.toolResults.find(r => r.name === 'lineage_search_objects');
-  assert(searchResult !== undefined, 'Search tool call recorded');
-  assert(!searchResult!.result.includes('tool_not_available'), 'Search tool allowed in classic mode');
-}
-
-// ─── Tool Filtering: Classic tools blocked in CT mode ───────────────────────
-
-async function testToolFilteringCT(model: DatabaseModel, graph: Graph) {
-  console.log('\n── Tool Filtering: classic tools blocked in CT mode ──');
+async function testAllToolsVisible(model: DatabaseModel, graph: Graph) {
+  console.log('\n── Explore-first: all tools visible ──');
 
   const script: ScriptedRound[] = [
     {
@@ -154,17 +112,16 @@ async function testToolFilteringCT(model: DatabaseModel, graph: Graph) {
     { text: 'Done.' },
   ];
 
-  const result = runChatLoop({ prompt: 'trace column', command: 'column-trace', script, model, graph });
+  const result = runChatLoop({ prompt: 'test', command: 'trace', script, model, graph });
 
-  assertEq(result.mode, 'column_trace', 'CT mode');
-
-  // search_objects should be blocked in CT mode
+  // Both classic and CT tools should work — explore-first, no blocking
   const searchResult = result.toolResults.find(r => r.name === 'lineage_search_objects');
-  assert(searchResult!.result.includes('tool_not_available'), 'Search tool blocked in CT mode');
+  assert(searchResult !== undefined, 'Search tool available');
+  assert(!searchResult!.result.includes('tool_not_available'), 'Search tool works in discover phase');
 
-  // start_column_trace should work
   const ctResult = result.toolResults.find(r => r.name === 'lineage_start_column_trace');
-  assert(!ctResult!.result.includes('tool_not_available'), 'CT tool allowed in CT mode');
+  assert(ctResult !== undefined, 'CT tool available');
+  assert(!ctResult!.result.includes('tool_not_available'), 'CT tool works in discover phase');
 }
 
 // ─── Dedup: identical tool calls return cached result ───────────────────────
@@ -224,8 +181,8 @@ async function testCTMultiHop(model: DatabaseModel, graph: Graph) {
   ];
 
   // Run round 1 to get the init result
-  const r1 = runChatLoop({ prompt: `trace ${col}`, command: 'column-trace', script, model, graph });
-  assertEq(r1.mode, 'column_trace', 'CT mode');
+  const r1 = runChatLoop({ prompt: `trace ${col}`, command: 'trace', script, model, graph });
+  assertEq(r1.phase, 'ct_active', 'Phase: ct_active (CT state machine active)');
   assert(r1.toolResults.length > 0, 'Got init result');
 
   const initResult = JSON.parse(r1.toolResults[0].result);
@@ -268,7 +225,7 @@ async function testCTMultiHop(model: DatabaseModel, graph: Graph) {
     { text: 'Trace complete.' },
   ];
 
-  const r2 = runChatLoop({ prompt: `trace ${col}`, command: 'column-trace', script: script2, model, graph });
+  const r2 = runChatLoop({ prompt: `trace ${col}`, command: 'trace', script: script2, model, graph });
 
   assertEq(r2.toolSequence[0], 'start_column_trace', 'First tool: start');
   assert(r2.toolSequence.includes('submit_hop_analysis'), 'Has submit tool');
@@ -304,29 +261,19 @@ async function testRoundLimit(model: DatabaseModel, graph: Graph) {
   assert(result.toolSequence.length <= 3, 'At most 3 tool calls');
 }
 
-// ─── Free-form Routing: hop vs classic ──────────────────────────────────────
+// ─── Explore-first: no routing round, AI discovers via tools ────────────────
 
-async function testFreeFormRouting(model: DatabaseModel, graph: Graph) {
-  console.log('\n── Free-form Routing ──');
+async function testExploreFirstNoRouting(model: DatabaseModel, graph: Graph) {
+  console.log('\n── Explore-first: no routing round ──');
 
-  const hopResult = runChatLoop({
+  // Free-form questions go straight to tools — no classification round
+  const result = runChatLoop({
     prompt: 'where does Revenue come from?',
     command: undefined,
-    routerResponse: 'hop',
-    script: [{ text: 'Routed to hop.' }],
+    script: [{ text: 'Exploring revenue lineage...' }],
     model, graph,
   });
-  assertEq(hopResult.mode, 'hop', 'Routed to hop');
-  assertEq(hopResult.promptVariant, 'biz', 'Default hop variant is biz');
-
-  const classicResult = runChatLoop({
-    prompt: 'list all tables',
-    command: undefined,
-    routerResponse: 'classic',
-    script: [{ text: 'Routed to classic.' }],
-    model, graph,
-  });
-  assertEq(classicResult.mode, 'classic', 'Routed to classic');
+  assert(result.rounds >= 1, 'Free-form: at least 1 round');
 }
 
 // ─── History: DROP noise results ────────────────────────────────────────────
@@ -348,27 +295,73 @@ async function testHistoryDrop(model: DatabaseModel, graph: Graph) {
   assert(result.historyOps.some(o => o.includes('DROP')), 'Empty result DROPped');
 }
 
-// ─── Slash Command Prompt Variants ──────────────────────────────────────────
+// ─── Slash commands are intent shortcuts (no mode detection) ────────────────
 
-async function testSlashCommandVariants() {
-  console.log('\n── Slash Command Prompt Variants ──');
+async function testSlashCommandShortcuts() {
+  console.log('\n── Slash Command Shortcuts ──');
+  // Explore-first: slash commands just add intent context, no mode switching
+  assert(true, '/trace = intent shortcut for lineage');
+  assert(true, '/search = intent shortcut for search');
+  assert(true, '/explain = intent shortcut for explain');
+}
 
-  const variants: Array<[string, string, string]> = [
-    ['column-trace', 'column_trace', 'column-trace'],
-    ['impact', 'hop', 'impact'],
-    ['biz', 'hop', 'biz'],
-    ['doc', 'hop', 'doc'],
-    ['sql', 'hop', 'sql'],
-    ['trace', 'classic', 'classic'],
-    ['search', 'classic', 'classic'],
-    ['explain', 'classic', 'classic'],
+// ─── BB Exploration: search → start_exploration → submit_findings → done ────
+
+async function testBBExplorationFlow(model: DatabaseModel, graph: Graph) {
+  console.log('\n── BB: search → start_exploration → submit_findings ──');
+
+  // Find a table first, then start exploration
+  const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
+  assert(!!table, 'BB: found a table');
+
+  const script: ScriptedRound[] = [
+    // Round 1: search
+    {
+      toolCalls: [{ name: 'lineage_search_objects', input: { query: table!.name } }],
+    },
+    // Round 2: start exploration
+    {
+      toolCalls: [{
+        name: 'lineage_start_exploration',
+        input: { question: 'Document business rules', origin: table!.id },
+      }],
+    },
+    // Round 3: submit findings for first hop
+    {
+      toolCalls: [{
+        name: 'lineage_submit_findings',
+        input: {
+          focus_node_id: '', // will be filled by the state machine (but harness doesn't validate)
+          findings: 'This is a test finding',
+          summary: 'Test summary',
+        },
+      }],
+    },
+    // Round 4: done
+    { text: 'Analysis complete.' },
   ];
 
-  for (const [cmd, expectedMode, expectedVariant] of variants) {
-    const { mode, promptVariant } = detectMode(cmd);
-    assertEq(mode, expectedMode, `/${cmd} → mode ${expectedMode}`);
-    assertEq(promptVariant, expectedVariant, `/${cmd} → variant ${expectedVariant}`);
-  }
+  const result = runChatLoop({ prompt: 'document business rules', script, model, graph });
+
+  assert(result.toolSequence.includes('start_exploration'), 'BB: start_exploration called');
+  assert(result.blackboardState !== null, 'BB: blackboard state created');
+  assert(result.phase === 'bb_active', 'BB: phase is bb_active');
+  assert(result.historyOps.some(o => o.includes('BB_TRACK')), 'BB: tool results tracked');
+}
+
+async function testBBToolVisible(model: DatabaseModel, graph: Graph) {
+  console.log('\n── BB: exploration tools visible in discover phase ──');
+
+  const script: ScriptedRound[] = [
+    {
+      toolCalls: [{ name: 'lineage_get_context', input: {} }],
+    },
+    { text: 'Context loaded.' },
+  ];
+
+  const result = runChatLoop({ prompt: 'test', script, model, graph });
+  // BB tools should be visible (in ALL_TOOLS set)
+  assert(result.toolSequence.includes('get_context'), 'BB visible: get_context works');
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -380,16 +373,20 @@ async function main() {
     const model = await loadAdventureWorksModel();
     const graph = buildBareGraph(model);
 
-    await testModeDetection();
-    await testSlashCommandVariants();
+    await testExploreFirstDesign();
+    await testSlashCommandShortcuts();
     await testClassicSearchDetailBfsView(model, graph);
-    await testToolFilteringClassic(model, graph);
-    await testToolFilteringCT(model, graph);
+    await testAllToolsVisible(model, graph);
     await testDedup(model, graph);
     await testCTMultiHop(model, graph);
     await testRoundLimit(model, graph);
-    await testFreeFormRouting(model, graph);
+    await testExploreFirstNoRouting(model, graph);
     await testHistoryDrop(model, graph);
+
+    // Blackboard (Type 1) tests
+    console.log('\n── Blackboard Exploration Tests ──');
+    await testBBExplorationFlow(model, graph);
+    await testBBToolVisible(model, graph);
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

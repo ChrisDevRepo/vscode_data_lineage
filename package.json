@@ -425,41 +425,6 @@
             "maximum": 50,
             "markdownDescription": "Maximum tool-call rounds per `@lineage` request. Increase for complex column traces on deep graphs. Each round is one AI reasoning step + tool call."
           },
-          "dataLineageViz.ai.searchMaxResults": {
-            "type": "integer",
-            "default": 50,
-            "minimum": 10,
-            "maximum": 500,
-            "markdownDescription": "Maximum results per `@lineage` object or DDL search. Derived from the internal token budget when not explicitly set."
-          },
-          "dataLineageViz.ai.bfsMaxNodes": {
-            "type": "integer",
-            "default": 200,
-            "minimum": 50,
-            "maximum": 750,
-            "markdownDescription": "Maximum nodes returned by `@lineage` BFS trace queries. Derived from the internal token budget when not explicitly set."
-          },
-          "dataLineageViz.ai.bfsMaxEdges": {
-            "type": "integer",
-            "default": 300,
-            "minimum": 50,
-            "maximum": 2000,
-            "markdownDescription": "Maximum edges returned by `@lineage` BFS trace queries. Derived from the internal token budget when not explicitly set."
-          },
-          "dataLineageViz.ai.analysisMaxGroups": {
-            "type": "integer",
-            "default": 100,
-            "minimum": 20,
-            "maximum": 500,
-            "markdownDescription": "Maximum groups returned by `@lineage` analysis queries (hubs, islands, orphans, cycles). Derived from the internal token budget when not explicitly set."
-          },
-          "dataLineageViz.ai.maxDdlChars": {
-            "type": "integer",
-            "default": 10000,
-            "minimum": 1000,
-            "maximum": 500000,
-            "markdownDescription": "Maximum DDL body characters per object (per single `getObjectDetail` call). When exceeded, an error is returned instead of partial DDL. Synapse/DWH stored procedures are typically 15,000–80,000 chars — raise to `500000` to effectively disable the limit."
-          },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
             "default": "",
@@ -478,7 +443,7 @@
         "commands": [
           {
             "name": "trace",
-            "description": "Trace data lineage upstream or downstream from an object"
+            "description": "Trace data lineage for an object or column"
           },
           {
             "name": "search",
@@ -487,14 +452,6 @@
           {
             "name": "explain",
             "description": "Explain what a stored procedure or view does"
-          },
-          {
-            "name": "column-trace",
-            "description": "Trace column-level data lineage through the graph (hop-and-distill)"
-          },
-          {
-            "name": "impact",
-            "description": "Analyze what breaks if you change a column or object"
           }
         ],
         "disambiguation": [
@@ -614,7 +571,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "PRIMARY tool for lineage questions. Returns upstream/downstream nodes with DDL, columns, and edges. Use schemas[] on large models. DDL contains INSERT/SELECT — read it to identify which nodes carry the target column. Only include those nodes in create_ai_view (10-15, not all BFS nodes).",
+        "modelDescription": "PRIMARY tool for lineage questions. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. Use schemas[] on large models. DDL contains INSERT/SELECT — read it to identify which nodes carry the target column. Only include those nodes in create_ai_view (10-15, not all BFS nodes).",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -660,6 +617,10 @@
             "include_ddl": {
               "type": "boolean",
               "description": "Include DDL/columns in results (default true). Set false for structure-only overview."
+            },
+            "target": {
+              "type": "string",
+              "description": "Path mode: find all nodes on paths from id to target. When provided, upstream_hops/downstream_hops are ignored."
             }
           },
           "required": [
@@ -905,25 +866,6 @@
         }
       },
       {
-        "name": "lineage_route_mode",
-        "toolReferenceName": "lineage_route_mode",
-        "displayName": "Route Mode",
-        "userDescription": "Classify the question type to select the best analysis mode.",
-        "modelDescription": "Classify the user question into a mode. Call this FIRST before any other action.\n\n- hop: question needs multi-hop graph analysis — business logic, impact analysis, documentation, SQL generation, or complex data flow questions that span multiple objects\n- classic: everything else — show lineage graph, explain a single object, search, simple questions\n\nExamples:\n  \"what breaks if I rename CustomerKey\" → hop\n  \"what's affected if I drop DimProduct\" → hop\n  \"explain the revenue business logic\" → hop\n  \"what business rules apply to the sales pipeline\" → hop\n  \"document the sales schema\" → hop\n  \"write a query joining Sales and Customer\" → hop\n  \"where does AdjustedRevenue come from\" → hop\n  \"how is revenue calculated\" → hop\n  \"show lineage for FactSalesReport\" → classic\n  \"what does spBuildSalesReport do\" → classic\n  \"search for tables with Sales\" → classic",
-        "canBeReferencedInPrompt": false,
-        "tags": ["lineage-router"],
-        "icon": "$(compass)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "mode": { "type": "string", "enum": ["hop", "classic"], "description": "hop = multi-hop graph analysis needed, classic = simple question" },
-            "reason": { "type": "string", "description": "Brief reason for the classification" }
-          },
-          "required": ["mode"]
-        }
-      },
-      {
         "name": "lineage_start_column_trace",
         "toolReferenceName": "lineage_start_column_trace",
         "displayName": "Start Column Trace",
@@ -974,6 +916,59 @@
           },
           "required": ["focus_node_id", "verdicts"]
         }
+      },
+      {
+        "name": "lineage_start_exploration",
+        "toolReferenceName": "lineage_start_exploration",
+        "when": "dataLineageViz.modelLoaded",
+        "displayName": "Start Exploration",
+        "userDescription": "Start a broad exploration of database objects for business rules, documentation, or investigations.",
+        "modelDescription": "Start a broad exploration of database objects. Use for questions about business rules, documentation, SQL patterns, or investigations across many objects.\n\nProvide an origin node — the state machine runs BFS to build the exploration map, seeds the agenda, and returns the first hop.\n\nReturns: scope map (nodes + edges) + first hop context with focus node DDL + neighbors.\n\nAfter receiving: analyze the focus node DDL/columns. Record your findings:\n- findings: detailed analysis (~500 chars) — stored permanently in long-term memory\n- summary: one-line digest (~100 chars) — shown in working memory for all future hops\n- questions: sub-questions for neighbors you want to investigate (boosts their agenda priority)\n- skip_ids: nodes to remove from agenda (not relevant)\n\nThe state machine manages your memory:\n- Long-term: full findings stored per node (never lost)\n- Working: ALL summaries + ALL pending questions returned each hop\n- Checklist: noted/total/open counts\n\ncurrent_task: your own question from a previous hop — answer it.\n\nDo NOT use for column-level tracing — use start_column_trace instead.",
+        "tags": ["lineage", "lineage-bb"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "question": { "type": "string", "description": "The user's exploration question" },
+            "origin": { "type": "string", "description": "Starting node ID. SM runs BFS from here to build the exploration map. Use search_objects to find." }
+          },
+          "required": ["question", "origin"]
+        }
+      },
+      {
+        "name": "lineage_submit_findings",
+        "toolReferenceName": "lineage_submit_findings",
+        "when": "dataLineageViz.modelLoaded",
+        "displayName": "Submit Findings",
+        "userDescription": "Submit analysis of the current node during exploration and receive the next node's data.",
+        "modelDescription": "Submit your analysis of the current exploration hop and receive the next node's data.\n\nProvide:\n- findings: detailed analysis (~500 chars) — stored permanently in memory\n- summary: one-line digest (~100 chars) — shown in working memory for ALL future hops\n- questions: sub-questions for nodes to investigate next (boosts their agenda priority)\n- skip_ids: nodes to remove from agenda (not relevant)\n\nResponse includes: next hop context OR complete result when agenda is empty.\n\nWorking memory in each response shows:\n- all_summaries: ALL your one-line summaries from every noted node (never truncated)\n- pending_questions: ALL open sub-questions (your checklist)\n- checklist: { noted, total, open, coveragePct }\n\ncurrent_task: your own question for the new focus node — answer it.",
+        "tags": ["lineage", "lineage-bb"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "focus_node_id": { "type": "string", "description": "ID of the focus node from the hop context" },
+            "findings": { "type": "string", "description": "Detailed analysis — business rules, transforms, patterns, column flows you observed (~500 chars)" },
+            "summary": { "type": "string", "description": "One-line digest of your findings, shown in working memory for all future hops (~100 chars)" },
+            "tags": { "type": "array", "items": { "type": "string" }, "description": "Categorization: business-rule, transform, source, staging, pattern, join, filter, etc." },
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "node_id": { "type": "string", "description": "Node to investigate" },
+                  "question": { "type": "string", "description": "What to look for at this node (~150 chars)" }
+                },
+                "required": ["node_id", "question"]
+              },
+              "description": "Sub-questions for nodes to investigate next (boosts their agenda priority)"
+            },
+            "skip_ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Node IDs to remove from agenda (not relevant to the investigation)"
+            }
+          },
+          "required": ["focus_node_id", "findings", "summary"]
+        }
       }
     ]
   },
@@ -985,7 +980,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/chat-loop.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/blackboard-state.test.ts && tsx test/chat-loop.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",

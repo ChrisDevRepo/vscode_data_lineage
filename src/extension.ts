@@ -6,12 +6,13 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  deriveCaps, shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, type DerivedCaps,
+  shouldInline, estimateTokens, INLINE_TOKEN_BUDGET,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixCreateAiView, validateCreateAiView,
   type CreateAiViewInput,
 } from './ai/tools';
 import { ColumnTraceState } from './ai/columnTraceState';
+import { BlackboardState } from './ai/blackboardState';
 import { ColumnStore } from './engine/columnStore';
 import { populateColumnStore } from './engine/modelBuilder';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
@@ -55,9 +56,9 @@ let _aiViews:          FilterProfile[] = [];
 let _aiProjectName:    string | null = null;
 let _aiCurrentProjectId: string | null = null;
 let _aiMaxInputTokens: number = 32000; // updated per @lineage chat request; informational only
-let _aiCaps:           Partial<DerivedCaps> = {};  // refreshed once per @lineage request; derived + setting overrides
 let _aiModelName:      string = '';          // display name of the current Copilot model (e.g., "Claude Sonnet 4.6")
-let _columnTraceState: ColumnTraceState | null = null; // per-request column-trace state machine
+let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
+let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
 let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage — populated on model load, cleared on reload
 
 /** AI output template instructions — loaded once at activation, cached for system prompt injection. */
@@ -77,26 +78,6 @@ function isAiEnabled(): boolean {
   return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
 }
 
-/** Caps for the current request. Precedence: explicit VS Code setting > deriveCaps() defaults. */
-function readAiCaps(): Partial<DerivedCaps> {
-  const cfg     = vscode.workspace.getConfiguration('dataLineageViz.ai');
-  const defaults = deriveCaps();
-
-  function resolve(key: keyof DerivedCaps, settingName: string): number {
-    const insp     = cfg.inspect<number>(settingName);
-    const explicit = insp?.globalValue ?? insp?.workspaceValue ?? insp?.workspaceFolderValue;
-    return explicit !== undefined ? explicit : defaults[key];
-  }
-
-  return {
-    SEARCH_MAX_RESULTS:  resolve('SEARCH_MAX_RESULTS',  'searchMaxResults'),
-    BFS_MAX_NODES:       resolve('BFS_MAX_NODES',       'bfsMaxNodes'),
-    BFS_MAX_EDGES:       resolve('BFS_MAX_EDGES',       'bfsMaxEdges'),
-    ANALYSIS_MAX_GROUPS: resolve('ANALYSIS_MAX_GROUPS', 'analysisMaxGroups'),
-    MAX_DDL_CHARS:       resolve('MAX_DDL_CHARS',       'maxDdlChars'),
-    DDL_BATCH_CAP:       defaults.DDL_BATCH_CAP,
-  };
-}
 
 function getThemeClass(kind: vscode.ColorThemeKind): string {
   return kind === vscode.ColorThemeKind.Dark ? 'vscode-dark' :
@@ -308,7 +289,7 @@ export function activate(context: vscode.ExtensionContext) {
           mode?: 'substring' | 'regex';
         };
         logDebug(outputChannel, 'AI', `lineage_search_objects: query="${query}", types=${JSON.stringify(types ?? null)}, schemas=${JSON.stringify(schemas ?? null)}${mode === 'regex' ? ', mode=regex' : ''}`);
-        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, mode ?? 'substring', _aiCaps);
+        const result = searchObjects(m, query, types as ObjectType[] | undefined, schemas, mode ?? 'substring');
         return toolResult(result);
       },
     }),
@@ -322,7 +303,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { id } = options.input as { id: string };
         logDebug(outputChannel, 'AI', `lineage_get_object_detail: id="${id}"`);
-        return toolResult(getObjectDetail(m, id, _aiCaps, _columnStore));
+        return toolResult(getObjectDetail(m, id, _columnStore));
       },
     }),
     vscode.lm.registerTool('lineage_run_bfs_trace', {
@@ -337,15 +318,15 @@ export function activate(context: vscode.ExtensionContext) {
         if (!isAiEnabled()) return disabled();
         const m = requireModel();
         const g = requireGraph();
-        const { id, upstream_hops, downstream_hops, types, schemas, include_ddl } =
+        const { id, upstream_hops, downstream_hops, types, schemas, include_ddl, target } =
           options.input as {
             id: string; upstream_hops?: number; downstream_hops?: number;
             types?: string[]; schemas?: string[];
-            include_ddl?: boolean;
+            include_ddl?: boolean; target?: string;
           };
-        logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}", up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}, ddl=${include_ddl ?? true}`);
+        logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}"${target ? ` → target="${target}"` : `, up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}`}, ddl=${include_ddl ?? true}`);
         return toolResult(runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
-          types as ObjectType[] | undefined, schemas, include_ddl ?? true, _aiCaps, _columnStore));
+          types as ObjectType[] | undefined, schemas, include_ddl ?? true, _columnStore, target));
       },
     }),
     vscode.lm.registerTool('lineage_run_analysis', {
@@ -361,7 +342,7 @@ export function activate(context: vscode.ExtensionContext) {
           type: string; min_degree?: number; max_size?: number;
         };
         logDebug(outputChannel, 'AI', `lineage_run_analysis: type="${type}"`);
-        return toolResult(runAnalysis(m, g, type as AnalysisType, min_degree, max_size, _aiCaps));
+        return toolResult(runAnalysis(m, g, type as AnalysisType, min_degree, max_size));
       },
     }),
     vscode.lm.registerTool('lineage_search_ddl', {
@@ -374,7 +355,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { query, types } = options.input as { query: string; types?: string[] };
         logDebug(outputChannel, 'AI', `lineage_search_ddl: query="${query.slice(0, 60)}"`);
-        return toolResult(searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _aiCaps, _columnStore));
+        return toolResult(searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _columnStore));
       },
     }),
     vscode.lm.registerTool('lineage_create_ai_view', {
@@ -463,20 +444,7 @@ export function activate(context: vscode.ExtensionContext) {
         const m = requireModel();
         const { ids } = options.input as { ids: string[] };
         logDebug(outputChannel, 'AI', `lineage_get_ddl_batch: ${ids.length} ids`);
-        return toolResult(getDdlBatch(m, ids, _aiCaps, _columnStore));
-      },
-    }),
-    // ─── Route Mode tool (auto-classification gate) ────────────────────────
-    vscode.lm.registerTool('lineage_route_mode', {
-      prepareInvocation(_options, _token) {
-        return { invocationMessage: 'Classifying question type…' };
-      },
-      invoke(options, _token) {
-        const input = options.input as { mode?: string; reason?: string };
-        const mode = input.mode ?? 'classic';
-        const reason = input.reason ?? '';
-        logInfo(outputChannel, 'AI', `[Route] Auto-routed: ${mode}${reason ? ` — ${reason}` : ''}`);
-        return toolResult({ routed: mode, message: `Mode set to ${mode}. Proceed with your analysis.` });
+        return toolResult(getDdlBatch(m, ids, _columnStore));
       },
     }),
     // ─── Column-Trace tools (hop-and-distill state machine) ─────────────────
@@ -497,28 +465,29 @@ export function activate(context: vscode.ExtensionContext) {
           if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
           else if (level === 'warn') logWarn(outputChannel, 'AI', `[CT] ${msg}`);
           else logDebug(outputChannel, 'AI', `[CT] ${msg}`);
-        }, { maxDdlChars: (_aiCaps.MAX_DDL_CHARS ?? deriveCaps().MAX_DDL_CHARS) }, _columnStore);
+        }, undefined, _columnStore);
 
         const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
         if ('error' in initResult) return toolResult(initResult);
 
-        // Depth gate: estimate DDL chars for scope → shouldInline decides classic fallback vs state machine
+        // Depth gate: estimate DDL chars for scope → shouldInline decides inline vs state machine (fallback for large scopes)
         const scopeDdlChars = _columnTraceState.estimateScopeDdlChars();
         const scopeInline = shouldInline(scopeDdlChars);
         if (scopeInline) {
           const originId = (initResult.originNode as { id?: string }).id;
           if (originId && g) {
-            logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${INLINE_TOKEN_BUDGET} → inline (classic fallback)`);
-            const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _aiCaps, _columnStore ?? undefined);
+            logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${INLINE_TOKEN_BUDGET} → inline (all DDL at once)`);
+            const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined);
             _columnTraceState = null; // release state machine — not needed
             return toolResult({
-              status: 'classic_fallback',
+              status: 'inline',
+              action_required: 'analyze_and_respond',
               reason: 'scope_fits_inline',
               scope_size: initResult.scopeSize,
               scope_ddl_chars: scopeDdlChars,
               origin: initResult.originNode,
               bfs_result: bfsResult,
-              hint: 'Scope DDL fits token budget — all DDL provided in one shot. Analyze directly without hop-by-hop.',
+              hint: 'All DDL provided inline. Analyze this data and present your findings to the user. Do NOT call any more tools — the trace is complete.',
             });
           }
         } else {
@@ -538,7 +507,7 @@ export function activate(context: vscode.ExtensionContext) {
       },
       invoke(options, _token) {
         if (!isAiEnabled()) return disabled();
-        if (!_columnTraceState) return toolResult({ error: 'no_active_trace', hint: 'Call lineage_start_column_trace first.' });
+        if (!_columnTraceState) return toolResult({ error: 'no_active_trace', action_required: 'analyze_and_respond', hint: 'No active state machine. If you received an inline result, analyze that data and respond to the user. Do NOT call any more tools.' });
 
         const input = options.input as {
           focus_node_id?: string;
@@ -569,6 +538,102 @@ export function activate(context: vscode.ExtensionContext) {
         return toolResult(hopResult);
       },
     }),
+    // ─── Type 1 Blackboard tools (exploration mode) ──────────────────────────
+    vscode.lm.registerTool('lineage_start_exploration', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Starting exploration…' };
+      },
+      invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
+        const m = requireModel();
+        const g = requireGraph();
+        const input = options.input as { question?: string; origin?: string };
+        const question = input.question ?? '';
+        const origin = input.origin ?? '';
+        logInfo(outputChannel, 'AI', `lineage_start_exploration: origin=${origin}, question="${question.slice(0, 80)}"`);
+
+        _blackboardState = new BlackboardState(m, (level, msg) => {
+          if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
+          else if (level === 'warn') logWarn(outputChannel, 'AI', `[BB] ${msg}`);
+          else logDebug(outputChannel, 'AI', `[BB] ${msg}`);
+        }, undefined, _columnStore);
+
+        const initResult = _blackboardState.init({ question, origin });
+        if ('error' in initResult) return toolResult(initResult);
+
+        // Token budget gate: inline if scope fits budget
+        const scopeDdlChars = _blackboardState.estimateScopeDdlChars();
+        const scopeInline = shouldInline(scopeDdlChars);
+        if (scopeInline) {
+          const originId = (initResult.originNode as { id?: string }).id;
+          if (originId && g) {
+            logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars → inline`);
+            const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined);
+            _blackboardState = null;
+            return toolResult({
+              status: 'inline',
+              action_required: 'analyze_and_respond',
+              reason: 'scope_fits_inline',
+              scope_size: initResult.scopeSize,
+              origin: initResult.originNode,
+              bfs_result: bfsResult,
+              hint: 'All DDL provided inline. Analyze this data and present your findings. Do NOT call more tools.',
+            });
+          }
+        } else {
+          logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars → exploration mode (state machine)`);
+        }
+
+        const hopResult = _blackboardState.getHopContext();
+        if ('error' in hopResult) return toolResult(hopResult);
+        if ('done' in hopResult) return toolResult({ ...initResult, status: 'complete', message: 'No neighbors to explore.' });
+
+        return toolResult({ ...initResult, ...hopResult });
+      },
+    }),
+    vscode.lm.registerTool('lineage_submit_findings', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Recording findings…' };
+      },
+      invoke(options, _token) {
+        if (!isAiEnabled()) return disabled();
+        if (!_blackboardState) return toolResult({ error: 'no_active_exploration', hint: 'No active exploration. Call start_exploration first.' });
+
+        const input = options.input as {
+          focus_node_id?: string;
+          findings?: string;
+          summary?: string;
+          tags?: string[];
+          questions?: Array<{ node_id?: string; question?: string }>;
+          skip_ids?: string[];
+        };
+        const focusNodeId = input.focus_node_id ?? '';
+        const findings = input.findings ?? '';
+        const summary = input.summary ?? '';
+        const questions = (input.questions ?? []).map(q => ({
+          nodeId: q.node_id ?? '',
+          question: q.question ?? '',
+        }));
+        logInfo(outputChannel, 'AI', `lineage_submit_findings: focus=${focusNodeId}, findings=${findings.length}ch, questions=${questions.length}`);
+
+        const submitResult = _blackboardState.submitFindings({
+          focusNodeId, findings, summary,
+          tags: input.tags,
+          questions,
+          skipIds: input.skip_ids,
+        });
+        if ('error' in submitResult) return toolResult(submitResult);
+
+        const hopResult = _blackboardState.getHopContext();
+        if ('error' in hopResult) return toolResult(hopResult);
+        if ('done' in hopResult) {
+          const fullResult = _blackboardState.getResult();
+          return toolResult(fullResult);
+        }
+
+        return toolResult(hopResult);
+      },
+    }),
   );
 
   // ─── @lineage Chat Participant ─────────────────────────────────────────────
@@ -586,11 +651,11 @@ export function activate(context: vscode.ExtensionContext) {
   const participant = vscode.chat.createChatParticipant(
     'dataLineageViz.lineage',
     async (request, context, stream, token): Promise<vscode.ChatResult> => {
-      // Update model context window and refresh caps once per request
+      // Update model context window once per request
       _aiMaxInputTokens = request.model.maxInputTokens;
       _aiModelName = request.model.name || request.model.id;
-      _aiCaps = readAiCaps();
-      _columnTraceState = null; // reset per request — each /column-trace gets a fresh state machine
+      _columnTraceState = null; // reset per request — each trace gets a fresh state machine
+      _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
 
       if (!isAiEnabled()) {
         stream.markdown('`@lineage` AI features are disabled. Enable via `dataLineageViz.ai.enabled`.');
@@ -602,81 +667,20 @@ export function activate(context: vscode.ExtensionContext) {
         return {};
       }
 
-      // ─── Mode detection: slash command → direct mode; free-form → routing round ───
-      // Modes: 'column_trace' (user-initiated only), 'hop' (auto-routable), 'classic'
-      // promptVariant: which system prompt to use (column-trace, impact, biz, doc, sql, classic)
-      let resolvedMode: 'column_trace' | 'hop' | 'classic' | null = null;
-      let promptVariant: 'column-trace' | 'impact' | 'hop' | 'classic' = 'classic';
+      // ─── Explore-first: no upfront routing. AI discovers intent via tools. ───
+      // Dynamic tool filtering: classic tools during discovery, CT tools during state machine.
+      let activePhase: 'discover' | 'ct_active' | 'ct_done' | 'bb_active' | 'bb_done' = 'discover';
+      let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+      logInfo(outputChannel, 'AI', `Phase: discover${request.command ? ` /${request.command}` : ''} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
-      // Slash commands set mode directly (no routing round needed)
-      if (request.command === 'column-trace') {
-        resolvedMode = 'column_trace';
-        promptVariant = 'column-trace';
-      } else if (request.command === 'impact') {
-        resolvedMode = 'hop';
-        promptVariant = 'impact';
-      } else if (request.command === 'trace' || request.command === 'search' || request.command === 'explain') {
-        resolvedMode = 'classic';
-      }
-
-      // Free-form: run routing round — AI classifies via route_mode tool (binary: hop vs classic)
-      if (!resolvedMode) {
-        const routerTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-router'));
-        if (routerTools.length > 0) {
-          const routerPrompt = [
-            'Classify this user question by calling lineage_route_mode. Do NOT answer the question yet.',
-            'Choose hop if the question needs multi-hop graph analysis (business logic, impact, documentation, SQL, complex data flow). Choose classic for everything else.',
-          ].join('\n');
-          const routerMessages = [
-            vscode.LanguageModelChatMessage.User(routerPrompt),
-            vscode.LanguageModelChatMessage.User(request.prompt),
-          ];
-          try {
-            const routerResponse = await request.model.sendRequest(routerMessages, { tools: routerTools }, token);
-            for await (const part of routerResponse.stream) {
-              if (part instanceof vscode.LanguageModelToolCallPart) {
-                const input = part.input as { mode?: string; reason?: string };
-                if (input.mode === 'hop') {
-                  resolvedMode = 'hop';
-                  promptVariant = 'hop'; // free-form hop — AI adapts from question context
-                } else {
-                  resolvedMode = 'classic';
-                }
-                await vscode.lm.invokeTool(part.name, { input: part.input, toolInvocationToken: request.toolInvocationToken }, token);
-              }
-            }
-          } catch (err) {
-            logWarn(outputChannel, 'AI', `Route classification failed, defaulting to classic — ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-        if (!resolvedMode) resolvedMode = 'classic'; // fallback
-      }
-
-      // Early feedback — user can course-correct on auto-routed questions
-      if (!request.command && resolvedMode === 'hop') {
-        stream.markdown('*Routing: hop-by-hop analysis. For column-level tracing, use `/column-trace [column]`. For impact analysis, use `/impact [column or object]`.*\n\n');
-      }
-
-      const isColumnTraceMode = resolvedMode === 'column_trace' || resolvedMode === 'hop';
-      const lineageTools = isColumnTraceMode
-        ? vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'))
-        : vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-      logInfo(outputChannel, 'AI', `Mode: ${resolvedMode} (${promptVariant})${request.command ? ` /${request.command}` : ' auto-routed'} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
-
-      // Slash command routing — transform user prompt for focused intent
+      // Slash commands = shortcuts (intent context only, no mode switching)
       let effectivePrompt = request.prompt;
       if (request.command === 'trace') {
-        effectivePrompt = `Trace the data lineage for: ${request.prompt}. Use search_objects to find the object, then run_bfs_trace with include_ddl=true.`;
+        effectivePrompt = `Trace the data lineage for: ${request.prompt}.`;
       } else if (request.command === 'search') {
-        effectivePrompt = `Search for database objects matching: ${request.prompt}. Use search_objects with smart query syntax.`;
+        effectivePrompt = `Search for database objects matching: ${request.prompt}.`;
       } else if (request.command === 'explain') {
-        effectivePrompt = `Explain what this object does: ${request.prompt}. Use get_object_detail to get the DDL, then explain the logic.`;
-      } else if (promptVariant === 'column-trace') {
-        effectivePrompt = `Column trace: ${request.prompt}\nDirection: up. Columns: extract from the question. In notes: column mappings and transformations.`;
-      } else if (promptVariant === 'impact') {
-        effectivePrompt = `Impact analysis: ${request.prompt}\nDirection: down. If user mentions a column, include in columns param. In notes: impact type and reasoning.`;
-      } else if (promptVariant === 'hop') {
-        effectivePrompt = `${request.prompt}\nDirection: up. No columns unless user mentions a specific column.`;
+        effectivePrompt = `Explain what this database object does: ${request.prompt}.`;
       }
 
       // Build conversation history with smart management:
@@ -776,43 +780,27 @@ export function activate(context: vscode.ExtensionContext) {
 
       const MAX_ROUNDS = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 25);
 
-      // System prompt: hop modes use 2 CT tools only; classic uses 8 tools + router
-      const smHopPrompt =
-        'Hop-by-hop lineage tracer. Analyzes database objects one at a time via the state machine tools.\n\n' +
+      // Single system prompt — explore-first data provider
+      const systemPrompt =
+        'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
+        `Budget: ${MAX_ROUNDS} rounds.\n\n` +
         'RULES:\n' +
-        '1. Call lineage_start_column_trace to begin. Origin is optional — the tool auto-discovers.\n' +
-        '2. For each hop: read the DDL, verdict each neighbor (trace / prune / pass), submit with notes.\n' +
-        '3. When tracing columns: provide INPUT column names, not output.\n' +
-        '   Track renames: INSERT INTO T(Revenue) SELECT Amount → trace [Amount].\n' +
-        '4. Prefer trace over prune when uncertain — false negatives cost more than noise.\n' +
-        '5. Present findings to the user after the final result.';
-
-      const systemPrompt = isColumnTraceMode
-        ? smHopPrompt
-        : 'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
-          `Budget: ${MAX_ROUNDS} rounds.\n\n` +
-          'RULES:\n' +
-          '1. VALIDATE FIRST: If search returns 0 results or schema_mismatch, STOP and ask user before proceeding.\n' +
-          '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-          '3. OUTPUT MODE — decide whether a graph adds value:\n' +
-          '   • Graph helps (lineage path, data flow, object relationships) → create_ai_view\n' +
-          '   • Graph doesn\'t help (generate SQL, list names, compare options) → answer in chat text\n' +
-          '   • Could go either way (explain SP, performance review) → default to chat text;\n' +
-          '     user can click "Show in Graph" afterward.\n' +
-          '   Default: text. Only create a view when the visual graph genuinely aids understanding.\n' +
-          '4. WHEN CREATING A VIEW:\n' +
-          '   PRUNE: BFS returns many objects. Include ONLY nodes in the target column\'s path.\n' +
-          '   Skip dimension lookups, utility SPs, and branches feeding other columns. 10-15 nodes, not 30+.\n' +
-          '   COLUMN TRACE: Read DDL in BFS results. Match INSERT columns to SELECT sources:\n' +
-          '   INSERT INTO Target (Revenue) SELECT src.Amount * rate.Rate → Revenue ← Amount × Rate\n' +
-          '   Follow only branches carrying the target column. Skip branches for DateKey, CompanyKey, etc.\n' +
-          '5. VIEW OUTPUT (only when creating a view) — fields form a layered hierarchy (headline → callouts → captions → article).\n' +
-          '   Badges (5-8 key nodes) are numbered anchors. Notes caption each badged node. Description references badge step numbers.\n' +
-          `   summary: ${_aiOutputTemplates.summary}\n` +
-          `   description: ${_aiOutputTemplates.description}\n` +
-          `   badges: ${_aiOutputTemplates.badges}\n` +
-          `   highlights: ${_aiOutputTemplates.highlights}\n` +
-          `   notes: ${_aiOutputTemplates.notes}`;
+        '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user.\n' +
+        '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
+        '3. For complex questions: discover scope (search → BFS), then start_column_trace if needed.\n' +
+        '   When tracing columns: provide INPUT column names, not output. Track renames.\n' +
+        '   Prefer trace over prune when uncertain.\n' +
+        '   For broad exploration (business rules, documentation, patterns, investigations):\n' +
+        '   use start_exploration to explore objects hop-by-hop with persistent memory.\n' +
+        '4. OUTPUT: create_ai_view when graph aids understanding (lineage path, data flow).\n' +
+        '   Chat text otherwise (explain, SQL, list, compare). Default: text.\n' +
+        '5. VIEW OUTPUT — fields form a layered hierarchy (headline → callouts → captions → article).\n' +
+        '   Badges (5-8 key nodes) are numbered anchors. Notes caption each badged node.\n' +
+        `   summary: ${_aiOutputTemplates.summary}\n` +
+        `   description: ${_aiOutputTemplates.description}\n` +
+        `   badges: ${_aiOutputTemplates.badges}\n` +
+        `   highlights: ${_aiOutputTemplates.highlights}\n` +
+        `   notes: ${_aiOutputTemplates.notes}`;
 
       const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(systemPrompt),
@@ -858,7 +846,8 @@ export function activate(context: vscode.ExtensionContext) {
       const runWithTools = async (): Promise<void> => {
         // Column-trace context control (POC-validated patterns)
         const ctToolResults: Array<{ msgIdx: number; callId: string }> = [];
-        let ctWhatNextIdx = -1;
+        // Blackboard context control (same compaction pattern as CT)
+        const bbToolResults: Array<{ msgIdx: number; callId: string }> = [];
 
         while (roundCount < MAX_ROUNDS) {
           roundCount++;
@@ -870,7 +859,7 @@ export function activate(context: vscode.ExtensionContext) {
             lastInputTokenEstimate = inputTokenEstimate;
           } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable on this model — skipping input estimate'); }
 
-          logInfo(outputChannel, 'AI', `Round ${roundCount}/${MAX_ROUNDS} [${resolvedMode}] — sending request`);
+          logInfo(outputChannel, 'AI', `Round ${roundCount}/${MAX_ROUNDS} [${activePhase}] — sending request`);
 
           const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
           const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
@@ -965,64 +954,144 @@ export function activate(context: vscode.ExtensionContext) {
           toolCallRounds.push({ response: responseText, toolCalls });
           totalToolCallsMade += toolCalls.length;
 
-          // ─── Column-trace context control (POC-validated) ──────────────────
-          if (isColumnTraceMode) {
-            const hasCtStart = toolCalls.some(tc => tc.name === 'lineage_start_column_trace');
-            const hasCtSubmit = toolCalls.some(tc => tc.name === 'lineage_submit_hop_analysis');
+          // ─── Dynamic tool filtering + CT context control ────────────────────
+          const hasCtStart = toolCalls.some(tc => tc.name === 'lineage_start_column_trace');
+          const hasCtSubmit = toolCalls.some(tc => tc.name === 'lineage_submit_hop_analysis');
 
-            // Detect success vs failure from tool result
-            const lastResultText = resultParts.length > 0
-              ? JSON.stringify((resultParts[resultParts.length - 1] as { content: unknown }).content ?? '')
-              : '';
-            const isCtSuccess = lastResultText.includes('ct_mode') || lastResultText.includes('"ok"');
-            const isTraceComplete = lastResultText.includes('"complete"') || lastResultText.includes('"done"');
+          // Phase transitions: discover → ct_active → ct_done
+          if (hasCtStart && _columnTraceState && activePhase === 'discover') {
+            const smActive = _columnTraceState.status === 'hopping' || _columnTraceState.status === 'awaiting_verdicts';
+            if (smActive) {
+              activePhase = 'ct_active';
+              lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'));
+              logInfo(outputChannel, 'AI', `[CT] Phase → ct_active | Tools: ${lineageTools.map(t => t.name).join(', ')}`);
 
-            // Track tool result message index + original callId (only successful CT calls)
-            if ((hasCtStart || hasCtSubmit) && isCtSuccess) {
-              const ctCall = toolCalls.find(tc => tc.name === 'lineage_start_column_trace' || tc.name === 'lineage_submit_hop_analysis');
-              if (ctCall) {
-                ctToolResults.push({ msgIdx: messages.length - 1, callId: ctCall.callId });
-                logDebug(outputChannel, 'AI', `[CT] Tracked tool result: msg[${messages.length - 1}], callId=${ctCall.callId.slice(-8)}, total tracked=${ctToolResults.length}`);
-              }
-            } else if ((hasCtStart || hasCtSubmit) && !isCtSuccess) {
-              logDebug(outputChannel, 'AI', `[CT] Skipped tracking failed CT call (error in result)`);
+              // Inject mode-specific prompt ONCE when entering CT mode
+              const hasColumns = _columnTraceState.columns.length > 0;
+              const modePrompt = hasColumns
+                ? 'COLUMN TRACE MODE: For each hop, read the focus node DDL. ' +
+                  'Verdict each neighbor: trace (provide INPUT column names — track renames), prune, or pass. ' +
+                  'Write notes about what you found. Prefer trace over prune when uncertain. ' +
+                  'The sub_question field contains your own question from the previous hop — answer it.'
+                : 'DEPENDENCY TRACE MODE: For each hop, read the focus node DDL. ' +
+                  'Verdict each neighbor: trace (follow this path), prune (cut), or pass (skip detail). ' +
+                  'Write notes about dependencies, business logic, or impact you observe. ' +
+                  'The sub_question field contains your own question from the previous hop — answer it.';
+              messages.push(vscode.LanguageModelChatMessage.User(modePrompt));
             }
+          }
+          if (_columnTraceState?.status === 'complete' && activePhase === 'ct_active') {
+            activePhase = 'ct_done';
+            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+            logInfo(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (create_ai_view available)`);
+          }
 
-            // In-place replacement: compact ALL previous CT tool result messages
-            if (hasCtSubmit && ctToolResults.length > 1) {
-              const compacted = ctToolResults.length - 1;
-              for (let i = 0; i < compacted; i++) {
-                const { msgIdx, callId } = ctToolResults[i];
-                const compactJson = JSON.stringify({ _ct_compacted: true, hop: i + 1, status: 'processed' });
-                messages[msgIdx] = vscode.LanguageModelChatMessage.User(
-                  [new vscode.LanguageModelToolResultPart(callId,
-                    [new vscode.LanguageModelTextPart(compactJson)])]
-                );
-              }
-              logDebug(outputChannel, 'AI', `[CT] Compacted ${compacted} previous hop message(s)`);
+          // CT success detection via typed state machine accessors (not string parsing)
+          const isCtSuccess = _columnTraceState != null &&
+            (_columnTraceState.status === 'hopping' || _columnTraceState.status === 'awaiting_verdicts' || _columnTraceState.status === 'complete');
+          const isTraceComplete = _columnTraceState?.status === 'complete';
+
+          // Track CT tool result messages for in-place compaction
+          if ((hasCtStart || hasCtSubmit) && isCtSuccess) {
+            const ctCall = toolCalls.find(tc => tc.name === 'lineage_start_column_trace' || tc.name === 'lineage_submit_hop_analysis');
+            if (ctCall) {
+              ctToolResults.push({ msgIdx: messages.length - 1, callId: ctCall.callId });
+              logDebug(outputChannel, 'AI', `[CT] Tracked tool result: msg[${messages.length - 1}], callId=${ctCall.callId.slice(-8)}, total tracked=${ctToolResults.length}`);
             }
+          }
 
-            // "What next" injection: guide model to next step
-            if ((hasCtStart || hasCtSubmit) && !isTraceComplete && isCtSuccess) {
-              const whatNextMsg = `COLUMN TRACE: Hop data received. Read the focus node DDL in the tool result. ` +
-                `Determine which neighbors carry the active columns. Submit your verdicts via lineage_submit_hop_analysis.`;
-              if (ctWhatNextIdx >= 0) {
-                messages[ctWhatNextIdx] = vscode.LanguageModelChatMessage.User(whatNextMsg);
-              } else {
-                messages.push(vscode.LanguageModelChatMessage.User(whatNextMsg));
-                ctWhatNextIdx = messages.length - 1;
-              }
+          // In-place replacement: compact ALL previous CT tool result messages
+          if (hasCtSubmit && ctToolResults.length > 1) {
+            const compacted = ctToolResults.length - 1;
+            for (let i = 0; i < compacted; i++) {
+              const { msgIdx, callId } = ctToolResults[i];
+              const compactJson = JSON.stringify({ _ct_compacted: true, hop: i + 1, status: 'processed' });
+              messages[msgIdx] = vscode.LanguageModelChatMessage.User(
+                [new vscode.LanguageModelToolResultPart(callId,
+                  [new vscode.LanguageModelTextPart(compactJson)])]
+              );
             }
+            logDebug(outputChannel, 'AI', `[CT] Compacted ${compacted} previous hop message(s)`);
+          }
 
-            // Progress logging
-            if (_columnTraceState) {
-              const st = _columnTraceState;
-              if (hasCtStart && isCtSuccess) {
-                logInfo(outputChannel, 'AI', `[CT] STARTED | scope=${st.scope} nodes | frontier=${st.frontierSize}`);
-              }
-              if (hasCtSubmit && isTraceComplete) {
-                logInfo(outputChannel, 'AI', `[CT] COMPLETE | ${st.hops} hops | visited=${st.visited_count}/${st.scope} | frontier drained`);
-              }
+          // Progress logging
+          if (_columnTraceState) {
+            const st = _columnTraceState;
+            if (hasCtStart && isCtSuccess) {
+              logInfo(outputChannel, 'AI', `[CT] STARTED | scope=${st.scope} nodes | frontier=${st.frontierSize}`);
+            }
+            if (hasCtSubmit && isTraceComplete) {
+              logInfo(outputChannel, 'AI', `[CT] COMPLETE | ${st.hops} hops | visited=${st.visited_count}/${st.scope} | frontier drained`);
+            }
+          }
+
+          // ─── Blackboard (Type 1) phase transitions + context control ──────────
+          const hasExplStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
+          const hasSubFindings = toolCalls.some(tc => tc.name === 'lineage_submit_findings');
+
+          // Phase transitions: discover → bb_active → bb_done
+          if (hasExplStart && _blackboardState && activePhase === 'discover') {
+            const smActive = _blackboardState.status === 'exploring' || _blackboardState.status === 'awaiting_findings';
+            if (smActive) {
+              activePhase = 'bb_active';
+              // BB keeps classic tools visible + adds BB tools, but hides CT tools (mutual exclusion)
+              lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && !t.tags.includes('lineage-ct'));
+              logInfo(outputChannel, 'AI', `[BB] Phase → bb_active | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
+
+              // Inject mode-specific prompt ONCE
+              const bbPrompt =
+                'EXPLORATION MODE: The state machine presents nodes one at a time with full DDL and metadata.\n' +
+                'For each node:\n' +
+                '1. Read the DDL/columns carefully\n' +
+                '2. Record detailed findings (what you discovered — business rules, transforms, patterns) (~500 chars)\n' +
+                '3. Write a one-line summary (~100 chars) — shown in your working memory for ALL future hops\n' +
+                '4. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
+                '5. skip_ids for nodes that aren\'t relevant\n\n' +
+                'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
+                'The current_task field contains your own question from a previous hop — answer it.';
+              messages.push(vscode.LanguageModelChatMessage.User(bbPrompt));
+            }
+          }
+          if (_blackboardState?.status === 'complete' && activePhase === 'bb_active') {
+            activePhase = 'bb_done';
+            lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
+            logInfo(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (create_ai_view available)`);
+          }
+
+          // BB success detection
+          const isBbSuccess = _blackboardState != null &&
+            (_blackboardState.status === 'exploring' || _blackboardState.status === 'awaiting_findings' || _blackboardState.status === 'complete');
+
+          // Track BB tool results for compaction (same pattern as CT)
+          if ((hasExplStart || hasSubFindings) && isBbSuccess) {
+            const bbCall = toolCalls.find(tc => tc.name === 'lineage_start_exploration' || tc.name === 'lineage_submit_findings');
+            if (bbCall) {
+              bbToolResults.push({ msgIdx: messages.length - 1, callId: bbCall.callId });
+              logDebug(outputChannel, 'AI', `[BB] Tracked tool result: msg[${messages.length - 1}], callId=${bbCall.callId.slice(-8)}, total tracked=${bbToolResults.length}`);
+            }
+          }
+
+          // In-place compaction: compact ALL previous BB tool result messages (keep current)
+          if (hasSubFindings && bbToolResults.length > 1) {
+            const compacted = bbToolResults.length - 1;
+            for (let i = 0; i < compacted; i++) {
+              const { msgIdx, callId } = bbToolResults[i];
+              const compactJson = JSON.stringify({ _bb_compacted: true, hop: i + 1, status: 'findings_recorded' });
+              messages[msgIdx] = vscode.LanguageModelChatMessage.User(
+                [new vscode.LanguageModelToolResultPart(callId,
+                  [new vscode.LanguageModelTextPart(compactJson)])]
+              );
+            }
+            logDebug(outputChannel, 'AI', `[BB] Compacted ${compacted} previous exploration message(s)`);
+          }
+
+          // BB progress logging
+          if (_blackboardState) {
+            if (hasExplStart && isBbSuccess) {
+              logInfo(outputChannel, 'AI', `[BB] STARTED | notes=${_blackboardState.noteCount}`);
+            }
+            if (hasSubFindings && _blackboardState.status === 'complete') {
+              logInfo(outputChannel, 'AI', `[BB] COMPLETE | notes=${_blackboardState.noteCount}`);
             }
           }
 
@@ -1039,7 +1108,8 @@ export function activate(context: vscode.ExtensionContext) {
         // C2: Structured summary — lastInputTokenEstimate is the final round's full context size (correct budget measure)
         const totalTokenEst = lastInputTokenEstimate + totalOutputTokens + Math.round(totalToolResultChars / 4);
         const budgetPct = _aiMaxInputTokens > 0 ? Math.round((lastInputTokenEstimate / _aiMaxInputTokens) * 100) : 0;
-        logInfo(outputChannel, 'AI', `Summary — model: ${request.model.id}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst} (${budgetPct}% of ${_aiMaxInputTokens})`);
+        const modeLabel = _blackboardState ? 'exploration' : _columnTraceState ? 'trace' : 'discover';
+        logInfo(outputChannel, 'AI', `Summary — model: ${request.model.id}, mode: ${modeLabel}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst} (${budgetPct}% of ${_aiMaxInputTokens})`);
         if (toolSequence.length > 0) {
           logInfo(outputChannel, 'AI', `Tool sequence: ${toolSequence.join(' → ')}`);
         }
