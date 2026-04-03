@@ -491,8 +491,7 @@ export function activate(context: vscode.ExtensionContext) {
           logDebug(outputChannel, 'AI', `enrich_view: validation passed`);
 
           if (!_aiCurrentProjectId) {
-            logWarn(outputChannel, 'AI', `enrich_view: no active project — _aiCurrentProjectId is null`);
-            return logAndReturn('enrich_view', { success: false, errors: ['No active project'], hint: 'Open a saved project before using enrich_view.' });
+            logDebug(outputChannel, 'AI', `enrich_view: no saved project — preview-only mode`);
           }
 
           // ── 4. Build aiMetadata for transient preview ──
@@ -522,6 +521,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (activePanel) {
             activePanel.webview.postMessage({ type: 'ai-view-preview', ...preview });
             activePanel.reveal(vscode.ViewColumn.One);
+            logInfo(outputChannel, 'AI', `enrich_view: displayed "${validation.name}" (${validation.node_ids.length} nodes) in panel`);
           } else {
             logWarn(outputChannel, 'AI', `enrich_view: activePanel is null — view enriched but NOT displayed. Open the lineage graph first.`);
           }
@@ -1663,13 +1663,19 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
     let cachedDspName = '';                            // dacpac DSP name from Phase 1
 
     /** Centralized model assignment — populates ColumnStore, strips nodes, syncs AI state. */
-    function setCurrentModel(m: DatabaseModel): void {
+    function setCurrentModel(m: DatabaseModel, project?: { id: string; name: string } | null): void {
       _columnStore.clear();
       populateColumnStore(m, _columnStore);
       currentModel = m;
       currentGraph = buildBareGraph(m);
       _aiModel = m;
       _aiGraph = currentGraph;
+      if (project !== undefined) {
+        currentProjectId = project?.id ?? null;
+        _aiCurrentProjectId = project?.id ?? null;
+        _aiProjectName = project?.name ?? null;
+      }
+      vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
       const stats = _columnStore.size;
       logDebug(outputChannel, 'Bridge', `ColumnStore: ${stats.objects} objects with columns, ${stats.totalColumns} total columns, ${stats.ddlCount} DDL entries`);
     }
@@ -1761,9 +1767,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'ready': async () => {
         if (loadDemo) {
           await handleLoadDemo(panel, context, true, (m) => {
-            setCurrentModel(m);
+            setCurrentModel(m, null);
             _aiProjectName = 'Demo';
-            vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
           });
           return;
         }
@@ -1775,10 +1780,15 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         const store = loadProjectStore(context);
         panel.webview.postMessage({ type: 'config-only', config });
         panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
-        // Re-send retained model for panel restore (<100ms vs re-import)
-        if (currentModel) {
-          const projectName = store.projects.find(p => p.id === currentProjectId)?.name;
-          panel.webview.postMessage({ type: 'dacpac-model', model: currentModel, config, sourceName: projectName ?? 'Project', autoVisualize: true });
+        // Restore project context from store on panel re-create
+        if (currentModel && store.lastOpenedId) {
+          const project = store.projects.find(p => p.id === store.lastOpenedId);
+          if (project) {
+            currentProjectId = project.id;
+            _aiCurrentProjectId = project.id;
+            _aiProjectName = project.name;
+          }
+          panel.webview.postMessage({ type: 'dacpac-model', model: currentModel, config, sourceName: _aiProjectName ?? 'Project', autoVisualize: true });
           logDebug(outputChannel, 'Bridge', 'Panel restored from retained model');
         }
       },
@@ -1848,11 +1858,9 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
               const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
               const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
-              setCurrentModel(model);
-              _aiProjectName = conn.displayName;
+              setCurrentModel(model, { id: project.id, name: conn.displayName });
               cachedElements = null;
               cachedDspName = '';
-              vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
               logInfo(outputChannel, 'Bridge', `Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
               if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
               panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: conn.displayName });
@@ -1913,9 +1921,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               }
               await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, allObjectsCache, conn.connectionInfo.database, conn.sourceName, platformInfoCache,
                 (m) => {
-                  setCurrentModel(m);
-                  _aiProjectName = project.name;
-                  vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+                  setCurrentModel(m, { id: project.id, name: project.name });
                   logInfo(outputChannel, 'Bridge', `Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
                 });
               if (!token.isCancellationRequested) {
@@ -1951,11 +1957,8 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       },
       'load-demo': async () => {
         await handleLoadDemo(panel, context, true, (m) => {
-          setCurrentModel(m);
+          setCurrentModel(m, null);
           _aiProjectName = 'Demo';
-          currentProjectId = null;
-          _aiCurrentProjectId = null;
-          vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
         });
       },
       'dacpac-visualize': async (msg) => {
@@ -1973,14 +1976,18 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         try {
           if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig));
           const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
-          setCurrentModel(model);
-          _aiProjectName = msg.projectName ?? null;
+          const projectName = msg.projectName ?? _aiProjectName ?? 'dacpac';
+          if (currentProjectId) {
+            setCurrentModel(model, { id: currentProjectId, name: projectName });
+          } else {
+            setCurrentModel(model);
+            _aiProjectName = projectName;
+          }
           cachedElements = null;
           cachedDspName = '';
-          vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
           logInfo(outputChannel, 'Bridge', `Model retained: ${model.nodes.length} nodes, ${model.edges.length} edges — ${model.dbPlatform ?? 'platform unknown'}`);
           if (model.parseStats) handleParseStats(model.parseStats, model.nodes.length, model.edges.length, model.schemas.length);
-          const sourceName = msg.projectName ?? currentProjectId ?? 'dacpac';
+          const sourceName = projectName;
           panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName });
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
@@ -2066,29 +2073,30 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         },
         async (conn, progress, token) => {
           const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
+          // Create project before Phase 2 so the callback can set the ID atomically with model
+          const pendingProject = msg.projectName ? createProject(msg.projectName, {
+            type: 'database' as const,
+            connectionInfo: stripSensitiveFields(conn.connectionInfo),
+            sourceName,
+            schemas: msg.schemas,
+          }) : null;
           await runDbPhase2(
             panel, conn.connectionUri, msg.schemas, progress, token, allObjectsCache,
             conn.connectionInfo.database, sourceName, platformInfoCache,
             (m) => {
-              setCurrentModel(m);
-              _aiProjectName = msg.projectName ?? sourceName;
-              vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+              if (pendingProject) {
+                setCurrentModel(m, { id: pendingProject.id, name: pendingProject.name });
+              } else {
+                setCurrentModel(m);
+                _aiProjectName = sourceName;
+              }
               logInfo(outputChannel, 'Bridge', `Model retained: ${m.nodes.length} nodes, ${m.edges.length} edges — ${m.dbPlatform ?? 'platform unknown'}`);
             },
           );
-          // Auto-save project if a name was provided (Create New DB flow)
-          if (msg.projectName && !token.isCancellationRequested) {
-            const dbConn = {
-              type: 'database' as const,
-              connectionInfo: stripSensitiveFields(conn.connectionInfo),
-              sourceName,
-              schemas: msg.schemas,
-            };
-            const project = createProject(msg.projectName, dbConn);
-            currentProjectId = project.id;
-            _aiCurrentProjectId = project.id;
+          // Persist project after Phase 2 completes
+          if (pendingProject && !token.isCancellationRequested) {
             const store = loadProjectStore(context);
-            const updated = updateProject(store, project);
+            const updated = updateProject(store, pendingProject);
             await saveProjectStore(context, updated);
             panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
             logInfo(outputChannel, 'Project', `Saved: "${msg.projectName}"`);

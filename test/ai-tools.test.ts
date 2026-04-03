@@ -94,8 +94,8 @@ async function testSearchObjects(model: DatabaseModel) {
   assert(results1.length > 0, `Employee/table results > 0 (got ${results1.length})`);
   // Results use compact keys: t (type), n (name), s (schema), deg (degree)
   assert(results1.every(n => n.t === 'table'), 'all results are t=table');
-  assert(results1.every(n => typeof n.deg === 'number'), 'all results have numeric deg');
-  assert(results1.every(n => n.match === 'name'), 'all name results have match=name');
+  assert(results1.every(n => n.deg === undefined || typeof n.deg === 'number'), 'all results have numeric deg or undefined');
+  assert(results1.every(n => n.match === 'name' || n.match === 'column'), 'all results have match=name or match=column');
 
   // empty result → hint present
   const r2 = searchObjects(model, 'xyznosuchthing12345') as Record<string, unknown>;

@@ -492,7 +492,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search objects by name (substring or mode='regex' for multi-pattern). Returns IDs for BFS/detail. Use schemas[] to narrow scope. For DDL body content search, use search_ddl instead. If 0 results with schemas[]: check schema_mismatch field — object may exist in another schema.",
+        "modelDescription": "Search objects by name or column name (substring or mode='regex' for multi-pattern). Returns IDs for BFS/detail. Results with match='column' matched a column inside the object, not the object name. Use schemas[] to narrow scope. For DDL body content search, use search_ddl instead. If 0 results: try search_ddl for DDL body matches before telling the user nothing was found. If 0 results with schemas[]: check schema_mismatch field — object may exist in another schema.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

@@ -14,7 +14,7 @@ import {
   type AnalysisType,
 } from '../engine/types';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
-import { searchCatalog, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
+import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
 import { normalizeBodyScript } from '../utils/sql';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
 import {
@@ -206,10 +206,28 @@ export function searchObjects(
     mode,
   );
 
-  const results = nameHits.map(n => ({
-    ...presentNode(n, model.neighborIndex),
-    match: 'name' as const,
-  }));
+  // Column name search (tables/external only, always-on, respects schema/type filters)
+  let columnNodes = model.nodes as SearchableNode[];
+  if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
+  if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
+  const columnHits = mode === 'substring'
+    ? searchColumns(columnNodes, effectiveQuery, 50)
+    : [];
+  const seenIds = new Set(nameHits.map(n => n.id));
+
+  const results = [
+    ...nameHits.map(n => ({
+      ...presentNode(n, model.neighborIndex),
+      match: 'name' as const,
+    })),
+    ...columnHits
+      .filter(h => !seenIds.has(h.node.id))
+      .map(h => ({
+        ...presentNode(h.node, model.neighborIndex),
+        match: 'column' as const,
+        matched_columns: h.snippet,
+      })),
+  ];
 
   const base = {
     results,
@@ -243,7 +261,7 @@ export function searchObjects(
     }
     return {
       ...base,
-      action_required: `NO RESULTS for "${effectiveQuery}". Ask the user to verify the name or try a different search term.`,
+      action_required: `NO RESULTS for "${effectiveQuery}". Try search_ddl for DDL body matches, or ask the user to verify the name.`,
     };
   }
   return base;
