@@ -67,6 +67,9 @@ export function validateToolInput(
 
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
+const COLUMN_SEARCH_LIMIT = 50;
+const ENRICH_VIEW_NAME_MAX_LENGTH = 60;
+const ENRICH_VIEW_SUMMARY_HARD_LIMIT = 300;
 
 /** Build source→target edge type lookup for the entire model (cheap one-pass). */
 export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
@@ -214,7 +217,7 @@ export function searchObjects(
   if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
   if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
   const columnHits = mode === 'substring'
-    ? searchColumns(columnNodes, effectiveQuery, 50)
+    ? searchColumns(columnNodes, effectiveQuery, COLUMN_SEARCH_LIMIT)
     : [];
   const seenIds = new Set(nameHits.map(n => n.id));
 
@@ -618,7 +621,7 @@ export function searchDdl(
 
   const ddlTypes: ObjectType[] = types
     ? (types as ObjectType[])
-    : ['view', 'procedure', 'function'];
+    : [...SCRIPT_TYPES];
   const typeSet = new Set<ObjectType>(ddlTypes);
 
   // Build searchable nodes with DDL from ColumnStore (or inline fallback for tests)
@@ -800,7 +803,7 @@ export function validateEnrichView(
 
   // Name validation
   if (!input.name || input.name.trim().length === 0) errors.push('name is required');
-  else if (input.name.length > 60) errors.push('name exceeds 60 characters');
+  else if (input.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) errors.push(`name exceeds ${ENRICH_VIEW_NAME_MAX_LENGTH} characters`);
 
   // Node set must be non-empty (after resolve + prune)
   if (resolvedNodeIds.length === 0) {
@@ -809,9 +812,9 @@ export function validateEnrichView(
 
   // summary required + length: soft 120 (instructed), hard 300 (rejected)
   if (!input.summary || input.summary.trim().length === 0) {
-    errors.push('summary is required — one-line graph purpose (~120 chars, max 300)');
-  } else if (input.summary.length > 300) {
-    errors.push('summary exceeds hard limit (300 chars) — aim for ~120 chars');
+    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${ENRICH_VIEW_SUMMARY_HARD_LIMIT})`);
+  } else if (input.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
+    errors.push(`summary exceeds hard limit (${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
   }
 
   // description optional — if provided, validate structure + markdown format

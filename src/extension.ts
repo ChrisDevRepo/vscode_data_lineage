@@ -331,6 +331,8 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
+          const inputErr = validateToolInput(options.input, { query: 'string' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `search_objects: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const { query, types, schemas, mode } = options.input as {
             query: string; types?: string[]; schemas?: string[];
             mode?: 'substring' | 'regex';
@@ -349,6 +351,8 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
+          const inputErr = validateToolInput(options.input, { id: 'string' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `get_object_detail: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const { id } = options.input as { id: string };
           logDebug(outputChannel, 'AI', `lineage_get_object_detail: id="${id}"`);
           return logAndReturn('get_object_detail', getObjectDetail(m, id, _columnStore));
@@ -368,6 +372,8 @@ export function activate(context: vscode.ExtensionContext) {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
           const g = requireGraph();
+          const inputErr = validateToolInput(options.input, { id: 'string' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `run_bfs_trace: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const { id, upstream_hops, downstream_hops, types, schemas, include_ddl, target } =
             options.input as {
               id: string; upstream_hops?: number; downstream_hops?: number;
@@ -396,6 +402,8 @@ export function activate(context: vscode.ExtensionContext) {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
           const g = requireGraph();
+          const inputErr = validateToolInput(options.input, { type: 'string' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `run_analysis: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const { type, min_degree, max_size } = options.input as {
             type: string; min_degree?: number; max_size?: number;
           };
@@ -413,6 +421,8 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
+          const inputErr = validateToolInput(options.input, { query: 'string' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `search_ddl: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const { query, types } = options.input as { query: string; types?: string[] };
           logDebug(outputChannel, 'AI', `lineage_search_ddl: query="${query.slice(0, 60)}"`);
           return logAndReturn('search_ddl', searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _columnStore));
@@ -561,6 +571,8 @@ export function activate(context: vscode.ExtensionContext) {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
           const g = requireGraph();
+          const inputErr = validateToolInput(options.input, { columns: 'array' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `start_column_trace: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const input = options.input as { columns?: string[]; direction?: string; origin?: string };
           const columns = input.columns ?? [];
           const direction = (input.direction ?? 'up') as 'up' | 'down' | 'both';
@@ -677,6 +689,8 @@ export function activate(context: vscode.ExtensionContext) {
           if (!isAiEnabled()) return disabled();
           const m = requireModel();
           const g = requireGraph();
+          const inputErr = validateToolInput(options.input, { question: 'string', origin: 'string' });
+          if (inputErr) { logWarn(outputChannel, 'AI', `start_exploration: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const input = options.input as { question?: string; origin?: string };
           const question = input.question ?? '';
           const origin = input.origin ?? '';

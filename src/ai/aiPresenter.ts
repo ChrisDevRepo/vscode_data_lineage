@@ -21,6 +21,7 @@ export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
 }
 
 const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', write: 'write', exec: 'exec', read: 'read' };
+const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
 /** Map internal edge types to the AI-facing API name. */
 export function edgeApiType(type: string): string {
@@ -81,7 +82,7 @@ export function presentColumnCompact(col: ColumnDef): string {
     return parts.join(' ');
   }
   if (col.type) parts.push(col.type);
-  parts.push(col.nullable === 'true' || col.nullable === 'True' || col.nullable === 'NULL' ? 'nullable' : 'not null');
+  parts.push(NULLABLE_VALUES.has(col.nullable ?? '') ? 'nullable' : 'not null');
   if (col.pkOrdinal) parts.push('PK');
   if (col.unique) parts.push('UQ');
   if (col.check) parts.push('CK');

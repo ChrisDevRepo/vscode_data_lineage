@@ -91,6 +91,7 @@ const DEFAULT_MAX_AGENDA = 200;
 const DEFAULT_FINDINGS_HARD_LIMIT = 5000;
 const DEFAULT_SUMMARY_HARD_LIMIT = 500;
 const BFS_SCOPE_CAP = 10_000;
+const COVERAGE_HINT_THRESHOLD = 80;  // % — suggest finishing exploration above this
 
 // ─── Class ─────────────────────────────────────────────────────────────────────
 
@@ -256,9 +257,7 @@ export class BlackboardState {
     const workingMemory = this.buildWorkingMemory();
 
     this._status = 'awaiting_findings';
-    const pct = this.scopeNodeIds.size > 0
-      ? Math.round((this.notes.size / this.scopeNodeIds.size) * 100) : 0;
-    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | notes=${this.notes.size}/${this.scopeNodeIds.size} (${pct}%) | agenda=${this.agenda.length}`);
+    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | notes=${this.notes.size}/${this.scopeNodeIds.size} (${this.coveragePct}%) | agenda=${this.agenda.length}`);
 
     // Cascade preview: show consequence of marking this node irrelevant
     const cascadePreview = this.countCascadeIfIrrelevant(entry.nodeId);
@@ -412,10 +411,8 @@ export class BlackboardState {
 
     const questionsAsked = this.questionLog.length;
     const questionsAnswered = this.questionLog.filter(q => q.answered).length;
-    const coveragePct = this.scopeNodeIds.size > 0
-      ? Math.round((this.notes.size / this.scopeNodeIds.size) * 100) : 0;
 
-    this.log('info', `BB RESULT | notes=${allNotes.length} | scope=${this.scopeNodeIds.size} | coverage=${coveragePct}% | hops=${this.hopCount} | questions=${questionsAnswered}/${questionsAsked}`);
+    this.log('info', `BB RESULT | notes=${allNotes.length} | scope=${this.scopeNodeIds.size} | coverage=${this.coveragePct}% | hops=${this.hopCount} | questions=${questionsAnswered}/${questionsAsked}`);
 
     return {
       status: 'complete',
@@ -427,7 +424,7 @@ export class BlackboardState {
         hops: this.hopCount,
         noted: allNotes.length,
         scopeSize: this.scopeNodeIds.size,
-        coveragePct,
+        coveragePct: this.coveragePct,
         questionsAsked,
         questionsAnswered,
       },
@@ -438,6 +435,10 @@ export class BlackboardState {
 
   get status(): BlackboardStatus { return this._status; }
   get noteCount(): number { return this.notes.size; }
+  private get coveragePct(): number {
+    return this.scopeNodeIds.size > 0
+      ? Math.round((this.notes.size / this.scopeNodeIds.size) * 100) : 0;
+  }
 
   /** Estimate total DDL chars in scope (for token budget gate in extension.ts). */
   estimateScopeDdlChars(): number {
@@ -467,8 +468,9 @@ export class BlackboardState {
   private bfsScope(startId: string): Set<string> {
     const seen = new Set<string>([startId]);
     const queue = [startId];
-    while (queue.length > 0) {
-      const id = queue.shift()!;
+    let idx = 0;
+    while (idx < queue.length) {
+      const id = queue[idx++];
       const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
       const allNeighbors = [...new Set([...nb.in, ...nb.out])];
       for (const nid of allNeighbors) {
@@ -519,12 +521,18 @@ export class BlackboardState {
     }
   }
 
-  /** Pop the highest-priority unvisited entry from agenda. */
+  /** Pop the highest-priority unvisited entry from agenda. O(n) scan, no sort. */
   private popNextAgendaEntry(): AgendaEntry | undefined {
     while (this.agenda.length > 0) {
-      // Sort by priority descending (stable: FIFO within same priority via insertion order)
-      this.agenda.sort((a, b) => b.priority - a.priority);
-      const entry = this.agenda.shift()!;
+      // Find highest-priority entry (FIFO within same priority: pick lowest index)
+      let bestIdx = 0;
+      for (let i = 1; i < this.agenda.length; i++) {
+        if (this.agenda[i].priority > this.agenda[bestIdx].priority) {
+          bestIdx = i;
+        }
+      }
+      const entry = this.agenda[bestIdx];
+      this.agenda.splice(bestIdx, 1);
       this.agendaIds.delete(entry.nodeId);
       if (!this.visited.has(entry.nodeId) && this.nodeMap.has(entry.nodeId)) {
         return entry;
@@ -691,19 +699,14 @@ export class BlackboardState {
       }
     }
 
-    const noted = this.notes.size;
-    const total = this.scopeNodeIds.size;
-    const open = this.agenda.length;
-    const coveragePct = total > 0 ? Math.round((noted / total) * 100) : 0;
-
     const wm: WorkingMemory = {
       user_question: this.userQuestion,
       all_summaries: allSummaries,
       pending_questions: pendingQuestions,
-      checklist: { noted, total, open, coveragePct },
+      checklist: { noted: this.notes.size, total: this.scopeNodeIds.size, open: this.agenda.length, coveragePct: this.coveragePct },
     };
 
-    if (coveragePct >= 80) {
+    if (this.coveragePct >= COVERAGE_HINT_THRESHOLD) {
       wm.hint = 'High coverage — consider finishing exploration if you have enough information.';
     }
 
@@ -740,8 +743,9 @@ export class BlackboardState {
     const reachable = new Set<string>();
     const queue = [this.originNodeId!];
     reachable.add(this.originNodeId!);
-    while (queue.length > 0) {
-      const id = queue.shift()!;
+    let idx = 0;
+    while (idx < queue.length) {
+      const id = queue[idx++];
       const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
       for (const nid of [...new Set([...nb.in, ...nb.out])]) {
         if (!reachable.has(nid) && !this.removedSet.has(nid) && this.scopeNodeIds.has(nid)) {
@@ -771,8 +775,9 @@ export class BlackboardState {
     const reachable = new Set<string>();
     const queue = [this.originNodeId!];
     reachable.add(this.originNodeId!);
-    while (queue.length > 0) {
-      const id = queue.shift()!;
+    let idx = 0;
+    while (idx < queue.length) {
+      const id = queue[idx++];
       const nb = this.model.neighborIndex[id] ?? { in: [], out: [] };
       for (const nid of [...new Set([...nb.in, ...nb.out])]) {
         if (!reachable.has(nid) && !tempRemoved.has(nid) && this.scopeNodeIds.has(nid)) {

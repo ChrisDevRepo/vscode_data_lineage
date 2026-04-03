@@ -76,6 +76,9 @@ const MAX_REJECTIONS_PER_HOP = 2;
 const MAX_REVISITS = 3;            // cap on re-expanding pruned branches per trace
 const DEFAULT_MAX_FRONTIER = 200;
 const BFS_SCOPE_CAP = 10_000; // cap scope computation (not frontier) — just for perf safety
+const MAX_AUTODISCOVER_CANDIDATES = 5;  // above this, ask user to specify origin
+const CANDIDATE_DISPLAY_LIMIT = 10;     // max candidates shown in ambiguity error
+const DEPTH_WARNING_THRESHOLD = 10;     // log warning when trace depth exceeds this
 
 // ─── Class ─────────────────────────────────────────────────────────────────────
 
@@ -115,7 +118,7 @@ export class ColumnTraceState {
   private currentFocusNodeId: string | null = null;
   private currentFocusActiveColumns: string[] = [];
   private currentFocusDepth = 0;
-  private rejectionsThisHop = 0;  // Gap 1: cap at MAX_REJECTIONS_PER_HOP
+  private rejectionsThisHop = 0;  // capped at MAX_REJECTIONS_PER_HOP per hop
 
   constructor(
     model: DatabaseModel,
@@ -204,13 +207,13 @@ export class ColumnTraceState {
         this._status = 'error';
         return { error: 'column_not_found', hint: `No object contains column(s): ${this.targetColumns.join(', ')}.` };
       }
-      if (candidates.length > 5) {
+      if (candidates.length > MAX_AUTODISCOVER_CANDIDATES) {
         // Too many candidates — ask for clarification
         this._status = 'error';
         return {
           error: 'ambiguous_origin',
           hint: `${candidates.length} objects contain column(s) "${this.targetColumns.join(', ')}". Provide the origin object ID.`,
-          candidates: candidates.slice(0, 10).map((c: LineageNode) => ({ id: c.id, name: c.name, type: c.type })),
+          candidates: candidates.slice(0, CANDIDATE_DISPLAY_LIMIT).map((c: LineageNode) => ({ id: c.id, name: c.name, type: c.type })),
         };
       }
       // 1-5 candidates: pick the one with highest degree (most connected = likely the fact/main table)
@@ -423,7 +426,7 @@ export class ColumnTraceState {
       ?? `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`;
     const pct = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
     this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeSize} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
-    if (entry.depth >= 10) {
+    if (entry.depth >= DEPTH_WARNING_THRESHOLD) {
       this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeSize}`);
     }
 
@@ -834,8 +837,9 @@ export class ColumnTraceState {
     const reachable = new Set<string>();
     const queue = [this.originNodeId];
     reachable.add(this.originNodeId);
-    while (queue.length > 0) {
-      const id = queue.shift()!;
+    let idx = 0;
+    while (idx < queue.length) {
+      const id = queue[idx++];
       const neighbors = this.getDirectionalNeighbors(id);
       for (const nid of neighbors) {
         if (!reachable.has(nid) && !this.removedSet.has(nid)) {
@@ -883,8 +887,9 @@ export class ColumnTraceState {
   private bfsScope(startId: string): Set<string> {
     const seen = new Set<string>([startId]);
     const queue = [startId];
-    while (queue.length > 0) {
-      const id = queue.shift()!;
+    let idx = 0;
+    while (idx < queue.length) {
+      const id = queue[idx++];
       const neighbors = this.getDirectionalNeighbors(id);
       for (const nid of neighbors) {
         if (!seen.has(nid)) {
