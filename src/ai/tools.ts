@@ -233,7 +233,7 @@ export function searchObjects(
   types?: ObjectType[],
   schemas?: string[],
   mode: 'substring' | 'regex' = 'substring',
-  activeFilter?: { schemas?: string[] } | null,
+  activeFilter?: SerializedFilterState | null,
 ) {
   if (query.length > REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
@@ -293,8 +293,20 @@ export function searchObjects(
     in_user_filter: filterSchemaSet ? filterSchemaSet.has(((r as any).s ?? '').toLowerCase()) : true,
   }));
 
+  const visibleNodeCount = activeFilter
+    ? model.nodes.filter(n => {
+        const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => s.toLowerCase() === n.schema.toLowerCase());
+        const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type as ObjectType);
+        return schemaOk && typeOk;
+      }).length
+    : model.nodes.length;
   const filterContext = {
-    active_schemas: activeFilter?.schemas ?? null,
+    active_schemas: activeFilter?.schemas?.length ? activeFilter.schemas : null,
+    active_types: activeFilter?.types?.length ? activeFilter.types : null,
+    focus_schemas: activeFilter?.focusSchemas?.length ? activeFilter.focusSchemas : null,
+    hide_isolated: activeFilter?.hideIsolated ?? false,
+    visible_node_count: visibleNodeCount,
+    total_node_count: model.nodes.length,
     all_schemas: [...new Set(model.nodes.map(n => n.schema))],
   };
 

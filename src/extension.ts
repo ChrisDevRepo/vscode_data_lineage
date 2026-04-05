@@ -1263,7 +1263,20 @@ export function activate(context: vscode.ExtensionContext) {
               resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, gateReject));
               continue;
             }
-            stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
+            // Make progress label informative for BB traversal: show node name when available
+            const inp = call.input as Record<string, unknown>;
+            const progressLabel = (() => {
+              if (call.name === 'lineage_submit_findings' && typeof inp.focus_node_id === 'string') {
+                const nodeName = (inp.focus_node_id as string).replace(/\[|\]/g, '').split('.').pop() ?? inp.focus_node_id;
+                return `Analyzing: ${nodeName}…`;
+              }
+              if (call.name === 'lineage_start_exploration' && typeof inp.origin === 'string') {
+                const nodeName = (inp.origin as string).replace(/\[|\]/g, '').split('.').pop() ?? inp.origin;
+                return `Starting exploration from: ${nodeName}…`;
+              }
+              return `Querying lineage: ${call.name.replace('lineage_', '').replace(/_/g, ' ')}…`;
+            })();
+            stream.progress(progressLabel);
             logDebug(outputChannel, 'AI', `Invoking ${call.name.replace('lineage_', '')} — input: ${trunc(JSON.stringify(call.input), 300)}`);
             const t0 = performance.now();
             try {
@@ -1435,6 +1448,11 @@ export function activate(context: vscode.ExtensionContext) {
                 '3. Write a one-line summary (~100 chars) — shown in your working memory for ALL future hops\n' +
                 '4. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
                 '5. prune_ids: neighbor IDs to prune (utility UDFs, unrelated objects) — cascades downstream\n\n' +
+                'PROGRESS: After each submit_findings call, before calling the next tool, emit ONE line: ' +
+                '"Hop N · [node_name] → verdict · ~Y nodes remaining" (e.g. "Hop 3 · spCadenceRule_RATE → relevant · ~12 remaining"). ' +
+                'This keeps the user informed while you work.\n\n' +
+                'INVALID NODES: working_memory.invalid_nodes lists node IDs that were rejected (not_in_model / out_of_scope / not_in_filter). ' +
+                'Never ask questions about not_in_model nodes — they do not exist. For out_of_scope nodes, use get_object_detail instead.\n\n' +
                 'EARLY COMPLETION: Set complete:true in submit_findings when you have enough findings to answer the question. ' +
                 'Do NOT try to drain the entire agenda — prune aggressively, focus on the most relevant nodes, and complete early.\n' +
                 'If scope_guidance is present in the init response, check estimated_max_hops to plan your exploration budget.\n\n' +

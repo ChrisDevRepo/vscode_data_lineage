@@ -78,6 +78,7 @@ interface WorkingMemory {
   user_question: string;
   all_summaries: Array<{ nodeId: string; summary: string }>;
   pending_questions: Array<{ nodeId: string; question: string }>;
+  invalid_nodes?: Array<{ id: string; reason: 'not_in_model' | 'out_of_scope' | 'not_in_filter' }>;
   checklist: { noted: number; total: number; open: number; coveragePct: number };
   hint?: string;
 }
@@ -131,6 +132,7 @@ export class BlackboardState {
   private currentFocusNodeId: string | null = null;
   private hopCount = 0;
   private removedSet = new Set<string>();  // pruned + cascade-removed nodes
+  private invalidNodeIds = new Map<string, 'not_in_model' | 'out_of_scope' | 'not_in_filter'>();
 
   constructor(
     model: DatabaseModel,
@@ -401,6 +403,7 @@ export class BlackboardState {
       for (const inv of invalid) {
         invalidQuestions.push({ node_id: inv.nodeId, question: inv.question, reason: inv.reason });
         this.log('info', `BB QUESTION REJECTED | ${inv.nodeId} | ${inv.reason}`);
+        this.invalidNodeIds.set(inv.nodeId, 'not_in_model');
       }
       for (const q of valid) {
         if (this.removedSet.has(q.nodeId)) {
@@ -420,7 +423,22 @@ export class BlackboardState {
         if (pruneId === this.originNodeId) continue;
         if (this.visited.has(pruneId)) continue;
         if (this.removedSet.has(pruneId)) continue;
-        if (!this.scopeNodeIds.has(pruneId)) continue;
+        if (!this.scopeNodeIds.has(pruneId)) {
+          const existsInModel = this.nodeMap.has(pruneId);
+          let reason: 'not_in_model' | 'out_of_scope' | 'not_in_filter';
+          if (!existsInModel) {
+            reason = 'not_in_model';
+          } else if (this.filterSchemas !== null) {
+            const nodeForFilter = this.nodeMap.get(pruneId)!;
+            reason = this.filterSchemas.has(nodeForFilter.schema.toLowerCase()) ? 'out_of_scope' : 'not_in_filter';
+          } else {
+            reason = 'out_of_scope';
+          }
+          rejectedPrunes.push({ id: pruneId, reason });
+          this.invalidNodeIds.set(pruneId, reason);
+          this.log('info', `BB PRUNE REJECTED | ${pruneId} | ${reason}`);
+          continue;
+        }
 
         // Guard 1: would orphan a noted node from origin?
         const orphanedId = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIdSet, pruneId);
@@ -809,6 +827,10 @@ export class BlackboardState {
       pending_questions: pendingQuestions,
       checklist: { noted: this.notes.size, total: this.scopeNodeIds.size, open: this.agenda.length, coveragePct: this.coveragePct },
     };
+
+    if (this.invalidNodeIds.size > 0) {
+      wm.invalid_nodes = [...this.invalidNodeIds.entries()].map(([id, reason]) => ({ id, reason }));
+    }
 
     if (this.coveragePct >= COVERAGE_HINT_THRESHOLD) {
       wm.hint = 'High coverage — consider finishing exploration if you have enough information.';

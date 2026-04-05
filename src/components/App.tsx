@@ -934,6 +934,13 @@ export function App() {
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filterProfiles = activeProject?.filterProfiles ?? [];
 
+  // Sync active filter state to extension host so AI tools (search_objects, start_exploration etc.)
+  // can report filter context correctly. Fires on every filter mutation and on initial model load.
+  useEffect(() => {
+    if (!model) return;
+    vscodeApi.postMessage({ type: 'filter-changed', filter: serializeFilter(filter), savedViews: filterProfiles });
+  }, [filter, filterProfiles, model, vscodeApi]);
+
   const isViewModified = useMemo(() => {
     if (!activeViewId) return false;
     const profile = filterProfiles.find(p => p.id === activeViewId);
