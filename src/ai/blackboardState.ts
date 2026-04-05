@@ -35,6 +35,7 @@ export interface BlackboardNote {
   findings: string;          // full detailed analysis (long-term memory slot)
   summary: string;           // one-line digest (working memory)
   tags?: string[];           // optional categorization
+  ddl?: string;              // source DDL — present on low-confidence results for AI re-verification
 }
 
 export interface AgendaEntry {
@@ -79,7 +80,7 @@ interface WorkingMemory {
   all_summaries: Array<{ nodeId: string; summary: string }>;
   pending_questions: Array<{ nodeId: string; question: string }>;
   invalid_nodes?: Array<{ id: string; reason: 'not_in_model' | 'out_of_scope' | 'not_in_filter' }>;
-  checklist: { noted: number; total: number; open: number; coveragePct: number };
+  checklist: { current_hop: number; noted: number; total: number; open: number; coveragePct: number };
   hint?: string;
 }
 
@@ -489,6 +490,7 @@ export class BlackboardState {
     notes: BlackboardNote[];
     fullNodes: Array<Record<string, unknown>>;
     edges: Array<[string, string, string]>;
+    skipped_nodes?: Array<{ nodeId: string; name: string; type: string; unanswered_question?: string }>;
     stats: {
       hops: number; noted: number; scopeSize: number; coveragePct: number;
       questionsAsked: number; questionsAnswered: number;
@@ -502,7 +504,17 @@ export class BlackboardState {
 
     this._status = 'complete';
 
-    const allNotes = [...this.notes.values()];
+    // Low confidence: early completion (agenda not empty) or coverage below threshold.
+    // Co-locate DDL with findings so AI can re-verify analysis during final synthesis.
+    const lowConfidence = this.agenda.length > 0 || this.coveragePct < 80;
+
+    const allNotes = [...this.notes.values()].map(note => {
+      if (!lowConfidence) return note;
+      const node = this.nodeMap.get(note.nodeId);
+      if (!node || !SCRIPT_TYPES.has(node.type)) return note;
+      const ddl = getNodeDdl(note.nodeId, this.nodeMap, this.store ?? undefined);
+      return ddl ? { ...note, ddl } : note;
+    });
     const notedIds = new Set(this.notes.keys());
 
     // anchoredIds = noted nodes + origin — ensures hub/star edges (SP→origin) are included
@@ -561,12 +573,23 @@ export class BlackboardState {
       this.log('trace', `BB EDGES | ${edges.map(([s, t, tp]) => `${s}→${t}(${tp})`).join(', ')}`);
     }
 
+    const skippedNodes = this.agenda.map(a => {
+      const n = this.nodeMap.get(a.nodeId);
+      return {
+        nodeId: a.nodeId,
+        name: n?.name ?? a.nodeId,
+        type: n?.type ?? 'unknown',
+        ...(a.question ? { unanswered_question: a.question } : {}),
+      };
+    });
+
     return {
       status: 'complete',
       question: this.userQuestion,
       notes: allNotes,
       fullNodes,
       edges,
+      ...(skippedNodes.length > 0 ? { skipped_nodes: skippedNodes } : {}),
       stats: {
         hops: this.hopCount,
         noted: allNotes.length,
@@ -825,7 +848,7 @@ export class BlackboardState {
       user_question: this.userQuestion,
       all_summaries: allSummaries,
       pending_questions: pendingQuestions,
-      checklist: { noted: this.notes.size, total: this.scopeNodeIds.size, open: this.agenda.length, coveragePct: this.coveragePct },
+      checklist: { current_hop: this.hopCount, noted: this.notes.size, total: this.scopeNodeIds.size, open: this.agenda.length, coveragePct: this.coveragePct },
     };
 
     if (this.invalidNodeIds.size > 0) {
