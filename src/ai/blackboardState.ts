@@ -41,7 +41,7 @@ export interface BlackboardNote {
 export interface AgendaEntry {
   nodeId: string;
   question?: string;         // Self-Ask: what to investigate at this node
-  priority: number;          // 0 = BFS default, 1 = neighbor of noted, 2 = question-boosted
+  priority: number;          // 0 = BFS default, 1 = neighbor of noted, 2 = question-boosted, 3 = mandatory (direct neighbor reinject)
   depth: number;             // BFS depth from origin
 }
 
@@ -79,6 +79,7 @@ interface WorkingMemory {
   user_question: string;
   all_summaries: Array<{ nodeId: string; summary: string }>;
   pending_questions: Array<{ nodeId: string; question: string }>;
+  remaining_agenda: Array<{ id: string; name: string; type: string; priority: number }>;
   invalid_nodes?: Array<{ id: string; reason: 'not_in_model' | 'out_of_scope' | 'not_in_filter' }>;
   checklist: { current_hop: number; noted: number; total: number; open: number; coveragePct: number };
   hint?: string;
@@ -133,6 +134,7 @@ export class BlackboardState {
   private currentFocusNodeId: string | null = null;
   private hopCount = 0;
   private removedSet = new Set<string>();  // pruned + cascade-removed nodes
+  private dimmedNodes = new Set<string>();  // direct neighbors AI tried to prune — kept in graph at reduced opacity
   private invalidNodeIds = new Map<string, 'not_in_model' | 'out_of_scope' | 'not_in_filter'>();
 
   constructor(
@@ -177,6 +179,9 @@ export class BlackboardState {
     this.originNodeId = null;
     this.currentFocusNodeId = null;
     this.hopCount = 0;
+    this.removedSet.clear();
+    this.dimmedNodes.clear();
+    this.invalidNodeIds.clear();
     this._status = 'created';
 
     const { question, origin } = params;
@@ -224,6 +229,7 @@ export class BlackboardState {
     this._status = 'initialized';
     this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
     this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
+    this.log('debug', `BB INIT scope nodes | [${[...scopeIds].map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
 
     return {
       ok: true,
@@ -258,6 +264,12 @@ export class BlackboardState {
         this._status = 'complete';
         const outsideScope = this.scopeNodeIds.size - this.visited.size - this.removedSet.size;
         this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.notes.size} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
+        // Safety check: mandatory direct neighbors still unresolved (cascade-removed without being visited)
+        const unresolved = this.getUnresolvedMandatoryNodes();
+        if (unresolved.length > 0) {
+          const names = unresolved.map(id => this.nodeMap.get(id)?.name ?? id);
+          this.log('warn', `BB COMPLETE | mandatory nodes unresolved after agenda exhaustion: [${names.join(', ')}]`);
+        }
         return {
           done: true,
           ...(outsideScope > 0 && {
@@ -291,6 +303,9 @@ export class BlackboardState {
     this._status = 'awaiting_findings';
     this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.notes.size} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
     this.log('debug', `BB Hop ${this.hopCount} detail | ${node.id} (${node.type}) | priority=${entry.priority} | task=${entry.question ? 'self-ask' : 'default'} | memory: ${workingMemory.all_summaries.length} summaries, ${workingMemory.pending_questions.length} pending Qs | coverage=${this.coveragePct}%`);
+    if (this.agenda.length > 0) {
+      this.log('trace', `BB Hop ${this.hopCount} remaining | [${this.agenda.map(e => this.nodeMap.get(e.nodeId)?.name ?? e.nodeId).join(', ')}]`);
+    }
 
     // Cascade preview: show consequence of marking this node irrelevant
     const cascadePreview = this.countCascadeIfIrrelevant(entry.nodeId);
@@ -324,7 +339,8 @@ export class BlackboardState {
   }): { ok: true; advanced: number; agendaSize: number; pruned?: number;
         rejected_prune_ids?: Array<{ id: string; reason: string }>;
         invalid_questions?: Array<{ node_id: string; question: string; reason: string }>;
-        early_complete?: ReturnType<BlackboardState['getResult']> }
+        early_complete?: ReturnType<BlackboardState['getResult']>;
+        complete_rejected?: { reason: string; nodes: Array<{ id: string; name: string; type: string }>; instruction: string } }
      | { error: string; limit?: number; hint?: string } {
 
     if (this._status !== 'awaiting_findings') {
@@ -419,11 +435,29 @@ export class BlackboardState {
     // Prune specific neighbor nodes from agenda (+ cascade downstream) — with guards
     const rejectedPrunes: Array<{ id: string; reason: string }> = [];
     if (pruneIds?.length) {
+      // Compute origin's direct neighbors once (direction-aware) for Guard 0
+      const originDirectNeighborIds: Set<string> = this.originNodeId ? new Set([
+        ...(this.scopeDirection !== 'downstream' ? this.graph.inNeighbors(this.originNodeId) : []),
+        ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
+      ]) : new Set();
+
       const notedIdSet = new Set(this.notes.keys());
       for (const pruneId of pruneIds) {
         if (pruneId === this.originNodeId) continue;
         if (this.visited.has(pruneId)) continue;
         if (this.removedSet.has(pruneId)) continue;
+
+        // Guard 0: direct neighbor of origin → dim instead of cascade-prune
+        // Preserves graph integrity: all 1-hop neighbors stay visible (possibly dimmed).
+        // AI's assessment is respected (lower relevance) but the node is never silently removed.
+        if (originDirectNeighborIds.has(pruneId) && this.scopeNodeIds.has(pruneId)) {
+          this.dimmedNodes.add(pruneId);
+          this.agenda = this.agenda.filter(e => e.nodeId !== pruneId);
+          this.agendaIds.delete(pruneId);
+          this.log('info', `BB PRUNE → DIM | ${pruneId} | direct neighbor of origin — kept in graph at reduced opacity`);
+          continue;
+        }
+
         if (!this.scopeNodeIds.has(pruneId)) {
           const existsInModel = this.nodeMap.has(pruneId);
           let reason: 'not_in_model' | 'out_of_scope' | 'not_in_filter';
@@ -457,8 +491,14 @@ export class BlackboardState {
           continue;
         }
 
+        const beforeCount = this.agenda.length;
+        const removedBefore = this.removedSet.size;
         pruned += this.cascadePrune(pruneId);
+        const cascadedIds = [...this.removedSet].slice(removedBefore).filter(id => id !== pruneId);
         this.log('info', `BB PRUNE | ${pruneId} | cascade=${pruned} | agenda=${this.agenda.length}`);
+        if (cascadedIds.length > 0) {
+          this.log('debug', `BB PRUNE cascade removed | [${cascadedIds.map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
+        }
       }
     }
 
@@ -473,10 +513,39 @@ export class BlackboardState {
       ...(invalidQuestions.length > 0 && { invalid_questions: invalidQuestions }),
     };
 
-    // Early completion: AI signals it has enough findings to answer the question
+    // Early completion: AI signals it has enough findings to answer the question.
+    // SM acceptance condition (BFS frontier + MemGPT sufficiency):
+    // All direct neighbors of origin must have a verdict before terminal state is valid.
+    // This prevents blind early-complete when working memory has lost the scope map via sliding window compaction.
     if (params.complete) {
-      this.log('info', `BB EARLY COMPLETE | notes=${this.notes.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
-      return { ...base, early_complete: this.getResult() };
+      const unresolved = this.getUnresolvedMandatoryNodes();
+      if (unresolved.length > 0) {
+        // Reject early complete — reinject unvisited direct neighbors as mandatory (priority=3)
+        for (const id of unresolved) {
+          const existing = this.agenda.find(e => e.nodeId === id);
+          if (existing) {
+            existing.priority = 3;
+          } else {
+            this.agenda.push({ nodeId: id, priority: 3, depth: 1 });
+            this.agendaIds.add(id);
+          }
+        }
+        const unresolvedNames = unresolved.map(id => this.nodeMap.get(id)?.name ?? id);
+        this.log('info', `BB COMPLETE REJECTED | unvisited direct neighbors: [${unresolvedNames.join(', ')}] — reinjected as mandatory, continuing`);
+        // Return structured rejection — NOT a warning string (warnings are ignored).
+        // AI reads complete_rejected.nodes to understand what it must visit before complete is accepted.
+        return {
+          ...base,
+          complete_rejected: {
+            reason: 'direct_neighbors_unvisited',
+            nodes: unresolved.map(id => ({ id, name: this.nodeMap.get(id)?.name ?? id, type: this.nodeMap.get(id)?.type ?? '?' })),
+            instruction: 'Visit or declare irrelevant each of these direct neighbors before setting complete:true',
+          },
+        };
+      } else {
+        this.log('info', `BB EARLY COMPLETE | notes=${this.notes.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length} | all direct neighbors resolved`);
+        return { ...base, early_complete: this.getResult() };
+      }
     }
 
     return base;
@@ -491,6 +560,8 @@ export class BlackboardState {
     fullNodes: Array<Record<string, unknown>>;
     edges: Array<[string, string, string]>;
     skipped_nodes?: Array<{ nodeId: string; name: string; type: string; unanswered_question?: string }>;
+    dimmed_nodes?: Array<{ nodeId: string; name: string; type: string }>;
+    warning?: string;
     stats: {
       hops: number; noted: number; scopeSize: number; coveragePct: number;
       questionsAsked: number; questionsAnswered: number;
@@ -583,6 +654,18 @@ export class BlackboardState {
       };
     });
 
+    // dimmed_nodes: direct neighbors AI requested to prune — kept in graph at reduced opacity
+    const dimmednodesList = [...this.dimmedNodes].map(id => {
+      const n = this.nodeMap.get(id);
+      return { nodeId: id, name: n?.name ?? id, type: n?.type ?? 'unknown' };
+    });
+
+    // warning: if mandatory direct neighbors were never resolved (edge case: cascade-removed without being visited)
+    const unresolved = this.getUnresolvedMandatoryNodes();
+    const warning = unresolved.length > 0
+      ? `Exploration ended with ${unresolved.length} direct neighbor(s) unresolved: [${unresolved.map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]. Increase ai.maxRounds or narrow the question scope.`
+      : undefined;
+
     return {
       status: 'complete',
       question: this.userQuestion,
@@ -590,6 +673,8 @@ export class BlackboardState {
       fullNodes,
       edges,
       ...(skippedNodes.length > 0 ? { skipped_nodes: skippedNodes } : {}),
+      ...(dimmednodesList.length > 0 ? { dimmed_nodes: dimmednodesList } : {}),
+      ...(warning ? { warning } : {}),
       stats: {
         hops: this.hopCount,
         noted: allNotes.length,
@@ -808,6 +893,22 @@ export class BlackboardState {
     return neighbors;
   }
 
+  /** Direct neighbors of origin that have no verdict yet (not visited, not removed, not dimmed).
+   *  These are the "mandatory" nodes — the SM blocks early complete until all are resolved. */
+  private getUnresolvedMandatoryNodes(): string[] {
+    if (!this.originNodeId) return [];
+    const directNeighbors = [
+      ...(this.scopeDirection !== 'downstream' ? this.graph.inNeighbors(this.originNodeId) : []),
+      ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
+    ];
+    return directNeighbors.filter(id =>
+      this.scopeNodeIds.has(id) &&
+      !this.visited.has(id) &&
+      !this.removedSet.has(id) &&
+      !this.dimmedNodes.has(id),
+    );
+  }
+
   private detectBoundary(nodeId: string): BoundaryFlag {
     const node = this.nodeMap.get(nodeId);
     if (!node) return 'external';
@@ -830,7 +931,11 @@ export class BlackboardState {
     }
   }
 
-  /** Build working memory snapshot: ALL summaries, ALL pending questions, checklist. */
+  /** Build working memory snapshot: ALL summaries, ALL pending questions, remaining agenda, checklist.
+   *  The remaining_agenda list is critical for the sliding-window memory model:
+   *  history compaction evicts the start_exploration scope map after ~4 rounds.
+   *  Without remaining_agenda in every hop, the AI cannot identify what nodes it still needs to visit,
+   *  leading to blind early-complete decisions (MemGPT invariant: WM must be sufficient for the next decision). */
   private buildWorkingMemory(): WorkingMemory {
     const allSummaries: Array<{ nodeId: string; summary: string }> = [];
     for (const note of this.notes.values()) {
@@ -844,10 +949,19 @@ export class BlackboardState {
       }
     }
 
+    // Remaining agenda — priority-sorted, capped at 30 to bound token cost.
+    // Sorted descending so mandatory (3) and question-boosted (2) items appear first.
+    const sortedAgenda = [...this.agenda].sort((a, b) => b.priority - a.priority);
+    const remaining_agenda = sortedAgenda.slice(0, 30).map(e => {
+      const n = this.nodeMap.get(e.nodeId);
+      return { id: e.nodeId, name: n?.name ?? e.nodeId, type: n?.type ?? '?', priority: e.priority };
+    });
+
     const wm: WorkingMemory = {
       user_question: this.userQuestion,
       all_summaries: allSummaries,
       pending_questions: pendingQuestions,
+      remaining_agenda,
       checklist: { current_hop: this.hopCount, noted: this.notes.size, total: this.scopeNodeIds.size, open: this.agenda.length, coveragePct: this.coveragePct },
     };
 
