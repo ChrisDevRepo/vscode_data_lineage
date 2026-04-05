@@ -319,11 +319,12 @@ export class BlackboardState {
     questions?: Array<{ nodeId: string; question: string }>;
     verdict: 'relevant' | 'noted' | 'irrelevant';
     pruneIds?: string[];
+    addIds?: string[];
     complete?: boolean;
     badge_label?: string;
     note_caption?: string;
   }): { ok: true; advanced: number; agendaSize: number; pruned?: number;
-        rejected_prune_ids?: Array<{ id: string; reason: string }>;
+        rejected_prune_ids?: Array<{ id: string; reason: string; hint?: string }>;
         invalid_questions?: Array<{ node_id: string; question: string; reason: string }>;
         early_complete?: ReturnType<BlackboardState['getResult']> }
      | { error: string; limit?: number; hint?: string } {
@@ -419,8 +420,19 @@ export class BlackboardState {
       }
     }
 
+    // Auto-add nodes to agenda (scope expansion for available neighbors)
+    if (params.addIds?.length) {
+      for (const addId of params.addIds) {
+        if (!this.nodeMap.has(addId)) { this.log('debug', `BB add_ids: ${addId} not in model, skipping`); continue; }
+        if (this.visited.has(addId) || this.removedSet.has(addId)) { this.log('debug', `BB add_ids: ${addId} already visited/pruned, skipping`); continue; }
+        this.addQuestion(addId, '(auto-added)');
+        advanced++;
+        this.log('info', `BB AUTO-ADD | ${addId} | agenda=${this.agenda.length}`);
+      }
+    }
+
     // Prune specific neighbor nodes from agenda (+ cascade downstream) — with guards
-    const rejectedPrunes: Array<{ id: string; reason: string }> = [];
+    const rejectedPrunes: Array<{ id: string; reason: string; hint?: string }> = [];
     if (pruneIds?.length) {
       // Compute origin's direct neighbors once (direction-aware) for Guard 0
       const originDirectNeighborIds: Set<string> = this.originNodeId ? new Set([
@@ -452,7 +464,11 @@ export class BlackboardState {
           } else {
             reason = 'out_of_scope';
           }
-          rejectedPrunes.push({ id: pruneId, reason });
+          const hint =
+            reason === 'out_of_scope'  ? 'In model and in filter but outside BFS scope. Use add_ids to add if relevant.' :
+            reason === 'not_in_filter' ? 'Outside user filter. Ask user in text if this schema should be included.' :
+                                         'Not in the loaded model — external reference.';
+          rejectedPrunes.push({ id: pruneId, reason, hint });
           this.invalidNodeIds.set(pruneId, reason);
           this.log('info', `BB PRUNE REJECTED | ${pruneId} | ${reason}`);
           continue;

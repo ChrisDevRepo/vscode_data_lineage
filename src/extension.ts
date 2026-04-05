@@ -870,6 +870,7 @@ export function activate(context: vscode.ExtensionContext) {
             questions?: Array<{ node_id?: string; question?: string }>;
             verdict?: string;
             prune_ids?: string[];
+            add_ids?: string[];
             badge_label?: string;
             note_caption?: string;
           };
@@ -885,7 +886,8 @@ export function activate(context: vscode.ExtensionContext) {
             question: q.question ?? '',
           }));
           const pruneIds = input.prune_ids ?? [];
-          logInfo(outputChannel, 'AI', `submit_findings: focus=${focusNodeId}, verdict=${verdict}, findings=${findings.length}ch, questions=${questions.length}${pruneIds.length ? `, prune=${pruneIds.length}` : ''}`);
+          const addIds = input.add_ids ?? [];
+          logInfo(outputChannel, 'AI', `submit_findings: focus=${focusNodeId}, verdict=${verdict}, findings=${findings.length}ch, questions=${questions.length}${pruneIds.length ? `, prune=${pruneIds.length}` : ''}${addIds.length ? `, add=${addIds.length}` : ''}`);
 
           const complete = !!(input as Record<string, unknown>).complete;
           const submitResult = _blackboardState.submitFindings({
@@ -894,6 +896,7 @@ export function activate(context: vscode.ExtensionContext) {
             questions,
             verdict,
             pruneIds,
+            addIds,
             complete,
             badge_label: input.badge_label,
             note_caption: input.note_caption,
@@ -1489,7 +1492,14 @@ export function activate(context: vscode.ExtensionContext) {
                 '4. badge_label (2-4 words) — step label for the enriched view, e.g. "4 INIT" or "7 Rate Impute"\n' +
                 '5. note_caption (1 line) — what this node does in this flow, e.g. "Entry point — TRUNCATEs and reloads from staging"\n' +
                 '6. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
-                '7. prune_ids: neighbor IDs to prune (utility UDFs, unrelated objects) — cascades downstream\n\n' +
+                '7. prune_ids: remove from agenda (scope=in_scope only). add_ids: add to agenda (scope=available).\n\n' +
+                'NEIGHBOR SCOPE — evaluate ALL neighbors, then act per tier:\n' +
+                '- scope=in_scope: on your agenda — will be visited. Can prune via prune_ids.\n' +
+                '- scope=available + in_filter=true: in model but not on agenda — add via add_ids if relevant\n' +
+                '- scope=available + in_filter=false: in model but outside user filter — ask user in text: "Schema X has relevant objects, should I include it?"\n' +
+                '- scope=external: referenced in DDL but not in loaded model — note as external reference in findings\n' +
+                '- scope=visited/pruned: already processed\n' +
+                'prune_ids only works on scope=in_scope. add_ids only works on scope=available.\n\n' +
                 'PROGRESS: After each submit_findings call, emit ONE line: ' +
                 '"Hop N · [node_name] → verdict · ~Y nodes remaining".\n\n' +
                 'INVALID NODES: working_memory.invalid_nodes lists rejected node IDs. ' +
