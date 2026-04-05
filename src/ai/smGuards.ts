@@ -13,12 +13,39 @@
  */
 
 import type Graph from 'graphology';
+import { bfsFromNode } from 'graphology-traversal';
+
+// ─── BFS Reachability ────────────────────────────────────────────────────────
+
+/**
+ * BFS reachability from startId using graphology bfsFromNode.
+ * Stops each branch at blocked nodes (removedSet or candidateId) and out-of-scope nodes.
+ * Mode 'mixed' = undirected traversal: correct for scope/reachability regardless of edge direction.
+ * Cycle-safe: bfsFromNode tracks visited nodes internally.
+ * Exported so cascadePrune can reuse — single BFS implementation for the entire SM layer.
+ */
+export function bfsReachable(
+  graph: Graph,
+  startId: string,
+  removedSet: ReadonlySet<string>,
+  candidateId?: string,
+  scope?: ReadonlySet<string>,
+): Set<string> {
+  const reachable = new Set<string>();
+  bfsFromNode(graph, startId, (node) => {
+    if (removedSet.has(node) || node === candidateId || (scope && !scope.has(node))) {
+      return true; // stop this branch — do not traverse through blocked/out-of-scope nodes
+    }
+    reachable.add(node);
+  }, { mode: 'directed' });
+  return reachable;
+}
 
 // ─── Prune Guards ────────────────────────────────────────────────────────────
 
 /**
  * Would pruning candidateId disconnect any noted node from origin?
- * BFS from origin excluding removedSet + candidate.
+ * BFS from origin excluding removedSet + candidate (no Set copy — candidateId checked inline).
  * @returns first orphaned noteId, or null if all noted nodes remain reachable.
  */
 export function wouldOrphanNotedNode(
@@ -29,9 +56,7 @@ export function wouldOrphanNotedNode(
   candidateId: string,
 ): string | null {
   if (notedIds.size === 0) return null;
-  const blocked = new Set(removedSet);
-  blocked.add(candidateId);
-  const reachable = bfsReachable(graph, originId, blocked);
+  const reachable = bfsReachable(graph, originId, removedSet, candidateId);
   for (const id of notedIds) {
     if (!reachable.has(id)) return id;
   }
@@ -51,9 +76,7 @@ export function countCascadeIfPruned(
   agendaNodeIds: ReadonlySet<string>,
   candidateId: string,
 ): number {
-  const blocked = new Set(removedSet);
-  blocked.add(candidateId);
-  const reachable = bfsReachable(graph, originId, blocked, scopeNodeIds);
+  const reachable = bfsReachable(graph, originId, removedSet, candidateId, scopeNodeIds);
   let count = 0;
   for (const id of agendaNodeIds) {
     if (!reachable.has(id)) count++;
@@ -105,6 +128,7 @@ export interface BridgeResult {
  * BFS from each orphan to the nearest connected noted node through the full graph.
  * Returns intermediate bridge nodes + edges to inject into the result.
  * Diamond-safe: bridge paths respect existing graph topology.
+ * Edge direction: uses edgeTypeMap to emit edges in actual directed order, not BFS traversal order.
  */
 export function findBridgeNodes(
   graph: Graph,
@@ -131,7 +155,7 @@ export function findBridgeNodes(
 
   for (const orphanId of orphans) {
     // BFS from orphan to nearest node in edgeParticipants (the connected component)
-    const path = bfsShortestPath(graph, orphanId, edgeParticipants);
+    const path = bfsShortestPath(graph, orphanId, edgeParticipants, edgeTypeMap);
     if (!path) continue; // truly disconnected — no path exists
     reconnected++;
 
@@ -151,12 +175,12 @@ export function findBridgeNodes(
       }
     }
 
-    // Add edges along the path
+    // Add edges along the path — already in correct directed order from bfsShortestPath
     for (const [s, t] of path.edgePairs) {
       const key = `${s}→${t}`;
       if (!addedEdgeKeys.has(key)) {
         addedEdgeKeys.add(key);
-        const type = edgeTypeMap.get(key) ?? edgeTypeMap.get(`${t}→${s}`) ?? 'read';
+        const type = edgeTypeMap.get(key) ?? 'read';
         bridgeEdges.push([s, t, type]);
       }
     }
@@ -167,34 +191,16 @@ export function findBridgeNodes(
 
 // ─── Private BFS Utilities ───────────────────────────────────────────────────
 
-/** BFS reachability from startId, excluding blocked nodes. Optional scope constraint. */
-function bfsReachable(
-  graph: Graph,
-  startId: string,
-  blocked: ReadonlySet<string>,
-  scope?: ReadonlySet<string>,
-): Set<string> {
-  const reachable = new Set<string>([startId]);
-  const queue = [startId];
-  let idx = 0;
-  while (idx < queue.length) {
-    const id = queue[idx++];
-    if (!graph.hasNode(id)) continue;
-    for (const nid of graph.neighbors(id)) {
-      if (!reachable.has(nid) && !blocked.has(nid) && (!scope || scope.has(nid))) {
-        reachable.add(nid);
-        queue.push(nid);
-      }
-    }
-  }
-  return reachable;
-}
-
-/** BFS shortest path from startId to any node in targetSet. Returns intermediate nodes + edge pairs. */
+/**
+ * BFS shortest path from startId to any node in targetSet.
+ * Returns intermediate nodes + edge pairs in correct directed order (via edgeTypeMap lookup).
+ * Undirected traversal via graph.neighbors — finds path regardless of edge direction.
+ */
 function bfsShortestPath(
   graph: Graph,
   startId: string,
   targetSet: ReadonlySet<string>,
+  edgeTypeMap: ReadonlyMap<string, string>,
 ): { intermediates: string[]; edgePairs: Array<[string, string]> } | null {
   if (targetSet.has(startId)) return { intermediates: [], edgePairs: [] };
   if (!graph.hasNode(startId)) return null;
@@ -217,7 +223,12 @@ function bfsShortestPath(
         let cur = nid;
         while (cur !== startId) {
           const prev = parent.get(cur)!;
-          edgePairs.unshift([prev, cur]);
+          // Emit edge in actual directed order — not BFS traversal order
+          if (edgeTypeMap.has(`${prev}→${cur}`)) {
+            edgePairs.unshift([prev, cur]);
+          } else {
+            edgePairs.unshift([cur, prev]); // actual directed edge is cur→prev
+          }
           if (cur !== nid && cur !== startId) intermediates.push(cur);
           cur = prev;
         }

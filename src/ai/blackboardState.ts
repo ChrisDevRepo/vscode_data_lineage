@@ -20,7 +20,7 @@ import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, findBridgeNodes } from './smGuards';
+import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, findBridgeNodes, bfsReachable } from './smGuards';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -467,8 +467,16 @@ export class BlackboardState {
     const allNotes = [...this.notes.values()];
     const notedIds = new Set(this.notes.keys());
 
-    // Full nodes: DDL for script types, columns for tables (same as CT getResult)
+    // anchoredIds = noted nodes + origin — ensures hub/star edges (SP→origin) are included
+    // and bridge injection always has a connected anchor even when no noted-to-noted edges exist
+    const anchoredIds = new Set([...notedIds, this.originNodeId!]);
+
+    // Full nodes: origin first (role='origin'), then noted nodes with DDL/columns
     const fullNodes: Array<Record<string, unknown>> = [];
+    const originNode = this.nodeMap.get(this.originNodeId!);
+    if (originNode) {
+      fullNodes.push(strip({ id: originNode.id, s: originNode.schema, n: originNode.name, t: originNode.type, role: 'origin' }));
+    }
     for (const noteEntry of allNotes) {
       const node = this.nodeMap.get(noteEntry.nodeId);
       if (!node) continue;
@@ -486,16 +494,18 @@ export class BlackboardState {
       fullNodes.push(strip(base));
     }
 
-    // Edges between noted nodes
+    // Edges: include all edges where both endpoints are in anchoredIds (noted nodes + origin)
+    // This captures SP→origin edges in hub/star topologies that notedIds-only filtering dropped
     const edges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
-      if (notedIds.has(e.source) && notedIds.has(e.target)) {
+      if (anchoredIds.has(e.source) && anchoredIds.has(e.target)) {
         edges.push([e.source, e.target, edgeApiType(e.type)]);
       }
     }
 
     // Bridge injection: reconnect orphan noted nodes via shortest path through graph
-    const bridgeResult = findBridgeNodes(this.graph, notedIds, edges, this.edgeTypeMap);
+    // anchoredIds ensures origin serves as anchor — edgeParticipants is never empty
+    const bridgeResult = findBridgeNodes(this.graph, anchoredIds, edges, this.edgeTypeMap);
     if (bridgeResult.bridgeNodes.length > 0) {
       for (const bn of bridgeResult.bridgeNodes) {
         fullNodes.push(strip({ id: bn.id, s: bn.schema, n: bn.name, t: bn.type, role: 'bridge' }));
@@ -799,21 +809,8 @@ export class BlackboardState {
   private cascadePrune(prunedId: string): number {
     this.removedSet.add(prunedId);
     this.log('debug', `BB cascadePrune: ${prunedId} | BFS reachability from ${this.originNodeId}`);
-    // BFS from origin through live nodes (not removed, in scope)
-    const reachable = new Set<string>();
-    const queue = [this.originNodeId!];
-    reachable.add(this.originNodeId!);
-    let idx = 0;
-    while (idx < queue.length) {
-      const id = queue[idx++];
-      if (!this.graph.hasNode(id)) continue;
-      for (const nid of this.graph.neighbors(id)) {
-        if (!reachable.has(nid) && !this.removedSet.has(nid) && this.scopeNodeIds.has(nid)) {
-          reachable.add(nid);
-          queue.push(nid);
-        }
-      }
-    }
+    // prunedId is already in removedSet — bfsReachable excludes all of removedSet (mode: mixed = undirected)
+    const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
     // Remove unreachable agenda nodes
     let cascaded = 0;
     for (let i = this.agenda.length - 1; i >= 0; i--) {

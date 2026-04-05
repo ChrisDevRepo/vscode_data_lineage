@@ -39,6 +39,11 @@ export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
   ch.warn(`[${cat}] ${msg}`);
 }
 
+/** Truncate a string for log previews: first `max` chars + `… [+N chars]` suffix if longer. */
+export function trunc(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max)}\u2026 [+${s.length - max} chars]`;
+}
+
 /**
  * error — operation failed: `[CAT] FAILED: operation — error detail`
  *

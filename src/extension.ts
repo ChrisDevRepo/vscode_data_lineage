@@ -39,7 +39,7 @@ import {
   addFilterProfile, deleteFilterProfile, isValidProject,
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
-import { logInfo, logDebug, logWarn, logError, logTrace } from './utils/log';
+import { logInfo, logDebug, logWarn, logError, logTrace, trunc } from './utils/log';
 import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
 
@@ -307,7 +307,7 @@ export function activate(context: vscode.ExtensionContext) {
   function logAndReturn(toolName: string, data: object): vscode.LanguageModelToolResult {
     const json = JSON.stringify(data);
     const chars = json.length;
-    const preview = chars > 200 ? json.slice(0, 200) + ` [TRUNCATED ${chars} chars]` : json;
+    const preview = trunc(json, 300);
     const isError = 'error' in data || ('success' in data && !(data as any).success);
     if (isError) logWarn(outputChannel, 'AI', `${toolName}: ${preview}`);
     logDebug(outputChannel, 'AI', `${toolName} → ${chars} chars: ${preview}`);
@@ -441,7 +441,7 @@ export function activate(context: vscode.ExtensionContext) {
           const inputErr = validateToolInput(options.input, { query: 'string' });
           if (inputErr) { logWarn(outputChannel, 'AI', `search_ddl: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
           const { query, types } = options.input as { query: string; types?: string[] };
-          logDebug(outputChannel, 'AI', `lineage_search_ddl: query="${query.slice(0, 60)}"`);
+          logDebug(outputChannel, 'AI', `lineage_search_ddl: query="${trunc(query, 200)}"`);
           return logAndReturn('search_ddl', searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, _columnStore));
         } catch (err) { return toolError('search_ddl', err); }
       },
@@ -727,7 +727,7 @@ export function activate(context: vscode.ExtensionContext) {
           const input = options.input as { question?: string; origin?: string };
           const question = input.question ?? '';
           const origin = input.origin ?? '';
-          logInfo(outputChannel, 'AI', `start_exploration: origin=${origin}, question="${question.slice(0, 80)}"`);
+          logInfo(outputChannel, 'AI', `start_exploration: origin=${origin}, question="${trunc(question, 200)}"`);
 
           _blackboardState = new BlackboardState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
@@ -913,7 +913,7 @@ export function activate(context: vscode.ExtensionContext) {
       const smDoneTools = () => vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_run_bfs_trace');
       let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
       _aiSessionCount++;
-      logInfo(outputChannel, 'AI', `[S${_aiSessionCount}] Session start — model=${request.model.id}, prompt="${request.prompt.slice(0, 80)}${request.prompt.length > 80 ? '…' : ''}"`);
+      logInfo(outputChannel, 'AI', `[S${_aiSessionCount}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
       logInfo(outputChannel, 'AI', `Phase: discover${request.command ? ` /${request.command}` : ''} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
       // Slash commands = shortcuts (intent context only, no mode switching)
@@ -927,7 +927,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       if (request.command) {
         logInfo(outputChannel, 'AI', `Slash /${request.command} — prompt rewritten`);
-        logDebug(outputChannel, 'AI', `Effective prompt: "${effectivePrompt.slice(0, 150)}"`);
+        logDebug(outputChannel, 'AI', `Effective prompt: "${trunc(effectivePrompt, 200)}"`);
       }
 
       // Build conversation history with smart management:
@@ -1176,7 +1176,7 @@ export function activate(context: vscode.ExtensionContext) {
           // C4: Log model reasoning between tool calls
           if (responseText.length > 0) {
             const flat = responseText.replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim();
-            logDebug(outputChannel, 'AI', `"${flat.slice(0, 500)}"${flat.length > 500 ? ` [TRUNCATED ${flat.length} chars]` : ''}`);
+            logDebug(outputChannel, 'AI', `"${trunc(flat, 200)}"`);
           }
 
           if (!toolCalls.length) {
@@ -1251,7 +1251,7 @@ export function activate(context: vscode.ExtensionContext) {
               continue;
             }
             stream.progress(`Querying lineage: ${call.name.replace(/_/g, ' ')}…`);
-            logDebug(outputChannel, 'AI', `Invoking ${call.name.replace('lineage_', '')} — input: ${JSON.stringify(call.input).slice(0, 300)}`);
+            logDebug(outputChannel, 'AI', `Invoking ${call.name.replace('lineage_', '')} — input: ${trunc(JSON.stringify(call.input), 300)}`);
             const t0 = performance.now();
             try {
               const result = await vscode.lm.invokeTool(
@@ -1267,12 +1267,12 @@ export function activate(context: vscode.ExtensionContext) {
               roundToolResultChars += chars;
               // C5: Per-tool timing + result size + content preview
               logDebug(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} — ${Math.round(performance.now() - t0)}ms, ${chars} chars`);
-              logTrace(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} result: ${resultJson.slice(0, 500)}${chars > 500 ? ` [TRUNCATED ${chars} chars]` : ''}`);
+              logTrace(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} result: ${trunc(resultJson, 300)}`);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               errorCount++;
               logWarn(outputChannel, 'AI', `Tool call failed: ${call.name} — ${msg}`);
-              logDebug(outputChannel, 'AI', `Error context: phase=${activePhase}, elapsed=${Math.round(performance.now() - t0)}ms, input=${JSON.stringify(call.input).slice(0, 200)}`);
+              logDebug(outputChannel, 'AI', `Error context: phase=${activePhase}, elapsed=${Math.round(performance.now() - t0)}ms, input=${trunc(JSON.stringify(call.input), 300)}`);
               const errContent = [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: msg }))];
               resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, errContent));
               accumulatedToolResults[call.callId] = new vscode.LanguageModelToolResult(errContent);
@@ -1314,7 +1314,7 @@ export function activate(context: vscode.ExtensionContext) {
             messages.push(new vscode.LanguageModelChatMessage(
               vscode.LanguageModelChatMessageRole.User, gate,
             ));
-            logInfo(outputChannel, 'AI', `[Gate] action_required: ${actionGates[0].slice(0, 120)}`);
+            logInfo(outputChannel, 'AI', `[Gate] action_required: ${trunc(actionGates[0], 200)}`);
           }
 
           toolCallRounds.push({ response: responseText, toolCalls });
@@ -1513,7 +1513,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (kpiParts.length > 0) {
           logInfo(outputChannel, 'AI', `KPIs — ${kpiParts.join(', ')}`);
         }
-        logDebug(outputChannel, 'AI', `Prompt: "${request.prompt.slice(0, 100)}${request.prompt.length > 100 ? '…' : ''}"`);
+        logDebug(outputChannel, 'AI', `Prompt: "${trunc(request.prompt, 200)}"`);
         logInfo(outputChannel, 'AI', `Session end`);
         // B3: "Show in Graph" button after BFS trace — triggers AI to create an annotated view
         if (activePanel && toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'))) {
@@ -1920,7 +1920,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
               logDebug(outputChannel, 'Detail',
                 `No handler for '${(msg as { type: string }).type}' — ` +
                 `pendingUpdate: ${pendingDetailUpdate ? 'set' : 'empty'}, ` +
-                `payload: ${JSON.stringify(msg).slice(0, 120)}`
+                `payload: ${trunc(JSON.stringify(msg), 300)}`
               );
             }
           } catch (err) {
@@ -2346,7 +2346,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
           } else {
             logDebug(outputChannel, 'Bridge',
               `No handler for '${(message as { type: string }).type}' — ` +
-              `payload: ${JSON.stringify(message).slice(0, 120)}`
+              `payload: ${trunc(JSON.stringify(message), 300)}`
             );
           }
         } catch (err) {
