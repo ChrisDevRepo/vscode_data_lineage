@@ -11,6 +11,7 @@ tmp_*
 tsconfig.json
 tsconfig.extension.json
 vite.config.ts
+vitest.config.ts
 tailwind.config.js
 postcss.config.js
 esbuild.config.mjs
@@ -36,6 +37,10 @@ test-internal/**
 
 # Claude Code session temp files (created by Claude CLI — must not leak into VSIX)
 tmpclaude-*
+
+# Stray root-level scripts/files (not part of extension)
+manual-trace.ts
+*batch_alloc*
 
 # Misc
 PLAN*.md
