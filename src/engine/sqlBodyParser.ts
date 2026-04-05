@@ -42,28 +42,58 @@ export interface ParseRulesConfig {
 //   • -- line comments     → replaced with space (already removed by pass 0 for block)
 //   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
 
-/** Max chars to scan after `CTE AS (` for the first FROM clause — limits scan on huge SQL bodies */
-const CTE_BODY_WINDOW_CHARS = 3000;
+/**
+ * Find the base table a CTE references via paren-balanced body detection.
+ * Works on cleaned SQL (Pass 0+1 removed comments/strings before this runs).
+ *
+ * SQL Server enforces that updatable CTEs are simple (no aggregates, no DISTINCT,
+ * no GROUP BY) — the first FROM is always the base table or another simple CTE.
+ *
+ * @param sql     Cleaned SQL text
+ * @param bodyStart  Position right after the opening `(` of `AS (`
+ * @param keywords   Regex to reject SQL keywords as CTE names
+ * @returns Schema-qualified table, unqualified CTE name (for chaining), or null
+ */
+function resolveCteFromTarget(sql: string, bodyStart: number, keywords: RegExp): string | null {
+  // Find CTE body end — paren balancing on cleaned SQL
+  let depth = 1;
+  let bodyEnd = -1;
+  for (let i = bodyStart; i < sql.length; i++) {
+    if (sql[i] === '[') { while (i < sql.length && sql[i] !== ']') i++; continue; }
+    if (sql[i] === '(') depth++;
+    else if (sql[i] === ')') { depth--; if (depth === 0) { bodyEnd = i; break; } }
+  }
+  if (bodyEnd < 0) return null;
+
+  const body = sql.slice(bodyStart, bodyEnd);
+
+  // Schema-qualified FROM first (e.g. FROM [schema].[table])
+  const qual = body.match(/\bFROM\s+((?:(?:\[[^\]]+\]|\w+)\.)+(?:\[[^\]]+\]|\w+))(?![\w\.])/i);
+  if (qual) return qual[1];
+
+  // Fallback: unqualified FROM — another CTE in chain
+  const unqual = body.match(/\bFROM\s+(\w+)(?!\s*\.)(?!\s*\()/i);
+  if (unqual && !keywords.test(unqual[1])) return unqual[1];
+
+  return null;
+}
 
 /**
  * Preprocessing: Replace CTE aliases in UPDATE statements with the CTE's base table.
- * WITH Alias AS (... FROM [schema].[table] ...) UPDATE Alias SET
- * → ... UPDATE [schema].[table] SET
  *
- * This allows extract_targets_dml to capture the actual write target instead of rejecting
- * the unqualified CTE alias (normalizeCaptured rejects names without a schema dot).
+ * Handles two patterns:
+ *   1. UPDATE CTE_NAME SET ...          → UPDATE [schema].[table] SET ...
+ *   2. UPDATE alias SET ... FROM CTE_NAME → UPDATE alias SET ... FROM [schema].[table]
  *
- * Strategy: for each CTE definition (WITH name AS (...) or , name AS (...)), extract the
- * first schema-qualified FROM table in its body. When UPDATE targets a known CTE alias
- * (no schema dot), rewrite it with that base table.
+ * Also resolves CTE chains: WITH c1 AS (...FROM [s].[T]), c2 AS (...FROM c1)
+ * collapses c2 → [s].[T] so both patterns above work through any chain depth.
  *
- * Only the first FROM table per CTE is used — this is the directly updatable table.
- * Nested subquery joins (LEFT JOIN (SELECT ... FROM inner) AS alias) appear later in
- * the text and are skipped by the first-match heuristic.
+ * This allows extract_targets_dml and extract_update_alias_target to capture the
+ * actual write target instead of rejecting the unqualified CTE alias.
  */
 function substituteCteUpdateAliases(sql: string): string {
   // Find CTE definitions: WITH name AS ( and , name AS ( (multi-CTE syntax)
-  const cteMap = new Map<string, string>(); // cteName (lowercase) → first base table expression
+  const cteMap = new Map<string, string>(); // cteName (lowercase) → base table or CTE ref
   const ctePattern = /(?:\bWITH\b|,)\s*(\w+)\s+AS\s*\(/gi;
   const KEYWORDS = /^(?:select|insert|update|delete|from|join|where|set|begin|end|values|exec|execute|top|distinct|all|as|on|and|or|not|in|is|null|by|order|group|having|into|case|when|then|else|return|declare|table|index|view|proc|procedure)$/i;
 
@@ -72,20 +102,42 @@ function substituteCteUpdateAliases(sql: string): string {
     const cteName = m[1];
     if (KEYWORDS.test(cteName)) continue;
     const bodyStart = m.index + m[0].length;
-    // Find first schema-qualified FROM reference within CTE_BODY_WINDOW_CHARS of CTE body start
-    const window = sql.slice(bodyStart, bodyStart + CTE_BODY_WINDOW_CHARS);
-    const fromMatch = window.match(/\bFROM\s+((?:(?:\[[^\]]+\]|\w+)\.)+(?:\[[^\]]+\]|\w+))(?![\w\.])/i);
-    if (fromMatch) {
-      cteMap.set(cteName.toLowerCase(), fromMatch[1]);
+    const ref = resolveCteFromTarget(sql, bodyStart, KEYWORDS);
+    if (ref) cteMap.set(cteName.toLowerCase(), ref);
+  }
+
+  // Resolve CTE chains: cte_A → cte_B → [schema].[table]
+  for (let pass = 0; pass < 10; pass++) {
+    let changed = false;
+    for (const [name, target] of cteMap) {
+      if (!target.includes('.') && cteMap.has(target.toLowerCase())) {
+        const resolved = cteMap.get(target.toLowerCase())!;
+        if (resolved !== target) { cteMap.set(name, resolved); changed = true; }
+      }
     }
+    if (!changed) break;
+  }
+  // Remove unresolvable entries (still no schema dot after chaining)
+  for (const [name, target] of cteMap) {
+    if (!target.includes('.')) cteMap.delete(name);
   }
 
   if (cteMap.size === 0) return sql;
 
-  return sql.replace(/\bUPDATE\s+(\w+)\s+SET\b/gi, (match, alias) => {
+  // Rewrite UPDATE CTE_NAME SET → UPDATE [schema].[table] SET
+  let result = sql.replace(/\bUPDATE\s+(\w+)\s+SET\b/gi, (match, alias) => {
     const baseTable = cteMap.get(alias.toLowerCase());
     return baseTable ? `UPDATE ${baseTable} SET` : match;
   });
+
+  // Rewrite FROM CTE_NAME → FROM [schema].[table] for alias UPDATE patterns.
+  // Safe globally: CTE names are unqualified → always rejected by normalizeCaptured.
+  // Replacing them only adds correct matches. Set deduplication handles redundancy.
+  for (const [cteName, baseTable] of cteMap) {
+    result = result.replace(new RegExp(`\\bFROM\\s+${cteName}\\b`, 'gi'), `FROM ${baseTable}`);
+  }
+
+  return result;
 }
 
 /**

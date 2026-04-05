@@ -2,6 +2,9 @@
 
 ## [0.9.7] - 2026-03-31
 
+### Fixed
+- **CTE UPDATE alias-FROM parsing** — Stored procedures using `UPDATE alias SET ... FROM cte_name` now correctly produce write edges to the underlying table. Previously only `UPDATE [schema].[table] SET` and `UPDATE cte_name SET` patterns were detected; the alias-FROM variant through a CTE was silently dropped. Also resolves chained CTE references (cte_A → cte_B → real table) and replaces the 3000-char magic-number window with paren-balanced CTE body detection.
+
 ### Added
 - **Column-trace state machine** — `@lineage /column-trace` hop-and-distill pattern: AI evaluates one node per hop, traces column renames, validates column names against metadata, reject/retry on invalid columns
 - **ColumnStore architecture** — centralized column and DDL metadata storage on extension host; webview receives lightweight flags only, reducing payload by ~10-20 MB on large DWH

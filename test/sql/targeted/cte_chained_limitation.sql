@@ -1,12 +1,12 @@
--- CTE CHAIN LIMITATION: WITH c1 AS (...FROM t1), c2 AS (...FROM c1) UPDATE c2 SET ...
--- When a CTE references another CTE (not a real table), Pass 1.6 cannot resolve the
--- chain: c2's first FROM is c1 (no schema dot), so fromMatch returns null and c2 remains
--- unresolved. The UPDATE c2 is not translated to any real table.
+-- CTE CHAIN RESOLUTION: WITH c1 AS (...FROM t1), c2 AS (...FROM c1) UPDATE c2 SET ...
+-- Pass 1.6 now resolves CTE chains: c2's first FROM is c1 (unqualified), which is looked
+-- up in the cteMap. Chain resolution collapses c2 → c1 → [dbo].[SalesOrder].
+-- Paren-balanced body detection finds exact CTE boundaries (no magic-number window).
 --
--- By-design limitation: zero occurrences in 448 SPs checked (196 real-world + 252 customer).
--- Adding two-pass chain resolution (~15 TS lines) is not justified by current frequency.
+-- Previously a by-design limitation; resolved after 10 real-world SPs hit this pattern
+-- (CadenceWorker EV/exception rules using UPDATE alias SET ... FROM cte_chain).
 --
--- STABILITY: no oracle (no -- EXPECT line) — parser must not crash, output must be bounded.
+-- EXPECT  sources:[dbo].[SalesOrder]  targets:[dbo].[SalesOrder]
 
 WITH BaseOrders AS (
     SELECT
@@ -28,7 +28,6 @@ UPDATE OrdersWithLimit            -- alias of alias: chain not resolved
 SET    [Status] = N'APPROVED'
 WHERE  [TotalAmount] BETWEEN 100 AND 10000;
 
--- Expected parser behavior:
+-- Expected parser behavior (after chain resolution):
 --   sources: [dbo].[SalesOrder]       (BaseOrders CTE resolved by Pass 1.6 via its FROM)
---   targets: (none)                   (OrdersWithLimit not resolved — FROM is BaseOrders, no dot)
--- This is the known gap. A two-pass resolver would add [dbo].[SalesOrder] to targets.
+--   targets: [dbo].[SalesOrder]       (OrdersWithLimit → BaseOrders → [dbo].[SalesOrder] chain resolved)
