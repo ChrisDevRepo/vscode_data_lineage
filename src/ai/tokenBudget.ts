@@ -17,7 +17,7 @@
 // ─── The single budget constant ─────────────────────────────────────────────
 
 /** Delivery mode gate: max estimated tokens for inline delivery (default). */
-export const INLINE_TOKEN_BUDGET = 30_000; // ~120K chars — fits most scopes under 50 nodes
+export const INLINE_TOKEN_BUDGET = 20_000; // ~80K chars — forces state machine for scopes above ~20 scriptable nodes
 
 /** Runtime override from VS Code setting `ai.inlineTokenBudget`. Set via setInlineBudgetOverride(). */
 let _budgetOverride: number | undefined;
