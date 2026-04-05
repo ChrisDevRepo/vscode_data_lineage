@@ -192,8 +192,8 @@ export function activate(context: vscode.ExtensionContext) {
   const inlineBudgetCfg = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.inlineTokenBudget');
   if (inlineBudgetCfg !== undefined && inlineBudgetCfg !== INLINE_TOKEN_BUDGET) {
     setInlineBudgetOverride(inlineBudgetCfg);
-    logInfo(outputChannel, 'Config', `ai.inlineTokenBudget override: ${inlineBudgetCfg} tokens`);
   }
+  logInfo(outputChannel, 'Config', `ai.inlineTokenBudget: ${getEffectiveBudget()} tokens${inlineBudgetCfg !== undefined && inlineBudgetCfg !== INLINE_TOKEN_BUDGET ? ' (user override)' : ''}`);
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
@@ -794,7 +794,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (scopeInline) {
             const originId = (initResult.originNode as { id?: string }).id;
             if (originId && g) {
-              logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars → inline`);
+              logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → inline`);
               const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined) as Record<string, unknown>;
               _blackboardState = null;
               // Store result graph for enrich_view
@@ -813,7 +813,7 @@ export function activate(context: vscode.ExtensionContext) {
               });
             }
           } else {
-            logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars → exploration mode (state machine)`);
+            logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → exploration mode (state machine)`);
           }
 
           const hopResult = _blackboardState.getHopContext();

@@ -926,9 +926,19 @@ export function validateEnrichView(
   }
 
   if (errors.length > 0) {
-    const hint = errors.length === 1 && errors[0].includes('summary')
-      ? 'Shorten the summary to ~120 chars (hard limit 300) and retry with the same input otherwise.'
-      : 'Fix the listed errors and retry. Do NOT change fields that passed validation.';
+    // Identify which fields failed so the hint tells the AI exactly what to fix
+    const failedFields = new Set<string>();
+    for (const e of errors) {
+      if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
+      else if (e.includes('summary')) failedFields.add('summary');
+      else if (e.includes('description')) failedFields.add('description');
+      else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
+      else if (e.includes('No nodes')) failedFields.add('nodes');
+    }
+    const fieldList = [...failedFields];
+    const hint = fieldList.length === 1
+      ? `Fix ${fieldList[0]} only. Keep all other fields (badges, notes, summary, highlight_groups) exactly as submitted.`
+      : `Fix these fields: ${fieldList.join(', ')}. Keep all other fields exactly as submitted.`;
     return { success: false, errors, hint };
   }
 
