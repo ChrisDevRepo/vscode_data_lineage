@@ -297,7 +297,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ─── AI Language Model Tools ───────────────────────────────────────────────
-  // All 9 tools read from module-level _ai* bridge vars (written by panel closures).
+  // All 12 tools read from module-level _ai* bridge vars (written by panel closures).
   // Only throws on "no model loaded" — all other errors return JSON for LLM self-correction.
 
   function requireModel(): NonNullable<typeof _aiModel> {

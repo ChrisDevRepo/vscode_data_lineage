@@ -16,7 +16,7 @@ import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
-import { wouldOrphanNotedNode } from './smGuards';
+import { wouldOrphanNotedNode, type LogFn } from './smGuards';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ export interface ColumnTraceConfig {
   activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
 }
 
-export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
+export type { LogFn } from './smGuards';
 
 // ─── Internal types ────────────────────────────────────────────────────────────
 

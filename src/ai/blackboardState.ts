@@ -20,7 +20,7 @@ import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, findBridgeNodes, bfsReachable } from './smGuards';
+import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, findBridgeNodes, bfsReachable, type LogFn } from './smGuards';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -52,7 +52,7 @@ export interface BlackboardConfig {
   scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';  // default 'bidirectional'; upstream=inNeighbors, downstream=outNeighbors
 }
 
-export type LogFn = (level: 'info' | 'debug' | 'warn' | 'trace', msg: string) => void;
+export type { LogFn } from './smGuards';
 
 // ─── Internal types ────────────────────────────────────────────────────────────
 

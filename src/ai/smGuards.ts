@@ -14,6 +14,11 @@
 
 import type Graph from 'graphology';
 
+// ─── Shared types ─────────────────────────────────────────────────────────────
+
+/** Logging callback injected into state machines — 'trace' is the most verbose level. */
+export type LogFn = (level: 'info' | 'debug' | 'warn' | 'trace', msg: string) => void;
+
 // ─── BFS Reachability ────────────────────────────────────────────────────────
 
 /**

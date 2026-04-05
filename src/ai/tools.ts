@@ -1,6 +1,8 @@
 /**
  * AI tool pure functions — zero VS Code imports.
- * All 8 functions are invoked by the registered LanguageModelTools in extension.ts.
+ * 8 classic retrieval functions invoked by classic LanguageModelTools in extension.ts.
+ * CT and BB tools (start_column_trace, submit_hop_analysis, start_exploration, submit_findings)
+ * are handled directly by ColumnTraceState and BlackboardState in extension.ts.
  *
  * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */
@@ -214,7 +216,7 @@ export function getContext(
 // ─── Query validation ───────────────────────────────────────────────────────
 
 /** Reject garbage queries (empty, single char, pure wildcards). */
-export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
+function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
     return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters.' };
