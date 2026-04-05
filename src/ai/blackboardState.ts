@@ -48,7 +48,8 @@ export interface BlackboardConfig {
   maxAgendaSize?: number;         // default 200 — cap, not truncation
   findingsHardLimit?: number;     // default 5000 chars — reject, never truncate
   summaryHardLimit?: number;      // default 500 chars — reject, never truncate
-  activeFilter?: SerializedFilterState | null;  // user's active filter — constrains BFS scope to matching schemas
+  activeFilter?: SerializedFilterState | null;  // user's active filter — applied as BFS schema boundary
+  scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';  // default 'bidirectional'; upstream=inNeighbors, downstream=outNeighbors
 }
 
 export type LogFn = (level: 'info' | 'debug' | 'warn' | 'trace', msg: string) => void;
@@ -92,6 +93,7 @@ const DEFAULT_MAX_AGENDA = 200;
 const DEFAULT_FINDINGS_HARD_LIMIT = 5000;
 const DEFAULT_SUMMARY_HARD_LIMIT = 500;
 const BFS_SCOPE_CAP = 10_000;
+const SCOPE_DIRECTION_GATE = 200;  // bidirectional scope above this requires explicit direction
 const COVERAGE_HINT_THRESHOLD = 80;  // % — suggest finishing exploration above this
 const CASCADE_REJECT_THRESHOLD = 0.5;  // reject prune if cascade removes >50% of remaining agenda
 
@@ -106,7 +108,8 @@ export class BlackboardState {
   private readonly findingsHardLimit: number;
   private readonly summaryHardLimit: number;
   private readonly activeFilter: SerializedFilterState | null;
-  private readonly filterSchemas: Set<string> | null;  // lowercased schema names from active filter
+  private readonly filterSchemas: Set<string> | null;  // lowercased schema names from active filter — applied as BFS boundary
+  private readonly scopeDirection: 'upstream' | 'downstream' | 'bidirectional';
 
   // Lookup caches (built once in constructor)
   private readonly nodeMap: Map<string, LineageNode>;
@@ -147,6 +150,7 @@ export class BlackboardState {
     this.filterSchemas = this.activeFilter?.schemas?.length
       ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
       : null;
+    this.scopeDirection = config?.scopeDirection ?? 'bidirectional';
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -185,11 +189,27 @@ export class BlackboardState {
 
     this.originNodeId = originNode.id;
 
-    // Compute scope via bidirectional BFS (Type 1 has no fixed direction)
+    // Compute scope — direction-aware BFS + filter boundary
     const scopeIds = this.bfsScope(originNode.id);
     this.scopeNodeIds = scopeIds;
 
-    // Seed agenda with BFS-ordered nodes (origin first, then neighbors breadth-first)
+    // Hard gate: bidirectional BFS on a large scope requires explicit direction declaration.
+    // Without a direction the AI gets a huge noisy map (e.g. 661 nodes for a central table).
+    // scopeNodeIds is set above so filterBreakdown is available.
+    if (scopeIds.size > SCOPE_DIRECTION_GATE && this.scopeDirection === 'bidirectional') {
+      this._status = 'error';
+      const bd = this.filterBreakdown;
+      this.log('warn', `BB INIT rejected — scope_too_broad | scope=${scopeIds.size} | direction=bidirectional`);
+      return {
+        error: 'scope_too_broad',
+        scope_size: scopeIds.size,
+        in_filter: bd.in_filter,
+        outside_filter: bd.outside_filter,
+        hint: `Scope is ${scopeIds.size} nodes (bidirectional BFS). Resubmit start_exploration with scope_direction='upstream' for source/ancestor queries or scope_direction='downstream' for impact/consumer queries.`,
+      } as unknown as ReturnType<BlackboardState['init']>;
+    }
+
+    // Seed agenda with BFS-ordered nodes, respecting direction
     this.seedAgenda(originNode.id);
 
     // Mark origin as visited (it's implicitly noted as the starting point)
@@ -199,8 +219,8 @@ export class BlackboardState {
     const map = this.buildMapOverview();
 
     this._status = 'initialized';
-    this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
-    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
+    this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
+    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
 
     return {
       ok: true,
@@ -567,6 +587,9 @@ export class BlackboardState {
   /** Bidirectional BFS from origin to compute reachable scope.
    *  Uses graphology Graph (built from model.edges — filtered to selected schemas).
    *  neighborIndex is NOT used here — it contains cross-schema phantom edges. */
+  /** BFS scope from startId using scopeDirection (upstream/downstream/bidirectional).
+   *  Filter constraint: if filterSchemas is set, nodes outside the filter schemas are skipped —
+   *  the user's active GUI filter acts as a BFS boundary, not just a reporting tag. */
   private bfsScope(startId: string): Set<string> {
     if (!this.graph.hasNode(startId)) return new Set([startId]);
     const seen = new Set<string>([startId]);
@@ -574,25 +597,37 @@ export class BlackboardState {
     let idx = 0;
     while (idx < queue.length) {
       const id = queue[idx++];
-      for (const nid of this.graph.neighbors(id)) {
-        if (!seen.has(nid)) {
-          seen.add(nid);
-          queue.push(nid);
-          if (seen.size >= BFS_SCOPE_CAP) return seen;
+      const neighbors =
+        this.scopeDirection === 'upstream'   ? this.graph.inNeighbors(id) :
+        this.scopeDirection === 'downstream' ? this.graph.outNeighbors(id) :
+                                               this.graph.neighbors(id);
+      for (const nid of neighbors) {
+        if (seen.has(nid)) continue;
+        if (this.filterSchemas) {
+          const schema = (this.nodeMap.get(nid)?.schema ?? '').toLowerCase();
+          if (!this.filterSchemas.has(schema)) continue;
         }
+        seen.add(nid);
+        queue.push(nid);
+        if (seen.size >= BFS_SCOPE_CAP) return seen;
       }
     }
     return seen;
   }
 
-  /** Seed agenda with BFS-ordered nodes from origin (bidirectional). */
+  /** Seed agenda with BFS-ordered nodes from origin, respecting scopeDirection. */
   private seedAgenda(originId: string): void {
     if (!this.graph.hasNode(originId)) return;
     const queue: Array<{ id: string; depth: number }> = [];
     const seen = new Set<string>([originId]);
 
+    const neighborFn = (id: string): string[] =>
+      this.scopeDirection === 'upstream'   ? this.graph.inNeighbors(id) :
+      this.scopeDirection === 'downstream' ? this.graph.outNeighbors(id) :
+                                             this.graph.neighbors(id);
+
     // Start with origin's neighbors
-    for (const nid of this.graph.neighbors(originId)) {
+    for (const nid of neighborFn(originId)) {
       if (!seen.has(nid) && this.scopeNodeIds.has(nid)) {
         seen.add(nid);
         queue.push({ id: nid, depth: 1 });
@@ -610,7 +645,7 @@ export class BlackboardState {
       this.agenda.push({ nodeId: id, priority: 0, depth });
       this.agendaIds.add(id);
 
-      for (const nid of this.graph.neighbors(id)) {
+      for (const nid of neighborFn(id)) {
         if (!seen.has(nid) && this.scopeNodeIds.has(nid)) {
           seen.add(nid);
           queue.push({ id: nid, depth: depth + 1 });

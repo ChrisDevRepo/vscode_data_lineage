@@ -39,7 +39,7 @@ import {
   addFilterProfile, deleteFilterProfile, isValidProject,
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
-import { logInfo, logDebug, logWarn, logError, logTrace, trunc } from './utils/log';
+import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
 import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
 
@@ -64,7 +64,7 @@ let _columnTraceState: ColumnTraceState | null = null; // per-request trace stat
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
 
 /** Stored result graph — populated by CT/BB/BFS/inline, consumed by enrich_view. */
-type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs';
+type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs' | 'origin';
 interface ResultGraph {
   nodeIds: string[];
   edges: [string, string, string][];
@@ -87,19 +87,29 @@ function buildResultGraphFromBfs(
   return { nodeIds: nodes.map(n => n.id), edges: edges ?? [], verdicts, source };
 }
 
-/** Store BB result graph for enrich_view — shared by normal completion and early completion. */
-function storeBbResultGraph(fullResult: { notes: Array<{ nodeId: string; summary: string }>; edges: [string, string, string][] }) {
-  const noteNodeIds = fullResult.notes.map(n => n.nodeId);
+/** Store BB result graph for enrich_view — shared by normal completion and early completion.
+ *  Uses fullNodes (origin + noted + bridges) so the origin node is always present and
+ *  edges with SP→origin endpoints are never dangling. */
+function storeBbResultGraph(fullResult: {
+  notes: Array<{ nodeId: string; summary: string }>;
+  fullNodes: Array<Record<string, unknown>>;
+  edges: [string, string, string][];
+}) {
   const v: Record<string, NodeRole> = {};
-  for (const id of noteNodeIds) v[id] = 'noted';
+  for (const n of fullResult.fullNodes) {
+    const id = n.id as string;
+    v[id] = ((n.role as string | undefined) ?? 'noted') as NodeRole;
+  }
+  const nodeIds = fullResult.fullNodes.map(n => n.id as string);
+  const extraCount = nodeIds.length - fullResult.notes.length;
   _resultGraph = {
-    nodeIds: noteNodeIds,
+    nodeIds,
     edges: fullResult.edges,
     verdicts: v,
     source: 'blackboard',
     notes: fullResult.notes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
   };
-  logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${noteNodeIds.length} nodes, ${fullResult.edges.length} edges, ${fullResult.notes.length} notes`);
+  logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${nodeIds.length} nodes (${fullResult.notes.length} noted, ${extraCount} origin+bridges), ${fullResult.edges.length} edges`);
 }
 
 let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage — populated on model load, cleared on reload
@@ -307,7 +317,7 @@ export function activate(context: vscode.ExtensionContext) {
   function logAndReturn(toolName: string, data: object): vscode.LanguageModelToolResult {
     const json = JSON.stringify(data);
     const chars = json.length;
-    const preview = trunc(json, 300);
+    const preview = trunc(sanitizeForLog(json), 300);
     const isError = 'error' in data || ('success' in data && !(data as any).success);
     if (isError) logWarn(outputChannel, 'AI', `${toolName}: ${preview}`);
     logDebug(outputChannel, 'AI', `${toolName} → ${chars} chars: ${preview}`);
@@ -724,17 +734,20 @@ export function activate(context: vscode.ExtensionContext) {
           const g = requireGraph();
           const inputErr = validateToolInput(options.input, { question: 'string', origin: 'string' });
           if (inputErr) { logWarn(outputChannel, 'AI', `start_exploration: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
-          const input = options.input as { question?: string; origin?: string };
+          const input = options.input as { question?: string; origin?: string; scope_direction?: string };
           const question = input.question ?? '';
           const origin = input.origin ?? '';
-          logInfo(outputChannel, 'AI', `start_exploration: origin=${origin}, question="${trunc(question, 200)}"`);
+          const scopeDirection = (['upstream', 'downstream', 'bidirectional'].includes(input.scope_direction ?? '')
+            ? input.scope_direction as 'upstream' | 'downstream' | 'bidirectional'
+            : 'bidirectional');
+          logInfo(outputChannel, 'AI', `start_exploration: origin=${origin}, direction=${scopeDirection}, question="${trunc(question, 200)}"`);
 
           _blackboardState = new BlackboardState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[BB] ${msg}`);
             else if (level === 'trace') logTrace(outputChannel, 'AI', `[BB] ${msg}`);
             else logDebug(outputChannel, 'AI', `[BB] ${msg}`);
-          }, { activeFilter: _aiFilter }, _columnStore);
+          }, { activeFilter: _aiFilter, scopeDirection }, _columnStore);
 
           const initResult = _blackboardState.init({ question, origin });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);

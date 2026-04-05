@@ -13,15 +13,15 @@
  */
 
 import type Graph from 'graphology';
-import { bfsFromNode } from 'graphology-traversal';
 
 // ─── BFS Reachability ────────────────────────────────────────────────────────
 
 /**
- * BFS reachability from startId using graphology bfsFromNode.
- * Stops each branch at blocked nodes (removedSet or candidateId) and out-of-scope nodes.
- * Mode 'mixed' = undirected traversal: correct for scope/reachability regardless of edge direction.
- * Cycle-safe: bfsFromNode tracks visited nodes internally.
+ * BFS reachability from startId — undirected (graph.neighbors) to match bfsScope/seedAgenda.
+ * The scope is built with undirected traversal so reachability checks must use the same strategy:
+ * upstream source tables are connected via inbound edges only and would be falsely unreachable
+ * if we used directed (outbound-only) traversal.
+ * Cycle-safe: reachable set guards against revisits.
  * Exported so cascadePrune can reuse — single BFS implementation for the entire SM layer.
  */
 export function bfsReachable(
@@ -31,13 +31,20 @@ export function bfsReachable(
   candidateId?: string,
   scope?: ReadonlySet<string>,
 ): Set<string> {
-  const reachable = new Set<string>();
-  bfsFromNode(graph, startId, (node) => {
-    if (removedSet.has(node) || node === candidateId || (scope && !scope.has(node))) {
-      return true; // stop this branch — do not traverse through blocked/out-of-scope nodes
+  if (!graph.hasNode(startId)) return new Set();
+  const reachable = new Set<string>([startId]);
+  const queue = [startId];
+  let idx = 0;
+  while (idx < queue.length) {
+    const id = queue[idx++];
+    for (const nid of graph.neighbors(id)) {
+      if (reachable.has(nid)) continue;
+      if (removedSet.has(nid) || nid === candidateId) continue;
+      if (scope && !scope.has(nid)) continue;
+      reachable.add(nid);
+      queue.push(nid);
     }
-    reachable.add(node);
-  }, { mode: 'directed' });
+  }
   return reachable;
 }
 
