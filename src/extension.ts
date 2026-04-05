@@ -71,6 +71,8 @@ interface ResultGraph {
   verdicts: Record<string, NodeRole>;
   source: 'column_trace' | 'blackboard' | 'bfs_trace' | 'inline';
   notes?: Array<{ nodeId: string; summary: string }>;  // BB/CT note summaries for enrich_view auto-populate
+  suggested_badges?: Array<{ node_id: string; text: string }>;  // BB: pre-built from per-hop badge_label
+  suggested_notes?: Array<{ node_id: string; text: string }>;   // BB: pre-built from per-hop note_caption
 }
 let _resultGraph: ResultGraph | null = null;
 
@@ -94,6 +96,8 @@ function storeBbResultGraph(fullResult: {
   notes: Array<{ nodeId: string; summary: string }>;
   fullNodes: Array<Record<string, unknown>>;
   edges: [string, string, string][];
+  suggested_badges?: Array<{ node_id: string; text: string }>;
+  suggested_notes?: Array<{ node_id: string; text: string }>;
 }) {
   const v: Record<string, NodeRole> = {};
   for (const n of fullResult.fullNodes) {
@@ -108,6 +112,8 @@ function storeBbResultGraph(fullResult: {
     verdicts: v,
     source: 'blackboard',
     notes: fullResult.notes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
+    suggested_badges: fullResult.suggested_badges,
+    suggested_notes: fullResult.suggested_notes,
   };
   logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${nodeIds.length} nodes (${fullResult.notes.length} noted, ${extraCount} origin+bridges), ${fullResult.edges.length} edges`);
 }
@@ -529,6 +535,21 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
 
+          // ── 1c. Auto-complete badges from BB suggested_badges for un-badged noted nodes ──
+          if (_resultGraph?.suggested_badges?.length) {
+            const userBadgeIds = new Set((rawInput.badges ?? []).map(b => (b as any).node_id as string));
+            const autoBadges: Array<{ node_id: string; text: string }> = [];
+            for (const sb of _resultGraph.suggested_badges) {
+              if (!userBadgeIds.has(sb.node_id) && sb.text) {
+                autoBadges.push(sb);
+              }
+            }
+            if (autoBadges.length > 0) {
+              rawInput.badges = [...(rawInput.badges ?? []), ...autoBadges];
+              logDebug(outputChannel, 'AI', `enrich_view: auto-completed ${autoBadges.length} badge(s) from SM suggested_badges`);
+            }
+          }
+
           // ── 2. Auto-fix orphaned badges/notes/highlights ──
           const { input, fixes } = autoFixEnrichView(m, rawInput, graphSource !== 'fallback' ? resolvedNodeIds : undefined);
           if (fixes.length > 0) {
@@ -834,6 +855,8 @@ export function activate(context: vscode.ExtensionContext) {
             questions?: Array<{ node_id?: string; question?: string }>;
             verdict?: string;
             prune_ids?: string[];
+            badge_label?: string;
+            note_caption?: string;
           };
           const focusNodeId = input.focus_node_id ?? '';
           const findings = input.findings ?? '';
@@ -857,6 +880,8 @@ export function activate(context: vscode.ExtensionContext) {
             verdict,
             pruneIds,
             complete,
+            badge_label: input.badge_label,
+            note_caption: input.note_caption,
           });
           if ('error' in submitResult) return logAndReturn('submit_findings', submitResult);
 
@@ -1446,16 +1471,15 @@ export function activate(context: vscode.ExtensionContext) {
                 '1. Read the DDL/columns carefully\n' +
                 '2. Record detailed findings (what you discovered — business rules, transforms, patterns) (~500 chars)\n' +
                 '3. Write a one-line summary (~100 chars) — shown in your working memory for ALL future hops\n' +
-                '4. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
-                '5. prune_ids: neighbor IDs to prune (utility UDFs, unrelated objects) — cascades downstream\n\n' +
-                'PROGRESS: After each submit_findings call, before calling the next tool, emit ONE line: ' +
-                '"Hop N · [node_name] → verdict · ~Y nodes remaining" (e.g. "Hop 3 · spCadenceRule_RATE → relevant · ~12 remaining"). ' +
-                'This keeps the user informed while you work.\n\n' +
-                'INVALID NODES: working_memory.invalid_nodes lists node IDs that were rejected (not_in_model / out_of_scope / not_in_filter). ' +
-                'Never ask questions about not_in_model nodes — they do not exist. For out_of_scope nodes, use get_object_detail instead.\n\n' +
-                'EARLY COMPLETION: Set complete:true in submit_findings when you have enough findings to answer the question. ' +
-                'Do NOT try to drain the entire agenda — prune aggressively, focus on the most relevant nodes, and complete early.\n' +
-                'If scope_guidance is present in the init response, check estimated_max_hops to plan your exploration budget.\n\n' +
+                '4. badge_label (2-4 words) — step label for the enriched view, e.g. "4 INIT" or "7 Rate Impute"\n' +
+                '5. note_caption (1 line) — what this node does in this flow, e.g. "Entry point — TRUNCATEs and reloads from staging"\n' +
+                '6. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
+                '7. prune_ids: neighbor IDs to prune (utility UDFs, unrelated objects) — cascades downstream\n\n' +
+                'PROGRESS: After each submit_findings call, emit ONE line: ' +
+                '"Hop N · [node_name] → verdict · ~Y nodes remaining".\n\n' +
+                'INVALID NODES: working_memory.invalid_nodes lists rejected node IDs. ' +
+                'Never ask questions about not_in_model nodes. For out_of_scope nodes, use get_object_detail instead.\n\n' +
+                'EARLY COMPLETION: Set complete:true when you can answer the question. Visit all relevant nodes — do not skip nodes to finish faster.\n\n' +
                 'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
                 'The current_task field contains your own question from a previous hop — answer it.';
               messages.push(vscode.LanguageModelChatMessage.User(bbPrompt));

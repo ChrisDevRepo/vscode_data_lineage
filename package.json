@@ -984,7 +984,15 @@
             },
             "complete": {
               "type": "boolean",
-              "description": "Set true when you have enough findings to answer the user's question. Triggers early completion — your current finding is processed, then the full result (notes, graph, stats) is returned. Use this instead of draining the entire agenda."
+              "description": "Set true when you have enough findings to answer the user's question. Triggers early completion — your current finding is processed, then the full result (notes, graph, stats) is returned."
+            },
+            "badge_label": {
+              "type": "string",
+              "description": "Short step label for the enriched view badge (2-4 words), e.g. '4 INIT' or '7 Rate Impute'. The result includes suggested_badges built from these labels."
+            },
+            "note_caption": {
+              "type": "string",
+              "description": "One-line caption for the enriched view note — what this node does in this flow. e.g. 'Entry point — TRUNCATEs and reloads from staging'. The result includes suggested_notes built from these captions."
             }
           },
           "required": ["focus_node_id", "findings", "summary", "verdict"]

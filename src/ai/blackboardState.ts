@@ -35,7 +35,8 @@ export interface BlackboardNote {
   findings: string;          // full detailed analysis (long-term memory slot)
   summary: string;           // one-line digest (working memory)
   tags?: string[];           // optional categorization
-  ddl?: string;              // source DDL — present on low-confidence results for AI re-verification
+  badge_label?: string;      // "4 INIT" — short step label for enrich_view badge
+  note_caption?: string;     // "Entry point — TRUNCATEs from staging" — 1-line caption for enrich_view note
 }
 
 export interface AgendaEntry {
@@ -82,7 +83,6 @@ interface WorkingMemory {
   remaining_agenda: Array<{ id: string; name: string; type: string; priority: number }>;
   invalid_nodes?: Array<{ id: string; reason: 'not_in_model' | 'out_of_scope' | 'not_in_filter' }>;
   checklist: { current_hop: number; noted: number; total: number; open: number; coveragePct: number };
-  hint?: string;
 }
 
 interface MapOverview {
@@ -97,7 +97,6 @@ const DEFAULT_FINDINGS_HARD_LIMIT = 5000;
 const DEFAULT_SUMMARY_HARD_LIMIT = 500;
 const BFS_SCOPE_CAP = 10_000;
 const SCOPE_DIRECTION_GATE = 200;  // bidirectional scope above this requires explicit direction
-const COVERAGE_HINT_THRESHOLD = 80;  // % — suggest finishing exploration above this
 const CASCADE_REJECT_THRESHOLD = 0.5;  // reject prune if cascade removes >50% of remaining agenda
 
 // ─── Class ─────────────────────────────────────────────────────────────────────
@@ -134,7 +133,6 @@ export class BlackboardState {
   private currentFocusNodeId: string | null = null;
   private hopCount = 0;
   private removedSet = new Set<string>();  // pruned + cascade-removed nodes
-  private dimmedNodes = new Set<string>();  // direct neighbors AI tried to prune — kept in graph at reduced opacity
   private invalidNodeIds = new Map<string, 'not_in_model' | 'out_of_scope' | 'not_in_filter'>();
 
   constructor(
@@ -180,7 +178,6 @@ export class BlackboardState {
     this.currentFocusNodeId = null;
     this.hopCount = 0;
     this.removedSet.clear();
-    this.dimmedNodes.clear();
     this.invalidNodeIds.clear();
     this._status = 'created';
 
@@ -244,7 +241,7 @@ export class BlackboardState {
 
   getHopContext():
     | { bb_mode: 'exploring'; hop: number; focus_node: Record<string, unknown>;
-        cascade_if_irrelevant: number; neighbors: HopNeighbor[];
+        neighbors: HopNeighbor[];
         current_task: string; working_memory: WorkingMemory;
         agenda_remaining: number }
     | { done: true; nodes_outside_scope?: number; hint?: string }
@@ -264,12 +261,6 @@ export class BlackboardState {
         this._status = 'complete';
         const outsideScope = this.scopeNodeIds.size - this.visited.size - this.removedSet.size;
         this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.notes.size} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
-        // Safety check: mandatory direct neighbors still unresolved (cascade-removed without being visited)
-        const unresolved = this.getUnresolvedMandatoryNodes();
-        if (unresolved.length > 0) {
-          const names = unresolved.map(id => this.nodeMap.get(id)?.name ?? id);
-          this.log('warn', `BB COMPLETE | mandatory nodes unresolved after agenda exhaustion: [${names.join(', ')}]`);
-        }
         return {
           done: true,
           ...(outsideScope > 0 && {
@@ -307,17 +298,10 @@ export class BlackboardState {
       this.log('trace', `BB Hop ${this.hopCount} remaining | [${this.agenda.map(e => this.nodeMap.get(e.nodeId)?.name ?? e.nodeId).join(', ')}]`);
     }
 
-    // Cascade preview: show consequence of marking this node irrelevant
-    const cascadePreview = this.countCascadeIfIrrelevant(entry.nodeId);
-    if (cascadePreview > 0) {
-      this.log('debug', `BB Hop ${this.hopCount} cascade preview | if irrelevant → ${cascadePreview} nodes would be pruned`);
-    }
-
     return {
       bb_mode: 'exploring',
       hop: this.hopCount,
       focus_node: focusNode,
-      cascade_if_irrelevant: cascadePreview,
       neighbors,
       current_task: currentTask,
       working_memory: workingMemory,
@@ -336,11 +320,12 @@ export class BlackboardState {
     verdict: 'relevant' | 'noted' | 'irrelevant';
     pruneIds?: string[];
     complete?: boolean;
+    badge_label?: string;
+    note_caption?: string;
   }): { ok: true; advanced: number; agendaSize: number; pruned?: number;
         rejected_prune_ids?: Array<{ id: string; reason: string }>;
         invalid_questions?: Array<{ node_id: string; question: string; reason: string }>;
-        early_complete?: ReturnType<BlackboardState['getResult']>;
-        complete_rejected?: { reason: string; nodes: Array<{ id: string; name: string; type: string }>; instruction: string } }
+        early_complete?: ReturnType<BlackboardState['getResult']> }
      | { error: string; limit?: number; hint?: string } {
 
     if (this._status !== 'awaiting_findings') {
@@ -391,6 +376,8 @@ export class BlackboardState {
         findings: verdict === 'irrelevant' ? summary : findings,
         summary,
         tags,
+        badge_label: params.badge_label,
+        note_caption: params.note_caption,
       });
     }
 
@@ -447,14 +434,10 @@ export class BlackboardState {
         if (this.visited.has(pruneId)) continue;
         if (this.removedSet.has(pruneId)) continue;
 
-        // Guard 0: direct neighbor of origin → dim instead of cascade-prune
-        // Preserves graph integrity: all 1-hop neighbors stay visible (possibly dimmed).
-        // AI's assessment is respected (lower relevance) but the node is never silently removed.
+        // Guard 0: direct neighbor of origin cannot be pruned — reject
         if (originDirectNeighborIds.has(pruneId) && this.scopeNodeIds.has(pruneId)) {
-          this.dimmedNodes.add(pruneId);
-          this.agenda = this.agenda.filter(e => e.nodeId !== pruneId);
-          this.agendaIds.delete(pruneId);
-          this.log('info', `BB PRUNE → DIM | ${pruneId} | direct neighbor of origin — kept in graph at reduced opacity`);
+          rejectedPrunes.push({ id: pruneId, reason: 'Direct neighbor of origin — cannot be pruned. Visit and analyze it instead.' });
+          this.log('info', `BB PRUNE REJECTED | ${pruneId} | direct neighbor of origin`);
           continue;
         }
 
@@ -513,39 +496,10 @@ export class BlackboardState {
       ...(invalidQuestions.length > 0 && { invalid_questions: invalidQuestions }),
     };
 
-    // Early completion: AI signals it has enough findings to answer the question.
-    // SM acceptance condition (BFS frontier + MemGPT sufficiency):
-    // All direct neighbors of origin must have a verdict before terminal state is valid.
-    // This prevents blind early-complete when working memory has lost the scope map via sliding window compaction.
+    // Early completion: AI signals it has enough findings. Trust the AI — accept immediately.
     if (params.complete) {
-      const unresolved = this.getUnresolvedMandatoryNodes();
-      if (unresolved.length > 0) {
-        // Reject early complete — reinject unvisited direct neighbors as mandatory (priority=3)
-        for (const id of unresolved) {
-          const existing = this.agenda.find(e => e.nodeId === id);
-          if (existing) {
-            existing.priority = 3;
-          } else {
-            this.agenda.push({ nodeId: id, priority: 3, depth: 1 });
-            this.agendaIds.add(id);
-          }
-        }
-        const unresolvedNames = unresolved.map(id => this.nodeMap.get(id)?.name ?? id);
-        this.log('info', `BB COMPLETE REJECTED | unvisited direct neighbors: [${unresolvedNames.join(', ')}] — reinjected as mandatory, continuing`);
-        // Return structured rejection — NOT a warning string (warnings are ignored).
-        // AI reads complete_rejected.nodes to understand what it must visit before complete is accepted.
-        return {
-          ...base,
-          complete_rejected: {
-            reason: 'direct_neighbors_unvisited',
-            nodes: unresolved.map(id => ({ id, name: this.nodeMap.get(id)?.name ?? id, type: this.nodeMap.get(id)?.type ?? '?' })),
-            instruction: 'Visit or declare irrelevant each of these direct neighbors before setting complete:true',
-          },
-        };
-      } else {
-        this.log('info', `BB EARLY COMPLETE | notes=${this.notes.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length} | all direct neighbors resolved`);
-        return { ...base, early_complete: this.getResult() };
-      }
+      this.log('info', `BB EARLY COMPLETE | notes=${this.notes.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
+      return { ...base, early_complete: this.getResult() };
     }
 
     return base;
@@ -559,9 +513,9 @@ export class BlackboardState {
     notes: BlackboardNote[];
     fullNodes: Array<Record<string, unknown>>;
     edges: Array<[string, string, string]>;
+    suggested_badges: Array<{ node_id: string; text: string }>;
+    suggested_notes: Array<{ node_id: string; text: string }>;
     skipped_nodes?: Array<{ nodeId: string; name: string; type: string; unanswered_question?: string }>;
-    dimmed_nodes?: Array<{ nodeId: string; name: string; type: string }>;
-    warning?: string;
     stats: {
       hops: number; noted: number; scopeSize: number; coveragePct: number;
       questionsAsked: number; questionsAnswered: number;
@@ -575,24 +529,16 @@ export class BlackboardState {
 
     this._status = 'complete';
 
-    // Low confidence: early completion (agenda not empty) or coverage below threshold.
-    // Co-locate DDL with findings so AI can re-verify analysis during final synthesis.
-    const lowConfidence = this.agenda.length > 0 || this.coveragePct < 80;
-
-    const allNotes = [...this.notes.values()].map(note => {
-      if (!lowConfidence) return note;
-      const node = this.nodeMap.get(note.nodeId);
-      if (!node || !SCRIPT_TYPES.has(node.type)) return note;
-      const ddl = getNodeDdl(note.nodeId, this.nodeMap, this.store ?? undefined);
-      return ddl ? { ...note, ddl } : note;
-    });
+    // Findings ARE the distilled DDL — no DDL re-inclusion.
+    // The AI already analyzed DDL per hop. Re-sending it causes attention dilution at synthesis.
+    const allNotes = [...this.notes.values()];
     const notedIds = new Set(this.notes.keys());
 
     // anchoredIds = noted nodes + origin — ensures hub/star edges (SP→origin) are included
     // and bridge injection always has a connected anchor even when no noted-to-noted edges exist
     const anchoredIds = new Set([...notedIds, this.originNodeId!]);
 
-    // Full nodes: origin first (role='origin'), then noted nodes with DDL/columns
+    // Full nodes: origin first (role='origin'), then noted nodes — NO DDL (findings are sufficient)
     const fullNodes: Array<Record<string, unknown>> = [];
     const originNode = this.nodeMap.get(this.originNodeId!);
     if (originNode) {
@@ -604,10 +550,6 @@ export class BlackboardState {
       const base: Record<string, unknown> = {
         id: node.id, s: node.schema, n: node.name, t: node.type,
       };
-      if (SCRIPT_TYPES.has(node.type)) {
-        const ddl = getNodeDdl(node.id, this.nodeMap, this.store ?? undefined);
-        if (ddl) base.ddl = ddl;
-      }
       const cols = getNodeColumns(node.id, this.nodeMap, this.store ?? undefined);
       if (cols?.length) {
         base.cols = cols.map(c => presentColumnCompact(c));
@@ -616,7 +558,6 @@ export class BlackboardState {
     }
 
     // Edges: include all edges where both endpoints are in anchoredIds (noted nodes + origin)
-    // This captures SP→origin edges in hub/star topologies that notedIds-only filtering dropped
     const edges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
       if (anchoredIds.has(e.source) && anchoredIds.has(e.target)) {
@@ -625,7 +566,6 @@ export class BlackboardState {
     }
 
     // Bridge injection: reconnect orphan noted nodes via shortest path through graph
-    // anchoredIds ensures origin serves as anchor — edgeParticipants is never empty
     const bridgeResult = findBridgeNodes(this.graph, anchoredIds, edges, this.edgeTypeMap);
     if (bridgeResult.bridgeNodes.length > 0) {
       for (const bn of bridgeResult.bridgeNodes) {
@@ -634,6 +574,18 @@ export class BlackboardState {
       edges.push(...bridgeResult.bridgeEdges);
       this.log('info', `BB BRIDGE | orphans=${bridgeResult.orphanCount} | reconnected=${bridgeResult.reconnectedCount} | bridges=${bridgeResult.bridgeNodes.length} nodes, ${bridgeResult.bridgeEdges.length} edges`);
     }
+
+    // Map-Reduce "reduce" step: assemble suggested output from per-hop fragments.
+    // AI wrote badge_label/note_caption during exploration when understanding was fresh.
+    // Fallback: auto-generate from hop number + node name / summary.
+    const suggested_badges = allNotes.map((n, i) => ({
+      node_id: n.nodeId,
+      text: n.badge_label ?? `${i + 1} ${n.name}`,
+    }));
+    const suggested_notes = allNotes.map(n => ({
+      node_id: n.nodeId,
+      text: n.note_caption ?? n.summary,
+    }));
 
     const questionsAsked = this.questionLog.length;
     const questionsAnswered = this.questionLog.filter(q => q.answered).length;
@@ -654,27 +606,15 @@ export class BlackboardState {
       };
     });
 
-    // dimmed_nodes: direct neighbors AI requested to prune — kept in graph at reduced opacity
-    const dimmednodesList = [...this.dimmedNodes].map(id => {
-      const n = this.nodeMap.get(id);
-      return { nodeId: id, name: n?.name ?? id, type: n?.type ?? 'unknown' };
-    });
-
-    // warning: if mandatory direct neighbors were never resolved (edge case: cascade-removed without being visited)
-    const unresolved = this.getUnresolvedMandatoryNodes();
-    const warning = unresolved.length > 0
-      ? `Exploration ended with ${unresolved.length} direct neighbor(s) unresolved: [${unresolved.map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]. Increase ai.maxRounds or narrow the question scope.`
-      : undefined;
-
     return {
       status: 'complete',
       question: this.userQuestion,
       notes: allNotes,
       fullNodes,
       edges,
+      suggested_badges,
+      suggested_notes,
       ...(skippedNodes.length > 0 ? { skipped_nodes: skippedNodes } : {}),
-      ...(dimmednodesList.length > 0 ? { dimmed_nodes: dimmednodesList } : {}),
-      ...(warning ? { warning } : {}),
       stats: {
         hops: this.hopCount,
         noted: allNotes.length,
@@ -893,22 +833,6 @@ export class BlackboardState {
     return neighbors;
   }
 
-  /** Direct neighbors of origin that have no verdict yet (not visited, not removed, not dimmed).
-   *  These are the "mandatory" nodes — the SM blocks early complete until all are resolved. */
-  private getUnresolvedMandatoryNodes(): string[] {
-    if (!this.originNodeId) return [];
-    const directNeighbors = [
-      ...(this.scopeDirection !== 'downstream' ? this.graph.inNeighbors(this.originNodeId) : []),
-      ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
-    ];
-    return directNeighbors.filter(id =>
-      this.scopeNodeIds.has(id) &&
-      !this.visited.has(id) &&
-      !this.removedSet.has(id) &&
-      !this.dimmedNodes.has(id),
-    );
-  }
-
   private detectBoundary(nodeId: string): BoundaryFlag {
     const node = this.nodeMap.get(nodeId);
     if (!node) return 'external';
@@ -969,10 +893,6 @@ export class BlackboardState {
       wm.invalid_nodes = [...this.invalidNodeIds.entries()].map(([id, reason]) => ({ id, reason }));
     }
 
-    if (this.coveragePct >= COVERAGE_HINT_THRESHOLD) {
-      wm.hint = 'High coverage — consider finishing exploration if you have enough information.';
-    }
-
     return wm;
   }
 
@@ -1019,28 +939,6 @@ export class BlackboardState {
       this.log('debug', `BB cascadePrune: ${prunedId} | reachable=${reachable.size} | cascaded=${cascaded} agenda nodes removed`);
     }
     return cascaded;
-  }
-
-  /** Preview: how many agenda nodes would be cascade-removed if this node were pruned. */
-  countCascadeIfIrrelevant(nodeId: string): number {
-    // Simulate: temporarily add nodeId to removed, BFS, count unreachable agenda nodes
-    const tempRemoved = new Set(this.removedSet);
-    tempRemoved.add(nodeId);
-    const reachable = new Set<string>();
-    const queue = [this.originNodeId!];
-    reachable.add(this.originNodeId!);
-    let idx = 0;
-    while (idx < queue.length) {
-      const id = queue[idx++];
-      if (!this.graph.hasNode(id)) continue;
-      for (const nid of this.graph.neighbors(id)) {
-        if (!reachable.has(nid) && !tempRemoved.has(nid) && this.scopeNodeIds.has(nid)) {
-          reachable.add(nid);
-          queue.push(nid);
-        }
-      }
-    }
-    return this.agenda.filter(e => !reachable.has(e.nodeId)).length;
   }
 
   // ─── Scope reporting ────────────────────────────────────────────────────────

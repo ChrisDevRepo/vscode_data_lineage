@@ -17,7 +17,7 @@
 // ─── The single budget constant ─────────────────────────────────────────────
 
 /** Delivery mode gate: max estimated tokens for inline delivery. */
-export const INLINE_TOKEN_BUDGET = 10_000; // ~40K chars
+export const INLINE_TOKEN_BUDGET = 30_000; // ~120K chars — fits most scopes under 50 nodes
 
 // ─── Estimation ─────────────────────────────────────────────────────────────
 

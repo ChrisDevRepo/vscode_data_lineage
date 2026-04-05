@@ -36,11 +36,12 @@ description:
 
 badges:
   instruction: >
-    Numbered navigation anchors on 5-8 KEY nodes -- not every node.
+    Numbered navigation anchors on nodes you analyzed.
     Format: "1 Source", "3 FX Convert". Number = logical step in the description.
-    Only mark a node as a step if the description explains what happens there.
-    BAD: 14 steps on 14 nodes (every node marked).
-    GOOD: 6 steps on the nodes where business logic lives -- sources, key transforms, final target.
+    Badge every node that appears in your description -- do NOT skip analyzed nodes.
+    For large sets: group related nodes under shared step numbers (e.g. "5-8 Allocation Rules" covers 4 related SPs).
+    BAD: 3 badges on a 13-node exploration where you analyzed all 13.
+    GOOD: 8 steps covering all 13 analyzed nodes with grouping where appropriate.
 
 highlights:
   instruction: >
