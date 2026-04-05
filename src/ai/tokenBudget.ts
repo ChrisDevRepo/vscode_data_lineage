@@ -16,8 +16,21 @@
 
 // ─── The single budget constant ─────────────────────────────────────────────
 
-/** Delivery mode gate: max estimated tokens for inline delivery. */
+/** Delivery mode gate: max estimated tokens for inline delivery (default). */
 export const INLINE_TOKEN_BUDGET = 30_000; // ~120K chars — fits most scopes under 50 nodes
+
+/** Runtime override from VS Code setting `ai.inlineTokenBudget`. Set via setInlineBudgetOverride(). */
+let _budgetOverride: number | undefined;
+
+/** Set runtime budget override from VS Code config. Pass `undefined` to reset to default. */
+export function setInlineBudgetOverride(budget: number | undefined): void {
+  _budgetOverride = budget;
+}
+
+/** Effective budget: user override if set, otherwise INLINE_TOKEN_BUDGET. */
+export function getEffectiveBudget(): number {
+  return _budgetOverride ?? INLINE_TOKEN_BUDGET;
+}
 
 // ─── Estimation ─────────────────────────────────────────────────────────────
 
@@ -31,10 +44,11 @@ export function estimateTokens(chars: number): number {
  *
  * @param payloadChars  Character count of the payload (used for heuristic estimation)
  * @param precomputedTokens  Optional: accurate token count from countTokens() API. Overrides heuristic when available.
+ * @param budgetOverride  Optional: user-configured budget from `ai.inlineTokenBudget` setting. Falls back to INLINE_TOKEN_BUDGET.
  */
 export function shouldInline(payloadChars: number, precomputedTokens?: number): boolean {
   const tokens = precomputedTokens ?? estimateTokens(payloadChars);
-  return tokens <= INLINE_TOKEN_BUDGET;
+  return tokens <= getEffectiveBudget();
 }
 
 // ─── Context pressure ──────────────────────────────────────────────────────

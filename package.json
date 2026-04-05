@@ -425,6 +425,13 @@
             "maximum": 100,
             "markdownDescription": "Maximum tool-call rounds per `@lineage` request. Increase for complex explorations on deep graphs. Each round is one AI reasoning step + tool call."
           },
+          "dataLineageViz.ai.inlineTokenBudget": {
+            "type": "integer",
+            "default": 30000,
+            "minimum": 1000,
+            "maximum": 100000,
+            "markdownDescription": "Token budget for inline delivery. When estimated scope tokens are below this threshold, the AI delivers all data in one shot. Lower values force multi-hop state machine exploration (useful for testing). Default: `30000`."
+          },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
             "default": "",

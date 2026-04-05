@@ -6,12 +6,13 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  shouldInline, estimateTokens, INLINE_TOKEN_BUDGET,
+  shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView,
   validateToolInput,
   type EnrichViewInput,
 } from './ai/tools';
+import { setInlineBudgetOverride } from './ai/tokenBudget';
 import { ColumnTraceState } from './ai/columnTraceState';
 import { BlackboardState } from './ai/blackboardState';
 import { ColumnStore } from './engine/columnStore';
@@ -187,11 +188,25 @@ export function activate(context: vscode.ExtensionContext) {
     .then(t => { _aiOutputTemplates = t; })
     .catch(err => logWarn(outputChannel, 'Config', `Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)}`));
 
+  // Apply inline token budget override from user setting
+  const inlineBudgetCfg = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.inlineTokenBudget');
+  if (inlineBudgetCfg !== undefined && inlineBudgetCfg !== INLINE_TOKEN_BUDGET) {
+    setInlineBudgetOverride(inlineBudgetCfg);
+    logInfo(outputChannel, 'Config', `ai.inlineTokenBudget override: ${inlineBudgetCfg} tokens`);
+  }
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
       // Reload AI templates when setting changes (independent of panel)
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
         _aiOutputTemplates = await loadAiOutputTemplates(outputChannel, context.extensionUri);
+      }
+
+      // Update inline token budget override
+      if (e.affectsConfiguration('dataLineageViz.ai.inlineTokenBudget')) {
+        const budget = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.inlineTokenBudget');
+        setInlineBudgetOverride(budget !== undefined && budget !== INLINE_TOKEN_BUDGET ? budget : undefined);
+        logInfo(outputChannel, 'Config', `ai.inlineTokenBudget ${budget !== undefined && budget !== INLINE_TOKEN_BUDGET ? `override: ${budget}` : 'reset to default'}`);
       }
 
       if (!activePanel) return;
@@ -657,7 +672,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (scopeInline) {
             const originId = (initResult.originNode as { id?: string }).id;
             if (originId && g) {
-              logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${INLINE_TOKEN_BUDGET} → inline (all DDL at once)`);
+              logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → inline (all DDL at once)`);
               const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined) as Record<string, unknown>;
               _columnTraceState = null; // release state machine — not needed
               // Store result graph for enrich_view
@@ -677,7 +692,7 @@ export function activate(context: vscode.ExtensionContext) {
               });
             }
           } else {
-            logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${INLINE_TOKEN_BUDGET} → on_demand (state machine)`);
+            logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → on_demand (state machine)`);
           }
 
           const hopResult = _columnTraceState.getHopContext();

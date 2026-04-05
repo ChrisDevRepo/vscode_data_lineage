@@ -28,8 +28,8 @@ import {
 
 // ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
 
-import { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, REGEX_MAX_LENGTH } from './tokenBudget';
-export { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET } from './tokenBudget';
+import { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
+export { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget } from './tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
 const BFS_INLINE_NODE_CAP = 200;
@@ -209,7 +209,7 @@ export function getContext(
     ...(!isInline && model.parseStats && {
       unresolved_ref_count: model.parseStats.droppedRefs?.length ?? 0,
     }),
-    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars), budget: INLINE_TOKEN_BUDGET, decision: isInline ? 'inline' : 'on_demand' },
+    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars), budget: getEffectiveBudget(), decision: isInline ? 'inline' : 'on_demand' },
   };
 }
 
@@ -647,7 +647,7 @@ export function runBfsTrace(
       total_nodes: filteredIds.length,
       total_edges: allEdges.length,
       scope_ddl_chars: totalChars,
-      budget_tokens: INLINE_TOKEN_BUDGET,
+      budget_tokens: getEffectiveBudget(),
       ai_hint: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_exploration for hop-by-hop analysis. Do NOT ask the user — pick the best approach.',
       ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }),
     };
