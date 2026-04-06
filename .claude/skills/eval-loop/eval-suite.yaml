@@ -338,3 +338,252 @@ tests:
         - CadenceWorker
       max_hops: 10
       # Tests: complete_rejected guard — AI must visit CadenceWorker (direct neighbor) before complete:true
+
+  # ════════════════════════════════════════════════════════════
+  # Category A: Forced Rejection Recovery
+  # Agent is INSTRUCTED to send wrong data first, then self-correct
+  # ════════════════════════════════════════════════════════════
+
+  - id: rej-ct-focus
+    question: "Trace TotalRevenue upstream from FactSalesReport"
+    type: ct
+    subtype: forced_rejection
+    difficulty: easy
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [TotalRevenue]
+    direction: up
+    filter: null
+    agent_instruction: |
+      REJECTION TEST: On your FIRST submit_hop_analysis call, deliberately send
+      focus_node_id: "DELIBERATELY_WRONG". You WILL get a focus_mismatch error.
+      Read the hint, extract the correct ID, resubmit correctly.
+      Report BOTH the error response AND the successful retry.
+      IMPORTANT: After recovery, complete the FULL trace. Your final answer must be
+      complete — same quality as a non-rejection test. Do not stop early.
+    expected:
+      delivery: sm
+      errors_expected:
+        - focus_mismatch
+      must_self_correct: true
+      # Final answer must still be complete despite the rejection
+      nodes_required:
+        - spBuildSalesReport
+        - vwConsolidatedSales
+        - vwPriceList
+      column_renames_min: 3
+      max_hops: 15
+
+  - id: rej-ct-columns
+    question: "Trace TotalRevenue upstream from FactSalesReport"
+    type: ct
+    subtype: forced_rejection
+    difficulty: easy
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [TotalRevenue]
+    direction: up
+    filter: null
+    agent_instruction: |
+      REJECTION TEST: On your FIRST trace verdict, send columns_to_trace: ["FAKE_COLUMN"].
+      You WILL get an invalid_columns error with a valid[] list. Pick a correct column
+      from that list based on the DDL, then resubmit. Report BOTH error and retry.
+      IMPORTANT: After recovery, complete the FULL trace. Final answer must be complete.
+    expected:
+      delivery: sm
+      errors_expected:
+        - invalid_columns
+      must_self_correct: true
+      nodes_required:
+        - spBuildSalesReport
+        - vwConsolidatedSales
+      column_renames_min: 3
+      max_hops: 15
+
+  - id: rej-bb-focus
+    question: "List all objects that directly read or write the Employee table"
+    type: bb
+    subtype: forced_rejection
+    difficulty: easy
+    dacpac: test/AdventureWorks.dacpac
+    origin: "[HumanResources].[Employee]"
+    scope_direction: downstream
+    filter: null
+    agent_instruction: |
+      REJECTION TEST: On your FIRST submit_findings call, deliberately send
+      focus_node_id: "DELIBERATELY_WRONG". You WILL get a focus mismatch error.
+      Read the hint, extract the correct ID, resubmit correctly.
+      Report BOTH the error response AND the successful retry.
+      IMPORTANT: After recovery, complete the FULL analysis. Final answer must be complete.
+    expected:
+      delivery: inline
+      errors_expected:
+        - focus_mismatch
+      must_self_correct: true
+      nodes_required:
+        - uspUpdateEmployeeHireInfo
+        - vEmployee
+        - ufnGetContactInformation
+      max_hops: 5
+
+  # ════════════════════════════════════════════════════════════
+  # Category B: Prune Guard Tests
+  # Agent tries actions that SM guards should reject
+  # ════════════════════════════════════════════════════════════
+
+  - id: guard-bb-direct-neighbor
+    question: "Analyze business logic in the CadenceWorker pipeline"
+    type: bb
+    subtype: guard_test
+    difficulty: medium
+    dacpac: customer-data/dacpac/Synapse_Data_Warehouse.dacpac
+    origin: "[TRANSFORMATION_FINANCEHUB].[CadenceWorker]"
+    scope_direction: upstream
+    filter:
+      schemas:
+        - TRANSFORMATION_FINANCEHUB
+        - STAGING_FINANCEHUB
+        - dbo
+    agent_instruction: |
+      GUARD TEST: After receiving your first hop, attempt to prune_ids the FIRST
+      neighbor with scope=in_scope that is a DIRECT neighbor of the origin (CadenceWorker).
+      The SM should reject this with Guard 0: "Direct neighbor of origin".
+      Report the rejected_prune_ids response, then continue normally.
+    expected:
+      delivery: sm
+      errors_expected:
+        - rejected_prune_ids  # Guard 0: direct neighbor of origin
+      max_hops: 15
+
+  # ════════════════════════════════════════════════════════════
+  # Category C: Scope Tier Tests
+  # ════════════════════════════════════════════════════════════
+
+  - id: scope-bb-out-of-filter
+    question: "What staging tables feed into the CadenceWorker transformation?"
+    type: bb
+    subtype: scope_test
+    difficulty: medium
+    dacpac: customer-data/dacpac/Synapse_Data_Warehouse.dacpac
+    origin: "[TRANSFORMATION_FINANCEHUB].[CadenceWorker]"
+    scope_direction: upstream
+    filter:
+      schemas:
+        - TRANSFORMATION_FINANCEHUB
+        # STAGING_FINANCEHUB intentionally omitted
+    agent_instruction: |
+      SCOPE TEST: Look for neighbors with scope=available and in_filter=false.
+      These are staging tables outside the user's schema filter.
+      You should mention them in your text response — e.g. "STAGING_FINANCEHUB has relevant objects".
+      Do NOT silently ignore them. Report which out-of-filter objects you found.
+    expected:
+      delivery: sm
+      must_mention_out_of_filter: true  # AI text should reference STAGING_FINANCEHUB
+      nodes_required:
+        - spCadenceRule_INIT
+      nodes_forbidden:
+        - udfDivideAsDec
+      max_hops: 15
+
+  - id: scope-bb-external
+    question: "Trace TotalRevenue upstream from FactSalesReport"
+    type: bb
+    subtype: scope_test
+    difficulty: easy
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    scope_direction: upstream
+    filter: null
+    agent_instruction: |
+      SCOPE TEST: Look for neighbors with scope=external (referenced in DDL but not in model).
+      The ext schema objects should appear as external references. Note them in your findings.
+    expected:
+      delivery: inline  # small scope
+      max_hops: 20
+
+  # ════════════════════════════════════════════════════════════
+  # Category D: Output Quality Tests
+  # Agent must call enrich_view and report the full input
+  # ════════════════════════════════════════════════════════════
+
+  - id: output-bb-badges
+    question: "Analyze business logic in the CadenceWorker pipeline"
+    type: bb
+    subtype: output_quality
+    difficulty: hard
+    dacpac: customer-data/dacpac/Synapse_Data_Warehouse.dacpac
+    origin: "[TRANSFORMATION_FINANCEHUB].[CadenceWorker]"
+    scope_direction: upstream
+    filter:
+      schemas:
+        - TRANSFORMATION_FINANCEHUB
+        - STAGING_FINANCEHUB
+        - CONSUMPTION_FINANCEHUB
+        - dbo
+    agent_instruction: |
+      OUTPUT TEST: After exploration completes, call lineage_enrich_view with full output.
+      Report the EXACT enrich_view input as JSON including:
+      - name, summary (check: ≤300 chars)
+      - badges[] (check: 5-8 badges, format "N Label", each text ≤20 chars)
+      - notes[] (check: every badged node has a note)
+      - description (first 500 chars — check: has ## headings)
+      - highlight_groups[] (check: 2-3 nodes, ONE scheme: Lineage or Diagnostic)
+    expected:
+      delivery: sm
+      output_checks:
+        badges_min: 5
+        badges_max: 12
+        summary_max_chars: 300
+        description_has_headings: true
+      max_hops: 15
+
+  - id: output-ct-chain
+    question: "Trace TotalRevenue upstream from FactSalesReport"
+    type: ct
+    subtype: output_quality
+    difficulty: hard
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [TotalRevenue]
+    direction: up
+    filter: null
+    agent_instruction: |
+      OUTPUT TEST: After trace completes, report the full chain from the result.
+      For each chain entry report: nodeId, columnsIn, columnsOut.
+      Check: columnsOut of node N should match columnsIn of node N+1 (rename tracking).
+      Report any column_rejections from the result.
+    expected:
+      delivery: sm
+      chain_length_min: 10
+      column_renames_min: 3
+      max_hops: 15
+
+  # ════════════════════════════════════════════════════════════
+  # Category E: CT Column Rejection Behavior
+  # ════════════════════════════════════════════════════════════
+
+  - id: ct-always-reject
+    question: "Trace TotalRevenue upstream from FactSalesReport"
+    type: ct
+    subtype: forced_rejection
+    difficulty: medium
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [TotalRevenue]
+    direction: up
+    filter: null
+    agent_instruction: |
+      REJECTION LOOP TEST: On the first trace verdict, send columns_to_trace: ["WRONG1"].
+      You will get invalid_columns. Then send ["WRONG2"]. Another invalid_columns.
+      Then send ["WRONG3"]. STILL invalid_columns (SM never accepts garbage).
+      After 3 rejections, the hint says "prune/pass to continue".
+      Prune or pass this neighbor, then continue the trace normally.
+      Report ALL error responses and your recovery action.
+    expected:
+      delivery: sm
+      errors_expected:
+        - invalid_columns
+        - invalid_columns
+        - invalid_columns
+      must_self_correct: true  # AI must prune/pass after repeated rejection
+      max_hops: 15
