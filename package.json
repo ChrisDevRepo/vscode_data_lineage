@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -718,7 +718,7 @@
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
         "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, badges, and text annotations. The graph comes from a prior trace, BFS, or exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last trace/BFS/exploration. The node set is already stored — you provide presentation: name (mandatory), summary (mandatory), optional description/badges/notes/highlight_groups. Use prune_node_ids to remove irrelevant nodes. Only provide node_ids if you haven't run any trace or BFS (discovery-only mode). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers under ## headings with business logic. BAD: 14 badges on all nodes, essay description. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…'.",
+        "modelDescription": "Enrich the stored result graph from your last trace/exploration. Provide name and summary (both required). Label-section data contract: for each node group you want to describe, assign a semantic badge label and a matching section — badge.text is the join key, section.label must match exactly. System orders sections by data-flow depth and assembles ## headings with step numbers — do not write description when sections are provided. One badge label per logical group, as many groups as needed; not every node requires a badge. In section text, reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered badge text ('1 Source'), section label mismatched from badge, description instead of sections, generic notes. GOOD: 'Source' badge on raw tables + matching section explaining what those tables contain.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -740,7 +740,7 @@
             },
             "description": {
               "type": "string",
-              "description": "Optional structured answer — markdown with headings, formulas, column mappings, business logic."
+              "description": "Fallback only — used when sections[] is not provided. Structured markdown with ## headings."
             },
             "prune_node_ids": {
               "type": "array",
@@ -803,7 +803,7 @@
             },
             "badges": {
               "type": "array",
-              "description": "Plain text chips on nodes — label with step number and role (max 50)",
+              "description": "Semantic label chips on key nodes (5-8 max). Same label on multiple nodes groups them. System assigns step numbers — do NOT include numbers in text.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -813,11 +813,32 @@
                   "text": {
                     "type": "string",
                     "maxLength": 20,
-                    "description": "Badge text (e.g. '1 Source', '2 Load')"
+                    "description": "Semantic label only — no leading number (e.g. 'Source', 'ETL', 'Target'). System prepends step number."
                   }
                 },
                 "required": [
                   "node_id",
+                  "text"
+                ]
+              }
+            },
+            "sections": {
+              "type": "array",
+              "description": "Structured description — one entry per unique badge label. Each section explains what you found at those nodes: logic, patterns, issues, performance, column mappings. System orders by data-flow and assembles into ## headings. Reference other labels by name (e.g. 'reads from **Source**'), never by number.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "description": "Must exactly match a badge text value — this is the join key."
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Markdown content for this label group. Supported: **bold**, `code`, tables, $math$, ```math blocks. Explain detail: what the nodes do, why it matters, formulas, column mappings, issues found."
+                  }
+                },
+                "required": [
+                  "label",
                   "text"
                 ]
               }
@@ -902,7 +923,7 @@
         "toolReferenceName": "lineage_submit_hop_analysis",
         "displayName": "Submit Hop Analysis",
         "userDescription": "Submit column trace analysis for the current hop.",
-        "modelDescription": "Submit your analysis of the current hop and receive the next hop's data.\n\nInput:\n- focus_node_id: extract focus_node.id from the hop context (e.g. hop has focus_node: {id: \"[dbo].[X]\", ...} → send focus_node_id: \"[dbo].[X]\")\n- notes: free-form text — your findings for this focus node (what you observed in the DDL)\n- verdicts: array — per neighbor:\n  - neighbor_id: the id field from each neighbor in the neighbors list\n  - verdict: trace | prune | pass\n  - columns_to_trace: for trace — the INPUT column names to trace upstream (not the output column name)\n  - summary: one-line description of what happens at this node\n  - question: for trace — what to look for at this neighbor (specific, not vague)\n\nVerdicts:\n- trace: follow this path — neighbor carries the traced column or is relevant to the analysis\n- prune: cut this branch — neighbor and all descendants removed from the graph\n- pass: data passes through unchanged (staging table, simple view) — children queued automatically\n- revisit: re-expand a previously pruned node (listed in revisitable field, max 3 per trace)\n\nIMPORTANT — columns_to_trace must be INPUT columns:\n  BAD: SP computes ListPrice = CostPrice * (1+MarkupPct) → [ListPrice]\n  GOOD: → [CostPrice, MarkupPct]\n\nBAD question: \"check this node\"\nGOOD question: \"Does vwSalesData transform Amount or pass it through from staging?\"\n\nTrace only columns relevant to the user's question. If asked about cost and TotalRevenue = Qty * UnitPrice, trace [UnitPrice] and prune Qty.\n\nReturns: next hop context OR complete result with full chain when all paths exhausted.\nIf you receive focus_mismatch error: re-read the hop context and extract focus_node.id correctly.\nIf you receive invalid_columns error: re-read the DDL and correct the column name, then resubmit.",
+        "modelDescription": "Submit your analysis of the current hop and receive the next hop's data.\n\nInput:\n- focus_node_id: extract focus_node.id from the hop context (e.g. hop has focus_node: {id: \"[dbo].[X]\", ...} → send focus_node_id: \"[dbo].[X]\")\n- notes: free-form text — your findings for this focus node (what you observed in the DDL)\n- verdicts: array — per neighbor:\n  - neighbor_id: the id field from each neighbor in the neighbors list\n  - verdict: trace | prune | pass\n  - columns: for trace — the INPUT column names to track into this neighbor (not the output column name)\n  - summary: one-line description of what happens at this node\n  - question: for trace — what to look for at this neighbor (specific, not vague)\n\nVerdicts:\n- trace: follow this path — neighbor carries the traced column or is relevant to the analysis\n- prune: cut this branch — neighbor and all descendants removed from the graph\n- pass: data passes through unchanged (staging table, simple view) — children queued automatically\n- revisit: re-expand a previously pruned node (listed in revisitable field, max 3 per trace)\n\nIMPORTANT — columns must be INPUT columns:\n  BAD: SP computes ListPrice = CostPrice * (1+MarkupPct) → [ListPrice]\n  GOOD: → [CostPrice, MarkupPct]\n\nBAD question: \"check this node\"\nGOOD question: \"Does vwSalesData transform Amount or pass it through from staging?\"\n\nCOLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.\n\nReturns: next hop context OR complete result with full chain when all paths exhausted.\nIf you receive focus_mismatch error: re-read the hop context and extract focus_node.id correctly.\nIf you receive invalid_columns error: re-read the DDL and correct the column name, then resubmit.\n\nTable focus nodes (t: \"table\"): tables have no DDL — they store data, not transform it. When the focus node is a table, trace through ALL upstream neighbors (they INSERT INTO this table). Prune only downstream neighbors that SELECT FROM this table.",
         "canBeReferencedInPrompt": true,
         "tags": ["lineage", "lineage-ct"],
         "icon": "$(check)",
@@ -919,7 +940,7 @@
                 "properties": {
                   "neighbor_id": { "type": "string", "description": "Exact neighbor ID from the hop context" },
                   "verdict": { "type": "string", "enum": ["trace", "prune", "pass", "revisit"] },
-                  "columns_to_trace": { "type": "array", "items": { "type": "string" }, "description": "For trace: INPUT column names to trace in upstream sources (not the output column)" },
+                  "columns": { "type": "array", "items": { "type": "string" }, "description": "For trace: INPUT column names to track into this neighbor (not the output column)" },
                   "summary": { "type": "string", "description": "One-line: what happens to the column at this node" },
                   "question": { "type": "string", "description": "For trace: what to look for at this neighbor (specific question, not vague)" }
                 },
@@ -1016,7 +1037,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/blackboard-state.test.ts && tsx test/chat-loop.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/blackboard-state.test.ts && tsx test-internal/chat-loop.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",

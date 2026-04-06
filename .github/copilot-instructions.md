@@ -64,7 +64,7 @@ Press F5 to launch Extension Development Host.
 | `test/ai-tools.test.ts` | 184 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
 | `test/column-trace-state.test.ts` | 98 | Column-trace state machine: lifecycle, init, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), synthetic model tests, bug regression (diamond merge, passthrough visited, depth, focus boundary) |
 | `test/blackboard-state.test.ts` | 66 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
-| `test/chat-loop.test.ts` | 28 | Orchestration loop: classic tool dispatch, dedup, CT multi-hop, round limit, BB tool visibility. Uses fake Copilot responses via `chatLoopTestHarness.ts` |
+| `test-internal/chat-loop.test.ts` | 28 | Orchestration loop: classic tool dispatch, dedup, CT multi-hop, round limit, BB tool visibility. Uses fake Copilot responses via `test-internal/chatLoopTestHarness.ts` |
 | `test/hooks/useInteractiveTrace.test.ts` | 31 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
 | `test/hooks/useGraphology.test.ts` | 27 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
 | `test/hooks/useOverviewMode.test.ts` | 18 | Overview mode state machine: auto-trigger, manual toggle, threshold guards, resetUserChoice |
@@ -286,6 +286,6 @@ npm test                               # all suites must pass
 - `test/ai-tools.test.ts` (294) — pure tool functions: getContext, search, detail, BFS (level + path), analysis, DDL, validate, autoFix
 - `test/column-trace-state.test.ts` (156) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
 - `test/blackboard-state.test.ts` (82) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
-- `test/chat-loop.test.ts` (45) — orchestration loop via fake Copilot responses: explore-first design, tool visibility, dedup, round limit, history DROP, CT compaction, BB exploration. Harness: `test/chatLoopTestHarness.ts`
+- `test-internal/chat-loop.test.ts` (28) — orchestration loop via fake Copilot responses: explore-first design, tool visibility, dedup, round limit, history DROP, CT compaction, BB exploration. Harness: `test-internal/chatLoopTestHarness.ts`
 
 **UAT scenarios:** `tmp/ai-uat-scenarios.md` — all modes (classic C1-C5, hop H1-H7, routing R1-R6, edge cases E1-E4). Column-trace UAT: `tmp/ai-column-trace-test-scenarios.md` (Q1-Q3).

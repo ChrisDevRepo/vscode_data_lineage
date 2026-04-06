@@ -8,6 +8,7 @@
  */
 import { bfsFromNode } from 'graphology-traversal';
 import type Graph from 'graphology';
+import { bfsDepthMap } from './smGuards';
 import {
   DEFAULT_CONFIG,
   type DatabaseModel,
@@ -216,7 +217,7 @@ export function getContext(
 // ─── Query validation ───────────────────────────────────────────────────────
 
 /** Reject garbage queries (empty, single char, pure wildcards). */
-function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
+export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
     return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters.' };
@@ -752,6 +753,10 @@ export type EnrichViewInput = {
     node_id: string;
     text: string;
   }>;
+  sections?: Array<{
+    label: string;    // must match badges[].text — join key for ordering
+    text: string;     // markdown content for this label group
+  }>;
   notes?: Array<{
     node_id: string;
     text: string;
@@ -774,6 +779,87 @@ export type EnrichViewRequest = {
 export type EnrichViewError = { success: false; errors: string[]; hint: string };
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
+
+/**
+ * Match sections to badges by label, sort by data-flow order, assign sequential numbers,
+ * and assemble the description markdown.
+ *
+ * Called from the enrich_view handler when _resultGraph + sections are both present.
+ * Guarantees badge numbers on the graph are identical to ## heading numbers in the description.
+ *
+ * Sort key: (min BFS depth of badges with this label, AI-provided array index).
+ * BFS depth handles cross-level ordering; AI array index breaks ties for parallel paths.
+ *
+ * Strips leading numbers from AI-supplied badge text ("3 Source" → "Source") before matching,
+ * so the system is always the single source of numbers.
+ *
+ * @param edges    Edge list from _resultGraph — [source, target, type].
+ * @param originNodeId  Root of the BFS depth calculation.
+ * @param badges   AI-provided badge array (mutated copy returned, not the original).
+ * @param sections AI-provided sections array.
+ */
+export function orderAndAssemble(
+  edges: ReadonlyArray<readonly [string, string, string]>,
+  originNodeId: string,
+  badges: Array<{ node_id: string; text: string }>,
+  sections: Array<{ label: string; text: string }>,
+): { badges: Array<{ node_id: string; text: string }>; description: string } {
+  const depthMap = bfsDepthMap(edges, originNodeId);
+
+  // Strip leading "N " or "N. " from badge texts so AI numbers don't interfere with matching
+  const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+
+  // Group badge indices by normalised label
+  const labelToAiIndex = new Map<string, number>(); // label → first occurrence in sections[]
+  sections.forEach((sec, i) => {
+    const norm = stripLeadingNumber(sec.label);
+    if (!labelToAiIndex.has(norm)) labelToAiIndex.set(norm, i);
+  });
+
+  // Per label: min BFS depth across all badges with that label
+  const labelMinDepth = new Map<string, number>();
+  for (const badge of badges) {
+    const label = stripLeadingNumber(badge.text);
+    const d = depthMap.get(badge.node_id) ?? Infinity;
+    const prev = labelMinDepth.get(label) ?? Infinity;
+    if (d < prev) labelMinDepth.set(label, d);
+  }
+
+  // Unique labels in sorted order: (minDepth, ai_index)
+  const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
+  uniqueLabels.sort((a, b) => {
+    const da = labelMinDepth.get(a) ?? Infinity;
+    const db = labelMinDepth.get(b) ?? Infinity;
+    if (da !== db) return da - db;
+    return (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0);
+  });
+
+  // Assign number N per unique label (1-based)
+  const labelToNumber = new Map<string, number>();
+  uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
+
+  // Rewrite + sort badges: strip AI numbers, prepend system number, sort by label's step number
+  const numberedBadges = badges
+    .map(b => {
+      const label = stripLeadingNumber(b.text);
+      const n = labelToNumber.get(label);
+      return { node_id: b.node_id, text: n !== undefined ? `${n} ${label}` : b.text, _n: n ?? Infinity };
+    })
+    .sort((a, b) => a._n - b._n)
+    .map(({ node_id, text }) => ({ node_id, text }));
+
+  // Assemble markdown: one ## heading per unique label in sorted order
+  const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
+  const parts: string[] = [];
+  for (const label of uniqueLabels) {
+    const n = labelToNumber.get(label)!;
+    const text = sectionMap.get(label) ?? '';
+    parts.push(`## ${n} ${label}\n\n${text}`);
+  }
+  const description = parts.join('\n\n');
+
+  return { badges: numberedBadges, description };
+}
 
 /**
  * Auto-fix common issues in enrich_view input.
@@ -826,7 +912,18 @@ export function autoFixEnrichView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 4. Prune highlight_groups referencing nodes not in the resolved set
+  // 4. Drop sections whose label doesn't match any badge text (orphaned sections)
+  if (fixed.sections?.length && fixed.badges?.length) {
+    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+    const badgeLabels = new Set(fixed.badges.map(b => stripNum(b.text)));
+    const before = fixed.sections.length;
+    const filtered = fixed.sections.filter(s => badgeLabels.has(stripNum(s.label)) && s.text && s.text.trim().length > 0);
+    fixed = { ...fixed, sections: filtered };
+    const dropped = before - filtered.length;
+    if (dropped > 0) fixes.push(`Dropped ${dropped} orphaned section(s) with no matching badge label`);
+  }
+
+  // 5. Prune highlight_groups referencing nodes not in the resolved set
   if (fixed.highlight_groups) {
     const before = fixed.highlight_groups.length;
     const pruned = fixed.highlight_groups
@@ -916,10 +1013,26 @@ export function validateEnrichView(
     const descLower = input.description.trimStart().toLowerCase();
     const WALKTHROUGH_PREFIXES = ['traces how', 'shows the', 'data flows', 'this view shows', 'visualizes'];
     if (WALKTHROUGH_PREFIXES.some(p => descLower.startsWith(p))) {
-      errors.push('description re-describes the graph — explain business logic, formulas, column mappings instead');
+      errors.push('description re-describes the graph — explain what you found: formulas, column mappings, issues, patterns instead');
     }
     // Markdown format validation (LaTeX delimiters, math blocks)
     errors.push(...validateMarkdownFormat(input.description));
+  }
+
+  // sections validation — each label must match a badge, content must be non-trivial
+  if (input.sections?.length) {
+    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+    const badgeLabels = new Set((input.badges ?? []).map(b => stripNum(b.text)));
+    for (const sec of input.sections) {
+      const label = stripNum(sec.label);
+      if (!badgeLabels.has(label)) {
+        errors.push(`Section label "${sec.label}" has no matching badge — label must match a badge text exactly`);
+      }
+      if (!sec.text || sec.text.trim().length < 50) {
+        errors.push(`Section "${sec.label}" is too short — explain what you found in this group (min 50 chars)`);
+      }
+      if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
+    }
   }
 
   // highlight_groups validation (structural + color validity)
@@ -938,6 +1051,7 @@ export function validateEnrichView(
       if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
       else if (e.includes('summary')) failedFields.add('summary');
       else if (e.includes('description')) failedFields.add('description');
+      else if (e.startsWith('Section ')) failedFields.add('sections');
       else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
       else if (e.includes('No nodes')) failedFields.add('nodes');
     }

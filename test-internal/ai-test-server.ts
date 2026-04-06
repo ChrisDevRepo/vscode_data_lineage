@@ -33,7 +33,7 @@ import type { DatabaseModel } from '../src/engine/types.js';
 import { ColumnStore } from '../src/engine/columnStore.js';
 import { populateColumnStore } from '../src/engine/modelBuilder.js';
 import { buildBareGraph } from '../src/ai/graphUtils.js';
-import { dispatchTool } from '../test/chatLoopTestHarness.js';
+import { dispatchTool } from './chatLoopTestHarness.js';
 import type { ColumnTraceState } from '../src/ai/columnTraceState.js';
 import type { BlackboardState } from '../src/ai/blackboardState.js';
 import type { SerializedFilterState } from '../src/engine/projectStore.js';
@@ -141,14 +141,18 @@ const SYSTEM_PROMPT =
 
 const CT_MODE_PROMPT =
   'COLUMN TRACE MODE: For each hop, read the focus node DDL. ' +
-  'Verdict each neighbor: trace (provide INPUT column names — track renames), prune, or pass. ' +
+  'Verdict each neighbor: trace (provide INPUT column names in the "columns" field — track renames), prune, or pass. ' +
   'Write notes about what you found. Prefer trace over prune when uncertain. ' +
   'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
   'The sub_question field contains your own question from the previous hop — answer it.\n' +
   'FIELD MAPPING: focus_node_id = focus_node.id from the hop context. neighbor_id = id field from each neighbor.\n' +
-  'COLUMN TRACKING: When a column is computed (e.g. TotalRevenue = Qty * UnitPrice), ' +
-  'trace the INPUT columns [Qty, UnitPrice], not the output. Track renames across hops.\n' +
-  'SELECTIVITY: Trace only columns relevant to the user\'s question. Prune unrelated branches.\n' +
+  'COLUMN FIELD: use "columns" (not columns_to_trace) — array of INPUT column names to track into this neighbor.\n' +
+  'COLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. ' +
+  'Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. ' +
+  'Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. ' +
+  'Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.\n' +
+  'TABLE NODES: When the focus node is a table (no DDL body), tables store data — they do not transform columns. ' +
+  'Trace through ALL upstream neighbors (they INSERT INTO this table). Prune only downstream neighbors that SELECT from it.\n' +
   'VERDICT ALL NEIGHBORS: Submit a verdict for every neighbor — skipped neighbors are silently lost.';
 
 const BB_MODE_PROMPT =

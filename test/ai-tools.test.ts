@@ -11,9 +11,10 @@ import { buildBareGraph } from '../src/ai/graphUtils';
 import {
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView,
-  validateQuery, validateMarkdownFormat,
+  validateQuery, validateMarkdownFormat, orderAndAssemble,
   type EnrichViewInput,
 } from '../src/ai/tools';
+import { bfsDepthMap } from '../src/ai/smGuards';
 import { INLINE_TOKEN_BUDGET, estimateTokens, shouldInline } from '../src/ai/tokenBudget';
 import { safeRegex } from '../src/utils/modelSearch';
 import { addFilterProfile, createProject } from '../src/engine/projectStore';
@@ -655,6 +656,104 @@ async function testSchemaMismatchDetection(model: DatabaseModel) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+function testBfsDepthMap() {
+  console.log('\n── bfsDepthMap ──');
+
+  // Linear chain: A→B→C
+  const chain: ReadonlyArray<readonly [string, string, string]> = [
+    ['A', 'B', 'read'] as const,
+    ['B', 'C', 'read'] as const,
+  ];
+  const depths = bfsDepthMap(chain, 'A');
+  assertEq(depths.get('A'), 0, 'origin depth=0');
+  assertEq(depths.get('B'), 1, 'B depth=1');
+  assertEq(depths.get('C'), 2, 'C depth=2');
+
+  // Disconnected node is absent
+  assert(!depths.has('D'), 'disconnected node absent');
+
+  // Diamond: A→B, A→C, B→D, C→D
+  const diamond: ReadonlyArray<readonly [string, string, string]> = [
+    ['A', 'B', 'read'] as const,
+    ['A', 'C', 'read'] as const,
+    ['B', 'D', 'read'] as const,
+    ['C', 'D', 'read'] as const,
+  ];
+  const dd = bfsDepthMap(diamond, 'A');
+  assertEq(dd.get('D'), 2, 'diamond sink depth=2 (BFS shortest)');
+  assertEq(dd.get('B'), 1, 'diamond B depth=1');
+
+  // Empty edges
+  const empty = bfsDepthMap([], 'X');
+  assertEq(empty.get('X'), 0, 'origin with no edges depth=0');
+  assertEq(empty.size, 1, 'only origin in map');
+}
+
+function testOrderAndAssemble() {
+  console.log('\n── orderAndAssemble ──');
+
+  const edges: ReadonlyArray<readonly [string, string, string]> = [
+    ['A', 'B', 'read'] as const,
+    ['B', 'C', 'read'] as const,
+  ];
+
+  // Basic 3-group case
+  const badges = [
+    { node_id: 'C', text: 'Target' },
+    { node_id: 'A', text: 'Source' },
+    { node_id: 'B', text: 'ETL' },
+  ];
+  const sections = [
+    { label: 'Target', text: 'Target receives data from ETL.' },
+    { label: 'Source', text: 'Raw data from Source tables.' },
+    { label: 'ETL', text: 'Transformation logic in ETL.' },
+  ];
+  const result = orderAndAssemble(edges, 'A', badges, sections);
+
+  // Badges reordered by depth: Source(0) → ETL(1) → Target(2)
+  const badgeOrder = result.badges.map(b => b.text);
+  assert(badgeOrder[0].startsWith('1 Source'), `first badge is "1 Source", got "${badgeOrder[0]}"`);
+  assert(badgeOrder[1].startsWith('2 ETL'), `second badge is "2 ETL", got "${badgeOrder[1]}"`);
+  assert(badgeOrder[2].startsWith('3 Target'), `third badge is "3 Target", got "${badgeOrder[2]}"`);
+
+  // Description has headings in correct order
+  assert(result.description.includes('## 1 Source'), 'description has ## 1 Source');
+  assert(result.description.includes('## 2 ETL'), 'description has ## 2 ETL');
+  assert(result.description.includes('## 3 Target'), 'description has ## 3 Target');
+  const src = result.description.indexOf('## 1 Source');
+  const etl = result.description.indexOf('## 2 ETL');
+  const tgt = result.description.indexOf('## 3 Target');
+  assert(src < etl && etl < tgt, 'headings appear in data-flow order');
+
+  // Grouping: same label on multiple badges
+  const groupBadges = [
+    { node_id: 'A', text: 'Source' },
+    { node_id: 'B', text: 'Source' },  // grouped
+    { node_id: 'C', text: 'Target' },
+  ];
+  const groupSections = [
+    { label: 'Source', text: 'Both A and B are source tables.' },
+    { label: 'Target', text: 'C is the target.' },
+  ];
+  const gr = orderAndAssemble(edges, 'A', groupBadges, groupSections);
+  const nums = gr.badges.map(b => b.text.split(' ')[0]);
+  assert(nums[0] === nums[1], 'grouped badges share same step number');
+  assert(nums[2] !== nums[0], 'target has different step number');
+
+  // Strip AI-provided leading numbers from badge text
+  const numberedBadges = [
+    { node_id: 'A', text: '1 Source' },
+    { node_id: 'C', text: '3 Target' },
+  ];
+  const numberedSections = [
+    { label: '1 Source', text: 'Source stripped correctly.' },
+    { label: '3 Target', text: 'Target stripped correctly.' },
+  ];
+  const stripped = orderAndAssemble(edges, 'A', numberedBadges, numberedSections);
+  assert(!stripped.description.includes('## 1 1 Source'), 'no double number in heading');
+  assert(stripped.description.includes('## 1 Source'), 'correct heading after strip');
+}
+
 async function main() {
 async function testPromptRegression() {
   console.log('\n── Prompt Regression (package.json) ──');
@@ -787,6 +886,8 @@ async function testYamlTemplates() {
     await testPromptRegression();
     await testMultiModeSchema();
     await testYamlTemplates();
+    testBfsDepthMap();
+    testOrderAndAssemble();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

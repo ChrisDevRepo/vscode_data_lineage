@@ -10,30 +10,59 @@ Customize how the `@lineage` chat participant formats its analysis views.
 
 ## How It Works
 
-The YAML file defines five output fields. Only the `instruction` value of each field is injected into the AI prompt. The `example`, `bad_example`, and `good_example` values are for you -- they help you understand what each field should produce.
+The YAML file defines six output fields. Only the `instruction` value of each field is injected into the AI prompt. The `example`, `bad_example`, and `good_example` values are for you -- they help you understand what each field should produce.
 
 ```
 aiOutputTemplates.yaml
   ├── summary.instruction      → injected into system prompt (rule 5)
   ├── description.instruction  → injected into system prompt (rule 5)
   ├── badges.instruction       → injected into enrich_view tool description
+  ├── sections.instruction     → injected into enrich_view tool description
   ├── highlights.instruction   → injected into enrich_view tool description
   └── notes.instruction        → injected into enrich_view tool description
 ```
 
-## The Five Fields -- A Layered Hierarchy
+## The Label-Section Data Contract
 
-The fields work together like a magazine article about a diagram:
+The key mechanism is a **label join key** between badges and sections:
+
+```
+badges: [                           sections: [
+  { node_id: "dbo.Raw",             ← label must match badge.text exactly
+    text:    "Source" },               { label: "Source",
+  { node_id: "dbo.Raw2",                 text:  "Raw and Raw2 are..." },
+    text:    "Source" },            ← same label → grouped under one heading
+  { node_id: "dbo.SP1",
+    text:    "ETL"   },                { label: "ETL",
+]                                        text:  "SP1 joins..." },
+                                    ]
+                         ↓
+System assigns numbers, orders by data-flow, assembles:
+  ## 1 Source          ← badge "1 Source" on both dbo.Raw and dbo.Raw2
+  Raw and Raw2 are...
+  ## 2 ETL             ← badge "2 ETL" on dbo.SP1
+  SP1 joins...
+```
+
+**Rules:**
+- `section.label` must exactly match `badge.text` (case-sensitive, no leading numbers)
+- Same label on multiple badges → one section, same step number on all those nodes
+- Not every node needs a badge — only the ones you chose to explain
+- Badge without a section → allowed (just a label chip, no heading generated)
+- Section without a matching badge → rejected by validation
+
+## The Six Fields
 
 | Layer | Field | Role | Where shown |
 |-------|-------|------|-------------|
 | **Headline** | `summary` | One-line purpose (max 120 chars) | Info card |
-| **Callouts** | `badges` | Numbered step markers on 5-8 key nodes | On graph nodes |
-| **Captions** | `notes` | One-line role of each badged node | Below graph nodes |
-| **Article** | `description` | Full step-by-step answer referencing badge numbers | Expandable overlay |
+| **Callouts** | `badges` | Semantic labels on key nodes (system adds step numbers) | On graph nodes |
+| **Detail** | `sections` | One markdown block per badge label — findings, logic, issues | Description overlay |
+| **Captions** | `notes` | One-line caption per node — visible below node, rest on hover | Below graph nodes |
 | **Emphasis** | `highlights` | Color glow on 2-3 critical nodes | Graph node borders |
+| **Fallback** | `description` | Freeform markdown — used only when sections[] is absent | Description overlay |
 
-**Badges** are numbered navigation anchors (e.g., "1 Source", "3 FX Convert"). **Notes** caption each badged node so the graph alone tells the story. **Description** is the deep read -- each `##` heading references badge step numbers to connect text to graph.
+**Badges** carry semantic labels (e.g. "Source", "ETL", "Target"). **Sections** explain what you found at each labeled group — the AI writes one section per unique label. **System** assigns step numbers, orders by data-flow, and assembles `## N Label` headings. **Notes** caption individual nodes. **Description** is a fallback when sections are not provided.
 
 ## YAML Format
 
@@ -46,27 +75,24 @@ summary:
     One-line graph purpose (max 120 chars). Shown in the info card.
   example: "Revenue lineage from SAP invoices through EV calculation to FactFinance."
 
-description:
-  instruction: >
-    The detailed answer -- structured markdown with ## headings.
-    Each heading covers one or more badge steps: "## Revenue Calculation (steps 3-4)".
-    Under each heading, explain the business logic -- formulas, column mappings, WHY it matters.
-    The graph shows structure; you explain meaning.
-    Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$ / $$block$$), code blocks.
-    Not supported: mermaid, HTML, images, footnotes.
-  bad_example: "Data flows from staging through transformation to consumption."
-  good_example: |
-    ## Revenue Calculation (steps 3-4)
-    Revenue uses **Earned Value methodology**:
-    $$Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}$$
-    `spCalcEV` (step 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
-    then `vw_Revenue` (step 4) applies the Swiss filter: `WHERE CountryCode = 'CH'`.
-
 badges:
   instruction: >
-    Numbered navigation anchors on 5-8 KEY nodes -- not every node.
-    Format: "1 Source", "3 FX Convert". Number = logical step in the description.
-    Only badge a node if the description explains what happens there.
+    Semantic labels on nodes you analyzed -- no numbers (system assigns step numbers).
+    Same label on multiple nodes groups them under one section heading.
+    One label per logical group, as many groups as needed.
+    Badge every node that appears in your sections -- section.label must match badge.text exactly (join key).
+    BAD: "3 Source" (number in label), badges with no matching section.
+    GOOD: "Source" on 2 raw tables, "ETL" on 3 SPs -- each covered by a section.
+
+sections:
+  instruction: >
+    One entry per unique badge label -- explains what you found at those nodes.
+    label: must exactly match a badge text value (join key, case-sensitive).
+    text: markdown explaining findings -- logic, patterns, issues, performance, column mappings, formulas.
+    System orders by data-flow depth and assembles ## headings with step numbers.
+    Reference other groups by label name ("reads from **Source**"), never by number.
+    Supported in text: **bold**, `code`, tables, $math$, ```math blocks.
+  example: '{ "label": "FX Convert", "text": "`spConvertFX` multiplies Amount by DimRate.Rate\nJoins FactSales.CurrencyKey -> DimRate.CurrencyKey" }'
 
 highlights:
   instruction: >
@@ -75,9 +101,25 @@ highlights:
 
 notes:
   instruction: >
-    One-line caption under each BADGED node -- what it does in this flow.
+    One-line caption under each node -- what it does in this flow.
     First line visible, rest on hover via \n.
   example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"
+
+description:
+  instruction: >
+    Fallback only -- used when sections[] is not provided. Prefer sections[].
+    Structured markdown with ## headings. Explain what you found -- logic, patterns, issues.
+    Supported: ## headings, **bold**, `code`, tables, LaTeX ($inline$, ```math blocks).
+    Not supported: mermaid, HTML, images, footnotes.
+  bad_example: "Data flows from staging through transformation to consumption."
+  good_example: |
+    ## Revenue Calculation
+    Revenue uses **Earned Value methodology**:
+    ```math
+    Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}
+    ```
+    `spCalcEV` reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
+    then `vw_Revenue` applies the Swiss filter: `WHERE CountryCode = 'CH'`.
 ```
 
 ## Writing Effective Instructions
@@ -90,7 +132,7 @@ These tips apply to any `instruction` field you customize.
 | **Include BAD/GOOD contrast** | Models follow examples more reliably than rules ([Anthropic](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/be-direct)) |
 | **Keep under 3 sentences** | Longer instructions get partially ignored; move details to `good_example` |
 | **Explain WHY** | "The graph shows structure; you explain meaning" works better than "don't describe topology" |
-| **Reference other fields** | "Reference badge step numbers in ## headings" connects the hierarchy |
+| **Reference other fields** | "Reference badge label names in section text" connects the data contract |
 
 ### Audience Adaptation
 
@@ -133,6 +175,6 @@ No per-tool caps — the extension delivers full data. Token estimation (`should
 Same pattern as [Parse Rules](PARSE_RULES.md) and [DMV Queries](DMV_QUERIES.md):
 
 1. Custom YAML file (from `outputTemplateFile` setting)
-2. Validate: all 5 required keys (`summary`, `description`, `badges`, `highlights`, `notes`) present with non-empty `instruction`
+2. Validate: all 6 required keys (`summary`, `description`, `badges`, `sections`, `highlights`, `notes`) present with non-empty `instruction`
 3. Missing keys: warn in Output channel, use built-in default for that key
 4. Custom file fails entirely: warn, fall back to built-in `assets/aiOutputTemplates.yaml`

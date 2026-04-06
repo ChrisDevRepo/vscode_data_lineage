@@ -8,7 +8,7 @@ import { buildBareGraph } from './ai/graphUtils';
 import {
   shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget,
   getContext, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
   type EnrichViewInput,
 } from './ai/tools';
@@ -64,16 +64,17 @@ let _aiSessionCount = 0;                     // monotonic session counter for lo
 let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
 
-/** Stored result graph — populated by CT/BB/BFS/inline, consumed by enrich_view. */
+/** Stored result graph — populated by CT/BB, consumed by enrich_view. */
 type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs' | 'origin';
 interface ResultGraph {
   nodeIds: string[];
   edges: [string, string, string][];
   verdicts: Record<string, NodeRole>;
   source: 'column_trace' | 'blackboard' | 'bfs_trace' | 'inline';
+  originNodeId?: string;  // root node — needed by bfsDepthMap() in orderAndAssemble()
   notes?: Array<{ nodeId: string; summary: string }>;  // BB/CT note summaries for enrich_view auto-populate
-  suggested_badges?: Array<{ node_id: string; text: string }>;  // BB: pre-built from per-hop badge_label
-  suggested_notes?: Array<{ node_id: string; text: string }>;   // BB: pre-built from per-hop note_caption
+  suggested_badges?: Array<{ node_id: string; text: string }>;  // SM: BB from badge_label, CT from chain name
+  suggested_notes?: Array<{ node_id: string; text: string }>;   // SM: BB from note_caption, CT from notes/summary
 }
 let _resultGraph: ResultGraph | null = null;
 
@@ -94,6 +95,7 @@ function buildResultGraphFromBfs(
  *  Uses fullNodes (origin + noted + bridges) so the origin node is always present and
  *  edges with SP→origin endpoints are never dangling. */
 function storeBbResultGraph(fullResult: {
+  originNodeId: string;
   notes: Array<{ nodeId: string; summary: string }>;
   fullNodes: Array<Record<string, unknown>>;
   edges: [string, string, string][];
@@ -112,11 +114,41 @@ function storeBbResultGraph(fullResult: {
     edges: fullResult.edges,
     verdicts: v,
     source: 'blackboard',
+    originNodeId: fullResult.originNodeId,
     notes: fullResult.notes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
     suggested_badges: fullResult.suggested_badges,
     suggested_notes: fullResult.suggested_notes,
   };
   logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${nodeIds.length} nodes (${fullResult.notes.length} noted, ${extraCount} origin+bridges), ${fullResult.edges.length} edges`);
+}
+
+/** Store CT result graph for enrich_view.
+ *  Chain entries = traced nodes. Passthroughs kept in fullNodes but marked 'pass'. */
+function storeCtResultGraph(fullResult: {
+  originNodeId: string;
+  chain: Array<{ nodeId: string; name: string; summary: string; notes?: string }>;
+  fullNodes: Array<Record<string, unknown>>;
+  edges: [string, string, string][];
+  outOfScope: Array<{ nodeId: string }>;
+  suggested_badges: Array<{ node_id: string; text: string }>;
+  suggested_notes:  Array<{ node_id: string; text: string }>;
+}) {
+  const chainIds = new Set(fullResult.chain.map(c => c.nodeId));
+  const allNodeIds = fullResult.fullNodes.map(n => n.id as string);
+  const v: Record<string, NodeRole> = {};
+  for (const id of allNodeIds) v[id] = chainIds.has(id) ? 'trace' : 'pass';
+  for (const o of fullResult.outOfScope) v[o.nodeId] = 'prune';
+  _resultGraph = {
+    nodeIds: allNodeIds,
+    edges: fullResult.edges,
+    verdicts: v,
+    source: 'column_trace',
+    originNodeId: fullResult.originNodeId,
+    notes: fullResult.chain.map(c => ({ nodeId: c.nodeId, summary: c.summary })),
+    suggested_badges: fullResult.suggested_badges,
+    suggested_notes:  fullResult.suggested_notes,
+  };
+  logDebug(outputChannel, 'AI', `[ResultGraph] stored from CT: ${allNodeIds.length} nodes (${chainIds.size} traced, ${allNodeIds.length - chainIds.size} passthrough), ${fullResult.edges.length} edges`);
 }
 
 let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage — populated on model load, cleared on reload
@@ -126,11 +158,12 @@ interface AiOutputTemplates {
   summary: string;
   description: string;
   badges: string;
+  sections: string;
   highlights: string;
   notes: string;
 }
 
-const EMPTY_AI_TEMPLATES: AiOutputTemplates = { summary: '', description: '', badges: '', highlights: '', notes: '' };
+const EMPTY_AI_TEMPLATES: AiOutputTemplates = { summary: '', description: '', badges: '', sections: '', highlights: '', notes: '' };
 
 let _aiOutputTemplates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
 
@@ -565,6 +598,22 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
 
+          // ── 1e. Order + assemble sections → numbered badges + synced description markdown ──
+          if (_resultGraph?.edges && _resultGraph.originNodeId
+              && rawInput.badges?.length && rawInput.sections?.length) {
+            const assembled = orderAndAssemble(
+              _resultGraph.edges,
+              _resultGraph.originNodeId,
+              rawInput.badges,
+              rawInput.sections,
+            );
+            rawInput.badges = assembled.badges;
+            if (!rawInput.description) {
+              rawInput.description = assembled.description;
+            }
+            logDebug(outputChannel, 'AI', `enrich_view: orderAndAssemble — ${rawInput.sections.length} section(s) → description ${assembled.description.length}ch`);
+          }
+
           // ── 2. Auto-fix orphaned badges/notes/highlights ──
           const { input, fixes } = autoFixEnrichView(m, rawInput, graphSource !== 'fallback' ? resolvedNodeIds : undefined);
           if (fixes.length > 0) {
@@ -666,34 +715,9 @@ export function activate(context: vscode.ExtensionContext) {
           const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
           if ('error' in initResult) return logAndReturn('start_column_trace', initResult);
 
-          // Depth gate: estimate DDL chars for scope → shouldInline decides inline vs state machine (fallback for large scopes)
+          // Log scope estimate (observability only — CT always uses state machine for hop-by-hop column tracking)
           const scopeDdlChars = _columnTraceState.estimateScopeDdlChars();
-          const scopeInline = shouldInline(scopeDdlChars);
-          if (scopeInline) {
-            const originId = (initResult.originNode as { id?: string }).id;
-            if (originId && g) {
-              logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → inline (all DDL at once)`);
-              const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined) as Record<string, unknown>;
-              _columnTraceState = null; // release state machine — not needed
-              // Store result graph for enrich_view
-              if (!('error' in bfsResult)) {
-                _resultGraph = buildResultGraphFromBfs(bfsResult, 'inline');
-                if (_resultGraph) logDebug(outputChannel, 'AI', `[ResultGraph] stored from inline CT: ${_resultGraph.nodeIds.length} nodes`);
-              }
-              return logAndReturn('start_column_trace', {
-                status: 'inline',
-                action_required: 'analyze_and_respond',
-                reason: 'scope_fits_inline',
-                scope_size: initResult.scopeSize,
-                scope_ddl_chars: scopeDdlChars,
-                origin: initResult.originNode,
-                bfs_result: bfsResult,
-                hint: 'All DDL provided inline. Analyze this data and present your findings to the user. Do NOT call any more tools — the trace is complete.',
-              });
-            }
-          } else {
-            logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → on_demand (state machine)`);
-          }
+          logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → state machine`);
 
           const hopResult = _columnTraceState.getHopContext();
           if ('error' in hopResult) return logAndReturn('start_column_trace', hopResult);
@@ -743,13 +767,7 @@ export function activate(context: vscode.ExtensionContext) {
             const fullResult = _columnTraceState.getResult();
             // Store result graph for enrich_view
             if (!('error' in fullResult)) {
-              const chainIds = new Set((fullResult.chain as Array<{ nodeId: string }>).map(c => c.nodeId));
-              const allNodeIds = (fullResult.fullNodes as Array<{ id: string }>).map(n => n.id);
-              const v: Record<string, NodeRole> = {};
-              for (const id of allNodeIds) v[id] = chainIds.has(id) ? 'trace' : 'pass';
-              for (const o of fullResult.outOfScope as Array<{ nodeId: string }>) v[o.nodeId] = 'prune';
-              _resultGraph = { nodeIds: allNodeIds, edges: fullResult.edges, verdicts: v, source: 'column_trace' };
-              logDebug(outputChannel, 'AI', `[ResultGraph] stored from CT: ${allNodeIds.length} nodes (${chainIds.size} traced, ${allNodeIds.length - chainIds.size} passthrough), ${fullResult.edges.length} edges`);
+              storeCtResultGraph(fullResult);
             }
             return logAndReturn('submit_hop_analysis', fullResult);
           }
@@ -788,33 +806,9 @@ export function activate(context: vscode.ExtensionContext) {
           const initResult = _blackboardState.init({ question, origin });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);
 
-          // Token budget gate: inline if scope fits budget
+          // Log scope estimate (observability only — BB always uses state machine for hop-by-hop exploration with working memory)
           const scopeDdlChars = _blackboardState.estimateScopeDdlChars();
-          const scopeInline = shouldInline(scopeDdlChars);
-          if (scopeInline) {
-            const originId = (initResult.originNode as { id?: string }).id;
-            if (originId && g) {
-              logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → inline`);
-              const bfsResult = runBfsTrace(m, g, originId, 5, 5, undefined, undefined, true, _columnStore ?? undefined) as Record<string, unknown>;
-              _blackboardState = null;
-              // Store result graph for enrich_view
-              if (!('error' in bfsResult)) {
-                _resultGraph = buildResultGraphFromBfs(bfsResult, 'inline');
-                if (_resultGraph) logDebug(outputChannel, 'AI', `[ResultGraph] stored from inline BB: ${_resultGraph.nodeIds.length} nodes`);
-              }
-              return logAndReturn('start_exploration', {
-                status: 'inline',
-                action_required: 'analyze_and_respond',
-                reason: 'scope_fits_inline',
-                scope_size: initResult.scopeSize,
-                origin: initResult.originNode,
-                bfs_result: bfsResult,
-                hint: 'All DDL provided inline. Analyze this data and present your findings. Do NOT call more tools.',
-              });
-            }
-          } else {
-            logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens), budget ${getEffectiveBudget()} → exploration mode (state machine)`);
-          }
+          logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → state machine`);
 
           const hopResult = _blackboardState.getHopContext();
           if ('error' in hopResult) return logAndReturn('start_exploration', hopResult);
@@ -1093,7 +1087,14 @@ export function activate(context: vscode.ExtensionContext) {
       const MAX_ROUNDS = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.maxRounds', 50);
 
       // Single system prompt — explore-first data provider
+      // Prepend active schema context when user has a filter selected (same injection pattern as _aiOutputTemplates)
+      const schemaCtx = (_aiFilter?.schemas?.length ?? 0) > 0
+        ? `Working context: user has schema(s) [${_aiFilter!.schemas.join(', ')}] selected.\n` +
+          `Default all searches, SQL generation, and analysis to these schemas.\n` +
+          `If answering the question requires objects from other schemas, ask the user first.\n\n`
+        : '';
       const systemPrompt =
+        schemaCtx +
         'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
         `Budget: ${MAX_ROUNDS} rounds.\n\n` +
         'RULES:\n' +
@@ -1108,13 +1109,14 @@ export function activate(context: vscode.ExtensionContext) {
         '   BFS (run_bfs_trace) is for scope discovery, not final trace results.\n' +
         '4. OUTPUT: enrich_view when graph aids understanding (lineage path, data flow).\n' +
         '   Chat text otherwise (explain, SQL, list, compare). Default: text.\n' +
-        '5. VIEW OUTPUT — fields form a layered hierarchy (headline → callouts → captions → article).\n' +
-        '   Badges (5-8 key nodes) are numbered anchors. Notes caption each badged node.\n' +
+        '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
+        '   System assigns step numbers and orders by data-flow. Do not number badges or write description when sections provided.\n' +
         `   summary: ${_aiOutputTemplates.summary}\n` +
-        `   description: ${_aiOutputTemplates.description}\n` +
         `   badges: ${_aiOutputTemplates.badges}\n` +
+        `   sections: ${_aiOutputTemplates.sections}\n` +
+        `   notes: ${_aiOutputTemplates.notes}\n` +
         `   highlights: ${_aiOutputTemplates.highlights}\n` +
-        `   notes: ${_aiOutputTemplates.notes}`;
+        `   description (fallback): ${_aiOutputTemplates.description}`;
 
       /** Serialize messages to a single string for countTokens (string overload only — message overload has known bugs). */
       const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
@@ -1417,9 +1419,11 @@ export function activate(context: vscode.ExtensionContext) {
                   'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
                   'The sub_question field contains your own question from the previous hop — answer it.\n' +
                   'FIELD MAPPING: focus_node_id = focus_node.id from the hop context. neighbor_id = id field from each neighbor.\n' +
-                  'COLUMN TRACKING: When a column is computed (e.g. TotalRevenue = Qty * UnitPrice), ' +
-                  'trace the INPUT columns [Qty, UnitPrice], not the output. Track renames across hops.\n' +
-                  'SELECTIVITY: Trace only columns relevant to the user\'s question. Prune unrelated branches.\n' +
+                  'COLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. ' +
+                  'Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. ' +
+                  'Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. ' +
+                  'Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.\n' +
+                  'TABLE NODES: Tables store data, not transform it. Trace ALL upstream neighbors of a table — they INSERT INTO it.\n' +
                   'VERDICT ALL NEIGHBORS: Submit a verdict for every neighbor — skipped neighbors are silently lost.'
                 : 'DEPENDENCY TRACE MODE: For each hop, read the focus node DDL. ' +
                   'Verdict each neighbor: trace (follow this path), prune (cut), or pass (skip detail). ' +
@@ -1499,7 +1503,7 @@ export function activate(context: vscode.ExtensionContext) {
                 '1. Read the DDL/columns carefully\n' +
                 '2. Record detailed findings (what you discovered — business rules, transforms, patterns) (~500 chars)\n' +
                 '3. Write a one-line summary (~100 chars) — shown in your working memory for ALL future hops\n' +
-                '4. badge_label (2-4 words) — step label for the enriched view, e.g. "4 INIT" or "7 Rate Impute"\n' +
+                '4. badge_label (2-4 words, no leading number) — semantic label for the enriched view, e.g. "Source", "ETL", "Staging"\n' +
                 '5. note_caption (1 line) — what this node does in this flow, e.g. "Entry point — TRUNCATEs and reloads from staging"\n' +
                 '6. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
                 '7. prune_ids: remove from agenda (scope=in_scope only). add_ids: add to agenda (scope=available).\n\n' +
@@ -1719,7 +1723,7 @@ async function loadAiOutputTemplates(
 ): Promise<AiOutputTemplates> {
   if (!isAiEnabled()) return { ...EMPTY_AI_TEMPLATES };
 
-  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'badges', 'highlights', 'notes'];
+  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'badges', 'sections', 'highlights', 'notes'];
 
   // Load built-in YAML first — serves as base and fallback for missing custom keys
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };

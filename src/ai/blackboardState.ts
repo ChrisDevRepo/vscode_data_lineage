@@ -20,7 +20,7 @@ import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, findBridgeNodes, bfsReachable, type LogFn } from './smGuards';
+import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, findBridgeNodes, bfsReachable, bfsDepthMap, type LogFn } from './smGuards';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ export interface BlackboardNote {
   findings: string;          // full detailed analysis (long-term memory slot)
   summary: string;           // one-line digest (working memory)
   tags?: string[];           // optional categorization
-  badge_label?: string;      // "4 INIT" — short step label for enrich_view badge
+  badge_label?: string;      // "Source" — semantic label (no number) for enrich_view badge; system assigns step numbers
   note_caption?: string;     // "Entry point — TRUNCATEs from staging" — 1-line caption for enrich_view note
 }
 
@@ -550,6 +550,7 @@ export class BlackboardState {
   getResult(): {
     status: 'complete';
     question: string;
+    originNodeId: string;
     notes: BlackboardNote[];
     fullNodes: Array<Record<string, unknown>>;
     edges: Array<[string, string, string]>;
@@ -615,12 +616,20 @@ export class BlackboardState {
       this.log('info', `BB BRIDGE | orphans=${bridgeResult.orphanCount} | reconnected=${bridgeResult.reconnectedCount} | bridges=${bridgeResult.bridgeNodes.length} nodes, ${bridgeResult.bridgeEdges.length} edges`);
     }
 
+    // Order allNotes by BFS depth from origin so suggested_badges follow data-flow order.
+    // This is a best-effort sort for suggested output; orderAndAssemble() in extension.ts
+    // will re-sort by actual depthMap when AI provides sections.
+    const depthMap = bfsDepthMap(edges, this.originNodeId!);
+    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+    allNotes.sort((a, b) => (depthMap.get(a.nodeId) ?? Infinity) - (depthMap.get(b.nodeId) ?? Infinity));
+
     // Map-Reduce "reduce" step: assemble suggested output from per-hop fragments.
     // AI wrote badge_label/note_caption during exploration when understanding was fresh.
-    // Fallback: auto-generate from hop number + node name / summary.
-    const suggested_badges = allNotes.map((n, i) => ({
+    // Strip any leading numbers from badge_label — system assigns numbers via orderAndAssemble().
+    // Fallback: auto-generate from node name.
+    const suggested_badges = allNotes.map(n => ({
       node_id: n.nodeId,
-      text: n.badge_label ?? `${i + 1} ${n.name}`,
+      text: n.badge_label ? stripNum(n.badge_label) : n.name,
     }));
     const suggested_notes = allNotes.map(n => ({
       node_id: n.nodeId,
@@ -649,6 +658,7 @@ export class BlackboardState {
     return {
       status: 'complete',
       question: this.userQuestion,
+      originNodeId: this.originNodeId!,
       notes: allNotes,
       fullNodes,
       edges,

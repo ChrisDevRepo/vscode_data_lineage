@@ -2,11 +2,13 @@
 # Edit 'instruction' fields to change the AI's output style.
 # Full documentation: docs/AI_PROMPTS.md
 #
-# Fields form a layered information hierarchy -- like a magazine article:
-#   summary     = headline
-#   badges      = numbered step callouts on the diagram (5-8 key nodes only)
-#   notes       = figure captions under each step node
-#   description = the article body, referencing callout numbers
+# Fields form a label-section data contract:
+#   summary     = headline (one-line purpose)
+#   badges      = semantic labels on key nodes (no numbers — system assigns them)
+#   sections    = one markdown block per badge label (system orders by data-flow, assembles ## headings)
+#   notes       = one-line captions under each node
+#   highlights  = color glow on 2-3 critical nodes
+#   description = fallback article body (used only when sections[] is absent)
 
 summary:
   instruction: >
@@ -15,33 +17,44 @@ summary:
 
 description:
   instruction: >
-    The detailed answer -- structured markdown with ## headings.
-    Each heading covers one or more steps: "## Revenue Calculation (steps 3-4)".
-    Under each heading, explain the business logic at those nodes -- formulas, column mappings, WHY it matters.
-    The graph shows structure; you explain meaning.
+    Fallback only -- used when sections[] is not provided. Prefer sections[] for structured output.
+    If used: structured markdown with ## headings, one heading per logical group.
+    Explain what you found -- logic, patterns, issues, performance, column mappings -- whatever is relevant.
     Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$, ```math blocks for display), code blocks.
     For display math use ```math fenced blocks (not $$). One formula per block. For piecewise/conditional logic use a table or bullet list instead of \begin environments.
     Not supported: mermaid, HTML, images, footnotes, LaTeX \begin environments.
-    BAD: A standalone essay that never mentions step numbers.
-    GOOD: "## FX Conversion (step 4)\n`spConvertFX` multiplies Amount by DimRate.Rate where CurrencyCode = 'CHF'..."
+    BAD: A standalone essay with no headings, re-describing the graph structure.
+    GOOD: "## FX Conversion\n`spConvertFX` multiplies Amount by DimRate.Rate where CurrencyCode = 'CHF'..."
   bad_example: "Data flows from staging through transformation to consumption."
   good_example: |
-    ## Revenue Calculation (steps 3-4)
+    ## Revenue Calculation
     Revenue uses the **Earned Value (EV) methodology**:
     ```math
     Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}
     ```
-    `spCalcEV` (step 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
-    then `vw_Revenue` (step 4) applies the Swiss filter: `WHERE CountryCode = 'CH'`.
+    `spCalcEV` reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
+    then `vw_Revenue` applies the Swiss filter: `WHERE CountryCode = 'CH'`.
 
 badges:
   instruction: >
-    Numbered navigation anchors on nodes you analyzed.
-    Format: "1 Source", "3 FX Convert". Number = logical step in the description.
-    Badge every node that appears in your description -- do NOT skip analyzed nodes.
-    For large sets: group related nodes under shared step numbers (e.g. "5-8 Allocation Rules" covers 4 related SPs).
-    BAD: 3 badges on a 13-node exploration where you analyzed all 13.
-    GOOD: 8 steps covering all 13 analyzed nodes with grouping where appropriate.
+    Semantic labels on nodes you analyzed -- no numbers (system assigns step numbers).
+    Same label on multiple nodes groups them under one section heading.
+    One label per logical group, as many groups as needed.
+    Badge every node that appears in your sections -- section.label must match badge.text exactly (join key).
+    BAD: "3 Source" (number in label), badges with no matching section.
+    GOOD: "Source" on 2 raw tables, "ETL" on 3 SPs, "Reporting" on 1 view -- each covered by a section.
+
+sections:
+  instruction: >
+    One entry per unique badge label -- explains what you found at those nodes.
+    label: must exactly match a badge text value (join key, case-sensitive).
+    text: markdown explaining findings -- logic, patterns, issues, performance, column mappings, formulas.
+    System orders sections by data-flow depth and assembles ## headings with step numbers.
+    In text, reference other groups by label name ("reads from **Source**"), never by number.
+    Supported in text: **bold**, `code`, tables, $math$, ```math blocks.
+    BAD: label typo mismatching badge, generic text ("Stores project data"), missing section for a badged group.
+    GOOD: { label: "ETL", text: "`spCalcEV` multiplies PlannedValue by earned ratio\nReads from **Source**, writes to **Target**" }
+  example: '{ "label": "FX Convert", "text": "`spConvertFX` multiplies Amount by DimRate.Rate\nJoins FactSales.CurrencyKey -> DimRate.CurrencyKey" }'
 
 highlights:
   instruction: >
