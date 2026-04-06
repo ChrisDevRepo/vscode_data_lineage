@@ -41,6 +41,8 @@ tmpclaude-*
 # Stray root-level scripts/files (not part of extension)
 manual-trace.ts
 *batch_alloc*
+bb_result.json
+*ct_hop*.json
 
 # Misc
 PLAN*.md
