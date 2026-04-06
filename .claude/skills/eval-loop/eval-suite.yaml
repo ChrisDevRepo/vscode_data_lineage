@@ -1,0 +1,210 @@
+# AI Eval Suite — Test definitions with expected outcomes
+# Each test defines a question, setup, and correctness criteria.
+# Baselines from tmp/ai-bridge-testing.md (verified 2026-04-05).
+
+tests:
+  # ────────────────────────────────────────────────────────────
+  # BB Tests — AdventureWorks
+  # ────────────────────────────────────────────────────────────
+
+  - id: bb-q1-employee
+    question: "List all objects that directly read or write the Employee table"
+    type: bb
+    difficulty: easy
+    dacpac: test/AdventureWorks.dacpac
+    origin: "[HumanResources].[Employee]"
+    scope_direction: downstream
+    filter: null
+    expected:
+      delivery: inline
+      nodes_required:
+        - uspUpdateEmployeeHireInfo
+        - uspUpdateEmployeeLogin
+        - uspUpdateEmployeePersonalInfo
+        - vEmployee
+        - vEmployeeDepartment
+        - vEmployeeDepartmentHistory
+        - uspGetEmployeeManagers
+        - uspGetManagerEmployees
+        - vSalesPerson
+        - vSalesPersonSalesByFiscalYears
+        # EmployeePayHistory removed — connected to Employee via FK only, no SQL body edge in graph
+        - ufnGetContactInformation
+      nodes_forbidden:
+        - uspLogError
+        - uspPrintError
+        - ErrorLog
+      max_hops: 0  # inline = no SM hops
+
+  - id: bb-q2-employee-deep
+    question: "What objects depend on the Employee table and how is Employee data consumed?"
+    type: bb
+    difficulty: medium
+    dacpac: test/AdventureWorks.dacpac
+    origin: "[HumanResources].[Employee]"
+    scope_direction: downstream
+    filter: null
+    expected:
+      delivery: inline
+      nodes_required:
+        - uspUpdateEmployeeHireInfo
+        - uspUpdateEmployeeLogin
+        - uspUpdateEmployeePersonalInfo
+        - vEmployee
+        - vEmployeeDepartment
+        - vEmployeeDepartmentHistory
+        - uspGetEmployeeManagers
+        - uspGetManagerEmployees
+        - vSalesPerson
+        - vSalesPersonSalesByFiscalYears
+        # EmployeePayHistory removed — FK only, no graph edge
+        - ufnGetContactInformation
+      nodes_forbidden:
+        - uspLogError
+        - uspPrintError
+      max_hops: 0
+
+  - id: bb-q4-sales
+    question: "Where does sales come from?"
+    type: bb
+    difficulty: hard
+    dacpac: test/AdventureWorks.dacpac
+    origin: null  # AI must discover via search
+    scope_direction: null  # AI decides
+    filter: null
+    expected:
+      delivery: inline  # AW sales tables are leaf nodes, small scope
+      nodes_required: []  # No fixed set — AI picks origin
+      nodes_forbidden: []
+      max_hops: 20
+      # Soft criteria (not FAIL, just WARN):
+      # - Origin should be a high-degree Sales object
+      # - Result should span 2+ schemas
+      # - Graph should be connected
+
+  # ────────────────────────────────────────────────────────────
+  # BB Tests — Customer Dacpac (CadenceWorker)
+  # ────────────────────────────────────────────────────────────
+
+  - id: bb-q5-cadenceworker
+    question: "Analyze business logic in the CadenceWorker pipeline"
+    type: bb
+    difficulty: hard
+    dacpac: customer-data/dacpac/Synapse_Data_Warehouse.dacpac
+    origin: "[TRANSFORMATION_FINANCEHUB].[CadenceWorker]"
+    scope_direction: upstream
+    filter:
+      schemas:
+        - TRANSFORMATION_FINANCEHUB
+        - STAGING_FINANCEHUB
+        - CONSUMPTION_FINANCEHUB
+        - dbo
+    expected:
+      delivery: sm
+      nodes_required:
+        - spCadenceRule_INIT
+        - spCadenceRule_OOS
+        - spCadenceRule_DEPT
+        - spCadenceRule_RATE
+        - spCadenceRule_Alloc1a
+        - spCadenceRule_Alloc1b
+        - spCadenceRule_Alloc1c
+        - spCadenceRule_Alloc1d
+        - spCadenceRule_Alloc2
+        - CadenceExtract_TEST
+        - CadenceRates_TEST
+        - vDataFilters
+      nodes_forbidden:
+        - udfDivideAsDec
+        - udfConvertUnixTS
+        - udfCreateKeyValuePair
+        - logmessage
+      max_hops: 15
+      min_badges: 10
+
+  # ────────────────────────────────────────────────────────────
+  # CT Tests — AI Schema Dacpac
+  # ────────────────────────────────────────────────────────────
+
+  - id: ct-q3-customersegment
+    question: "Trace CustomerSegment column upstream from FactSalesReport"
+    type: ct
+    difficulty: easy
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [CustomerSegment]
+    direction: up
+    filter: null
+    expected:
+      delivery: sm
+      chain_path:
+        - FactSalesReport
+        - spBuildSalesReport
+        - CustomerMaster
+        - CustomerSegmentMap
+        - spRefreshSegments
+      column_renames_min: 1  # SegmentName -> CustomerSegment
+      max_hops: 5
+
+  - id: ct-q1-totalrevenue
+    question: "Trace TotalRevenue column upstream from FactSalesReport"
+    type: ct
+    difficulty: hard
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [TotalRevenue]
+    direction: up
+    filter: null
+    expected:
+      delivery: sm
+      chain_length_min: 17
+      branches: 2
+      column_renames_min: 7
+      source_nodes:
+        - SAPOrders
+        - OracleOrders
+        - SupplierPrices
+        - MarkupRules
+      max_hops: 15
+
+  - id: ct-q2-adjustedrevenue
+    question: "Trace AdjustedRevenue column upstream from FactSalesReport"
+    type: ct
+    difficulty: hardest
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [AdjustedRevenue]
+    direction: up
+    filter: null
+    expected:
+      delivery: sm
+      # AdjustedRevenue = TotalRevenue - Discount branch
+      # Superset of ct-q1 plus Discount path
+      branches: 3  # Qty + UnitPrice + Discount
+      column_renames_min: 7
+      source_nodes:
+        - SAPOrders
+        - OracleOrders
+        - SupplierPrices
+        - MarkupRules
+      max_hops: 20
+
+  # ────────────────────────────────────────────────────────────
+  # CT Tests — AdventureWorks (known limitation)
+  # ────────────────────────────────────────────────────────────
+
+  - id: ct-q3-aw-businessentityid
+    question: "Trace BusinessEntityID column upstream from Employee"
+    type: ct
+    difficulty: medium
+    dacpac: test/AdventureWorks.dacpac
+    origin: "[HumanResources].[Employee]"
+    columns: [BusinessEntityID]
+    direction: up
+    filter: null
+    known_limitation: "FK relationships don't create graph edges — CT follows SQL body edges only"
+    expected:
+      delivery: sm
+      # Person.Person SHOULD be in trace (FK source) but won't be (known limitation)
+      # SPs that reference Employee will appear as upstream (graph-correct, semantically wrong)
+      max_hops: 5
