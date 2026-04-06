@@ -208,3 +208,133 @@ tests:
       # Person.Person SHOULD be in trace (FK source) but won't be (known limitation)
       # SPs that reference Employee will appear as upstream (graph-correct, semantically wrong)
       max_hops: 5
+
+  # ────────────────────────────────────────────────────────────
+  # Type 2 — Dependency Trace (CT without columns)
+  # ────────────────────────────────────────────────────────────
+
+  - id: dep-q1-vemployee
+    question: "Trace all dependencies upstream from vEmployee"
+    type: ct
+    difficulty: easy
+    dacpac: test/AdventureWorks.dacpac
+    origin: "[HumanResources].[vEmployee]"
+    columns: []  # empty = dependency mode (Type 2)
+    direction: up
+    filter: null
+    expected:
+      delivery: sm
+      nodes_required:
+        - Employee
+        - Person
+      max_hops: 8
+
+  # ────────────────────────────────────────────────────────────
+  # BB with schema filter — inline delivery
+  # ────────────────────────────────────────────────────────────
+
+  - id: bb-q6-production-filter
+    question: "What does the Product table depend on?"
+    type: bb
+    difficulty: easy
+    dacpac: test/AdventureWorks.dacpac
+    origin: "[Production].[Product]"
+    scope_direction: upstream
+    filter:
+      schemas:
+        - Production
+    expected:
+      delivery: inline
+      nodes_required: []
+      nodes_forbidden: []
+      max_hops: 0
+
+  # ────────────────────────────────────────────────────────────
+  # BB auto-add — AI should discover out-of-scope staging deps
+  # ────────────────────────────────────────────────────────────
+
+  - id: bb-q7-cadence-add-ids
+    question: "What staging tables feed into the CadenceWorker transformation?"
+    type: bb
+    difficulty: medium
+    dacpac: customer-data/dacpac/Synapse_Data_Warehouse.dacpac
+    origin: "[TRANSFORMATION_FINANCEHUB].[CadenceWorker]"
+    scope_direction: upstream
+    filter:
+      schemas:
+        - TRANSFORMATION_FINANCEHUB
+        # STAGING_FINANCEHUB intentionally omitted — AI should notice staging deps
+        # and either add_ids or note as outside filter
+    expected:
+      delivery: sm
+      nodes_required:
+        - spCadenceRule_INIT
+      nodes_forbidden:
+        - udfDivideAsDec
+      max_hops: 15
+
+  # ────────────────────────────────────────────────────────────
+  # CT rejection recovery — multi-CTE rename chain
+  # ────────────────────────────────────────────────────────────
+
+  - id: ct-q4-tricky-rename
+    question: "Trace UnitPrice column upstream from FactSalesReport"
+    type: ct
+    difficulty: hard
+    dacpac: tmp/AdventureWorks2025_AI.dacpac
+    origin: "[ai].[FactSalesReport]"
+    columns: [UnitPrice]
+    direction: up
+    filter: null
+    expected:
+      delivery: sm
+      nodes_required:
+        - vwPriceList
+        - PriceMaster
+        - SupplierPrices
+      column_renames_min: 3
+      max_hops: 10
+      # Tests: AI must navigate ListPrice→BasePrice→AdjPrice→UnitPrice rename chain
+      # Likely triggers invalid_columns — tests self-correction
+
+  # ────────────────────────────────────────────────────────────
+  # BB scope_too_broad — AI must pick direction
+  # ────────────────────────────────────────────────────────────
+
+  - id: bb-q8-scope-broad
+    question: "Analyze the Person table"
+    type: bb
+    difficulty: medium
+    dacpac: test/AdventureWorks.dacpac
+    origin: null  # AI must search and pick direction
+    scope_direction: null
+    filter: null
+    expected:
+      delivery: inline
+      nodes_required: []
+      nodes_forbidden: []
+      max_hops: 20
+      # Tests: scope_too_broad handling — AI should pick upstream or downstream
+
+  # ────────────────────────────────────────────────────────────
+  # BB early completion — must visit direct neighbors first
+  # ────────────────────────────────────────────────────────────
+
+  - id: bb-q9-cadence-early-complete
+    question: "What is the purpose of spCadenceRule_INIT?"
+    type: bb
+    difficulty: easy
+    dacpac: customer-data/dacpac/Synapse_Data_Warehouse.dacpac
+    origin: "[TRANSFORMATION_FINANCEHUB].[spCadenceRule_INIT]"
+    scope_direction: downstream
+    filter:
+      schemas:
+        - TRANSFORMATION_FINANCEHUB
+        - STAGING_FINANCEHUB
+        - dbo
+    expected:
+      delivery: sm
+      nodes_required:
+        - CadenceWorker
+      max_hops: 10
+      # Tests: complete_rejected guard — AI must visit CadenceWorker (direct neighbor) before complete:true
