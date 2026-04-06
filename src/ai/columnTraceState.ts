@@ -120,9 +120,7 @@ export class ColumnTraceState {
   private currentFocusNodeId: string | null = null;
   private currentFocusActiveColumns: string[] = [];
   private currentFocusDepth = 0;
-  private rejectionsThisHop = 0;  // capped at MAX_REJECTIONS_PER_HOP per hop
-  private degradedToDepMode = false;  // true after column validation fails MAX_REJECTIONS — falls back to dependency mode (no column tracking)
-  private degradationHop: number | null = null;
+  private rejectionsThisHop = 0;  // after MAX_REJECTIONS_PER_HOP → auto-prune the unresolvable neighbor
   private rejectionHistory: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }> = [];
 
   constructor(
@@ -484,11 +482,11 @@ export class ColumnTraceState {
         continue; // no further validation needed for revisit
       }
       if (v.verdict === 'trace') {
-        if (!v.columnsOut?.length && this.targetColumns.length > 0 && !this.degradedToDepMode) {
+        if (!v.columnsOut?.length && this.targetColumns.length > 0) {
           return { error: 'missing_columns', hint: `Verdict "trace" for ${v.nodeId} requires columnsOut (column mode).` };
         }
-        // Column validation (skip if no columns to validate or rejection cap reached)
-        if (v.columnsOut?.length && this.rejectionsThisHop < MAX_REJECTIONS_PER_HOP) {
+        // Column validation — always validate, never accept garbage, never auto-prune
+        if (v.columnsOut?.length) {
           const neighbor = this.nodeMap.get(v.nodeId);
           const neighborCols = getNodeColumns(v.nodeId, this.nodeMap, this.store ?? undefined);
           if (neighborCols?.length) {
@@ -497,14 +495,15 @@ export class ColumnTraceState {
             if (invalid.length > 0) {
               this.rejectionsThisHop++;
               this.rejectionHistory.push({ hop: this.hopCount, nodeId: v.nodeId, submitted: invalid, valid: neighborCols.map(c => c.name) });
-              this.log('warn', `REJECT (${this.rejectionsThisHop}/${MAX_REJECTIONS_PER_HOP}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
-              const willDegrade = this.rejectionsThisHop >= MAX_REJECTIONS_PER_HOP;
+              this.log('warn', `REJECT (${this.rejectionsThisHop}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
               return {
                 error: 'invalid_columns',
                 nodeId: v.nodeId,
                 invalid,
                 valid: neighborCols.map(c => c.name),
-                ...(willDegrade && { warning: 'Next attempt will degrade to dependency mode (no column tracking). Correct the column name or accept dependency-only tracing.' }),
+                hint: this.rejectionsThisHop >= MAX_REJECTIONS_PER_HOP
+                  ? `Column rejected ${this.rejectionsThisHop} times. Fix the column name, or prune/pass this neighbor to continue the trace.`
+                  : 'Fix the column name from the valid list and resubmit.',
               };
             }
           } else if (neighbor?.type === 'procedure') {
@@ -515,12 +514,6 @@ export class ColumnTraceState {
               this.log('debug', `SP→SP exec: ${focusId} → ${v.nodeId} — column validation skipped`);
             }
           }
-        } else if (!this.degradedToDepMode) {
-          // Rejection cap already reached but not yet degraded — degrade to dependency mode
-          this.degradedToDepMode = true;
-          this.degradationHop = this.hopCount;
-          this.log('warn', `CT DEGRADED to dependency mode at hop ${this.hopCount} — column validation disabled. Rejection history: ${this.rejectionHistory.length} rejections.`);
-          // Continue processing — columns accepted without validation from here on
         }
       }
     }
@@ -683,16 +676,7 @@ export class ColumnTraceState {
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
     this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
-    return {
-      ok: true, advanced, frontierSize: this.frontier.length,
-      ...(this.degradedToDepMode && this.degradationHop === this.hopCount && {
-        mode_degraded: {
-          from: 'column', to: 'dependency',
-          reason: `Column validation failed ${MAX_REJECTIONS_PER_HOP} times at hop ${this.hopCount}. Columns no longer tracked — trace continues as dependency-only.`,
-          rejection_history: this.rejectionHistory,
-        },
-      }),
-    };
+    return { ok: true, advanced, frontierSize: this.frontier.length };
   }
 
   // ─── getResult ─────────────────────────────────────────────────────────────
@@ -707,6 +691,7 @@ export class ColumnTraceState {
     edges: [string, string, string][];
     outOfScope: OutOfScopeEntry[];
     stats: { hops: number; examined: number; relevant: number; removed: number; passthrough: number };
+    column_rejections?: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }>;
   } | { error: string; hint?: string } {
 
     if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
@@ -773,6 +758,7 @@ export class ColumnTraceState {
       originNodeId: this.originNodeId ?? '',
       direction: this.direction,
       chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats,
+      ...(this.rejectionHistory.length > 0 && { column_rejections: this.rejectionHistory }),
     };
   }
 
