@@ -16,9 +16,9 @@ The YAML file defines five output fields. Only the `instruction` value of each f
 aiOutputTemplates.yaml
   ├── summary.instruction      → injected into system prompt (rule 5)
   ├── description.instruction  → injected into system prompt (rule 5)
-  ├── badges.instruction       → injected into create_ai_view tool description
-  ├── highlights.instruction   → injected into create_ai_view tool description
-  └── notes.instruction        → injected into create_ai_view tool description
+  ├── badges.instruction       → injected into enrich_view tool description
+  ├── highlights.instruction   → injected into enrich_view tool description
+  └── notes.instruction        → injected into enrich_view tool description
 ```
 
 ## The Five Fields -- A Layered Hierarchy
@@ -103,19 +103,30 @@ Edit the `description.instruction` to match your audience:
 | **Manager** | "Business language. No SQL. Focus on what the numbers mean." |
 | **DBA / compliance** | "Technical detail. Include data types, constraints, audit trail." |
 
+## What You Can vs Cannot Customize
+
+The YAML controls the **presentation layer** only — how the AI formats its final output to you. Everything upstream (discovery, routing, state machine protocol, anti-hallucination guards) is hardcoded for correctness.
+
+| Layer | Customizable? | Mechanism | Examples |
+|-------|:---:|-----------|----------|
+| **Output formatting** (enrich_view) | **Yes — YAML** | `aiOutputTemplates.yaml` | Summary length, description style, badge count, audience tone |
+| System prompt (rules 1-4) | No — hardcoded | `extension.ts` | "Never fabricate IDs", validation stops, routing logic |
+| Mode prompts (CT/BB) | No — hardcoded | `extension.ts` | Verdict instructions, column tracking, findings format |
+| Tool descriptions | No — hardcoded | `package.json` | When/what/format for each tool |
+| State machine protocol | No — hardcoded | `columnTraceState.ts`, `blackboardState.ts` | Goal anchors, boundary detection, memory tiers |
+| Token budget gate | No — hardcoded | `tokenBudget.ts` | Inline vs state machine delivery |
+
+**Why this boundary?** A power user changing "use numbered steps" → "use bullet points" is a style preference that cannot break correctness. A power user changing "NEVER fabricate IDs" would introduce hallucination risk. The YAML controls the final mile; the code controls everything that feeds it.
+
 ## VS Code Settings
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `dataLineageViz.ai.enabled` | `true` | Enable/disable the `@lineage` chat participant |
 | `dataLineageViz.ai.outputTemplateFile` | *(empty)* | Path to custom YAML (relative to workspace root) |
-| `dataLineageViz.ai.searchMaxResults` | *(auto)* | Override search result cap |
-| `dataLineageViz.ai.bfsMaxNodes` | *(auto)* | Override BFS node cap |
-| `dataLineageViz.ai.bfsMaxEdges` | *(auto)* | Override BFS edge cap |
-| `dataLineageViz.ai.analysisMaxGroups` | *(auto)* | Override analysis group cap |
-| `dataLineageViz.ai.maxDdlChars` | *(auto)* | Override DDL size cap per object |
+| `dataLineageViz.ai.maxRounds` | `25` | Max tool-call rounds per request. Increase for complex column traces. |
 
-Settings marked *(auto)* scale automatically based on the Copilot model's context window. Set them explicitly only if you need to override the auto-scaled value.
+No per-tool caps — the extension delivers full data. Token estimation (`shouldInline`) decides delivery mode (inline vs state machine).
 
 ## Failsafe Chain
 

@@ -55,6 +55,7 @@ export function DetailApp() {
   const nodeIdRef  = useRef<string | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
+  const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('ddl');
 
   // Keep ref in sync so the stable message handler can read the current node id.
   nodeIdRef.current = detail?.node?.id;
@@ -89,6 +90,9 @@ export function DetailApp() {
     return () => window.removeEventListener('message', handler);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reset toggle to DDL view when switching to a different node
+  useEffect(() => { setDetailMode('ddl'); }, [detail?.node?.id]);
+
   if (!detail) {
     return (
       <div
@@ -105,6 +109,7 @@ export function DetailApp() {
 
   const { node, findQuery, config } = detail;
   const isTable = node.type === 'table' || node.type === 'external';
+  const hasColumnsAndDdl = !!(node.columns?.length && node.bodyScript);
 
   function handleRequestStats(mode: StatsMode) {
     vscodeApi.current.postMessage({
@@ -121,6 +126,7 @@ export function DetailApp() {
     vscodeApi.current.postMessage({ type: 'close-detail' });
   }
 
+  // Tables/externals: always show columns (no DDL toggle)
   if (isTable) {
     return (
       <TableDetailPanel
@@ -143,5 +149,47 @@ export function DetailApp() {
     );
   }
 
+  // Views/TVFs with both columns and DDL: show toggle bar
+  if (hasColumnsAndDdl) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div className="ln-detail-tab-bar">
+          <button
+            onClick={() => setDetailMode('ddl')}
+            className={`ln-detail-tab-button${detailMode === 'ddl' ? ' active' : ''}`}
+          >DDL</button>
+          <button
+            onClick={() => setDetailMode('columns')}
+            className={`ln-detail-tab-button${detailMode === 'columns' ? ' active' : ''}`}
+          >Columns</button>
+        </div>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          {detailMode === 'columns' ? (
+            <TableDetailPanel
+              schema={node.schema}
+              objectName={node.name}
+              objectType={node.type as 'view' | 'function'}
+              columns={node.columns ?? []}
+              fks={[]}
+              statsState={{ phase: 'idle' }}
+              onClose={handleClose}
+              onRequestStats={() => {}}
+              isDbMode={false}
+              statsEnabled={false}
+              excludeExternalTables={false}
+              standardModeEnabled={false}
+              fillContainer
+              findQuery={findQuery}
+              compactColumns
+            />
+          ) : (
+            <MonacoSqlView node={node} findQuery={findQuery} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Procedures, scalar functions: DDL only
   return <MonacoSqlView node={node} findQuery={findQuery} />;
 }

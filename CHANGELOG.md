@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.7] - 2026-03-31
+
+### Added
+- **Column metadata for views & functions** — Views and table-valued functions now show column details in the detail panel, with a toggle between columns and DDL source
+- **`@lineage` column tracing** — Ask the AI assistant to follow columns hop-by-hop through views, procedures, and functions, tracking renames and transformations
+
+### Fixed
+- **CTE UPDATE parsing** — `UPDATE alias SET ... FROM cte_name` patterns and chained CTE references now correctly produce write edges to the underlying table
+- **`@lineage` LaTeX rendering** — Fixed math formula display in AI description overlay
+
+### Changed
+- Reduced webview payload size on large data warehouses by keeping column metadata on the extension host
+- Updated documentation with lineage-focused examples
+
 ## [0.9.6] - 2026-03-27
 
 ### Added

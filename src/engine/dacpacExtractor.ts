@@ -292,12 +292,17 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
     const { schema, objectName } = parseName(name);
     const bodyScript = getBodyScript(el, type, schema, objectName);
 
-    // For tables (and external tables) without bodyScript: extract column metadata + constraints
+    // Extract column metadata for column-bearing types (tables, views, TVFs)
+    const COLUMN_BEARING_DACPAC_TYPES = new Set([
+      'SqlTable', 'SqlExternalTable', 'SqlView',
+      'SqlInlineTableValuedFunction', 'SqlMultiStatementTableValuedFunction',
+    ]);
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
-    if (!bodyScript && (type === 'SqlTable' || type === 'SqlExternalTable')) {
+    if (COLUMN_BEARING_DACPAC_TYPES.has(type)) {
       columns = extractColumnsFromXml(el);
-      if (columns) {
+      // FK enrichment applies to tables/externals only (views/functions have no FK constraints)
+      if (columns && (type === 'SqlTable' || type === 'SqlExternalTable')) {
         fks = enrichColumnsWithConstraints(columns, normalizeName(name), constraintMaps);
       }
     }

@@ -1,26 +1,16 @@
 /**
- * Smart history management for @lineage chat participant.
+ * History management for @lineage chat participant.
  *
  * Three operations on tool results re-injected into conversation history:
  * 1. DROP — remove error/empty results, replace with 1-line summary
  * 2. MERGE — deduplicate overlapping search results (keep superset)
- * 3. FIELD-STRIP — remove heavy fields (ddl, columns) from old results by TTL
+ * 3. EVICT — under context pressure, drop oldest turns to fit token budget
  *
- * NEVER truncates JSON strings. Operates on parsed objects, re-serializes valid JSON.
+ * Token budget decisions (inline vs on-demand) are made at tool call time
+ * by shouldInline() in tokenBudget.ts. History manager never truncates data
+ * within a single tool response — eviction operates at the turn level.
  * Zero VS Code imports — pure functions for testability.
  */
-
-// ─── TTL configuration (in response turns) ──────────────────────────────────
-
-/** Fields and their TTL in response turns. After TTL, the field is stripped. */
-const FIELD_TTL: Record<string, number> = {
-  ddl:          4,   // 80%+ of token cost — AI can re-fetch via get_ddl_batch
-  columns:      6,   // medium cost — AI can re-fetch via get_object_detail
-  foreign_keys: 6,
-  edges:        8,   // aligned with up/dn — model can reference full BFS at same age
-  up:           8,   // neighbor arrays — useful, small
-  dn:           8,
-};
 
 // ─── DROP: remove noise results ─────────────────────────────────────────────
 
@@ -31,14 +21,17 @@ const FIELD_TTL: Record<string, number> = {
 export function compactNoiseResult(toolName: string, resultJson: string): string | null {
   try {
     const parsed = JSON.parse(resultJson);
+    const shortName = toolName.replace('lineage_', '');
     // Error responses
     if (parsed.error) {
-      const shortName = toolName.replace('lineage_', '');
       return JSON.stringify({ summary: `${shortName} → error: ${parsed.error}` });
+    }
+    // Validation rejections (success: false with errors array)
+    if (parsed.success === false && Array.isArray(parsed.errors)) {
+      return JSON.stringify({ summary: `${shortName} → rejected: ${parsed.errors.length} error(s)` });
     }
     // Empty search results
     if (parsed.results && Array.isArray(parsed.results) && parsed.results.length === 0) {
-      const shortName = toolName.replace('lineage_', '');
       return JSON.stringify({ summary: `${shortName} → 0 matches` });
     }
   } catch { /* not JSON or parse error — keep as-is */ }
@@ -140,42 +133,26 @@ export function findMergeableCallIds(rounds: Array<{ toolCalls: ToolCallInfo[] }
   return dropIds;
 }
 
-// ─── FIELD-STRIP: remove heavy fields by TTL ────────────────────────────────
+// ─── EVICT: constants for context-pressure eviction ─────────────────────────
 
 /**
- * Strip expired fields from a tool result JSON string based on turn age.
- * Returns the modified JSON string with expired fields removed.
- * Never truncates — only removes complete JSON fields.
+ * Minimum history messages to preserve during eviction.
+ * Each "turn" is typically 2-3 messages (user + assistant + tool results).
+ * Preserving 6 messages ≈ 2 turns minimum — enough for the model to
+ * understand current context.
  */
-export function stripExpiredFields(resultJson: string, turnAge: number): string {
-  if (turnAge < 4) return resultJson; // nothing expires before turn 4
-  try {
-    const parsed = JSON.parse(resultJson);
-    if (typeof parsed !== 'object' || parsed === null) return resultJson;
-    stripFieldsRecursive(parsed, turnAge);
-    return JSON.stringify(parsed);
-  } catch {
-    return resultJson; // not valid JSON — return as-is
-  }
+export const MIN_HISTORY_MESSAGES = 6;
+
+/**
+ * Build the stub message content inserted after eviction so the model
+ * knows earlier conversation existed.
+ */
+export function buildEvictionStub(evictedCount: number): string {
+  return JSON.stringify({
+    _evicted: true,
+    messages_dropped: evictedCount,
+    reason: 'context_pressure',
+    hint: 'Earlier conversation was removed to fit context window. Key context from those turns may be missing.',
+  });
 }
 
-function stripFieldsRecursive(obj: Record<string, unknown>, age: number): void {
-  for (const field of Object.keys(obj)) {
-    const ttl = FIELD_TTL[field];
-    if (ttl !== undefined && age >= ttl) {
-      delete obj[field];
-      continue;
-    }
-    // Recurse into nested objects and arrays
-    const val = obj[field];
-    if (Array.isArray(val)) {
-      for (const item of val) {
-        if (typeof item === 'object' && item !== null) {
-          stripFieldsRecursive(item as Record<string, unknown>, age);
-        }
-      }
-    } else if (typeof val === 'object' && val !== null) {
-      stripFieldsRecursive(val as Record<string, unknown>, age);
-    }
-  }
-}

@@ -21,6 +21,7 @@ export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
 }
 
 const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', write: 'write', exec: 'exec', read: 'read' };
+const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
 /** Map internal edge types to the AI-facing API name. */
 export function edgeApiType(type: string): string {
@@ -68,6 +69,31 @@ export function presentColumn(col: ColumnDef): Record<string, unknown> {
     uq: col.unique    || undefined,
     ck: col.check     || undefined,
   } as Record<string, unknown>);
+}
+
+/**
+ * One-line compact column string for hop context (AI parses naturally).
+ * E.g. "CustomerKey int, not null, PK" or "CalcTotal COMPUTED"
+ */
+export function presentColumnCompact(col: ColumnDef): string {
+  const parts = [col.name];
+  if (col.extra === 'COMPUTED') {
+    parts.push('COMPUTED');
+    return parts.join(' ');
+  }
+  if (col.type) parts.push(col.type);
+  parts.push(NULLABLE_VALUES.has(col.nullable ?? '') ? 'nullable' : 'not null');
+  if (col.pkOrdinal) parts.push('PK');
+  if (col.unique) parts.push('UQ');
+  if (col.check) parts.push('CK');
+  return parts.join(', ');
+}
+
+/**
+ * Compact FK string for hop context. E.g. "CustomerKey → dbo.DimCustomer"
+ */
+export function presentFkCompact(fk: { columns: string[]; refSchema: string; refTable: string }): string {
+  return `${fk.columns.join(', ')} → ${fk.refSchema}.${fk.refTable}`;
 }
 
 /**

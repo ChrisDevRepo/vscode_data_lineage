@@ -101,7 +101,7 @@ Right-click any node and select **Show Details** to open the detail bar at the b
 - **Unresolved** — SQL references not found in the data source (e.g. dynamic SQL, cross-server refs)
 - **Excluded** — nodes hidden by your exclusion patterns
 
-For **tables and external tables**, the detail panel shows column metadata: name, data type, nullability, primary key, and foreign key constraints.
+For **tables, views, external tables, and table-valued functions**, the detail panel shows column metadata: name, data type, nullability, primary key, and foreign key constraints. Views and TVFs show a **Columns / DDL toggle** to switch between the column table and SQL source code.
 
 ---
 
@@ -172,29 +172,86 @@ Standard mode can be disabled via `tableStatistics.standardModeEnabled`.
 
 ## @lineage AI (GitHub Copilot Chat)
 
-Type `@lineage` in GitHub Copilot Chat to query your loaded lineage graph in plain English. The assistant answers from your actual data — never from general knowledge.
+Type `@lineage` in GitHub Copilot Chat to explore your loaded lineage graph with natural language. The assistant answers from your actual data — never from general knowledge.
+
+### Core features vs AI-enhanced capabilities
+
+The extension provides **object-level lineage** as its core feature — tracing dependencies between tables, views, stored procedures, and functions. This works deterministically from your data model.
+
+The `@lineage` AI assistant in GitHub Copilot Chat can go further by analyzing the available metadata (DDL, column definitions, constraints). It can attempt:
+
+- **Column-level dependency tracing** — mapping how specific columns flow between objects
+- **SQL logic explanation** — breaking down view and procedure bodies
+- **Documentation** — summarizing data flows and schema purposes
+- **Bookmarked views** — creating filtered graph views you can save and explore interactively
+
+> **Note:** AI-enhanced analysis depends on the completeness of the loaded metadata. Column-level tracing reads DDL to infer mappings — results may be incomplete if DDL is unavailable or if the logic involves dynamic SQL. Always verify AI output against your actual database.
+
+When the AI creates a view in the app (e.g., *"show me the lineage in the app"*), it generates a filtered graph with annotated nodes. This view is saved as a bookmark — you can reopen it any time, interact with the graph, trace further, or export it.
 
 ### Example queries
+
+**Trace & explore lineage**
+
+```
+@lineage trace from Sales.SalesOrderDetail upstream to the source tables
+@lineage show me all dependencies of HumanResources.Employee in the app
+@lineage what downstream objects depend on Sales.SalesTerritory?
+@lineage find the shortest path from Purchasing.Vendor to Sales.SalesOrderHeader
+```
+
+**Column-level lineage (AI-enhanced)**
+
+```
+@lineage how is sales calculated — show me the lineage up to source in the app
+@lineage what columns from SalesOrderHeader end up in Sales.vSalesPerson?
+```
+
+When DDL is loaded, the AI assistant can attempt column-level dependency tracing — returning column mappings, join paths, and formula breakdowns. Results depend on the completeness of available metadata. The AI can create an annotated graph view you can save as a bookmark for further interactive exploration.
+
+For broader investigations — business rules, documentation, or pattern discovery across many objects — the assistant uses an exploration mode with persistent two-tier memory: detailed findings stored per node plus one-line summaries visible in every subsequent step. This keeps the assistant focused on your original question even across large scopes.
+
+**SQL understanding**
+
+```
+@lineage explain the SQL of Sales.vSalesPerson — any performance or logic issues?
+@lineage what joins does HumanResources.vEmployee use?
+```
+
+**Documentation**
+
+```
+@lineage document the data flow from Purchasing tables to the reporting views
+@lineage summarize what the Production schema does
+```
+
+**Analysis**
+
+```
+@lineage which objects are hubs with the most connections?
+@lineage find orphan tables that nothing depends on
+@lineage are there any circular dependencies?
+```
+
+**Discovery**
 
 ```
 @lineage what schemas are loaded?
 @lineage find tables with Employee in the name
-@lineage what does HumanResources.Employee depend on?
-@lineage trace 3 levels upstream from Sales.SalesOrderDetail
-@lineage which objects have more than 10 connections?
 ```
 
 ### How it works
 
-- Built-in tools: search objects, trace dependencies, get DDL, run analysis, and more
+- Built-in tools: search objects, trace dependencies, explore business rules, get DDL, run analysis, and more
 - Works with any model in your Copilot chat dropdown
 - Auto-scales context limits based on the model's context window
 - Tools are only active when a lineage graph is loaded
 
 ### Tips
 
+- **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Try *"how is sales calculated — show me the lineage in the app"*.
 - **Start a new chat for each topic.** The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press `Ctrl+L` to start fresh.
-- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* and the assistant builds a filtered graph view with exactly the relevant objects — bookmarked as a saved view you can return to.
+- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark. You can then explore the view interactively, trace further, or export it.
 - **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"* and it answers from your live session state.
 - **Be specific with object names.** `@lineage trace from Sales.SalesOrderDetail` works better than `trace from the sales order table`.
 - **Narrow BFS scope on large graphs.** Ask for 1–2 levels first, then expand if you need more depth.
@@ -223,7 +280,7 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 | **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |
 | **Trace** | `trace.defaultUpstreamLevels`, `trace.defaultDownstreamLevels` |
 | **Analysis** | `analysis.hubMinDegree`, `analysis.islandMaxSize`, `analysis.longestPathMinNodes` |
-| **AI Assistant** | `ai.enabled`, `ai.searchMaxResults`, `ai.maxDdlChars` |
+| **AI Assistant** | `ai.enabled`, `ai.maxRounds`, `ai.outputTemplateFile` |
 
 ### Customization guides
 
@@ -232,3 +289,13 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 | [Custom Parse Rules](PARSE_RULES.md) | Regex rules for stored procedure dependency extraction |
 | [Custom DMV Queries](DMV_QUERIES.md) | SQL queries used during database import |
 | [Profiling Patterns](PROFILING_PATTERNS.md) | Table statistics SQL reference |
+
+---
+
+## FAQ
+
+**Do I need a .dacpac file?**
+No — connect directly to a database. If you prefer a `.dacpac`, extract one from Visual Studio, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications).
+
+**Why are some dependencies missing?**
+Dynamic SQL cannot be analyzed statically. Only compile-time dependencies are detected.

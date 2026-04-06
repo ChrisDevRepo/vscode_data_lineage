@@ -10,7 +10,7 @@
 
 summary:
   instruction: >
-    One-line graph purpose (max 120 chars). Shown in the info card.
+    One-line graph purpose (~120 chars, max 300). Shown in the info card.
   example: "Revenue lineage from SAP invoices through EV calculation to FactFinance."
 
 description:
@@ -19,25 +19,29 @@ description:
     Each heading covers one or more steps: "## Revenue Calculation (steps 3-4)".
     Under each heading, explain the business logic at those nodes -- formulas, column mappings, WHY it matters.
     The graph shows structure; you explain meaning.
-    Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$ / $$block$$), code blocks.
-    Not supported: mermaid, HTML, images, footnotes.
+    Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$, ```math blocks for display), code blocks.
+    For display math use ```math fenced blocks (not $$). One formula per block. For piecewise/conditional logic use a table or bullet list instead of \begin environments.
+    Not supported: mermaid, HTML, images, footnotes, LaTeX \begin environments.
     BAD: A standalone essay that never mentions step numbers.
     GOOD: "## FX Conversion (step 4)\n`spConvertFX` multiplies Amount by DimRate.Rate where CurrencyCode = 'CHF'..."
   bad_example: "Data flows from staging through transformation to consumption."
   good_example: |
     ## Revenue Calculation (steps 3-4)
     Revenue uses the **Earned Value (EV) methodology**:
-    $$Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}$$
+    ```math
+    Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}
+    ```
     `spCalcEV` (step 3) reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
     then `vw_Revenue` (step 4) applies the Swiss filter: `WHERE CountryCode = 'CH'`.
 
 badges:
   instruction: >
-    Numbered navigation anchors on 5-8 KEY nodes -- not every node.
+    Numbered navigation anchors on nodes you analyzed.
     Format: "1 Source", "3 FX Convert". Number = logical step in the description.
-    Only mark a node as a step if the description explains what happens there.
-    BAD: 14 steps on 14 nodes (every node marked).
-    GOOD: 6 steps on the nodes where business logic lives -- sources, key transforms, final target.
+    Badge every node that appears in your description -- do NOT skip analyzed nodes.
+    For large sets: group related nodes under shared step numbers (e.g. "5-8 Allocation Rules" covers 4 related SPs).
+    BAD: 3 badges on a 13-node exploration where you analyzed all 13.
+    GOOD: 8 steps covering all 13 analyzed nodes with grouping where appropriate.
 
 highlights:
   instruction: >

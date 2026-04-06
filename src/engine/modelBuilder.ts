@@ -21,6 +21,7 @@ import {
 } from './types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
 import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
+import { ColumnStore } from './columnStore';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -71,6 +72,24 @@ export function buildModel(
     parseStats: stats,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
+}
+
+/**
+ * Index columns and DDL from LineageNode into ColumnStore for fast lookup.
+ * ColumnStore provides O(1) indexed access for AI tools + column-trace auto-discover.
+ * Inline data on nodes is preserved until detail search is migrated to extension host.
+ */
+export function populateColumnStore(model: DatabaseModel, store: ColumnStore): void {
+  for (const node of model.nodes) {
+    if (node.columns && node.columns.length > 0) {
+      store.setColumns(node.id, node.columns);
+      node.hasColumns = true;
+    }
+    if (node.bodyScript) {
+      store.setDdl(node.id, node.bodyScript);
+      node.hasDdl = true;
+    }
+  }
 }
 
 // ─── Catalog Builder ────────────────────────────────────────────────────────

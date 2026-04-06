@@ -4,7 +4,7 @@
 ![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)
 ![Status](https://img.shields.io/badge/status-preview-orange.svg)
 
-Visualize SQL dependencies right inside VS Code. Ask `@lineage` in Copilot Chat to explore your graph with natural language — or browse interactively with search, trace, and schema overview.
+Visualize SQL dependencies right inside VS Code. Ask `@lineage` in Copilot Chat to explore your lineage graph with natural language — or browse interactively with search, trace, and schema overview.
 
 Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
@@ -18,20 +18,25 @@ Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric
 
 No data? Click **Try with demo data** to explore the AdventureWorks sample.
 
-## AI-Powered Exploration
+## AI-Powered Lineage
 
-Use `@lineage` in GitHub Copilot Chat to query your loaded graph. The assistant uses dedicated lineage tools — never general knowledge.
+Use `@lineage` in GitHub Copilot Chat to explore your database dependencies. The assistant traces lineage from your actual data model.
 
 ```
-@lineage what does HumanResources.Employee depend on?
-@lineage trace 3 levels upstream from Sales.SalesOrderDetail
-@lineage which objects are hubs with more than 10 connections?
+@lineage trace from Sales.SalesOrderDetail upstream to the source tables
+@lineage how is sales calculated — show me the lineage up to source in the app
+@lineage which objects are hubs with the most connections?
 ```
+
+Trace object dependencies and create bookmarked graph views. The AI assistant can go further — analyzing column mappings and SQL logic from the available metadata.
+
+![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
 Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
 
 ## Features
 
+- **@lineage AI** — ask Copilot Chat to trace lineage, analyze column mappings, explain SQL logic, and create bookmarked graph views from your data model
 - **Search & trace** — find objects with autocomplete, trace upstream/downstream dependencies, find shortest paths between nodes
 - **Graph analysis** — detect islands, hubs, orphans, circular dependencies, and longest chains
 - **Schema overview** — large graphs auto-summarize at schema level; double-click to drill in
@@ -40,29 +45,11 @@ Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=Gi
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen
 - **Export** — generate Draw.io diagrams for documentation
 
-## How It Works
-
-1. **Extract** — reads `model.xml` from a `.dacpac`, or imports metadata via DMV queries
-2. **Parse** — combines XML/DMV dependencies with configurable regex patterns
-3. **Graph** — builds a directed graph with automatic layout
-4. **Render** — interactive visualization with pan, zoom, and filtering
-
-## Configuration
-
-Search `dataLineageViz` in VS Code Settings (`Ctrl+,`).
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| `maxNodes` | `750` | Objects to load (up to 10,000). AI queries the full model; GUI is separately capped |
-| `renderLimit` | `750` | Max nodes the GUI renders before showing a summary |
-| `excludePatterns` | `[]` | Regex patterns to exclude objects by name |
-| `layout.direction` | `"LR"` | Graph direction: left-to-right or top-to-bottom |
-
-Advanced users can override [parse rules](docs/PARSE_RULES.md), [DMV queries](docs/DMV_QUERIES.md), and review [profiling patterns](docs/PROFILING_PATTERNS.md). Scaffold templates via Command Palette: **Create Parse Rules** / **Create DMV Queries**.
+For configuration, settings reference, and advanced customization (parse rules, DMV queries), see the [full documentation](docs/FEATURES.md).
 
 ## Limitations
 
-- Object-level only — no column-level lineage
+- Column-level lineage via `@lineage /column-trace` (AI-assisted, requires GitHub Copilot)
 - Static analysis — dynamic SQL (`EXEC(@sql)`) not detected
 - Fully-qualified names only — unqualified references are excluded
 

@@ -3,15 +3,18 @@
 ## Running Tests
 
 ```bash
-npm test                                       # All unit tests (1258 tsx + 112 vitest + snapshot)
-npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (108 tests)
+npm test                                       # All unit tests (1372 tsx + 112 vitest + snapshot)
+npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (109 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (218 tests)
-npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (197 tests)
+npx tsx test/parser-edge-cases.test.ts         # Syntactic parser tests (204 tests)
 npx tsx test/graphAnalysis.test.ts             # Graph analysis tests (81 tests)
 npx tsx test/dmvExtractor.test.ts              # DMV extractor tests (193 tests)
 npx tsx test/tsql-complex.test.ts              # SQL pattern tests (55 tests)
 npx tsx test/projectStore.test.ts              # Project store tests (136 tests)
-npx tsx test/ai-tools.test.ts                  # AI tool function tests (270 tests)
+npx tsx test/ai-tools.test.ts                  # AI tool function tests (184 tests)
+npx tsx test/column-trace-state.test.ts        # Column-trace state machine tests (98 tests)
+npx tsx test/blackboard-state.test.ts          # Blackboard state machine tests (66 tests)
+npx tsx test/chat-loop.test.ts                 # Chat-loop orchestration tests (28 tests)
 npx vitest run --config vitest.config.ts       # Hook tests (112 tests, vitest + React Testing Library)
 npm run test:snapshot                          # Parser baseline check (31 AW SPs vs committed TSV)
 npm run test:snapshot:update                   # Regenerate test/aw-baseline.tsv after parser changes
@@ -22,14 +25,17 @@ npm run test:coverage                          # Hook tests with v8 coverage rep
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `dacpacExtractor.test.ts` | 108 | Dacpac extraction, filtering, edge integrity, Fabric SDK, CVE security, error handling, constraint extraction (UQ/CK/FK), `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
+| `dacpacExtractor.test.ts` | 109 | Dacpac extraction, filtering, edge integrity, Fabric SDK, CVE security, error handling, constraint extraction (UQ/CK/FK), `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
 | `graphBuilder.test.ts` | 218 | Graph construction, dagre layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
-| `parser-edge-cases.test.ts` | 197 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
+| `parser-edge-cases.test.ts` | 204 | **Syntactic parser tests** — pure regex rule verification, no dacpac data |
 | `graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `tsql-complex.test.ts` | 55 | **SQL pattern tests** — targeted SQL files covering each parser pattern; expected results embedded as `-- EXPECT` comments |
 | `projectStore.test.ts` | 136 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `ai-tools.test.ts` | 270 | AI tool pure functions: getContext, searchObjects (schemas/types/regex/mismatch), getObjectDetail, runBfsTrace (ddl/schema/type filters, truncation), runAnalysis, searchDdl, getDdlBatch, validateCreateAiView, autoFixCreateAiView, validateQuery, safeRegex |
+| `ai-tools.test.ts` | 184 | AI tool pure functions: getContext, searchObjects (schemas/types/regex/mismatch), getObjectDetail, runBfsTrace (ddl/schema/type filters, truncation), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
+| `column-trace-state.test.ts` | 98 | Column-trace state machine: lifecycle, init, verdict processing, rejection/retry, column validation, frontier cap, boundary detection, synthetic model tests, bug regression (diamond merge, passthrough visited, depth tracking, focus boundary) |
+| `blackboard-state.test.ts` | 66 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
+| `chat-loop.test.ts` | 28 | Orchestration loop: classic tool dispatch, dedup, CT multi-hop, round limit, BB tool visibility. Uses fake Copilot responses via `chatLoopTestHarness.ts` |
 | `hooks/useInteractiveTrace.test.ts` | 31 | **Trace state machine** — mode transitions (none/configuring/filtered/applied/pathfinding/path-applied/analysis), depth limits (upstream-only, downstream-only), path finding success/failure, analysis subset, endTrace/clearTrace reset from all modes, tracedNodes memoization |
 | `hooks/useGraphology.test.ts` | 27 | **Graph filter pipeline** — schema filter (case-insensitive), type filter, isolation (hideIsolated), exclusion patterns, focus schema + cross-schema neighbors, allowlist, external ref visibility, graph/metrics state, rebuild behavior |
 | `hooks/useDacpacLoader.routing.test.tsx` | 30 | useDacpacLoader: message routing (dacpac vs DB paths), state transitions, callbacks, isDemo flag |

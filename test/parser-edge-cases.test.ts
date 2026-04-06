@@ -399,6 +399,40 @@ function testCteExclusion() {
     assert(hasName(r.targets, 'Prices'), 'CTE UPDATE alias WHERE: base table in targets');
     assert(!hasName(r.targets, 'Upd'),   'CTE UPDATE alias WHERE: CTE name NOT in targets');
   }
+
+  // CTE UPDATE alias-FROM: UPDATE w SET ... FROM cte w (the CTE name is in FROM, not UPDATE target)
+  // Pass 1.6 rewrites FROM cte → FROM [schema].[table], enabling extract_update_alias_target
+  {
+    const r = parseSqlBody(`
+      WITH cte_Result AS (SELECT * FROM [TRANSFORMATION_FINANCEHUB].[CadenceWorker])
+      UPDATE w SET w.Col = 1 FROM cte_Result w
+    `);
+    assert(hasName(r.targets, 'CadenceWorker'), 'CTE UPDATE alias-FROM: CadenceWorker in targets');
+    assert(hasName(r.sources, 'CadenceWorker'), 'CTE UPDATE alias-FROM: CadenceWorker also in sources');
+    assert(!r.targets.some(s => s.toLowerCase().includes('cte_result')), 'CTE UPDATE alias-FROM: cte_Result NOT in targets');
+  }
+
+  // Chained CTE: cte_B → cte_A → schema.table, UPDATE cte_B SET (chain resolution)
+  {
+    const r = parseSqlBody(`
+      WITH BaseOrders AS (SELECT * FROM [dbo].[SalesOrder] WHERE Status = 'PENDING'),
+      OrdersWithLimit AS (SELECT * FROM BaseOrders WHERE TotalAmount > 100)
+      UPDATE OrdersWithLimit SET Status = 'APPROVED'
+    `);
+    assert(hasName(r.targets, 'SalesOrder'), 'Chained CTE UPDATE: SalesOrder in targets (chain resolved)');
+    assert(hasName(r.sources, 'SalesOrder'), 'Chained CTE UPDATE: SalesOrder in sources');
+  }
+
+  // Chained CTE + alias-FROM: cte_B → cte_A → schema.table, UPDATE w SET ... FROM cte_B w
+  {
+    const r = parseSqlBody(`
+      WITH cte_Base AS (SELECT * FROM [warehouse].[Inventory]),
+      cte_Filtered AS (SELECT * FROM cte_Base WHERE Qty > 0)
+      UPDATE inv SET inv.Qty = 0 FROM cte_Filtered inv
+    `);
+    assert(hasName(r.targets, 'Inventory'), 'Chained CTE alias-FROM: Inventory in targets');
+    assert(hasName(r.sources, 'Inventory'), 'Chained CTE alias-FROM: Inventory in sources');
+  }
 }
 
 

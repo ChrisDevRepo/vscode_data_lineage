@@ -19,7 +19,7 @@ export type TableStatsState =
 export interface TableDetailPanelProps {
   schema: string;
   objectName: string;
-  objectType: 'table' | 'external';
+  objectType: 'table' | 'external' | 'view' | 'function';
   externalType?: 'et' | 'file' | 'db';
   columns: ColumnDef[];
   fks: ForeignKeyInfo[];
@@ -34,6 +34,8 @@ export interface TableDetailPanelProps {
   fillContainer?: boolean;
   /** Highlight this search term in column names and FK references */
   findQuery?: string;
+  /** Hide Null/Flags columns (views/functions — meaningless metadata). */
+  compactColumns?: boolean;
 }
 
 const MIN_WIDTH = 320;
@@ -58,11 +60,15 @@ export const TableDetailPanel = memo(function TableDetailPanel({
   standardModeEnabled,
   fillContainer,
   findQuery,
+  compactColumns,
 }: TableDetailPanelProps) {
   const typeIcon = TYPE_COLORS[objectType as ObjectType]?.icon ?? '■';
   const typeLabel = externalType === 'file' ? 'FILE SOURCE'
     : externalType === 'db' ? 'CROSS-DATABASE'
-    : objectType === 'external' ? 'EXTERNAL TABLE' : 'TABLE';
+    : objectType === 'external' ? 'EXTERNAL TABLE'
+    : objectType === 'view' ? 'VIEW'
+    : objectType === 'function' ? 'FUNCTION'
+    : 'TABLE';
   const isVirtualExt = externalType === 'file' || externalType === 'db';
 
   const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
@@ -176,7 +182,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
           </div>
 
           {/* Column table */}
-          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} findQuery={findQuery} />
+          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} findQuery={findQuery} compact={compactColumns} />
 
           {/* Foreign Keys section */}
           {fks.length > 0 && <ForeignKeysSection fks={fks} findQuery={findQuery} />}

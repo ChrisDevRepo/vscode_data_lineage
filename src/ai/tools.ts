@@ -1,6 +1,8 @@
 /**
  * AI tool pure functions — zero VS Code imports.
- * All 8 functions are invoked by the registered LanguageModelTools in extension.ts.
+ * 8 classic retrieval functions invoked by classic LanguageModelTools in extension.ts.
+ * CT and BB tools (start_column_trace, submit_hop_analysis, start_exploration, submit_findings)
+ * are handled directly by ColumnTraceState and BlackboardState in extension.ts.
  *
  * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */
@@ -10,40 +12,71 @@ import {
   DEFAULT_CONFIG,
   type DatabaseModel,
   type LineageNode,
+  type ColumnDef,
   type ObjectType,
   type AnalysisType,
 } from '../engine/types';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
-import { searchCatalog, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
+import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
 import { normalizeBodyScript } from '../utils/sql';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
 import {
   strip, edgeApiType,
-  presentNode, presentColumn, presentSchema, presentNeighbor, presentFilter,
+  presentNode, presentColumn, presentColumnCompact, presentFkCompact,
+  presentSchema, presentNeighbor, presentFilter,
 } from './aiPresenter';
 
-// ─── Caps ────────────────────────────────────────────────────────────────────
+// ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
 
-export const AI_CAPS = {
-  BFS_MAX_NODES:       200,
-  BFS_MAX_EDGES:       300,
-  SEARCH_MAX_RESULTS:   50,
-  REGEX_MAX_LENGTH:    200,
-  ANALYSIS_MAX_GROUPS: 100,
-  MAX_DDL_CHARS:     10000,   // per object; 500000 = effectively unlimited
-  DDL_BATCH_CAP:        20,   // max IDs per getDdlBatch call
-} as const;
+import { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
+export { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget } from './tokenBudget';
 
-/** Mutable override type for per-request cap tuning (auto-scale + VS Code settings). */
-export type AiCapsOverride = { [K in keyof typeof AI_CAPS]?: number };
+/** Max nodes for inline BFS delivery — above this, recommend state machine. */
+const BFS_INLINE_NODE_CAP = 200;
+
+// ─── Input validation ────────────────────────────────────────────────────────
+
+type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
+
+/**
+ * Lightweight runtime validation for LLM tool inputs. Returns null if valid,
+ * or a structured error if any required field is missing or has the wrong type.
+ * No external dependencies (not Zod) — keeps the extension lean.
+ */
+export function validateToolInput(
+  input: unknown,
+  required: Record<string, FieldType>,
+): { error: string; hint: string } | null {
+  if (input === null || input === undefined || typeof input !== 'object') {
+    return { error: 'invalid_input', hint: 'Tool input must be an object.' };
+  }
+  const obj = input as Record<string, unknown>;
+  for (const [field, expectedType] of Object.entries(required)) {
+    const val = obj[field];
+    if (val === undefined || val === null) {
+      return { error: 'missing_field', hint: `Required field "${field}" is missing.` };
+    }
+    if (expectedType === 'array') {
+      if (!Array.isArray(val)) {
+        return { error: 'wrong_type', hint: `Field "${field}" must be an array, got ${typeof val}.` };
+      }
+    } else if (typeof val !== expectedType) {
+      return { error: 'wrong_type', hint: `Field "${field}" must be ${expectedType}, got ${typeof val}.` };
+    }
+  }
+  return null;
+}
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
+const COLUMN_SEARCH_LIMIT = 50;
+const ENRICH_VIEW_NAME_MAX_LENGTH = 60;
+const ENRICH_VIEW_SUMMARY_HARD_LIMIT = 300;
 
 /** Build source→target edge type lookup for the entire model (cheap one-pass). */
-function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
+export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const m = new Map<string, string>();
   for (const e of model.edges) {
     m.set(`${e.source}→${e.target}`, edgeApiType(e.type));
@@ -52,14 +85,14 @@ function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
 }
 
 /** Build id→node lookup. */
-function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
+export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   const m = new Map<string, LineageNode>();
   for (const n of model.nodes) m.set(n.id, n);
   return m;
 }
 
 /** Build lowercase "Schema.Name" → unrelated refs lookup from parse stats. */
-function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
+export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   const m = new Map<string, string[]>();
   if (!model.parseStats?.spDetails) return m;
   for (const d of model.parseStats.spDetails) {
@@ -70,21 +103,60 @@ function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   return m;
 }
 
-// ─── Result types ─────────────────────────────────────────────────────────────
+// ─── Shared SM helpers (used by CT, BB, and classical tools) ─────────────────
 
-export type NotFoundError = { error: 'not_found'; id: string; hint: string };
-export type InvalidRegex  = { error: 'invalid_regex'; hint: string };
+/** Shared column access — used by classical tools, CT, and BB. */
+export function getNodeColumns(
+  nodeId: string, nodeMap: Map<string, LineageNode>,
+  store?: import('../engine/columnStore').ColumnStore,
+): ColumnDef[] | undefined {
+  return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
+}
+
+/** Shared DDL access — normalized. Used by classical tools, CT, and BB. */
+export function getNodeDdl(
+  nodeId: string, nodeMap: Map<string, LineageNode>,
+  store?: import('../engine/columnStore').ColumnStore,
+): string | undefined {
+  const raw = store?.getDdl(nodeId) ?? nodeMap.get(nodeId)?.bodyScript;
+  return raw ? normalizeBodyScript(raw) : undefined;
+}
+
+/** Build focus node detail for hop context — shared by CT and BB. */
+export function buildHopFocusNode(
+  node: LineageNode,
+  nodeMap: Map<string, LineageNode>,
+  unrelatedMap: Map<string, string[]>,
+  store?: import('../engine/columnStore').ColumnStore,
+  ddlKey = 'ddl',
+): Record<string, unknown> {
+  const focusNode: Record<string, unknown> = {
+    id: node.id, s: node.schema, n: node.name, t: node.type,
+  };
+  const ddl = getNodeDdl(node.id, nodeMap, store);
+  const cols = getNodeColumns(node.id, nodeMap, store);
+  if (SCRIPT_TYPES.has(node.type) && ddl) {
+    focusNode[ddlKey] = ddl;
+  } else if (cols?.length) {
+    focusNode.cols = cols.map(c => presentColumnCompact(c));
+  }
+  if (node.fks?.length) {
+    focusNode.fks = node.fks.map(fk => presentFkCompact(fk));
+  }
+  const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
+  const unrel = unrelatedMap.get(unrelKey);
+  if (unrel?.length) focusNode.unresolved_refs = unrel;
+  return strip(focusNode) as Record<string, unknown>;
+}
 
 // ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
-
-/** Threshold: models at or below this size include full object catalog in get_context. */
-const SMALL_MODEL_THRESHOLD = 150;
 
 export function getContext(
   model: DatabaseModel,
   activeFilter: SerializedFilterState | null,
   projectName: string | null,
   savedViews: FilterProfile[],
+  store?: import('../engine/columnStore').ColumnStore,
 ) {
   const visibleNodes = activeFilter
     ? model.nodes.filter(n => {
@@ -96,55 +168,55 @@ export function getContext(
       }).length
     : model.nodes.length;
 
-  const isSmall = model.nodes.length <= SMALL_MODEL_THRESHOLD;
+  // Build full catalog payload, then measure — token budget decides inline vs on-demand
+  const catalog = model.nodes.map(n => {
+    const base = presentNode(n, model.neighborIndex);
+    const ddlBody = store?.getDdl(n.id) ?? n.bodyScript;
+    if (SCRIPT_TYPES.has(n.type) && ddlBody) {
+      const ddl = normalizeBodyScript(ddlBody);
+      return { ...base, ddl };
+    }
+    const cols = store?.getColumns(n.id) ?? n.columns;
+    if (cols && cols.length > 0) {
+      const enriched: Record<string, unknown> = { ...base, cols: cols.map(c => presentColumn(c)) };
+      if (n.fks && n.fks.length > 0) {
+        enriched.fks = n.fks.map(fk => ({
+          name: fk.name, columns: fk.columns,
+          ref_schema: fk.refSchema, ref_table: fk.refTable,
+          ref_columns: fk.refColumns, on_delete: fk.onDelete,
+        }));
+      }
+      return strip(enriched);
+    }
+    return base;
+  });
+  const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]);
+  const catalogChars = JSON.stringify(catalog).length + JSON.stringify(edges).length;
+  const isInline = shouldInline(catalogChars);
 
   return {
     project_name:  projectName,
     source_type:   model.dbPlatform ? 'database' : 'dacpac',
     db_platform:   model.dbPlatform ?? null,
-    model_size:    isSmall ? 'small' as const : 'large' as const,
+    model_size:    isInline ? 'small' as const : 'large' as const,
     model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
     schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
     saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
-    // Small model: include full catalog WITH DDL + columns — AI can answer column questions
-    // without any additional tool calls (no search, no BFS needed)
-    ...(isSmall && {
-      objects: model.nodes.map(n => {
-        const base = presentNode(n, model.neighborIndex);
-        // Add DDL for scriptable nodes (procedure/view/function)
-        if (SCRIPT_TYPES.has(n.type) && n.bodyScript) {
-          const ddl = normalizeBodyScript(n.bodyScript);
-          return { ...base, ddl };
-        }
-        // Add columns + FK for table/external nodes
-        if (n.columns && n.columns.length > 0) {
-          const enriched: Record<string, unknown> = { ...base, cols: n.columns.map(c => presentColumn(c)) };
-          if (n.fks && n.fks.length > 0) {
-            enriched.fks = n.fks.map(fk => ({
-              name: fk.name, columns: fk.columns,
-              ref_schema: fk.refSchema, ref_table: fk.refTable,
-              ref_columns: fk.refColumns, on_delete: fk.onDelete,
-            }));
-          }
-          return strip(enriched);
-        }
-        return base;
-      }),
-      edges: model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]),
-    }),
-    // Large model: tell AI how many refs are outside the loaded model
-    ...(!isSmall && model.parseStats && {
+    // Token budget check: inline full catalog when payload fits, otherwise summary only
+    ...(isInline && { objects: catalog, edges }),
+    ...(!isInline && model.parseStats && {
       unresolved_ref_count: model.parseStats.droppedRefs?.length ?? 0,
     }),
+    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars), budget: getEffectiveBudget(), decision: isInline ? 'inline' : 'on_demand' },
   };
 }
 
 // ─── Query validation ───────────────────────────────────────────────────────
 
 /** Reject garbage queries (empty, single char, pure wildcards). */
-export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
+function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
     return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters.' };
@@ -163,11 +235,10 @@ export function searchObjects(
   types?: ObjectType[],
   schemas?: string[],
   mode: 'substring' | 'regex' = 'substring',
-  caps?: AiCapsOverride,
+  activeFilter?: SerializedFilterState | null,
 ) {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
-  if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
+  if (query.length > REGEX_MAX_LENGTH) {
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   // Validate query (reject garbage)
@@ -188,22 +259,66 @@ export function searchObjects(
     effectiveQuery,
     typeSet,
     schemaSet,
-    effectiveCaps.SEARCH_MAX_RESULTS,
+    Number.MAX_SAFE_INTEGER,
     mode,
   );
 
-  const results = nameHits.map(n => ({
-    ...presentNode(n, model.neighborIndex),
-    match: 'name' as const,
+  // Column name search (tables/external only, always-on, respects schema/type filters)
+  let columnNodes = model.nodes as SearchableNode[];
+  if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
+  if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
+  const columnHits = mode === 'substring'
+    ? searchColumns(columnNodes, effectiveQuery, COLUMN_SEARCH_LIMIT)
+    : [];
+  const seenIds = new Set(nameHits.map(n => n.id));
+
+  const results = [
+    ...nameHits.map(n => ({
+      ...presentNode(n, model.neighborIndex),
+      match: 'name' as const,
+    })),
+    ...columnHits
+      .filter(h => !seenIds.has(h.node.id))
+      .map(h => ({
+        ...presentNode(h.node, model.neighborIndex),
+        match: 'column' as const,
+        matched_columns: h.snippet,
+      })),
+  ];
+
+  // Tag each result with in_user_filter so AI knows what the user currently sees
+  const filterSchemaSet = activeFilter?.schemas?.length
+    ? new Set(activeFilter.schemas.map(s => s.toLowerCase()))
+    : null;
+  const taggedResults = results.map(r => ({
+    ...r,
+    in_user_filter: filterSchemaSet ? filterSchemaSet.has((((r as Record<string, unknown>).s as string) ?? '').toLowerCase()) : true,
   }));
 
-  const base = {
-    results,
-    total:     results.length,
-    truncated: nameHits.length >= effectiveCaps.SEARCH_MAX_RESULTS,
+  const visibleNodeCount = activeFilter
+    ? model.nodes.filter(n => {
+        const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => s.toLowerCase() === n.schema.toLowerCase());
+        const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type as ObjectType);
+        return schemaOk && typeOk;
+      }).length
+    : model.nodes.length;
+  const filterContext = {
+    active_schemas: activeFilter?.schemas?.length ? activeFilter.schemas : null,
+    active_types: activeFilter?.types?.length ? activeFilter.types : null,
+    focus_schemas: activeFilter?.focusSchemas?.length ? activeFilter.focusSchemas : null,
+    hide_isolated: activeFilter?.hideIsolated ?? false,
+    visible_node_count: visibleNodeCount,
+    total_node_count: model.nodes.length,
+    all_schemas: [...new Set(model.nodes.map(n => n.schema))],
   };
 
-  if (results.length === 0) {
+  const base = {
+    results: taggedResults,
+    total: taggedResults.length,
+    filter_context: filterContext,
+  };
+
+  if (taggedResults.length === 0) {
     // Schema mismatch detection: schema-filtered search empty, but name exists elsewhere?
     if (appliedSchemaFilter) {
       const fallbackHits = searchCatalog(
@@ -216,21 +331,27 @@ export function searchObjects(
       );
       if (fallbackHits.length > 0) {
         const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
+        // Return fallback results as primary — AI can proceed immediately
+        const fallbackResults = fallbackHits.slice(0, 10).map(n => ({
+          ...presentNode(n, model.neighborIndex),
+          match: 'name' as const,
+          in_user_filter: filterSchemaSet ? filterSchemaSet.has(n.schema.toLowerCase()) : true,
+        }));
         return {
-          ...base,
-          action_required: `SCHEMA MISMATCH: 0 results for "${effectiveQuery}" in ${appliedSchemaFilter.join(', ')}. ` +
-            `Found in: ${foundSchemas.join(', ')}. Ask the user which schema they mean before calling any other tool.`,
-          schema_mismatch: {
+          results: fallbackResults,
+          total: fallbackResults.length,
+          filter_context: filterContext,
+          ai_hint: `0 results in schemas [${appliedSchemaFilter.join(', ')}]. Found "${effectiveQuery}" in [${foundSchemas.join(', ')}]. Results shown from matched schemas.`,
+          schema_correction: {
             requested_schemas: appliedSchemaFilter,
-            found_in_schemas: foundSchemas,
-            fallback_results: fallbackHits.slice(0, 5).map(n => presentNode(n, model.neighborIndex)),
+            actual_schemas: foundSchemas,
           },
         };
       }
     }
     return {
       ...base,
-      action_required: `NO RESULTS for "${effectiveQuery}". Ask the user to verify the name or try a different search term.`,
+      ai_hint: `No results for "${effectiveQuery}". Try search_ddl for DDL body matches, try regex mode, or broaden with fewer filters.`,
     };
   }
   return base;
@@ -243,10 +364,8 @@ const NEIGHBOR_CAP = 25;
 export function getObjectDetail(
   model: DatabaseModel,
   id: string,
-  caps?: AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
-
   const nodeMap   = buildNodeMap(model);
   const node      = nodeMap.get(id);
   if (!node) {
@@ -263,7 +382,8 @@ export function getObjectDetail(
   const upMore = Math.max(0, upRaw.length - NEIGHBOR_CAP);
   const dnMore = Math.max(0, dnRaw.length - NEIGHBOR_CAP);
 
-  const columns    = node.columns?.map(c => presentColumn(c)) ?? undefined;
+  const cols = getNodeColumns(node.id, nodeMap, store);
+  const columns    = cols?.map(c => presentColumn(c)) ?? undefined;
   const foreignKeys = node.fks?.map(fk => ({
     name:        fk.name,
     columns:     fk.columns,
@@ -288,36 +408,47 @@ export function getObjectDetail(
     dn_more:       dnMore > 0 ? dnMore : undefined,
   } as Record<string, unknown>);
 
-  const ddl = node.bodyScript ? normalizeBodyScript(node.bodyScript) : null;
+  const ddl = getNodeDdl(node.id, nodeMap, store) ?? null;
 
   // Attach unresolved refs for scriptable nodes
   const unrelMap = buildUnrelatedMap(model);
   const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
   const unresolved_refs = unrelMap.get(unrelKey) ?? undefined;
 
-  if (ddl && ddl.length > effectiveCaps.MAX_DDL_CHARS) {
-    return {
-      ...base,
-      ddl: null,
-      ddl_too_large: true,
-      ddl_chars: ddl.length,
-      ddl_hint: `DDL is ${ddl.length} chars, limit is ${effectiveCaps.MAX_DDL_CHARS}. ` +
-                `Raise dataLineageViz.ai.maxDdlChars (max 500000) or use a large-context model (auto-scales).`,
-      unresolved_refs,
-    };
-  }
-
+  // Never truncate DDL — zero-truncation guarantee
   return { ...base, ddl, unresolved_refs };
 }
 
 // ─── Tool 4: lineage_run_bfs_trace ────────────────────────────────────────────
-// Compound tool: BFS + DDL/columns per node (include_ddl=true default).
-// For scriptable nodes (procedure/view/function): includes normalized DDL.
-// For table/external nodes: includes compact column list instead.
+// Two modes:
+//   Level BFS:  origin + upstream_hops + downstream_hops → explore by depth
+//   Path BFS:   origin + target → all nodes on paths between start and end
+// shouldInline() gates delivery mode: fits → full DDL, exceeds → on_demand hint.
 // types[] and schemas[] are include-only filters (no exclude).
-// BFS_MAX_NODES/BFS_MAX_EDGES caps prevent payload blow-up — no depth clamp needed.
 
-const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
+export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
+
+/** Find all node IDs on any path between start and end (BFS from both sides, intersect). */
+function findPathNodes(
+  graph: Graph, startId: string, endId: string,
+): Set<string> {
+  // BFS downstream from start — collect all reachable nodes
+  const fromStart = new Set<string>();
+  bfsFromNode(graph, startId, (node) => { fromStart.add(node); }, { mode: 'outbound' });
+  fromStart.add(startId);
+
+  // BFS upstream from end — collect all reachable nodes
+  const fromEnd = new Set<string>();
+  bfsFromNode(graph, endId, (node) => { fromEnd.add(node); }, { mode: 'inbound' });
+  fromEnd.add(endId);
+
+  // Intersect: nodes reachable downstream from start AND upstream from end
+  const pathNodes = new Set<string>();
+  for (const nid of fromStart) {
+    if (fromEnd.has(nid)) pathNodes.add(nid);
+  }
+  return pathNodes;
+}
 
 /** Run bidirectional BFS and return depth maps for each direction. */
 function executeBfs(
@@ -358,24 +489,20 @@ function applyBfsFilters(
   });
 }
 
-/** Attach DDL or column list to a BFS node base object, plus unresolved_refs when available. */
+/** Attach DDL or column list to a BFS node, plus unresolved_refs. Never truncates DDL. */
 function attachDdl(
   base: Record<string, unknown>,
   node: LineageNode | undefined,
   includeDdl: boolean,
-  maxDdlChars: number,
   unrelMap?: Map<string, string[]>,
+  store?: import('../engine/columnStore').ColumnStore,
 ): Record<string, unknown> {
   if (!includeDdl || !node) return base;
   let result = base;
-  if (SCRIPT_TYPES.has(node.type) && node.bodyScript) {
-    const ddl = normalizeBodyScript(node.bodyScript);
-    if (ddl.length > maxDdlChars) {
-      result = { ...result, ddl_too_large: true, ddl_chars: ddl.length };
-    } else {
-      result = { ...result, ddl };
-    }
-    // Attach unresolved refs for scriptable nodes — tells AI which DDL refs are outside the model
+  const ddlBody = store?.getDdl(node.id) ?? node.bodyScript;
+  if (SCRIPT_TYPES.has(node.type) && ddlBody) {
+    const ddl = normalizeBodyScript(ddlBody);
+    result = { ...result, ddl };
     if (unrelMap) {
       const key = `${node.schema}.${node.name}`.toLowerCase();
       const unrel = unrelMap.get(key);
@@ -383,8 +510,9 @@ function attachDdl(
     }
     return result;
   }
-  if (node.columns && node.columns.length > 0) {
-    return { ...result, cols: node.columns.map(c => presentColumn(c)) };
+  const cols = store?.getColumns(node.id) ?? node.columns;
+  if (cols && cols.length > 0) {
+    return { ...result, cols: cols.map(c => presentColumn(c)) };
   }
   return result;
 }
@@ -398,22 +526,43 @@ export function runBfsTrace(
   types?:          ObjectType[],
   schemas?:        string[],
   includeDdl:      boolean = true,
-  caps?:           AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
+  target?: string,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   if (!graph.hasNode(id)) {
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
+  if (target && !graph.hasNode(target)) {
+    return { error: 'not_found' as const, id: target, hint: 'Target node not found. Call lineage_search_objects to find the exact object ID.' };
+  }
 
-  const { upDepth, downDepth } = executeBfs(graph, id, upstreamHops, downstreamHops);
-  const allNodeIds    = new Set([...upDepth.keys(), ...downDepth.keys()]);
+  // Path BFS (start→end) or Level BFS (depth-based)
+  let allNodeIds: Set<string>;
+  let upDepth: Map<string, number>;
+  let downDepth: Map<string, number>;
+
+  if (target) {
+    // Path mode: find all nodes on paths between start and end
+    allNodeIds = findPathNodes(graph, id, target);
+    if (allNodeIds.size === 0) {
+      return { error: 'no_path' as const, origin: id, target, hint: `No path found from ${id} to ${target}. They may not be connected.` };
+    }
+    // No depth info in path mode — set both to 0
+    upDepth = new Map(); downDepth = new Map();
+    for (const nid of allNodeIds) { upDepth.set(nid, 0); downDepth.set(nid, 0); }
+  } else {
+    // Level mode: explore by depth from origin
+    const bfs = executeBfs(graph, id, upstreamHops, downstreamHops);
+    upDepth = bfs.upDepth; downDepth = bfs.downDepth;
+    allNodeIds = new Set([...upDepth.keys(), ...downDepth.keys()]);
+  }
   const nodeMap       = buildNodeMap(model);
   const typeSet       = types   ? new Set<ObjectType>(types)   : null;
   const schemaSet     = schemas ? new Set<string>(schemas)     : null;
 
   const filteredIds = applyBfsFilters(allNodeIds, nodeMap, typeSet, schemaSet);
 
-  // Collect edges between filtered nodes
+  // Collect ALL edges between filtered nodes — no slicing
   const filteredSet = new Set(filteredIds);
   const allEdges: [string, string, string][] = [];
   for (const e of model.edges) {
@@ -422,20 +571,48 @@ export function runBfsTrace(
     }
   }
 
-  const totalNodes  = filteredIds.length;
-  const totalEdges  = allEdges.length;
-  const truncated   = totalNodes > effectiveCaps.BFS_MAX_NODES || totalEdges > effectiveCaps.BFS_MAX_EDGES;
-  const cappedIds   = filteredIds.slice(0, effectiveCaps.BFS_MAX_NODES);
-  const cappedSet   = new Set(cappedIds);
-  const cappedEdges = allEdges
-    .filter(([s, t]) => cappedSet.has(s) && cappedSet.has(t))
-    .slice(0, effectiveCaps.BFS_MAX_EDGES);
+  // Large scope → recommend state machine delivery (same data, different delivery mode)
+  if (filteredIds.length > BFS_INLINE_NODE_CAP) {
+    const schemaBreakdown: Record<string, number> = {};
+    for (const nid of filteredIds) {
+      const n = nodeMap.get(nid);
+      if (n) schemaBreakdown[n.schema] = (schemaBreakdown[n.schema] || 0) + 1;
+    }
+    return {
+      delivery: 'state_machine_recommended' as const,
+      origin: id, ...(target ? { target } : {}),
+      total_nodes: filteredIds.length,
+      total_edges: allEdges.length,
+      schemas: schemaBreakdown,
+      hint: `BFS result has ${filteredIds.length} nodes (>${BFS_INLINE_NODE_CAP}). Use start_exploration for hop-by-hop analysis with verdicts, or narrow with schema/type filters.`,
+    };
+  }
+
+  // Detect depth-limited boundary nodes (level mode only, not path mode)
+  const depthLimitedNodes: Array<{ id: string; direction: string; connections_beyond: number }> = [];
+  if (!target) {
+    for (const nid of filteredIds) {
+      // Check upstream boundary: node at max upstream depth with more inbound neighbors beyond
+      if (upstreamHops > 0 && upDepth.get(nid) === upstreamHops) {
+        const beyondCount = (graph.hasNode(nid) ? graph.inboundNeighbors(nid) : [])
+          .filter(n => !filteredSet.has(n)).length;
+        if (beyondCount > 0) depthLimitedNodes.push({ id: nid, direction: 'upstream', connections_beyond: beyondCount });
+      }
+      // Check downstream boundary: node at max downstream depth with more outbound neighbors beyond
+      if (downstreamHops > 0 && downDepth.get(nid) === downstreamHops) {
+        const beyondCount = (graph.hasNode(nid) ? graph.outboundNeighbors(nid) : [])
+          .filter(n => !filteredSet.has(n)).length;
+        if (beyondCount > 0) depthLimitedNodes.push({ id: nid, direction: 'downstream', connections_beyond: beyondCount });
+      }
+    }
+  }
 
   const unrelMap = includeDdl ? buildUnrelatedMap(model) : undefined;
 
-  const nodes = cappedIds.map(nid => {
-    const n    = nodeMap.get(nid);
-    const base = strip({
+  // Build node metadata (always complete — no slicing)
+  const buildNodeBase = (nid: string) => {
+    const n = nodeMap.get(nid);
+    return strip({
       id:  nid,
       s:   n?.schema       || undefined,
       n:   n?.name         ?? nid,
@@ -444,18 +621,44 @@ export function runBfsTrace(
       up:  upDepth.get(nid),
       dn:  downDepth.get(nid),
     } as Record<string, unknown>);
-    return attachDdl(base, n, includeDdl, effectiveCaps.MAX_DDL_CHARS, unrelMap);
-  });
-
-  return {
-    origin:      id,
-    nodes,
-    edges:       cappedEdges,
-    truncated,
-    total_nodes: totalNodes,
-    total_edges: totalEdges,
-    ...(truncated ? { truncation_note: `Showing ${cappedIds.length} of ${totalNodes} nodes and ${cappedEdges.length} of ${totalEdges} edges. Narrow scope with types[]/schemas[] or reduce hops.` } : {}),
   };
+
+  // Token gate: full result with DDL vs lightweight without DDL
+  if (includeDdl) {
+    const nodesWithDdl = filteredIds.map(nid =>
+      attachDdl(buildNodeBase(nid), nodeMap.get(nid), true, unrelMap, store));
+    const totalChars = JSON.stringify({ nodes: nodesWithDdl, edges: allEdges }).length;
+
+    const baseResult = { origin: id, ...(target ? { target } : {}), mode: target ? 'path' as const : 'level' as const };
+
+    if (shouldInline(totalChars)) {
+      return { ...baseResult, nodes: nodesWithDdl, edges: allEdges, delivery: 'inline' as const,
+        ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
+    }
+
+    // Exceeds budget — return without DDL, hint to use follow-up tools or start_trace
+    const nodesLight = filteredIds.map(nid =>
+      attachDdl(buildNodeBase(nid), nodeMap.get(nid), false, undefined, store));
+    return {
+      ...baseResult,
+      nodes:  nodesLight,
+      edges:  allEdges,
+      delivery: 'on_demand' as const,
+      total_nodes: filteredIds.length,
+      total_edges: allEdges.length,
+      scope_ddl_chars: totalChars,
+      budget_tokens: getEffectiveBudget(),
+      ai_hint: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_exploration for hop-by-hop analysis. Do NOT ask the user — pick the best approach.',
+      ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }),
+    };
+  }
+
+  // include_ddl=false: structure only
+  const baseResult = { origin: id, ...(target ? { target } : {}), mode: target ? 'path' as const : 'level' as const };
+  const nodes = filteredIds.map(nid =>
+    attachDdl(buildNodeBase(nid), nodeMap.get(nid), false, undefined, store));
+  return { ...baseResult, nodes, edges: allEdges, delivery: 'inline' as const,
+    ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
 }
 
 // ─── Tool 5: lineage_run_analysis ─────────────────────────────────────────────
@@ -466,9 +669,7 @@ export function runAnalysis(
   type: AnalysisType,
   minDegree?: number,
   maxSize?: number,
-  caps?: AiCapsOverride,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
   const analysisConfig = {
     hubMinDegree:         minDegree ?? DEFAULT_CONFIG.analysis.hubMinDegree,
     islandMaxSize:        maxSize   ?? DEFAULT_CONFIG.analysis.islandMaxSize,
@@ -476,17 +677,11 @@ export function runAnalysis(
   };
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
-  const totalGroups = result.groups.length;
-  const truncated   = totalGroups > effectiveCaps.ANALYSIS_MAX_GROUPS;
-  const groups      = result.groups.slice(0, effectiveCaps.ANALYSIS_MAX_GROUPS);
-
   return {
     type:         result.type,
     summary:      result.summary,
-    groups,
-    total_groups: totalGroups,
-    truncated,
-    ...(truncated ? { truncation_note: `Showing ${groups.length} of ${totalGroups} groups. Use min_degree or max_size to narrow results.` } : {}),
+    groups:       result.groups,
+    total_groups: result.groups.length,
   };
 }
 
@@ -496,11 +691,10 @@ export function searchDdl(
   model: DatabaseModel,
   query: string,
   types?: ('view' | 'procedure' | 'function')[],
-  caps?: AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
-  if (query.length > effectiveCaps.REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${effectiveCaps.REGEX_MAX_LENGTH} characters.` };
+  if (query.length > REGEX_MAX_LENGTH) {
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   // Reject invalid / catastrophically slow regex
@@ -510,15 +704,20 @@ export function searchDdl(
 
   const ddlTypes: ObjectType[] = types
     ? (types as ObjectType[])
-    : ['view', 'procedure', 'function'];
+    : [...SCRIPT_TYPES];
   const typeSet = new Set<ObjectType>(ddlTypes);
 
+  // Build searchable nodes with DDL from ColumnStore (or inline fallback for tests)
+  const searchableNodes: SearchableNode[] = model.nodes.map(n => ({
+    ...n,
+    bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
+  }));
   const matches = searchBodyScripts(
-    model.nodes as SearchableNode[],
+    searchableNodes,
     query,
     typeSet,
     SNIPPET_CONTEXT_LINES,
-    effectiveCaps.SEARCH_MAX_RESULTS,
+    Number.MAX_SAFE_INTEGER,
   );
 
   const results = matches.map(m => ({
@@ -528,27 +727,21 @@ export function searchDdl(
     matches: [m.snippet],
   }));
 
-  const base = {
-    results,
-    total:     results.length,
-    truncated: matches.length >= effectiveCaps.SEARCH_MAX_RESULTS,
-  };
-
   if (results.length === 0) {
-    return { ...base, hint: 'No matches. Try a shorter substring, check spelling, or call lineage_search_objects to confirm object names.' };
+    return { results, total: 0, hint: 'No matches. Try a shorter substring, check spelling, or call lineage_search_objects to confirm object names.' };
   }
-  return base;
+  return { results, total: results.length };
 }
 
-// ─── Tool 7: lineage_create_ai_view ──────────────────────────────────────────
+// ─── Tool 7: lineage_enrich_view ─────────────────────────────────────────────
 
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
-export type CreateAiViewInput = {
+export type EnrichViewInput = {
   name: string;
-  node_ids: string[];
-  summary?: string;
+  summary: string;
   description?: string;
+  prune_node_ids?: string[];
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;
@@ -563,13 +756,14 @@ export type CreateAiViewInput = {
     node_id: string;
     text: string;
   }>;
+  node_ids?: string[];  // fallback only: used when no stored result graph exists
 };
 
-export type CreateAiViewRequest = {
+export type EnrichViewRequest = {
   success: true;
   name: string;
   node_ids: string[];
-  summary?: string;
+  summary: string;
   description?: string;
   layout_direction: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
@@ -577,19 +771,32 @@ export type CreateAiViewRequest = {
   notes: Array<{ node_id: string; text: string }>;
 };
 
-export type CreateAiViewError = { success: false; errors: string[]; hint: string };
+export type EnrichViewError = { success: false; errors: string[]; hint: string };
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
-export function autoFixCreateAiView(
+/**
+ * Auto-fix common issues in enrich_view input.
+ * @param model — database model (only used for fallback catalog validation)
+ * @param input — raw AI input
+ * @param resolvedNodeIds — canonical node set from stored result graph (if available)
+ */
+export function autoFixEnrichView(
   model: DatabaseModel,
-  input: CreateAiViewInput,
-): { input: CreateAiViewInput; fixes: string[] } {
+  input: EnrichViewInput,
+  resolvedNodeIds?: string[],
+): { input: EnrichViewInput; fixes: string[] } {
   const fixes: string[] = [];
   let fixed = { ...input };
 
-  // 1. Filter out unknown node_ids (as long as at least 1 valid ID remains)
-  if (fixed.node_ids?.length > 0) {
+  // 0. Normalize escaped newlines in description (LLMs sometimes double-escape)
+  if (fixed.description && /\\n/.test(fixed.description)) {
+    fixed = { ...fixed, description: fixed.description.replace(/\\n/g, '\n').replace(/\\t/g, '\t') };
+    fixes.push('Normalized escaped newlines in description');
+  }
+
+  // 1. Filter unknown node_ids — only for fallback mode (no stored graph)
+  if (!resolvedNodeIds && fixed.node_ids?.length) {
     const unknown = fixed.node_ids.filter(id => !model.catalog[id]);
     const valid = fixed.node_ids.filter(id => model.catalog[id]);
     if (unknown.length > 0 && valid.length >= 1) {
@@ -598,15 +805,10 @@ export function autoFixCreateAiView(
     }
   }
 
-  // 2. Truncate summary at 120 chars
-  if (fixed.summary && fixed.summary.length > 120) {
-    fixes.push(`Truncated summary from ${fixed.summary.length} to 120 chars`);
-    fixed = { ...fixed, summary: fixed.summary.slice(0, 120) };
-  }
+  // Use resolved graph node set or fallback to input.node_ids
+  const nodeIdSet = new Set(resolvedNodeIds ?? fixed.node_ids ?? []);
 
-  const nodeIdSet = new Set(fixed.node_ids ?? []);
-
-  // 3. Drop empty badges & badges for removed nodes (no text truncation — UI handles overflow)
+  // 2. Drop empty badges & badges for nodes not in the resolved set
   if (fixed.badges) {
     const before = fixed.badges.length;
     const filtered = fixed.badges.filter(b => nodeIdSet.has(b.node_id) && b.text && b.text.trim().length > 0);
@@ -615,7 +817,7 @@ export function autoFixCreateAiView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned badge(s)`);
   }
 
-  // 4. Drop empty notes & notes for removed nodes (no text truncation or cap — UI handles overflow)
+  // 3. Drop empty notes & notes for nodes not in the resolved set
   if (fixed.notes) {
     const before = fixed.notes.length;
     const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
@@ -624,45 +826,88 @@ export function autoFixCreateAiView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 5. Prune highlight_groups referencing removed nodes
+  // 4. Prune highlight_groups referencing nodes not in the resolved set
   if (fixed.highlight_groups) {
-    fixed = {
-      ...fixed,
-      highlight_groups: fixed.highlight_groups
-        .map(g => ({ ...g, node_ids: g.node_ids.filter(id => nodeIdSet.has(id)) }))
-        .filter(g => g.node_ids.length > 0),
-    };
+    const before = fixed.highlight_groups.length;
+    const pruned = fixed.highlight_groups
+      .map(g => ({ ...g, node_ids: g.node_ids.filter(id => nodeIdSet.has(id)) }))
+      .filter(g => g.node_ids.length > 0);
+    fixed = { ...fixed, highlight_groups: pruned };
+    const dropped = before - pruned.length;
+    if (dropped > 0) fixes.push(`Dropped ${dropped} orphaned highlight group(s)`);
   }
 
   return { input: fixed, fixes };
 }
 
-export function validateCreateAiView(
-  model: DatabaseModel,
-  input: CreateAiViewInput,
-): CreateAiViewRequest | CreateAiViewError {
+/** Validate markdown format — returns error strings (empty = valid). */
+export function validateMarkdownFormat(md: string): string[] {
+  const errors: string[] = [];
+
+  // Reject \begin{...} environments (fragile in remark-math, breaks rendering)
+  const beginMatch = md.match(/\\begin\{([^}]+)\}/);
+  if (beginMatch) {
+    errors.push(
+      `description contains \\begin{${beginMatch[1]}} — use a \`\`\`math block for simple formulas or rewrite as a table`,
+    );
+  }
+
+  // Reject unbalanced $$ delimiters (odd count → unclosed block corrupts all subsequent markdown)
+  const ddCount = (md.match(/\$\$/g) || []).length;
+  if (ddCount % 2 !== 0) {
+    errors.push(
+      'description has unbalanced $$ delimiters — use ```math fenced blocks for display math',
+    );
+  }
+
+  // Reject unclosed fenced blocks (walk lines, track open/close state)
+  let insideFence = false;
+  for (const line of md.split('\n')) {
+    const trimmed = line.trim();
+    if (!insideFence && trimmed.startsWith('```')) {
+      insideFence = true;
+    } else if (insideFence && trimmed === '```') {
+      insideFence = false;
+    }
+  }
+  if (insideFence) {
+    errors.push(
+      'description has an unclosed fenced block — ensure closing ``` is present',
+    );
+  }
+
+  return errors;
+}
+
+/**
+ * Validate enrich_view input.
+ * @param input — auto-fixed AI input
+ * @param resolvedNodeIds — canonical node set (from stored graph or fallback)
+ */
+export function validateEnrichView(
+  input: EnrichViewInput,
+  resolvedNodeIds: string[],
+): EnrichViewRequest | EnrichViewError {
   const errors: string[] = [];
 
   // Name validation
   if (!input.name || input.name.trim().length === 0) errors.push('name is required');
-  else if (input.name.length > 60) errors.push('name exceeds 60 characters');
+  else if (input.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) errors.push(`name exceeds ${ENRICH_VIEW_NAME_MAX_LENGTH} characters`);
 
-  // node_ids validation (structural only — unknown IDs handled by autoFix)
-  if (!input.node_ids || input.node_ids.length === 0) {
-    errors.push('node_ids must contain at least 1 ID');
-  } else if (input.node_ids.length > 30) {
-    errors.push('node_ids exceeds maximum of 30 IDs — create multiple focused views instead');
+  // Node set must be non-empty (after resolve + prune)
+  if (resolvedNodeIds.length === 0) {
+    errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
-  // summary required
+  // summary required + length: soft 120 (instructed), hard 300 (rejected)
   if (!input.summary || input.summary.trim().length === 0) {
-    errors.push('summary is required — one-line graph purpose (max 120 chars)');
+    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${ENRICH_VIEW_SUMMARY_HARD_LIMIT})`);
+  } else if (input.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
+    errors.push(`summary exceeds hard limit (${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
   }
 
-  // description required + content quality checks
-  if (!input.description || input.description.trim().length === 0) {
-    errors.push('description is required — structured markdown answer with ## headings');
-  } else {
+  // description optional — if provided, validate structure + markdown format
+  if (input.description && input.description.trim().length > 0) {
     // Must have structure: ## headings or multiple paragraphs
     if (!input.description.includes('##') && !input.description.includes('\n\n')) {
       errors.push('description must use ## headings or multiple paragraphs — not a single block of text');
@@ -673,10 +918,11 @@ export function validateCreateAiView(
     if (WALKTHROUGH_PREFIXES.some(p => descLower.startsWith(p))) {
       errors.push('description re-describes the graph — explain business logic, formulas, column mappings instead');
     }
+    // Markdown format validation (LaTeX delimiters, math blocks)
+    errors.push(...validateMarkdownFormat(input.description));
   }
 
-  // highlight_groups validation (structural + color validity — autoFix does not normalize colors)
-  const nodeIdSet = new Set(input.node_ids ?? []);
+  // highlight_groups validation (structural + color validity)
   if (input.highlight_groups) {
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
@@ -686,17 +932,26 @@ export function validateCreateAiView(
   }
 
   if (errors.length > 0) {
-    return {
-      success: false,
-      errors,
-      hint: 'Fix the listed errors and retry.',
-    };
+    // Identify which fields failed so the hint tells the AI exactly what to fix
+    const failedFields = new Set<string>();
+    for (const e of errors) {
+      if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
+      else if (e.includes('summary')) failedFields.add('summary');
+      else if (e.includes('description')) failedFields.add('description');
+      else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
+      else if (e.includes('No nodes')) failedFields.add('nodes');
+    }
+    const fieldList = [...failedFields];
+    const hint = fieldList.length === 1
+      ? `Fix ${fieldList[0]} only. Keep all other fields (badges, notes, summary, highlight_groups) exactly as submitted.`
+      : `Fix these fields: ${fieldList.join(', ')}. Keep all other fields exactly as submitted.`;
+    return { success: false, errors, hint };
   }
 
   return {
     success: true,
     name: input.name.trim(),
-    node_ids: input.node_ids,
+    node_ids: resolvedNodeIds,
     summary: input.summary,
     description: input.description,
     layout_direction: input.layout_direction ?? 'TB',
@@ -711,40 +966,24 @@ export function validateCreateAiView(
 export function getDdlBatch(
   model: DatabaseModel,
   ids: string[],
-  caps?: AiCapsOverride,
+  store?: import('../engine/columnStore').ColumnStore,
 ): object {
-  const effectiveCaps = caps ? { ...AI_CAPS, ...caps } : AI_CAPS;
-  const cappedIds = ids.slice(0, effectiveCaps.DDL_BATCH_CAP);
-  const nodeMap   = buildNodeMap(model);
+  const nodeMap = buildNodeMap(model);
 
-  const results = cappedIds.map(id => {
+  // Never truncate — return full DDL for all requested IDs
+  const results = ids.map(id => {
     const node = nodeMap.get(id);
     if (!node) {
       return strip({ id, error: 'not_found' } as Record<string, unknown>);
     }
-    if (!node.bodyScript) {
-      // Tables and external nodes have no DDL body — return type only
+    const rawDdl = store?.getDdl(id) ?? node.bodyScript;
+    if (!rawDdl) {
       return strip({ id, t: node.type } as Record<string, unknown>);
     }
-    const ddl = normalizeBodyScript(node.bodyScript);
-    if (ddl.length > effectiveCaps.MAX_DDL_CHARS) {
-      return strip({
-        id, t: node.type,
-        ddl_too_large: true,
-        ddl_chars: ddl.length,
-      } as Record<string, unknown>);
-    }
+    const ddl = normalizeBodyScript(rawDdl);
     return strip({ id, t: node.type, ddl } as Record<string, unknown>);
   });
 
-  const truncated = ids.length > effectiveCaps.DDL_BATCH_CAP;
-  return {
-    results,
-    total:     results.length,
-    truncated,
-    ...(truncated ? {
-      truncation_note: `Showing ${cappedIds.length} of ${ids.length} IDs. Split into multiple calls if needed.`,
-    } : {}),
-  };
+  return { results, total: results.length };
 }
 

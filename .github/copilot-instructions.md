@@ -35,7 +35,8 @@ source format into the shared intermediate types and nothing more.
 | `docs/PARSE_RULES.md` | Custom parse rules guide |
 | `docs/DMV_QUERIES.md` | Custom DMV queries guide |
 | `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
-| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateCreateAiView`. `AI_CAPS` defaults, `AiCapsOverride` type. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
+| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateEnrichView`. Zero per-tool caps — delivery mode via `shouldInline()`. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
+| `src/ai/tokenBudget.ts` | Single source of truth for token budget: `INLINE_TOKEN_BUDGET` (10K tokens), `shouldInline()`, `estimateTokens()`, `REGEX_MAX_LENGTH`. Gate for inline vs on-demand delivery. Zero VS Code imports. |
 | `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()` (explicit type map with 'read' fallback). Zero business logic, zero VS Code imports. |
 | `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
 
@@ -53,14 +54,17 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 108 | Dacpac extraction, filtering, edge integrity, Fabric SDK, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
+| `test/dacpacExtractor.test.ts` | 109 | Dacpac extraction, filtering, edge integrity, Fabric SDK, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
 | `test/graphBuilder.test.ts` | 218 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
-| `test/parser-edge-cases.test.ts` | 197 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
+| `test/parser-edge-cases.test.ts` | 204 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
 | `test/graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
 | `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/projectStore.test.ts` | 136 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `test/ai-tools.test.ts` | 270 | AI tool pure functions: getContext, searchObjects (incl. include_body), getObjectDetail (incl. inline neighbors), runBfsTrace (incl. truncation cap), runAnalysis, searchDdl, getDdlBatch, validateCreateAiView, autoFixCreateAiView, validateQuery, safeRegex |
+| `test/ai-tools.test.ts` | 184 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
+| `test/column-trace-state.test.ts` | 98 | Column-trace state machine: lifecycle, init, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), synthetic model tests, bug regression (diamond merge, passthrough visited, depth, focus boundary) |
+| `test/blackboard-state.test.ts` | 66 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
+| `test/chat-loop.test.ts` | 28 | Orchestration loop: classic tool dispatch, dedup, CT multi-hop, round limit, BB tool visibility. Uses fake Copilot responses via `chatLoopTestHarness.ts` |
 | `test/hooks/useInteractiveTrace.test.ts` | 31 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
 | `test/hooks/useGraphology.test.ts` | 27 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
 | `test/hooks/useOverviewMode.test.ts` | 18 | Overview mode state machine: auto-trigger, manual toggle, threshold guards, resetUserChoice |
@@ -72,13 +76,13 @@ Press F5 to launch Extension Development Host.
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                            # All unit tests (1258 tsx + 112 vitest + snapshot)
+npm test                            # All unit tests (1372 tsx + 112 vitest + snapshot)
 npm run test:snapshot               # Parser baseline check only
 npm run test:snapshot:update        # Regenerate test/aw-baseline.tsv after parser changes
 npm run test:coverage               # Vitest with v8 coverage (requires @vitest/coverage-v8)
 ```
 
-**tsx tests** (1258 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
+**tsx tests** (1566 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
 
 **Vitest tests** (112 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
 
@@ -210,41 +214,78 @@ npm test                               # all suites must pass
 
 ## AI Chat Participant (`@lineage`)
 
-**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 8 language model tools via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
+**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 12 language model tools (8 classic + 2 column-trace + 2 blackboard) via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
+
+**Explore-first architecture** — no upfront mode routing. AI discovers intent via tools. Dynamic tool filtering by phase:
+
+| Phase | Tag filter | Tools visible | Transition |
+|-------|-----------|---------------|------------|
+| **discover** | `lineage` | All 12 tools (free-form) or filtered (slash commands) | `/trace` filters to 6 tools (CT path, no BFS); `/search` prompt rewrite only |
+| **ct_active** | `lineage-ct` | 2 CT tools only | Entered when `start_column_trace` activates state machine |
+| **ct_done** | `lineage` | All 12 tools restored | Entered when CT state machine completes; AI can `enrich_view` |
+| **bb_active** | `lineage` minus `lineage-ct` | Classic 8 + BB 2 (CT excluded) | Entered when `start_exploration` activates state machine; CT mutual exclusion |
+| **bb_done** | `lineage` | All 12 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
 
 **Key files:**
-- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateCreateAiView` write tool). `AI_CAPS` (SEARCH=50, BFS_N=200, BFS_E=300, GROUPS=100, DDL=10000, BATCH=20), `AiCapsOverride` type. Zero VS Code imports. Imports `strip()` and all presenters from `aiPresenter.ts`. Soft errors `{ error: 'not_found' }` (no throw). DDL too large → `{ ddl: null, ddl_too_large: true, ddl_chars: N }` (never partial DDL).
+- `src/ai/tokenBudget.ts` — Single source of truth: `INLINE_TOKEN_BUDGET` (10K tokens, ~40K chars). Gate for delivery mode: inline (all data at once) vs on-demand (state machine hop-by-hop). Zero per-tool caps — only delivery mode changes. Zero VS Code imports.
+- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates delivery mode, not data size. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
 - `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
 - `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
-- `src/extension.ts` — chat participant registration, 8 tool registrations, `readAiCaps()`, `autoScaleTier()`, `isAiEnabled()`, participant handler. Write tool (`create_ai_view`) uses `confirmationMessages` in `prepareInvocation`.
+- `src/ai/blackboardState.ts` — Type 1 Blackboard state machine: free-form exploration with two-tier memory (MemGPT pattern). Passive SM: AI drives traversal via sub-questions, SM stores findings, manages agenda priority. Zero VS Code imports.
+- `src/extension.ts` — chat participant registration, 12 tool registrations (8 classic + 2 CT + 2 BB), `isAiEnabled()`, participant handler, dynamic tool filtering (5 phase transitions). Write tool (`enrich_view`) uses `confirmationMessages` in `prepareInvocation`.
 
-**8 registered tools** (all tagged `"lineage"`, hidden via `"when": "dataLineageViz.modelLoaded"` when no graph is loaded):
+**12 registered tools:**
 
-| Tool | Kind | Purpose |
-|------|------|---------|
-| `lineage_get_context` | read | Active project, platform, filter state, model stats — call first each conversation |
-| `lineage_search_objects` | read | Name/body search, returns IDs for other tools. `scope=visible` restricts to screen |
-| `lineage_get_object_detail` | read | Full metadata + DDL body for one object; inline up/dn neighbors |
-| `lineage_run_bfs_trace` | read | Multi-hop BFS lineage trace; `incomplete=true` means capped — narrow scope or reduce hops |
-| `lineage_run_analysis` | read | Structural analysis: hubs/islands/orphans/longest-path/cycles |
-| `lineage_search_ddl` | read | Full-text regex search across SP/view/function DDL bodies |
-| `lineage_get_ddl_batch` | read | Batch DDL retrieval for multiple objects by ID array |
-| `lineage_create_ai_view` | write | Create named AI bookmark: node set, summary, description, highlight groups (up to 5), badges (up to 50), notes |
+| Tool | Tag | Kind | Purpose |
+|------|-----|------|---------|
+| `lineage_get_context` | lineage | read | Active project, filter, stats — call first. Inline catalog when `shouldInline()` passes |
+| `lineage_search_objects` | lineage | read | Name/body search, returns IDs for other tools |
+| `lineage_get_object_detail` | lineage | read | Full metadata + DDL body for one object |
+| `lineage_run_bfs_trace` | lineage | read | BFS lineage trace. Level mode (depth) or path mode (start→end via `target` param) |
+| `lineage_run_analysis` | lineage | read | Structural analysis: hubs/islands/orphans/longest-path/cycles |
+| `lineage_search_ddl` | lineage | read | Regex search across SP/view/function DDL bodies |
+| `lineage_get_ddl_batch` | lineage | read | Batch DDL retrieval for multiple objects by ID array |
+| `lineage_enrich_view` | lineage | write | Create named AI bookmark with annotations |
+| `lineage_start_column_trace` | lineage, lineage-ct | read | Init hop-by-hop CT state machine trace |
+| `lineage_submit_hop_analysis` | lineage, lineage-ct | read | Submit verdicts, get next hop or final result |
+| `lineage_start_exploration` | lineage, lineage-bb | read | Init BB state machine: free-form exploration with two-tier memory |
+| `lineage_submit_findings` | lineage, lineage-bb | read | Submit findings + summary, get next hop or final result |
 
-**Auto-scaling caps** — set via `request.model.maxInputTokens` per request → `autoScaleTier()`:
+**Two guards only** (`src/ai/tokenBudget.ts`):
+1. `INLINE_TOKEN_BUDGET` (10K tokens, ~40K chars) — delivery mode gate: inline vs state machine
+2. `ai.maxRounds` (VS Code setting, default 25) — hard stop on tool rounds
 
-| Model context | SEARCH | BFS nodes | BFS edges | GROUPS | DDL chars |
-|---|---|---|---|---|---|
-| < 32K (small local LLM) | 20 | 100 | 150 | 50 | 4000 |
-| 32K–128K (GPT-4o, medium) | 50 | 200 | 300 | 100 | 10000 |
-| > 128K (Claude Sonnet, large) | 100 | 400 | 600 | 200 | 500000 |
+**Zero-truncation guarantee:** No tool response is ever truncated, capped, or sliced. Fits budget → full data inline. Exceeds budget → state machine delivers per-hop, or lightweight response with follow-up hint. No per-tool caps exist.
 
-Explicit `dataLineageViz.ai.*` VS Code settings override auto-scale (detected via `cfg.inspect()` checking `globalValue`/`workspaceValue`).
-
-**DDL size policy:** When `MAX_DDL_CHARS` exceeded, `getObjectDetail` returns `{ ddl: null, ddl_too_large: true, ddl_chars: N, ddl_hint: "..." }` — NOT partial DDL. Partial DDL misleads the LLM.
-
-**Conversation memory:** `context.history` is read each turn and prepended to `messages[]` so the model remembers earlier questions in the same chat session.
+**Conversation memory:** `context.history` is read each turn and prepended to `messages[]` so the model remembers earlier questions in the same chat session. Under context pressure (>75% of `maxInputTokens`), oldest turns are evicted (drop+log, not summarize).
 
 **`ai.enabled` guard:** `isAiEnabled()` checked at both the chat participant level (returns disabled message) and in every tool `invoke()` handler (returns `{ error: 'disabled' }`).
 
-**Unit tests:** `test/ai-tools.test.ts` (270 tests) covers all 8 pure tool functions (`getContext`, `searchObjects` incl. `include_body`, `getObjectDetail` incl. inline neighbors, `runBfsTrace` incl. truncation, `runAnalysis`, `searchDdl`, `getDdlBatch`, `validateCreateAiView`, `autoFixCreateAiView`, `validateQuery`, `safeRegex`). Does not test `extension.ts` wiring (VS Code dependency).
+**Column-trace state machine** (`src/ai/columnTraceState.ts`):
+- Lifecycle: `init()` → `getHopContext()` ↔ `submitVerdicts()` → (frontier empty → full result)
+- Verdict actions: `trace` (follow + track columns), `pass` (skip node, queue children), `prune` (drop node + subtree), `revisit` (re-expand previously pruned node, max 3/trace)
+- Graph traversal uses NeighborIndex (O(1) neighbor lookup), NOT graphology — deliberate separation from classic BFS
+- Column tracking: `activeColumns` per frontier entry, `columnsOut` for rename tracking (INSERT→SELECT mapping)
+- Boundary detection: source/sink/external/cycle — deterministic, no AI input
+- Inline delivery: when scope DDL fits `INLINE_TOKEN_BUDGET`, returns full BFS result in one shot (`status: 'inline'`), releases state machine
+- Column validation: tables only (case-insensitive, max 2 rejections/hop). SPs/views: accept on trust
+
+**Blackboard state machine** (`src/ai/blackboardState.ts`):
+- Lifecycle: `init(origin, question)` → BFS scope → `getHopContext()` ↔ `submitFindings()` → (agenda empty → full result)
+- Two-tier memory (MemGPT pattern): `findings` (long-term, full detail per node) + `summary` (working memory, all summaries shown every hop)
+- Priority agenda: question-boosted nodes (priority 2) > neighbors of noted (1) > BFS default (0)
+- Self-Ask: AI generates sub-questions that boost target node priority and persist in `pending_questions`
+- Goal anchor: `working_memory.user_question` repeats the original question every hop to prevent drift
+- Hard limits: findings 5000 chars, summary 500 chars — rejected (not truncated)
+
+**Goal anchoring** (anti-drift):
+- CT: `goal: { columns, direction, origin }` repeated in every hop context — prevents losing track of original columns after renames
+- BB: `working_memory.user_question` repeated every hop — prevents losing sight of original investigation question
+
+**AI tests (4 tiers, 577 tests):**
+- `test/ai-tools.test.ts` (294) — pure tool functions: getContext, search, detail, BFS (level + path), analysis, DDL, validate, autoFix
+- `test/column-trace-state.test.ts` (156) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
+- `test/blackboard-state.test.ts` (82) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
+- `test/chat-loop.test.ts` (45) — orchestration loop via fake Copilot responses: explore-first design, tool visibility, dedup, round limit, history DROP, CT compaction, BB exploration. Harness: `test/chatLoopTestHarness.ts`
+
+**UAT scenarios:** `tmp/ai-uat-scenarios.md` — all modes (classic C1-C5, hop H1-H7, routing R1-R6, edge cases E1-E4). Column-trace UAT: `tmp/ai-column-trace-test-scenarios.md` (Q1-Q3).
