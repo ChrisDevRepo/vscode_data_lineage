@@ -151,13 +151,37 @@ For each rejection, record in `{run-dir}/rejections.json`:
 
 ### 3c. Iterative Fix-and-Test (SMALL CHANGES ONLY)
 
-1. Make ONE small change (prompt wording, error message, or SM logic)
+**Test on bridge FIRST, then update extension code.**
+
+1. Make ONE small change to the bridge server prompt (`test-internal/ai-test-server.ts`)
 2. Commit it locally
-3. Restart bridge server (it loads source at startup)
+3. Restart bridge server (`npx tsx test-internal/ai-test-server.ts [dacpac]`)
 4. Re-run the specific failing test via Haiku agent
-5. **If fix works** → push, update tracker, move to next issue
+5. **If fix works on bridge** → apply same change to extension code (`src/extension.ts`, `package.json`), commit, push, update journal
 6. **If fix doesn't help** → `git revert` the commit, try different approach
 7. Never batch multiple unrelated fixes — isolate each change so rollback is clean
+
+### 3d. Investigation Journal
+
+Maintain a sliding task list in `.claude/plans/*.md` (the plan file for the active eval conversation). Format:
+
+```markdown
+## Current: [what you're working on right now]
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | description | RESOLVED ✓ / INVESTIGATING / TODO |
+| 2 | description | TODO |
+
+## Done Log
+- [date] Issue #1: [what was done] → [result] → [commit hash]
+- [date] Issue #2: ...
+
+## Next Steps
+- Issue #N: [what to investigate next]
+```
+
+This journal persists across conversation turns. Always update it after each fix-and-test cycle.
 
 ### 3d. Baseline Compare
 
