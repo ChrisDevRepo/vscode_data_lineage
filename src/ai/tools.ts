@@ -789,6 +789,12 @@ export function autoFixEnrichView(
   const fixes: string[] = [];
   let fixed = { ...input };
 
+  // 0. Normalize escaped newlines in description (LLMs sometimes double-escape)
+  if (fixed.description && /\\n/.test(fixed.description)) {
+    fixed = { ...fixed, description: fixed.description.replace(/\\n/g, '\n').replace(/\\t/g, '\t') };
+    fixes.push('Normalized escaped newlines in description');
+  }
+
   // 1. Filter unknown node_ids — only for fallback mode (no stored graph)
   if (!resolvedNodeIds && fixed.node_ids?.length) {
     const unknown = fixed.node_ids.filter(id => !model.catalog[id]);

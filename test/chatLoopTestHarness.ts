@@ -12,10 +12,12 @@ import {
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
   autoFixEnrichView, validateEnrichView,
+  shouldInline, estimateTokens, getEffectiveBudget,
 } from '../src/ai/tools';
 import { ColumnTraceState } from '../src/ai/columnTraceState';
 import { BlackboardState } from '../src/ai/blackboardState';
 import { buildBareGraph } from '../src/ai/graphUtils';
+import type { SerializedFilterState } from '../src/engine/projectStore';
 import { compactNoiseResult, findMergeableCallIds } from '../src/ai/historyManager';
 import type { ColumnStore } from '../src/engine/columnStore';
 
@@ -69,15 +71,17 @@ export function dispatchTool(
   columnTraceState: { current: ColumnTraceState | null },
   columnStore: ColumnStore | null,
   blackboardState?: { current: BlackboardState | null },
+  activeFilter?: SerializedFilterState | null,
 ): string {
   switch (name) {
     case 'lineage_get_context':
-      return JSON.stringify(getContext(model, null, 'TestProject', [], columnStore ?? undefined));
+      return JSON.stringify(getContext(model, activeFilter ?? null, 'TestProject', [], columnStore ?? undefined));
 
     case 'lineage_search_objects':
       return JSON.stringify(searchObjects(
         model, input.query as string, input.types as string[] | undefined,
         input.schemas as string[] | undefined, input.mode as string | undefined,
+        activeFilter ?? null,
       ));
 
     case 'lineage_get_object_detail':
@@ -111,7 +115,7 @@ export function dispatchTool(
     case 'lineage_start_column_trace': {
       const columns = (input.columns ?? []) as string[];
       const direction = (input.direction ?? 'up') as 'up' | 'down' | 'both';
-      const state = new ColumnTraceState(model, buildBareGraph(model), (l, m) => { /* silent */ }, undefined, columnStore ?? undefined);
+      const state = new ColumnTraceState(model, buildBareGraph(model), (l, m) => { /* silent */ }, { activeFilter: activeFilter ?? undefined }, columnStore ?? undefined);
       columnTraceState.current = state;
       const initResult = state.init({ targetColumns: columns, origin: input.origin as string | undefined, direction });
       if ('error' in initResult) return JSON.stringify(initResult);
@@ -144,18 +148,77 @@ export function dispatchTool(
 
     case 'lineage_start_exploration': {
       const bb = blackboardState ?? { current: null };
-      const state = new BlackboardState(model, graph, () => {}, undefined, columnStore ?? undefined);
+      const scopeDir = (['upstream', 'downstream', 'bidirectional'].includes(input.scope_direction as string ?? '')
+        ? input.scope_direction as 'upstream' | 'downstream' | 'bidirectional'
+        : 'bidirectional');
+      const state = new BlackboardState(model, graph, () => {}, { activeFilter: activeFilter ?? undefined, scopeDirection: scopeDir }, columnStore ?? undefined);
       bb.current = state;
       const initResult = state.init({ question: input.question as string ?? '', origin: input.origin as string ?? '' });
       if ('error' in initResult) return JSON.stringify(initResult);
+
+      // Token budget gate — same logic as extension.ts:792-813
+      const scopeDdlChars = state.estimateScopeDdlChars();
+      const scopeTokens = estimateTokens(scopeDdlChars);
+      const budget = getEffectiveBudget();
+      const scopeInline = shouldInline(scopeDdlChars);
+      // Log for debugging parity with extension
+      console.log(`[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${scopeTokens} tokens), budget ${budget} → ${scopeInline ? 'inline' : 'exploration mode (state machine)'}`);
+      if (scopeInline) {
+        const originId = (initResult.originNode as { id?: string }).id;
+        if (originId) {
+          const bfsResult = runBfsTrace(model, graph, originId, 5, 5, undefined, undefined, true, columnStore ?? undefined);
+          bb.current = null;
+          return JSON.stringify({
+            status: 'inline',
+            action_required: 'analyze_and_respond',
+            reason: 'scope_fits_inline',
+            scope_size: initResult.scopeSize,
+            origin: initResult.originNode,
+            bfs_result: bfsResult,
+            hint: 'All DDL provided inline. Analyze this data and present your findings. Do NOT call more tools.',
+          });
+        }
+      }
+
       const hopCtx = state.getHopContext();
-      return JSON.stringify({ ...initResult, ...hopCtx });
+      if ('error' in hopCtx) return JSON.stringify(hopCtx);
+      if ('done' in hopCtx) return JSON.stringify({ ...initResult, status: 'complete', message: 'No neighbors to explore.' });
+
+      // Scope preview + guidance — same as extension.ts:824-845
+      const scopePreview = {
+        total_scope_nodes: state.filterBreakdown.total,
+        in_user_filter: state.filterBreakdown.in_filter,
+        outside_filter: state.filterBreakdown.outside_filter,
+        schemas: state.schemaBreakdown(),
+      };
+      const maxRounds = 25;
+      const agendaSize = initResult.agendaSize ?? 0;
+      const estimatedHops = Math.floor(maxRounds * 0.8);
+      const scopeGuidance = agendaSize > estimatedHops ? {
+        agenda_size: agendaSize,
+        estimated_max_hops: estimatedHops,
+        recommendation: `Agenda (${agendaSize}) exceeds round budget (~${estimatedHops} hops). Prune aggressively and use complete:true in submit_findings when you have enough findings to answer the question.`,
+      } : undefined;
+
+      return JSON.stringify({
+        ...initResult, ...hopCtx,
+        scope_preview: scopePreview,
+        ...(scopeGuidance && { scope_guidance: scopeGuidance }),
+        ai_hint: `Scope: ${scopePreview.total_scope_nodes} nodes (${scopePreview.in_user_filter} match user filter). Proceed with exploration.`,
+      });
     }
 
     case 'lineage_submit_findings': {
       const bb = blackboardState ?? { current: null };
       const state = bb.current;
-      if (!state) return JSON.stringify({ error: 'no_active_exploration' });
+      if (!state) return JSON.stringify({ error: 'no_active_exploration', hint: 'No active exploration. Call start_exploration first.' });
+
+      // Verdict validation — same as extension.ts:881-883
+      const verdict = input.verdict as string | undefined;
+      if (!verdict || !['relevant', 'noted', 'irrelevant'].includes(verdict)) {
+        return JSON.stringify({ error: 'verdict_required', hint: 'verdict must be "relevant", "noted", or "irrelevant".' });
+      }
+
       const subResult = state.submitFindings({
         focusNodeId: input.focus_node_id as string ?? '',
         findings: input.findings as string ?? '',
@@ -164,11 +227,23 @@ export function dispatchTool(
         questions: (input.questions as Array<{ node_id: string; question: string }> ?? []).map(q => ({
           nodeId: q.node_id, question: q.question,
         })),
-        skipIds: input.skip_ids as string[] | undefined,
+        verdict: verdict as 'relevant' | 'noted' | 'irrelevant',
+        pruneIds: input.prune_ids as string[] | undefined,
+        addIds: input.add_ids as string[] | undefined,
+        complete: input.complete as boolean | undefined,
+        badge_label: input.badge_label as string | undefined,
+        note_caption: input.note_caption as string | undefined,
       });
       if ('error' in subResult) return JSON.stringify(subResult);
+
+      // Early completion — return raw result (same as extension.ts:907-910)
+      if ('early_complete' in subResult && subResult.early_complete) {
+        return JSON.stringify(subResult.early_complete);
+      }
+      // Normal completion — return raw result (same as extension.ts:916-920)
       const nextHop = state.getHopContext();
-      if ('done' in nextHop) return JSON.stringify({ ...subResult, result: state.getResult() });
+      if ('done' in nextHop) return JSON.stringify(state.getResult());
+      // Next hop — merge submit metadata with hop context (same as extension.ts:923)
       return JSON.stringify({ ...subResult, ...nextHop });
     }
 

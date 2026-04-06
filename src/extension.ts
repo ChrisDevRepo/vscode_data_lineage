@@ -970,21 +970,25 @@ export function activate(context: vscode.ExtensionContext) {
       let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
       _aiSessionCount++;
       logInfo(outputChannel, 'AI', `[S${_aiSessionCount}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
-      logInfo(outputChannel, 'AI', `Phase: discover${request.command ? ` /${request.command}` : ''} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
-      // Slash commands = shortcuts (intent context only, no mode switching)
+      // Slash commands: /trace filters tools (forces CT path), /search is prompt-only
       let effectivePrompt = request.prompt;
       if (request.command === 'trace') {
+        // Tool filtering: remove BFS and BB — AI must use start_column_trace (token gate guaranteed)
+        const traceTools = new Set([
+          'lineage_search_objects', 'lineage_get_object_detail', 'lineage_get_ddl_batch',
+          'lineage_start_column_trace', 'lineage_submit_hop_analysis', 'lineage_enrich_view',
+        ]);
+        lineageTools = lineageTools.filter(t => traceTools.has(t.name));
         effectivePrompt = `Trace the data lineage for: ${request.prompt}.`;
       } else if (request.command === 'search') {
         effectivePrompt = `Search for database objects matching: ${request.prompt}.`;
-      } else if (request.command === 'explain') {
-        effectivePrompt = `Explain what this database object does: ${request.prompt}.`;
       }
       if (request.command) {
         logInfo(outputChannel, 'AI', `Slash /${request.command} — prompt rewritten`);
         logDebug(outputChannel, 'AI', `Effective prompt: "${trunc(effectivePrompt, 200)}"`);
       }
+      logInfo(outputChannel, 'AI', `Phase: discover${request.command ? ` /${request.command}` : ''} | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
 
       // Build conversation history with smart management:
       // 1. DROP — replace error/empty tool results with 1-line summaries
@@ -1096,11 +1100,12 @@ export function activate(context: vscode.ExtensionContext) {
         '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user which object they mean.\n' +
         '   For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
         '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-        '3. For column questions: start_column_trace directly (it discovers scope internally). For other complex questions: search → BFS.\n' +
+        '3. For column questions: start_column_trace with columns. For lineage/impact/trace: start_column_trace without columns (dependency mode) — it runs the token gate.\n' +
         '   When tracing columns: provide INPUT column names, not output. Track renames.\n' +
         '   Prefer trace over prune when uncertain.\n' +
         '   For broad exploration (business rules, documentation, patterns, investigations):\n' +
         '   use start_exploration to explore objects hop-by-hop with persistent memory.\n' +
+        '   BFS (run_bfs_trace) is for scope discovery, not final trace results.\n' +
         '4. OUTPUT: enrich_view when graph aids understanding (lineage path, data flow).\n' +
         '   Chat text otherwise (explain, SQL, list, compare). Default: text.\n' +
         '5. VIEW OUTPUT — fields form a layered hierarchy (headline → callouts → captions → article).\n' +

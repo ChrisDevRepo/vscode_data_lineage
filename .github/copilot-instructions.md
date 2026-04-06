@@ -220,7 +220,7 @@ npm test                               # all suites must pass
 
 | Phase | Tag filter | Tools visible | Transition |
 |-------|-----------|---------------|------------|
-| **discover** | `lineage` | All 12 tools | AI explores freely; `/trace`, `/search`, `/explain` are intent shortcuts |
+| **discover** | `lineage` | All 12 tools (free-form) or filtered (slash commands) | `/trace` filters to 6 tools (CT path, no BFS); `/search` prompt rewrite only |
 | **ct_active** | `lineage-ct` | 2 CT tools only | Entered when `start_column_trace` activates state machine |
 | **ct_done** | `lineage` | All 12 tools restored | Entered when CT state machine completes; AI can `enrich_view` |
 | **bb_active** | `lineage` minus `lineage-ct` | Classic 8 + BB 2 (CT excluded) | Entered when `start_exploration` activates state machine; CT mutual exclusion |

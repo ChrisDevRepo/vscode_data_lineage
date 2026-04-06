@@ -333,6 +333,7 @@ async function testBBExplorationFlow(model: DatabaseModel, graph: Graph) {
           focus_node_id: '', // will be filled by the state machine (but harness doesn't validate)
           findings: 'This is a test finding',
           summary: 'Test summary',
+          verdict: 'relevant',
         },
       }],
     },
@@ -343,9 +344,21 @@ async function testBBExplorationFlow(model: DatabaseModel, graph: Graph) {
   const result = runChatLoop({ prompt: 'document business rules', script, model, graph });
 
   assert(result.toolSequence.includes('start_exploration'), 'BB: start_exploration called');
-  assert(result.blackboardState !== null, 'BB: blackboard state created');
-  assert(result.phase === 'bb_active', 'BB: phase is bb_active');
-  assert(result.historyOps.some(o => o.includes('BB_TRACK')), 'BB: tool results tracked');
+
+  // Small scope → inline gate fires (shouldInline returns true) → BB state nulled, BFS returned
+  // This matches extension.ts behavior: scope fits inline → no state machine
+  const explResult = result.toolResults.find(r => r.name === 'lineage_start_exploration');
+  const explJson = explResult ? JSON.parse(explResult.result) : {};
+  const isInline = explJson.status === 'inline';
+  if (isInline) {
+    assert(result.blackboardState === null, 'BB: inline mode — no BB state (correct)');
+    assert(explJson.bfs_result !== undefined, 'BB: inline mode — BFS result present');
+    assert(explJson.action_required === 'analyze_and_respond', 'BB: inline mode — action_required gate');
+  } else {
+    assert(result.blackboardState !== null, 'BB: SM mode — blackboard state created');
+    assert(result.phase === 'bb_active', 'BB: SM mode — phase is bb_active');
+    assert(result.historyOps.some(o => o.includes('BB_TRACK')), 'BB: SM mode — tool results tracked');
+  }
 }
 
 async function testBBToolVisible(model: DatabaseModel, graph: Graph) {
