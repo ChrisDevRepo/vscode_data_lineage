@@ -464,7 +464,7 @@ export class ColumnTraceState {
     }
     if (params.focusNodeId !== this.currentFocusNodeId) {
       this.log('debug', `submitVerdicts: focus mismatch — expected=${this.currentFocusNodeId}, got=${params.focusNodeId}`);
-      return { error: 'focus_mismatch', hint: `Expected focus ${this.currentFocusNodeId}, got ${params.focusNodeId}` };
+      return { error: 'focus_mismatch', hint: `Expected focus ${this.currentFocusNodeId}, got ${params.focusNodeId}. Extract the id field from focus_node in the hop context response.` };
     }
 
     // Validate all verdicts before committing (transactional)

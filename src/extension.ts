@@ -1415,7 +1415,12 @@ export function activate(context: vscode.ExtensionContext) {
                   'Verdict each neighbor: trace (provide INPUT column names — track renames), prune, or pass. ' +
                   'Write notes about what you found. Prefer trace over prune when uncertain. ' +
                   'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
-                  'The sub_question field contains your own question from the previous hop — answer it.'
+                  'The sub_question field contains your own question from the previous hop — answer it.\n' +
+                  'FIELD MAPPING: focus_node_id = focus_node.id from the hop context. neighbor_id = id field from each neighbor.\n' +
+                  'COLUMN TRACKING: When a column is computed (e.g. TotalRevenue = Qty * UnitPrice), ' +
+                  'trace the INPUT columns [Qty, UnitPrice], not the output. Track renames across hops.\n' +
+                  'SELECTIVITY: Trace only columns relevant to the user\'s question. Prune unrelated branches.\n' +
+                  'VERDICT ALL NEIGHBORS: Submit a verdict for every neighbor — skipped neighbors are silently lost.'
                 : 'DEPENDENCY TRACE MODE: For each hop, read the focus node DDL. ' +
                   'Verdict each neighbor: trace (follow this path), prune (cut), or pass (skip detail). ' +
                   'Write notes about dependencies, business logic, or impact you observe. ' +
