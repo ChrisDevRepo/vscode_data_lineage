@@ -326,6 +326,7 @@ export class BlackboardState {
   }): { ok: true; advanced: number; agendaSize: number; pruned?: number;
         rejected_prune_ids?: Array<{ id: string; reason: string; hint?: string }>;
         invalid_questions?: Array<{ node_id: string; question: string; reason: string }>;
+        complete_rejected?: { nodes: string[]; names: string[]; hint: string };
         early_complete?: ReturnType<BlackboardState['getResult']> }
      | { error: string; limit?: number; hint?: string } {
 
@@ -512,8 +513,31 @@ export class BlackboardState {
       ...(invalidQuestions.length > 0 && { invalid_questions: invalidQuestions }),
     };
 
-    // Early completion: AI signals it has enough findings. Trust the AI — accept immediately.
+    // Early completion: AI signals it has enough findings. Validate direct neighbors first.
     if (params.complete) {
+      // Guard: direct neighbors of origin must be visited or removed before accepting complete
+      const originDirectIds: Set<string> = this.originNodeId ? new Set([
+        ...(this.scopeDirection !== 'downstream' ? this.graph.inNeighbors(this.originNodeId) : []),
+        ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
+      ]) : new Set();
+      const unvisitedDirect = [...originDirectIds].filter(id =>
+        this.scopeNodeIds.has(id) && !this.visited.has(id) && !this.removedSet.has(id),
+      );
+      if (unvisitedDirect.length > 0) {
+        // Reinject as mandatory (priority=3)
+        for (const id of unvisitedDirect) {
+          if (!this.agendaIds.has(id)) {
+            this.agenda.push({ nodeId: id, priority: 3, depth: 1 });
+            this.agendaIds.add(id);
+          } else {
+            const entry = this.agenda.find(e => e.nodeId === id);
+            if (entry) entry.priority = 3;
+          }
+        }
+        const names = unvisitedDirect.map(id => this.nodeMap.get(id)?.name ?? id);
+        this.log('info', `BB COMPLETE REJECTED | unvisited direct neighbors: [${names.join(', ')}]`);
+        return { ...base, complete_rejected: { nodes: unvisitedDirect, names, hint: `Visit or mark these direct neighbors before completing: ${names.join(', ')}` } };
+      }
       this.log('info', `BB EARLY COMPLETE | notes=${this.notes.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
       return { ...base, early_complete: this.getResult() };
     }

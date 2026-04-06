@@ -121,6 +121,9 @@ export class ColumnTraceState {
   private currentFocusActiveColumns: string[] = [];
   private currentFocusDepth = 0;
   private rejectionsThisHop = 0;  // capped at MAX_REJECTIONS_PER_HOP per hop
+  private degradedToDepMode = false;  // true after column validation fails MAX_REJECTIONS — falls back to dependency mode (no column tracking)
+  private degradationHop: number | null = null;
+  private rejectionHistory: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }> = [];
 
   constructor(
     model: DatabaseModel,
@@ -481,7 +484,7 @@ export class ColumnTraceState {
         continue; // no further validation needed for revisit
       }
       if (v.verdict === 'trace') {
-        if (!v.columnsOut?.length && this.targetColumns.length > 0) {
+        if (!v.columnsOut?.length && this.targetColumns.length > 0 && !this.degradedToDepMode) {
           return { error: 'missing_columns', hint: `Verdict "trace" for ${v.nodeId} requires columnsOut (column mode).` };
         }
         // Column validation (skip if no columns to validate or rejection cap reached)
@@ -493,12 +496,15 @@ export class ColumnTraceState {
             const invalid = v.columnsOut.filter(c => !validSet.has(c.toLowerCase()));
             if (invalid.length > 0) {
               this.rejectionsThisHop++;
+              this.rejectionHistory.push({ hop: this.hopCount, nodeId: v.nodeId, submitted: invalid, valid: neighborCols.map(c => c.name) });
               this.log('warn', `REJECT (${this.rejectionsThisHop}/${MAX_REJECTIONS_PER_HOP}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
+              const willDegrade = this.rejectionsThisHop >= MAX_REJECTIONS_PER_HOP;
               return {
                 error: 'invalid_columns',
                 nodeId: v.nodeId,
                 invalid,
                 valid: neighborCols.map(c => c.name),
+                ...(willDegrade && { warning: 'Next attempt will degrade to dependency mode (no column tracking). Correct the column name or accept dependency-only tracing.' }),
               };
             }
           } else if (neighbor?.type === 'procedure') {
@@ -509,8 +515,12 @@ export class ColumnTraceState {
               this.log('debug', `SP→SP exec: ${focusId} → ${v.nodeId} — column validation skipped`);
             }
           }
-        } else {
-          this.log('warn', `Rejection cap reached (${MAX_REJECTIONS_PER_HOP}) — accepting columns on trust for ${v.nodeId}`);
+        } else if (!this.degradedToDepMode) {
+          // Rejection cap already reached but not yet degraded — degrade to dependency mode
+          this.degradedToDepMode = true;
+          this.degradationHop = this.hopCount;
+          this.log('warn', `CT DEGRADED to dependency mode at hop ${this.hopCount} — column validation disabled. Rejection history: ${this.rejectionHistory.length} rejections.`);
+          // Continue processing — columns accepted without validation from here on
         }
       }
     }
@@ -673,7 +683,16 @@ export class ColumnTraceState {
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
     this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
-    return { ok: true, advanced, frontierSize: this.frontier.length };
+    return {
+      ok: true, advanced, frontierSize: this.frontier.length,
+      ...(this.degradedToDepMode && this.degradationHop === this.hopCount && {
+        mode_degraded: {
+          from: 'column', to: 'dependency',
+          reason: `Column validation failed ${MAX_REJECTIONS_PER_HOP} times at hop ${this.hopCount}. Columns no longer tracked — trace continues as dependency-only.`,
+          rejection_history: this.rejectionHistory,
+        },
+      }),
+    };
   }
 
   // ─── getResult ─────────────────────────────────────────────────────────────
