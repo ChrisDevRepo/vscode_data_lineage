@@ -425,13 +425,6 @@
             "maximum": 100,
             "markdownDescription": "Maximum tool-call rounds per `@lineage` request. Increase for complex explorations on deep graphs. Each round is one AI reasoning step + tool call."
           },
-          "dataLineageViz.ai.inlineTokenBudget": {
-            "type": "integer",
-            "default": 20000,
-            "minimum": 1000,
-            "maximum": 100000,
-            "markdownDescription": "Token budget for inline delivery. When estimated scope tokens are below this threshold, the AI delivers all data in one shot. Lower values force multi-hop state machine exploration. Default: `20000`."
-          },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
             "default": "",
@@ -722,7 +715,7 @@
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
         "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, badges, and text annotations. The graph comes from a prior trace, BFS, or exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last trace/exploration. Provide name and summary (both required). Label-section data contract: for each node group you want to describe, assign a semantic badge label and a matching section — badge.text is the join key, section.label must match exactly. System orders sections by data-flow depth and assembles ## headings with step numbers — do not write description when sections are provided. One badge label per logical group, as many groups as needed; not every node requires a badge. In section text, reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered badge text ('1 Source'), section label mismatched from badge, description instead of sections, generic notes. GOOD: 'Source' badge on raw tables + matching section explaining what those tables contain.",
+        "modelDescription": "Enrich the stored result graph from your last trace/exploration. Provide name and summary (both required). Label-section data contract: for each node group you want to describe, assign a semantic badge label and a matching section — badge.text is the join key, section.label must match exactly. System numbers sections in YOUR WRITTEN ORDER and assembles ## headings with step numbers — write sections in the narrative sequence you want the reader to follow. Do not write description when sections are provided. One badge label per logical group, as many groups as needed; not every node requires a badge. In section text, reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered badge text ('1 Source'), section label mismatched from badge, description instead of sections, generic notes. GOOD: 'Source' badge on raw tables + matching section explaining what those tables contain.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

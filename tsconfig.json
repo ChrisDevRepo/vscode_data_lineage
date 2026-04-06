@@ -14,12 +14,7 @@
     "sourceMap": true,
     "outDir": "./out",
     "rootDir": "./src",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
-    "paths": {
-      "@/*": ["src/*"]
-    }
+    "lib": ["ES2020", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "out", "dist"]

@@ -6,13 +6,12 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget,
+  estimateTokens,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
   type EnrichViewInput,
 } from './ai/tools';
-import { setInlineBudgetOverride } from './ai/tokenBudget';
 import { ColumnTraceState } from './ai/columnTraceState';
 import { BlackboardState } from './ai/blackboardState';
 import { ColumnStore } from './engine/columnStore';
@@ -64,7 +63,7 @@ let _aiModelName:      string = '';          // display name of the current Copi
 let _aiSessionCount = 0;                     // monotonic session counter for log correlation
 let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
-let _isDocMode = false;                                // true when /document or doc-intent keyword detected
+let _isDocMode = false;                                // per-request: true when /document or doc-intent keyword detected
 
 /** Stored result graph — populated by CT/BB, consumed by enrich_view. */
 type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs' | 'origin';
@@ -72,7 +71,7 @@ interface ResultGraph {
   nodeIds: string[];
   edges: [string, string, string][];
   verdicts: Record<string, NodeRole>;
-  source: 'column_trace' | 'blackboard' | 'bfs_trace' | 'inline';
+  source: 'column_trace' | 'blackboard' | 'bfs_trace';
   originNodeId?: string;  // root node — needed by bfsDepthMap() in orderAndAssemble()
   notes?: Array<{ nodeId: string; summary: string }>;  // BB/CT note summaries for enrich_view auto-populate
   suggested_badges?: Array<{ node_id: string; text: string }>;  // SM: BB from badge_label, CT from chain name
@@ -83,7 +82,7 @@ let _resultGraph: ResultGraph | null = null;
 /** Build ResultGraph from a BFS trace result (nodes + edges). */
 function buildResultGraphFromBfs(
   result: Record<string, unknown>,
-  source: 'bfs_trace' | 'inline',
+  source: 'bfs_trace',
 ): ResultGraph | null {
   const nodes = result.nodes as Array<{ id: string }> | undefined;
   const edges = result.edges as [string, string, string][] | undefined;
@@ -223,25 +222,11 @@ export function activate(context: vscode.ExtensionContext) {
     .then(t => { _aiOutputTemplates = t; })
     .catch(err => logWarn(outputChannel, 'Config', `Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)}`));
 
-  // Apply inline token budget override from user setting
-  const inlineBudgetCfg = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.inlineTokenBudget');
-  if (inlineBudgetCfg !== undefined && inlineBudgetCfg !== INLINE_TOKEN_BUDGET) {
-    setInlineBudgetOverride(inlineBudgetCfg);
-  }
-  logInfo(outputChannel, 'Config', `ai.inlineTokenBudget: ${getEffectiveBudget()} tokens${inlineBudgetCfg !== undefined && inlineBudgetCfg !== INLINE_TOKEN_BUDGET ? ' (user override)' : ''}`);
-
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
       // Reload AI templates when setting changes (independent of panel)
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
         _aiOutputTemplates = await loadAiOutputTemplates(outputChannel, context.extensionUri);
-      }
-
-      // Update inline token budget override
-      if (e.affectsConfiguration('dataLineageViz.ai.inlineTokenBudget')) {
-        const budget = vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.inlineTokenBudget');
-        setInlineBudgetOverride(budget !== undefined && budget !== INLINE_TOKEN_BUDGET ? budget : undefined);
-        logInfo(outputChannel, 'Config', `ai.inlineTokenBudget ${budget !== undefined && budget !== INLINE_TOKEN_BUDGET ? `override: ${budget}` : 'reset to default'}`);
       }
 
       if (!activePanel) return;
@@ -943,6 +928,7 @@ export function activate(context: vscode.ExtensionContext) {
       _aiModelName = request.model.name || request.model.id;
       _columnTraceState = null; // reset per request — each trace gets a fresh state machine
       _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
+      _isDocMode = false;       // reset per request — set by /document or doc-intent keyword below
       // _resultGraph intentionally NOT reset — it persists across turns so the
       // "Show in Graph" button (which opens a new chat turn) can consume the
       // last BFS result.  It is overwritten whenever a new trace runs.
@@ -970,7 +956,6 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Slash commands: /trace filters tools (forces CT path), /search is prompt-only, /document forces BB doc mode
       let effectivePrompt = request.prompt;
-      _isDocMode = false;
       if (request.command === 'trace') {
         // Tool filtering: remove BFS and BB — AI must use start_column_trace (token gate guaranteed)
         const traceTools = new Set([
@@ -983,12 +968,15 @@ export function activate(context: vscode.ExtensionContext) {
         effectivePrompt = `Search for database objects matching: ${request.prompt}.`;
       } else if (request.command === 'document') {
         // Tool filtering: BB only — no CT, no BFS, no enrich_view
+        // get_context included so model can orient to schema structure on fresh sessions
         const docTools = new Set([
-          'lineage_search_objects', 'lineage_get_object_detail', 'lineage_get_ddl_batch',
+          'lineage_get_context',
+          'lineage_search_objects',
           'lineage_start_exploration', 'lineage_submit_findings',
         ]);
         lineageTools = lineageTools.filter(t => docTools.has(t.name));
-        effectivePrompt = `Document all objects reachable from: ${request.prompt}.`;
+        effectivePrompt = `Document all objects reachable from: ${request.prompt}. ` +
+          `Use search_objects to find the highest-degree node in scope as origin, then call start_exploration — do not write documentation text directly.`;
         _isDocMode = true;
       } else if (/\b(document|catalog|inventory)\b/i.test(request.prompt)) {
         // Freeform doc intent — all tools available, but BB will use autoSkipTypes
@@ -1246,6 +1234,9 @@ export function activate(context: vscode.ExtensionContext) {
           if (!toolCalls.length) {
             logInfo(outputChannel, 'AI', `Round ${roundCount} complete — model responded without tool calls (${roundMs}ms)`);
             logDebug(outputChannel, 'AI', `Exit: phase=${activePhase}, responseText=${responseText.length}ch`);
+            if (_isDocMode && !_blackboardState && activePhase === 'discover') {
+              logWarn(outputChannel, 'AI', '[BB] /document exited discover without start_exploration — AI wrote prose directly → effectivePrompt may be insufficient');
+            }
             return;
           }
 
@@ -1378,7 +1369,7 @@ export function activate(context: vscode.ExtensionContext) {
               if (part instanceof vscode.LanguageModelTextPart) {
                 try {
                   const parsed = JSON.parse(part.value);
-                  if (parsed.action_required && typeof parsed.action_required === 'string') {
+                  if (parsed.action_required === 'analyze_and_respond') {
                     actionGates.push(parsed.action_required);
                   }
                 } catch { logDebug(outputChannel, 'AI', 'Tool result not JSON — skipping action gate parse'); }

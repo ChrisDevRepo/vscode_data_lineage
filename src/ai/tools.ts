@@ -984,6 +984,10 @@ export function validateEnrichView(
 
   // description optional — if provided, validate structure + markdown format
   if (input.description && input.description.trim().length > 0) {
+    // sections[] and description are mutually exclusive — sections is preferred
+    if (input.sections?.length) {
+      errors.push('Provide either sections[] or description — not both. Use sections[] for structured output; description is the fallback for unstructured answers only');
+    }
     // Must have structure: ## headings or multiple paragraphs
     if (!input.description.includes('##') && !input.description.includes('\n\n')) {
       errors.push('description must use ## headings or multiple paragraphs — not a single block of text');
@@ -998,7 +1002,7 @@ export function validateEnrichView(
     errors.push(...validateMarkdownFormat(input.description));
   }
 
-  // sections validation — each label must match a badge, content must be non-trivial
+  // sections validation — each label must match a badge, content must be substantive
   if (input.sections?.length) {
     const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
     const badgeLabels = new Set((input.badges ?? []).map(b => stripNum(b.text)));
@@ -1007,10 +1011,19 @@ export function validateEnrichView(
       if (!badgeLabels.has(label)) {
         errors.push(`Section label "${sec.label}" has no matching badge — label must match a badge text exactly`);
       }
-      if (!sec.text || sec.text.trim().length < 50) {
-        errors.push(`Section "${sec.label}" is too short — explain what you found in this group (min 50 chars)`);
+      if (!sec.text || sec.text.trim().length < 120) {
+        errors.push(`Section "${sec.label}" is too short — write 3-8 sentences or items explaining what you found (min 120 chars)`);
       }
       if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
+    }
+  }
+
+  // notes validation — must be specific, not generic one-word captions
+  if (input.notes?.length) {
+    for (const note of input.notes) {
+      if (!note.text || note.text.trim().length < 20) {
+        errors.push(`Note for "${note.node_id}" is too short — write a specific one-line caption (min 20 chars)`);
+      }
     }
   }
 
@@ -1031,6 +1044,7 @@ export function validateEnrichView(
       else if (e.includes('summary')) failedFields.add('summary');
       else if (e.includes('description')) failedFields.add('description');
       else if (e.startsWith('Section ')) failedFields.add('sections');
+      else if (e.startsWith('Note for ')) failedFields.add('notes');
       else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
       else if (e.includes('No nodes')) failedFields.add('nodes');
     }

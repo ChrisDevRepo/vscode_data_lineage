@@ -206,7 +206,7 @@ export function findBridgeNodes(
 /**
  * Directed BFS from originNodeId over a result-graph edge list.
  * Returns the minimum distance (in hops) from origin to each reachable node.
- * Used by orderAndAssemble() to sort badge groups in data-flow order.
+ * Used by blackboardState.ts getResult() to sort badge groups in data-flow order.
  *
  * @param edges  Flat edge list from ResultGraph — [source, target, type].
  * @param originNodeId  The root node; gets depth 0.
