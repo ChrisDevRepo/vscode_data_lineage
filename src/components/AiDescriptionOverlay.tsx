@@ -48,7 +48,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     navigator.clipboard.writeText(description).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    }).catch(err => console.error('[Webview] Clipboard write failed:', err));
   }
 
   return (

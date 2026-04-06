@@ -2,24 +2,17 @@
 
 ## [0.9.7] - 2026-03-31
 
-### Fixed
-- **CTE UPDATE alias-FROM parsing** — Stored procedures using `UPDATE alias SET ... FROM cte_name` now correctly produce write edges to the underlying table. Previously only `UPDATE [schema].[table] SET` and `UPDATE cte_name SET` patterns were detected; the alias-FROM variant through a CTE was silently dropped. Also resolves chained CTE references (cte_A → cte_B → real table) and replaces the 3000-char magic-number window with paren-balanced CTE body detection.
-
 ### Added
-- **Column-trace state machine** — `@lineage /column-trace` hop-and-distill pattern: AI evaluates one node per hop, traces column renames, validates column names against metadata, reject/retry on invalid columns
-- **ColumnStore architecture** — centralized column and DDL metadata storage on extension host; webview receives lightweight flags only, reducing payload by ~10-20 MB on large DWH
-- **View/function column extraction** — views and table-valued functions (inline + multi-statement) now have column metadata extracted from both dacpac XML and DMV `sys.columns`
-- **Detail panel DDL/Columns toggle** — views and TVFs show a toggle bar to switch between column metadata table and DDL source code
-- **Column-trace tools** — 3 new AI tools: `lineage_start_column_trace`, `lineage_submit_hop_analysis`, `lineage_get_column_trace_result`
+- **Column metadata for views & functions** — Views and table-valued functions now show column details in the detail panel, with a toggle between columns and DDL source
+- **`@lineage` column tracing** — Ask the AI assistant to follow columns hop-by-hop through views, procedures, and functions, tracking renames and transformations
+
+### Fixed
+- **CTE UPDATE parsing** — `UPDATE alias SET ... FROM cte_name` patterns and chained CTE references now correctly produce write edges to the underlying table
+- **`@lineage` LaTeX rendering** — Fixed math formula display in AI description overlay
 
 ### Changed
-- Disable DDL viewer button in schema overview mode
-- Revised documentation across README, product page, help modal, and features guide with lineage-focused examples and AI capability descriptions
-- **AI multi-use-case routing** — `@lineage` now answers explain, optimize, and document requests in chat text instead of always creating a bookmark; users can click "Show in Graph" afterward
-- **AI validation reject/retry** — Summary uses soft 120 / hard 300 char limit with rejection instead of silent truncation; failed tool calls are compacted in history to save context
-
-### Fixed
-- **LaTeX rendering** — Fixed math formula display in AI description overlay
+- Reduced webview payload size on large data warehouses by keeping column metadata on the extension host
+- Updated documentation with lineage-focused examples
 
 ## [0.9.6] - 2026-03-27
 

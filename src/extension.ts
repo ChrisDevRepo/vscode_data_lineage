@@ -268,7 +268,7 @@ export function activate(context: vscode.ExtensionContext) {
   // ─── AI: "Show in Graph" — sends follow-up to @lineage to create annotated view
   context.subscriptions.push(
     vscode.commands.registerCommand('dataLineageViz.aiCreateView', (originalPrompt: string) => {
-      const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${(originalPrompt || '').slice(0, 60)}"`;
+      const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${trunc(originalPrompt || '', 60)}"`;
       vscode.commands.executeCommand('workbench.action.chat.open', {
         query: `@lineage ${viewPrompt}`,
       });
@@ -1378,7 +1378,7 @@ export function activate(context: vscode.ExtensionContext) {
                   if (parsed.action_required && typeof parsed.action_required === 'string') {
                     actionGates.push(parsed.action_required);
                   }
-                } catch { /* not JSON */ }
+                } catch { logDebug(outputChannel, 'AI', 'Tool result not JSON — skipping action gate parse'); }
               }
             }
           }
@@ -2265,10 +2265,10 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         _aiViews = msg.savedViews;
         logDebug(outputChannel, 'Bridge', 'Active filter updated via filter-changed');
       },
-      'log': (msg) => { outputChannel.info(msg.text); },
+      'log': (msg) => { logInfo(outputChannel, 'Bridge', msg.text); },
       'error': (msg) => {
-        outputChannel.error(msg.error);
-        if (msg.stack) outputChannel.debug(msg.stack);
+        logError(outputChannel, 'Bridge', 'Webview error', new Error(msg.error));
+        if (msg.stack) logDebug(outputChannel, 'Bridge', msg.stack);
         vscode.window.showErrorMessage(`Data Lineage Error: ${msg.error}`);
       },
       'open-external': async (msg) => {

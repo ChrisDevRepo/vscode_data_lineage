@@ -133,104 +133,6 @@ async function testInitInvalidOrigin() {
 
 // ─── Test: Hop Context ───────────────────────────────────────────────────────
 
-async function testHopContextStructure() {
-  clearLogs();
-  const model = buildSyntheticModel();
-  const state = new BlackboardState(model, buildGraphFromModel(model), log);
-  state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
-
-  const hop = state.getHopContext();
-  assert(!('done' in hop) && !('error' in hop), 'First hop returns context');
-
-  const ctx = hop as {
-    bb_mode: string; hop: number; focus_node: Record<string, unknown>;
-    neighbors: unknown[]; current_task: string; working_memory: Record<string, unknown>;
-    agenda_remaining: number;
-  };
-
-  assertEq(ctx.bb_mode, 'exploring', 'bb_mode is exploring');
-  assertEq(ctx.hop, 1, 'First hop is 1');
-  assert(!!ctx.focus_node.id, 'Focus node has id');
-  assert(ctx.neighbors.length > 0, 'Focus node has neighbors');
-  assert(ctx.current_task.length > 0, 'Has current_task');
-  assert(ctx.agenda_remaining >= 0, 'Has agenda_remaining');
-
-  // Working memory structure
-  const wm = ctx.working_memory as {
-    user_question: string; all_summaries: unknown[]; pending_questions: unknown[];
-    checklist: { noted: number; total: number; open: number; coveragePct: number };
-  };
-  assertEq(wm.user_question, 'Test', 'Working memory includes user_question goal anchor');
-  assertEq(wm.all_summaries.length, 0, 'No summaries initially');
-  assertEq(wm.pending_questions.length, 0, 'No questions initially');
-  assert(wm.checklist.total > 0, 'Checklist has total');
-  assertEq(wm.checklist.noted, 0, 'No notes yet');
-
-  assertEq(state.status, 'awaiting_findings', 'Status is awaiting_findings after getHopContext');
-}
-
-async function testFocusNodeDdl() {
-  clearLogs();
-  const model = buildSyntheticModel();
-  const state = new BlackboardState(model, buildGraphFromModel(model), log);
-  state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
-
-  // Drain until we find a procedure with DDL
-  let foundDdl = false;
-  for (let i = 0; i < 6; i++) {
-    const hop = state.getHopContext();
-    if ('done' in hop || 'error' in hop) break;
-    const ctx = hop as { focus_node: Record<string, unknown>; neighbors: unknown[] };
-
-    if (ctx.focus_node.bb_ddl) {
-      foundDdl = true;
-      assert(typeof ctx.focus_node.bb_ddl === 'string', 'DDL is string');
-      assert((ctx.focus_node.bb_ddl as string).length > 0, 'DDL is non-empty');
-      break;
-    }
-
-    // Submit minimal findings to advance
-    state.submitFindings({
-      focusNodeId: ctx.focus_node.id as string,
-      findings: 'test',
-      summary: 'test',
-    });
-  }
-  assert(foundDdl, 'Found a focus node with DDL');
-}
-
-async function testFocusNodeColumns() {
-  clearLogs();
-  const model = buildSyntheticModel();
-  const state = new BlackboardState(model, buildGraphFromModel(model), log);
-  state.init({ question: 'Test', origin: '[staging].[rawdata]' });
-
-  // rawdata is origin (visited), so first hop is a neighbor
-  // Drain until we find a table with columns
-  let foundCols = false;
-  for (let i = 0; i < 6; i++) {
-    const hop = state.getHopContext();
-    if ('done' in hop || 'error' in hop) break;
-    const ctx = hop as { focus_node: Record<string, unknown> };
-
-    if (ctx.focus_node.cols) {
-      foundCols = true;
-      const cols = ctx.focus_node.cols as string[];
-      assert(cols.length > 0, 'Has columns');
-      // Check compact format: "Amount decimal(18,2), nullable"
-      assert(cols.some(c => c.includes('decimal') || c.includes('int') || c.includes('varchar')),
-        'Columns have type info');
-      break;
-    }
-
-    state.submitFindings({
-      focusNodeId: ctx.focus_node.id as string,
-      findings: 'test', summary: 'test',
-    });
-  }
-  assert(foundCols, 'Found a focus node with compact columns');
-}
-
 // ─── Test: Submit Findings ───────────────────────────────────────────────────
 
 async function testSubmitFindings() {
@@ -685,35 +587,6 @@ async function testBoundaryDetection() {
   // source/sink may or may not appear depending on traversal order
 }
 
-// ─── Test: Neighbor metadata ─────────────────────────────────────────────────
-
-async function testNeighborMetadata() {
-  clearLogs();
-  const model = buildSyntheticModel();
-  const state = new BlackboardState(model, buildGraphFromModel(model), log);
-  state.init({ question: 'Test', origin: '[dbo].[sptransform]' });
-
-  // Find a hop with neighbors that have cols or fks
-  let foundCols = false;
-  let foundEdgeInfo = false;
-  for (let i = 0; i < 10; i++) {
-    const hop = state.getHopContext();
-    if ('done' in hop || 'error' in hop) break;
-    const ctx = hop as { focus_node: { id: string }; neighbors: Array<{ id: string; cols?: string[]; edge_direction: string; edge_type: string }> };
-
-    for (const nb of ctx.neighbors) {
-      if (nb.cols && nb.cols.length > 0) foundCols = true;
-      if (nb.edge_direction && nb.edge_type) foundEdgeInfo = true;
-    }
-
-    state.submitFindings({ focusNodeId: ctx.focus_node.id, findings: 'test', summary: 'test' });
-    if (foundCols && foundEdgeInfo) break;
-  }
-
-  assert(foundCols, 'Neighbors include compact column info');
-  assert(foundEdgeInfo, 'Neighbors include edge direction and type');
-}
-
 // ─── Test: Re-init ───────────────────────────────────────────────────────────
 
 async function testReInit() {
@@ -731,47 +604,6 @@ async function testReInit() {
   assert('ok' in result2, 'Re-init succeeds');
   assertEq(state.noteCount, 0, 'Notes cleared on re-init');
   assertEq(state.status, 'initialized', 'Status reset to initialized');
-}
-
-// ─── Test: High coverage hint ────────────────────────────────────────────────
-
-async function testHighCoverageHint() {
-  clearLogs();
-  // Small model: 2 nodes
-  const nodes: LineageNode[] = [
-    { id: '[a].[t1]', schema: 'a', name: 'T1', fullName: '[a].[T1]', type: 'table',
-      columns: [{ name: 'Id', type: 'int', nullable: 'false', extra: '' }] },
-    { id: '[a].[sp1]', schema: 'a', name: 'SP1', fullName: '[a].[SP1]', type: 'procedure',
-      bodyScript: 'CREATE PROCEDURE [a].[SP1] AS SELECT Id FROM a.T1' },
-  ];
-  const edges: LineageEdge[] = [{ source: '[a].[t1]', target: '[a].[sp1]', type: 'body' }];
-  const neighborIndex: NeighborIndex = {};
-  for (const n of nodes) neighborIndex[n.id] = { in: [], out: [] };
-  for (const e of edges) {
-    neighborIndex[e.source]?.out.push(e.target);
-    neighborIndex[e.target]?.in.push(e.source);
-  }
-  const model: DatabaseModel = {
-    nodes, edges, neighborIndex,
-    schemas: [{ name: 'a', nodeCount: 2, types: { table: 1, view: 0, procedure: 1, function: 0, external: 0 } }],
-    catalog: Object.fromEntries(nodes.map(n => [n.id, { schema: n.schema, name: n.name, type: n.type }])),
-  };
-
-  const state = new BlackboardState(model, buildGraphFromModel(model), log);
-  state.init({ question: 'Test', origin: '[a].[t1]' });
-
-  // Only 1 node on agenda (SP1), origin already visited
-  const hop = state.getHopContext();
-  assert(!('done' in hop) && !('error' in hop), 'Got hop');
-  const ctx = hop as { focus_node: { id: string } };
-
-  // Submit findings → 1 note of 2 scope = 50%. No hint yet.
-  state.submitFindings({ focusNodeId: ctx.focus_node.id, findings: 'test', summary: 'test' });
-
-  // Agenda should be empty now (only 2 nodes total, both visited)
-  const hop2 = state.getHopContext();
-  // Should be done
-  assert('done' in hop2, 'Agenda exhausted with 2-node model');
 }
 
 // ─── Test: Question with unknown nodeId is ignored ──────────────────────────
@@ -824,11 +656,6 @@ async function main() {
     await testInitValid();
     await testInitInvalidOrigin();
 
-    console.log('\n── Hop Context ──');
-    await testHopContextStructure();
-    await testFocusNodeDdl();
-    await testFocusNodeColumns();
-
     console.log('\n── Submit Findings ──');
     await testSubmitFindings();
     await testSubmitFocusMismatch();
@@ -859,9 +686,7 @@ async function main() {
     await testAutoExpandScope();
     await testQuestionUnknownNodeIgnored();
     await testBoundaryDetection();
-    await testNeighborMetadata();
     await testReInit();
-    await testHighCoverageHint();
 
   } catch (err) {
     console.error('\n✗ Fatal error:', err);

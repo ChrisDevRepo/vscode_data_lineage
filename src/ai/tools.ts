@@ -292,7 +292,7 @@ export function searchObjects(
     : null;
   const taggedResults = results.map(r => ({
     ...r,
-    in_user_filter: filterSchemaSet ? filterSchemaSet.has(((r as any).s ?? '').toLowerCase()) : true,
+    in_user_filter: filterSchemaSet ? filterSchemaSet.has((((r as Record<string, unknown>).s as string) ?? '').toLowerCase()) : true,
   }));
 
   const visibleNodeCount = activeFilter

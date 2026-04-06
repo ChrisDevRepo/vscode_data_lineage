@@ -153,26 +153,14 @@ export function DetailApp() {
   if (hasColumnsAndDdl) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div style={{
-          display: 'flex', gap: 4, padding: '6px 10px',
-          borderBottom: '1px solid var(--vscode-panel-border, var(--vscode-widget-border, #444))',
-          background: 'var(--vscode-editor-background)',
-        }}>
+        <div className="ln-detail-tab-bar">
           <button
             onClick={() => setDetailMode('ddl')}
-            style={{
-              padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 3,
-              background: detailMode === 'ddl' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)',
-              color: detailMode === 'ddl' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)',
-            }}
+            className={`ln-detail-tab-button${detailMode === 'ddl' ? ' active' : ''}`}
           >DDL</button>
           <button
             onClick={() => setDetailMode('columns')}
-            style={{
-              padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRadius: 3,
-              background: detailMode === 'columns' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)',
-              color: detailMode === 'columns' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)',
-            }}
+            className={`ln-detail-tab-button${detailMode === 'columns' ? ' active' : ''}`}
           >Columns</button>
         </div>
         <div style={{ flex: 1, overflow: 'hidden' }}>

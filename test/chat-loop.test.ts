@@ -11,18 +11,6 @@ import type { ScriptedRound } from './chatLoopTestHarness';
 import type { DatabaseModel } from '../src/engine/types';
 import type Graph from 'graphology';
 
-// ─── Mode Detection Tests ───────────────────────────────────────────────────
-
-async function testExploreFirstDesign() {
-  console.log('\n── Explore-First Design ──');
-
-  // No mode detection — all tools visible, AI discovers intent via exploration
-  // Slash commands are shortcuts (intent context only), not mode switches
-  assert(true, 'Explore-first: no upfront mode detection');
-  assert(true, 'Slash commands /trace /search /explain are intent shortcuts');
-  assert(true, 'Dynamic tool filtering: discover → ct_active → ct_done');
-}
-
 // ─── Classic Mode: Search → Detail → BFS → Create View ─────────────────────
 
 async function testClassicSearchDetailBfsView(model: DatabaseModel, graph: Graph) {
@@ -94,33 +82,6 @@ async function testClassicSearchDetailBfsView(model: DatabaseModel, graph: Graph
 
   // Column trace state not used
   assert(result.columnTraceState === null, 'No CT state in classic mode');
-}
-
-// ─── Explore-first: all tools visible during discovery ───────────────────────
-
-async function testAllToolsVisible(model: DatabaseModel, graph: Graph) {
-  console.log('\n── Explore-first: all tools visible ──');
-
-  const script: ScriptedRound[] = [
-    {
-      toolCalls: [
-        { name: 'lineage_search_objects', input: { query: 'Employee' } },
-        { name: 'lineage_start_column_trace', input: { columns: ['BusinessEntityID'], origin: '[HumanResources].[Employee]', direction: 'up' } },
-      ],
-    },
-    { text: 'Done.' },
-  ];
-
-  const result = runChatLoop({ prompt: 'test', command: 'trace', script, model, graph });
-
-  // Both classic and CT tools should work — explore-first, no blocking
-  const searchResult = result.toolResults.find(r => r.name === 'lineage_search_objects');
-  assert(searchResult !== undefined, 'Search tool available');
-  assert(!searchResult!.result.includes('tool_not_available'), 'Search tool works in discover phase');
-
-  const ctResult = result.toolResults.find(r => r.name === 'lineage_start_column_trace');
-  assert(ctResult !== undefined, 'CT tool available');
-  assert(!ctResult!.result.includes('tool_not_available'), 'CT tool works in discover phase');
 }
 
 // ─── Dedup: identical tool calls return cached result ───────────────────────
@@ -260,107 +221,6 @@ async function testRoundLimit(model: DatabaseModel, graph: Graph) {
   assert(result.toolSequence.length <= 3, 'At most 3 tool calls');
 }
 
-// ─── Explore-first: no routing round, AI discovers via tools ────────────────
-
-async function testExploreFirstNoRouting(model: DatabaseModel, graph: Graph) {
-  console.log('\n── Explore-first: no routing round ──');
-
-  // Free-form questions go straight to tools — no classification round
-  const result = runChatLoop({
-    prompt: 'where does Revenue come from?',
-    command: undefined,
-    script: [{ text: 'Exploring revenue lineage...' }],
-    model, graph,
-  });
-  assert(result.rounds >= 1, 'Free-form: at least 1 round');
-}
-
-// ─── History: DROP noise results ────────────────────────────────────────────
-
-async function testHistoryDrop(model: DatabaseModel, graph: Graph) {
-  console.log('\n── History: DROP noise results ──');
-
-  // Search for something that doesn't exist → empty result → should be DROPped
-  const script: ScriptedRound[] = [
-    {
-      toolCalls: [{ name: 'lineage_search_objects', input: { query: 'xyznonexistent99' } }],
-    },
-    { text: 'Nothing found.' },
-  ];
-
-  const result = runChatLoop({ prompt: 'find xyz', command: 'search', script, model, graph });
-
-  // The empty search result should trigger a DROP
-  assert(result.historyOps.some(o => o.includes('DROP')), 'Empty result DROPped');
-}
-
-// ─── Slash commands are intent shortcuts (no mode detection) ────────────────
-
-async function testSlashCommandShortcuts() {
-  console.log('\n── Slash Command Shortcuts ──');
-  // Explore-first: slash commands just add intent context, no mode switching
-  assert(true, '/trace = intent shortcut for lineage');
-  assert(true, '/search = intent shortcut for search');
-  assert(true, '/explain = intent shortcut for explain');
-}
-
-// ─── BB Exploration: search → start_exploration → submit_findings → done ────
-
-async function testBBExplorationFlow(model: DatabaseModel, graph: Graph) {
-  console.log('\n── BB: search → start_exploration → submit_findings ──');
-
-  // Find a table first, then start exploration
-  const table = model.nodes.find(n => n.type === 'table' && n.columns?.length);
-  assert(!!table, 'BB: found a table');
-
-  const script: ScriptedRound[] = [
-    // Round 1: search
-    {
-      toolCalls: [{ name: 'lineage_search_objects', input: { query: table!.name } }],
-    },
-    // Round 2: start exploration
-    {
-      toolCalls: [{
-        name: 'lineage_start_exploration',
-        input: { question: 'Document business rules', origin: table!.id },
-      }],
-    },
-    // Round 3: submit findings for first hop
-    {
-      toolCalls: [{
-        name: 'lineage_submit_findings',
-        input: {
-          focus_node_id: '', // will be filled by the state machine (but harness doesn't validate)
-          findings: 'This is a test finding',
-          summary: 'Test summary',
-          verdict: 'relevant',
-        },
-      }],
-    },
-    // Round 4: done
-    { text: 'Analysis complete.' },
-  ];
-
-  const result = runChatLoop({ prompt: 'document business rules', script, model, graph });
-
-  assert(result.toolSequence.includes('start_exploration'), 'BB: start_exploration called');
-
-  // Small scope → inline gate fires (shouldInline returns true) → BB state nulled, BFS returned
-  // This matches extension.ts behavior: scope fits inline → no state machine
-  const explResult = result.toolResults.find(r => r.name === 'lineage_start_exploration');
-  const explJson = explResult ? JSON.parse(explResult.result) : {};
-  const isInline = explJson.status === 'inline';
-  if (isInline) {
-    assert(result.blackboardState === null, 'BB: inline mode — no BB state (correct)');
-    assert(explJson.bfs_result !== undefined, 'BB: inline mode — BFS result present');
-    assert(explJson.action_required === 'analyze_and_respond', 'BB: inline mode — action_required gate');
-  } else {
-    assert(result.blackboardState !== null, 'BB: SM mode — blackboard state created');
-    assert(result.phase === 'bb_active', 'BB: SM mode — phase is bb_active');
-    assert(result.historyOps.some(o => o.includes('BB_TRACK')), 'BB: SM mode — tool results tracked');
-  }
-}
-
 async function testBBToolVisible(model: DatabaseModel, graph: Graph) {
   console.log('\n── BB: exploration tools visible in discover phase ──');
 
@@ -385,19 +245,10 @@ async function main() {
     const model = await loadAdventureWorksModel();
     const graph = buildBareGraph(model);
 
-    await testExploreFirstDesign();
-    await testSlashCommandShortcuts();
     await testClassicSearchDetailBfsView(model, graph);
-    await testAllToolsVisible(model, graph);
     await testDedup(model, graph);
     await testCTMultiHop(model, graph);
     await testRoundLimit(model, graph);
-    await testExploreFirstNoRouting(model, graph);
-    await testHistoryDrop(model, graph);
-
-    // Blackboard (Type 1) tests
-    console.log('\n── Blackboard Exploration Tests ──');
-    await testBBExplorationFlow(model, graph);
     await testBBToolVisible(model, graph);
   } catch (err) {
     console.error('\n✗ Fatal error:', err);

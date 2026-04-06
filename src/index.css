@@ -394,6 +394,28 @@ body {
   padding: 12px 16px;
 }
 
+/* Detail panel tab bar */
+.ln-detail-tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, #444));
+  background: var(--vscode-editor-background);
+}
+.ln-detail-tab-button {
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  border-radius: 3px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+.ln-detail-tab-button.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
 /* Markdown content styling */
 .ln-ai-description-md {
   font-size: 12px;
