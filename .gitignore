@@ -25,7 +25,12 @@ test/*.dacpac
 CLAUDE.md
 .claude/
 tmp/
+ai/
 PLAN*.md
+
+# AI test session artifacts (written to root by Claude Code during ai-test-server sessions)
+hop*_response.json
+trace_results.json
 
 # Environment
 .env

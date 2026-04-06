@@ -455,6 +455,10 @@
           {
             "name": "search",
             "description": "Search for database objects by name or schema"
+          },
+          {
+            "name": "document",
+            "description": "Generate structured documentation for all objects in a schema or lineage path"
           }
         ],
         "disambiguation": [
@@ -1037,7 +1041,8 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/ai-tools.test.ts && tsx test/column-trace-state.test.ts && tsx test/blackboard-state.test.ts && tsx test-internal/chat-loop.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
+    "test:internal": "tsx test-internal/ai-tools.test.ts && tsx test-internal/column-trace-state.test.ts && tsx test-internal/blackboard-state.test.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",
@@ -1045,7 +1050,7 @@
     "test:dmv": "tsx test/dmvExtractor.test.ts",
     "test:sql": "tsx test/tsql-complex.test.ts",
     "test:project": "tsx test/projectStore.test.ts",
-    "test:ai": "tsx test/ai-tools.test.ts",
+    "test:ai": "tsx test-internal/ai-tools.test.ts",
     "test:snapshot": "tsx test/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx test/snapshot-aw-baseline.ts --update",
     "test:hooks": "vitest run --config vitest.config.ts",

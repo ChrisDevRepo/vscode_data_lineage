@@ -37,24 +37,41 @@ description:
 
 badges:
   instruction: >
-    Semantic labels on nodes you analyzed -- no numbers (system assigns step numbers).
+    Semantic labels on nodes you explain in your sections -- no numbers (system assigns step numbers).
     Same label on multiple nodes groups them under one section heading.
-    One label per logical group, as many groups as needed.
-    Badge every node that appears in your sections -- section.label must match badge.text exactly (join key).
-    BAD: "3 Source" (number in label), badges with no matching section.
-    GOOD: "Source" on 2 raw tables, "ETL" on 3 SPs, "Reporting" on 1 view -- each covered by a section.
+    Only badge nodes that have their own section -- passthroughs and minor relay nodes do not need badges.
+    section.label must match badge.text exactly (join key, case-sensitive).
+    BAD: "3 Source" (number in label), badges with no matching section, badging every node.
+    GOOD: "Source" on origin tables, "ETL" on SPs that compute logic, "Target" on the destination -- each covered by a section.
 
 sections:
   instruction: >
-    One entry per unique badge label -- explains what you found at those nodes.
-    label: must exactly match a badge text value (join key, case-sensitive).
-    text: markdown explaining findings -- logic, patterns, issues, performance, column mappings, formulas.
-    System orders sections by data-flow depth and assembles ## headings with step numbers.
-    In text, reference other groups by label name ("reads from **Source**"), never by number.
-    Supported in text: **bold**, `code`, tables, $math$, ```math blocks.
-    BAD: label typo mismatching badge, generic text ("Stores project data"), missing section for a badged group.
-    GOOD: { label: "ETL", text: "`spCalcEV` multiplies PlannedValue by earned ratio\nReads from **Source**, writes to **Target**" }
-  example: '{ "label": "FX Convert", "text": "`spConvertFX` multiplies Amount by DimRate.Rate\nJoins FactSales.CurrencyKey -> DimRate.CurrencyKey" }'
+    One entry per unique badge label. System numbers sections in the ORDER you write them --
+    write sections in the narrative sequence you want the reader to follow, not by object type.
+    label must exactly match badge.text (join key, case-sensitive).
+
+    CLASSIFY the question before writing. business logic -> formulas, column renames, risks; skip
+    ETL mechanics (TRUNCATE, rebuild modes, indexes). technical -> execution and rebuild details.
+    documentation -> both.
+
+    Only badge nodes you explain. Passthrough nodes (rename-only views, simple SELECTs) mention
+    in one sentence inside the section that uses them -- no badge, no section of their own.
+
+    In section text use the format that fits the content. Column rename or mapping ->
+    | From | To | Notes | table. Formula -> ```math block. Multi-step logic -> ordered 1. 2. 3.
+    list. Risk or data quality issue -> warning prefix with emoji. Write 3-8 sentences or items
+    per section -- not a one-liner, not an object inventory.
+
+    BAD order -- jumping non-linearly (Target -> Source -> ETL -> Views).
+    BAD text -- "Stores project data." or "Reads from Source." (no detail).
+    GOOD order -- follow the pipeline in one direction without skipping
+    (e.g. Target -> ETL -> Views -> Source, or Source -> Views -> ETL -> Target).
+    GOOD text -- "`spBuildSalesReport` computes `TotalRevenue = Qty x UnitPrice` at INSERT.
+    Reads `Qty` from **Staging View** (rename `OrderQty -> Qty`), `UnitPrice` from **Price View**
+    (PriceMaster lookup via 3-CTE chain), `Discount` from **Discount View**
+    (`OrderAmount x DiscountPct`). Cross-basis risk -- discount and revenue use different monetary
+    bases."
+  example: '{ "label": "ETL", "text": "`spCalcEV` multiplies PlannedValue by earned ratio.\nReads from **Source**, writes to **Target**.\n| Input | Column | Notes |\n|---|---|---|\n| DimProject | PlannedValue | base budget |\n| FactTimesheet | Hours | actuals |" }'
 
 highlights:
   instruction: >
@@ -64,9 +81,10 @@ highlights:
 
 notes:
   instruction: >
-    One-line caption under each step node -- what it does in this flow.
+    One-line caption under each node -- what it does specifically in this flow, not a generic description.
     Glancing at graph + notes should tell the story without opening the description.
     First line visible, rest on hover via \n.
-    BAD: Generic note unrelated to the description ("Stores project data").
-    GOOD: "Multiplies Amount x Rate for CHF conversion\nJoins FactSales.CurrencyKey -> DimRate.CurrencyKey"
+    If the node is a passthrough, say what it passes or filters ("Passthrough -- WHERE IsValid = 1 filter only").
+    BAD: "Stores project data." (generic), "Reads from Source." (no specifics).
+    GOOD: "Computes TotalRevenue = Qty x UnitPrice at INSERT\nAlso computes AdjustedRevenue = TotalRevenue - Discount"
   example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"

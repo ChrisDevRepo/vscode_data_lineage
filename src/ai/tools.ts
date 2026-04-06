@@ -8,7 +8,6 @@
  */
 import { bfsFromNode } from 'graphology-traversal';
 import type Graph from 'graphology';
-import { bfsDepthMap } from './smGuards';
 import {
   DEFAULT_CONFIG,
   type DatabaseModel,
@@ -781,58 +780,39 @@ export type EnrichViewError = { success: false; errors: string[]; hint: string }
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
- * Match sections to badges by label, sort by data-flow order, assign sequential numbers,
+ * Match sections to badges by label, assign sequential numbers in the AI's sections[] order,
  * and assemble the description markdown.
  *
- * Called from the enrich_view handler when _resultGraph + sections are both present.
+ * Called from the enrich_view handler when badges + sections are both present.
  * Guarantees badge numbers on the graph are identical to ## heading numbers in the description.
  *
- * Sort key: (min BFS depth of badges with this label, AI-provided array index).
- * BFS depth handles cross-level ordering; AI array index breaks ties for parallel paths.
+ * Sort key: AI-provided sections[] array index.
+ * The AI writes sections in the narrative order it wants the reader to follow.
+ * The system just stamps 1, 2, 3… onto those labels.
  *
  * Strips leading numbers from AI-supplied badge text ("3 Source" → "Source") before matching,
  * so the system is always the single source of numbers.
  *
- * @param edges    Edge list from _resultGraph — [source, target, type].
- * @param originNodeId  Root of the BFS depth calculation.
  * @param badges   AI-provided badge array (mutated copy returned, not the original).
  * @param sections AI-provided sections array.
  */
 export function orderAndAssemble(
-  edges: ReadonlyArray<readonly [string, string, string]>,
-  originNodeId: string,
   badges: Array<{ node_id: string; text: string }>,
   sections: Array<{ label: string; text: string }>,
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
-  const depthMap = bfsDepthMap(edges, originNodeId);
-
   // Strip leading "N " or "N. " from badge texts so AI numbers don't interfere with matching
-  const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+  const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.]?\s+/, '').trim();
 
-  // Group badge indices by normalised label
-  const labelToAiIndex = new Map<string, number>(); // label → first occurrence in sections[]
+  // First occurrence index per label — preserves AI's narrative order
+  const labelToAiIndex = new Map<string, number>();
   sections.forEach((sec, i) => {
     const norm = stripLeadingNumber(sec.label);
     if (!labelToAiIndex.has(norm)) labelToAiIndex.set(norm, i);
   });
 
-  // Per label: min BFS depth across all badges with that label
-  const labelMinDepth = new Map<string, number>();
-  for (const badge of badges) {
-    const label = stripLeadingNumber(badge.text);
-    const d = depthMap.get(badge.node_id) ?? Infinity;
-    const prev = labelMinDepth.get(label) ?? Infinity;
-    if (d < prev) labelMinDepth.set(label, d);
-  }
-
-  // Unique labels in sorted order: (minDepth, ai_index)
+  // Unique labels in AI's sections[] order
   const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
-  uniqueLabels.sort((a, b) => {
-    const da = labelMinDepth.get(a) ?? Infinity;
-    const db = labelMinDepth.get(b) ?? Infinity;
-    if (da !== db) return da - db;
-    return (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0);
-  });
+  uniqueLabels.sort((a, b) => (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0));
 
   // Assign number N per unique label (1-based)
   const labelToNumber = new Map<string, number>();
@@ -848,7 +828,7 @@ export function orderAndAssemble(
     .sort((a, b) => a._n - b._n)
     .map(({ node_id, text }) => ({ node_id, text }));
 
-  // Assemble markdown: one ## heading per unique label in sorted order
+  // Assemble markdown: one ## heading per unique label in AI's order
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
   const parts: string[] = [];
   for (const label of uniqueLabels) {
@@ -856,9 +836,8 @@ export function orderAndAssemble(
     const text = sectionMap.get(label) ?? '';
     parts.push(`## ${n} ${label}\n\n${text}`);
   }
-  const description = parts.join('\n\n');
 
-  return { badges: numberedBadges, description };
+  return { badges: numberedBadges, description: parts.join('\n\n') };
 }
 
 /**

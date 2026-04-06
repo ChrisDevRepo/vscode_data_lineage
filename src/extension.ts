@@ -6,7 +6,7 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget,
+  estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
@@ -43,6 +43,7 @@ import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIVie
 import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
 import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
+import { buildSystemPromptBase, CT_MODE_PROMPT, CT_DEP_MODE_PROMPT, BB_MODE_PROMPT, BB_DOC_MODE_PROMPT } from './ai/prompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,7 @@ let _aiModelName:      string = '';          // display name of the current Copi
 let _aiSessionCount = 0;                     // monotonic session counter for log correlation
 let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
+let _isDocMode = false;                                // true when /document or doc-intent keyword detected
 
 /** Stored result graph — populated by CT/BB, consumed by enrich_view. */
 type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs' | 'origin';
@@ -598,12 +600,9 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
 
-          // ── 1e. Order + assemble sections → numbered badges + synced description markdown ──
-          if (_resultGraph?.edges && _resultGraph.originNodeId
-              && rawInput.badges?.length && rawInput.sections?.length) {
+          // ── 1e. Number badges + assemble description markdown in AI's sections[] order ──
+          if (rawInput.badges?.length && rawInput.sections?.length) {
             const assembled = orderAndAssemble(
-              _resultGraph.edges,
-              _resultGraph.originNodeId,
               rawInput.badges,
               rawInput.sections,
             );
@@ -745,13 +744,13 @@ export function activate(context: vscode.ExtensionContext) {
           const input = options.input as {
             focus_node_id?: string;
             notes?: string;
-            verdicts?: Array<{ neighbor_id?: string; verdict?: string; columns_to_trace?: string[]; summary?: string; question?: string }>;
+            verdicts?: Array<{ neighbor_id?: string; verdict?: string; columns?: string[]; summary?: string; question?: string }>;
           };
           const focusNodeId = input.focus_node_id ?? '';
           const verdicts = (input.verdicts ?? []).map(v => ({
             nodeId: v.neighbor_id ?? '',
             verdict: (v.verdict ?? 'prune') as 'trace' | 'prune' | 'pass' | 'revisit',
-            columnsOut: v.columns_to_trace,
+            columnsOut: v.columns,
             summary: v.summary,
             question: v.question,
           }));
@@ -801,7 +800,11 @@ export function activate(context: vscode.ExtensionContext) {
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[BB] ${msg}`);
             else if (level === 'trace') logTrace(outputChannel, 'AI', `[BB] ${msg}`);
             else logDebug(outputChannel, 'AI', `[BB] ${msg}`);
-          }, { activeFilter: _aiFilter, scopeDirection }, _columnStore);
+          }, {
+            activeFilter: _aiFilter,
+            scopeDirection,
+            ...(_isDocMode && { autoSkipTypes: ['table', 'external'] as import('./engine/types').ObjectType[] }),
+          }, _columnStore);
 
           const initResult = _blackboardState.init({ question, origin });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);
@@ -965,8 +968,9 @@ export function activate(context: vscode.ExtensionContext) {
       _aiSessionCount++;
       logInfo(outputChannel, 'AI', `[S${_aiSessionCount}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
-      // Slash commands: /trace filters tools (forces CT path), /search is prompt-only
+      // Slash commands: /trace filters tools (forces CT path), /search is prompt-only, /document forces BB doc mode
       let effectivePrompt = request.prompt;
+      _isDocMode = false;
       if (request.command === 'trace') {
         // Tool filtering: remove BFS and BB — AI must use start_column_trace (token gate guaranteed)
         const traceTools = new Set([
@@ -977,6 +981,18 @@ export function activate(context: vscode.ExtensionContext) {
         effectivePrompt = `Trace the data lineage for: ${request.prompt}.`;
       } else if (request.command === 'search') {
         effectivePrompt = `Search for database objects matching: ${request.prompt}.`;
+      } else if (request.command === 'document') {
+        // Tool filtering: BB only — no CT, no BFS, no enrich_view
+        const docTools = new Set([
+          'lineage_search_objects', 'lineage_get_object_detail', 'lineage_get_ddl_batch',
+          'lineage_start_exploration', 'lineage_submit_findings',
+        ]);
+        lineageTools = lineageTools.filter(t => docTools.has(t.name));
+        effectivePrompt = `Document all objects reachable from: ${request.prompt}.`;
+        _isDocMode = true;
+      } else if (/\b(document|catalog|inventory)\b/i.test(request.prompt)) {
+        // Freeform doc intent — all tools available, but BB will use autoSkipTypes
+        _isDocMode = true;
       }
       if (request.command) {
         logInfo(outputChannel, 'AI', `Slash /${request.command} — prompt rewritten`);
@@ -1095,22 +1111,7 @@ export function activate(context: vscode.ExtensionContext) {
         : '';
       const systemPrompt =
         schemaCtx +
-        'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
-        `Budget: ${MAX_ROUNDS} rounds.\n\n` +
-        'RULES:\n' +
-        '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user which object they mean.\n' +
-        '   For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
-        '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-        '3. For column questions: start_column_trace with columns. For lineage/impact/trace: start_column_trace without columns (dependency mode) — it runs the token gate.\n' +
-        '   When tracing columns: provide INPUT column names, not output. Track renames.\n' +
-        '   Prefer trace over prune when uncertain.\n' +
-        '   For broad exploration (business rules, documentation, patterns, investigations):\n' +
-        '   use start_exploration to explore objects hop-by-hop with persistent memory.\n' +
-        '   BFS (run_bfs_trace) is for scope discovery, not final trace results.\n' +
-        '4. OUTPUT: enrich_view when graph aids understanding (lineage path, data flow).\n' +
-        '   Chat text otherwise (explain, SQL, list, compare). Default: text.\n' +
-        '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
-        '   System assigns step numbers and orders by data-flow. Do not number badges or write description when sections provided.\n' +
+        buildSystemPromptBase(MAX_ROUNDS) +
         `   summary: ${_aiOutputTemplates.summary}\n` +
         `   badges: ${_aiOutputTemplates.badges}\n` +
         `   sections: ${_aiOutputTemplates.sections}\n` +
@@ -1412,24 +1413,7 @@ export function activate(context: vscode.ExtensionContext) {
 
               // Inject mode-specific prompt ONCE when entering CT mode
               const hasColumns = _columnTraceState.columns.length > 0;
-              const modePrompt = hasColumns
-                ? 'COLUMN TRACE MODE: For each hop, read the focus node DDL. ' +
-                  'Verdict each neighbor: trace (provide INPUT column names — track renames), prune, or pass. ' +
-                  'Write notes about what you found. Prefer trace over prune when uncertain. ' +
-                  'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
-                  'The sub_question field contains your own question from the previous hop — answer it.\n' +
-                  'FIELD MAPPING: focus_node_id = focus_node.id from the hop context. neighbor_id = id field from each neighbor.\n' +
-                  'COLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. ' +
-                  'Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. ' +
-                  'Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. ' +
-                  'Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.\n' +
-                  'TABLE NODES: Tables store data, not transform it. Trace ALL upstream neighbors of a table — they INSERT INTO it.\n' +
-                  'VERDICT ALL NEIGHBORS: Submit a verdict for every neighbor — skipped neighbors are silently lost.'
-                : 'DEPENDENCY TRACE MODE: For each hop, read the focus node DDL. ' +
-                  'Verdict each neighbor: trace (follow this path), prune (cut), or pass (skip detail). ' +
-                  'Write notes about dependencies, business logic, or impact you observe. ' +
-                  'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). ' +
-                  'The sub_question field contains your own question from the previous hop — answer it.';
+              const modePrompt = hasColumns ? CT_MODE_PROMPT : CT_DEP_MODE_PROMPT;
               messages.push(vscode.LanguageModelChatMessage.User(modePrompt));
             } else {
               logDebug(outputChannel, 'AI', `[CT] Not activated: status=${_columnTraceState?.status}, phase=${activePhase}`);
@@ -1497,31 +1481,8 @@ export function activate(context: vscode.ExtensionContext) {
               logDebug(outputChannel, 'AI', `[BB] Activation: status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
 
               // Inject mode-specific prompt ONCE
-              const bbPrompt =
-                'EXPLORATION MODE: The state machine presents nodes one at a time with full DDL and metadata.\n' +
-                'For each node:\n' +
-                '1. Read the DDL/columns carefully\n' +
-                '2. Record detailed findings (what you discovered — business rules, transforms, patterns) (~500 chars)\n' +
-                '3. Write a one-line summary (~100 chars) — shown in your working memory for ALL future hops\n' +
-                '4. badge_label (2-4 words, no leading number) — semantic label for the enriched view, e.g. "Source", "ETL", "Staging"\n' +
-                '5. note_caption (1 line) — what this node does in this flow, e.g. "Entry point — TRUNCATEs and reloads from staging"\n' +
-                '6. Generate sub-questions for neighbors you want to investigate (boosts their priority)\n' +
-                '7. prune_ids: remove from agenda (scope=in_scope only). add_ids: add to agenda (scope=available).\n\n' +
-                'NEIGHBOR SCOPE — evaluate ALL neighbors, then act per tier:\n' +
-                '- scope=in_scope: on your agenda — will be visited. Can prune via prune_ids.\n' +
-                '- scope=available + in_filter=true: in model but not on agenda — add via add_ids if relevant\n' +
-                '- scope=available + in_filter=false: in model but outside user filter — ask user in text: "Schema X has relevant objects, should I include it?"\n' +
-                '- scope=external: referenced in DDL but not in loaded model — note as external reference in findings\n' +
-                '- scope=visited/pruned: already processed\n' +
-                'prune_ids only works on scope=in_scope. add_ids only works on scope=available.\n\n' +
-                'PROGRESS: After each submit_findings call, emit ONE line: ' +
-                '"Hop N · [node_name] → verdict · ~Y nodes remaining".\n\n' +
-                'INVALID NODES: working_memory.invalid_nodes lists rejected node IDs. ' +
-                'Never ask questions about not_in_model nodes. For out_of_scope nodes, use get_object_detail instead.\n\n' +
-                'EARLY COMPLETION: Set complete:true when you can answer the question. Visit all relevant nodes — do not skip nodes to finish faster.\n\n' +
-                'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
-                'The current_task field contains your own question from a previous hop — answer it.';
-              messages.push(vscode.LanguageModelChatMessage.User(bbPrompt));
+              messages.push(vscode.LanguageModelChatMessage.User(_isDocMode ? BB_DOC_MODE_PROMPT : BB_MODE_PROMPT));
+              logInfo(outputChannel, 'AI', `[BB] Mode prompt: ${_isDocMode ? 'DOC' : 'EXPLORE'}`);
             } else {
               logDebug(outputChannel, 'AI', `[BB] Not activated: status=${_blackboardState?.status}, phase=${activePhase}`);
             }

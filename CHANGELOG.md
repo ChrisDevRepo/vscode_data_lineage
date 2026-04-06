@@ -3,23 +3,17 @@
 ## [0.9.8] - 2026-04-06
 
 ### Added
-- **Structured description via label-keyed sections** — `enrich_view` now accepts a `sections[]` field alongside `badges[]`. The AI assigns semantic labels to badges (e.g. "Source", "ETL", "Target") and provides one section per unique label. The system orders sections by data-flow depth (BFS from origin), assigns step numbers, and assembles `## N Label` headings — guaranteeing badge numbers on the graph always match heading numbers in the description.
-- **Label-section data contract** — `section.label` must exactly match `badge.text` (join key). Same label on multiple badges groups those nodes under one heading. System rejects unmatched sections and strips any AI-provided leading numbers from badge text.
+- **`@lineage /document`** slash command: generates structured documentation across your schema. Tables are documented automatically from existing metadata (columns, keys, FK relationships). Stored procedures, views, and functions receive AI-written descriptions covering purpose, load pattern, and business logic. Prompts with `document`, `catalog`, or `inventory` intent also activate this mode.
+- **Structured graph descriptions** — Graph annotations are now organized into labeled sections (e.g. "Source", "ETL", "Target") ordered by data-flow depth. Badge numbers on the graph always match heading numbers in the description panel.
 
 ### Changed
-- **`@lineage` always uses state machine** — Column traces and explorations now always run hop-by-hop, even on small schemas. Produces deeper traces with full column rename tracking and richer graph annotations.
-- **Focus mismatch recovery** — When the AI sends a wrong node ID during column tracing, the error response now includes the full hop context (DDL, neighbors, columns), enabling immediate self-correction without losing a round.
-- **Consistent column field name** — The `columns` field in `submit_hop_analysis` is now named consistently across both the tool input schema and the hop context response, eliminating the naming split that caused agents to use the wrong field name.
-- **Badge labels are semantic, not numbered** — The AI no longer includes step numbers in badge text. Numbers are assigned by the system after data-flow ordering.
-- **BB exploration `badge_label` ordering** — Suggested badges from BB explorations are now pre-sorted by BFS depth from the origin node.
+- **`@lineage` always traces hop-by-hop** — Column traces and explorations now always run in full depth, even on small schemas, producing richer annotations and complete column rename tracking.
+- **Badge numbers assigned by data-flow order** — Step numbers are determined by the system based on data-flow depth, not by the AI, ensuring consistent ordering between graph and description.
 
 ### Fixed
-- Column traces on small schemas no longer short-circuit to a shallow BFS dump
-- `enrich_view` now always receives SM metadata (chain, verdicts, badges, notes) regardless of scope size
-- **`@lineage` schema context** — When the user has a schema filter active in the GUI, `@lineage` now defaults all searches, SQL generation, and analysis to those schemas. If a question requires objects from other schemas, the assistant asks the user before expanding scope.
-- **CT `enrich_view` auto-populate** — Column traces now pre-suggest badge labels (from traced node names) and caption text (from per-hop AI analysis) for the `enrich_view` step, matching the guidance already provided after BB explorations
-- `validateQuery` is now exported from `tools.ts` (was internal — tests referenced it but import failed silently)
-- Validation error for graph-walkthrough descriptions is now domain-agnostic (removed "business logic" wording)
+- **Schema-aware AI queries** — When a schema filter is active in the GUI, `@lineage` now scopes all searches and analysis to those schemas by default. Expanding scope requires explicit confirmation.
+- Column traces on small schemas now always run in full depth — no more shallow fallback.
+- Column traces now pre-suggest badge labels and captions for the annotation step, matching the behavior already present after explorations.
 
 ## [0.9.7] - 2026-03-31
 
