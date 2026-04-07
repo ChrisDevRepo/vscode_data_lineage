@@ -711,7 +711,7 @@
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
         "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, badges, and text annotations. The graph comes from a prior trace, BFS, or exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last trace/BFS/exploration. The node set is already stored — you provide presentation: name (mandatory), summary (mandatory), optional description/badges/notes/highlight_groups. Use prune_node_ids to remove irrelevant nodes. Only provide node_ids if you haven't run any trace or BFS (discovery-only mode). Fields are a layered hierarchy: badges (5-8 key nodes, numbered) are navigation anchors; notes caption each badged node; description references step numbers under ## headings with business logic. BAD: 14 badges on all nodes, essay description. GOOD: 6 badges on key nodes, description with '## FX Conversion (step 4)\\n`spConvertFX` reads DimRate.Rate…'.",
+        "modelDescription": "Enrich the stored result graph from your last trace/exploration. Provide name and summary (both required). Label-section data contract: for each node group you want to describe, assign a semantic badge label and a matching section — badge.text is the join key, section.label must match exactly. System numbers sections in YOUR WRITTEN ORDER and assembles ## headings with step numbers — write sections in the narrative sequence you want the reader to follow. Do not write description when sections are provided. One badge label per logical group, as many groups as needed; not every node requires a badge. In section text, reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered badge text ('1 Source'), section label mismatched from badge, description instead of sections, generic notes. GOOD: 'Source' badge on raw tables + matching section explaining what those tables contain.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -733,7 +733,7 @@
             },
             "description": {
               "type": "string",
-              "description": "Optional structured answer — markdown with headings, formulas, column mappings, business logic."
+              "description": "Fallback only — used when sections[] is not provided. Structured markdown with ## headings."
             },
             "prune_node_ids": {
               "type": "array",
@@ -796,7 +796,7 @@
             },
             "badges": {
               "type": "array",
-              "description": "Plain text chips on nodes — label with step number and role (max 50)",
+              "description": "Semantic label chips on key nodes (5-8 max). Same label on multiple nodes groups them. System assigns step numbers — do NOT include numbers in text.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -806,11 +806,32 @@
                   "text": {
                     "type": "string",
                     "maxLength": 20,
-                    "description": "Badge text (e.g. '1 Source', '2 Load')"
+                    "description": "Semantic label only — no leading number (e.g. 'Source', 'ETL', 'Target'). System prepends step number."
                   }
                 },
                 "required": [
                   "node_id",
+                  "text"
+                ]
+              }
+            },
+            "sections": {
+              "type": "array",
+              "description": "Structured description — one entry per unique badge label. Each section explains what you found at those nodes: logic, patterns, issues, performance, column mappings. System orders by data-flow and assembles into ## headings. Reference other labels by name (e.g. 'reads from **Source**'), never by number.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "description": "Must exactly match a badge text value — this is the join key."
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Markdown content for this label group. Supported: **bold**, `code`, tables, $math$, ```math blocks. Explain detail: what the nodes do, why it matters, formulas, column mappings, issues found."
+                  }
+                },
+                "required": [
+                  "label",
                   "text"
                 ]
               }

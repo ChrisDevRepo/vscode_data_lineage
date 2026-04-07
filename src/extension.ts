@@ -8,7 +8,7 @@ import { buildBareGraph } from './ai/graphUtils';
 import {
   estimateTokens,
   getContext, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
   type EnrichViewInput,
 } from './ai/tools';
@@ -42,6 +42,7 @@ import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIVie
 import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
 import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
+import { buildSystemPromptBase, CT_MODE_PROMPT, CT_DEP_MODE_PROMPT, BB_MODE_PROMPT, BB_DOC_MODE_PROMPT } from './ai/prompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ let _aiModelName:      string = '';          // display name of the current Copi
 let _aiSessionCount = 0;                     // monotonic session counter for log correlation
 let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
+let _isDocMode = false;                                // per-request: true when /document or doc-intent keyword detected
 
 /** Stored result graph — populated by CT/BB, consumed by enrich_view. */
 type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs' | 'origin';
