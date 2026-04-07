@@ -42,6 +42,7 @@ import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIVie
 import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
 import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
+import { buildSystemPromptBase, CT_MODE_PROMPT, CT_DEP_MODE_PROMPT, BB_MODE_PROMPT } from './ai/prompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -951,7 +952,7 @@ export function activate(context: vscode.ExtensionContext) {
       _aiSessionCount++;
       logInfo(outputChannel, 'AI', `[S${_aiSessionCount}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
-      // Slash commands: /trace filters tools (forces CT path), /search is prompt-only, /document forces BB doc mode
+      // Slash commands: /trace filters tools (forces CT path), /search is prompt-only
       let effectivePrompt = request.prompt;
       if (request.command === 'trace') {
         // Tool filtering: remove BFS and BB — AI must use start_column_trace (token gate guaranteed)
@@ -963,21 +964,6 @@ export function activate(context: vscode.ExtensionContext) {
         effectivePrompt = `Trace the data lineage for: ${request.prompt}.`;
       } else if (request.command === 'search') {
         effectivePrompt = `Search for database objects matching: ${request.prompt}.`;
-      } else if (request.command === 'document') {
-        // Tool filtering: BB only — no CT, no BFS, no enrich_view
-        // get_context included so model can orient to schema structure on fresh sessions
-        const docTools = new Set([
-          'lineage_get_context',
-          'lineage_search_objects',
-          'lineage_start_exploration', 'lineage_submit_findings',
-        ]);
-        lineageTools = lineageTools.filter(t => docTools.has(t.name));
-        effectivePrompt = `Document all objects reachable from: ${request.prompt}. ` +
-          `Use search_objects to find the highest-degree node in scope as origin, then call start_exploration — do not write documentation text directly.`;
-        _isDocMode = true;
-      } else if (/\b(document|catalog|inventory)\b/i.test(request.prompt)) {
-        // Freeform doc intent — all tools available, but BB will use autoSkipTypes
-        _isDocMode = true;
       }
       if (request.command) {
         logInfo(outputChannel, 'AI', `Slash /${request.command} — prompt rewritten`);
