@@ -35,8 +35,8 @@ source format into the shared intermediate types and nothing more.
 | `docs/PARSE_RULES.md` | Custom parse rules guide |
 | `docs/DMV_QUERIES.md` | Custom DMV queries guide |
 | `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
-| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateEnrichView`. Zero per-tool caps. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
-| `src/ai/tokenBudget.ts` | Token utilities: `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`, `REGEX_MAX_LENGTH`. CT and BB always use state machine delivery. Zero VS Code imports. |
+| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateEnrichView`. `shouldInline()` gates catalog/detail delivery mode (not CT/BB). Zero VS Code imports. |
+| `src/ai/tokenBudget.ts` | Token budget: `INLINE_TOKEN_BUDGET`, `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`, `REGEX_MAX_LENGTH`. CT/BB always use state machine; budget applies to catalog/detail tools only. Zero VS Code imports. |
 | `src/ai/prompts.ts` | Central prompt dispatcher: `buildSystemPromptBase()`, `CT_MODE_PROMPT`, `CT_DEP_MODE_PROMPT`, `BB_MODE_PROMPT`. Zero VS Code imports. |
 | `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()` (explicit type map with 'read' fallback). Zero business logic, zero VS Code imports. |
 | `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
@@ -228,9 +228,9 @@ npm test                               # all suites must pass
 | **bb_done** | `lineage` | All 12 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
 
 **Key files:**
-- `src/ai/tokenBudget.ts` — Token utilities: `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`, `REGEX_MAX_LENGTH`. CT and BB always use state machine delivery. Zero VS Code imports.
+- `src/ai/tokenBudget.ts` — Token budget: `INLINE_TOKEN_BUDGET` (20K tokens), `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`. Budget gates catalog/detail delivery; CT/BB always use state machine. Zero VS Code imports.
 - `src/ai/prompts.ts` — Central prompt dispatcher: `buildSystemPromptBase()`, `CT_MODE_PROMPT`, `CT_DEP_MODE_PROMPT`, `BB_MODE_PROMPT`. Zero VS Code imports.
-- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
+- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates catalog/detail delivery. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
 - `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
 - `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
 - `src/ai/blackboardState.ts` — Type 1 Blackboard state machine: free-form exploration with two-tier memory (MemGPT pattern). Passive SM: AI drives traversal via sub-questions, SM stores findings, manages agenda priority. Zero VS Code imports.
@@ -240,7 +240,7 @@ npm test                               # all suites must pass
 
 | Tool | Tag | Kind | Purpose |
 |------|-----|------|---------|
-| `lineage_get_context` | lineage | read | Active project, filter, stats — call first |
+| `lineage_get_context` | lineage | read | Active project, filter, stats — call first. Inline catalog when `shouldInline()` passes |
 | `lineage_search_objects` | lineage | read | Name/body search, returns IDs for other tools |
 | `lineage_get_object_detail` | lineage | read | Full metadata + DDL body for one object |
 | `lineage_run_bfs_trace` | lineage | read | BFS lineage trace. Level mode (depth) or path mode (start→end via `target` param) |
@@ -253,9 +253,11 @@ npm test                               # all suites must pass
 | `lineage_start_exploration` | lineage, lineage-bb | read | Init BB state machine: free-form exploration with two-tier memory |
 | `lineage_submit_findings` | lineage, lineage-bb | read | Submit findings + summary, get next hop or final result |
 
-**Guard:** `ai.maxRounds` (VS Code setting, default 25) — hard stop on tool rounds. CT and BB always use state machine delivery (hop-by-hop).
+**Two guards** (`src/ai/tokenBudget.ts`):
+1. `INLINE_TOKEN_BUDGET` (20K tokens) — catalog/detail delivery gate: inline vs on_demand hint. CT/BB always use state machine regardless.
+2. `ai.maxRounds` (VS Code setting, default 25) — hard stop on tool rounds
 
-**Zero-truncation guarantee:** No tool response is ever truncated, capped, or sliced. State machine delivers per-hop. No per-tool caps exist.
+**Zero-truncation guarantee:** No tool response is ever truncated, capped, or sliced. Fits budget → full data inline. Exceeds budget → state machine or on_demand hint. No per-tool caps exist.
 
 **Conversation memory:** `context.history` is read each turn and prepended to `messages[]` so the model remembers earlier questions in the same chat session. Under context pressure (>75% of `maxInputTokens`), oldest turns are evicted (drop+log, not summarize).
 

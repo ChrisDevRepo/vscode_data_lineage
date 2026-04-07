@@ -167,7 +167,7 @@ The YAML controls the **presentation layer** only — how the AI formats its fin
 | `dataLineageViz.ai.outputTemplateFile` | *(empty)* | Path to custom YAML (relative to workspace root) |
 | `dataLineageViz.ai.maxRounds` | `25` | Max tool-call rounds per request. Increase for complex column traces. |
 
-No per-tool caps — the extension delivers full data. CT and BB always use state machine delivery (hop-by-hop).
+No per-tool caps — the extension delivers full data. `shouldInline()` gates catalog/detail delivery mode; CT and BB always use state machine (hop-by-hop).
 
 ## Failsafe Chain
 
