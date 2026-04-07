@@ -152,11 +152,10 @@ The YAML controls the **presentation layer** only — how the AI formats its fin
 | Layer | Customizable? | Mechanism | Examples |
 |-------|:---:|-----------|----------|
 | **Output formatting** (enrich_view) | **Yes — YAML** | `aiOutputTemplates.yaml` | Summary length, description style, badge count, audience tone |
-| System prompt (rules 1-4) | No — hardcoded | `extension.ts` | "Never fabricate IDs", validation stops, routing logic |
-| Mode prompts (CT/BB) | No — hardcoded | `extension.ts` | Verdict instructions, column tracking, findings format |
+| System prompt (rules 1-5) | No — hardcoded | `prompts.ts` | "Never fabricate IDs", validation stops, routing logic |
+| Mode prompts (CT/BB) | No — hardcoded | `prompts.ts` | Verdict instructions, column tracking, findings format |
 | Tool descriptions | No — hardcoded | `package.json` | When/what/format for each tool |
 | State machine protocol | No — hardcoded | `columnTraceState.ts`, `blackboardState.ts` | Goal anchors, boundary detection, memory tiers |
-| Token budget gate | No — hardcoded | `tokenBudget.ts` | Inline vs state machine delivery |
 
 **Why this boundary?** A power user changing "use numbered steps" → "use bullet points" is a style preference that cannot break correctness. A power user changing "NEVER fabricate IDs" would introduce hallucination risk. The YAML controls the final mile; the code controls everything that feeds it.
 
@@ -168,7 +167,7 @@ The YAML controls the **presentation layer** only — how the AI formats its fin
 | `dataLineageViz.ai.outputTemplateFile` | *(empty)* | Path to custom YAML (relative to workspace root) |
 | `dataLineageViz.ai.maxRounds` | `25` | Max tool-call rounds per request. Increase for complex column traces. |
 
-No per-tool caps — the extension delivers full data. Token estimation (`shouldInline`) decides delivery mode (inline vs state machine).
+No per-tool caps — the extension delivers full data. CT and BB always use state machine delivery (hop-by-hop).
 
 ## Failsafe Chain
 

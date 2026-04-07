@@ -23,32 +23,6 @@
 
 ---
 
-## 2026-04-07 — /document: force BB initiation + harden discover tool set
-
-**Bug fixed:** `/document` exited in `discover` phase with freeform prose instead of structured BB documentation + graph. AI satisfied `"Document all objects reachable from: X."` using `search_objects` + prose, never calling `start_exploration`. `BB_DOC_MODE_PROMPT` was never injected.
-
-**Changes (same session):**
-
-1. `src/extension.ts:993` — `effectivePrompt` for `/document` slash command (prompt surface).
-   - Before: `"Document all objects reachable from: ${request.prompt}."`
-   - After: `"Document all objects reachable from: ${request.prompt}. Use search_objects to find the highest-degree node in scope as origin, then call start_exploration — do not write documentation text directly."`
-
-2. `src/extension.ts` — `docTools` set for discover phase (tool filter, not a prompt surface).
-   - Removed: `lineage_get_object_detail`, `lineage_get_ddl_batch`
-   - Final set: `get_context`, `search_objects`, `start_exploration`, `submit_findings`
-   - Rationale: `search_objects` returns node IDs + degrees — sufficient to pick an origin. DDL delivery is the BB state machine's job (one node per hop). Having DDL tools in discover was a leaky door: AI could prefetch all DDL and write prose without BB.
-
-3. `src/extension.ts` — `logWarn` added when `/document` exits discover without `start_exploration` called (diagnostic guard).
-
-**Design:** Prompt change (soft guard) + tool removal (hard guard) together close the failure mode. Neither alone is complete: prompt can be ignored by a weak model; tool removal without prompt guidance leaves no origin selection criteria.
-
-**Note:** The concurrent CT gate fix (`action_required === 'analyze_and_respond'`) is a separate, unrelated bug. `start_exploration`/`submit_findings` return no `action_required` field; the gate was not involved.
-
-**Still deferred:**
-- Freeform doc-intent path (lines 995–997): `_isDocMode = true` set but all tools available, no prompt override — same gap remains for non-slash-command usage.
-
----
-
 ## 2026-04-06 — B-NEW6: Dynamic schema context preamble
 
 **Bug fixed:** AI ignored active schema filter when generating SQL or starting discovery.

@@ -3,7 +3,6 @@
 ## [0.9.8] - 2026-04-06
 
 ### Added
-- **`@lineage /document`** slash command: generates structured documentation across your schema. Tables are documented automatically from existing metadata (columns, keys, FK relationships). Stored procedures, views, and functions receive AI-written descriptions covering purpose, load pattern, and business logic. Prompts with `document`, `catalog`, or `inventory` intent also activate this mode.
 - **Structured graph descriptions** — Graph annotations are now organized into labeled sections (e.g. "Source", "ETL", "Target") ordered by data-flow depth. Badge numbers on the graph always match heading numbers in the description panel.
 
 ### Changed

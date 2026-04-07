@@ -52,9 +52,6 @@ export interface BlackboardConfig {
   summaryHardLimit?: number;      // default 500 chars — reject, never truncate
   activeFilter?: SerializedFilterState | null;  // user's active filter — applied as BFS schema boundary
   scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';  // default 'bidirectional'; upstream=inNeighbors, downstream=outNeighbors
-  /** Object types to auto-note from metadata without an AI hop. Tables and external tables are fully
-   *  described by structural metadata — no AI involvement needed or desired. */
-  autoSkipTypes?: ObjectType[];
 }
 
 export type { LogFn } from './smGuards';
@@ -115,7 +112,6 @@ export class BlackboardState {
   private readonly activeFilter: SerializedFilterState | null;
   private readonly filterSchemas: Set<string> | null;  // lowercased schema names from active filter — applied as BFS boundary
   private readonly scopeDirection: 'upstream' | 'downstream' | 'bidirectional';
-  private readonly autoSkipTypes: ReadonlySet<ObjectType>;
 
   // Lookup caches (built once in constructor)
   private readonly nodeMap: Map<string, LineageNode>;
@@ -158,7 +154,6 @@ export class BlackboardState {
       ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
       : null;
     this.scopeDirection = config?.scopeDirection ?? 'bidirectional';
-    this.autoSkipTypes = new Set(config?.autoSkipTypes ?? []);
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -279,14 +274,6 @@ export class BlackboardState {
         this.log('warn', `BB node ${entry.nodeId} missing from model, skipping`);
         continue;
       }
-      // Auto-skip: build metadata note without an AI hop for structural-only object types
-      if (this.autoSkipTypes.has(node.type)) {
-        this.autoNoteMetadata(node);
-        this.visited.add(node.id);
-        this.log('info', `BB AutoSkip | ${node.id} (${node.type}) — noted from metadata, no AI hop`);
-        this._status = 'exploring';
-        continue;
-      }
       break;
     }
 
@@ -323,89 +310,6 @@ export class BlackboardState {
       working_memory: workingMemory,
       agenda_remaining: this.agenda.length,
     };
-  }
-
-  // ─── autoNoteMetadata ─────────────────────────────────────────────────────
-
-  /**
-   * Build a complete metadata note for structural-only objects (tables, external tables)
-   * without consuming an AI hop. Reuses getNodeColumns / presentColumnCompact / presentFkCompact
-   * — the same data that drives the React NodeInfoBar detail panel.
-   */
-  private autoNoteMetadata(node: LineageNode): void {
-    const cols = getNodeColumns(node.id, this.nodeMap, this.store ?? undefined);
-    const fks = node.fks ?? [];
-    const ni = this.model.neighborIndex[node.id];
-    const inIds  = ni?.in  ?? [];
-    const outIds = ni?.out ?? [];
-
-    const toName = (id: string) => {
-      const n = this.nodeMap.get(id);
-      return n ? `[${n.schema}].[${n.name}]` : id;
-    };
-
-    const lines: string[] = [];
-
-    // ── Header row ──────────────────────────────────────────────────────────
-    const typeLabel = node.type === 'external' ? 'External Table' : 'Table';
-    const colCount  = cols?.length ?? 0;
-    const pkCols    = cols?.filter(c => c.pkOrdinal).map(c => c.name) ?? [];
-    const fkCount   = fks.length;
-    lines.push(`**[${node.schema}].[${node.name}]** — ${typeLabel}`);
-
-    // ── Connection summary ───────────────────────────────────────────────────
-    const inNames  = inIds.map(toName);
-    const outNames = outIds.map(toName);
-    lines.push(`| Input Objects | ${inNames.length  ? inNames.join(' · ')  : '*(base table)*'} |`);
-    lines.push(`| Output Objects | ${outNames.length ? outNames.join(' · ') : '*(no downstream)*'} |`);
-
-    // ── Column table ─────────────────────────────────────────────────────────
-    if (cols?.length) {
-      const displayCols = cols.length > 30 ? cols.slice(0, 30) : cols;
-      lines.push('');
-      lines.push(`### Columns (${cols.length}${cols.length > 30 ? ', showing first 30' : ''})`);
-      lines.push('| Column | Type | Null | Key |');
-      lines.push('|---|---|---|---|');
-      for (const col of displayCols) {
-        const keyFlags: string[] = [];
-        if (col.pkOrdinal) keyFlags.push('PK');
-        if (col.unique)    keyFlags.push('UQ');
-        if (col.check)     keyFlags.push('CK');
-        const nullable = col.extra === 'COMPUTED' ? 'COMPUTED' : (col.nullable ? 'NULL' : 'NOT NULL');
-        lines.push(`| ${col.name} | ${col.type ?? ''} | ${nullable} | ${keyFlags.join(' ')} |`);
-      }
-    }
-
-    // ── FK constraints ───────────────────────────────────────────────────────
-    if (fks.length) {
-      lines.push('');
-      lines.push('### Foreign Keys');
-      for (const fk of fks) {
-        lines.push(`- ${presentFkCompact(fk)}`);
-      }
-    }
-
-    // ── Auto-summary ─────────────────────────────────────────────────────────
-    const summaryParts = [`${typeLabel}`, colCount ? `${colCount} column${colCount !== 1 ? 's' : ''}` : ''];
-    if (pkCols.length) summaryParts.push(`PK: ${pkCols.join(', ')}`);
-    if (fkCount)       summaryParts.push(`${fkCount} FK${fkCount !== 1 ? 's' : ''}`);
-    const summary = `[${node.schema}].[${node.name}] — ${summaryParts.filter(Boolean).join(', ')}`;
-
-    const noteCaptionParts = [`${typeLabel}`];
-    if (colCount)  noteCaptionParts.push(`${colCount} cols`);
-    if (fkCount)   noteCaptionParts.push(`${fkCount} FKs`);
-    if (pkCols.length) noteCaptionParts.push(`PK: ${pkCols[0]}${pkCols.length > 1 ? '…' : ''}`);
-
-    this.notes.set(node.id, {
-      nodeId:       node.id,
-      schema:       node.schema,
-      name:         node.name,
-      type:         node.type,
-      findings:     lines.join('\n'),
-      summary,
-      badge_label:  node.schema,
-      note_caption: noteCaptionParts.join(' · '),
-    });
   }
 
   // ─── submitFindings ────────────────────────────────────────────────────────

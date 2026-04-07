@@ -787,7 +787,6 @@ export function activate(context: vscode.ExtensionContext) {
           }, {
             activeFilter: _aiFilter,
             scopeDirection,
-            ...(_isDocMode && { autoSkipTypes: ['table', 'external'] as import('./engine/types').ObjectType[] }),
           }, _columnStore);
 
           const initResult = _blackboardState.init({ question, origin });
@@ -1217,9 +1216,6 @@ export function activate(context: vscode.ExtensionContext) {
           if (!toolCalls.length) {
             logInfo(outputChannel, 'AI', `Round ${roundCount} complete — model responded without tool calls (${roundMs}ms)`);
             logDebug(outputChannel, 'AI', `Exit: phase=${activePhase}, responseText=${responseText.length}ch`);
-            if (_isDocMode && !_blackboardState && activePhase === 'discover') {
-              logWarn(outputChannel, 'AI', '[BB] /document exited discover without start_exploration — AI wrote prose directly → effectivePrompt may be insufficient');
-            }
             return;
           }
 
@@ -1455,8 +1451,8 @@ export function activate(context: vscode.ExtensionContext) {
               logDebug(outputChannel, 'AI', `[BB] Activation: status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
 
               // Inject mode-specific prompt ONCE
-              messages.push(vscode.LanguageModelChatMessage.User(_isDocMode ? BB_DOC_MODE_PROMPT : BB_MODE_PROMPT));
-              logInfo(outputChannel, 'AI', `[BB] Mode prompt: ${_isDocMode ? 'DOC' : 'EXPLORE'}`);
+              messages.push(vscode.LanguageModelChatMessage.User(BB_MODE_PROMPT));
+              logInfo(outputChannel, 'AI', `[BB] Mode prompt: EXPLORE`);
             } else {
               logDebug(outputChannel, 'AI', `[BB] Not activated: status=${_blackboardState?.status}, phase=${activePhase}`);
             }

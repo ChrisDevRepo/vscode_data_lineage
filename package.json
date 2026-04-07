@@ -897,7 +897,7 @@
         "toolReferenceName": "lineage_start_column_trace",
         "displayName": "Start Column Trace",
         "userDescription": "Start a column-level lineage trace through the dependency graph.",
-        "modelDescription": "Start a hop-by-hop lineage trace. Call as first action — origin is optional.\n\nReturns: scope preview + first hop context with focus node DDL + neighbor list.\n\nAfter receiving: read DDL, verdict each neighbor:\n- trace: follow this path. Provide columns_to_trace (INPUT columns) + question.\n- prune: cut branch and descendants. Explain why.\n- pass: data passes through unchanged, children queued automatically.\nThen call lineage_submit_hop_analysis. Repeat until all paths exhausted.\n\ncolumns_to_trace must be INPUT columns:\n  SP computes ListPrice = CostPrice * (1+MarkupPct) → [CostPrice, MarkupPct]\nIf no columns provided (concept-level trace): omit columns_to_trace from verdicts.",
+        "modelDescription": "Start a hop-by-hop lineage trace. Call as first action — origin is optional.\n\nReturns: scope preview + first hop context with focus node DDL + neighbor list.\n\nAfter receiving: read DDL, verdict each neighbor:\n- trace: follow this path. Provide columns (INPUT columns) + question.\n- prune: cut branch and descendants. Explain why.\n- pass: data passes through unchanged, children queued automatically.\nThen call lineage_submit_hop_analysis. Repeat until all paths exhausted.\n\ncolumns must be INPUT columns:\n  SP computes ListPrice = CostPrice * (1+MarkupPct) → [CostPrice, MarkupPct]\nIf no columns provided (concept-level trace): omit columns from verdicts.",
         "canBeReferencedInPrompt": true,
         "tags": ["lineage", "lineage-ct"],
         "icon": "$(search)",
