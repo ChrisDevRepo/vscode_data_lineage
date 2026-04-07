@@ -653,7 +653,7 @@ export class BlackboardState {
     notes: BlackboardNote[];
     fullNodes: Array<Record<string, unknown>>;
     edges: Array<[string, string, string]>;
-    suggested_badges: Array<{ node_id: string; text: string }>;
+    suggested_labels: Array<{ node_id: string; text: string }>;
     suggested_notes: Array<{ node_id: string; text: string }>;
     skipped_nodes?: Array<{ nodeId: string; name: string; type: string; unanswered_question?: string }>;
     stats: {
@@ -715,7 +715,7 @@ export class BlackboardState {
       this.log('info', `BB BRIDGE | orphans=${bridgeResult.orphanCount} | reconnected=${bridgeResult.reconnectedCount} | bridges=${bridgeResult.bridgeNodes.length} nodes, ${bridgeResult.bridgeEdges.length} edges`);
     }
 
-    // Order allNotes by BFS depth from origin so suggested_badges follow data-flow order.
+    // Order allNotes by BFS depth from origin so suggested_labels follow data-flow order.
     // This is a best-effort sort for suggested output; orderAndAssemble() in extension.ts
     // will re-sort by actual depthMap when AI provides sections.
     const depthMap = bfsDepthMap(edges, this.originNodeId!);
@@ -726,7 +726,7 @@ export class BlackboardState {
     // AI wrote badge_label/note_caption during exploration when understanding was fresh.
     // Strip any leading numbers from badge_label — system assigns numbers via orderAndAssemble().
     // Fallback: auto-generate from node name.
-    const suggested_badges = allNotes.map(n => ({
+    const suggested_labels = allNotes.map(n => ({
       node_id: n.nodeId,
       text: n.badge_label ? stripNum(n.badge_label) : n.name,
     }));
@@ -761,7 +761,7 @@ export class BlackboardState {
       notes: allNotes,
       fullNodes,
       edges,
-      suggested_badges,
+      suggested_labels,
       suggested_notes,
       ...(skippedNodes.length > 0 ? { skipped_nodes: skippedNodes } : {}),
       stats: {

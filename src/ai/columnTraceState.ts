@@ -711,7 +711,7 @@ export class ColumnTraceState {
     outOfScope: OutOfScopeEntry[];
     stats: { hops: number; examined: number; relevant: number; removed: number; passthrough: number };
     column_rejections?: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }>;
-    suggested_badges: Array<{ node_id: string; text: string }>;
+    suggested_labels: Array<{ node_id: string; text: string }>;
     suggested_notes:  Array<{ node_id: string; text: string }>;
   } | { error: string; hint?: string } {
 
@@ -777,7 +777,7 @@ export class ColumnTraceState {
     // Chain is already the curated traced set — every entry is a relevant node.
     // name  = natural badge label (parallel to BB's badge_label ?? name).
     // notes = AI's per-hop findings (richer). summary = verdict reason (always set).
-    const suggested_badges = chainArr.map(e => ({ node_id: e.nodeId, text: e.name }));
+    const suggested_labels = chainArr.map(e => ({ node_id: e.nodeId, text: e.name }));
     const suggested_notes  = chainArr.map(e => ({ node_id: e.nodeId, text: e.notes ?? e.summary }));
 
     return {
@@ -787,7 +787,7 @@ export class ColumnTraceState {
       direction: this.direction,
       chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats,
       ...(this.rejectionHistory.length > 0 && { column_rejections: this.rejectionHistory }),
-      suggested_badges,
+      suggested_labels,
       suggested_notes,
     };
   }

@@ -714,8 +714,8 @@
         "name": "lineage_enrich_view",
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
-        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, badges, and text annotations. The graph comes from a prior trace, BFS, or exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last trace/exploration. Provide name and summary (both required). Label-section data contract: for each node group you want to describe, assign a semantic badge label and a matching section — badge.text is the join key, section.label must match exactly. System numbers sections in YOUR WRITTEN ORDER and assembles ## headings with step numbers — write sections in the narrative sequence you want the reader to follow. Do not write description when sections are provided. One badge label per logical group, as many groups as needed; not every node requires a badge. In section text, reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered badge text ('1 Source'), section label mismatched from badge, description instead of sections, generic notes. GOOD: 'Source' badge on raw tables + matching section explaining what those tables contain.",
+        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, and text annotations. The graph comes from a prior trace, BFS, or exploration — you provide the presentation layer.",
+        "modelDescription": "Enrich the stored result graph from your last trace/exploration. Provide name and summary (both required). Document model: sections[] is the core — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = the primary key AND the chip shown on all nodes in node_ids. System numbers labels in YOUR WRITTEN ORDER — write sections in the pipeline sequence you want the reader to follow. Passthrough nodes: mention in section text only — omit from node_ids, no separate section. Reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered label ('1 Source'), node_ids with unknown IDs, description instead of sections. GOOD: { label: 'Source', node_ids: ['dbo.RawOrders', 'dbo.SupplierPrices'], text: 'Both tables are raw...' }",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -734,6 +734,20 @@
               "type": "string",
               "maxLength": 300,
               "description": "One-line graph purpose for the info card (~120 chars, max 300)"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 80,
+              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the pipeline and its key computation: '[Subject] — [formula or method]'. GOOD: 'TotalRevenue — Qty × UnitPrice, 6-hop ETL to FactSalesReport'. Omit if graph name is sufficient."
+            },
+            "intro": {
+              "type": "string",
+              "description": "Optional. 2–4 sentence paragraph rendered BEFORE the numbered ## sections. Set context: what is computed, where data originates, key structural pre-conditions. No bullets, no headings. Do NOT repeat section content. Omit if sections are self-explanatory."
+            },
+            "closing": {
+              "type": "string",
+              "maxLength": 400,
+              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider. Use ONLY for a cross-cutting risk or design note that spans the whole pipeline. Prefix risks with ⚠️. GOOD: '⚠️ If vwPriceList returns NULL, TotalRevenue = Qty × 0.' Omit if nothing material to add."
             },
             "description": {
               "type": "string",
@@ -798,40 +812,24 @@
                 ]
               }
             },
-            "badges": {
-              "type": "array",
-              "description": "Semantic label chips on key nodes (5-8 max). Same label on multiple nodes groups them. System assigns step numbers — do NOT include numbers in text.",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "node_id": {
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string",
-                    "maxLength": 20,
-                    "description": "Semantic label only — no leading number (e.g. 'Source', 'ETL', 'Target'). System prepends step number."
-                  }
-                },
-                "required": [
-                  "node_id",
-                  "text"
-                ]
-              }
-            },
             "sections": {
               "type": "array",
-              "description": "Structured description — one entry per unique badge label. Each section explains what you found at those nodes: logic, patterns, issues, performance, column mappings. System orders by data-flow and assembles into ## headings. Reference other labels by name (e.g. 'reads from **Source**'), never by number.",
+              "description": "Document sections — one entry per logical group. Each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label is the PRIMARY KEY and the badge chip text shown on every node in node_ids. System numbers sections in YOUR WRITTEN ORDER. Reference other groups by label name ('reads from **Source**'), never by number.",
               "items": {
                 "type": "object",
                 "properties": {
                   "label": {
                     "type": "string",
-                    "description": "Must exactly match a badge text value — this is the join key."
+                    "description": "PRIMARY KEY for this section (unique per sections[]). Also the badge chip text shown on every node in node_ids. No leading number — system assigns step numbers."
+                  },
+                  "node_ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Nodes that display this label as a badge chip (1..N). All nodes in this group share the same label chip. Omit for passthrough nodes mentioned in text only."
                   },
                   "text": {
                     "type": "string",
-                    "description": "Markdown content for this label group. Supported: **bold**, `code`, tables, $math$, ```math blocks. Explain detail: what the nodes do, why it matters, formulas, column mappings, issues found."
+                    "description": "Markdown description for this label group (1..1 per label). Explain what you found: formulas, column mappings, logic, risks. Supported: **bold**, `code`, tables, $math$, ```math blocks."
                   }
                 },
                 "required": [

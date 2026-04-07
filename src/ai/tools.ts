@@ -740,6 +740,9 @@ export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn
 export type EnrichViewInput = {
   name: string;
   summary: string;
+  title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
+  intro?: string;       // 2–4 sentence paragraph before the numbered sections
+  closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
   description?: string;
   prune_node_ids?: string[];
   layout_direction?: 'LR' | 'TB';
@@ -748,13 +751,10 @@ export type EnrichViewInput = {
     color: AIHighlightRole;
     node_ids: string[];
   }>;
-  badges?: Array<{
-    node_id: string;
-    text: string;
-  }>;
   sections?: Array<{
-    label: string;    // must match badges[].text — join key for ordering
-    text: string;     // markdown content for this label group
+    label: string;       // PRIMARY KEY for document grouping — unique per section
+    node_ids?: string[]; // nodes that display this label as a badge chip (1..N)
+    text: string;        // markdown description for this label group (1..1 per label)
   }>;
   notes?: Array<{
     node_id: string;
@@ -780,27 +780,22 @@ export type EnrichViewError = { success: false; errors: string[]; hint: string }
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
- * Match sections to badges by label, assign sequential numbers in the AI's sections[] order,
- * and assemble the description markdown.
+ * Assign sequential numbers to sections in the AI's written order, derive badge chips
+ * from sections[].node_ids, and assemble the description markdown.
  *
- * Called from the enrich_view handler when badges + sections are both present.
  * Guarantees badge numbers on the graph are identical to ## heading numbers in the description.
+ * Sort key: AI-provided sections[] array index (narrative order).
+ * Strips leading numbers from AI-supplied labels ("3 Source" → "Source") — system is the
+ * single source of numbers.
  *
- * Sort key: AI-provided sections[] array index.
- * The AI writes sections in the narrative order it wants the reader to follow.
- * The system just stamps 1, 2, 3… onto those labels.
- *
- * Strips leading numbers from AI-supplied badge text ("3 Source" → "Source") before matching,
- * so the system is always the single source of numbers.
- *
- * @param badges   AI-provided badge array (mutated copy returned, not the original).
- * @param sections AI-provided sections array.
+ * @param sections  AI-provided sections: each is a (label KEY, node_ids[] 1..N, text 1..1) tuple.
+ * @param opts      Optional title/intro/closing doc wrapper blocks.
  */
 export function orderAndAssemble(
-  badges: Array<{ node_id: string; text: string }>,
-  sections: Array<{ label: string; text: string }>,
+  sections: Array<{ label: string; node_ids?: string[]; text: string }>,
+  opts?: { title?: string; intro?: string; closing?: string },
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
-  // Strip leading "N " or "N. " from badge texts so AI numbers don't interfere with matching
+  // Strip leading "N " or "N. " so AI numbers don't interfere with label matching
   const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.]?\s+/, '').trim();
 
   // First occurrence index per label — preserves AI's narrative order
@@ -814,28 +809,38 @@ export function orderAndAssemble(
   const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
   uniqueLabels.sort((a, b) => (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0));
 
-  // Assign number N per unique label (1-based)
+  // Assign step number N per unique label (1-based, in AI's narrative order)
   const labelToNumber = new Map<string, number>();
   uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
 
-  // Rewrite + sort badges: strip AI numbers, prepend system number, sort by label's step number
-  const numberedBadges = badges
-    .map(b => {
-      const label = stripLeadingNumber(b.text);
+  // Build (node_id → label) map from sections[].node_ids
+  const nodeToLabel = new Map<string, string>();
+  for (const sec of sections) {
+    const label = stripLeadingNumber(sec.label);
+    for (const id of sec.node_ids ?? []) nodeToLabel.set(id, label);
+  }
+
+  // Emit numbered badge chips, dropping any node whose label has no matching section.
+  const numberedBadges = [...nodeToLabel.entries()]
+    .map(([node_id, label]) => {
       const n = labelToNumber.get(label);
-      return { node_id: b.node_id, text: n !== undefined ? `${n} ${label}` : b.text, _n: n ?? Infinity };
+      return n !== undefined ? { node_id, text: `${n} ${label}`, _n: n } : null;
     })
+    .filter((b): b is { node_id: string; text: string; _n: number } => b !== null)
     .sort((a, b) => a._n - b._n)
     .map(({ node_id, text }) => ({ node_id, text }));
 
-  // Assemble markdown: one ## heading per unique label in AI's order
+  // Assemble markdown: title → intro → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
   const parts: string[] = [];
+  if (opts?.title)   parts.push(`# ${opts.title}`);
+  if (opts?.intro)   parts.push(opts.intro);
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
     parts.push(`## ${n} ${label}\n\n${text}`);
   }
+  if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
   return { badges: numberedBadges, description: parts.join('\n\n') };
 }
@@ -873,16 +878,7 @@ export function autoFixEnrichView(
   // Use resolved graph node set or fallback to input.node_ids
   const nodeIdSet = new Set(resolvedNodeIds ?? fixed.node_ids ?? []);
 
-  // 2. Drop empty badges & badges for nodes not in the resolved set
-  if (fixed.badges) {
-    const before = fixed.badges.length;
-    const filtered = fixed.badges.filter(b => nodeIdSet.has(b.node_id) && b.text && b.text.trim().length > 0);
-    fixed = { ...fixed, badges: filtered };
-    const dropped = before - filtered.length;
-    if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned badge(s)`);
-  }
-
-  // 3. Drop empty notes & notes for nodes not in the resolved set
+  // 2. Drop empty notes & notes for nodes not in the resolved set
   if (fixed.notes) {
     const before = fixed.notes.length;
     const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
@@ -891,18 +887,7 @@ export function autoFixEnrichView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 4. Drop sections whose label doesn't match any badge text (orphaned sections)
-  if (fixed.sections?.length && fixed.badges?.length) {
-    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
-    const badgeLabels = new Set(fixed.badges.map(b => stripNum(b.text)));
-    const before = fixed.sections.length;
-    const filtered = fixed.sections.filter(s => badgeLabels.has(stripNum(s.label)) && s.text && s.text.trim().length > 0);
-    fixed = { ...fixed, sections: filtered };
-    const dropped = before - filtered.length;
-    if (dropped > 0) fixes.push(`Dropped ${dropped} orphaned section(s) with no matching badge label`);
-  }
-
-  // 5. Prune highlight_groups referencing nodes not in the resolved set
+  // 3. Prune highlight_groups referencing nodes not in the resolved set
   if (fixed.highlight_groups) {
     const before = fixed.highlight_groups.length;
     const pruned = fixed.highlight_groups
@@ -963,6 +948,7 @@ export function validateMarkdownFormat(md: string): string[] {
 export function validateEnrichView(
   input: EnrichViewInput,
   resolvedNodeIds: string[],
+  assembledBadges?: Array<{ node_id: string; text: string }>,
 ): EnrichViewRequest | EnrichViewError {
   const errors: string[] = [];
 
@@ -974,6 +960,14 @@ export function validateEnrichView(
   if (resolvedNodeIds.length === 0) {
     errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
   }
+
+  // title/intro/closing optional — validate length and no-walkthrough
+  if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
+  const WALKTHROUGH_PREFIXES_DOC = ['this graph', 'this view', 'data flows', 'shows the', 'visualizes'];
+  if (input.intro && WALKTHROUGH_PREFIXES_DOC.some(p => input.intro!.trimStart().toLowerCase().startsWith(p))) {
+    errors.push('intro re-describes the graph structure — provide context: what is computed, where data originates');
+  }
+  if (input.closing && input.closing.trim().length > 400) errors.push('closing exceeds 400 characters — keep it to 1–2 sentences');
 
   // summary required + length: soft 120 (instructed), hard 300 (rejected)
   if (!input.summary || input.summary.trim().length === 0) {
@@ -1002,14 +996,17 @@ export function validateEnrichView(
     errors.push(...validateMarkdownFormat(input.description));
   }
 
-  // sections validation — each label must match a badge, content must be substantive
+  // sections validation — content must be substantive; node_ids (when provided) must be valid
   if (input.sections?.length) {
     const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
-    const badgeLabels = new Set((input.badges ?? []).map(b => stripNum(b.text)));
+    const resolvedSet = new Set(resolvedNodeIds);
     for (const sec of input.sections) {
-      const label = stripNum(sec.label);
-      if (!badgeLabels.has(label)) {
-        errors.push(`Section label "${sec.label}" has no matching badge — label must match a badge text exactly`);
+      // Validate node_ids when AI uses the embedded form
+      if (sec.node_ids?.length) {
+        const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
+        if (unknownIds.length > 0) {
+          errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — use IDs from the result graph`);
+        }
       }
       if (!sec.text || sec.text.trim().length < 120) {
         errors.push(`Section "${sec.label}" is too short — write 3-8 sentences or items explaining what you found (min 120 chars)`);
@@ -1050,7 +1047,7 @@ export function validateEnrichView(
     }
     const fieldList = [...failedFields];
     const hint = fieldList.length === 1
-      ? `Fix ${fieldList[0]} only. Keep all other fields (badges, notes, summary, highlight_groups) exactly as submitted.`
+      ? `Fix ${fieldList[0]} only. Keep all other fields (notes, summary, highlight_groups) exactly as submitted.`
       : `Fix these fields: ${fieldList.join(', ')}. Keep all other fields exactly as submitted.`;
     return { success: false, errors, hint };
   }
@@ -1063,7 +1060,7 @@ export function validateEnrichView(
     description: input.description,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
-    badges: input.badges ?? [],
+    badges: assembledBadges ?? [],
     notes: input.notes ?? [],
   };
 }
