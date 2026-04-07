@@ -65,12 +65,12 @@ let _columnTraceState: ColumnTraceState | null = null; // per-request trace stat
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
 
 /** Stored result graph — populated by CT/BB, consumed by enrich_view. */
-type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs' | 'origin';
+type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'origin';
 interface ResultGraph {
   nodeIds: string[];
   edges: [string, string, string][];
   verdicts: Record<string, NodeRole>;
-  source: 'column_trace' | 'blackboard' | 'bfs_trace';
+  source: 'column_trace' | 'blackboard';
   originNodeId?: string;  // root node — needed by bfsDepthMap() in orderAndAssemble()
   notes?: Array<{ nodeId: string; summary: string }>;  // BB/CT note summaries for enrich_view auto-populate
   suggested_badges?: Array<{ node_id: string; text: string }>;  // SM: BB from badge_label, CT from chain name
@@ -78,18 +78,6 @@ interface ResultGraph {
 }
 let _resultGraph: ResultGraph | null = null;
 
-/** Build ResultGraph from a BFS trace result (nodes + edges). */
-function buildResultGraphFromBfs(
-  result: Record<string, unknown>,
-  source: 'bfs_trace',
-): ResultGraph | null {
-  const nodes = result.nodes as Array<{ id: string }> | undefined;
-  const edges = result.edges as [string, string, string][] | undefined;
-  if (!nodes?.length) return null;
-  const verdicts: Record<string, NodeRole> = {};
-  for (const n of nodes) verdicts[n.id] = 'bfs';
-  return { nodeIds: nodes.map(n => n.id), edges: edges ?? [], verdicts, source };
-}
 
 /** Store BB result graph for enrich_view — shared by normal completion and early completion.
  *  Uses fullNodes (origin + noted + bridges) so the origin node is always present and
@@ -450,11 +438,8 @@ export function activate(context: vscode.ExtensionContext) {
           logDebug(outputChannel, 'AI', `lineage_run_bfs_trace: id="${id}"${target ? ` → target="${target}"` : `, up=${upstream_hops ?? 3}, down=${downstream_hops ?? 3}`}, ddl=${include_ddl ?? true}`);
           const bfsResult = runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
             types as ObjectType[] | undefined, schemas, include_ddl ?? true, _columnStore, target) as Record<string, unknown>;
-          // Store result graph for enrich_view (skip error results)
-          if (!('error' in bfsResult)) {
-            _resultGraph = buildResultGraphFromBfs(bfsResult, 'bfs_trace');
-            if (_resultGraph) logDebug(outputChannel, 'AI', `[ResultGraph] stored from BFS: ${_resultGraph.nodeIds.length} nodes, ${_resultGraph.edges.length} edges`);
-          }
+          // BFS does not store to _resultGraph — enrich_view requires SM (BB/CT).
+          // BFS is a discovery tool; AI must route to start_exploration or start_column_trace for render output.
           return logAndReturn('run_bfs_trace', bfsResult);
         } catch (err) { return toolError('run_bfs_trace', err); }
       },
@@ -500,7 +485,7 @@ export function activate(context: vscode.ExtensionContext) {
       prepareInvocation(options, _token) {
         const input = options.input as EnrichViewInput;
         const source = _resultGraph ? _resultGraph.source : 'manual';
-        const nodeCount = _resultGraph ? _resultGraph.nodeIds.length : (input.node_ids?.length ?? 0);
+        const nodeCount = _resultGraph ? _resultGraph.nodeIds.length : 0;
         return {
           invocationMessage: `Enrich view "${input.name}" (${nodeCount} nodes from ${source})`,
           confirmationMessages: {
@@ -526,6 +511,8 @@ export function activate(context: vscode.ExtensionContext) {
           let graphSource: string;
 
           if (_resultGraph) {
+            // _resultGraph.source is typed 'column_trace' | 'blackboard' — SM only.
+            // BFS does not store to _resultGraph, so reaching here guarantees SM origin.
             resolvedNodeIds = [..._resultGraph.nodeIds];
             resolvedEdges = [..._resultGraph.edges];
             graphSource = _resultGraph.source;
@@ -543,14 +530,13 @@ export function activate(context: vscode.ExtensionContext) {
               logInfo(outputChannel, 'AI', `enrich_view: pruned ${beforeCount - resolvedNodeIds.length} node(s), ${resolvedNodeIds.length} remaining`);
             }
             logInfo(outputChannel, 'AI', `enrich_view: using stored graph (${graphSource}, ${resolvedNodeIds.length} nodes, ${resolvedEdges.length} edges)`);
-          } else if (rawInput.node_ids?.length) {
-            resolvedNodeIds = rawInput.node_ids;
-            resolvedEdges = [];
-            graphSource = 'fallback';
-            logWarn(outputChannel, 'AI', `enrich_view: no stored graph — using AI-provided node_ids (${resolvedNodeIds.length})`);
           } else {
-            logWarn(outputChannel, 'AI', `enrich_view: no stored graph and no node_ids`);
-            return logAndReturn('enrich_view', { success: false, errors: ['No graph available — run a trace, BFS, or provide node_ids'], hint: 'Call run_bfs_trace or start_column_trace first, then retry enrich_view.' });
+            logWarn(outputChannel, 'AI', `enrich_view: no stored graph from SM`);
+            return logAndReturn('enrich_view', {
+              success: false,
+              errors: ['No state-machine result available — enrich_view requires a completed column_trace or blackboard exploration.'],
+              hint: 'Call start_exploration or start_column_trace to analyze the graph first, then retry enrich_view.',
+            });
           }
 
           // ── 1b. Auto-populate notes from BB/CT note summaries for unannotated nodes ──

@@ -760,7 +760,7 @@ export type EnrichViewInput = {
     node_id: string;
     text: string;
   }>;
-  node_ids?: string[];  // fallback only: used when no stored result graph exists
+  // node_ids fallback removed — enrich_view requires SM result graph (BB or CT)
 };
 
 export type EnrichViewRequest = {
@@ -860,18 +860,9 @@ export function autoFixEnrichView(
     fixes.push('Normalized escaped newlines in description');
   }
 
-  // 1. Filter unknown node_ids — only for fallback mode (no stored graph)
-  if (!resolvedNodeIds && fixed.node_ids?.length) {
-    const unknown = fixed.node_ids.filter(id => !model.catalog[id]);
-    const valid = fixed.node_ids.filter(id => model.catalog[id]);
-    if (unknown.length > 0 && valid.length >= 1) {
-      fixes.push(`Removed ${unknown.length} unknown ID(s): ${unknown.slice(0, 3).join(', ')}${unknown.length > 3 ? ' ...' : ''}`);
-      fixed = { ...fixed, node_ids: valid };
-    }
-  }
-
-  // Use resolved graph node set or fallback to input.node_ids
-  const nodeIdSet = new Set(resolvedNodeIds ?? fixed.node_ids ?? []);
+  // node_ids fallback removed — enrich_view requires SM result graph.
+  // resolvedNodeIds is always provided from SM (BB/CT).
+  const nodeIdSet = new Set(resolvedNodeIds ?? []);
 
   // 2. Drop empty badges & badges for nodes not in the resolved set
   if (fixed.badges) {

@@ -570,7 +570,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. The result graph is automatically stored — use enrich_view to annotate it. Use prune_node_ids in enrich_view to remove irrelevant nodes. Use schemas[] on large models.\nFor traced lineage with pruning, use start_column_trace instead (runs token gate, prunes dead ends).",
+        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only — to create an annotated view, follow up with start_exploration (blackboard) or start_column_trace (column trace). enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -710,8 +710,8 @@
         "name": "lineage_enrich_view",
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
-        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, badges, and text annotations. The graph comes from a prior trace, BFS, or exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last trace/exploration. Provide name and summary (both required). Label-section data contract: for each node group you want to describe, assign a semantic badge label and a matching section — badge.text is the join key, section.label must match exactly. System numbers sections in YOUR WRITTEN ORDER and assembles ## headings with step numbers — write sections in the narrative sequence you want the reader to follow. Do not write description when sections are provided. One badge label per logical group, as many groups as needed; not every node requires a badge. In section text, reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered badge text ('1 Source'), section label mismatched from badge, description instead of sections, generic notes. GOOD: 'Source' badge on raw tables + matching section explaining what those tables contain.",
+        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, badges, and text annotations. The graph comes from a completed state-machine exploration (column trace or blackboard) — you provide the presentation layer.",
+        "modelDescription": "Enrich the stored result graph from your last column_trace or blackboard exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration or start_column_trace first. Provide name and summary (both required). Label-section data contract: for each node group you want to describe, assign a semantic badge label and a matching section — badge.text is the join key, section.label must match exactly. System numbers sections in YOUR WRITTEN ORDER and assembles ## headings with step numbers — write sections in the narrative sequence you want the reader to follow. Do not write description when sections are provided. One badge label per logical group, as many groups as needed; not every node requires a badge. In section text, reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered badge text ('1 Source'), section label mismatched from badge, description instead of sections, generic notes. GOOD: 'Source' badge on raw tables + matching section explaining what those tables contain.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -741,13 +741,6 @@
                 "type": "string"
               },
               "description": "Node IDs to remove from the stored result graph. Use to prune irrelevant nodes."
-            },
-            "node_ids": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Fallback only — exact node IDs when no stored result graph exists (discovery-only mode). Ignored when a stored graph is available."
             },
             "layout_direction": {
               "type": "string",
