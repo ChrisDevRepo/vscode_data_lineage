@@ -42,7 +42,6 @@ import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIVie
 import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
 import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
-import { buildSystemPromptBase, CT_MODE_PROMPT, CT_DEP_MODE_PROMPT, BB_MODE_PROMPT, BB_DOC_MODE_PROMPT } from './ai/prompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -63,7 +62,6 @@ let _aiModelName:      string = '';          // display name of the current Copi
 let _aiSessionCount = 0;                     // monotonic session counter for log correlation
 let _columnTraceState: ColumnTraceState | null = null; // per-request trace state machine
 let _blackboardState:  BlackboardState | null = null;  // per-request exploration state machine
-let _isDocMode = false;                                // per-request: true when /document or doc-intent keyword detected
 
 /** Stored result graph — populated by CT/BB, consumed by enrich_view. */
 type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'bfs' | 'origin';
@@ -928,7 +926,6 @@ export function activate(context: vscode.ExtensionContext) {
       _aiModelName = request.model.name || request.model.id;
       _columnTraceState = null; // reset per request — each trace gets a fresh state machine
       _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
-      _isDocMode = false;       // reset per request — set by /document or doc-intent keyword below
       // _resultGraph intentionally NOT reset — it persists across turns so the
       // "Show in Graph" button (which opens a new chat turn) can consume the
       // last BFS result.  It is overwritten whenever a new trace runs.
