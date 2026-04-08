@@ -1,28 +1,26 @@
 /**
  * Column-Trace State Machine — Hop-and-Distill pattern.
  *
- * Owns graph traversal, column tracking, frontier management, boundary detection,
- * column validation (reject/retry), and final assembly. Zero VS Code imports.
+ * Extends HopStateMachine (smBase.ts) for shared state, memory, and helpers.
+ * CT-specific: frontier management, column tracking, verdict handling, chain assembly.
  *
  * Lifecycle: init() → getHopContext() ↔ submitVerdicts() loop → getResult()
- *
- * @see tmp/ai-architecture-hop-and-distill.md
- * @see tmp/ai-implementation-plan-hop-and-distill.md
  */
 
-import type { DatabaseModel, LineageNode, ColumnDef, NeighborIndex, ObjectType } from '../engine/types';
+import type { DatabaseModel, LineageNode } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
+import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
+import { HopStateMachine, type BoundaryFlag, type HopNeighbor } from './smBase';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
 export type ColumnTraceDirection = 'up' | 'down' | 'both';
 export type HopVerdict = 'trace' | 'prune' | 'pass' | 'revisit';
-export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
+export type { BoundaryFlag } from './smBase';
 
 export interface FrontierEntry {
   nodeId: string;
@@ -57,21 +55,7 @@ export interface ColumnTraceConfig {
 
 export type { LogFn } from './smGuards';
 
-// ─── Internal types ────────────────────────────────────────────────────────────
-
-interface HopNeighbor {
-  id: string;
-  s: string;
-  n: string;
-  t: string;
-  edge_direction: 'upstream' | 'downstream';
-  edge_type: string;
-  boundary: BoundaryFlag;
-  boundary_reason?: string;
-  cols?: string[];                 // compact column strings: "Amount decimal(18,2), not null, PK"
-  fks?: string[];                  // compact FK strings: "CustomerKey → dbo.DimCustomer"
-  hasDdl: boolean;
-}
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_REJECTIONS_PER_HOP = 2;
 const MAX_REVISITS = 3;            // cap on re-expanding pruned branches per trace
@@ -83,44 +67,24 @@ const DEPTH_WARNING_THRESHOLD = 10;     // log warning when trace depth exceeds 
 
 // ─── Class ─────────────────────────────────────────────────────────────────────
 
-export class ColumnTraceState {
-  private readonly model: DatabaseModel;
-  private readonly graph: Graph;
-  private readonly store: ColumnStore | null;
-  private readonly log: LogFn;
+export class ColumnTraceState extends HopStateMachine {
+
+  // CT-specific state
   private readonly maxFrontierSize: number;
-  private readonly activeFilter: SerializedFilterState | null;
-  private readonly filterSchemas: Set<string> | null;
-
-  // Lookup caches (built once in constructor)
-  private readonly nodeMap: Map<string, LineageNode>;
-  private readonly edgeTypeMap: Map<string, string>;
-  private readonly unrelatedMap: Map<string, string[]>;
-
-  // Lifecycle status — enforces valid transitions
-  private _status: 'created' | 'initialized' | 'hopping' | 'awaiting_verdicts' | 'complete' | 'error' = 'created';
-
-  // State (set by init, mutated by submitVerdicts)
+  private _ctStatus: 'created' | 'initialized' | 'hopping' | 'awaiting_verdicts' | 'complete' | 'error' = 'created';
   private direction: ColumnTraceDirection = 'up';
   private targetColumns: string[] = [];
-  private originNodeId: string | null = null;
   private frontier: FrontierEntry[] = [];
-  private frontierIds = new Set<string>(); // dedup: prevent same node queued twice
-  private visited = new Set<string>();
+  private frontierIds = new Set<string>();
   private chain = new Map<string, ChainEntry>();
-  private passthroughMap = new Map<string, string[]>(); // nodeId → columns at time of passthrough
-  private removedSet = new Set<string>();
+  private passthroughMap = new Map<string, string[]>();
   private outOfScope: OutOfScopeEntry[] = [];
   private prunedEntries = new Map<string, { parentColumns: string[]; depth: number; parentNodeId: string | null }>();
   private revisitCount = 0;
-  private hopCount = 0;
   private scopeSize = 0;
-
-  // Current hop context (for submitVerdicts validation)
-  private currentFocusNodeId: string | null = null;
   private currentFocusActiveColumns: string[] = [];
   private currentFocusDepth = 0;
-  private rejectionsThisHop = 0;  // after MAX_REJECTIONS_PER_HOP → auto-prune the unresolvable neighbor
+  private rejectionsThisHop = 0;
   private rejectionHistory: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }> = [];
 
   constructor(
@@ -130,18 +94,14 @@ export class ColumnTraceState {
     config?: ColumnTraceConfig,
     store?: ColumnStore | null,
   ) {
-    this.model = model;
-    this.graph = graph;
-    this.store = store ?? null;
-    this.log = log;
+    super(model, graph, log, {
+      activeFilter: config?.activeFilter,
+    }, store);
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
-    this.activeFilter = config?.activeFilter ?? null;
-    this.filterSchemas = this.activeFilter?.schemas?.length
-      ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
-      : null;
-    this.nodeMap = buildNodeMap(model);
-    this.edgeTypeMap = buildEdgeTypeMap(model);
-    this.unrelatedMap = buildUnrelatedMap(model);
+  }
+
+  protected getScopeDirection(): 'upstream' | 'downstream' | 'bidirectional' {
+    return this.direction === 'up' ? 'upstream' : this.direction === 'down' ? 'downstream' : 'bidirectional';
   }
 
   // ─── init ──────────────────────────────────────────────────────────────────
@@ -154,27 +114,27 @@ export class ColumnTraceState {
      | { error: string; hint?: string; candidates?: Array<{ id: string; name: string; type: string }> } {
 
     // Reset all mutable state (safe to call init() again on same instance)
+    this.resetSharedState();
     this.frontier = [];
     this.frontierIds.clear();
-    this.visited.clear();
     this.chain.clear();
     this.passthroughMap.clear();
-    this.removedSet.clear();
     this.outOfScope = [];
-    this.hopCount = 0;
     this.scopeSize = 0;
-    this.currentFocusNodeId = null;
     this.currentFocusActiveColumns = [];
     this.currentFocusDepth = 0;
     this.rejectionsThisHop = 0;
-    this._status = 'created';
+    this.prunedEntries.clear();
+    this.revisitCount = 0;
+    this.rejectionHistory = [];
+    this._ctStatus = 'created';
 
     const { targetColumns: rawCols, origin, direction = 'up' } = params;
 
     // Runtime validation — LM API passes untyped JSON
     const VALID_DIRECTIONS: ColumnTraceDirection[] = ['up', 'down', 'both'];
     if (!VALID_DIRECTIONS.includes(direction)) {
-      this._status = 'error';
+      this._ctStatus = 'error';
       this.log('debug', `INIT ERROR: invalid direction "${direction}"`);
       return { error: 'invalid_direction', hint: `direction must be 'up', 'down', or 'both'` };
     }
@@ -186,13 +146,13 @@ export class ColumnTraceState {
     if (origin) {
       originNode = this.nodeMap.get(origin.toLowerCase());
       if (!originNode) {
-        this._status = 'error';
+        this._ctStatus = 'error';
         this.log('debug', `INIT ERROR: origin "${origin}" not found`);
         return { error: 'origin_not_found', hint: `Object "${origin}" not found in loaded model.` };
       }
     } else if (!this.targetColumns.length) {
       // No columns AND no origin — can't auto-discover
-      this._status = 'error';
+      this._ctStatus = 'error';
       this.log('debug', 'INIT ERROR: no origin and no columns');
       return { error: 'no_origin', hint: 'Provide origin object when tracing without columns.' };
     } else {
@@ -212,13 +172,13 @@ export class ColumnTraceState {
           });
       }
       if (candidates.length === 0) {
-        this._status = 'error';
+        this._ctStatus = 'error';
         this.log('debug', `INIT ERROR: no object contains columns [${this.targetColumns}]`);
         return { error: 'column_not_found', hint: `No object contains column(s): ${this.targetColumns.join(', ')}.` };
       }
       if (candidates.length > MAX_AUTODISCOVER_CANDIDATES) {
         // Too many candidates — ask for clarification
-        this._status = 'error';
+        this._ctStatus = 'error';
         this.log('debug', `INIT ERROR: ${candidates.length} candidates for columns [${this.targetColumns}] — ambiguous`);
         return {
           error: 'ambiguous_origin',
@@ -240,7 +200,7 @@ export class ColumnTraceState {
     this.originNodeId = origin_.id;
 
     // Compute scope via NeighborIndex BFS (direction-aware)
-    const scopeIds = this.bfsScope(origin_.id);
+    const scopeIds = this.bfsScopeViaIndex(origin_.id);
     this.scopeSize = scopeIds.size;
 
     // Seed frontier with directional neighbors of origin
@@ -269,7 +229,7 @@ export class ColumnTraceState {
       boundaryFlag: 'none',
     });
 
-    this._status = 'initialized';
+    this._ctStatus = 'initialized';
     this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
     this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
 
@@ -298,9 +258,9 @@ export class ColumnTraceState {
     out_of_scope_so_far: OutOfScopeEntry[] | { count: number; recent: OutOfScopeEntry[] };
   } | { done: true } | { error: string } {
 
-    if (this._status !== 'initialized' && this._status !== 'hopping') {
-      this.log('debug', `getHopContext: invalid status "${this._status}"`);
-      return { error: `invalid_status: expected 'initialized' or 'hopping', got '${this._status}'` };
+    if (this._ctStatus !== 'initialized' && this._ctStatus !== 'hopping') {
+      this.log('debug', `getHopContext: invalid status "${this._ctStatus}"`);
+      return { error: `invalid_status: expected 'initialized' or 'hopping', got '${this._ctStatus}'` };
     }
 
     // Pop next valid frontier entry (skip visited + missing nodes without recursion)
@@ -328,7 +288,7 @@ export class ColumnTraceState {
     }
 
     if (!entry || !node) {
-      this._status = 'complete';
+      this._ctStatus = 'complete';
       this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeSize} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
       return { done: true };
     }
@@ -345,7 +305,7 @@ export class ColumnTraceState {
     const focusNode = buildHopFocusNode(node, this.nodeMap, this.unrelatedMap, this.store ?? undefined, 'ct_ddl');
     focusNode.active_columns = entry.activeColumns;
 
-    const neighbors = this.buildNeighborList(entry.nodeId);
+    const neighbors = this.buildCtNeighborList(entry.nodeId);
 
     // Build path summary (two-level: summary for scan, notes for detail)
     const pathSoFar: Array<{ node_id: string; summary: string; columns_in: string[]; columns: string[]; notes?: string }> = [];
@@ -374,7 +334,7 @@ export class ColumnTraceState {
       this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeSize}`);
     }
 
-    this._status = 'awaiting_verdicts';
+    this._ctStatus = 'awaiting_verdicts';
     return {
       trace_status: 'in_progress' as const,
       action_required: 'submit_hop_analysis' as const,
@@ -401,7 +361,7 @@ export class ColumnTraceState {
   // ─── Shared: neighbor list builder ─────────────────────────────────────────
 
   /** Build the neighbor list for a focus node. Used by getHopContext() and rebuildCurrentHopContext(). */
-  private buildNeighborList(focusNodeId: string): HopNeighbor[] {
+  private buildCtNeighborList(focusNodeId: string): HopNeighbor[] {
     const neighborIds = this.getDirectionalNeighbors(focusNodeId);
     const nb = this.model.neighborIndex[focusNodeId] ?? { in: [], out: [] };
     const inSet = new Set(nb.in);
@@ -455,7 +415,7 @@ export class ColumnTraceState {
     return {
       focus_node: strip(focusNode),
       active_columns: this.currentFocusActiveColumns,
-      neighbors: this.buildNeighborList(this.currentFocusNodeId),
+      neighbors: this.buildCtNeighborList(this.currentFocusNodeId),
       hop: this.hopCount,
       frontier_remaining: this.frontier.length,
     };
@@ -477,9 +437,9 @@ export class ColumnTraceState {
      | { error: 'invalid_columns'; nodeId: string; invalid: string[]; valid: string[] }
      | { error: string; hint?: string } {
 
-    if (this._status !== 'awaiting_verdicts') {
-      this.log('debug', `submitVerdicts: invalid status "${this._status}"`);
-      return { error: `invalid_status: expected 'awaiting_verdicts', got '${this._status}'` };
+    if (this._ctStatus !== 'awaiting_verdicts') {
+      this.log('debug', `submitVerdicts: invalid status "${this._ctStatus}"`);
+      return { error: `invalid_status: expected 'awaiting_verdicts', got '${this._ctStatus}'` };
     }
     if (params.focusNodeId !== this.currentFocusNodeId) {
       this.log('debug', `submitVerdicts: focus mismatch — expected=${this.currentFocusNodeId}, got=${params.focusNodeId}`);
@@ -690,7 +650,7 @@ export class ColumnTraceState {
       if (cascaded > 0) this.log('info', `CT cascade: ${cascaded} frontier nodes removed (unreachable after prune)`);
     }
 
-    this._status = 'hopping'; // ready for next getHopContext()
+    this._ctStatus = 'hopping'; // ready for next getHopContext()
     const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
@@ -715,15 +675,15 @@ export class ColumnTraceState {
     suggested_notes:  Array<{ node_id: string; text: string }>;
   } | { error: string; hint?: string } {
 
-    if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
-      this.log('debug', `getResult: invalid status "${this._status}"`);
-      return { error: `invalid_status: cannot get result in '${this._status}' state` };
+    if (this._ctStatus === 'created' || this._ctStatus === 'error' || this._ctStatus === 'awaiting_verdicts') {
+      this.log('debug', `getResult: invalid status "${this._ctStatus}"`);
+      return { error: `invalid_status: cannot get result in '${this._ctStatus}' state` };
     }
-    if (this._status !== 'complete' && this.frontier.length > 0) {
+    if (this._ctStatus !== 'complete' && this.frontier.length > 0) {
       this.log('debug', `getResult: frontier not empty (${this.frontier.length} remaining)`);
       return { error: 'frontier_not_empty', hint: `${this.frontier.length} entries remain. Call getHopContext/submitVerdicts until done.` };
     }
-    this._status = 'complete'; // E1: ensure status is complete when returning results
+    this._ctStatus = 'complete'; // E1: ensure status is complete when returning results
 
     // Build chain array (Map insertion order = BFS order)
     const chainArr = [...this.chain.values()];
@@ -794,10 +754,10 @@ export class ColumnTraceState {
 
   // ─── Accessors ─────────────────────────────────────────────────────────────
 
-  get status(): string { return this._status; }
-  get isInitialized(): boolean { return this._status !== 'created' && this._status !== 'error'; }
-  get isComplete(): boolean { return this._status === 'complete'; }
-  get isAwaitingVerdicts(): boolean { return this._status === 'awaiting_verdicts'; }
+  override get status() { return this._ctStatus; }
+  get isInitialized(): boolean { return this._ctStatus !== 'created' && this._ctStatus !== 'error'; }
+  get isComplete(): boolean { return this._ctStatus === 'complete'; }
+  get isAwaitingVerdicts(): boolean { return this._ctStatus === 'awaiting_verdicts'; }
   get hops(): number { return this.hopCount; }
   get frontierSize(): number { return this.frontier.length; }
   get scope(): number { return this.scopeSize; }
@@ -838,7 +798,7 @@ export class ColumnTraceState {
     }
   }
 
-  private detectBoundary(nodeId: string): BoundaryFlag {
+  protected override detectBoundary(nodeId: string): BoundaryFlag {
     const node = this.nodeMap.get(nodeId);
     if (!node) return 'external';
     if (node.type === 'external') return 'external';
@@ -849,7 +809,7 @@ export class ColumnTraceState {
     return 'none';
   }
 
-  private boundaryReason(flag: BoundaryFlag, node: LineageNode): string {
+  protected override boundaryReason(flag: BoundaryFlag, node: LineageNode): string {
     switch (flag) {
       case 'source': return 'No upstream SP writes to this object — source boundary';
       case 'sink': return 'No downstream readers — sink boundary';
@@ -911,8 +871,8 @@ export class ColumnTraceState {
     return added;
   }
 
-  /** Direction-aware BFS via NeighborIndex to compute reachable scope (no graphology needed). */
-  private bfsScope(startId: string): Set<string> {
+  /** Direction-aware BFS via NeighborIndex to compute reachable scope. */
+  private bfsScopeViaIndex(startId: string): Set<string> {
     const seen = new Set<string>([startId]);
     const queue = [startId];
     let idx = 0;

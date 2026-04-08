@@ -24,7 +24,8 @@ import { estimateTokens } from './tokenBudget';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type SmStatus = 'created' | 'initialized' | 'active' | 'awaiting' | 'complete' | 'error'
-                      | 'exploring' | 'awaiting_findings';  // BB-specific statuses
+                      | 'exploring' | 'awaiting_findings'    // BB-specific
+                      | 'hopping' | 'awaiting_verdicts';     // CT-specific
 
 export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 

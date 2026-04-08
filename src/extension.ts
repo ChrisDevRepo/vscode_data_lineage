@@ -40,9 +40,10 @@ import {
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
 import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
-import { compactNoiseResult, findMergeableCallIds, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
+import { compactNoiseResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
-import { buildSystemPromptBase, CT_MODE_PROMPT, CT_DEP_MODE_PROMPT, BB_MODE_PROMPT } from './ai/prompts';
+import { buildSystemPromptBase } from './ai/prompts';
+import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt } from './ai/smPrompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -974,19 +975,12 @@ export function activate(context: vscode.ExtensionContext) {
             | { toolCallRounds: ToolCallRound[]; toolCallResults: Record<string, vscode.LanguageModelToolResult> }
             | undefined;
           if (meta?.toolCallRounds?.length) {
-            // MERGE: find duplicate/subset tool calls to drop
-            const mergeDropIds = findMergeableCallIds(
-              meta.toolCallRounds.map(r => ({
-                toolCalls: r.toolCalls.map(tc => extractToolCallFields(tc)),
-              })),
-            );
-
             for (const round of meta.toolCallRounds) {
-              // Determine which tool calls have results (skip merged/missing)
+              // Determine which tool calls have results (skip missing)
               const keepCallIds = new Set<string>();
               for (const tc of round.toolCalls) {
                 const { callId } = extractToolCallFields(tc);
-                if (!mergeDropIds.has(callId) && meta.toolCallResults[callId]) {
+                if (meta.toolCallResults[callId]) {
                   keepCallIds.add(callId);
                 }
               }
@@ -1147,10 +1141,7 @@ export function activate(context: vscode.ExtensionContext) {
       const phaseTransitions: string[] = [];
 
       const runWithTools = async (): Promise<void> => {
-        // Column-trace context control (POC-validated patterns)
-        const ctToolResults: Array<{ msgIdx: number; callId: string }> = [];
-        // Blackboard context control (same compaction pattern as CT)
-        const bbToolResults: Array<{ msgIdx: number; callId: string }> = [];
+        // Phase tracking
         // action_required gate: blocks non-search tools until AI responds to user
         let actionRequiredPending = false;
         const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
@@ -1323,8 +1314,6 @@ export function activate(context: vscode.ExtensionContext) {
           messages.push(new vscode.LanguageModelChatMessage(
             vscode.LanguageModelChatMessageRole.User, resultParts,
           ));
-          const toolResultMsgIdx = messages.length - 1;
-
           // action_required gate: scan tool results and inject blocking message
           const actionGates: string[] = [];
           for (const call of toolCalls) {
@@ -1369,7 +1358,7 @@ export function activate(context: vscode.ExtensionContext) {
 
               // Inject mode-specific prompt ONCE when entering CT mode
               const hasColumns = _columnTraceState.columns.length > 0;
-              const modePrompt = hasColumns ? CT_MODE_PROMPT : CT_DEP_MODE_PROMPT;
+              const modePrompt = hasColumns ? buildCtPrompt() : buildCtDepPrompt();
               messages.push(vscode.LanguageModelChatMessage.User(modePrompt));
             } else {
               logDebug(outputChannel, 'AI', `[CT] Not activated: status=${_columnTraceState?.status}, phase=${activePhase}`);
@@ -1386,29 +1375,6 @@ export function activate(context: vscode.ExtensionContext) {
           const isCtSuccess = _columnTraceState != null &&
             (_columnTraceState.status === 'hopping' || _columnTraceState.status === 'awaiting_verdicts' || _columnTraceState.status === 'complete');
           const isTraceComplete = _columnTraceState?.status === 'complete';
-
-          // Track CT tool result messages for in-place compaction
-          if ((hasCtStart || hasCtSubmit) && isCtSuccess) {
-            const ctCall = toolCalls.find(tc => tc.name === 'lineage_start_column_trace' || tc.name === 'lineage_submit_hop_analysis');
-            if (ctCall) {
-              ctToolResults.push({ msgIdx: toolResultMsgIdx, callId: ctCall.callId });
-              logDebug(outputChannel, 'AI', `[CT] Tracked tool result: msg[${toolResultMsgIdx}], callId=${ctCall.callId.slice(-8)}, total tracked=${ctToolResults.length}`);
-            }
-          }
-
-          // In-place replacement: compact ALL previous CT tool result messages
-          if (hasCtSubmit && ctToolResults.length > 1) {
-            const compacted = ctToolResults.length - 1;
-            for (let i = 0; i < compacted; i++) {
-              const { msgIdx, callId } = ctToolResults[i];
-              const compactJson = JSON.stringify({ _ct_compacted: true, hop: i + 1, status: 'processed' });
-              messages[msgIdx] = vscode.LanguageModelChatMessage.User(
-                [new vscode.LanguageModelToolResultPart(callId,
-                  [new vscode.LanguageModelTextPart(compactJson)])]
-              );
-            }
-            logDebug(outputChannel, 'AI', `[CT] Compacted ${compacted} previous hop message(s)`);
-          }
 
           // Progress logging
           if (_columnTraceState) {
@@ -1437,7 +1403,7 @@ export function activate(context: vscode.ExtensionContext) {
               logDebug(outputChannel, 'AI', `[BB] Activation: status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
 
               // Inject mode-specific prompt ONCE
-              messages.push(vscode.LanguageModelChatMessage.User(BB_MODE_PROMPT));
+              messages.push(vscode.LanguageModelChatMessage.User(buildBbPrompt()));
               logInfo(outputChannel, 'AI', `[BB] Mode prompt: EXPLORE`);
             } else {
               logDebug(outputChannel, 'AI', `[BB] Not activated: status=${_blackboardState?.status}, phase=${activePhase}`);
@@ -1453,29 +1419,6 @@ export function activate(context: vscode.ExtensionContext) {
           // BB success detection
           const isBbSuccess = _blackboardState != null &&
             (_blackboardState.status === 'exploring' || _blackboardState.status === 'awaiting_findings' || _blackboardState.status === 'complete');
-
-          // Track BB tool results for compaction (same pattern as CT)
-          if ((hasExplStart || hasSubFindings) && isBbSuccess) {
-            const bbCall = toolCalls.find(tc => tc.name === 'lineage_start_exploration' || tc.name === 'lineage_submit_findings');
-            if (bbCall) {
-              bbToolResults.push({ msgIdx: toolResultMsgIdx, callId: bbCall.callId });
-              logDebug(outputChannel, 'AI', `[BB] Tracked tool result: msg[${toolResultMsgIdx}], callId=${bbCall.callId.slice(-8)}, total tracked=${bbToolResults.length}`);
-            }
-          }
-
-          // In-place compaction: compact ALL previous BB tool result messages (keep current)
-          if (hasSubFindings && bbToolResults.length > 1) {
-            const compacted = bbToolResults.length - 1;
-            for (let i = 0; i < compacted; i++) {
-              const { msgIdx, callId } = bbToolResults[i];
-              const compactJson = JSON.stringify({ _bb_compacted: true, hop: i + 1, status: 'findings_recorded' });
-              messages[msgIdx] = vscode.LanguageModelChatMessage.User(
-                [new vscode.LanguageModelToolResultPart(callId,
-                  [new vscode.LanguageModelTextPart(compactJson)])]
-              );
-            }
-            logDebug(outputChannel, 'AI', `[BB] Compacted ${compacted} previous exploration message(s)`);
-          }
 
           // BB progress logging
           if (_blackboardState) {
