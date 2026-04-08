@@ -431,7 +431,8 @@ export abstract class HopStateMachine {
     );
 
     // Strip leading numbers from badge_label — system assigns via orderAndAssemble()
-    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+    const BADGE_NUMBER_PREFIX_RE = /^\d+[\.\s]+/;
+    const stripNum = (s: string) => s.replace(BADGE_NUMBER_PREFIX_RE, '').trim();
     const suggested_labels = orderedSlots.map(s => ({
       node_id: s.nodeId,
       text: s.badge_label ? stripNum(s.badge_label) : s.name,

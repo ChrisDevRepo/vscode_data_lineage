@@ -21,7 +21,7 @@ import { HopStateMachine, type HopNeighbor, type SmResult, type DetailSlot } fro
 export interface AgendaEntry {
   nodeId: string;
   question?: string;
-  priority: number;   // 0=BFS, 1=neighbor, 2=question-boosted, 3=mandatory
+  priority: number;   // 0=BFS, 1=neighbor, 2=question-boosted, 3=mandatory (higher wins)
   depth: number;
 }
 
@@ -650,7 +650,8 @@ export class BlackboardState extends HopStateMachine {
     }
 
     const sortedAgenda = [...this.agenda].sort((a, b) => b.priority - a.priority);
-    const remaining_agenda = sortedAgenda.slice(0, 30).map(e => {
+    const MAX_AGENDA_PREVIEW = 30;
+    const remaining_agenda = sortedAgenda.slice(0, MAX_AGENDA_PREVIEW).map(e => {
       const n = this.nodeMap.get(e.nodeId);
       return { id: e.nodeId, name: n?.name ?? e.nodeId, type: n?.type ?? '?', priority: e.priority };
     });

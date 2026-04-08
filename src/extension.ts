@@ -467,7 +467,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.lm.registerTool('lineage_search_ddl', {
       prepareInvocation(options, _token) {
         const { query } = options.input as { query: string };
-        return { invocationMessage: `Searching DDL for "${query.slice(0, 40)}"…` };
+        return { invocationMessage: `Searching DDL for "${trunc(query, 40)}"…` };
       },
       invoke(options, _token) {
         try {

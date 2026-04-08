@@ -106,7 +106,8 @@ function abbreviateInput(tool: string, input: Record<string, unknown>): string {
   if (input.id)           parts.push(`id=${input.id}`);
   if (input.pattern)      parts.push(`pattern="${input.pattern}"`);
   if (input.type)         parts.push(`type=${input.type}`);
-  if (input.question)     parts.push(`question="${String(input.question).slice(0, 60)}"`);
+  const QUESTION_PREVIEW_LEN = 60;
+  if (input.question)     parts.push(`question="${String(input.question).slice(0, QUESTION_PREVIEW_LEN)}"`);
   if (input.focus_node_id) parts.push(`focus=${input.focus_node_id}`);
   if (Array.isArray(input.columns) && input.columns.length)
     parts.push(`columns=[${(input.columns as string[]).join(', ')}]`);
@@ -121,7 +122,8 @@ function abbreviateInput(tool: string, input: Record<string, unknown>): string {
 /** Concise result summary — error or key numeric/status fields. */
 function abbreviateResult(tool: string, result: Record<string, unknown>): string {
   if (!result || typeof result !== 'object') return '';
-  if (result['error']) return ` ERROR: ${result['error']}${result['hint'] ? ' — ' + String(result['hint']).slice(0, 80) : ''}`;
+  const HINT_PREVIEW_LEN = 80;
+  if (result['error']) return ` ERROR: ${result['error']}${result['hint'] ? ' — ' + String(result['hint']).slice(0, HINT_PREVIEW_LEN) : ''}`;
 
   const parts: string[] = [];
   // CT
