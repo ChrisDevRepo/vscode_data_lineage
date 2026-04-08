@@ -1,3 +1,48 @@
+# AI Prompt Baseline — 2026-04-07 (/document effectivePrompt iteration 3)
+
+## Surface: /document slash command effectivePrompt + origin pre-computation
+**File:** `src/extension.ts:979-989`
+
+```text
+effectivePrompt = origin
+  ? `Document the objects in scope — emit "Discovering scope…", call start_exploration from "${origin.name}" (origin id: "${origin.id}"). Scope: ${request.prompt}`
+  : `Document the objects in scope — emit "Discovering scope…", call get_context, then start_exploration. Scope: ${request.prompt}`;
+```
+
+---
+
+# AI Prompt Baseline — 2026-04-07 (/document effectivePrompt iteration 2)
+
+## Surface: /document slash command effectivePrompt
+**File:** `src/extension.ts:978-979`
+
+```text
+Document all objects reachable from: ${request.prompt}. Use search_objects to find the highest-degree node in scope as origin, then call start_exploration — do not write documentation text directly.
+```
+
+---
+
+# AI Prompt Baseline — 2026-04-07 (CT prompt refactor — buildCtModePrompt)
+
+## Surface: CT_MODE_PROMPT + CT_DEP_MODE_PROMPT
+**File:** `src/ai/prompts.ts` lines 39–60
+**Call site:** `src/extension.ts` line 1408
+
+```text
+CT_MODE_PROMPT (hasColumns=true):
+COLUMN TRACE MODE: For each hop, read the focus node DDL. Verdict each neighbor: trace (provide INPUT column names — track renames), prune, or pass. Write notes about what you found. Prefer trace over prune when uncertain. If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). The sub_question field contains your own question from the previous hop — answer it.
+FIELD MAPPING: focus_node_id = focus_node.id from the hop context. neighbor_id = id field from each neighbor.
+COLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.
+TABLE NODES: Tables store data, not transform it. Trace ALL upstream neighbors of a table — they INSERT INTO it.
+VERDICT ALL NEIGHBORS: Submit a verdict for every neighbor — skipped neighbors are silently lost.
+
+CT_DEP_MODE_PROMPT (hasColumns=false):
+DEPENDENCY TRACE MODE: For each hop, read the focus node DDL. Verdict each neighbor: trace (follow this path), prune (cut), or pass (skip detail). Write notes about dependencies, business logic, or impact you observe. If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3 per trace). The sub_question field contains your own question from the previous hop — answer it.
+[MISSING: FIELD MAPPING, TABLE NODES, VERDICT ALL NEIGHBORS]
+```
+
+---
+
 # AI Prompt Baseline — 2026-04-07 (enrich_view section order correction)
 
 ## Surface: lineage_enrich_view modelDescription

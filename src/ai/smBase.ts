@@ -71,7 +71,7 @@ export interface SmResult {
   originNodeId: string;
   fullNodes: Array<Record<string, unknown>>;
   edges: Array<[string, string, string]>;
-  suggested_badges: Array<{ node_id: string; text: string }>;
+  suggested_labels: Array<{ node_id: string; text: string }>;
   suggested_notes: Array<{ node_id: string; text: string }>;
   short_memory: ShortMemory;
   detail_slots: DetailSlot[];
@@ -421,10 +421,10 @@ export abstract class HopStateMachine {
         fullNodes.push(strip({ id: bn.id, s: bn.schema, n: bn.name, t: bn.type, role: 'bridge' }) as Record<string, unknown>);
       }
       edges.push(...bridgeResult.bridgeEdges);
-      this.log('info', `[Bridge] orphans=${bridgeResult.orphanCount} | reconnected=${bridgeResult.reconnectedCount} | bridges=${bridgeResult.bridgeNodes.length}`);
+      this.log('info', `[Bridge] orphans=${bridgeResult.orphanCount} | reconnected=${bridgeResult.reconnectedCount} | bridges=${bridgeResult.bridgeNodes.length} nodes, ${bridgeResult.bridgeEdges.length} edges`);
     }
 
-    // Order slots by BFS depth from origin for suggested badges/notes
+    // Order slots by BFS depth from origin for suggested labels/notes
     const depthMap = bfsDepthMap(edges, this.originNodeId!);
     const orderedSlots = [...slots].sort(
       (a, b) => (depthMap.get(a.nodeId) ?? Infinity) - (depthMap.get(b.nodeId) ?? Infinity),
@@ -432,7 +432,7 @@ export abstract class HopStateMachine {
 
     // Strip leading numbers from badge_label — system assigns via orderAndAssemble()
     const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
-    const suggested_badges = orderedSlots.map(s => ({
+    const suggested_labels = orderedSlots.map(s => ({
       node_id: s.nodeId,
       text: s.badge_label ? stripNum(s.badge_label) : s.name,
     }));
@@ -444,14 +444,18 @@ export abstract class HopStateMachine {
     // Attach both memory tiers
     const memory = this.getMemoryForSynthesis();
 
-    this.log('info', `[Result] slots=${slots.length} | edges=${edges.length} | scope=${this.scopeNodeIds.size} | coverage=${this.coveragePct}% | hops=${this.hopCount}`);
+    this.log('info', `[Result] notes=${slots.length} | edges=${edges.length} | scope=${this.scopeNodeIds.size} | coverage=${this.coveragePct}% | hops=${this.hopCount}`);
+    this.log('debug', `[Result] detail | fullNodes=${fullNodes.length} | bridges=${bridgeResult.bridgeNodes.length} | model_edges=${this.model.edges.length} | pruned=${this.removedSet.size} | visited=${this.visited.size}`);
+    if (edges.length > 0) {
+      this.log('trace', `[Result] EDGES | ${edges.map(([s, t, tp]) => `${s}→${t}(${tp})`).join(', ')}`);
+    }
 
     return {
       status: 'complete',
       originNodeId: this.originNodeId!,
       fullNodes,
       edges,
-      suggested_badges,
+      suggested_labels,
       suggested_notes,
       short_memory: memory.short_memory,
       detail_slots: memory.detail_slots,

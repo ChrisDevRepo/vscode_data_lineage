@@ -2,11 +2,13 @@
 # Edit 'instruction' fields to change the AI's output style.
 # Full documentation: docs/AI_PROMPTS.md
 #
-# Fields form a label-section data contract:
-#   summary     = headline (one-line purpose)
-#   badges      = semantic labels on key nodes (no numbers — system assigns them)
-#   sections    = one markdown block per badge label (system orders by data-flow, assembles ## headings)
-#   notes       = one-line captions under each node
+# Document building blocks (all optional except summary):
+#   summary     = one-line headline shown in the info card
+#   title       = # heading at top of description panel
+#   intro       = context paragraph before numbered sections
+#   sections    = (label KEY, node_ids[] 1..N, text 1..1) tuples — core of the document
+#   closing     = cross-cutting risk/note after sections
+#   notes       = per-node captions (node_id KEY, text 1..1)
 #   highlights  = color glow on 2-3 critical nodes
 #   description = fallback article body (used only when sections[] is absent)
 
@@ -14,6 +16,75 @@ summary:
   instruction: >
     One-line graph purpose (~120 chars, max 300). Shown in the info card.
   example: "Revenue lineage from SAP invoices through EV calculation to FactFinance."
+
+title:
+  instruction: >
+    Optional. ≤80 chars. Names the pipeline and its key computation:
+    "[Subject] — [what it computes or key formula]".
+    Include the final output object if space allows. Omit step counts and numbers.
+    BAD: "TotalRevenue" (too vague), "Revenue Lineage Analysis Report" (too long, generic).
+    GOOD: "TotalRevenue — Qty × UnitPrice, 6-hop ETL to FactSalesReport"
+  example: "TotalRevenue — Qty × UnitPrice, 6-hop ETL to FactSalesReport"
+
+intro:
+  instruction: >
+    Optional. 2–4 sentences as a standalone paragraph BEFORE the numbered sections.
+    Answer: what does this pipeline compute? where does the data originate? what are
+    the key structural pre-conditions or facts the reader needs before diving into steps?
+    No bullet lists. No headings. Do NOT repeat content from any section — context only.
+    BAD: "This graph shows how TotalRevenue flows from Source to Target." (graph walkthrough)
+    GOOD: "TotalRevenue is the product of Qty and UnitPrice — both computed independently
+    before joining at spBuildSalesReport. Qty originates in raw order imports; UnitPrice
+    is derived from supplier margins with a markup formula. No upstream ETL transforms
+    either value before they enter the pipeline."
+  example: >
+    TotalRevenue is the product of Qty and UnitPrice — both computed independently
+    before joining at spBuildSalesReport. Qty originates in raw order imports; UnitPrice
+    is derived from supplier margins with a markup formula.
+
+sections:
+  instruction: >
+    Core of the document. Each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple:
+      label    = PRIMARY KEY — unique name for this logical group (also the badge chip text on the graph)
+      node_ids = nodes that display this label chip (1..N, can be one or many)
+      text     = markdown explanation for this group (1..1 per label)
+
+    System numbers labels in the ORDER you write them — write in the narrative sequence you want
+    the reader to follow. label has no leading number (system assigns step numbers).
+
+    Same label on multiple nodes groups them. One section per unique label.
+    Passthrough nodes (rename-only views, simple SELECTs) — mention in one sentence inside
+    the section that uses them, do NOT include in node_ids, no separate section.
+
+    CLASSIFY the question before writing. business logic -> formulas, column renames, risks.
+    technical -> execution and rebuild details. documentation -> both.
+
+    In section text use the format that fits the content:
+    Column rename or mapping -> | From | To | Notes | table.
+    Formula -> ```math block.
+    Multi-step logic -> ordered 1. 2. 3. list.
+    Risk or data quality issue -> warning prefix with ⚠️.
+    Write 3-8 sentences or items per section — not a one-liner, not an object inventory.
+
+    BAD order — jumping non-linearly (Target -> Source -> ETL -> Views).
+    BAD text — "Stores project data." or "Reads from Source." (no detail).
+    GOOD order — follow the pipeline in one direction without skipping
+    (e.g. Source -> ETL -> Target, or Target -> ETL -> Source).
+    GOOD text — "`spBuildSalesReport` computes `TotalRevenue = Qty x UnitPrice` at INSERT.
+    Reads `Qty` from **Staging View** (rename `OrderQty -> Qty`), `UnitPrice` from **Price View**
+    (PriceMaster lookup via 3-CTE chain)."
+  example: '{ "label": "ETL", "node_ids": ["dbo.spCalcEV"], "text": "`spCalcEV` multiplies PlannedValue by earned ratio.\nReads from **Source**, writes to **Target**.\n| Input | Column | Notes |\n|---|---|---|\n| DimProject | PlannedValue | base budget |\n| FactTimesheet | Hours | actuals |" }'
+
+closing:
+  instruction: >
+    Optional. 1–2 sentences AFTER the sections, separated by a --- divider.
+    Use ONLY for a cross-cutting risk, data quality issue, or design note that applies
+    to the WHOLE pipeline and doesn't fit in any single section. Prefix risks with ⚠️.
+    Omit if nothing material to add — most pipelines do not need a closing.
+    BAD: "Overall this pipeline correctly computes TotalRevenue." (summary — never repeat what was just said)
+    GOOD: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 —
+    verify price coverage before each INSERT run."
+  example: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 — verify price coverage before each INSERT run."
 
 description:
   instruction: >
@@ -35,44 +106,6 @@ description:
     `spCalcEV` reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
     then `vw_Revenue` applies the Swiss filter: `WHERE CountryCode = 'CH'`.
 
-badges:
-  instruction: >
-    Semantic labels on nodes you explain in your sections -- no numbers (system assigns step numbers).
-    Same label on multiple nodes groups them under one section heading.
-    Only badge nodes that have their own section -- passthroughs and minor relay nodes do not need badges.
-    section.label must match badge.text exactly (join key, case-sensitive).
-    BAD: "3 Source" (number in label), badges with no matching section, badging every node.
-    GOOD: "Source" on origin tables, "ETL" on SPs that compute logic, "Target" on the destination -- each covered by a section.
-
-sections:
-  instruction: >
-    One entry per unique badge label. System numbers sections in the ORDER you write them --
-    write sections in the narrative sequence you want the reader to follow, not by object type.
-    label must exactly match badge.text (join key, case-sensitive).
-
-    CLASSIFY the question before writing. business logic -> formulas, column renames, risks; skip
-    ETL mechanics (TRUNCATE, rebuild modes, indexes). technical -> execution and rebuild details.
-    documentation -> both.
-
-    Only badge nodes you explain. Passthrough nodes (rename-only views, simple SELECTs) mention
-    in one sentence inside the section that uses them -- no badge, no section of their own.
-
-    In section text use the format that fits the content. Column rename or mapping ->
-    | From | To | Notes | table. Formula -> ```math block. Multi-step logic -> ordered 1. 2. 3.
-    list. Risk or data quality issue -> warning prefix with emoji. Write 3-8 sentences or items
-    per section -- not a one-liner, not an object inventory.
-
-    BAD order -- jumping non-linearly (Target -> Source -> ETL -> Views).
-    BAD text -- "Stores project data." or "Reads from Source." (no detail).
-    GOOD order -- follow the pipeline in one direction without skipping
-    (e.g. Target -> ETL -> Views -> Source, or Source -> Views -> ETL -> Target).
-    GOOD text -- "`spBuildSalesReport` computes `TotalRevenue = Qty x UnitPrice` at INSERT.
-    Reads `Qty` from **Staging View** (rename `OrderQty -> Qty`), `UnitPrice` from **Price View**
-    (PriceMaster lookup via 3-CTE chain), `Discount` from **Discount View**
-    (`OrderAmount x DiscountPct`). Cross-basis risk -- discount and revenue use different monetary
-    bases."
-  example: '{ "label": "ETL", "text": "`spCalcEV` multiplies PlannedValue by earned ratio.\nReads from **Source**, writes to **Target**.\n| Input | Column | Notes |\n|---|---|---|\n| DimProject | PlannedValue | base budget |\n| FactTimesheet | Hours | actuals |" }'
-
 highlights:
   instruction: >
     Glow 2-3 critical nodes only. Pick ONE scheme:
@@ -81,7 +114,8 @@ highlights:
 
 notes:
   instruction: >
-    One-line caption under each node -- what it does specifically in this flow, not a generic description.
+    Per-node captions (node_id KEY, text 1..1). One-line caption under each node —
+    what it does specifically in this flow, not a generic description.
     Glancing at graph + notes should tell the story without opening the description.
     First line visible, rest on hover via \n.
     If the node is a passthrough, say what it passes or filters ("Passthrough -- WHERE IsValid = 1 filter only").

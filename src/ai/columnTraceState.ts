@@ -71,7 +71,6 @@ export class ColumnTraceState extends HopStateMachine {
 
   // CT-specific state
   private readonly maxFrontierSize: number;
-  private _ctStatus: 'created' | 'initialized' | 'hopping' | 'awaiting_verdicts' | 'complete' | 'error' = 'created';
   private direction: ColumnTraceDirection = 'up';
   private targetColumns: string[] = [];
   private frontier: FrontierEntry[] = [];
@@ -127,14 +126,13 @@ export class ColumnTraceState extends HopStateMachine {
     this.prunedEntries.clear();
     this.revisitCount = 0;
     this.rejectionHistory = [];
-    this._ctStatus = 'created';
 
     const { targetColumns: rawCols, origin, direction = 'up' } = params;
 
     // Runtime validation — LM API passes untyped JSON
     const VALID_DIRECTIONS: ColumnTraceDirection[] = ['up', 'down', 'both'];
     if (!VALID_DIRECTIONS.includes(direction)) {
-      this._ctStatus = 'error';
+      this._status = 'error';
       this.log('debug', `INIT ERROR: invalid direction "${direction}"`);
       return { error: 'invalid_direction', hint: `direction must be 'up', 'down', or 'both'` };
     }
@@ -146,13 +144,13 @@ export class ColumnTraceState extends HopStateMachine {
     if (origin) {
       originNode = this.nodeMap.get(origin.toLowerCase());
       if (!originNode) {
-        this._ctStatus = 'error';
+        this._status = 'error';
         this.log('debug', `INIT ERROR: origin "${origin}" not found`);
         return { error: 'origin_not_found', hint: `Object "${origin}" not found in loaded model.` };
       }
     } else if (!this.targetColumns.length) {
       // No columns AND no origin — can't auto-discover
-      this._ctStatus = 'error';
+      this._status = 'error';
       this.log('debug', 'INIT ERROR: no origin and no columns');
       return { error: 'no_origin', hint: 'Provide origin object when tracing without columns.' };
     } else {
@@ -172,13 +170,13 @@ export class ColumnTraceState extends HopStateMachine {
           });
       }
       if (candidates.length === 0) {
-        this._ctStatus = 'error';
+        this._status = 'error';
         this.log('debug', `INIT ERROR: no object contains columns [${this.targetColumns}]`);
         return { error: 'column_not_found', hint: `No object contains column(s): ${this.targetColumns.join(', ')}.` };
       }
       if (candidates.length > MAX_AUTODISCOVER_CANDIDATES) {
         // Too many candidates — ask for clarification
-        this._ctStatus = 'error';
+        this._status = 'error';
         this.log('debug', `INIT ERROR: ${candidates.length} candidates for columns [${this.targetColumns}] — ambiguous`);
         return {
           error: 'ambiguous_origin',
@@ -229,7 +227,7 @@ export class ColumnTraceState extends HopStateMachine {
       boundaryFlag: 'none',
     });
 
-    this._ctStatus = 'initialized';
+    this._status = 'initialized';
     this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
     this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
 
@@ -258,9 +256,9 @@ export class ColumnTraceState extends HopStateMachine {
     out_of_scope_so_far: OutOfScopeEntry[] | { count: number; recent: OutOfScopeEntry[] };
   } | { done: true } | { error: string } {
 
-    if (this._ctStatus !== 'initialized' && this._ctStatus !== 'hopping') {
-      this.log('debug', `getHopContext: invalid status "${this._ctStatus}"`);
-      return { error: `invalid_status: expected 'initialized' or 'hopping', got '${this._ctStatus}'` };
+    if (this._status !== 'initialized' && this._status !== 'hopping') {
+      this.log('debug', `getHopContext: invalid status "${this._status}"`);
+      return { error: `invalid_status: expected 'initialized' or 'hopping', got '${this._status}'` };
     }
 
     // Pop next valid frontier entry (skip visited + missing nodes without recursion)
@@ -288,7 +286,7 @@ export class ColumnTraceState extends HopStateMachine {
     }
 
     if (!entry || !node) {
-      this._ctStatus = 'complete';
+      this._status = 'complete';
       this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeSize} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
       return { done: true };
     }
@@ -334,7 +332,7 @@ export class ColumnTraceState extends HopStateMachine {
       this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeSize}`);
     }
 
-    this._ctStatus = 'awaiting_verdicts';
+    this._status = 'awaiting_verdicts';
     return {
       trace_status: 'in_progress' as const,
       action_required: 'submit_hop_analysis' as const,
@@ -437,9 +435,9 @@ export class ColumnTraceState extends HopStateMachine {
      | { error: 'invalid_columns'; nodeId: string; invalid: string[]; valid: string[] }
      | { error: string; hint?: string } {
 
-    if (this._ctStatus !== 'awaiting_verdicts') {
-      this.log('debug', `submitVerdicts: invalid status "${this._ctStatus}"`);
-      return { error: `invalid_status: expected 'awaiting_verdicts', got '${this._ctStatus}'` };
+    if (this._status !== 'awaiting_verdicts') {
+      this.log('debug', `submitVerdicts: invalid status "${this._status}"`);
+      return { error: `invalid_status: expected 'awaiting_verdicts', got '${this._status}'` };
     }
     if (params.focusNodeId !== this.currentFocusNodeId) {
       this.log('debug', `submitVerdicts: focus mismatch — expected=${this.currentFocusNodeId}, got=${params.focusNodeId}`);
@@ -650,7 +648,7 @@ export class ColumnTraceState extends HopStateMachine {
       if (cascaded > 0) this.log('info', `CT cascade: ${cascaded} frontier nodes removed (unreachable after prune)`);
     }
 
-    this._ctStatus = 'hopping'; // ready for next getHopContext()
+    this._status = 'hopping'; // ready for next getHopContext()
     const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
@@ -671,19 +669,19 @@ export class ColumnTraceState extends HopStateMachine {
     outOfScope: OutOfScopeEntry[];
     stats: { hops: number; examined: number; relevant: number; removed: number; passthrough: number };
     column_rejections?: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }>;
-    suggested_badges: Array<{ node_id: string; text: string }>;
+    suggested_labels: Array<{ node_id: string; text: string }>;
     suggested_notes:  Array<{ node_id: string; text: string }>;
   } | { error: string; hint?: string } {
 
-    if (this._ctStatus === 'created' || this._ctStatus === 'error' || this._ctStatus === 'awaiting_verdicts') {
-      this.log('debug', `getResult: invalid status "${this._ctStatus}"`);
-      return { error: `invalid_status: cannot get result in '${this._ctStatus}' state` };
+    if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
+      this.log('debug', `getResult: invalid status "${this._status}"`);
+      return { error: `invalid_status: cannot get result in '${this._status}' state` };
     }
-    if (this._ctStatus !== 'complete' && this.frontier.length > 0) {
+    if (this._status !== 'complete' && this.frontier.length > 0) {
       this.log('debug', `getResult: frontier not empty (${this.frontier.length} remaining)`);
       return { error: 'frontier_not_empty', hint: `${this.frontier.length} entries remain. Call getHopContext/submitVerdicts until done.` };
     }
-    this._ctStatus = 'complete'; // E1: ensure status is complete when returning results
+    this._status = 'complete'; // E1: ensure status is complete when returning results
 
     // Build chain array (Map insertion order = BFS order)
     const chainArr = [...this.chain.values()];
@@ -737,7 +735,7 @@ export class ColumnTraceState extends HopStateMachine {
     // Chain is already the curated traced set — every entry is a relevant node.
     // name  = natural badge label (parallel to BB's badge_label ?? name).
     // notes = AI's per-hop findings (richer). summary = verdict reason (always set).
-    const suggested_badges = chainArr.map(e => ({ node_id: e.nodeId, text: e.name }));
+    const suggested_labels = chainArr.map(e => ({ node_id: e.nodeId, text: e.name }));
     const suggested_notes  = chainArr.map(e => ({ node_id: e.nodeId, text: e.notes ?? e.summary }));
 
     return {
@@ -747,17 +745,16 @@ export class ColumnTraceState extends HopStateMachine {
       direction: this.direction,
       chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats,
       ...(this.rejectionHistory.length > 0 && { column_rejections: this.rejectionHistory }),
-      suggested_badges,
+      suggested_labels,
       suggested_notes,
     };
   }
 
   // ─── Accessors ─────────────────────────────────────────────────────────────
 
-  override get status() { return this._ctStatus; }
-  get isInitialized(): boolean { return this._ctStatus !== 'created' && this._ctStatus !== 'error'; }
-  get isComplete(): boolean { return this._ctStatus === 'complete'; }
-  get isAwaitingVerdicts(): boolean { return this._ctStatus === 'awaiting_verdicts'; }
+  get isInitialized(): boolean { return this._status !== 'created' && this._status !== 'error'; }
+  get isComplete(): boolean { return this._status === 'complete'; }
+  get isAwaitingVerdicts(): boolean { return this._status === 'awaiting_verdicts'; }
   get hops(): number { return this.hopCount; }
   get frontierSize(): number { return this.frontier.length; }
   get scope(): number { return this.scopeSize; }

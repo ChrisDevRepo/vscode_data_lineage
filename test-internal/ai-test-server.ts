@@ -49,7 +49,7 @@ import { ColumnStore } from '../src/engine/columnStore.js';
 import { populateColumnStore } from '../src/engine/modelBuilder.js';
 import { buildBareGraph } from '../src/ai/graphUtils.js';
 import { dispatchTool } from './dispatcher.js';
-import { buildSystemPromptBase, CT_MODE_PROMPT, CT_DEP_MODE_PROMPT, BB_MODE_PROMPT } from '../src/ai/prompts.js';
+import { buildSystemPromptBase, buildCtModePrompt, BB_MODE_PROMPT } from '../src/ai/prompts.js';
 import type { ColumnTraceState } from '../src/ai/columnTraceState.js';
 import type { BlackboardState } from '../src/ai/blackboardState.js';
 import type { SerializedFilterState } from '../src/engine/projectStore.js';
@@ -57,7 +57,7 @@ import type Graph from 'graphology';
 
 // ─── Prompt helpers ─────────────────────────────────────────────────────────
 
-const TEMPLATE_KEYS = ['summary', 'description', 'badges', 'sections', 'highlights', 'notes'] as const;
+const TEMPLATE_KEYS = ['summary', 'title', 'intro', 'closing', 'description', 'sections', 'highlights', 'notes'] as const;
 type TemplateKey = typeof TEMPLATE_KEYS[number];
 
 /** Mirrors extension.ts system prompt assembly: schema context + base rules + aiOutputTemplates. */
@@ -71,7 +71,6 @@ function buildBridgeSystemPrompt(filter: SerializedFilterState | null, templates
     schemaCtx +
     buildSystemPromptBase(25) +
     `   summary: ${templates.summary}\n` +
-    `   badges: ${templates.badges}\n` +
     `   sections: ${templates.sections}\n` +
     `   notes: ${templates.notes}\n` +
     `   highlights: ${templates.highlights}\n` +
@@ -316,8 +315,8 @@ async function main() {
         const promptSession = sessions.get(qsId);
         return respond(res, 200, {
           system: buildBridgeSystemPrompt(promptSession?.filter ?? null, loadedTemplates),
-          ct_mode_columns: CT_MODE_PROMPT,
-          ct_mode_deps: CT_DEP_MODE_PROMPT,
+          ct_mode_columns: buildCtModePrompt(true),
+          ct_mode_deps: buildCtModePrompt(false),
           bb_mode: BB_MODE_PROMPT,
           tool_descriptions: TOOL_DEFS,
         });

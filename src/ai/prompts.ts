@@ -3,6 +3,8 @@
  *
  * Each constant is a complete prompt string injected at a specific point
  * in the chat loop. See ai/prompt-changelog.md for change history.
+ *
+ * SM mode prompts (CT/BB) are in smPrompts.ts (composable building blocks).
  */
 
 // ─── System Prompt Base ──────────────────────────────────────────────────────
@@ -23,10 +25,10 @@ export function buildSystemPromptBase(maxRounds: number): string {
     '   use start_exploration to explore objects hop-by-hop with persistent memory.\n' +
     '   BFS (run_bfs_trace) is for scope discovery, not final trace results.\n' +
     '4. OUTPUT: enrich_view when graph aids understanding (lineage path, data flow).\n' +
-    '   Chat text otherwise (explain, SQL, list, compare). Default: text.\n' +
+    '   Chat text for: pure explanations, SQL generation, list/compare requests (no graph needed).\n' +
     '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
-    '   System assigns step numbers and orders by data-flow. Do not number badges or write description when sections provided.\n'
+    '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow. Do not number badges yourself or write description when sections are provided.\n' +
+    'PROGRESS: After each hop verdict, emit ONE line: "Hop N · [node_name] → verdict · ~Y remaining".\n'
+    // Callers append: summary/badges/sections/notes/highlights/description from aiOutputTemplates
   );
 }
-
-// SM mode prompts moved to smPrompts.ts (composable building blocks).

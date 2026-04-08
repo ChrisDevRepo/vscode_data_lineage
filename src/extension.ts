@@ -74,7 +74,7 @@ interface ResultGraph {
   source: 'column_trace' | 'blackboard';
   originNodeId?: string;  // root node — needed by bfsDepthMap() in orderAndAssemble()
   notes?: Array<{ nodeId: string; summary: string }>;  // BB/CT note summaries for enrich_view auto-populate
-  suggested_badges?: Array<{ node_id: string; text: string }>;  // SM: BB from badge_label, CT from chain name
+  suggested_labels?: Array<{ node_id: string; text: string }>;  // SM: BB from badge_label, CT from chain name
   suggested_notes?: Array<{ node_id: string; text: string }>;   // SM: BB from note_caption, CT from notes/summary
 }
 let _resultGraph: ResultGraph | null = null;
@@ -88,7 +88,7 @@ function storeBbResultGraph(fullResult: {
   notes: Array<{ nodeId: string; summary: string }>;
   fullNodes: Array<Record<string, unknown>>;
   edges: [string, string, string][];
-  suggested_badges?: Array<{ node_id: string; text: string }>;
+  suggested_labels?: Array<{ node_id: string; text: string }>;
   suggested_notes?: Array<{ node_id: string; text: string }>;
 }) {
   const v: Record<string, NodeRole> = {};
@@ -105,7 +105,7 @@ function storeBbResultGraph(fullResult: {
     source: 'blackboard',
     originNodeId: fullResult.originNodeId,
     notes: fullResult.notes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
-    suggested_badges: fullResult.suggested_badges,
+    suggested_labels: fullResult.suggested_labels,
     suggested_notes: fullResult.suggested_notes,
   };
   logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${nodeIds.length} nodes (${fullResult.notes.length} noted, ${extraCount} origin+bridges), ${fullResult.edges.length} edges`);
@@ -119,7 +119,7 @@ function storeCtResultGraph(fullResult: {
   fullNodes: Array<Record<string, unknown>>;
   edges: [string, string, string][];
   outOfScope: Array<{ nodeId: string }>;
-  suggested_badges: Array<{ node_id: string; text: string }>;
+  suggested_labels: Array<{ node_id: string; text: string }>;
   suggested_notes:  Array<{ node_id: string; text: string }>;
 }) {
   const chainIds = new Set(fullResult.chain.map(c => c.nodeId));
@@ -134,7 +134,7 @@ function storeCtResultGraph(fullResult: {
     source: 'column_trace',
     originNodeId: fullResult.originNodeId,
     notes: fullResult.chain.map(c => ({ nodeId: c.nodeId, summary: c.summary })),
-    suggested_badges: fullResult.suggested_badges,
+    suggested_labels: fullResult.suggested_labels,
     suggested_notes:  fullResult.suggested_notes,
   };
   logDebug(outputChannel, 'AI', `[ResultGraph] stored from CT: ${allNodeIds.length} nodes (${chainIds.size} traced, ${allNodeIds.length - chainIds.size} passthrough), ${fullResult.edges.length} edges`);
@@ -146,13 +146,12 @@ let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage
 interface AiOutputTemplates {
   summary: string;
   description: string;
-  badges: string;
   sections: string;
   highlights: string;
   notes: string;
 }
 
-const EMPTY_AI_TEMPLATES: AiOutputTemplates = { summary: '', description: '', badges: '', sections: '', highlights: '', notes: '' };
+const EMPTY_AI_TEMPLATES: AiOutputTemplates = { summary: '', description: '', sections: '', highlights: '', notes: '' };
 
 let _aiOutputTemplates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
 
@@ -556,32 +555,43 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
 
-          // ── 1c. Auto-complete badges from BB suggested_badges for un-badged noted nodes ──
-          if (_resultGraph?.suggested_badges?.length) {
-            const userBadgeIds = new Set((rawInput.badges ?? []).map(b => (b as any).node_id as string));
-            const autoBadges: Array<{ node_id: string; text: string }> = [];
-            for (const sb of _resultGraph.suggested_badges) {
-              if (!userBadgeIds.has(sb.node_id) && sb.text) {
-                autoBadges.push(sb);
+          // ── 1c. Auto-populate sections[].node_ids from SM suggested_labels for any section
+          //        where AI wrote sections[] but left node_ids absent/empty ──
+          if (_resultGraph?.suggested_labels?.length && rawInput.sections?.length) {
+            const hasNodeIds = rawInput.sections.some(s => s.node_ids && s.node_ids.length > 0);
+            if (!hasNodeIds) {
+              const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+              const labelToNodeIds = new Map<string, string[]>();
+              for (const sl of _resultGraph.suggested_labels) {
+                if (!sl.text) continue;
+                const label = stripNum(sl.text);
+                if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, []);
+                labelToNodeIds.get(label)!.push(sl.node_id);
               }
-            }
-            if (autoBadges.length > 0) {
-              rawInput.badges = [...(rawInput.badges ?? []), ...autoBadges];
-              logDebug(outputChannel, 'AI', `enrich_view: auto-completed ${autoBadges.length} badge(s) from SM suggested_badges`);
+              let filled = 0;
+              rawInput.sections = rawInput.sections.map(sec => {
+                const norm = stripNum(sec.label);
+                const ids = labelToNodeIds.get(norm);
+                if (ids?.length) { filled++; return { ...sec, node_ids: ids }; }
+                return sec;
+              });
+              if (filled > 0) logDebug(outputChannel, 'AI', `enrich_view: auto-populated node_ids into ${filled} section(s) from SM suggested_labels`);
             }
           }
 
-          // ── 1e. Number badges + assemble description markdown in AI's sections[] order ──
-          if (rawInput.badges?.length && rawInput.sections?.length) {
+          // ── 1e. Number sections, derive badge chips, assemble description markdown ──
+          let assembledBadges: Array<{ node_id: string; text: string }> = [];
+          if (rawInput.sections?.length) {
             const assembled = orderAndAssemble(
-              rawInput.badges,
               rawInput.sections,
+              { title: rawInput.title, intro: rawInput.intro, closing: rawInput.closing },
             );
-            rawInput.badges = assembled.badges;
+            assembledBadges = assembled.badges;
             if (!rawInput.description) {
               rawInput.description = assembled.description;
             }
-            logDebug(outputChannel, 'AI', `enrich_view: orderAndAssemble — ${rawInput.sections.length} section(s) → description ${assembled.description.length}ch`);
+            rawInput.sections = undefined;  // consumed — clear to avoid mutual-exclusivity validation error
+            logDebug(outputChannel, 'AI', `enrich_view: orderAndAssemble — ${assembled.badges.length} badge(s), description ${assembled.description.length}ch`);
           }
 
           // ── 2. Auto-fix orphaned badges/notes/highlights ──
@@ -591,7 +601,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
 
           // ── 3. Validate mandatory fields ──
-          const validation = validateEnrichView(input, resolvedNodeIds);
+          const validation = validateEnrichView(input, resolvedNodeIds, assembledBadges);
           if (!validation.success) {
             logWarn(outputChannel, 'AI', `enrich_view: validation failed — ${validation.errors?.join(', ')}`);
             return logAndReturn('enrich_view', validation);
@@ -959,7 +969,6 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Build conversation history with smart management:
       // 1. DROP — replace error/empty tool results with 1-line summaries
-      // 2. MERGE — deduplicate overlapping search results (keep superset)
       const responseTurns = context.history.filter(t => t instanceof vscode.ChatResponseTurn);
       const totalResponseTurns = responseTurns.length;
       let responseIndex = 0;
@@ -1063,7 +1072,6 @@ export function activate(context: vscode.ExtensionContext) {
         schemaCtx +
         buildSystemPromptBase(MAX_ROUNDS) +
         `   summary: ${_aiOutputTemplates.summary}\n` +
-        `   badges: ${_aiOutputTemplates.badges}\n` +
         `   sections: ${_aiOutputTemplates.sections}\n` +
         `   notes: ${_aiOutputTemplates.notes}\n` +
         `   highlights: ${_aiOutputTemplates.highlights}\n` +
@@ -1583,7 +1591,7 @@ async function loadAiOutputTemplates(
 ): Promise<AiOutputTemplates> {
   if (!isAiEnabled()) return { ...EMPTY_AI_TEMPLATES };
 
-  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'badges', 'sections', 'highlights', 'notes'];
+  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'sections', 'highlights', 'notes'];
 
   // Load built-in YAML first — serves as base and fallback for missing custom keys
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };

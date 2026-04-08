@@ -43,6 +43,17 @@ const BLOCK = {
     'SELECTIVITY: Trace only columns relevant to the question. Prune unrelated branches.\n' +
     'Prefer trace over prune when uncertain.',
 
+  /** Column lineage rule — CT column mode only */
+  columnLineageRule:
+    'COLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. ' +
+    'Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. ' +
+    'Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. ' +
+    'Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.',
+
+  /** Table node guidance — CT (column + dep) */
+  tableNodes:
+    'TABLE NODES: Tables store data, not transform it. Trace ALL upstream neighbors of a table — they INSERT INTO it.',
+
   /** Revisit — CT and CT_DEP */
   revisit:
     'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3).',
@@ -72,7 +83,8 @@ const BLOCK = {
   /** Working memory usage — BB only */
   workingMemory:
     'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
-    'invalid_nodes: never ask about not_in_model nodes; use get_object_detail for out_of_scope.',
+    'INVALID NODES: working_memory.invalid_nodes lists rejected node IDs. ' +
+    'Never ask questions about not_in_model nodes. For out_of_scope nodes, use get_object_detail instead.',
 
   /** Detail memory at synthesis */
   detailMemory:
@@ -115,6 +127,8 @@ export function buildCtPrompt(): string {
     `5. ${BLOCK.verdictNeighbors}`,
     '',
     BLOCK.columnTracking,
+    BLOCK.columnLineageRule,
+    BLOCK.tableNodes,
     BLOCK.revisit,
     BLOCK.fieldMapping,
     BLOCK.selfAsk,
@@ -132,7 +146,9 @@ export function buildCtDepPrompt(): string {
     `4. ${BLOCK.badgeAndNote}`,
     `5. ${BLOCK.verdictNeighbors}`,
     '',
+    BLOCK.tableNodes,
     BLOCK.revisit,
+    BLOCK.fieldMapping,
     BLOCK.selfAsk,
     BLOCK.detailMemory,
   ].join('\n');
