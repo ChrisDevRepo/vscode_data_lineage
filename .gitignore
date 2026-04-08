@@ -25,7 +25,7 @@ test/*.dacpac
 CLAUDE.md
 .claude/
 tmp/
-ai/
+/ai/
 PLAN*.md
 
 # AI test session artifacts (written to root by Claude Code during ai-test-server sessions)
