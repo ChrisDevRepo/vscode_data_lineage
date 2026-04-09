@@ -1,5 +1,29 @@
 # AI Prompt Changelog
 
+## 2026-04-09 — Detail memory grounding: structured extractive findings + synthesis contract
+
+**Problem:** `BLOCK.writeFindings` said "~500 chars" with no structure → shallow, generic detail slots. `BLOCK.detailMemory` was 2 vague lines → ungrounded synthesis. `getMemoryForSynthesis()` evicted oldest slots to summary-only under budget pressure → destroyed AI's evidence.
+
+**Design basis:** MemGPT/Letta (archival storage, no eviction), Chain-of-Note (self-contained notes), Self-RAG (retrieval on demand). SM is a data provider — stores and delivers all evidence at full fidelity.
+
+**Changes:**
+1. `src/ai/smBase.ts` — removed detail memory eviction: `DETAIL_MEMORY_FRACTION`, `detailMemoryBudget`, `maxInputTokens`, `isDetailMemoryOverBudget()`, eviction loop (~40 lines removed). `getMemoryForSynthesis()` now always returns all slots at full analysis.
+2. `src/ai/smPrompts.ts` `BLOCK.writeFindings` — structured extractive format: 6 aspects (COLUMNS, TRANSFORMS, JOINS, FILTERS, DATA FLOW, QUESTION RELEVANCE), verbatim SQL quoting, target 300-1500 chars (was ~500), self-contained notes
+3. `src/ai/smPrompts.ts` `BLOCK.writeSummary` — expanded to 100-200 chars, includes "what's still open"
+4. `src/ai/smPrompts.ts` `BLOCK.detailMemory` — synthesis grounding contract: cite evidence, omit over invent, re-read DDL if insufficient
+5. `ai/dataflow.md` — Detail Memory Architecture section, updated findings/summary field descriptions
+6. `.claude/rules/architecture.md` — Memory Architecture section
+7. `.claude/rules/ai.md` — Detail Memory entry under State Machine Types
+
+**Eval results (bb-q1-employee, bb-q2-employee-deep, AdventureWorks AI dacpac):**
+- bb-q2: PASS across all iterations (8/8 nodes, 8 hops, 315-868 char findings)
+- bb-q1: PARTIAL (10-11/11 nodes, findings 350-700 chars — ufnGetContactInformation sometimes over-pruned)
+- Findings quality: improved from unknown/generic to 300-700 char structured SQL evidence
+
+**Token impact:** +~200 tokens in mode prompt (writeFindings expanded). Net code reduction (~40 lines removed from smBase.ts).
+
+---
+
 ## 2026-04-07 — /document: inject pre-computed origin (iteration 3)
 
 **Bug fixed:** Round 2 stall after `get_context` call. AI output: "Context loaded. What would you like to investigate?" Root cause: `getContext` builds catalog from all model nodes (148) → 219,606 chars → exceeds 20,000-token inline budget → `model_size: "large"` → no `objects[]` with node IDs returned. AI has no ID to pass to `start_exploration.origin` and falls back to asking the user. Active filter had only 52 nodes but full model drives the inline/on_demand decision.

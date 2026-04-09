@@ -1,3 +1,32 @@
+# AI Prompt Baseline — 2026-04-09 (detail memory grounding — writeFindings + writeSummary)
+
+## Surface: BLOCK.writeFindings (APPLIED)
+**File:** `src/ai/smPrompts.ts:17-29`
+
+```text
+Write findings to detail memory — your external storage for this node (target 300-1500 chars, hard limit 5000).
+Each finding must be SELF-CONTAINED — usable at synthesis without re-reading DDL.
+Extract by aspect (include only those present):
+- COLUMNS: key column names and their roles (verbatim from DDL)
+- TRANSFORMS: expressions, CASE/COALESCE logic, computed columns (quote the SQL fragment)
+- JOINS: join conditions and what they connect (table.col = table.col)
+- FILTERS: WHERE/HAVING clauses that encode business rules
+- DATA FLOW: INSERT INTO / SELECT FROM / MERGE targets and sources
+- QUESTION RELEVANCE: how this node answers or advances the user question
+Quote column names and SQL fragments verbatim — paraphrases lose grounding.
+Scale depth to DDL complexity: simple table → 300 chars, complex SP → use full budget.
+```
+
+## Surface: BLOCK.writeSummary (APPLIED)
+**File:** `src/ai/smPrompts.ts:31-33`
+
+```text
+Write a summary for short memory (~100-200 chars) — visible every future hop.
+Include: what this node does + what is still open (unanswered questions, paths to explore).
+```
+
+---
+
 # AI Prompt Baseline — 2026-04-07 (/document effectivePrompt iteration 3)
 
 ## Surface: /document slash command effectivePrompt + origin pre-computation

@@ -31,7 +31,6 @@ export interface BlackboardConfig {
   summaryHardLimit?: number;
   activeFilter?: SerializedFilterState | null;
   scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';
-  maxInputTokens?: number;
 }
 
 interface WorkingMemory {
@@ -79,7 +78,6 @@ export class BlackboardState extends HopStateMachine {
       activeFilter: config?.activeFilter,
       findingsHardLimit: config?.findingsHardLimit,
       summaryHardLimit: config?.summaryHardLimit,
-      maxInputTokens: config?.maxInputTokens,
     }, store);
     this.maxAgendaSize = config?.maxAgendaSize ?? DEFAULT_MAX_AGENDA;
     this.scopeDirection = config?.scopeDirection ?? 'bidirectional';

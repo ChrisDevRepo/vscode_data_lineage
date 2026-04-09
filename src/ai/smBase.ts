@@ -5,9 +5,9 @@
  * Subclasses provide queue management (agenda vs frontier) and submission logic.
  *
  * Two-tier memory model (MemGPT-inspired):
- *   - Short memory: compressed narrative that grows each hop. Always fits context.
- *   - Detail memory: per-node analysis slots. Evictable under token pressure
- *     (oldest slots compress into short memory, freeing tokens for synthesis).
+ *   - Short memory: incremental index — grows each hop, tracks what was loaded/found.
+ *   - Detail memory: per-node analysis slots — grounded evidence, always delivered
+ *     at full fidelity. SM is a data provider, never evicts or degrades evidence.
  *
  * Zero VS Code imports — pure logic for testability.
  */
@@ -19,7 +19,7 @@ import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, type LogFn } from './smGuards';
-import { estimateTokens } from './tokenBudget';
+
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -214,24 +214,11 @@ export abstract class HopStateMachine implements IHopStateMachine {
   }
 
   /**
-   * Check if detail memory exceeds budget.
-   * Used by getResult() to decide presentation: full analysis vs summary-only for oldest slots.
-   * The system stores everything — this only affects what we INCLUDE in the tool response.
-   * No data is ever lost; the AI already analyzed DDL during each hop.
-   */
-  protected isDetailMemoryOverBudget(): boolean {
-    const totalChars = [...this.detailSlots.values()]
-      .reduce((sum, s) => sum + s.analysis.length + s.summary.length, 0);
-    return estimateTokens(totalChars) > this.detailMemoryBudget;
-  }
-
-  /**
    * Get both memory tiers for the final result tool response.
    *
-   * Presentation decision (not data loss):
-   * - Under budget: all slots include full analysis text.
-   * - Over budget: oldest slots are presented with summary only in the response.
-   *   Full analysis is still stored in our state — the AI already saw it during hops.
+   * SM is a data provider — delivers ALL detail slots at full fidelity.
+   * No eviction, no budget pressure. Context window management is the
+   * AI platform's job (VS Code Copilot Chat handles turn eviction).
    */
   getMemoryForSynthesis(): { short_memory: ShortMemory; detail_slots: DetailSlot[] } {
     this.shortMemory.coverage = {
@@ -239,34 +226,10 @@ export abstract class HopStateMachine implements IHopStateMachine {
       total: this.scopeNodeIds.size,
       pct: this.coveragePct,
     };
-
-    const allSlots = [...this.detailSlots.values()];
-
-    if (!this.isDetailMemoryOverBudget()) {
-      return { short_memory: { ...this.shortMemory }, detail_slots: allSlots };
-    }
-
-    // Over budget: present oldest slots as summary-only in the response.
-    // This is a delivery-mode decision (like shouldInline for BFS),
-    // not data loss — AI already analyzed DDL per hop.
-    let runningTokens = 0;
-    const presented: DetailSlot[] = [];
-    // Reverse order: newest first (most relevant for synthesis)
-    const reversed = [...allSlots].reverse();
-    for (const slot of reversed) {
-      const slotTokens = estimateTokens(slot.analysis.length + slot.summary.length);
-      if (runningTokens + slotTokens <= this.detailMemoryBudget) {
-        presented.unshift(slot); // keep full
-        runningTokens += slotTokens;
-      } else {
-        // Summary-only presentation for oldest slots
-        presented.unshift({ ...slot, analysis: slot.summary });
-        runningTokens += estimateTokens(slot.summary.length * 2);
-      }
-    }
-
-    this.log('info', `[Memory] Over budget — ${allSlots.length - presented.filter(s => s.analysis !== s.summary).length} slot(s) presented as summary-only`);
-    return { short_memory: { ...this.shortMemory }, detail_slots: presented };
+    return {
+      short_memory: { ...this.shortMemory },
+      detail_slots: [...this.detailSlots.values()],
+    };
   }
 
   // ── Shared helpers (extracted from BB+CT duplication) ──

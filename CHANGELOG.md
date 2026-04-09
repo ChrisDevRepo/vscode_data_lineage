@@ -9,6 +9,7 @@
 - **`badge_label` / `note_caption` for column traces** — Column trace hops now accept semantic role labels and per-node captions (matching existing blackboard behavior), enabling selective labeling of key pipeline nodes.
 
 ### Changed
+- **Detail memory grounding** — AI findings are now structured extractive evidence (verbatim SQL fragments, column names, join conditions) instead of generic summaries. Detail memory is delivered at full fidelity — no eviction under budget pressure. Synthesis uses a grounding contract: every claim must cite stored evidence.
 - **`@lineage` always traces hop-by-hop** — Column traces and explorations now always run in full depth, even on small schemas, producing richer annotations and complete column rename tracking.
 - **Badge numbers assigned by data-flow order** — Step numbers are determined by the system based on data-flow depth, not by the AI, ensuring consistent ordering between graph and description.
 - **Progress lines show visited count** — Hop progress changed from "~Y remaining" (fluctuating frontier) to "visited X of S" (monotonically increasing) for clearer trace progress.

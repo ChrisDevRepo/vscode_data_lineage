@@ -16,12 +16,22 @@ const BLOCK = {
 
   /** Step 2 — record detailed findings (→ detail memory slot) */
   writeFindings:
-    'Record detailed findings (~500 chars) — business rules, transforms, column mappings, patterns you discovered.' +
-    ' These are stored in detail memory and available at synthesis.',
+    'Write findings to detail memory — your external storage for this node (target 300-1500 chars, hard limit 5000).\n' +
+    'Each finding must be SELF-CONTAINED — usable at synthesis without re-reading DDL.\n' +
+    'Extract by aspect (include only those present):\n' +
+    '- COLUMNS: key column names and their roles (verbatim from DDL)\n' +
+    '- TRANSFORMS: expressions, CASE/COALESCE logic, computed columns (quote the SQL fragment)\n' +
+    '- JOINS: join conditions and what they connect (table.col = table.col)\n' +
+    '- FILTERS: WHERE/HAVING clauses that encode business rules\n' +
+    '- DATA FLOW: INSERT INTO / SELECT FROM / MERGE targets and sources\n' +
+    '- QUESTION RELEVANCE: how this node answers or advances the user question\n' +
+    'Quote column names and SQL fragments verbatim — paraphrases lose grounding.\n' +
+    'Scale depth to DDL complexity: simple table → 300 chars, complex SP → use full budget.',
 
-  /** Step 3 — one-line summary (→ short memory, visible every hop) */
+  /** Step 3 — summary for short memory (→ incremental index, visible every hop) */
   writeSummary:
-    'Write a one-line summary (~100 chars) — shown in your short memory for ALL future hops.',
+    'Write a summary for short memory (~100-200 chars) — visible every future hop.\n' +
+    'Include: what this node does + what is still open (unanswered questions, paths to explore).',
 
   /** Step 4 — semantic badge + note caption for enrich_view */
   badgeAndNote:
@@ -89,13 +99,19 @@ const BLOCK = {
     'INVALID NODES: working_memory.invalid_nodes lists rejected node IDs. ' +
     'Never ask questions about not_in_model nodes. For out_of_scope nodes, use get_object_detail instead.',
 
-  /** Detail memory at synthesis */
+  /** Detail memory at synthesis — grounding contract */
   detailMemory:
-    'At completion, your detail memory slots are returned with per-node findings.\n' +
+    'SYNTHESIS GROUNDING CONTRACT:\n' +
+    'At completion, your detail memory slots are returned — one per visited node, always at full fidelity.\n' +
+    'These are your ONLY evidence for writing enrich_view. Raw DDL is NOT re-delivered.\n' +
+    'Rules:\n' +
+    '- Every claim must cite a detail slot (node name + quoted SQL evidence from your findings)\n' +
+    '- If a slot lacks evidence for a claim, omit the claim — do not invent\n' +
+    '- Group nodes by role in answering the question, not by schema\n' +
+    '- If detail memory is insufficient for a node, use get_object_detail to re-read its DDL\n' +
     'suggested_sections groups your badge_labels into sections ordered by pipeline depth.\n' +
     'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
-    'adjust labels if needed, and write text per section from your detail memory findings. ' +
-    'Reference specific findings, not general impressions.',
+    'adjust labels if needed, and write text per section from your detail memory findings.',
 } as const;
 
 // ─── Mode Prompts (composed from blocks) ────────────────────────────────────
