@@ -73,6 +73,7 @@ export interface SmResult {
   edges: Array<[string, string, string]>;
   suggested_labels: Array<{ node_id: string; text: string }>;
   suggested_notes: Array<{ node_id: string; text: string }>;
+  suggested_sections: Array<{ label: string; node_ids: string[] }>;
   short_memory: ShortMemory;
   detail_slots: DetailSlot[];
   stats: Record<string, number>;
@@ -100,12 +101,6 @@ export interface IHopStateMachine {
 const BFS_SCOPE_CAP = 10_000;
 const DEFAULT_FINDINGS_LIMIT = 5000;
 const DEFAULT_SUMMARY_LIMIT = 500;
-/**
- * Fraction of model's maxInputTokens reserved for detail memory in getResult().
- * The rest is needed for: system prompt, history, short memory, user prompt.
- * This is a presentation budget — data is never lost, just summarized in the response.
- */
-const DETAIL_MEMORY_FRACTION = 0.25;
 
 // ─── Abstract Base ──────────────────────────────────────────────────────────
 
@@ -123,8 +118,6 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected readonly filterSchemas: Set<string> | null;
   protected readonly findingsHardLimit: number;
   protected readonly summaryHardLimit: number;
-  protected readonly maxInputTokens: number;
-  protected readonly detailMemoryBudget: number;
 
   // ── Shared mutable state ──
   protected _status: SmStatus = 'created';
@@ -151,7 +144,6 @@ export abstract class HopStateMachine implements IHopStateMachine {
       activeFilter?: SerializedFilterState | null;
       findingsHardLimit?: number;
       summaryHardLimit?: number;
-      maxInputTokens?: number;  // model's context window size — budget derived from this
     },
     store?: ColumnStore | null,
   ) {
@@ -165,10 +157,6 @@ export abstract class HopStateMachine implements IHopStateMachine {
       : null;
     this.findingsHardLimit = config.findingsHardLimit ?? DEFAULT_FINDINGS_LIMIT;
     this.summaryHardLimit = config.summaryHardLimit ?? DEFAULT_SUMMARY_LIMIT;
-    // Derive detail memory budget from model's context window.
-    // Default 128K tokens if model doesn't report (GPT-4o/Claude level).
-    this.maxInputTokens = config.maxInputTokens ?? 128_000;
-    this.detailMemoryBudget = Math.floor(this.maxInputTokens * DETAIL_MEMORY_FRACTION);
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -459,6 +447,24 @@ export abstract class HopStateMachine implements IHopStateMachine {
       text: s.note_caption ?? s.summary,
     }));
 
+    // Group per-node labels into sections by shared badge_label, depth-ordered.
+    // Nodes without badge_label are passthrough — excluded from sections.
+    const sectionMap = new Map<string, string[]>();
+    const sectionOrder: string[] = [];
+    for (const slot of orderedSlots) {
+      const label = slot.badge_label ? stripNum(slot.badge_label) : undefined;
+      if (!label) continue;
+      if (!sectionMap.has(label)) {
+        sectionMap.set(label, []);
+        sectionOrder.push(label);
+      }
+      sectionMap.get(label)!.push(slot.nodeId);
+    }
+    const suggested_sections = sectionOrder.map(label => ({
+      label,
+      node_ids: sectionMap.get(label)!,
+    }));
+
     // Attach both memory tiers
     const memory = this.getMemoryForSynthesis();
 
@@ -475,6 +481,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
       edges,
       suggested_labels,
       suggested_notes,
+      suggested_sections,
       short_memory: memory.short_memory,
       detail_slots: memory.detail_slots,
       stats: {

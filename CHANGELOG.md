@@ -4,10 +4,15 @@
 
 ### Added
 - **Structured graph descriptions** — Graph annotations are now organized into labeled sections (e.g. "Source", "ETL", "Target") ordered by data-flow depth. Badge numbers on the graph always match heading numbers in the description panel.
+- **"Show in Graph" button after trace/exploration** — A one-click button now appears after column trace or blackboard exploration completes, with follow-up suggestions for visualization and detailed explanation.
+- **`suggested_sections` in SM completion result** — The state machine groups per-hop `badge_label` assignments into depth-ordered section skeletons, giving the AI a structured starting point for graph annotations instead of relying on prompt-only ordering.
+- **`badge_label` / `note_caption` for column traces** — Column trace hops now accept semantic role labels and per-node captions (matching existing blackboard behavior), enabling selective labeling of key pipeline nodes.
 
 ### Changed
 - **`@lineage` always traces hop-by-hop** — Column traces and explorations now always run in full depth, even on small schemas, producing richer annotations and complete column rename tracking.
 - **Badge numbers assigned by data-flow order** — Step numbers are determined by the system based on data-flow depth, not by the AI, ensuring consistent ordering between graph and description.
+- **Progress lines show visited count** — Hop progress changed from "~Y remaining" (fluctuating frontier) to "visited X of S" (monotonically increasing) for clearer trace progress.
+- **Selective labeling guidance** — AI prompts now instruct 3–6 logical sections per pipeline (not one per node), with passthrough nodes mentioned in text only and same-role nodes grouped under shared labels.
 
 ### Fixed
 - **Schema-aware AI queries** — When a schema filter is active in the GUI, `@lineage` now scopes all searches and analysis to those schemas by default. Expanding scope requires explicit confirmation.

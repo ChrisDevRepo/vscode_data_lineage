@@ -53,6 +53,9 @@ sections:
     the reader to follow. label has no leading number (system assigns step numbers).
 
     Same label on multiple nodes groups them. One section per unique label.
+    Create 3-6 sections that capture the pipeline's logical stages, not one per node.
+    Multiple nodes under one label = one section. Unlabeled nodes go in section text, not node_ids.
+    Use the suggested_sections from the completion result as your starting structure.
     Passthrough nodes (rename-only views, simple SELECTs) — mention in one sentence inside
     the section that uses them, do NOT include in node_ids, no separate section.
 

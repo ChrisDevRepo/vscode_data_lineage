@@ -711,7 +711,7 @@
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
         "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, and text annotations. The graph comes from a completed state-machine exploration (column trace or blackboard) — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last column_trace or blackboard exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration or start_column_trace first. Provide name and summary (both required). Document model: sections[] is the core — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = the primary key AND the chip shown on all nodes in node_ids. System numbers labels in YOUR WRITTEN ORDER — write sections in the pipeline sequence you want the reader to follow. Passthrough nodes: mention in section text only — omit from node_ids, no separate section. Reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered label ('1 Source'), node_ids with unknown IDs, description instead of sections. GOOD: { label: 'Source', node_ids: ['dbo.RawOrders', 'dbo.SupplierPrices'], text: 'Both tables are raw...' }",
+        "modelDescription": "Enrich the stored result graph from your last column_trace or blackboard exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration or start_column_trace first. Provide name and summary (both required). Document model: sections[] is the core — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = the primary key AND the chip shown on all nodes in node_ids. The completion result includes suggested_sections — a pre-grouped, depth-ordered section skeleton built from your per-hop badge_labels. Use this as your starting structure: the grouping reflects your own role labels, the order reflects pipeline depth. Adjust labels, merge or split groups as needed, then add text from detail memory per section. Not every node needs a badge — only nodes you labeled during hops. System numbers labels in YOUR WRITTEN ORDER. Passthrough nodes: mention in section text only — omit from node_ids, no separate section. Reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered label ('1 Source'), node_ids with unknown IDs, description instead of sections. GOOD: { label: 'Source', node_ids: ['dbo.RawOrders', 'dbo.SupplierPrices'], text: 'Both tables are raw...' }",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -987,6 +987,14 @@
                   "verdict"
                 ]
               }
+            },
+            "badge_label": {
+              "type": "string",
+              "description": "Short semantic role label for this focus node (2-4 words), e.g. 'Source', 'ETL', 'Staging'. Used to build suggested_sections in the completion result. Skip for passthrough nodes."
+            },
+            "note_caption": {
+              "type": "string",
+              "description": "One-line caption for this focus node — what it does in this flow, e.g. 'Computes TotalRevenue = Qty × UnitPrice at INSERT'."
             }
           },
           "required": [

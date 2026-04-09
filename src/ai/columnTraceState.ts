@@ -424,6 +424,8 @@ export class ColumnTraceState extends HopStateMachine {
   submitVerdicts(params: {
     focusNodeId: string;
     notes?: string;              // free-form AI findings for the focus node
+    badge_label?: string;        // semantic role label for enrich_view (e.g. "Source", "ETL")
+    note_caption?: string;       // one-line caption for enrich_view note
     verdicts: Array<{
       nodeId: string;
       verdict: HopVerdict;
@@ -519,7 +521,10 @@ export class ColumnTraceState extends HopStateMachine {
       if (focusChain) {
         focusChain.notes = params.notes;
         // Wire CT to base class memory (matches BB pattern at blackboardState.ts:328-335)
-        this.storeDetail(this.currentFocusNodeId, params.notes, focusChain.summary || '', {});
+        this.storeDetail(this.currentFocusNodeId, params.notes, focusChain.summary || '', {
+          badge_label: params.badge_label,
+          note_caption: params.note_caption,
+        });
         this.updateShortMemory(`${focusChain.name}: ${(focusChain.summary || params.notes).slice(0, 100)}`);
       }
     }
@@ -680,6 +685,7 @@ export class ColumnTraceState extends HopStateMachine {
     column_rejections?: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }>;
     suggested_labels: Array<{ node_id: string; text: string }>;
     suggested_notes:  Array<{ node_id: string; text: string }>;
+    suggested_sections: Array<{ label: string; node_ids: string[] }>;
     short_memory: ShortMemory;
     detail_slots: DetailSlot[];
   } | { error: string; hint?: string } {
@@ -744,10 +750,38 @@ export class ColumnTraceState extends HopStateMachine {
 
     // Derive badge/note suggestions from chain entries.
     // Chain is already the curated traced set — every entry is a relevant node.
-    // name  = natural badge label (parallel to BB's badge_label ?? name).
+    // badge_label from detail slot (AI-provided) falls back to node name.
     // notes = AI's per-hop findings (richer). summary = verdict reason (always set).
-    const suggested_labels = chainArr.map(e => ({ node_id: e.nodeId, text: e.name }));
-    const suggested_notes  = chainArr.map(e => ({ node_id: e.nodeId, text: e.notes ?? e.summary }));
+    const BADGE_NUM_RE = /^\d+[\.\s]+/;
+    const stripBadgeNum = (s: string) => s.replace(BADGE_NUM_RE, '').trim();
+    const suggested_labels = chainArr.map(e => {
+      const slot = this.detailSlots.get(e.nodeId);
+      const label = slot?.badge_label ? stripBadgeNum(slot.badge_label) : e.name;
+      return { node_id: e.nodeId, text: label };
+    });
+    const suggested_notes  = chainArr.map(e => {
+      const slot = this.detailSlots.get(e.nodeId);
+      return { node_id: e.nodeId, text: slot?.note_caption ?? e.notes ?? e.summary };
+    });
+
+    // Group per-node labels into sections by shared badge_label, depth-ordered.
+    // Uses the same depth ordering as the parent's getResult() — chainArr is already in BFS order.
+    const sectionMap = new Map<string, string[]>();
+    const sectionOrder: string[] = [];
+    for (const sl of suggested_labels) {
+      const slot = this.detailSlots.get(sl.node_id);
+      if (!slot?.badge_label) continue; // Only nodes with explicit badge_label form sections
+      const label = stripBadgeNum(slot.badge_label);
+      if (!sectionMap.has(label)) {
+        sectionMap.set(label, []);
+        sectionOrder.push(label);
+      }
+      sectionMap.get(label)!.push(sl.node_id);
+    }
+    const suggested_sections = sectionOrder.map(label => ({
+      label,
+      node_ids: sectionMap.get(label)!,
+    }));
 
     // Attach both memory tiers (matches BB pattern via buildSharedResult → getMemoryForSynthesis)
     const memory = this.getMemoryForSynthesis();
@@ -761,6 +795,7 @@ export class ColumnTraceState extends HopStateMachine {
       ...(this.rejectionHistory.length > 0 && { column_rejections: this.rejectionHistory }),
       suggested_labels,
       suggested_notes,
+      suggested_sections,
       short_memory: memory.short_memory,
       detail_slots: memory.detail_slots,
     };

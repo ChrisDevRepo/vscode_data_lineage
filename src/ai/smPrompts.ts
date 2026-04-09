@@ -25,8 +25,11 @@ const BLOCK = {
 
   /** Step 4 — semantic badge + note caption for enrich_view */
   badgeAndNote:
-    'badge_label (2-4 words): semantic label for the view, e.g. "Source", "ETL", "Staging".\n' +
-    'note_caption (1 line): what this node does in this flow, e.g. "Entry point — TRUNCATEs from staging".',
+    'badge_label (2-4 words): semantic ROLE label, e.g. "Source", "ETL", "Staging", "Final output".\n' +
+    'SELECTIVITY: Only assign badge_label to nodes with distinct pipeline roles. ' +
+    'Passthrough nodes (SELECT *, simple staging, lookup joins) — skip badge_label, they will be mentioned in section text.\n' +
+    'GROUPING: Nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
+    'note_caption (1 line): what this node does in this flow.',
 
   /** Self-ask — answer your own question from the previous hop */
   selfAsk:
@@ -74,7 +77,7 @@ const BLOCK = {
 
   /** Progress line — BB only */
   progress:
-    'After each submit_findings call, emit ONE line: "Hop N · [node_name] → verdict · ~Y nodes remaining".',
+    'After each submit_findings call, emit ONE line: "Hop N · [node_name] → verdict (visited X of S)".',
 
   /** Early completion — BB only */
   earlyComplete:
@@ -88,8 +91,11 @@ const BLOCK = {
 
   /** Detail memory at synthesis */
   detailMemory:
-    'At completion, your detail memory slots are returned with your findings per node.\n' +
-    'Use these to write enrich_view sections — they replace raw DDL. Reference specific findings, not general impressions.',
+    'At completion, your detail memory slots are returned with per-node findings.\n' +
+    'suggested_sections groups your badge_labels into sections ordered by pipeline depth.\n' +
+    'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
+    'adjust labels if needed, and write text per section from your detail memory findings. ' +
+    'Reference specific findings, not general impressions.',
 } as const;
 
 // ─── Mode Prompts (composed from blocks) ────────────────────────────────────

@@ -76,6 +76,7 @@ interface ResultGraph {
   notes?: Array<{ nodeId: string; summary: string }>;  // BB/CT note summaries for enrich_view auto-populate
   suggested_labels?: Array<{ node_id: string; text: string }>;  // SM: BB from badge_label, CT from chain name
   suggested_notes?: Array<{ node_id: string; text: string }>;   // SM: BB from note_caption, CT from notes/summary
+  suggested_sections?: Array<{ label: string; node_ids: string[] }>;  // SM: grouped badge_labels, depth-ordered
 }
 let _resultGraph: ResultGraph | null = null;
 
@@ -90,6 +91,7 @@ function storeBbResultGraph(fullResult: {
   edges: [string, string, string][];
   suggested_labels?: Array<{ node_id: string; text: string }>;
   suggested_notes?: Array<{ node_id: string; text: string }>;
+  suggested_sections?: Array<{ label: string; node_ids: string[] }>;
 }) {
   const v: Record<string, NodeRole> = {};
   for (const n of fullResult.fullNodes) {
@@ -107,6 +109,7 @@ function storeBbResultGraph(fullResult: {
     notes: fullResult.notes.map(n => ({ nodeId: n.nodeId, summary: n.summary })),
     suggested_labels: fullResult.suggested_labels,
     suggested_notes: fullResult.suggested_notes,
+    suggested_sections: fullResult.suggested_sections,
   };
   logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${nodeIds.length} nodes (${fullResult.notes.length} noted, ${extraCount} origin+bridges), ${fullResult.edges.length} edges`);
 }
@@ -121,6 +124,7 @@ function storeCtResultGraph(fullResult: {
   outOfScope: Array<{ nodeId: string }>;
   suggested_labels: Array<{ node_id: string; text: string }>;
   suggested_notes:  Array<{ node_id: string; text: string }>;
+  suggested_sections: Array<{ label: string; node_ids: string[] }>;
 }) {
   const chainIds = new Set(fullResult.chain.map(c => c.nodeId));
   const allNodeIds = fullResult.fullNodes.map(n => n.id as string);
@@ -136,6 +140,7 @@ function storeCtResultGraph(fullResult: {
     notes: fullResult.chain.map(c => ({ nodeId: c.nodeId, summary: c.summary })),
     suggested_labels: fullResult.suggested_labels,
     suggested_notes:  fullResult.suggested_notes,
+    suggested_sections: fullResult.suggested_sections,
   };
   logDebug(outputChannel, 'AI', `[ResultGraph] stored from CT: ${allNodeIds.length} nodes (${chainIds.size} traced, ${allNodeIds.length - chainIds.size} passthrough), ${fullResult.edges.length} edges`);
 }
@@ -725,6 +730,8 @@ export function activate(context: vscode.ExtensionContext) {
           const input = options.input as {
             focus_node_id?: string;
             notes?: string;
+            badge_label?: string;
+            note_caption?: string;
             verdicts?: Array<{ neighbor_id?: string; verdict?: string; columns?: string[]; summary?: string; question?: string }>;
           };
           const focusNodeId = input.focus_node_id ?? '';
@@ -737,7 +744,10 @@ export function activate(context: vscode.ExtensionContext) {
           }));
           logInfo(outputChannel, 'AI', `submit_hop_analysis: focus=${focusNodeId}, ${verdicts.length} verdict(s)`);
 
-          const submitResult = _columnTraceState.submitVerdicts({ focusNodeId, notes: input.notes, verdicts });
+          const submitResult = _columnTraceState.submitVerdicts({
+            focusNodeId, notes: input.notes, verdicts,
+            badge_label: input.badge_label, note_caption: input.note_caption,
+          });
           if ('error' in submitResult) return logAndReturn('submit_hop_analysis', submitResult);
 
           const hopResult = _columnTraceState.getHopContext();
@@ -1477,8 +1487,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
         logDebug(outputChannel, 'AI', `Prompt: "${trunc(request.prompt, 200)}"`);
         logInfo(outputChannel, 'AI', `Session end`);
-        // B3: "Show in Graph" button after BFS trace — triggers AI to create an annotated view
-        if (activePanel && toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'))) {
+        // B3: "Show in Graph" button — after BFS trace or SM completion (CT/BB)
+        const alreadyEnriched = toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_enrich_view'));
+        const hasBfs = toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'));
+        const smComplete = ctSnap?.status === 'complete' || bbSnap?.status === 'complete';
+        if (activePanel && !alreadyEnriched && (hasBfs || smComplete)) {
           stream.button({
             command: 'dataLineageViz.aiCreateView',
             title: '$(type-hierarchy-sub) Show in Graph',
@@ -1536,6 +1549,11 @@ export function activate(context: vscode.ExtensionContext) {
         followups.push({ prompt: 'What other objects reference this one?', label: 'Find references' });
       } else if (lastTools.some(t => t.includes('analysis'))) {
         followups.push({ prompt: 'Show me the details of the top hub', label: 'Explore top hub' });
+      } else if (lastTools.some(t => t.includes('enrich_view'))) {
+        followups.push({ prompt: 'Explain the lineage in more detail', label: 'Detailed explanation' });
+      } else if (lastTools.some(t => t.includes('submit_hop') || t.includes('submit_findings'))) {
+        followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
+        followups.push({ prompt: 'Explain the full lineage path in detail', label: 'Detailed explanation' });
       }
 
       return followups;
