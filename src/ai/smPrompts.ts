@@ -14,19 +14,27 @@ const BLOCK = {
   readDdl:
     'Read the focus node DDL/columns carefully.',
 
+  /** Node classification — shared concept across all SM types */
+  verdictCategories:
+    'NODE CLASSIFICATION (three categories):\n' +
+    '- relevant (BB) / trace (CT): node has business logic, transforms, or answers the question → full analysis + badge_label\n' +
+    '- pass: node is in the path but no transforms (SELECT *, staging, identity view) → summary only, no badge_label\n' +
+    '- irrelevant (BB) / prune (CT): node has no connection to the question → removed from graph',
+
   /** Step 2 — record detailed findings (→ detail memory slot) */
   writeFindings:
-    'Write findings to detail memory — your external storage for this node (target 300-1500 chars, hard limit 5000).\n' +
-    'Each finding must be SELF-CONTAINED — usable at synthesis without re-reading DDL.\n' +
-    'Extract by aspect (include only those present):\n' +
-    '- COLUMNS: key column names and their roles (verbatim from DDL)\n' +
-    '- TRANSFORMS: expressions, CASE/COALESCE logic, computed columns (quote the SQL fragment)\n' +
-    '- JOINS: join conditions and what they connect (table.col = table.col)\n' +
-    '- FILTERS: WHERE/HAVING clauses that encode business rules\n' +
-    '- DATA FLOW: INSERT INTO / SELECT FROM / MERGE targets and sources\n' +
-    '- QUESTION RELEVANCE: how this node answers or advances the user question\n' +
-    'Quote column names and SQL fragments verbatim — paraphrases lose grounding.\n' +
-    'Scale depth to DDL complexity: simple table → 300 chars, complex SP → use full budget.',
+    'Write findings to detail memory — depth depends on classification:\n' +
+    '- relevant/trace → full analysis (300-1500 chars, hard limit 5000). Self-contained, usable at synthesis.\n' +
+    '  Extract by aspect (include only those present):\n' +
+    '  COLUMNS: key column names and roles (verbatim from DDL)\n' +
+    '  TRANSFORMS: expressions, CASE/COALESCE, computed columns (quote the SQL fragment)\n' +
+    '  JOINS: join conditions (table.col = table.col)\n' +
+    '  FILTERS: WHERE/HAVING business rules\n' +
+    '  DATA FLOW: INSERT INTO / SELECT FROM / MERGE\n' +
+    '  QUESTION RELEVANCE: how this node answers the user question\n' +
+    '  Quote SQL verbatim — paraphrases lose grounding.\n' +
+    '- pass → summary only (~100-200 chars): what passes through, from where to where.\n' +
+    '- irrelevant/prune → brief summary only.',
 
   /** Step 3 — summary for short memory (→ incremental index, visible every hop) */
   writeSummary:
@@ -47,7 +55,7 @@ const BLOCK = {
 
   /** Verdict neighbors — shared by CT and CT_DEP */
   verdictNeighbors:
-    'Verdict each neighbor: trace (follow this path), prune (cut), or pass (skip detail).\n' +
+    'Verdict each neighbor: trace (has logic, follow with columns), pass (no transforms, children queued), prune (irrelevant, cut).\n' +
     'Submit a verdict for every neighbor — skipped neighbors are silently lost.',
 
   /** Column tracking — CT only */
@@ -120,6 +128,9 @@ const BLOCK = {
 export function buildBbPrompt(): string {
   return [
     'EXPLORATION MODE: The state machine presents nodes one at a time with full DDL and metadata.',
+    '',
+    BLOCK.verdictCategories,
+    '',
     'For each node:',
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
@@ -142,6 +153,9 @@ export function buildBbPrompt(): string {
 export function buildCtPrompt(): string {
   return [
     'COLUMN TRACE MODE: For each hop, analyze the focus node.',
+    '',
+    BLOCK.verdictCategories,
+    '',
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
     `3. ${BLOCK.writeSummary}`,
@@ -162,6 +176,9 @@ export function buildCtPrompt(): string {
 export function buildCtDepPrompt(): string {
   return [
     'DEPENDENCY TRACE MODE: For each hop, analyze the focus node.',
+    '',
+    BLOCK.verdictCategories,
+    '',
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
     `3. ${BLOCK.writeSummary}`,

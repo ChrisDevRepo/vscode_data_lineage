@@ -273,7 +273,7 @@ export class BlackboardState extends HopStateMachine {
     summary: string;
     tags?: string[];
     questions?: Array<{ nodeId: string; question: string }>;
-    verdict: 'relevant' | 'noted' | 'irrelevant';
+    verdict: 'relevant' | 'pass' | 'irrelevant';
     pruneIds?: string[];
     addIds?: string[];
     complete?: boolean;
@@ -291,7 +291,14 @@ export class BlackboardState extends HopStateMachine {
       return { error: `Cannot submit findings in status "${this._status}"` };
     }
 
-    const { focusNodeId, findings, summary, questions, verdict } = params;
+    const { focusNodeId, findings, summary, questions } = params;
+
+    // Coerce verdict — VS Code doesn't enforce JSON Schema enums on tool inputs
+    const rawVerdict = params.verdict as string;
+    const verdict: 'relevant' | 'pass' | 'irrelevant' =
+      rawVerdict === 'relevant' || rawVerdict === 'pass' || rawVerdict === 'irrelevant' ? rawVerdict
+      : rawVerdict === 'noted' ? 'pass'   // back-compat: treat legacy 'noted' as 'pass'
+      : 'relevant';                        // unknown → default to relevant (safe)
 
     // Coerce AI inputs — VS Code doesn't enforce JSON Schema types on tool inputs
     const tags = Array.isArray(params.tags) ? params.tags
@@ -322,10 +329,11 @@ export class BlackboardState extends HopStateMachine {
       return { error: 'summary_too_long', limit: this.summaryHardLimit };
     }
 
-    // Store detail memory slot
-    this.storeDetail(focusNodeId, verdict === 'irrelevant' ? summary : findings, summary, {
+    // Store detail memory slot — passthrough and irrelevant store summary only (minimal memory)
+    const useFullFindings = verdict === 'relevant';
+    this.storeDetail(focusNodeId, useFullFindings ? findings : summary, summary, {
       tags,
-      badge_label: params.badge_label,
+      badge_label: verdict === 'relevant' ? params.badge_label : undefined,
       note_caption: params.note_caption,
     });
 

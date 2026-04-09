@@ -1,5 +1,22 @@
 # AI Prompt Changelog
 
+## 2026-04-09 — Unified node classification: relevant / pass / irrelevant
+
+**Problem:** BB had three verdicts (`relevant`, `noted`, `irrelevant`) but `noted` was dead code — zero behavioral difference from `relevant` in the SM. AI used it as a safe middle ground, producing no pruning and visiting every node. CT already had `pass` for passthrough nodes.
+
+**Change:** Replaced `noted` with `pass` — harmonized with CT. Three clear categories, one shared `BLOCK.verdictCategories` block:
+- `relevant` (BB) / `trace` (CT): business logic → full findings + badge_label
+- `pass`: in the path, no transforms → summary only, no badge_label (SM enforces)
+- `irrelevant` (BB) / `prune` (CT): no connection → cascade prune
+
+**Code:** `blackboardState.ts` verdict type + runtime coercion (legacy `noted` → `pass`). `pass` verdict stores summary only + strips badge_label. `package.json` enum + modelDescription updated. `extension.ts` type cast updated.
+
+**Prompt:** New shared `BLOCK.verdictCategories` injected into all 3 mode prompts. `BLOCK.writeFindings` references categories for findings depth. `BLOCK.verdictNeighbors` (CT) updated to match.
+
+**Eval:** bb-q1 PASS (11/11, 14 hops, 3 pruned), bb-q2 PASS (8/8, 8 hops), bb-q4 working (15 relevant + 4 pass + 4 pruned).
+
+---
+
 ## 2026-04-09 — Detail memory grounding: structured extractive findings + synthesis contract
 
 **Problem:** `BLOCK.writeFindings` said "~500 chars" with no structure → shallow, generic detail slots. `BLOCK.detailMemory` was 2 vague lines → ungrounded synthesis. `getMemoryForSynthesis()` evicted oldest slots to summary-only under budget pressure → destroyed AI's evidence.

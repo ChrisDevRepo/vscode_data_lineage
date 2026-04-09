@@ -864,7 +864,7 @@ export function activate(context: vscode.ExtensionContext) {
           const focusNodeId = input.focus_node_id ?? '';
           const findings = input.findings ?? '';
           const summary = input.summary ?? '';
-          const verdict = input.verdict as 'relevant' | 'noted' | 'irrelevant' | undefined;
+          const verdict = input.verdict as 'relevant' | 'pass' | 'irrelevant' | undefined;
           if (!verdict || !['relevant', 'noted', 'irrelevant'].includes(verdict)) {
             return logAndReturn('submit_findings', { error: 'verdict_required', hint: 'verdict must be "relevant", "noted", or "irrelevant".' });
           }
