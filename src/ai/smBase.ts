@@ -78,6 +78,23 @@ export interface SmResult {
   stats: Record<string, number>;
 }
 
+/**
+ * Public caller contract for hop-by-hop state machines.
+ *
+ * Both ColumnTraceState (CT) and BlackboardState (BB) satisfy this interface.
+ * Callers that only need lifecycle checks (extension.ts phase logic) should
+ * type against IHopStateMachine rather than the concrete subclass.
+ *
+ * Note: init(), getHopContext(), and the submission methods (submitVerdicts / submitFindings)
+ * have SM-specific signatures and are NOT part of this shared interface.
+ * Use the concrete subclass type for handlers that call those methods.
+ */
+export interface IHopStateMachine {
+  readonly status: SmStatus;
+  readonly slotCount: number;
+  readonly coveragePct: number;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const BFS_SCOPE_CAP = 10_000;
@@ -92,7 +109,7 @@ const DETAIL_MEMORY_FRACTION = 0.25;
 
 // ─── Abstract Base ──────────────────────────────────────────────────────────
 
-export abstract class HopStateMachine {
+export abstract class HopStateMachine implements IHopStateMachine {
 
   // ── Shared readonly state ──
   protected readonly model: DatabaseModel;

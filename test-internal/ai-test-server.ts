@@ -49,7 +49,8 @@ import { ColumnStore } from '../src/engine/columnStore.js';
 import { populateColumnStore } from '../src/engine/modelBuilder.js';
 import { buildBareGraph } from '../src/ai/graphUtils.js';
 import { dispatchTool } from './dispatcher.js';
-import { buildSystemPromptBase, buildCtModePrompt, BB_MODE_PROMPT } from '../src/ai/prompts.js';
+import { buildSystemPromptBase } from '../src/ai/prompts.js';
+import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt } from '../src/ai/smPrompts.js';
 import type { ColumnTraceState } from '../src/ai/columnTraceState.js';
 import type { BlackboardState } from '../src/ai/blackboardState.js';
 import type { SerializedFilterState } from '../src/engine/projectStore.js';
@@ -317,9 +318,9 @@ async function main() {
         const promptSession = sessions.get(qsId);
         return respond(res, 200, {
           system: buildBridgeSystemPrompt(promptSession?.filter ?? null, loadedTemplates),
-          ct_mode_columns: buildCtModePrompt(true),
-          ct_mode_deps: buildCtModePrompt(false),
-          bb_mode: BB_MODE_PROMPT,
+          ct_mode_columns: buildCtPrompt(),
+          ct_mode_deps: buildCtDepPrompt(),
+          bb_mode: buildBbPrompt(),
           tool_descriptions: TOOL_DEFS,
         });
       }

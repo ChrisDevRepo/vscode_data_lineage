@@ -516,7 +516,12 @@ export class ColumnTraceState extends HopStateMachine {
           this.chain.set(this.currentFocusNodeId, focusChain);
         }
       }
-      if (focusChain) focusChain.notes = params.notes;
+      if (focusChain) {
+        focusChain.notes = params.notes;
+        // Wire CT to base class memory (matches BB pattern at blackboardState.ts:328-335)
+        this.storeDetail(this.currentFocusNodeId, params.notes, focusChain.summary || '', {});
+        this.updateShortMemory(`${focusChain.name}: ${(focusChain.summary || params.notes).slice(0, 100)}`);
+      }
     }
     let advanced = 0;
     for (const v of params.verdicts) {
@@ -612,6 +617,10 @@ export class ColumnTraceState extends HopStateMachine {
           summary: v.summary ?? '',
           boundaryFlag: boundary,
         });
+        // Wire traced node to base class memory
+        if (v.summary) {
+          this.storeDetail(v.nodeId, v.summary, v.summary, {});
+        }
       }
 
       if (boundary === 'none') {

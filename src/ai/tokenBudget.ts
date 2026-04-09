@@ -18,7 +18,7 @@
 // ─── The single budget constant ─────────────────────────────────────────────
 
 /** Delivery mode gate for catalog/detail tools: max estimated tokens for inline delivery. */
-export const INLINE_TOKEN_BUDGET = 20_000; // ~80K chars
+export const INLINE_TOKEN_BUDGET = 5_000; // ~20K chars — lowered to force SM hop-by-hop for smaller scopes
 
 /** Effective budget: returns INLINE_TOKEN_BUDGET (no runtime override since ai.inlineTokenBudget setting was removed). */
 export function getEffectiveBudget(): number {
