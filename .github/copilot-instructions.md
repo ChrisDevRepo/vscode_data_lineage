@@ -228,7 +228,7 @@ npm test                               # all suites must pass
 | **bb_done** | `lineage` | All 12 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
 
 **Key files:**
-- `src/ai/tokenBudget.ts` — Token budget: `INLINE_TOKEN_BUDGET` (20K tokens), `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`. Budget gates catalog/detail delivery; CT/BB always use state machine. Zero VS Code imports.
+- `src/ai/tokenBudget.ts` — Token budget: `ai.inlineTokenBudget` setting (default 10K tokens), `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`. Budget gates catalog/detail delivery; CT/BB always use state machine. Zero VS Code imports.
 - `src/ai/prompts.ts` — Central prompt dispatcher: `buildSystemPromptBase()`, `CT_MODE_PROMPT`, `CT_DEP_MODE_PROMPT`, `BB_MODE_PROMPT`. Zero VS Code imports.
 - `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates catalog/detail delivery. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
 - `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
@@ -254,8 +254,8 @@ npm test                               # all suites must pass
 | `lineage_submit_findings` | lineage, lineage-bb | read | Submit findings + summary, get next hop or final result |
 
 **Two guards** (`src/ai/tokenBudget.ts`):
-1. `INLINE_TOKEN_BUDGET` (20K tokens) — catalog/detail delivery gate: inline vs on_demand hint. CT/BB always use state machine regardless.
-2. `ai.maxRounds` (VS Code setting, default 25) — hard stop on tool rounds
+1. `ai.inlineTokenBudget` (VS Code setting, default 10K tokens) — catalog/detail delivery gate: inline vs on_demand hint. CT/BB always use state machine regardless.
+2. `ai.maxRounds` (VS Code setting, default 50) — hard stop on tool rounds
 
 **Zero-truncation guarantee:** No tool response is ever truncated, capped, or sliced. Fits budget → full data inline. Exceeds budget → state machine or on_demand hint. No per-tool caps exist.
 

@@ -28,8 +28,8 @@ import {
 
 // ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
 
-import { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
-export { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget } from './tokenBudget';
+import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
+export { shouldInline, estimateTokens, getEffectiveBudget, setInlineTokenBudget } from './tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
 const BFS_INLINE_NODE_CAP = 200;

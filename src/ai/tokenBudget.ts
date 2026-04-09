@@ -2,7 +2,7 @@
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
  * Two guards drive the system:
- *   1. INLINE_TOKEN_BUDGET (this file) — catalog/detail delivery: inline vs on_demand hint
+ *   1. ai.inlineTokenBudget (VS Code setting, default 10K) — catalog/detail delivery: inline vs on_demand hint
  *   2. ai.maxRounds (VS Code setting)  — hard stop on tool rounds (user-configurable)
  *
  * CT and BB always use state machine delivery (hop-by-hop) regardless of budget.
@@ -15,14 +15,22 @@
  * Zero VS Code imports — pure functions for testability.
  */
 
-// ─── The single budget constant ─────────────────────────────────────────────
+// ─── Inline token budget (configurable via VS Code setting) ────────────────
 
-/** Delivery mode gate for catalog/detail tools: max estimated tokens for inline delivery. */
-export const INLINE_TOKEN_BUDGET = 5_000; // ~20K chars — lowered to force SM hop-by-hop for smaller scopes
+/** Default inline token budget — overridden per-request from VS Code setting `ai.inlineTokenBudget`. */
+const DEFAULT_INLINE_TOKEN_BUDGET = 10_000;
 
-/** Effective budget: returns INLINE_TOKEN_BUDGET (no runtime override since ai.inlineTokenBudget setting was removed). */
+/** Runtime budget — set from VS Code setting at each request start. */
+let _inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
+
+/** Set from VS Code setting (called per-request in extension.ts). */
+export function setInlineTokenBudget(value: number): void {
+  _inlineTokenBudget = value;
+}
+
+/** Returns the configured inline token budget. */
 export function getEffectiveBudget(): number {
-  return INLINE_TOKEN_BUDGET;
+  return _inlineTokenBudget;
 }
 
 // ─── Estimation ─────────────────────────────────────────────────────────────

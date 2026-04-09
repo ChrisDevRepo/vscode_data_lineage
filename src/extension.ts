@@ -6,7 +6,7 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  estimateTokens,
+  estimateTokens, setInlineTokenBudget,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
@@ -721,7 +721,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (!isAiEnabled()) return disabled();
           if (!_columnTraceState) {
             logWarn(outputChannel, 'AI', `submit_hop_analysis: no active trace state machine`);
-            return logAndReturn('submit_hop_analysis', { error: 'no_active_trace', action_required: 'analyze_and_respond', hint: 'No active state machine. If you received an inline result, analyze that data and respond to the user. Do NOT call any more tools.' });
+            return logAndReturn('submit_hop_analysis', { error: 'no_active_trace', hint: 'No active column trace. To create an annotated view, call start_column_trace first.' });
           }
 
           const inputErr = validateToolInput(options.input, { focus_node_id: 'string', verdicts: 'array' });
@@ -928,9 +928,10 @@ export function activate(context: vscode.ExtensionContext) {
   const participant = vscode.chat.createChatParticipant(
     'dataLineageViz.lineage',
     async (request, context, stream, token): Promise<vscode.ChatResult> => {
-      // Update model context window once per request
+      // Update model context window + inline budget once per request
       _aiMaxInputTokens = request.model.maxInputTokens;
       _aiModelName = request.model.name || request.model.id;
+      setInlineTokenBudget(vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.inlineTokenBudget', 10_000));
       _columnTraceState = null; // reset per request — each trace gets a fresh state machine
       _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
       // _resultGraph intentionally NOT reset — it persists across turns so the

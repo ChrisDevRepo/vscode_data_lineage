@@ -425,6 +425,13 @@
             "maximum": 100,
             "markdownDescription": "Maximum tool-call rounds per `@lineage` request. Increase for complex explorations on deep graphs. Each round is one AI reasoning step + tool call."
           },
+          "dataLineageViz.ai.inlineTokenBudget": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 1000,
+            "maximum": 100000,
+            "markdownDescription": "Maximum estimated tokens for inline delivery. Below this threshold, `run_bfs_trace` and `get_context` return full DDL inline. Above, DDL is omitted and the AI uses hop-by-hop exploration via the state machine. Lower values force more structured exploration; higher values give the AI more upfront context."
+          },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
             "default": "",
@@ -570,7 +577,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only — to create an annotated view, follow up with start_exploration (blackboard) or start_column_trace (column trace). enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
+        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only — never answer lineage questions directly from BFS results. To create an annotated view, you MUST follow with start_exploration (blackboard) or start_column_trace (column trace) — enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
