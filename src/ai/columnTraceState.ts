@@ -14,7 +14,7 @@ import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './t
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
-import { HopStateMachine, type BoundaryFlag, type HopNeighbor } from './smBase';
+import { HopStateMachine, type BoundaryFlag, type HopNeighbor, type ShortMemory, type DetailSlot } from './smBase';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -680,6 +680,8 @@ export class ColumnTraceState extends HopStateMachine {
     column_rejections?: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }>;
     suggested_labels: Array<{ node_id: string; text: string }>;
     suggested_notes:  Array<{ node_id: string; text: string }>;
+    short_memory: ShortMemory;
+    detail_slots: DetailSlot[];
   } | { error: string; hint?: string } {
 
     if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
@@ -747,6 +749,9 @@ export class ColumnTraceState extends HopStateMachine {
     const suggested_labels = chainArr.map(e => ({ node_id: e.nodeId, text: e.name }));
     const suggested_notes  = chainArr.map(e => ({ node_id: e.nodeId, text: e.notes ?? e.summary }));
 
+    // Attach both memory tiers (matches BB pattern via buildSharedResult → getMemoryForSynthesis)
+    const memory = this.getMemoryForSynthesis();
+
     return {
       status: 'complete',
       targetColumns: this.targetColumns,
@@ -756,6 +761,8 @@ export class ColumnTraceState extends HopStateMachine {
       ...(this.rejectionHistory.length > 0 && { column_rejections: this.rejectionHistory }),
       suggested_labels,
       suggested_notes,
+      short_memory: memory.short_memory,
+      detail_slots: memory.detail_slots,
     };
   }
 
