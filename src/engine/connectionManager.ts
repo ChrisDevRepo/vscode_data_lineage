@@ -81,7 +81,7 @@ async function loadBuiltInDmvQueries(
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
   }
 
-  logInfo(outputChannel, 'Config', `Using built-in DMV queries (${parsed.queries.length} queries)`);
+  logDebug(outputChannel, 'Config', `Using built-in DMV queries (${parsed.queries.length} queries)`);
   return parsed.queries;
 }
 
@@ -98,7 +98,7 @@ async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExt
   }
 
   const api = ext.isActive ? ext.exports : await ext.activate();
-  logInfo(outputChannel, 'DB', `MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext.packageJSON?.version ?? '?'} found`);
+  logDebug(outputChannel, 'DB', `MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext.packageJSON?.version ?? '?'} found`);
 
   return api;
 }
@@ -131,7 +131,7 @@ export async function promptForConnection(
     return undefined;
   }
 
-  logInfo(outputChannel, 'DB', `>> Open: ${connectionInfo.server} / ${connectionInfo.database}`);
+  logInfo(outputChannel, 'DB', `Connecting to ${connectionInfo.server}/${connectionInfo.database}`);
   const connectionUri = await api.connect(connectionInfo, false);
   logInfo(outputChannel, 'DB', 'Connected');
 
@@ -154,10 +154,10 @@ export async function connectDirect(
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
   const api = await getMssqlApi(outputChannel);
 
-  logInfo(outputChannel, 'DB', `>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
+  logDebug(outputChannel, 'DB', `>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
   try {
     const connectionUri = await api.connect(connectionInfo, false);
-    logInfo(outputChannel, 'DB', 'Connected');
+    logDebug(outputChannel, 'DB', 'Reconnected');
     return { connectionUri, connectionInfo };
   } catch (err) {
     logWarn(outputChannel, 'DB', `Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
@@ -195,7 +195,7 @@ export async function executeDmvQueries(
     const step = i + 1;
 
     onProgress?.(step, total, query.name);
-    logInfo(outputChannel, 'DB', `Executing query: ${query.name} (${step}/${total})...`);
+    logDebug(outputChannel, 'DB', `Executing query: ${query.name} (${step}/${total})...`);
     logTrace(outputChannel, 'DB', `SQL for '${query.name}':\n${query.sql}`);
 
     const start = Date.now();
@@ -203,7 +203,7 @@ export async function executeDmvQueries(
     const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logInfo(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -243,7 +243,7 @@ export async function executeDmvQueriesFiltered(
     const sql = expandSchemaPlaceholder(query.sql, schemas);
 
     onProgress?.(step, total, query.name);
-    logInfo(outputChannel, 'DB', `Executing filtered query: ${query.name} (${step}/${total})...`);
+    logDebug(outputChannel, 'DB', `Executing filtered query: ${query.name} (${step}/${total})...`);
     logTrace(outputChannel, 'DB', `SQL for '${query.name}':\n${sql}`);
 
     const start = Date.now();
@@ -251,7 +251,7 @@ export async function executeDmvQueriesFiltered(
     const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logInfo(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -283,5 +283,5 @@ export async function disconnectDatabase(
 ): Promise<void> {
   const sharing = await getConnectionSharingApi(outputChannel);
   await sharing.disconnect(connectionUri);
-  logInfo(outputChannel, 'DB', '<< Closed');
+  logInfo(outputChannel, 'DB', 'Disconnected');
 }

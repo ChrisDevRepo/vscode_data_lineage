@@ -319,9 +319,6 @@ export const Toolbar = memo(function Toolbar({
               <div className="flex-shrink-0 text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-center gap-1 pr-1 cursor-default select-none">
                 <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalNodes}</span>
                 <span className="opacity-60">objects</span>
-                <span className="opacity-30 mx-1">·</span>
-                <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalEdges}</span>
-                <span className="opacity-60">relations</span>
               </div>
             </Tooltip>
           </>

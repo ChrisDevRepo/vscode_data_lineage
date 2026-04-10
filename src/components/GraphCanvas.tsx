@@ -313,7 +313,7 @@ export function GraphCanvas({
   );
 
   // Zoom and center on a specific node
-  const log = useCallback((text: string) => window.vscode?.postMessage({ type: 'log', text }), []);
+  const log = useCallback((text: string, level: 'info' | 'debug' | 'trace' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level }), []);
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
@@ -403,6 +403,10 @@ export function GraphCanvas({
       if (!nodeExists) {
         if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
           log(`[Filter] pendingZoom: "${zoomTarget}" not found after ${elapsed}ms, expiring (node may have been filtered out)`);
+          window.vscode?.postMessage({
+            type: 'show-warning',
+            text: `"${zoomTarget}" is not visible in the current view. Adjust your schema filter or increase the node limit to include it.`
+          });
           pendingZoomRef.current = null;
           pendingClickRef.current = null;
           // Fall through to fitView
@@ -415,7 +419,11 @@ export function GraphCanvas({
         pendingZoomRef.current = null;
         pendingClickRef.current = null;
         zoomToNode(zoomTarget);
-        if (clickTarget) onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm);
+        // Defer click to next frame so highlight survives the filter-changed rebuild
+        // that may still be in-flight from the overview→full transition.
+        if (clickTarget) {
+          requestAnimationFrame(() => onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm));
+        }
         return;
       }
     }

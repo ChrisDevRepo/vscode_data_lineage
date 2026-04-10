@@ -24,7 +24,7 @@ interface UseOverviewModeResult {
   resetUserChoice: () => void;
 }
 
-const log = (text: string) => window.vscode?.postMessage({ type: 'log', text });
+const log = (text: string, level: 'info' | 'debug' | 'trace' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
 
 export function useOverviewMode({
   model,
@@ -76,7 +76,7 @@ export function useOverviewMode({
         log(`[Filter] Mode auto: overview suppressed (search drill-down in progress, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold})`);
         return;
       }
-      log(`[Filter] Mode auto: overview (forced, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold})`);
+      log(`[Filter] Switched to Overview — ${filteredCount} objects exceed display threshold`, 'info');
       setGraphMode('overview');
       return;
     }
@@ -84,10 +84,10 @@ export function useOverviewMode({
 
     if (userChoseMode.current) return;
     if (filteredCount > config.overview.threshold) {
-      log(`[Filter] Mode auto: overview (${filteredCount} nodes > threshold=${config.overview.threshold})`);
+      log(`[Filter] Switched to Overview — ${filteredCount} objects`, 'info');
       setGraphMode('overview');
     } else if (graphMode === 'overview') {
-      log(`[Filter] Mode auto: full (${filteredCount} nodes <= threshold=${config.overview.threshold})`);
+      log(`[Filter] Switched to Full View`, 'info');
       setGraphMode('full');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -97,7 +97,7 @@ export function useOverviewMode({
     userChoseMode.current = true;
     setGraphMode((prev) => {
       const next = prev === 'overview' ? 'full' : 'overview';
-      log(`[Filter] Mode toggle: ${prev} → ${next} (user)`);
+      log(`[Filter] View: ${next === 'overview' ? 'Overview' : 'Full View'}`, 'info');
       return next;
     });
     setEnteredFocusFromOverview(false);
@@ -105,7 +105,7 @@ export function useOverviewMode({
 
   const enterFocusFromOverview = useCallback(
     (schema: string) => {
-      log(`[Filter] Mode focus: overview → full, schema="${schema}"`);
+      log(`[Filter] Focusing on schema "${schema}"`, 'info');
       userChoseMode.current = true;
       suppressForceOverview.current = true;
       setEnteredFocusFromOverview(true);

@@ -132,6 +132,11 @@
         "command": "dataLineageViz.aiCreateView",
         "title": "Data Lineage: Show AI Trace in Graph",
         "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "dataLineageViz.copyDebugInfo",
+        "title": "Data Lineage: Copy Debug Info",
+        "icon": "$(bug)"
       }
     ],
     "keybindings": [],
