@@ -8,8 +8,11 @@ interface UseOverviewModeOptions {
   config: ExtensionConfig;
   /** Sorted comma-separated schema names — changing this value resets the auto-trigger guard. */
   schemasKey: string;
-  /** Called when entering focus from overview — always sets the schema (never toggles off). */
-  onSetFocusSchema: (schema: string) => void;
+  /** Called when entering focus from overview — always sets the schema (never toggles off).
+   *  Returns the post-filter node count so the caller can decide on fallback. */
+  onSetFocusSchema: (schema: string, forceLayout: boolean) => number;
+  /** Fallback: focus only the target schema (no neighbors) when neighbor selection too large. */
+  onSetFocusSchemaOnly: (schema: string, forceLayout: boolean) => number;
 }
 
 interface UseOverviewModeResult {
@@ -29,11 +32,16 @@ export function useOverviewMode({
   config,
   schemasKey,
   onSetFocusSchema,
+  onSetFocusSchemaOnly,
 }: UseOverviewModeOptions): UseOverviewModeResult {
   const [graphMode, setGraphMode] = useState<GraphMode>('full');
   const [enteredFocusFromOverview, setEnteredFocusFromOverview] = useState(false);
   // Once the user manually overrides mode, stop auto-triggering for this model session.
   const userChoseMode = useRef(false);
+  // When true, the forceOverviewThreshold auto-trigger is suppressed for ONE render cycle.
+  // This prevents the auto-trigger from reverting graphMode='full' immediately after
+  // enterFocusFromOverview sets it — the subsequent rebuild will lower filteredCount.
+  const suppressForceOverview = useRef(false);
 
   // Reset when a new model is loaded — re-evaluate auto-trigger
   const prevModelRef = useRef<DatabaseModel | null>(null);
@@ -41,6 +49,7 @@ export function useOverviewMode({
     if (model !== prevModelRef.current) {
       prevModelRef.current = model;
       userChoseMode.current = false;
+      suppressForceOverview.current = false;
       setEnteredFocusFromOverview(false);
     }
   }, [model]);
@@ -59,12 +68,19 @@ export function useOverviewMode({
   useEffect(() => {
     if (!config.overview.enabled) return;
 
-    // Soft guard — force overview when node count is far above threshold
+    // Soft guard — force overview when node count is far above threshold.
+    // Suppressed for one cycle after enterFocusFromOverview to let the rebuild land first.
     if (filteredCount > config.overview.forceOverviewThreshold) {
+      if (suppressForceOverview.current) {
+        suppressForceOverview.current = false;
+        log(`[Filter] Mode auto: overview suppressed (search drill-down in progress, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold})`);
+        return;
+      }
       log(`[Filter] Mode auto: overview (forced, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold})`);
       setGraphMode('overview');
       return;
     }
+    suppressForceOverview.current = false;
 
     if (userChoseMode.current) return;
     if (filteredCount > config.overview.threshold) {
@@ -91,15 +107,26 @@ export function useOverviewMode({
     (schema: string) => {
       log(`[Filter] Mode focus: overview → full, schema="${schema}"`);
       userChoseMode.current = true;
+      suppressForceOverview.current = true;
       setEnteredFocusFromOverview(true);
       setGraphMode('full');
-      onSetFocusSchema(schema);
+
+      // Primary attempt: focus schema + neighbors with forceLayout so dagre runs immediately
+      const resultCount = onSetFocusSchema(schema, true);
+      log(`[Filter] Mode focus: focusSchema+neighbors resultCount=${resultCount}, forceOverviewThreshold=${config.overview.forceOverviewThreshold}`);
+
+      // Fallback: if neighbor selection still exceeds threshold, narrow to just the target schema
+      if (resultCount > config.overview.forceOverviewThreshold) {
+        log(`[Filter] Mode focus: neighbor selection too large (${resultCount}), falling back to schema-only`);
+        onSetFocusSchemaOnly(schema, true);
+      }
     },
-    [onSetFocusSchema]
+    [onSetFocusSchema, onSetFocusSchemaOnly, config.overview.forceOverviewThreshold]
   );
 
   const resetUserChoice = useCallback(() => {
     userChoseMode.current = false;
+    suppressForceOverview.current = false;
   }, []);
 
   return { graphMode, enteredFocusFromOverview, toggleMode, enterFocusFromOverview, resetUserChoice };

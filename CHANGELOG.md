@@ -1,10 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Changed
-- **Debug logging overhaul** — Added action-level debug logs for Quick Jump search, schema/node mode switching, guard decisions, dagre layout timing, analysis runs, and detail panel operations; suppressed per-keystroke `filter-changed` noise from search input.
-
 ## [0.9.8] - 2026-04-06
 
 ### Added
@@ -19,6 +14,8 @@
 - **Badge numbers assigned by data-flow order** — Step numbers are determined by the system based on data-flow depth, not by the AI, ensuring consistent ordering between graph and description.
 - **Progress lines show visited count** — Hop progress changed from "~Y remaining" (fluctuating frontier) to "visited X of S" (monotonically increasing) for clearer trace progress.
 - **Selective labeling guidance** — AI prompts now instruct 3–6 logical sections per pipeline (not one per node), with passthrough nodes mentioned in text only and same-role nodes grouped under shared labels.
+- **Debug logging overhaul** — Added action-level debug logs for Quick Jump search, schema/node mode switching, guard decisions, dagre layout timing, analysis runs, and detail panel operations; suppressed per-keystroke `filter-changed` noise from search input.
+- **Reliable schema→node mode switch** — Search from overview mode now drills down synchronously with forceLayout, preventing race conditions where graphMode changes before flowNodes are ready.
 
 ### Fixed
 - **Schema-aware AI queries** — When a schema filter is active in the GUI, `@lineage` now scopes all searches and analysis to those schemas by default. Expanding scope requires explicit confirmation.

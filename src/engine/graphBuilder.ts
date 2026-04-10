@@ -333,6 +333,26 @@ export function applyTraceToFlow(
     }
   }
 
+  // Recalculate in/out degree for synthesized nodes from the final edge set
+  if (trace.mode === 'path-applied' && model) {
+    const synthesizedIds = new Set(
+      filteredNodes.filter(n => n.data.inDegree === 0 && n.data.outDegree === 0).map(n => n.id)
+    );
+    if (synthesizedIds.size > 0) {
+      const inCount = new Map<string, number>();
+      const outCount = new Map<string, number>();
+      for (const e of filteredEdges) {
+        if (synthesizedIds.has(e.target)) inCount.set(e.target, (inCount.get(e.target) ?? 0) + 1);
+        if (synthesizedIds.has(e.source)) outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1);
+      }
+      for (const n of filteredNodes) {
+        if (!synthesizedIds.has(n.id)) continue;
+        n.data.inDegree = inCount.get(n.id) ?? 0;
+        n.data.outDegree = outCount.get(n.id) ?? 0;
+      }
+    }
+  }
+
   // RELAYOUT the traced subset — dispatch layout by analysis type
   let positions: Map<string, { x: number; y: number }>;
   if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {

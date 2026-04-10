@@ -1,4 +1,4 @@
-import { memo, useMemo, useCallback } from 'react';
+import { memo, useMemo, useCallback, useState } from 'react';
 import { FloatingPortal, useFloating, offset, flip, shift, size, autoUpdate } from '@floating-ui/react';
 import { ObjectType } from '../engine/types';
 import { filterSuggestions } from '../utils/autocomplete';
@@ -8,8 +8,6 @@ import { SuggestionList } from './ui/SuggestionList';
 import { Tooltip } from './ui/Tooltip';
 
 interface SearchWithAutocompleteProps {
-  searchTerm: string;
-  onSearchChange: (term: string) => void;
   onExecuteSearch?: (name: string, schema?: string) => void;
   onStartTrace?: (nodeId: string) => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
@@ -18,14 +16,16 @@ interface SearchWithAutocompleteProps {
 }
 
 export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
-  searchTerm,
-  onSearchChange,
   onExecuteSearch,
   onStartTrace,
   allNodes = [],
   selectedSchemas,
   types,
 }: SearchWithAutocompleteProps) {
+  // Search term is local state — keystrokes only re-render this component,
+  // not the entire App/GraphCanvas tree. The parent is notified only on Enter.
+  const [searchTerm, setSearchTerm] = useState('');
+
   const filteredNodes = useMemo(
     () => allNodes.filter(n => (n.schema === '' || selectedSchemas.has(n.schema)) && types.has(n.type)),
     [allNodes, selectedSchemas, types],
@@ -75,7 +75,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
         ref={inputRef}
         type="text"
         value={searchTerm}
-        onChange={(e) => onSearchChange(e.target.value)}
+        onChange={(e) => setSearchTerm(e.target.value)}
         onKeyDown={(e) => {
           handleArrowKeys(e);
           if (e.key === 'Enter' && onExecuteSearch) {
@@ -86,10 +86,10 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
             } else if (searchTerm.trim()) {
               onExecuteSearch(searchTerm.trim());
             }
-            onSearchChange('');
+            setSearchTerm('');
             setIsOpen(false);
           } else if (e.key === 'Escape') {
-            onSearchChange('');
+            setSearchTerm('');
             setIsOpen(false);
           }
         }}
@@ -98,7 +98,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
       />
       {searchTerm ? (
         <button
-          onClick={() => { onSearchChange(''); setIsOpen(false); }}
+          onClick={() => { setSearchTerm(''); setIsOpen(false); }}
           className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center ln-text-muted hover:opacity-70"
           aria-label="Clear search"
         >
@@ -122,7 +122,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
             onSelect={(node) => {
               if (onExecuteSearch) {
                 onExecuteSearch(node.name, node.schema);
-                onSearchChange('');
+                setSearchTerm('');
                 setIsOpen(false);
               }
             }}
@@ -136,7 +136,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
                   onClick={(e) => {
                     e.stopPropagation();
                     onStartTrace(node.id);
-                    onSearchChange('');
+                    setSearchTerm('');
                     setIsOpen(false);
                   }}
                   className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded hover:opacity-70 ln-text-link"
