@@ -257,6 +257,35 @@ For broader investigations — business rules, documentation, or pattern discove
 - **Narrow BFS scope on large graphs.** Ask for 1–2 levels first, then expand if you need more depth.
 - **Try a bigger model for large databases.** Models with 128K+ context auto-scale to show more results and larger DDL.
 
+### How @lineage analyzes your database
+
+When you ask `@lineage` a question, it goes through four steps:
+
+1. **Search** — finds the relevant objects in your loaded model
+2. **Scope** — determines how many objects are involved (the "scope")
+3. **Analyze** — reads the SQL of each object and traces column flows
+4. **Annotate** — creates labeled graph views with section descriptions
+
+For step 3, the assistant automatically chooses between two analysis modes based on scope size:
+
+**Quick analysis** — for small scopes (≤10 objects and under token budget). The AI receives all SQL at once and reasons about everything in a single pass. This is fast and works well for straightforward questions like *"what reads from the Employee table?"* or *"trace BusinessEntityID upstream."*
+
+**Deep exploration** — for larger scopes (>10 objects or exceeding token budget). The AI examines one object at a time, building persistent memory as it goes. Each step records what was found — column renames, formulas, join conditions — so that information from early steps remains available 15 or 20 steps later.
+
+**Why does this matter?** In complex ETL pipelines, a column often changes names multiple times. For example, `ItemCount` in Oracle becomes `Quantity`, then `RawQty`, then `OrderQty`, then finally `Qty`. Without persistent memory, the AI loses track of earlier renames and produces incomplete traces. Deep exploration keeps this context across the entire pipeline.
+
+**Settings** — the defaults work well for most databases:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `ai.inlineTokenBudget` | `10000` | Token threshold — how much SQL data fits in quick mode |
+| `ai.inlineNodeCap` | `10` | Node threshold — how many objects fit in quick mode |
+
+Both thresholds must be within limits for quick mode. If either is exceeded, deep exploration is used.
+
+- **Increase `inlineNodeCap`** if your stored procedures are small and you prefer faster responses
+- **Decrease it** if you want more thorough analysis on every trace
+
 ### Requirements
 
 - [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) extension

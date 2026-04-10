@@ -6,7 +6,7 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  estimateTokens, setInlineTokenBudget, shouldSmInline,
+  estimateTokens, setInlineTokenBudget, setSmInlineNodeCap, shouldSmInline,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
@@ -939,7 +939,9 @@ export function activate(context: vscode.ExtensionContext) {
       // Update model context window + inline budget once per request
       _aiMaxInputTokens = request.model.maxInputTokens;
       _aiModelName = request.model.name || request.model.id;
-      setInlineTokenBudget(vscode.workspace.getConfiguration('dataLineageViz').get<number>('ai.inlineTokenBudget', 10_000));
+      const aiConfig = vscode.workspace.getConfiguration('dataLineageViz');
+      setInlineTokenBudget(aiConfig.get<number>('ai.inlineTokenBudget', 10_000));
+      setSmInlineNodeCap(aiConfig.get<number>('ai.inlineNodeCap', 10));
       _columnTraceState = null; // reset per request — each trace gets a fresh state machine
       _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
       // _resultGraph intentionally NOT reset — it persists across turns so the

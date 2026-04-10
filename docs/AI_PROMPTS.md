@@ -164,10 +164,12 @@ The YAML controls the **presentation layer** only — how the AI formats its fin
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `dataLineageViz.ai.enabled` | `true` | Enable/disable the `@lineage` chat participant |
+| `dataLineageViz.ai.maxRounds` | `50` | Max tool-call rounds per request. Increase for complex column traces. |
+| `dataLineageViz.ai.inlineTokenBudget` | `10000` | Token threshold for quick vs deep analysis. Both this AND `inlineNodeCap` must be within limits for quick mode. |
+| `dataLineageViz.ai.inlineNodeCap` | `10` | Node count threshold for quick vs deep analysis. Scopes with more nodes use hop-by-hop with persistent memory. |
 | `dataLineageViz.ai.outputTemplateFile` | *(empty)* | Path to custom YAML (relative to workspace root) |
-| `dataLineageViz.ai.maxRounds` | `25` | Max tool-call rounds per request. Increase for complex column traces. |
 
-No per-tool caps — the extension delivers full data. `shouldInline()` gates catalog/detail delivery mode; CT and BB always use state machine (hop-by-hop).
+No per-tool caps — the extension delivers full data. Small scopes (≤10 nodes AND under token budget) use quick inline delivery. Larger scopes use hop-by-hop exploration with persistent memory for deeper column tracking.
 
 ## Failsafe Chain
 

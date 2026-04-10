@@ -430,7 +430,14 @@
             "default": 10000,
             "minimum": 1000,
             "maximum": 100000,
-            "markdownDescription": "Maximum estimated tokens for inline delivery. Below this threshold, `run_bfs_trace` and `get_context` return full DDL inline. Above, DDL is omitted and the AI uses hop-by-hop exploration via the state machine. Lower values force more structured exploration; higher values give the AI more upfront context."
+            "markdownDescription": "Maximum estimated tokens for inline (quick) delivery. When a trace or exploration scope fits within **both** this token budget and the node cap, the AI receives all SQL at once for faster analysis. Exceeding either threshold switches to hop-by-hop deep exploration with persistent memory. Lower values favor accuracy; higher values favor speed."
+          },
+          "dataLineageViz.ai.inlineNodeCap": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 100,
+            "markdownDescription": "Maximum scope nodes for inline (quick) delivery. When a trace or exploration scope has more nodes than this, the AI explores hop-by-hop with persistent memory for deeper analysis. Deep mode tracks column renames and transformations across many pipeline stages. Lower values favor accuracy; higher values favor speed."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",

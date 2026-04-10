@@ -49,18 +49,31 @@ export function shouldInline(payloadChars: number, precomputedTokens?: number): 
   return tokens <= getEffectiveBudget();
 }
 
-// ─── SM inline node cap ───────────────────────────────────────────────────
+// ─── SM inline node cap (configurable via VS Code setting) ────────────────
 
-/** Max scope nodes for inline SM delivery. Above this, always use hop-by-hop even if tokens fit. */
-export const SM_INLINE_NODE_CAP = 10;
+/** Default node cap for inline SM delivery — overridden per-request from VS Code setting `ai.inlineNodeCap`. */
+const DEFAULT_SM_INLINE_NODE_CAP = 10;
+
+/** Runtime node cap — set from VS Code setting at each request start. */
+let _smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
+
+/** Set from VS Code setting (called per-request in extension.ts). */
+export function setSmInlineNodeCap(value: number): void {
+  _smInlineNodeCap = value;
+}
+
+/** Returns the configured inline node cap. */
+export function getSmInlineNodeCap(): number {
+  return _smInlineNodeCap;
+}
 
 /**
  * Should CT/BB use inline delivery? Checks BOTH token budget AND node count.
- * Small scopes (≤10 nodes, under token budget) → inline.
- * Larger scopes → hop-by-hop with sliding memory (deep traces need memory for rename tracking).
+ * Small scopes (≤cap nodes AND under token budget) → inline (quick analysis).
+ * Larger scopes → hop-by-hop with sliding memory (deep exploration for rename tracking).
  */
 export function shouldSmInline(payloadChars: number, scopeNodeCount: number): boolean {
-  return scopeNodeCount <= SM_INLINE_NODE_CAP && shouldInline(payloadChars);
+  return scopeNodeCount <= _smInlineNodeCap && shouldInline(payloadChars);
 }
 
 // ─── Context pressure ──────────────────────────────────────────────────────

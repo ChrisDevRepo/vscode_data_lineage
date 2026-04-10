@@ -10,14 +10,14 @@
 
 ### Changed
 - **Detail memory grounding** — AI findings are now structured extractive evidence (verbatim SQL fragments, column names, join conditions) instead of generic summaries. Detail memory is delivered at full fidelity — no eviction under budget pressure. Synthesis uses a grounding contract: every claim must cite stored evidence.
-- **`@lineage` always traces hop-by-hop** — Column traces and explorations now always run in full depth, even on small schemas, producing richer annotations and complete column rename tracking.
+- **Smart delivery for `@lineage`** — Small traces (≤10 nodes) deliver all data at once for faster analysis. Larger scopes automatically switch to hop-by-hop exploration with persistent memory, tracking column renames across deep pipelines. Controlled by `ai.inlineTokenBudget` and `ai.inlineNodeCap` settings.
 - **Badge numbers assigned by data-flow order** — Step numbers are determined by the system based on data-flow depth, not by the AI, ensuring consistent ordering between graph and description.
 - **Progress lines show visited count** — Hop progress changed from "~Y remaining" (fluctuating frontier) to "visited X of S" (monotonically increasing) for clearer trace progress.
 - **Selective labeling guidance** — AI prompts now instruct 3–6 logical sections per pipeline (not one per node), with passthrough nodes mentioned in text only and same-role nodes grouped under shared labels.
 
 ### Fixed
 - **Schema-aware AI queries** — When a schema filter is active in the GUI, `@lineage` now scopes all searches and analysis to those schemas by default. Expanding scope requires explicit confirmation.
-- Column traces on small schemas now always run in full depth — no more shallow fallback.
+- Column traces on small schemas use quick inline delivery; large schemas use deep hop-by-hop exploration with persistent memory.
 - Column traces now pre-suggest badge labels and captions for the annotation step, matching the behavior already present after explorations.
 
 ## [0.9.7] - 2026-03-31
