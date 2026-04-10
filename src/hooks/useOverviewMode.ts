@@ -21,6 +21,8 @@ interface UseOverviewModeResult {
   resetUserChoice: () => void;
 }
 
+const log = (text: string) => window.vscode?.postMessage({ type: 'log', text });
+
 export function useOverviewMode({
   model,
   filteredCount,
@@ -59,14 +61,17 @@ export function useOverviewMode({
 
     // Soft guard — force overview when node count is far above threshold
     if (filteredCount > config.overview.forceOverviewThreshold) {
+      log(`[Filter] Mode auto: overview (forced, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold})`);
       setGraphMode('overview');
       return;
     }
 
     if (userChoseMode.current) return;
     if (filteredCount > config.overview.threshold) {
+      log(`[Filter] Mode auto: overview (${filteredCount} nodes > threshold=${config.overview.threshold})`);
       setGraphMode('overview');
     } else if (graphMode === 'overview') {
+      log(`[Filter] Mode auto: full (${filteredCount} nodes <= threshold=${config.overview.threshold})`);
       setGraphMode('full');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -74,12 +79,17 @@ export function useOverviewMode({
 
   const toggleMode = useCallback(() => {
     userChoseMode.current = true;
-    setGraphMode((prev) => (prev === 'overview' ? 'full' : 'overview'));
+    setGraphMode((prev) => {
+      const next = prev === 'overview' ? 'full' : 'overview';
+      log(`[Filter] Mode toggle: ${prev} → ${next} (user)`);
+      return next;
+    });
     setEnteredFocusFromOverview(false);
   }, []);
 
   const enterFocusFromOverview = useCallback(
     (schema: string) => {
+      log(`[Filter] Mode focus: overview → full, schema="${schema}"`);
       userChoseMode.current = true;
       setEnteredFocusFromOverview(true);
       setGraphMode('full');

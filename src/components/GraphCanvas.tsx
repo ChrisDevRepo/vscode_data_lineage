@@ -310,6 +310,7 @@ export function GraphCanvas({
   );
 
   // Zoom and center on a specific node
+  const log = useCallback((text: string) => window.vscode?.postMessage({ type: 'log', text }), []);
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
@@ -319,17 +320,21 @@ export function GraphCanvas({
           targetNode.position.y + NODE_HEIGHT / 2,
           { zoom: 0.8, duration: FIT_VIEW_DURATION }
         );
+      } else {
+        log(`[Filter] zoomToNode: "${nodeId}" — no position (layout pending?)`);
       }
     });
-  }, [getNode, setCenter]);
+  }, [getNode, setCenter, log]);
 
   // Execute search: find node and zoom to it (drills down from overview if needed)
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
+    const label = schema ? `[${schema}].[${name}]` : name;
     const foundNode = schema
       ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
       : flowNodes.find(n => n.data.label === name);
 
     if (foundNode) {
+      log(`[Filter] Quick Jump: "${label}" → found ${foundNode.id}, zooming`);
       onNodeClick(foundNode.id);
       zoomToNode(foundNode.id);
       return;
@@ -341,12 +346,17 @@ export function GraphCanvas({
         ? model.nodes.find(n => n.name === name && n.schema === schema)
         : model.nodes.find(n => n.name === name);
       if (modelNode) {
+        log(`[Filter] Quick Jump: "${label}" → drilling into schema "${modelNode.schema}" from overview`);
         pendingZoomRef.current = modelNode.id;
         pendingClickRef.current = { id: modelNode.id };
         onSchemaNodeDoubleClick?.(modelNode.schema);
+      } else {
+        log(`[Filter] Quick Jump: "${label}" → not found in model (${model.nodes.length} nodes)`);
       }
+    } else {
+      log(`[Filter] Quick Jump: "${label}" → not found in ${flowNodes.length} visible nodes`);
     }
-  }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick]);
+  }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick, log]);
 
   // Export current graph to Draw.io format (disabled in overview mode)
   const handleExportDrawio = useCallback(() => {

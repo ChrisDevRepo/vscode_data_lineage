@@ -31,7 +31,9 @@ export function useGraphology(): UseGraphologyReturn {
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false) => {
+    const log = (text: string) => window.vscode?.postMessage({ type: 'log', text });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
+    log(`[Filter] Schema: ${model.nodes.length} → ${filtered.nodes.length} nodes (${model.nodes.length - filtered.nodes.length} removed, maxNodes=${config.maxNodes})`);
 
     // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
@@ -61,6 +63,7 @@ export function useGraphology(): UseGraphologyReturn {
 
     // Guard 1: hard render limit — skip everything
     if (count > config.renderLimit) {
+      log(`[Filter] Guard: render limit hit (${count} > renderLimit=${config.renderLimit}) — skipping layout`);
       setFlowNodes([]);
       setFlowEdges([]);
       setGraph(null);
@@ -74,6 +77,7 @@ export function useGraphology(): UseGraphologyReturn {
     // Guard 2: overview threshold — build graph for traces/metrics, skip expensive dagre layout.
     // Bypassed when forceLayout=true (user manually toggled overview→full).
     if (!forceLayout && count > config.overview.forceOverviewThreshold) {
+      log(`[Filter] Guard: overview threshold (${count} > forceOverviewThreshold=${config.overview.forceOverviewThreshold}, forceLayout=false) — skipping dagre`);
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
       setFlowEdges(result.flowEdges);
@@ -83,7 +87,10 @@ export function useGraphology(): UseGraphologyReturn {
     }
 
     // Full mode — dagre runs
+    const t0 = performance.now();
     const result = buildGraph(allowlistFiltered, config);
+    const ms = (performance.now() - t0).toFixed(1);
+    log(`[Filter] Layout: dagre complete — ${result.flowNodes.length} nodes, ${result.flowEdges.length} edges (${ms}ms)`);
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);

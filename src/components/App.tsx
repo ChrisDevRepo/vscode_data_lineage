@@ -84,7 +84,7 @@ export function App() {
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
   const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
-    useInteractiveTrace(graph, flowNodes, flowEdges, config);
+    useInteractiveTrace(graph, flowNodes, flowEdges, config, model);
 
   // Allows callbacks defined before useOverviewMode to reset the auto-trigger guard.
   const overviewActionsRef = useRef<{ resetUserChoice: () => void }>({
@@ -445,7 +445,10 @@ export function App() {
       });
 
       const node = model?.nodes.find(n => n.id === nodeId);
-      if (!node) return;
+      if (!node) {
+        window.vscode?.postMessage({ type: 'log', text: `[Bridge] handleNodeClick: "${nodeId}" not in model (${model?.nodes.length ?? 0} nodes)` });
+        return;
+      }
       if (isDetailOpen) {
         vscodeApi.postMessage({ type: 'update-detail', node, findQuery });
       } else if (findQuery) {
@@ -696,6 +699,8 @@ export function App() {
     } else {
       if (graph) {
         const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+        const totalNodes = result.groups.reduce((sum, g) => sum + g.nodeIds.length, 0);
+        window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis run: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
         setAnalysisMode({ type, result, activeGroupId: null });
       }
     }
@@ -706,6 +711,8 @@ export function App() {
       const type = pendingAnalysisRef.current;
       pendingAnalysisRef.current = null;
       const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+      const totalNodes = result.groups.reduce((sum, g) => sum + g.nodeIds.length, 0);
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis pending applied: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
       setAnalysisMode({ type, result, activeGroupId: null });
     }
   }, [graph, config.analysis, config.maxNodes]);
@@ -924,6 +931,7 @@ export function App() {
     const wasOverview = prevGraphModeRef.current === 'overview';
     prevGraphModeRef.current = graphMode;
     if (wasOverview && graphMode === 'full' && model && filteredCount > config.overview.forceOverviewThreshold) {
+      window.vscode?.postMessage({ type: 'log', text: `[Filter] Mode switch rebuild: overview→full, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold}, forceLayout=true` });
       rebuild(model, filter, config, true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -935,11 +943,18 @@ export function App() {
   const filterProfiles = activeProject?.filterProfiles ?? [];
 
   // Sync active filter state to extension host so AI tools (search_objects, start_exploration etc.)
-  // can report filter context correctly. Fires on every filter mutation and on initial model load.
+  // can report filter context correctly. Fires on structural filter changes and initial model load.
+  // Excludes searchTerm — it's client-only (autocomplete) and would spam filter-changed on every keystroke.
+  const filterKeyForHost = useMemo(() => {
+    const { searchTerm: _, ...rest } = serializeFilter(filter);
+    return JSON.stringify(rest);
+  }, [filter]);
   useEffect(() => {
     if (!model) return;
-    vscodeApi.postMessage({ type: 'filter-changed', filter: serializeFilter(filter), savedViews: filterProfiles });
-  }, [filter, filterProfiles, model, vscodeApi]);
+    const { searchTerm: _, ...filterForHost } = serializeFilter(filter);
+    vscodeApi.postMessage({ type: 'filter-changed', filter: filterForHost, savedViews: filterProfiles });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKeyForHost, filterProfiles, model, vscodeApi]);
 
   const isViewModified = useMemo(() => {
     if (!activeViewId) return false;

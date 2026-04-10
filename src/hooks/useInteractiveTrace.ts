@@ -2,8 +2,8 @@ import { useState, useCallback, useMemo } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType } from '../engine/types';
-import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath } from '../engine/graphBuilder';
+import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel } from '../engine/types';
+import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
 
 interface UseInteractiveTraceReturn {
   trace: TraceState;
@@ -34,9 +34,14 @@ export function useInteractiveTrace(
   graph: Graph | null,
   flowNodes: FlowNode<CustomNodeData>[],
   flowEdges: FlowEdge[],
-  config: ExtensionConfig = DEFAULT_CONFIG
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  model: DatabaseModel | null = null
 ): UseInteractiveTraceReturn {
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
+
+  // Full (unfiltered) graph for path-finding — paths should traverse all model nodes,
+  // not just the filtered subset. Regular trace still uses the filtered graph.
+  const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
 
   // Phase 1: Start configuring trace (show InlineTraceControls)
   const startTraceConfig = useCallback((nodeId: string) => {
@@ -128,14 +133,16 @@ export function useInteractiveTrace(
   }, []);
 
   // Compute and apply shortest path — returns true if path found
+  // Uses fullGraph (unfiltered model) so paths can traverse nodes hidden by filters.
   const applyPath = useCallback((targetNodeId: string): boolean => {
-    if (!graph || !trace.selectedNodeId) {
-      window.vscode?.postMessage({ type: 'log', text: `[Trace] Path skipped — graph=${!!graph} selectedNode=${trace.selectedNodeId}` });
+    const pathGraph = fullGraph ?? graph;
+    if (!pathGraph || !trace.selectedNodeId) {
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Path skipped — graph=${!!pathGraph} selectedNode=${trace.selectedNodeId}` });
       return false;
     }
 
     const t0 = performance.now();
-    const result = computeShortestPath(graph, trace.selectedNodeId, targetNodeId);
+    const result = computeShortestPath(pathGraph, trace.selectedNodeId, targetNodeId);
     const ms = (performance.now() - t0).toFixed(1);
     if (!result) {
       window.vscode?.postMessage({ type: 'log', text:
@@ -157,7 +164,7 @@ export function useInteractiveTrace(
       tracedEdgeIds: result.edgeIds,
     });
     return true;
-  }, [graph, trace.selectedNodeId]);
+  }, [fullGraph, graph, trace.selectedNodeId]);
 
   // Apply analysis subset — reuses same rendering as trace/path
   const applyAnalysisSubset = useCallback((
@@ -197,10 +204,10 @@ export function useInteractiveTrace(
         return { tracedNodes: flowNodes, tracedEdges: flowEdges };
       }
 
-      const { nodes, edges } = applyTraceToFlow(flowNodes, flowEdges, trace, config);
+      const { nodes, edges } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model);
       return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges };
     },
-    [flowNodes, flowEdges, trace, config]
+    [flowNodes, flowEdges, trace, config, model]
   );
 
   return { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace };

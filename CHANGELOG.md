@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Debug logging overhaul** — Added action-level debug logs for Quick Jump search, schema/node mode switching, guard decisions, dagre layout timing, analysis runs, and detail panel operations; suppressed per-keystroke `filter-changed` noise from search input.
+
 ## [0.9.8] - 2026-04-06
 
 ### Added
@@ -19,6 +24,7 @@
 - **Schema-aware AI queries** — When a schema filter is active in the GUI, `@lineage` now scopes all searches and analysis to those schemas by default. Expanding scope requires explicit confirmation.
 - Column traces on small schemas use quick inline delivery; large schemas use deep hop-by-hop exploration with persistent memory.
 - Column traces now pre-suggest badge labels and captions for the annotation step, matching the behavior already present after explorations.
+- **Find Path ignores filters** — Right-click "Find Path" now searches the full model, finding paths through nodes hidden by schema/type filters.
 
 ## [0.9.7] - 2026-03-31
 

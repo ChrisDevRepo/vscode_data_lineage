@@ -2184,6 +2184,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       },
       'open-settings': () => { vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz'); },
       'overview-mode-changed': (msg) => {
+        logDebug(outputChannel, 'Bridge', `overview-mode-changed: mode=${msg.mode}${msg.enteredFocusFromOverview ? ' (from-overview-focus)' : ''}`);
         if (!overviewStatusBar) return;
         if (msg.mode === 'overview') {
           overviewStatusBar.text = '$(graph) Lineage: Overview';
@@ -2209,9 +2210,20 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
         logInfo(outputChannel, 'Bridge', `Exported: ${uri.fsPath}`);
         await vscode.commands.executeCommand('revealFileInOS', uri);
       },
-      'show-detail': (msg) => { openOrRevealDetailPanel(msg.node, msg.findQuery); },
-      'update-detail': (msg) => { if (detailPanel) openOrRevealDetailPanel(msg.node, msg.findQuery); },
-      'close-detail': () => { detailPanel?.dispose(); },
+      'show-detail': (msg) => {
+        logDebug(outputChannel, 'Detail', `show-detail: [${msg.node.schema}].[${msg.node.name}]${msg.findQuery ? ` find="${msg.findQuery}"` : ''}`);
+        openOrRevealDetailPanel(msg.node, msg.findQuery);
+      },
+      'update-detail': (msg) => {
+        if (detailPanel) {
+          logDebug(outputChannel, 'Detail', `update-detail: [${msg.node.schema}].[${msg.node.name}]`);
+          openOrRevealDetailPanel(msg.node, msg.findQuery);
+        }
+      },
+      'close-detail': () => {
+        logDebug(outputChannel, 'Detail', 'close-detail');
+        detailPanel?.dispose();
+      },
       'check-mssql': () => {
         panel.webview.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
       },
