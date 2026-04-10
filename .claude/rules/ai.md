@@ -28,21 +28,29 @@ State machines receive `_aiFilter` (user's active schema/type filter) for REPORT
 
 ## Tools
 
-12 tools (8 classic + 2 CT + 2 BB), registered via `vscode.lm.registerTool()`:
+14 tools (8 classic + 2 CT + 2 BB + 2 batch), registered via `vscode.lm.registerTool()`:
 - Classic: get_context, search_objects, get_object_detail, run_bfs_trace, run_analysis, search_ddl, get_ddl_batch, enrich_view
 - CT: start_column_trace, submit_hop_analysis
 - BB: start_exploration, submit_findings
+- Batch (inline mode only): submit_batch_hop (CT), submit_batch_findings (BB)
 
 **Dynamic filtering per round (5 phases):**
-- `discover`: all 12 tools visible
-- `ct_active`: CT tools only (hop-by-hop verdicts)
+- `discover`: all tools visible
+- `ct_active`: CT tools (hop-by-hop or batch)
 - `ct_done`: classic tools restored, **BFS excluded** (SM result is authoritative)
 - `bb_active`: classic + BB tools (CT hidden, mutual exclusion)
 - `bb_done`: classic tools restored, **BFS excluded** (SM result is authoritative)
 
+## Delivery Mode Gate
+
+`shouldSmInline()` in `tokenBudget.ts` — AND logic:
+- Scope <= `ai.inlineNodeCap` (default 10) AND scope DDL <= `ai.inlineTokenBudget` (default 10K tokens)
+- **Below both:** inline — all DDL in `scope_nodes`, batch verdicts, memory skipped
+- **Above either:** hop-by-hop — one node per hop, short_memory + detail_slots built per hop
+
 ## State Machine Types
 
-Activated when scope exceeds `ai.inlineTokenBudget` setting (default 10K tokens):
+Activated for all CT/BB traces (inline mode skips memory, not the SM):
 - Type 3: Column — columns provided, validation + rename tracking
 - Type 2: Dependency — no columns, frontier + verdicts + boundary detection
 - Type 1: Blackboard — free-form exploration with two-tier memory (MemGPT pattern)

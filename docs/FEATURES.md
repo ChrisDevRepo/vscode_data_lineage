@@ -268,7 +268,7 @@ When you ask `@lineage` a question, it goes through four steps:
 
 For step 3, the assistant automatically chooses between two analysis modes based on scope size:
 
-**Quick analysis** — for small scopes (≤10 objects and under token budget). The AI receives all SQL at once and reasons about everything in a single pass. This is fast and works well for straightforward questions like *"what reads from the Employee table?"* or *"trace BusinessEntityID upstream."*
+**Quick analysis** — for small scopes (≤10 objects and under token budget). The AI receives all SQL at once, reasons about everything in a single pass, and submits all decisions in one batch. This is fast and works well for straightforward questions like *"what reads from the Employee table?"* or *"trace BusinessEntityID upstream."*
 
 **Deep exploration** — for larger scopes (>10 objects or exceeding token budget). The AI examines one object at a time, building persistent memory as it goes. Each step records what was found — column renames, formulas, join conditions — so that information from early steps remains available 15 or 20 steps later.
 

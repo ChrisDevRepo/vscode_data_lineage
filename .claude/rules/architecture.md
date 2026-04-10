@@ -53,7 +53,7 @@ Extension host holds full model regardless. AI tools + BFS operate on full model
 
 SM stores and delivers — never filters, ranks, or evicts AI evidence.
 
-**Inline vs hop-by-hop:** `shouldSmInline()` in `tokenBudget.ts` gates delivery mode. Small scopes (≤ `ai.inlineNodeCap` AND under `ai.inlineTokenBudget`) → inline: all DDL delivered at once, memory storage skipped. Larger scopes → hop-by-hop with two-tier memory below. Both modes use the same SM for verdict validation.
+**Inline vs hop-by-hop:** `shouldSmInline()` in `tokenBudget.ts` gates delivery mode. Small scopes (≤ `ai.inlineNodeCap` AND under `ai.inlineTokenBudget`) → inline: all DDL delivered at once, memory storage skipped. AI submits all verdicts via batch API (one call). Larger scopes → hop-by-hop with two-tier memory below. Both modes use the same SM for verdict validation.
 
 **Two memories (hop-by-hop mode only) — different purposes:**
 - **Short memory** (`narrative[]`): incremental index. ~100-200 chars per hop. Tracks what was loaded and what's still open. The AI sees ALL entries at every hop — this is how it stays on track.
