@@ -11,7 +11,7 @@ import {
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
   autoFixEnrichView, validateEnrichView, orderAndAssemble,
-  estimateTokens, shouldInline,
+  estimateTokens, shouldSmInline,
 } from '../src/ai/tools.js';
 import type { EnrichViewInput } from '../src/ai/tools.js';
 import { ColumnTraceState } from '../src/ai/columnTraceState.js';
@@ -171,9 +171,9 @@ export function dispatchTool(
       columnTraceState.current = state;
       const initResult = state.init({ targetColumns: columns, origin: input.origin as string | undefined, direction });
       if ('error' in initResult) return JSON.stringify(initResult);
-      // Token budget gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
+      // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
       const scopeDdlChars = state.estimateScopeDdlChars();
-      const inline = shouldInline(scopeDdlChars);
+      const inline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
       if (inline) state.setInlineMode(true);
       log('info', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → ${inline ? 'inline' : 'state machine'}`);
       const hopCtx = state.getHopContext();
@@ -221,9 +221,9 @@ export function dispatchTool(
       const initResult = state.init({ question: (input.question as string) ?? '', origin: (input.origin as string) ?? '' });
       if ('error' in initResult) return JSON.stringify(initResult);
 
-      // Token budget gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
+      // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
       const scopeDdlChars = state.estimateScopeDdlChars();
-      const inline = shouldInline(scopeDdlChars);
+      const inline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
       if (inline) state.setInlineMode(true);
       log('info', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → ${inline ? 'inline' : 'state machine'}`);
 

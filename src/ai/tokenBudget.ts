@@ -49,6 +49,20 @@ export function shouldInline(payloadChars: number, precomputedTokens?: number): 
   return tokens <= getEffectiveBudget();
 }
 
+// ─── SM inline node cap ───────────────────────────────────────────────────
+
+/** Max scope nodes for inline SM delivery. Above this, always use hop-by-hop even if tokens fit. */
+export const SM_INLINE_NODE_CAP = 10;
+
+/**
+ * Should CT/BB use inline delivery? Checks BOTH token budget AND node count.
+ * Small scopes (≤10 nodes, under token budget) → inline.
+ * Larger scopes → hop-by-hop with sliding memory (deep traces need memory for rename tracking).
+ */
+export function shouldSmInline(payloadChars: number, scopeNodeCount: number): boolean {
+  return scopeNodeCount <= SM_INLINE_NODE_CAP && shouldInline(payloadChars);
+}
+
 // ─── Context pressure ──────────────────────────────────────────────────────
 
 /**

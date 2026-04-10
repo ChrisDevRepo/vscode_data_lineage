@@ -6,7 +6,7 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  estimateTokens, setInlineTokenBudget, shouldInline,
+  estimateTokens, setInlineTokenBudget, shouldSmInline,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
@@ -700,9 +700,9 @@ export function activate(context: vscode.ExtensionContext) {
           const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
           if ('error' in initResult) return logAndReturn('start_column_trace', initResult);
 
-          // Token budget gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
+          // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
           const scopeDdlChars = _columnTraceState.estimateScopeDdlChars();
-          const inline = shouldInline(scopeDdlChars);
+          const inline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
           if (inline) _columnTraceState.setInlineMode(true);
           logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → ${inline ? 'inline' : 'state machine'}`);
 
@@ -804,9 +804,9 @@ export function activate(context: vscode.ExtensionContext) {
           const initResult = _blackboardState.init({ question, origin });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);
 
-          // Token budget gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
+          // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
           const scopeDdlChars = _blackboardState.estimateScopeDdlChars();
-          const inline = shouldInline(scopeDdlChars);
+          const inline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
           if (inline) _blackboardState.setInlineMode(true);
           logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → ${inline ? 'inline' : 'state machine'}`);
 
