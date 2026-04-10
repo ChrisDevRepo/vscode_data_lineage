@@ -207,6 +207,53 @@ export function dispatchTool(
       return JSON.stringify({ ...subResult, hop_context: nextHop });
     }
 
+    case 'lineage_submit_batch_hop': {
+      const state = columnTraceState.current;
+      if (!state) return JSON.stringify({ error: 'no_active_trace', hint: 'No active column trace.' });
+      const entries = (input.entries as Array<{
+        node_id: string; notes?: string; badge_label?: string; note_caption?: string;
+        verdicts: Array<{ neighbor_id: string; verdict: string; columns?: string[]; summary?: string; question?: string }>;
+      }>).map(e => ({
+        nodeId: e.node_id,
+        notes: e.notes,
+        badge_label: e.badge_label,
+        note_caption: e.note_caption,
+        verdicts: (e.verdicts ?? []).map(v => ({
+          nodeId: v.neighbor_id,
+          verdict: v.verdict as 'trace' | 'prune' | 'pass' | 'revisit',
+          columnsOut: v.columns,
+          summary: v.summary,
+          question: v.question,
+        })),
+      }));
+      return JSON.stringify(state.submitBatch(entries));
+    }
+
+    case 'lineage_submit_batch_findings': {
+      const bb = blackboardState ?? { current: null };
+      const state = bb.current;
+      if (!state) return JSON.stringify({ error: 'no_active_exploration', hint: 'No active exploration.' });
+      const entries = (input.entries as Array<{
+        node_id: string; findings: string; summary: string; verdict: string;
+        badge_label?: string; note_caption?: string;
+        prune_ids?: string[]; add_ids?: string[];
+        questions?: Array<{ node_id: string; question: string }>;
+        complete?: boolean;
+      }>).map(e => ({
+        nodeId: e.node_id,
+        findings: e.findings,
+        summary: e.summary,
+        verdict: e.verdict as 'relevant' | 'pass' | 'irrelevant',
+        badge_label: e.badge_label,
+        note_caption: e.note_caption,
+        prune_ids: e.prune_ids,
+        add_ids: e.add_ids,
+        questions: e.questions,
+        complete: e.complete,
+      }));
+      return JSON.stringify(state.submitBatch(entries));
+    }
+
     case 'lineage_start_exploration': {
       const bb = blackboardState ?? { current: null };
       const scopeDir = (['upstream', 'downstream', 'bidirectional'].includes((input.scope_direction as string) ?? '')

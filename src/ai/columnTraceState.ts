@@ -671,6 +671,75 @@ export class ColumnTraceState extends HopStateMachine {
     return { ok: true, advanced, frontierSize: this.frontier.length };
   }
 
+  // ─── submitBatch (inline mode) ──────────────────────────────────────────────
+
+  /**
+   * Batch submit all verdicts at once (inline mode only).
+   * AI provides verdicts keyed by node ID. SM loops frontier internally:
+   *   getHopContext() → match AI verdict → submitVerdicts() → repeat
+   * Stops on first rejection or when frontier is empty.
+   */
+  submitBatch(entries: Array<{
+    nodeId: string;
+    notes?: string;
+    badge_label?: string;
+    note_caption?: string;
+    verdicts: Array<{
+      nodeId: string;
+      verdict: HopVerdict;
+      columnsOut?: string[];
+      summary?: string;
+      question?: string;
+    }>;
+  }>): { ok: true; result: ReturnType<ColumnTraceState['getResult']> }
+     | { error: string; hint?: string; processed: number; failed_node?: string } {
+
+    if (!this._inlineMode) {
+      return { error: 'batch_not_inline', hint: 'Batch submit is only available in inline mode.', processed: 0 };
+    }
+
+    const entryMap = new Map(entries.map(e => [e.nodeId.toLowerCase(), e]));
+    let processed = 0;
+
+    while (true) {
+      // If already awaiting verdicts (first hop from init), use current focus.
+      // Otherwise advance to next hop.
+      if (this._status !== 'awaiting_verdicts') {
+        const hop = this.getHopContext();
+        if ('done' in hop) break;
+        if ('error' in hop) return { error: hop.error, hint: 'Internal hop error', processed, failed_node: this.currentFocusNodeId ?? undefined };
+      }
+
+      const focusId = this.currentFocusNodeId!;
+      const entry = entryMap.get(focusId.toLowerCase());
+      if (!entry) {
+        // AI didn't provide verdict for this focus node — return partial result
+        return {
+          error: 'missing_verdict',
+          hint: `No verdict provided for focus node ${focusId}. Provide a verdict and resubmit.`,
+          processed,
+          failed_node: focusId,
+        };
+      }
+
+      const result = this.submitVerdicts({
+        focusNodeId: focusId,
+        notes: entry.notes,
+        badge_label: entry.badge_label,
+        note_caption: entry.note_caption,
+        verdicts: entry.verdicts,
+      });
+
+      if ('error' in result) {
+        return { error: result.error, hint: (result as { hint?: string }).hint, processed, failed_node: focusId };
+      }
+      processed++;
+    }
+
+    this.log('info', `Batch complete: ${processed} hops processed`);
+    return { ok: true, result: this.getResult() };
+  }
+
   // ─── getResult ─────────────────────────────────────────────────────────────
 
   getResult(): {

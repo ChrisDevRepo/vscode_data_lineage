@@ -500,6 +500,85 @@ export class BlackboardState extends HopStateMachine {
     return base;
   }
 
+  // ─── submitBatch (inline mode) ──────────────────────────────────────────────
+
+  /**
+   * Batch submit all findings at once (inline mode only).
+   * AI provides findings keyed by node ID. SM loops agenda internally:
+   *   getHopContext() → match AI findings → submitFindings() → repeat
+   * Stops on first rejection or when agenda is empty / complete accepted.
+   */
+  submitBatch(entries: Array<{
+    nodeId: string;
+    findings: string;
+    summary: string;
+    verdict: 'relevant' | 'pass' | 'irrelevant';
+    badge_label?: string;
+    note_caption?: string;
+    prune_ids?: string[];
+    add_ids?: string[];
+    questions?: Array<{ node_id: string; question: string }>;
+    complete?: boolean;
+  }>): { ok: true; result: ReturnType<BlackboardState['getResult']> }
+     | { error: string; hint?: string; processed: number; failed_node?: string } {
+
+    if (!this._inlineMode) {
+      return { error: 'batch_not_inline', hint: 'Batch submit is only available in inline mode.', processed: 0 };
+    }
+
+    const entryMap = new Map(entries.map(e => [e.nodeId.toLowerCase(), e]));
+    let processed = 0;
+
+    while (true) {
+      // If already awaiting findings (first hop from init), use current focus.
+      // Otherwise advance to next hop.
+      if (this._status !== 'awaiting_findings') {
+        const hop = this.getHopContext();
+        if ('done' in hop) break;
+        if ('error' in hop) return { error: (hop as { error: string }).error, hint: 'Internal hop error', processed, failed_node: this.currentFocusNodeId ?? undefined };
+      }
+
+      const focusId = this.currentFocusNodeId!;
+      const entry = entryMap.get(focusId.toLowerCase());
+      if (!entry) {
+        return {
+          error: 'missing_verdict',
+          hint: `No verdict provided for focus node ${focusId}. Provide a verdict and resubmit.`,
+          processed,
+          failed_node: focusId,
+        };
+      }
+
+      const result = this.submitFindings({
+        focusNodeId: focusId,
+        findings: entry.findings,
+        summary: entry.summary,
+        verdict: entry.verdict,
+        tags: undefined,
+        pruneIds: entry.prune_ids,
+        addIds: entry.add_ids,
+        questions: entry.questions?.map(q => ({ nodeId: q.node_id, question: q.question })),
+        complete: entry.complete,
+        badge_label: entry.badge_label,
+        note_caption: entry.note_caption,
+      });
+
+      if ('error' in result) {
+        return { error: result.error, hint: (result as { hint?: string }).hint, processed, failed_node: focusId };
+      }
+      processed++;
+
+      // Check if early_complete was accepted
+      if ('early_complete' in result && result.early_complete) {
+        this.log('info', `Batch early complete: ${processed} hops processed`);
+        return { ok: true, result: result.early_complete as ReturnType<BlackboardState['getResult']> };
+      }
+    }
+
+    this.log('info', `Batch complete: ${processed} hops processed`);
+    return { ok: true, result: this.getResult() };
+  }
+
   // ─── getResult ────────────────────────────────────────────────────────────
 
   getResult(): SmResult & {

@@ -267,7 +267,11 @@ async function main() {
       .filter(t => t.name.startsWith('lineage_') && t.modelDescription)
       .map(t => [t.name, t.modelDescription as string])
   );
-  const TOOL_NAMES = Object.keys(TOOL_DEFS);
+  const TOOL_NAMES = [
+    ...Object.keys(TOOL_DEFS),
+    'lineage_submit_batch_hop',       // inline batch CT
+    'lineage_submit_batch_findings',  // inline batch BB
+  ];
 
   // 6. Load AI output templates — same YAML + extraction logic as extension.ts loadAiOutputTemplates()
   const rawTemplates = yaml.load(
