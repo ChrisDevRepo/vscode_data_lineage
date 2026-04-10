@@ -399,12 +399,6 @@ export interface TraceState {
   downstreamLevels: number;
   tracedNodeIds: Set<string>;
   tracedEdgeIds: Set<string>;
-  /** Node count from BFS on unfiltered model (undefined = not computed). */
-  fullTraceNodeCount?: number;
-  /** Per-node count of trace neighbors hidden by filters. Only set when gaps exist. */
-  filteredNeighborGaps?: Map<string, { hidden: number; total: number }>;
-  /** When true, trace BFS used the unfiltered model graph. */
-  useFullGraph?: boolean;
 }
 
 // ─── Graph Analysis Types ────────────────────────────────────────────────────

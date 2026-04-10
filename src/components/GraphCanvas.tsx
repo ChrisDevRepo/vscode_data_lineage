@@ -148,8 +148,6 @@ interface GraphCanvasProps {
   pendingViewport?: { x: number; y: number; zoom: number };
   /** Called after pendingPositions have been applied so the parent can clear them. */
   onPendingPositionsApplied?: () => void;
-  /** Toggle between filtered and full-model BFS in trace mode. */
-  onToggleFullGraph?: () => void;
 }
 
 export function GraphCanvas({
@@ -222,7 +220,6 @@ export function GraphCanvas({
   pendingPositions,
   pendingViewport,
   onPendingPositionsApplied,
-  onToggleFullGraph,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -630,9 +627,6 @@ export function GraphCanvas({
           onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
           onReset={() => onResetAll()}
           onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
-          fullTraceNodeCount={trace.fullTraceNodeCount}
-          useFullGraph={trace.useFullGraph}
-          onToggleFullGraph={onToggleFullGraph}
         />
       )}
 
