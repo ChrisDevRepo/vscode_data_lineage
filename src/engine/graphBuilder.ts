@@ -74,7 +74,7 @@ export interface GraphResult {
 }
 
 /** Build graphology graph from model (shared by buildGraph and buildGraphNoLayout). */
-function buildGraphologyGraph(model: DatabaseModel): Graph {
+export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   for (const node of model.nodes) {
     graph.addNode(node.id, { ...node });
@@ -245,7 +245,8 @@ export function applyTraceToFlow(
   flowNodes: FlowNode[],
   flowEdges: FlowEdge[],
   trace: TraceState,
-  config: ExtensionConfig = DEFAULT_CONFIG
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  model?: DatabaseModel | null
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
   if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
     return { nodes: flowNodes, edges: flowEdges };
@@ -262,6 +263,44 @@ export function applyTraceToFlow(
     console.warn(`[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`);
   }
 
+  // Synthesize FlowNodes for path/full-graph nodes outside the current filter
+  if (filteredNodes.length < trace.tracedNodeIds.size && (trace.mode === 'path-applied' || trace.useFullGraph) && model) {
+    const flowNodeIdSet = new Set(filteredNodes.map(n => n.id));
+    const modelNodeMap = new Map(model.nodes.map(n => [n.id, n]));
+    for (const id of trace.tracedNodeIds) {
+      if (flowNodeIdSet.has(id)) continue;
+      const mn = modelNodeMap.get(id);
+      if (!mn) continue;
+      filteredNodes.push({
+        id: mn.id,
+        type: 'lineageNode',
+        position: { x: 0, y: 0 },
+        draggable: true,
+        selectable: true,
+        data: {
+          label: mn.name,
+          schema: mn.schema,
+          fullName: mn.fullName,
+          objectType: mn.type,
+          inDegree: 0,
+          outDegree: 0,
+          ...(mn.externalType && { externalType: mn.externalType }),
+          ...(mn.externalUrl && { externalUrl: mn.externalUrl }),
+          ...(mn.externalDatabase && { externalDatabase: mn.externalDatabase }),
+        },
+      });
+    }
+  } else if (filteredNodes.length < trace.tracedNodeIds.size) {
+    const flowNodeIdSet = new Set(flowNodes.map(n => n.id));
+    const missing = [...trace.tracedNodeIds].filter(id => !flowNodeIdSet.has(id));
+    if (missing.length > 0) {
+      window.vscode?.postMessage({ type: 'log', text:
+        `[Trace] Gap: BFS found ${trace.tracedNodeIds.size}, view has ${filteredNodes.length}. ` +
+        `Missing: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` (+${missing.length - 5} more)` : ''}`
+      });
+    }
+  }
+
   // FILTER edges to only show traced subset
   const filteredEdges = flowEdges.filter((e) => {
     // Check if edge is in traced set
@@ -273,6 +312,27 @@ export function applyTraceToFlow(
     }
     return traced;
   });
+
+  // Synthesize FlowEdges for path/full-graph edges outside the current filter
+  if ((trace.mode === 'path-applied' || trace.useFullGraph) && model) {
+    const existingEdgeIds = new Set(filteredEdges.map(e => e.id));
+    for (const edgeId of trace.tracedEdgeIds) {
+      if (existingEdgeIds.has(edgeId)) continue;
+      // Also check if a bidirectional edge already covers this
+      const [src, tgt] = edgeId.split('→');
+      if (!src || !tgt) continue;
+      const bidir = `${src}↔${tgt}`;
+      const bidirRev = `${tgt}↔${src}`;
+      if (existingEdgeIds.has(bidir) || existingEdgeIds.has(bidirRev)) continue;
+      filteredEdges.push({
+        id: edgeId,
+        source: src,
+        target: tgt,
+        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+        style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.2 },
+      });
+    }
+  }
 
   // RELAYOUT the traced subset — dispatch layout by analysis type
   let positions: Map<string, { x: number; y: number }>;
@@ -296,6 +356,7 @@ export function applyTraceToFlow(
         : n.id === trace.targetNodeId
           ? 'yellow' as const
           : false,
+      filteredNeighborGap: trace.filteredNeighborGaps?.get(n.id),
     },
   }));
 
