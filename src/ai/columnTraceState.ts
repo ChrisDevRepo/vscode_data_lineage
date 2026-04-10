@@ -199,6 +199,7 @@ export class ColumnTraceState extends HopStateMachine {
 
     // Compute scope via NeighborIndex BFS (direction-aware)
     const scopeIds = this.bfsScopeViaIndex(origin_.id);
+    this.scopeNodeIds = scopeIds;
     this.scopeSize = scopeIds.size;
 
     // Seed frontier with directional neighbors of origin
