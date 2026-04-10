@@ -83,8 +83,8 @@ export function App() {
   });
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
-  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, toggleFullGraph } =
-    useInteractiveTrace(graph, flowNodes, flowEdges, config, model);
+  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
+    useInteractiveTrace(graph, flowNodes, flowEdges, config);
 
   // Allows callbacks defined before useOverviewMode to reset the auto-trigger guard.
   const overviewActionsRef = useRef<{ resetUserChoice: () => void }>({
@@ -386,10 +386,6 @@ export function App() {
   configRef.current = config;
   const rebuildRef = useRef(rebuild);
   rebuildRef.current = rebuild;
-
-  // Diagnostics snapshot ref — kept fresh every render for the message handler.
-  // Initial value uses placeholder for graphMode (declared later); .current updated after.
-  const diagRef = useRef({ filteredCount, renderLimitHit, renderedSchemas, flowNodeCount: flowNodes.length, flowEdgeCount: flowEdges.length, traceMode: trace.mode, tracedNodeCount: trace.tracedNodeIds.size, graphMode: 'full' as string });
   const prevIsModeLocked = useRef(false);
 
   useEffect(() => {
@@ -595,9 +591,6 @@ export function App() {
     schemasKey,
     onSetFocusSchema: handleSetFocusSchema,
   });
-
-  // Update diagnostics ref with current values (graphMode is now in scope)
-  diagRef.current = { filteredCount, renderLimitHit, renderedSchemas, flowNodeCount: flowNodes.length, flowEdgeCount: flowEdges.length, traceMode: trace.mode, tracedNodeCount: trace.tracedNodeIds.size, graphMode };
 
   // Populate ref so handleRefresh/handleResetAll (defined earlier) can reset the guard.
   overviewActionsRef.current.resetUserChoice = resetUserChoice;
@@ -887,22 +880,6 @@ export function App() {
         } else {
           setTimeout(() => setIsRebuilding(false), MIN_REBUILD_SPINNER_MS - elapsed);
         }
-      } else if (msg?.type === 'request-diagnostics') {
-        const d = diagRef.current;
-        const vscodeApi = (window as { vscode?: { postMessage: (msg: unknown) => void } }).vscode;
-        vscodeApi?.postMessage({
-          type: 'diagnostics-response',
-          data: {
-            filteredNodeCount: d.flowNodeCount,
-            filteredEdgeCount: d.flowEdgeCount,
-            renderedSchemas: d.renderedSchemas,
-            renderLimitHit: d.renderLimitHit,
-            filteredCount: d.filteredCount,
-            traceMode: d.traceMode,
-            tracedNodeCount: d.tracedNodeCount,
-            graphMode: d.graphMode,
-          },
-        });
       } else if (msg?.type === 'ai-view-preview') {
         // AI created a transient view — show as preview, user decides whether to save
         const preview: AiPreview = {
@@ -1264,7 +1241,6 @@ export function App() {
         pendingPositions={pendingPositions}
         pendingViewport={pendingViewport}
         onPendingPositionsApplied={handlePendingPositionsApplied}
-        onToggleFullGraph={toggleFullGraph}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);

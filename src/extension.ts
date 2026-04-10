@@ -301,40 +301,6 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // ─── Copy Diagnostics command ──────────────────────────────────────────────
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dataLineageViz.copyDiagnostics', async () => {
-      const cfg = vscode.workspace.getConfiguration('dataLineageViz');
-      const diag: Record<string, unknown> = {
-        version: context.extension.packageJSON?.version ?? 'unknown',
-        model: _aiModel ? { nodes: _aiModel.nodes.length, edges: _aiModel.edges.length, schemas: _aiModel.schemas.length } : null,
-        filter: _aiFilter ?? null,
-        config: { maxNodes: cfg.get<number>('maxNodes', DEFAULT_CONFIG.maxNodes), renderLimit: cfg.get<number>('renderLimit', DEFAULT_CONFIG.renderLimit) },
-      };
-
-      // Request webview state (with 2s timeout)
-      if (activePanel) {
-        const webviewData = await new Promise<Record<string, unknown> | null>((resolve) => {
-          const timeout = setTimeout(() => resolve(null), 2000);
-          const disposable = activePanel!.webview.onDidReceiveMessage((msg) => {
-            if (msg?.type === 'diagnostics-response') {
-              clearTimeout(timeout);
-              disposable.dispose();
-              resolve(msg.data);
-            }
-          });
-          activePanel!.webview.postMessage({ type: 'request-diagnostics' });
-        });
-        if (webviewData) diag.webview = webviewData;
-      }
-
-      const text = JSON.stringify(diag, null, 2);
-      await vscode.env.clipboard.writeText(text);
-      vscode.window.showInformationMessage('Data Lineage: Diagnostics copied to clipboard');
-      logInfo(outputChannel, 'Bridge', `Diagnostics copied (${text.length} chars)`);
-    })
-  );
-
   // ─── QuickPick object search command ───────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand('dataLineageViz.searchObjects', async () => {
