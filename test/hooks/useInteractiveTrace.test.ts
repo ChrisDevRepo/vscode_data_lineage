@@ -18,6 +18,7 @@ import type { Node as FlowNode } from '@xyflow/react';
 import { useInteractiveTrace } from '../../src/hooks/useInteractiveTrace';
 import type { CustomNodeData } from '../../src/components/CustomNode';
 import { DEFAULT_CONFIG } from '../../src/engine/types';
+import type { DatabaseModel, LineageNode, LineageEdge } from '../../src/engine/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,14 @@ function makeFlowNodes(ids: string[]): FlowNode<CustomNodeData>[] {
       outDegree: 1,
     },
   }));
+}
+
+function makeModel(nodeIds: string[], edges: [string, string][]): DatabaseModel {
+  const nodes: LineageNode[] = nodeIds.map(id => ({
+    id, schema: 'dbo', name: id, fullName: `[dbo].[${id}]`, type: 'table' as const,
+  }));
+  const modelEdges: LineageEdge[] = edges.map(([s, t]) => ({ source: s, target: t, type: 'body' as const }));
+  return { nodes, edges: modelEdges, schemas: [], catalog: {}, neighborIndex: {} };
 }
 
 // Linear chain used by most tests: A → B → C
@@ -257,6 +266,44 @@ describe('Suite F — applyPath', () => {
     let found = false;
     act(() => { found = result.current.applyPath('A'); });
     expect(found).toBe(true);
+  });
+
+  it('finds path through nodes not in filtered graph via full model', () => {
+    // Full model: A → B → C → D. Filtered graph: A, B, D only (C hidden by filter).
+    const filteredGraph = makeGraph(['A', 'B', 'D'], [['A', 'B']]);
+    const fullModel = makeModel(['A', 'B', 'C', 'D'], [['A', 'B'], ['B', 'C'], ['C', 'D']]);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(filteredGraph, [], [], DEFAULT_CONFIG, fullModel)
+    );
+    act(() => { result.current.startPathFinding('A'); });
+    let found = false;
+    act(() => { found = result.current.applyPath('D'); });
+    expect(found).toBe(true);
+    expect(result.current.trace.tracedNodeIds.has('C')).toBe(true);
+    expect(result.current.trace.tracedNodeIds.size).toBe(4);
+  });
+
+  it('synthesizes FlowNodes for path nodes outside the filter', () => {
+    // Full model: A → B → C → D. Filtered graph + flowNodes: A, B, D only.
+    const filteredGraph = makeGraph(['A', 'B', 'D'], [['A', 'B']]);
+    const fullModel = makeModel(['A', 'B', 'C', 'D'], [['A', 'B'], ['B', 'C'], ['C', 'D']]);
+    const flowNodes = makeFlowNodes(['A', 'B', 'D']);
+    const flowEdges = [{ id: 'A→B', source: 'A', target: 'B' }];
+    const { result } = renderHook(() =>
+      useInteractiveTrace(filteredGraph, flowNodes, flowEdges, DEFAULT_CONFIG, fullModel)
+    );
+    act(() => { result.current.startPathFinding('A'); });
+    act(() => { result.current.applyPath('D'); });
+    // tracedNodes should include synthesized node for C
+    const nodeIds = result.current.tracedNodes.map(n => n.id);
+    expect(nodeIds).toContain('C');
+    expect(nodeIds).toContain('A');
+    expect(nodeIds).toContain('D');
+    expect(result.current.tracedNodes.length).toBe(4);
+    // Synthesized edges B→C and C→D should also be present
+    const edgeIds = result.current.tracedEdges.map(e => e.id);
+    expect(edgeIds).toContain('B→C');
+    expect(edgeIds).toContain('C→D');
   });
 });
 
