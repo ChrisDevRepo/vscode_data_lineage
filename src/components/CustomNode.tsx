@@ -81,18 +81,6 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           </Tooltip>
         </NodeToolbar>
       )}
-      {/* Filter gap badge — bottom-right outside node, same pattern as aiBadge/aiNote */}
-      {data.filteredNeighborGap && (
-        <NodeToolbar position={Position.Bottom} align="end" offset={2} isVisible>
-          <Tooltip content={`${data.filteredNeighborGap.hidden} of ${data.filteredNeighborGap.total} neighbors filtered out`} placement="right" delay={300}>
-            <div className="ln-filter-gap-badge">
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
-              </svg>
-            </div>
-          </Tooltip>
-        </NodeToolbar>
-      )}
       <Tooltip content={tooltipText} placement="top" multiline maxWidth={300} asChild>
       <div
         className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-card"
@@ -129,6 +117,18 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             >
               ×
             </button>
+          </Tooltip>
+        )}
+        {data.filteredNeighborGap && (
+          <Tooltip content={`${data.filteredNeighborGap.hidden} of ${data.filteredNeighborGap.total} neighbors filtered out`} placement="bottom">
+            <div
+              className="absolute flex items-center justify-center ln-text-muted"
+              style={{ bottom: 2, right: 2, width: 14, height: 14, zIndex: 10, cursor: 'help' }}
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
+              </svg>
+            </div>
           </Tooltip>
         )}
         <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
