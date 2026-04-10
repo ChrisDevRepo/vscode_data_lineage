@@ -64,7 +64,7 @@ interface GraphCanvasProps {
   onTraceEnd: (onComplete?: () => void) => void;
   onResetAll: () => void;
   onToggleType: (type: ObjectType) => void;
-  onSearchChange: (term: string) => void;
+  // searchTerm is local to SearchWithAutocomplete — no longer passed through props
   onToggleIsolated: () => void;
   onToggleFocusSchema: (schema: string) => void;
   onToggleSchema?: (schema: string) => void;
@@ -166,7 +166,6 @@ export function GraphCanvas({
   onTraceEnd,
   onResetAll,
   onToggleType,
-  onSearchChange,
   onToggleIsolated,
   onToggleFocusSchema,
   onToggleSchema,
@@ -227,9 +226,14 @@ export function GraphCanvas({
   // Pending actions for post-rebuild drill-down (overview → full + zoom to node)
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
+  /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
+  const pendingZoomSetAt = useRef<number>(0);
   // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
+
+  /** Max time to wait for a pending zoom target to appear in flowNodes before giving up. */
+  const PENDING_ZOOM_TIMEOUT_MS = 5000;
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -314,36 +318,48 @@ export function GraphCanvas({
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
+        console.debug('[search-switch] zoomToNode: centering on %s at (%d,%d)', nodeId, targetNode.position.x, targetNode.position.y);
         setCenter(
           targetNode.position.x + NODE_WIDTH / 2,
           targetNode.position.y + NODE_HEIGHT / 2,
           { zoom: 0.8, duration: FIT_VIEW_DURATION }
         );
+      } else {
+        console.debug('[search-switch] zoomToNode: node %s not found in ReactFlow store (getNode returned %o)', nodeId, targetNode);
       }
     });
   }, [getNode, setCenter]);
 
   // Execute search: find node and zoom to it (drills down from overview if needed)
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
+    console.debug('[search-switch] handleExecuteSearch: name=%s, schema=%s, graphMode=%s, flowNodes.length=%d', name, schema, graphMode, flowNodes.length);
+
     const foundNode = schema
       ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
       : flowNodes.find(n => n.data.label === name);
 
     if (foundNode) {
+      console.debug('[search-switch] node found in flowNodes, zoom+click: id=%s', foundNode.id);
       onNodeClick(foundNode.id);
       zoomToNode(foundNode.id);
       return;
     }
 
-    // Overview mode: node not in flowNodes — drill down to its schema
+    // Overview mode: node not in flowNodes — drill down to its schema.
+    // enterFocusFromOverview now rebuilds synchronously with forceLayout=true,
+    // so flowNodes will be ready on the next render when the useEffect fires.
     if (graphMode === 'overview' && model) {
       const modelNode = schema
         ? model.nodes.find(n => n.name === name && n.schema === schema)
         : model.nodes.find(n => n.name === name);
       if (modelNode) {
+        console.debug('[search-switch] overview drill-down: nodeId=%s, schema=%s', modelNode.id, modelNode.schema);
         pendingZoomRef.current = modelNode.id;
         pendingClickRef.current = { id: modelNode.id };
+        pendingZoomSetAt.current = Date.now();
         onSchemaNodeDoubleClick?.(modelNode.schema);
+      } else {
+        console.debug('[search-switch] node not found in model: name=%s, schema=%s', name, schema);
       }
     }
   }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick]);
@@ -363,18 +379,43 @@ export function GraphCanvas({
 
   // Auto-fit view whenever the graph data changes — skipped when saved positions are being restored.
   // If a pending drill-down zoom target exists (overview → full), zoom to that node instead of fitView.
-  // flowNodes reference only changes on rebuild — not on highlight
+  // flowNodes reference only changes on rebuild — not on highlight.
+  //
+  // IMPORTANT: Only consume pendingZoomRef when the target node actually exists in the current
+  // flowNodes. During overview→full transitions the graphMode change can trigger a render with
+  // stale flowNodes before the rebuild's new nodes arrive. If we consumed the ref at that point
+  // the zoom would silently fail and be lost. By checking existence first, we keep the ref set
+  // until the correct flowNodes arrive on a subsequent render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) return;
     const zoomTarget = pendingZoomRef.current;
     const clickTarget = pendingClickRef.current;
     if (zoomTarget) {
-      pendingZoomRef.current = null;
-      pendingClickRef.current = null;
-      zoomToNode(zoomTarget);
-      if (clickTarget) onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm);
-      return;
+      // Verify the target node exists in the current flowNodes before consuming.
+      // During overview→full transitions the graphMode change may trigger a render
+      // with stale flowNodes before the rebuild arrives. Keep the ref set until the
+      // correct flowNodes land, or expire after PENDING_ZOOM_TIMEOUT_MS.
+      const nodeExists = flowNodes.some(n => n.id === zoomTarget);
+      const elapsed = Date.now() - pendingZoomSetAt.current;
+      if (!nodeExists) {
+        if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
+          console.debug('[search-switch] pendingZoom target %s not found after %dms, expiring (node may have been filtered out)', zoomTarget, elapsed);
+          pendingZoomRef.current = null;
+          pendingClickRef.current = null;
+          // Fall through to fitView
+        } else {
+          console.debug('[search-switch] pendingZoom target %s not yet in flowNodes (len=%d, elapsed=%dms), deferring', zoomTarget, flowNodes.length, elapsed);
+          return; // Don't consume — wait for the next flowNodes update
+        }
+      } else {
+        console.debug('[search-switch] pendingZoom target %s found in flowNodes, zooming+clicking', zoomTarget);
+        pendingZoomRef.current = null;
+        pendingClickRef.current = null;
+        zoomToNode(zoomTarget);
+        if (clickTarget) onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm);
+        return;
+      }
     }
     const raf = requestAnimationFrame(() => {
       fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
@@ -545,8 +586,6 @@ export function GraphCanvas({
       <Toolbar
         types={filter.types}
         onToggleType={onToggleType}
-        searchTerm={filter.searchTerm}
-        onSearchChange={onSearchChange}
         hideIsolated={filter.hideIsolated}
         onToggleIsolated={onToggleIsolated}
         focusSchemas={filter.focusSchemas}

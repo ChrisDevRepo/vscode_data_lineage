@@ -17,8 +17,6 @@ import type { FilterProfile } from '../engine/projectStore';
 interface ToolbarProps {
   types: Set<ObjectType>;
   onToggleType: (type: ObjectType) => void;
-  searchTerm: string;
-  onSearchChange: (term: string) => void;
   hideIsolated: boolean;
   onToggleIsolated: () => void;
   focusSchemas: Set<string>;
@@ -90,8 +88,6 @@ function buildMetricsTooltip(
 export const Toolbar = memo(function Toolbar({
   types,
   onToggleType,
-  searchTerm,
-  onSearchChange,
   hideIsolated,
   onToggleIsolated,
   focusSchemas,
@@ -173,8 +169,6 @@ export const Toolbar = memo(function Toolbar({
         {/* Search & Filters */}
         <div className="flex-1 min-w-[100px] max-w-[340px]">
           <SearchWithAutocomplete
-            searchTerm={searchTerm}
-            onSearchChange={onSearchChange}
             onExecuteSearch={onExecuteSearch}
             onStartTrace={isModeLocked || isAnalysisActive ? undefined : onStartTrace}
             allNodes={allNodes}

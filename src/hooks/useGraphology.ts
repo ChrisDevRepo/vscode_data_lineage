@@ -18,7 +18,7 @@ interface UseGraphologyReturn {
   filteredCount: number;
   /** Unique schema names from nodes that survived all filters — for legend display. */
   renderedSchemas: string[];
-  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => void;
+  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => number;
 }
 
 export function useGraphology(): UseGraphologyReturn {
@@ -30,7 +30,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [filteredCount, setFilteredCount] = useState(0);
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
-  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false) => {
+  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false): number => {
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
     // Fused type + ext refs filter (single node pass)
@@ -66,7 +66,7 @@ export function useGraphology(): UseGraphologyReturn {
       setGraph(null);
       setMetrics(null);
       setRenderLimitHit(count);
-      return;
+      return count;
     }
 
     setRenderLimitHit(0);
@@ -79,7 +79,7 @@ export function useGraphology(): UseGraphologyReturn {
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
-      return;
+      return count;
     }
 
     // Full mode — dagre runs
@@ -88,6 +88,7 @@ export function useGraphology(): UseGraphologyReturn {
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
     setMetrics(getGraphMetrics(result.graph));
+    return count;
   }, []);
 
   return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel };

@@ -35,7 +35,8 @@ function defaultProps(overrides?: Partial<HookProps>): HookProps {
     filteredCount: 2, // below threshold
     config: defaultConfig(),
     schemasKey: 'dbo',
-    onSetFocusSchema: vi.fn(),
+    onSetFocusSchema: vi.fn().mockReturnValue(0),
+    onSetFocusSchemaOnly: vi.fn().mockReturnValue(0),
     ...overrides,
   };
 }
@@ -127,13 +128,13 @@ describe('Suite D — Schema focus entry', () => {
     expect(result.current.enteredFocusFromOverview).toBe(true);
   });
 
-  it('D13: calls onSetFocusSchema with schema name', () => {
-    const spy = vi.fn();
+  it('D13: calls onSetFocusSchema with schema name and forceLayout=true', () => {
+    const spy = vi.fn().mockReturnValue(0);
     const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchema: spy });
     const { result } = renderHook(() => useOverviewMode(props));
 
     act(() => result.current.enterFocusFromOverview('Sales'));
-    expect(spy).toHaveBeenCalledWith('Sales');
+    expect(spy).toHaveBeenCalledWith('Sales', true);
   });
 
   it('D14: sets guard after focus entry', () => {
@@ -148,6 +149,41 @@ describe('Suite D — Schema focus entry', () => {
     expect(result.current.graphMode).toBe('full');
   });
 });
+
+  it('D14b: forceOverview suppressed for one cycle after enterFocusFromOverview', () => {
+    const spy = vi.fn().mockReturnValue(FORCE_THRESHOLD + 1);
+    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchema: spy });
+    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
+    expect(result.current.graphMode).toBe('overview');
+
+    act(() => result.current.enterFocusFromOverview('Sales'));
+    expect(result.current.graphMode).toBe('full');
+
+    // First rerender with count above forceOverviewThreshold — suppressed
+    rerender({ ...props, filteredCount: FORCE_THRESHOLD + 1 });
+    expect(result.current.graphMode).toBe('full');
+
+    // In real usage, the synchronous rebuild from enterFocusFromOverview will have
+    // lowered filteredCount (or the schema-only fallback triggered). Simulate this:
+    rerender({ ...props, filteredCount: THRESHOLD });
+    expect(result.current.graphMode).toBe('full');
+  });
+
+  it('D14c: enterFocusFromOverview falls back to schema-only when neighbor count exceeds threshold', () => {
+    const focusSpy = vi.fn().mockReturnValue(FORCE_THRESHOLD + 1); // neighbors too large
+    const schemaOnlySpy = vi.fn().mockReturnValue(THRESHOLD); // schema-only fits
+    const props = defaultProps({
+      filteredCount: THRESHOLD + 1,
+      onSetFocusSchema: focusSpy,
+      onSetFocusSchemaOnly: schemaOnlySpy,
+    });
+    const { result } = renderHook(() => useOverviewMode(props));
+
+    act(() => result.current.enterFocusFromOverview('Sales'));
+    expect(focusSpy).toHaveBeenCalledWith('Sales', true);
+    expect(schemaOnlySpy).toHaveBeenCalledWith('Sales', true);
+    expect(result.current.graphMode).toBe('full');
+  });
 
 // ─── Suite E — Reset on model/schema change ──────────────────────────────────
 

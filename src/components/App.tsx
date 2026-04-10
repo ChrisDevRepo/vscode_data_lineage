@@ -99,8 +99,14 @@ export function App() {
   const [, startTransition] = useTransition();
 
   const rebuild = useCallback(
-    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false) => {
-      startTransition(() => buildFromModel(m, f, cfg || config, forceLayout));
+    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false): number => {
+      // When forceLayout is true (overview→full drill-down), run synchronously to avoid
+      // the race condition where graphMode changes before flowNodes are ready.
+      if (forceLayout) {
+        return buildFromModel(m, f, cfg || config, true);
+      }
+      startTransition(() => buildFromModel(m, f, cfg || config, false));
+      return 0; // Count unavailable for deferred builds; callers requiring count use forceLayout
     },
     [buildFromModel, config]
   );
@@ -504,9 +510,8 @@ export function App() {
     [model, config, rebuild]
   );
 
-  const handleSearchChange = useCallback((term: string) => {
-    setFilter((prev) => ({ ...prev, searchTerm: term }));
-  }, []);
+  // searchTerm is now local to SearchWithAutocomplete — no longer part of filter state.
+  // Keystrokes only re-render the search component, not the entire App/GraphCanvas tree.
 
   const handleToggleIsolated = useCallback(() => {
     setFilter((prev) => {
@@ -557,28 +562,43 @@ export function App() {
 
   /** Called on schema bubble double-click — same as clicking the star button in the
    *  schema dropdown. Sets focusSchemas + selects the schema + its neighbors. Always-set
-   *  (never toggles off, even if schema was already focused). */
-  const handleSetFocusSchema = useCallback((schema: string) => {
-    if (!model) return;
-    setFilter((prev) => {
-      const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
-      const nodeById = new Map(model.nodes.map(n => [n.id, n]));
-      const neighborSchemas = new Set<string>([schema]);
-      for (const e of model.edges) {
-        if (focusNodeIds.has(e.source)) {
-          const target = nodeById.get(e.target);
-          if (target) neighborSchemas.add(target.schema);
-        }
-        if (focusNodeIds.has(e.target)) {
-          const source = nodeById.get(e.source);
-          if (source) neighborSchemas.add(source.schema);
-        }
+   *  (never toggles off, even if schema was already focused).
+   *  @param forceLayout When true, bypass Guard 2 (run dagre synchronously). Used during overview→full drill-down.
+   *  @returns Post-filter node count so caller can decide on fallback. */
+  const handleSetFocusSchema = useCallback((schema: string, forceLayout = false): number => {
+    if (!model) return 0;
+    const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
+    const nodeById = new Map(model.nodes.map(n => [n.id, n]));
+    const neighborSchemas = new Set<string>([schema]);
+    for (const e of model.edges) {
+      if (focusNodeIds.has(e.source)) {
+        const target = nodeById.get(e.target);
+        if (target) neighborSchemas.add(target.schema);
       }
-      const next = { ...prev, focusSchemas: new Set([schema]), schemas: neighborSchemas };
-      rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+      if (focusNodeIds.has(e.target)) {
+        const source = nodeById.get(e.source);
+        if (source) neighborSchemas.add(source.schema);
+      }
+    }
+    const next = { ...filter, focusSchemas: new Set([schema]), schemas: neighborSchemas };
+    console.debug('[search-switch] handleSetFocusSchema: schema=%s, neighborSchemas=%o, forceLayout=%s', schema, [...neighborSchemas], forceLayout);
+    const count = rebuild(model, next, config, forceLayout);
+    setFilter(next);
+    return count;
+  }, [model, config, rebuild, filter]);
+
+  /** Fallback: focus only the target schema (no neighbors) when neighbor selection too large.
+   *  @param forceLayout When true, bypass Guard 2 (run dagre synchronously).
+   *  @returns Post-filter node count. */
+  const handleSetFocusSchemaOnly = useCallback((schema: string, forceLayout = false): number => {
+    if (!model) return 0;
+    const schemaOnly = new Set<string>([schema]);
+    const next = { ...filter, focusSchemas: schemaOnly, schemas: schemaOnly };
+    console.debug('[search-switch] handleSetFocusSchemaOnly: schema=%s, forceLayout=%s', schema, forceLayout);
+    const count = rebuild(model, next, config, forceLayout);
+    setFilter(next);
+    return count;
+  }, [model, config, rebuild, filter]);
 
   // ── Overview mode (schema-level view) ───────────────────────────────────────
 
@@ -590,6 +610,7 @@ export function App() {
     config,
     schemasKey,
     onSetFocusSchema: handleSetFocusSchema,
+    onSetFocusSchemaOnly: handleSetFocusSchemaOnly,
   });
 
   // Populate ref so handleRefresh/handleResetAll (defined earlier) can reset the guard.
@@ -917,13 +938,15 @@ export function App() {
     }
   }, [graphMode, enteredFocusFromOverview, view, vscodeApi]);
 
-  // When user toggles overview→full and dagre was skipped (Guard 2), trigger a full rebuild
-  // so dagre positions are computed before the node graph renders.
+  // When user manually toggles overview→full (not via search drill-down) and dagre was skipped
+  // (Guard 2), trigger a full rebuild so dagre positions are computed.
+  // Skipped when enteredFocusFromOverview=true — that path already rebuilds with forceLayout=true.
   const prevGraphModeRef = useRef(graphMode);
   useEffect(() => {
     const wasOverview = prevGraphModeRef.current === 'overview';
     prevGraphModeRef.current = graphMode;
-    if (wasOverview && graphMode === 'full' && model && filteredCount > config.overview.forceOverviewThreshold) {
+    if (wasOverview && graphMode === 'full' && !enteredFocusFromOverview && model && filteredCount > config.overview.forceOverviewThreshold) {
+      console.debug('[search-switch] manual toggle overview→full, forceLayout rebuild: filteredCount=%d', filteredCount);
       rebuild(model, filter, config, true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1195,7 +1218,6 @@ export function App() {
         onTraceEnd={endTrace}
         onResetAll={handleResetAll}
         onToggleType={handleToggleType}
-        onSearchChange={handleSearchChange}
         onToggleIsolated={handleToggleIsolated}
         onToggleFocusSchema={handleToggleFocusSchema}
         onToggleSchema={handleToggleSchema}
