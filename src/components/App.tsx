@@ -444,11 +444,9 @@ export function App() {
 
   const handleNodeClick = useCallback(
     (nodeId: string, findQuery?: string) => {
-      setHighlightedNodeId(prev => {
-        const toggled = prev === nodeId ? null : nodeId;
-        setInfoBarNodeId(cur => cur !== null ? toggled : null);
-        return toggled;
-      });
+      const toggled = highlightedNodeId === nodeId ? null : nodeId;
+      setHighlightedNodeId(toggled);
+      setInfoBarNodeId(prev => prev !== null ? toggled : null);
 
       const node = model?.nodes.find(n => n.id === nodeId);
       if (!node) {
@@ -463,7 +461,7 @@ export function App() {
         setIsDetailOpen(true);
       }
     },
-    [model, vscodeApi, isDetailOpen]
+    [model, vscodeApi, isDetailOpen, highlightedNodeId]
   );
 
   const handleTraceApply = useCallback((config: { upstreamLevels: number; downstreamLevels: number }) => {

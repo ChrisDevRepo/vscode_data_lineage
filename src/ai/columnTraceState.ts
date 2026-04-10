@@ -20,7 +20,6 @@ import { HopStateMachine, type BoundaryFlag, type HopNeighbor, type ShortMemory,
 
 export type ColumnTraceDirection = 'up' | 'down' | 'both';
 export type HopVerdict = 'trace' | 'prune' | 'pass' | 'revisit';
-export type { BoundaryFlag } from './smBase';
 
 export interface FrontierEntry {
   nodeId: string;
@@ -53,7 +52,6 @@ export interface ColumnTraceConfig {
   activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
 }
 
-export type { LogFn } from './smGuards';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -277,7 +275,7 @@ export class ColumnTraceState extends HopStateMachine {
       }
       const n = this.nodeMap.get(candidate.nodeId);
       if (!n) {
-        this.log('warn', `Node not in model: ${candidate.nodeId} — skipped`);
+        this.log('debug', `Node not in model: ${candidate.nodeId} — skipped`);
         this.visited.add(candidate.nodeId); // prevent re-encounter
         continue;
       }
@@ -475,7 +473,7 @@ export class ColumnTraceState extends HopStateMachine {
             if (invalid.length > 0) {
               this.rejectionsThisHop++;
               this.rejectionHistory.push({ hop: this.hopCount, nodeId: v.nodeId, submitted: invalid, valid: neighborCols.map(c => c.name) });
-              this.log('warn', `REJECT (${this.rejectionsThisHop}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
+              this.log('debug', `REJECT (${this.rejectionsThisHop}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
               return {
                 error: 'invalid_columns',
                 nodeId: v.nodeId,

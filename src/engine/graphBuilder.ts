@@ -16,6 +16,12 @@ export const SCHEMA_NODE_HEIGHT = 80;
 /** Typed tuple for React Flow edge label background padding. */
 const LABEL_BG_PAD: [number, number] = [4, 4];
 
+/** Default column count for grid-based analysis layouts. */
+const GRID_DEFAULT_COLS = 4;
+
+/** Padding between nodes in grid layout (px). */
+const GRID_CELL_PADDING = 40;
+
 /** Collect edges between traced nodes with direction-aware filtering.
  *  When only one direction is active (the other is 0), edges are filtered
  *  to only show data flow in the requested direction using BFS depth:
@@ -231,10 +237,10 @@ export function computeShortestPath(
 
 // ─── Analysis-Specific Layouts ──────────────────────────────────────────────
 
-function gridLayout(nodeIds: string[], cols: number = 4): Map<string, { x: number; y: number }> {
+function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
-  const cellW = NODE_WIDTH + 40;
-  const cellH = NODE_HEIGHT + 40;
+  const cellW = NODE_WIDTH + GRID_CELL_PADDING;
+  const cellH = NODE_HEIGHT + GRID_CELL_PADDING;
   nodeIds.forEach((id, i) => {
     positions.set(id, { x: (i % cols) * cellW, y: Math.floor(i / cols) * cellH });
   });

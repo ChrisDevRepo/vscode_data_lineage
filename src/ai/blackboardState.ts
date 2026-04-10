@@ -213,7 +213,7 @@ export class BlackboardState extends HopStateMachine {
       }
       node = this.nodeMap.get(entry.nodeId);
       if (!node) {
-        this.log('warn', `BB node ${entry.nodeId} missing from model, skipping`);
+        this.log('debug', `BB node ${entry.nodeId} missing from model, skipping`);
         continue;
       }
       break;
@@ -444,7 +444,7 @@ export class BlackboardState extends HopStateMachine {
         const cascadeCount = countCascadeIfPruned(this.graph, this.originNodeId!, this.removedSet, this.scopeNodeIds, this.agendaIds, pruneId);
         if (cascadeCount > this.agenda.length * CASCADE_REJECT_THRESHOLD) {
           rejectedPrunes.push({ id: pruneId, reason: `Cascade would remove ${cascadeCount} of ${this.agenda.length} remaining agenda nodes (>${50}%). Explore more nodes first or use a narrower prune.` });
-          this.log('warn', `BB PRUNE REJECTED | ${pruneId} | cascade=${cascadeCount} > 50% of agenda (${this.agenda.length})`);
+          this.log('debug', `BB PRUNE REJECTED | ${pruneId} | cascade=${cascadeCount} > 50% of agenda (${this.agenda.length})`);
           continue;
         }
 

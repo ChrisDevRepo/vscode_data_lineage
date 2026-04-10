@@ -3,25 +3,19 @@
 ## [0.9.8] - 2026-04-06
 
 ### Added
-- **Structured graph descriptions** — Graph annotations are now organized into labeled sections (e.g. "Source", "ETL", "Target") ordered by data-flow depth. Badge numbers on the graph always match heading numbers in the description panel.
-- **"Show in Graph" button after trace/exploration** — A one-click button now appears after column trace or blackboard exploration completes, with follow-up suggestions for visualization and detailed explanation.
-- **`suggested_sections` in SM completion result** — The state machine groups per-hop `badge_label` assignments into depth-ordered section skeletons, giving the AI a structured starting point for graph annotations instead of relying on prompt-only ordering.
-- **`badge_label` / `note_caption` for column traces** — Column trace hops now accept semantic role labels and per-node captions (matching existing blackboard behavior), enabling selective labeling of key pipeline nodes.
+- **Structured graph descriptions** — AI annotations are organized into labeled sections (e.g. "Source", "ETL", "Target") ordered by data flow. Badge numbers on nodes match heading numbers in the description panel.
+- **"Show in Graph" button** — One-click button after AI trace or exploration completes, with follow-up suggestions for visualization.
 
 ### Changed
-- **Detail memory grounding** — AI findings are now structured extractive evidence (verbatim SQL fragments, column names, join conditions) instead of generic summaries. Detail memory is delivered at full fidelity — no eviction under budget pressure. Synthesis uses a grounding contract: every claim must cite stored evidence.
-- **Smart delivery for `@lineage`** — Small traces (≤10 nodes) deliver all data at once and accept batch verdicts in a single call for faster analysis. Larger scopes automatically switch to hop-by-hop exploration with persistent memory, tracking column renames across deep pipelines. Controlled by `ai.inlineTokenBudget` and `ai.inlineNodeCap` settings.
-- **Badge numbers assigned by data-flow order** — Step numbers are determined by the system based on data-flow depth, not by the AI, ensuring consistent ordering between graph and description.
-- **Progress lines show visited count** — Hop progress changed from "~Y remaining" (fluctuating frontier) to "visited X of S" (monotonically increasing) for clearer trace progress.
-- **Selective labeling guidance** — AI prompts now instruct 3–6 logical sections per pipeline (not one per node), with passthrough nodes mentioned in text only and same-role nodes grouped under shared labels.
-- **Debug logging overhaul** — Added action-level debug logs for Quick Jump search, schema/node mode switching, guard decisions, dagre layout timing, analysis runs, and detail panel operations; suppressed per-keystroke `filter-changed` noise from search input.
-- **Reliable schema→node mode switch** — Search from overview mode now drills down synchronously with forceLayout, preventing race conditions where graphMode changes before flowNodes are ready.
+- **Faster AI analysis on small scopes** — Traces with ≤10 nodes deliver all data at once for faster results. Larger scopes automatically switch to hop-by-hop exploration with persistent memory, tracking column renames across deep pipelines. Controlled by `ai.inlineTokenBudget` and `ai.inlineNodeCap` settings.
+- **More accurate AI findings** — AI citations now reference verbatim SQL evidence (column names, join conditions, transforms) instead of generic summaries.
+- **Badge numbers by data-flow order** — Step numbers follow data-flow depth, ensuring consistent ordering between graph and description panel.
+- **Clearer trace progress** — Progress changed from "~Y remaining" (fluctuating) to "visited X of S" (monotonically increasing).
 
 ### Fixed
-- **Schema-aware AI queries** — When a schema filter is active in the GUI, `@lineage` now scopes all searches and analysis to those schemas by default. Expanding scope requires explicit confirmation.
-- Column traces on small schemas use quick inline delivery; large schemas use deep hop-by-hop exploration with persistent memory.
-- Column traces now pre-suggest badge labels and captions for the annotation step, matching the behavior already present after explorations.
+- **Schema-aware AI queries** — When a schema filter is active, `@lineage` now scopes searches and analysis to those schemas by default.
 - **Find Path ignores filters** — Right-click "Find Path" now searches the full model, finding paths through nodes hidden by schema/type filters.
+- **Reliable search from overview** — Searching from schema overview mode now drills down correctly without race conditions.
 
 ## [0.9.7] - 2026-03-31
 
