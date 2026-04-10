@@ -33,6 +33,24 @@ const DACPAC_TIMEOUT_MS = 20_000;
 const DB_TIMEOUT_MS = 60_000;
 const MIN_SPINNER_MS = 1200;
 
+/** Compute all schemas that have at least one edge connecting to a node in the target schema. */
+function computeNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
+  const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
+  const nodeById = new Map(model.nodes.map(n => [n.id, n]));
+  const neighborSchemas = new Set<string>([schema]);
+  for (const e of model.edges) {
+    if (focusNodeIds.has(e.source)) {
+      const target = nodeById.get(e.target);
+      if (target) neighborSchemas.add(target.schema);
+    }
+    if (focusNodeIds.has(e.target)) {
+      const source = nodeById.get(e.source);
+      if (source) neighborSchemas.add(source.schema);
+    }
+  }
+  return neighborSchemas;
+}
+
 interface ContextMenuState {
   x: number;
   y: number;
@@ -522,87 +540,48 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  const handleToggleFocusSchema = useCallback((schema: string) => {
-    setFilter((prev) => {
-      const focusSchemas = new Set<string>();
-      const isUnfocusing = prev.focusSchemas.has(schema);
-
-      if (!isUnfocusing) {
-        focusSchemas.add(schema);
-      }
-
-      let schemas: Set<string>;
-      if (isUnfocusing) {
-        schemas = new Set(model?.schemas.map(s => s.name) || []);
-      } else if (model) {
-        const focusNodeIds = new Set(
-          model.nodes.filter(n => n.schema === schema).map(n => n.id)
-        );
-        const nodeById = new Map(model.nodes.map(n => [n.id, n]));
-        const neighborSchemas = new Set<string>([schema]);
-        for (const e of model.edges) {
-          if (focusNodeIds.has(e.source)) {
-            const target = nodeById.get(e.target);
-            if (target) neighborSchemas.add(target.schema);
-          }
-          if (focusNodeIds.has(e.target)) {
-            const source = nodeById.get(e.source);
-            if (source) neighborSchemas.add(source.schema);
-          }
-        }
-        schemas = neighborSchemas;
-      } else {
-        schemas = prev.schemas;
-      }
-
-      const next = { ...prev, focusSchemas, schemas };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
-
-  /** Called on schema bubble double-click — same as clicking the star button in the
-   *  schema dropdown. Sets focusSchemas + selects the schema + its neighbors. Always-set
-   *  (never toggles off, even if schema was already focused).
-   *  @param forceLayout When true, bypass Guard 2 (run dagre synchronously). Used during overview→full drill-down.
-   *  @returns Post-filter node count so caller can decide on fallback.
+  /** Unified star-schema handler. All three entry points (star button, overview double-click,
+   *  quick jump) route through this single function.
+   *  @param schema  Target schema, or null to unfocus.
+   *  @param options.toggle  If true, unfocus if already focused (star button behavior).
+   *  @param options.forceLayout  Bypass Guard 2 (overview→full drill-down).
+   *  @param options.includeNeighbors  If false, only include the target schema (fallback).
+   *  @returns Post-filter node count (0 when model is absent).
    *  NOTE: Uses `{ ...filter }` spread (not functional setFilter updater) because we need
    *  the synchronous count from rebuild() before calling setFilter. `filter` is in deps
    *  so the closure is always current, but this does cause re-creation on every filter change. */
-  const handleSetFocusSchema = useCallback((schema: string, forceLayout = false): number => {
+  const applyStarSchema = useCallback((
+    schema: string | null,
+    options: { toggle?: boolean; forceLayout?: boolean; includeNeighbors?: boolean } = {}
+  ): number => {
+    const { toggle = false, forceLayout = false, includeNeighbors = true } = options;
     if (!model) return 0;
-    const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
-    const nodeById = new Map(model.nodes.map(n => [n.id, n]));
-    const neighborSchemas = new Set<string>([schema]);
-    for (const e of model.edges) {
-      if (focusNodeIds.has(e.source)) {
-        const target = nodeById.get(e.target);
-        if (target) neighborSchemas.add(target.schema);
-      }
-      if (focusNodeIds.has(e.target)) {
-        const source = nodeById.get(e.source);
-        if (source) neighborSchemas.add(source.schema);
-      }
+
+    // Unfocus: clear star, show all schemas
+    if (schema === null || (toggle && filter.focusSchemas.has(schema))) {
+      const allSchemas = new Set(model.schemas.map(s => s.name));
+      const next = { ...filter, focusSchemas: new Set<string>(), schemas: allSchemas };
+      const count = rebuild(model, next, config, forceLayout);
+      setFilter(next);
+      return count;
     }
-    const next = { ...filter, focusSchemas: new Set([schema]), schemas: neighborSchemas };
-    window.vscode?.postMessage({ type: 'log', text: `[Filter] handleSetFocusSchema: schema="${schema}", neighborSchemas=[${[...neighborSchemas].join(',')}], forceLayout=${forceLayout}` });
+
+    // Focus: compute neighbor schemas, set filter
+    const schemas = includeNeighbors
+      ? computeNeighborSchemas(model, schema)
+      : new Set<string>([schema]);
+    const next = { ...filter, focusSchemas: new Set([schema]), schemas };
+    window.vscode?.postMessage({ type: 'log', text: `[Filter] applyStarSchema: schema="${schema}", schemas=[${[...schemas].join(',')}], forceLayout=${forceLayout}` });
     const count = rebuild(model, next, config, forceLayout);
     setFilter(next);
     return count;
   }, [model, config, rebuild, filter]);
 
-  /** Fallback: focus only the target schema (no neighbors) when neighbor selection too large.
-   *  @param forceLayout When true, bypass Guard 2 (run dagre synchronously).
-   *  @returns Post-filter node count. */
-  const handleSetFocusSchemaOnly = useCallback((schema: string, forceLayout = false): number => {
-    if (!model) return 0;
-    const schemaOnly = new Set<string>([schema]);
-    const next = { ...filter, focusSchemas: schemaOnly, schemas: schemaOnly };
-    window.vscode?.postMessage({ type: 'log', text: `[Filter] handleSetFocusSchemaOnly: schema="${schema}", forceLayout=${forceLayout}` });
-    const count = rebuild(model, next, config, forceLayout);
-    setFilter(next);
-    return count;
-  }, [model, config, rebuild, filter]);
+  // Star button in schema dropdown (toggle behavior)
+  const handleToggleFocusSchema = useCallback(
+    (schema: string) => { applyStarSchema(schema, { toggle: true }); },
+    [applyStarSchema]
+  );
 
   // ── Overview mode (schema-level view) ───────────────────────────────────────
 
@@ -613,8 +592,8 @@ export function App() {
     filteredCount,
     config,
     schemasKey,
-    onSetFocusSchema: handleSetFocusSchema,
-    onSetFocusSchemaOnly: handleSetFocusSchemaOnly,
+    onSetFocusSchema: (schema, forceLayout) => applyStarSchema(schema, { forceLayout }),
+    onSetFocusSchemaOnly: (schema, forceLayout) => applyStarSchema(schema, { forceLayout, includeNeighbors: false }),
   });
 
   // Populate ref so handleRefresh/handleResetAll (defined earlier) can reset the guard.
@@ -975,7 +954,7 @@ export function App() {
   useEffect(() => {
     if (!model) return;
     const { searchTerm: _, ...filterForHost } = serializeFilter(filter);
-    vscodeApi.postMessage({ type: 'filter-changed', filter: filterForHost, savedViews: filterProfiles });
+    vscodeApi.postMessage({ type: 'filter-changed', filter: filterForHost, savedViews: filterProfiles, filteredCount, renderLimitHit });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKeyForHost, filterProfiles, model, vscodeApi]);
 

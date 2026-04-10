@@ -31,7 +31,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false): number => {
-    const log = (text: string) => window.vscode?.postMessage({ type: 'log', text });
+    const log = (text: string, level: 'info' | 'debug' | 'trace' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
     log(`[Filter] Schema: ${model.nodes.length} → ${filtered.nodes.length} nodes (${model.nodes.length - filtered.nodes.length} removed, maxNodes=${config.maxNodes})`);
 
@@ -50,8 +50,7 @@ export function useGraphology(): UseGraphologyReturn {
     const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 
     const exclusionFiltered = applyExclusionFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.exclusionPatterns);
-    const focusFiltered = applyFocusSchemaFilter(exclusionFiltered, filter.focusSchemas);
-    const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
+    const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
 
     const count = allowlistFiltered.nodes.length;
@@ -63,7 +62,7 @@ export function useGraphology(): UseGraphologyReturn {
 
     // Guard 1: hard render limit — skip everything
     if (count > config.renderLimit) {
-      log(`[Filter] Guard: render limit hit (${count} > renderLimit=${config.renderLimit}) — skipping layout`);
+      log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
       setFlowNodes([]);
       setFlowEdges([]);
       setGraph(null);
@@ -156,28 +155,3 @@ function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | und
   return { ...model, nodes, edges };
 }
 
-// ─── Focus Schema Filter ─────────────────────────────────────────────────────
-
-function applyFocusSchemaFilter(
-  model: DatabaseModel,
-  focusSchemas: Set<string>
-): DatabaseModel {
-  if (focusSchemas.size === 0) return model;
-
-  const focusNodeIds = new Set(
-    model.nodes.filter((n) => focusSchemas.has(n.schema)).map((n) => n.id)
-  );
-
-  const neighborIds = new Set<string>();
-  for (const e of model.edges) {
-    if (focusNodeIds.has(e.source)) neighborIds.add(e.target);
-    if (focusNodeIds.has(e.target)) neighborIds.add(e.source);
-  }
-
-  const keepIds = new Set([...focusNodeIds, ...neighborIds]);
-  const nodes = model.nodes.filter((n) => keepIds.has(n.id));
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-
-  return { ...model, nodes, edges };
-}
