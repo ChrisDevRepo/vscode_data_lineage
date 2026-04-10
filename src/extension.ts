@@ -6,7 +6,7 @@ declare const __BUILD_TIMESTAMP__: string;
 import Graph from 'graphology';
 import { buildBareGraph } from './ai/graphUtils';
 import {
-  estimateTokens, setInlineTokenBudget,
+  estimateTokens, setInlineTokenBudget, shouldInline,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
   validateToolInput,
@@ -700,15 +700,20 @@ export function activate(context: vscode.ExtensionContext) {
           const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
           if ('error' in initResult) return logAndReturn('start_column_trace', initResult);
 
-          // Log scope estimate (observability only — CT always uses state machine for hop-by-hop column tracking)
+          // Token budget gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
           const scopeDdlChars = _columnTraceState.estimateScopeDdlChars();
-          logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → state machine`);
+          const inline = shouldInline(scopeDdlChars);
+          if (inline) _columnTraceState.setInlineMode(true);
+          logInfo(outputChannel, 'AI', `[CT] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → ${inline ? 'inline' : 'state machine'}`);
 
           const hopResult = _columnTraceState.getHopContext();
           if ('error' in hopResult) return logAndReturn('start_column_trace', hopResult);
           if ('done' in hopResult) return logAndReturn('start_column_trace', { ...initResult, status: 'complete', message: 'No neighbors to trace.' });
 
-          return logAndReturn('start_column_trace', { ...initResult, ...hopResult });
+          return logAndReturn('start_column_trace', {
+            ...initResult, ...hopResult,
+            ...(inline && { scope_nodes: _columnTraceState.getAllScopeNodesWithDdl(), delivery: 'inline' }),
+          });
         } catch (err) { return toolError('start_column_trace', err); }
       },
     }),
@@ -799,9 +804,11 @@ export function activate(context: vscode.ExtensionContext) {
           const initResult = _blackboardState.init({ question, origin });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);
 
-          // Log scope estimate (observability only — BB always uses state machine for hop-by-hop exploration with working memory)
+          // Token budget gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
           const scopeDdlChars = _blackboardState.estimateScopeDdlChars();
-          logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → state machine`);
+          const inline = shouldInline(scopeDdlChars);
+          if (inline) _blackboardState.setInlineMode(true);
+          logInfo(outputChannel, 'AI', `[BB] Scope ${initResult.scopeSize} nodes, ~${scopeDdlChars} chars (~${estimateTokens(scopeDdlChars)} tokens) → ${inline ? 'inline' : 'state machine'}`);
 
           const hopResult = _blackboardState.getHopContext();
           if ('error' in hopResult) return logAndReturn('start_exploration', hopResult);
@@ -829,7 +836,8 @@ export function activate(context: vscode.ExtensionContext) {
             ...initResult, ...hopResult,
             scope_preview: scopePreview,
             ...(scopeGuidance && { scope_guidance: scopeGuidance }),
-            ai_hint: `Scope: ${scopePreview.total_scope_nodes} nodes (${scopePreview.in_user_filter} match user filter). Proceed with exploration.`,
+            ...(inline && { scope_nodes: _blackboardState.getAllScopeNodesWithDdl(), delivery: 'inline' }),
+            ai_hint: `Scope: ${scopePreview.total_scope_nodes} nodes (${scopePreview.in_user_filter} match user filter).${inline ? ' All DDL included — reason about all nodes, then submit verdicts.' : ' Proceed with exploration.'}`,
           });
         } catch (err) { return toolError('start_exploration', err); }
       },

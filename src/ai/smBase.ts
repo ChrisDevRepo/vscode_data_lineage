@@ -94,6 +94,7 @@ export interface IHopStateMachine {
   readonly status: SmStatus;
   readonly slotCount: number;
   readonly coveragePct: number;
+  readonly inlineMode: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -121,6 +122,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   // ── Shared mutable state ──
   protected _status: SmStatus = 'created';
+  protected _inlineMode = false;
   protected originNodeId: string | null = null;
   protected scopeNodeIds = new Set<string>();
   protected visited = new Set<string>();
@@ -166,11 +168,34 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   get status(): SmStatus { return this._status; }
   get slotCount(): number { return this.detailSlots.size; }
+  get inlineMode(): boolean { return this._inlineMode; }
 
   get coveragePct(): number {
     return this.scopeNodeIds.size > 0
       ? Math.round((this.detailSlots.size / this.scopeNodeIds.size) * 100)
       : 0;
+  }
+
+  /** Enable inline mode — AI gets all DDL upfront, memory overhead skipped. */
+  setInlineMode(value: boolean): void {
+    this._inlineMode = value;
+    if (value) this.log('info', 'Inline mode enabled — memory storage skipped');
+  }
+
+  /** Return all scope nodes with DDL for inline delivery. */
+  getAllScopeNodesWithDdl(): Array<Record<string, unknown>> {
+    const result: Array<Record<string, unknown>> = [];
+    for (const id of this.scopeNodeIds) {
+      const node = this.nodeMap.get(id);
+      if (!node) continue;
+      const ddl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
+      result.push({
+        id: node.id, s: node.schema, n: node.name, t: node.type,
+        ...(ddl && { ddl }),
+        ...(node.columns && { columns: node.columns }),
+      });
+    }
+    return result;
   }
 
   // ── Two-tier memory management ──
@@ -187,13 +212,14 @@ export abstract class HopStateMachine implements IHopStateMachine {
   ): void {
     const node = this.nodeMap.get(nodeId);
     if (!node) return;
+    // Inline mode: store only labels/captions for getResult() suggested_sections — skip analysis/summary
     this.detailSlots.set(nodeId, {
       nodeId,
       schema: node.schema,
       name: node.name,
       type: node.type,
-      analysis,
-      summary,
+      analysis: this._inlineMode ? '' : analysis,
+      summary: this._inlineMode ? '' : summary,
       tags: meta?.tags,
       badge_label: meta?.badge_label,
       note_caption: meta?.note_caption,
@@ -203,8 +229,10 @@ export abstract class HopStateMachine implements IHopStateMachine {
   /**
    * Append a finding to short memory narrative.
    * Called after each hop to maintain the compressed thread.
+   * Skipped in inline mode — AI has all DDL in context.
    */
   updateShortMemory(hopSummary: string): void {
+    if (this._inlineMode) return;
     this.shortMemory.narrative.push(hopSummary);
     this.shortMemory.coverage = {
       noted: this.detailSlots.size,

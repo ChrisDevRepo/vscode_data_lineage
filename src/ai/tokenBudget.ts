@@ -2,11 +2,11 @@
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
  * Two guards drive the system:
- *   1. ai.inlineTokenBudget (VS Code setting, default 10K) — catalog/detail delivery: inline vs on_demand hint
+ *   1. ai.inlineTokenBudget (VS Code setting, default 10K) — delivery mode gate:
+ *      - Below budget → inline: AI gets all DDL at once, reasons in one pass (no sliding memory)
+ *      - Above budget → hop-by-hop: state machine with short_memory + detail_slots
+ *      Applies to: CT, BB, getContext(), runBfsTrace()
  *   2. ai.maxRounds (VS Code setting)  — hard stop on tool rounds (user-configurable)
- *
- * CT and BB always use state machine delivery (hop-by-hop) regardless of budget.
- * The budget gate applies to getContext() catalog delivery and getObjectDetail() DDL.
  *
  * ZERO-TRUNCATION GUARANTEE:
  *   No tool response is ever truncated, capped, or sliced.
@@ -42,7 +42,7 @@ export function estimateTokens(chars: number): number {
 
 /**
  * Should this payload be delivered inline (one-shot) or on-demand (follow-up tools)?
- * Used by getContext() for catalog delivery and getObjectDetail() for DDL delivery.
+ * Used by getContext(), runBfsTrace(), start_column_trace, and start_exploration.
  */
 export function shouldInline(payloadChars: number, precomputedTokens?: number): boolean {
   const tokens = precomputedTokens ?? estimateTokens(payloadChars);
