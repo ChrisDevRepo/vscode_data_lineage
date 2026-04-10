@@ -3,22 +3,28 @@
 ## [0.9.8] - 2026-04-06
 
 ### Added
-- **Structured graph descriptions** — Graph annotations are now organized into labeled sections (e.g. "Source", "ETL", "Target") ordered by data-flow depth. Badge numbers on the graph always match heading numbers in the description panel.
-- **"Show in Graph" button after trace/exploration** — A one-click button now appears after column trace or blackboard exploration completes, with follow-up suggestions for visualization and detailed explanation.
-- **`suggested_sections` in SM completion result** — The state machine groups per-hop `badge_label` assignments into depth-ordered section skeletons, giving the AI a structured starting point for graph annotations instead of relying on prompt-only ordering.
-- **`badge_label` / `note_caption` for column traces** — Column trace hops now accept semantic role labels and per-node captions (matching existing blackboard behavior), enabling selective labeling of key pipeline nodes.
-
-### Changed
-- **Detail memory grounding** — AI findings are now structured extractive evidence (verbatim SQL fragments, column names, join conditions) instead of generic summaries. Detail memory is delivered at full fidelity — no eviction under budget pressure. Synthesis uses a grounding contract: every claim must cite stored evidence.
-- **Smart delivery for `@lineage`** — Small traces (≤10 nodes) deliver all data at once and accept batch verdicts in a single call for faster analysis. Larger scopes automatically switch to hop-by-hop exploration with persistent memory, tracking column renames across deep pipelines. Controlled by `ai.inlineTokenBudget` and `ai.inlineNodeCap` settings.
-- **Badge numbers assigned by data-flow order** — Step numbers are determined by the system based on data-flow depth, not by the AI, ensuring consistent ordering between graph and description.
-- **Progress lines show visited count** — Hop progress changed from "~Y remaining" (fluctuating frontier) to "visited X of S" (monotonically increasing) for clearer trace progress.
-- **Selective labeling guidance** — AI prompts now instruct 3–6 logical sections per pipeline (not one per node), with passthrough nodes mentioned in text only and same-role nodes grouped under shared labels.
+- **Trace filter awareness** — Nodes with neighbors hidden by active filters show a funnel icon; hover reveals "X of Y neighbors filtered out". A "Show All" toggle in the trace banner switches BFS to the unfiltered model for complete path visibility.
 
 ### Fixed
-- **Schema-aware AI queries** — When a schema filter is active in the GUI, `@lineage` now scopes all searches and analysis to those schemas by default. Expanding scope requires explicit confirmation.
-- Column traces on small schemas use quick inline delivery; large schemas use deep hop-by-hop exploration with persistent memory.
-- Column traces now pre-suggest badge labels and captions for the annotation step, matching the behavior already present after explorations.
+- **Tooltip overflow** — Long qualified object names no longer break out of the tooltip box.
+
+### Added (prior)
+- **Structured graph descriptions** — Annotations organized into labeled sections ordered by data-flow depth, with badge numbers matching between graph and description panel.
+- **Badge labels and captions for column traces** — Selective labeling of key pipeline nodes.
+- **Filter pipeline logging** — Each filter stage logs node counts to the Output Channel (`[Filter]` category).
+- **Copy Diagnostics command** — Copies model stats, filter state, and config to clipboard (Ctrl+Shift+P).
+
+### Changed
+- **Detail memory grounding** — AI findings use extractive SQL evidence instead of generic summaries, delivered at full fidelity.
+- **Smart delivery for `@lineage`** — Small traces (≤10 nodes) deliver all data at once; larger scopes use hop-by-hop exploration with persistent memory. Controlled by `ai.inlineTokenBudget` and `ai.inlineNodeCap` settings.
+- **Badge numbers assigned by data-flow order** — Consistent ordering between graph and description.
+- **Progress lines** show "visited X of S" instead of fluctuating estimates.
+
+### Fixed
+- **Focus schema (star) shows complete neighbor schemas** — Previously kept only directly connected nodes, hiding deeper objects in neighbor schemas.
+- **Schema-aware AI queries** — `@lineage` scopes searches to active schema filter by default.
+- Column traces auto-select inline vs hop-by-hop delivery based on scope size.
+- **Find Path ignores filters** — Right-click "Find Path" now searches the full model, finding paths through nodes hidden by schema/type filters.
 
 ## [0.9.7] - 2026-03-31
 

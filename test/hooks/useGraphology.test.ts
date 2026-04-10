@@ -223,6 +223,7 @@ describe('Suite E — focus schema filter', () => {
     // Focus on sales: salesSp is focus; dboT is its neighbor → both included
     expect(result.current.flowNodes.length).toBe(2);
   });
+
 });
 
 // ─── Suite F — Allowlist filter ───────────────────────────────────────────────
