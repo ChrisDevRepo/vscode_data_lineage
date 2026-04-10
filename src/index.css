@@ -271,6 +271,22 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+/* Filter gap badge — small funnel icon outside node, bottom-right */
+.ln-filter-gap-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ln-bg-elevated);
+  border: 1px solid var(--ln-border-light);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  color: var(--ln-warning-fg);
+  cursor: help;
+  pointer-events: auto;
+}
+
 /* AI note — title line visible below node, full text on hover */
 .ln-ai-note-label {
   font-size: 9px;
