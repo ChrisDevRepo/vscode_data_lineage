@@ -31,9 +31,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false) => {
-    const log = (text: string) => window.vscode?.postMessage({ type: 'log', text });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
-    log(`[Filter] Schema: ${model.nodes.length} → ${filtered.nodes.length} nodes (${model.nodes.length - filtered.nodes.length} removed, maxNodes=${config.maxNodes})`);
 
     // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
@@ -48,16 +46,11 @@ export function useGraphology(): UseGraphologyReturn {
     });
     const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
     const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
-    if (fusedNodes.length !== filtered.nodes.length) log(`[Filter] Type: ${filtered.nodes.length} → ${fusedNodes.length} nodes (${filtered.nodes.length - fusedNodes.length} removed)`);
 
     const exclusionFiltered = applyExclusionFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.exclusionPatterns);
-    if (exclusionFiltered.nodes.length !== fusedNodes.length) log(`[Filter] Exclusion: ${fusedNodes.length} → ${exclusionFiltered.nodes.length} nodes (${fusedNodes.length - exclusionFiltered.nodes.length} removed)`);
     const focusFiltered = applyFocusSchemaFilter(exclusionFiltered, filter.focusSchemas);
-    if (focusFiltered.nodes.length !== exclusionFiltered.nodes.length) log(`[Filter] Focus: ${exclusionFiltered.nodes.length} → ${focusFiltered.nodes.length} nodes (${exclusionFiltered.nodes.length - focusFiltered.nodes.length} removed)`);
     const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
-    if (isolationFiltered.nodes.length !== focusFiltered.nodes.length) log(`[Filter] Isolation: ${focusFiltered.nodes.length} → ${isolationFiltered.nodes.length} nodes (${focusFiltered.nodes.length - isolationFiltered.nodes.length} removed)`);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
-    if (allowlistFiltered.nodes.length !== isolationFiltered.nodes.length) log(`[Filter] Allowlist: ${isolationFiltered.nodes.length} → ${allowlistFiltered.nodes.length} nodes (${isolationFiltered.nodes.length - allowlistFiltered.nodes.length} removed)`);
 
     const count = allowlistFiltered.nodes.length;
     setFilteredCount(count);
@@ -167,22 +160,14 @@ function applyFocusSchemaFilter(
     model.nodes.filter((n) => focusSchemas.has(n.schema)).map((n) => n.id)
   );
 
-  // Keep entire neighbor SCHEMAS (not just 1-hop neighbor nodes).
-  // Matches the schema-level selection the star handler computes.
-  const keepSchemas = new Set<string>(focusSchemas);
-  const nodeSchemaMap = new Map(model.nodes.map(n => [n.id, n.schema]));
+  const neighborIds = new Set<string>();
   for (const e of model.edges) {
-    if (focusNodeIds.has(e.source)) {
-      const s = nodeSchemaMap.get(e.target);
-      if (s) keepSchemas.add(s);
-    }
-    if (focusNodeIds.has(e.target)) {
-      const s = nodeSchemaMap.get(e.source);
-      if (s) keepSchemas.add(s);
-    }
+    if (focusNodeIds.has(e.source)) neighborIds.add(e.target);
+    if (focusNodeIds.has(e.target)) neighborIds.add(e.source);
   }
 
-  const nodes = model.nodes.filter((n) => keepSchemas.has(n.schema));
+  const keepIds = new Set([...focusNodeIds, ...neighborIds]);
+  const nodes = model.nodes.filter((n) => keepIds.has(n.id));
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
