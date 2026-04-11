@@ -140,6 +140,7 @@ export const NodeInfoBar = memo(function NodeInfoBar({
       <Tooltip content="Close details">
         <button
           onClick={onClose}
+          aria-label="Close details"
           className="ml-auto ln-text-dim hover:opacity-80 text-sm leading-none"
         >
           ✕

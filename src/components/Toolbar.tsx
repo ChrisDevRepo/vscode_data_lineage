@@ -265,30 +265,32 @@ export const Toolbar = memo(function Toolbar({
               ref={analysis.refs.setFloating}
               style={{ ...analysis.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
               className="w-52 rounded-md shadow-lg z-50 ln-dropdown"
+              role="menu"
+              aria-label="Graph analysis tools"
               {...analysis.getFloatingProps()}
             >
               <div className="py-1">
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('islands'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('islands'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
                   Islands
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('hubs'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('hubs'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" /></svg>
                   Hubs
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('orphans'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('orphans'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>
                   Orphan Nodes
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('longest-path'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('longest-path'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
                   Longest Path
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('cycles'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('cycles'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
                   Cycles
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('external-refs'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('external-refs'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
                   External Refs
                 </button>

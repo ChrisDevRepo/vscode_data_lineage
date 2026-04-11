@@ -109,6 +109,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
         {data.showRemoveButton && (
           <Tooltip content="Remove from view" placement="top" asChild>
             <button
+              aria-label="Remove from view"
               className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn"
               style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
               onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}

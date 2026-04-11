@@ -22,13 +22,13 @@ export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: Colum
   const pkCount = columns.filter(c => c.pkOrdinal !== undefined).length;
 
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <table className="ln-detail-table">
       <thead>
         <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: compact ? '50%' : '38%' }}>Name</th>
-          <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: compact ? '50%' : '30%' }}>Type</th>
-          {!compact && <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)', width: '18%' }}>Null</th>}
-          {!compact && <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Flags</th>}
+          <th style={{ width: compact ? '50%' : '38%' }}>Name</th>
+          <th style={{ width: compact ? '50%' : '30%' }}>Type</th>
+          {!compact && <th style={{ width: '18%' }}>Null</th>}
+          {!compact && <th>Flags</th>}
         </tr>
       </thead>
       <tbody>
@@ -41,7 +41,7 @@ export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: Colum
             col.check ? 'CK' : '',
           ].filter(Boolean).join(' ');
           return (
-            <tr key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
+            <tr key={col.name}>
               <Tooltip content={col.name} asChild>
                 <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }}>
                   {highlightText(col.name, findQuery)}

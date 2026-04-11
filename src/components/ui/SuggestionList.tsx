@@ -39,6 +39,8 @@ function SuggestionRow({
   return (
     <div
       key={node.id}
+      role="option"
+      aria-selected={index === selectedIndex}
       className={`px-2 py-1.5 cursor-pointer transition-colors ln-list-item flex items-center justify-between gap-2 ${
         index === selectedIndex ? 'ln-list-item-selected' : ''
       }`}
@@ -81,6 +83,7 @@ export function SuggestionList({
   return (
     <div
       ref={dropdownRef}
+      role="listbox"
       className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-y-auto ln-dropdown ${className}`}
       style={{ ...style, maxHeight: 320 }}
     >

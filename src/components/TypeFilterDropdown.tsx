@@ -29,6 +29,8 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
           ref={refs.setReference}
           onClick={toggle}
           variant="icon"
+          aria-expanded={isOpen}
+          aria-haspopup="listbox"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
         <svg
@@ -60,6 +62,8 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
             ref={refs.setFloating}
             style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
             className="w-56 rounded-md shadow-lg z-50 p-2 ln-dropdown"
+            role="listbox"
+            aria-label="Filter object types"
             {...getFloatingProps()}
           >
             {ALL_TYPES.map((type) => {

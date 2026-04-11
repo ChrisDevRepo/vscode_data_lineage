@@ -8,18 +8,18 @@ export function ForeignKeysSection({ fks, findQuery }: { fks: ForeignKeyInfo[]; 
       <div className="ln-section-label mb-2">
         FOREIGN KEYS
       </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table className="ln-detail-table">
         <thead>
           <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Constraint</th>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>Column(s)</th>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>References</th>
-            <th className="text-left pb-1 text-xs font-semibold" style={{ color: 'var(--ln-fg-muted)' }}>On Delete</th>
+            <th>Constraint</th>
+            <th>Column(s)</th>
+            <th>References</th>
+            <th>On Delete</th>
           </tr>
         </thead>
         <tbody>
           {fks.map(fk => (
-            <tr key={fk.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
+            <tr key={fk.name}>
               <Tooltip content={fk.name} asChild>
                 <td className="py-0.5 pr-1 text-xs font-mono truncate" style={{ color: 'var(--ln-fg)', maxWidth: '0' }}>
                   {highlightText(fk.name, findQuery)}

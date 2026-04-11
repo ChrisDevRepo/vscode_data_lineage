@@ -751,6 +751,15 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   filter: brightness(0.95);
 }
 
+/* Focus-visible ring for keyboard navigation (WCAG 2.1 AA) */
+.ln-btn-primary:focus-visible,
+.ln-btn-secondary:focus-visible,
+.ln-btn-ghost:focus-visible,
+.ln-btn-icon:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: 2px;
+}
+
 /* Filter-narrowed dot indicator */
 .ln-filter-dot::after {
   content: '';
@@ -762,6 +771,22 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   border-radius: 50%;
   background: var(--ln-button-bg);
   pointer-events: none;
+}
+
+/* Detail table (column list, foreign keys) */
+.ln-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.ln-detail-table th {
+  text-align: left;
+  padding-bottom: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ln-fg-muted);
+}
+.ln-detail-table tbody tr {
+  border-bottom: 1px solid var(--ln-border-light);
 }
 
 /* Section label (column table, FK, stats headers) */
@@ -804,6 +829,10 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 }
 .ln-list-item-selected {
   background: var(--ln-hover-bg);
+}
+.ln-list-item:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: -2px;
 }
 
 /* Monaco inline search highlights (decorations API) */
@@ -1249,6 +1278,10 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 
 .ln-analysis-group-active:hover {
   background: var(--ln-analysis-bg);
+}
+.ln-analysis-group-item:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: -2px;
 }
 
 /* #endregion */

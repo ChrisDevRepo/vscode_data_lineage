@@ -40,6 +40,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
           ref={refs.setReference}
           onClick={toggle}
           variant="icon"
+          aria-expanded={isOpen}
+          aria-haspopup="listbox"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
         <svg
@@ -66,6 +68,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
             ref={refs.setFloating}
             style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
             className="w-96 rounded-md shadow-lg z-50 p-2 max-h-96 flex flex-col ln-dropdown"
+            role="listbox"
+            aria-label="Filter schemas"
             {...getFloatingProps()}
           >
             <div className="mb-2 flex items-center gap-2">
