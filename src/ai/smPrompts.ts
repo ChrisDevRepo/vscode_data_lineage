@@ -73,7 +73,7 @@ const BLOCK = {
 
   /** Table node guidance — CT (column + dep) */
   tableNodes:
-    'TABLE NODES: Tables store data, not transform it. Trace ALL upstream neighbors of a table — they INSERT INTO it.',
+    'TABLE NODES: Tables store data, not transform it — verdict the table itself as pass (no badge). Trace ALL upstream neighbors to find the writers.',
 
   /** Revisit — CT and CT_DEP */
   revisit:
