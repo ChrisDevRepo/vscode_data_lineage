@@ -1337,6 +1337,11 @@ export function activate(context: vscode.ExtensionContext) {
               // C5: Per-tool timing + result size + content preview
               logDebug(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} — ${Math.round(performance.now() - t0)}ms, ${chars} chars`);
               logTrace(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} result: ${trunc(resultJson, 300)}`);
+              // Show SM progress line to user after submit calls
+              if (call.name === 'lineage_submit_findings' || call.name === 'lineage_submit_hop_analysis') {
+                const plMatch = resultJson.match(/"progress_line":"([^"]+)"/);
+                if (plMatch?.[1]) stream.progress(plMatch[1].replace(/\\u00b7/g, '·'));
+              }
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               errorCount++;

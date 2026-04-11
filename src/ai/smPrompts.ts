@@ -24,7 +24,7 @@ const BLOCK = {
   /** Step 2 — record detailed findings (→ detail memory slot) */
   writeFindings:
     'Write findings to detail memory — depth depends on classification:\n' +
-    '- relevant/trace → full analysis (300-1500 chars, hard limit 5000). Self-contained, usable at synthesis.\n' +
+    '- relevant/trace → full analysis (hard limit 5000 chars). Match depth to complexity: simple passthrough ~200 chars, moderate transform ~800 chars, complex multi-CTE SP with formulas/joins/CASE logic ~2000-4000 chars. Self-contained, usable at synthesis.\n' +
     '  Extract by aspect (include only those present):\n' +
     '  COLUMNS: key column names and roles (verbatim from DDL)\n' +
     '  TRANSFORMS: expressions, CASE/COALESCE, computed columns (quote the SQL fragment)\n' +
@@ -97,9 +97,8 @@ const BLOCK = {
     '- scope=visited/pruned: already processed\n' +
     'prune_ids only works on scope=in_scope. add_ids only works on scope=available.',
 
-  /** Progress line — BB only */
-  progress:
-    'After each submit_findings call, emit ONE line: "Hop N · [node_name] → verdict (visited X of S)".',
+  /** Progress line — BB only (now SM-generated via stream.progress, no AI action needed) */
+  progress: '',
 
   /** Early completion — BB only */
   earlyComplete:
@@ -121,6 +120,9 @@ const BLOCK = {
     '- If a slot lacks evidence for a claim, omit the claim — do not invent\n' +
     '- Group nodes by role in answering the question, not by schema\n' +
     '- If detail memory is insufficient for a node, use get_object_detail to re-read its DDL\n' +
+    '- When a section groups multiple nodes, decide per-node depth by distinctness:\n' +
+    '  DISTINCT logic (different SQL expressions, different business rules) → cite each: node name, role, key SQL expression, business meaning.\n' +
+    '  SIMILAR logic (same pattern repeated, e.g. copy-and-load steps) → summarize the group with one representative example, then list variations.\n' +
     'suggested_sections groups your badge_labels into sections ordered by dependency depth.\n' +
     'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
     'adjust labels if needed, and write text per section from your detail memory findings.',

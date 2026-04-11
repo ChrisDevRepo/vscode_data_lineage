@@ -397,6 +397,7 @@ export class ColumnTraceState extends HopStateMachine {
       verdicts_expected: neighbors.length,
       ct_mode: 'hop_and_distill',
       hop: this.hopCount,
+      ...(this.lastProgressLine && { progress_line: this.lastProgressLine }),
       current_depth: entry.depth,
       frontier_remaining: this.frontier.length,
       goal: { columns: this.targetColumns, direction: this.direction, origin: this.originNodeId },
@@ -581,8 +582,18 @@ export class ColumnTraceState extends HopStateMachine {
     this._status = 'hopping'; // ready for next getHopContext()
     const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
+    const totalRemoved = pruneCount + cascaded;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
     this.log('info', `Verdicts: ${relevant} relevant, ${pruneCount} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
+
+    // Build progress line — summarize verdict for user display
+    const parts: string[] = [];
+    if (relevant > 0) parts.push(`${relevant} traced`);
+    if (passthrough > 0) parts.push(`${passthrough} pass`);
+    if (totalRemoved > 0) parts.push(`${totalRemoved} pruned`);
+    const verdictSummary = parts.join(', ') || 'no verdicts';
+    this.buildProgressLine(focusName, verdictSummary, totalRemoved, 0, this.frontier.length);
+
     return { ok: true, advanced, frontierSize: this.frontier.length };
   }
 

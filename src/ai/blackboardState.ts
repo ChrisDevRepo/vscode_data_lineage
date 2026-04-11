@@ -257,6 +257,7 @@ export class BlackboardState extends HopStateMachine {
     return {
       bb_mode: 'exploring',
       hop: this.hopCount,
+      ...(this.lastProgressLine && { progress_line: this.lastProgressLine }),
       focus_node: focusNode,
       neighbors,
       current_task: currentTask,
@@ -378,12 +379,14 @@ export class BlackboardState extends HopStateMachine {
     }
 
     // Auto-add nodes to agenda (scope expansion for available neighbors)
+    let added = 0;
     if (params.addIds?.length) {
       for (const addId of params.addIds) {
         if (!this.nodeMap.has(addId)) { this.log('debug', `BB add_ids: ${addId} not in model, skipping`); continue; }
         if (this.visited.has(addId) || this.removedSet.has(addId)) { this.log('debug', `BB add_ids: ${addId} already visited/pruned, skipping`); continue; }
         this.addQuestion(addId, '(auto-added)');
         advanced++;
+        added++;
         this.log('info', `BB AUTO-ADD | ${addId} | agenda=${this.agenda.length}`);
       }
     }
@@ -461,6 +464,9 @@ export class BlackboardState extends HopStateMachine {
     this._status = 'exploring';
     this.log('info', `BB submit | ${focusNodeId} | verdict=${verdict} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | pruned=${pruned} | agenda=${this.agenda.length}`);
     this.log('debug', `BB submit detail | ${focusNodeId} | summary=${summary.length}ch | tags=[${tags?.join(',') ?? ''}] | advanced=${advanced} | notes_total=${this.detailSlots.size} | coverage=${this.coveragePct}%`);
+
+    const nodeName = this.nodeMap.get(focusNodeId)?.name ?? focusNodeId;
+    this.buildProgressLine(nodeName, verdict, pruned, added, this.agenda.length);
 
     const base = {
       ok: true as const, advanced, agendaSize: this.agenda.length,

@@ -53,7 +53,7 @@ sections:
     the reader to follow. label has no leading number (system assigns step numbers).
 
     Same label on multiple nodes groups them. One section per unique label.
-    Create 3-6 sections that capture the logical stages of the analysis, not one per node.
+    Create sections that capture the logical stages of the analysis: 2-4 for focused questions (≤10 nodes), 4-8 for broad explorations (10-20 nodes), up to 10-12 for full pipeline documentation (20+ nodes). Not one per node, but enough to preserve distinct business rules.
     Multiple nodes under one label = one section. Unlabeled nodes go in section text, not node_ids.
     Use the suggested_sections from the completion result as your starting structure.
     Passthrough nodes (rename-only views, simple SELECTs) — mention in one sentence inside
@@ -71,7 +71,7 @@ sections:
     Formula -> ```math block.
     Multi-step logic -> ordered 1. 2. 3. list.
     Risk or data quality issue -> warning prefix with ⚠️.
-    Write 3-8 sentences or items per section — not a one-liner, not an object inventory.
+    Scale text depth to content: 3-8 items for focused questions with few nodes, 5-15 items for documentation/investigation questions spanning 10+ nodes. Each node with distinct business logic deserves its own sentence or bullet citing SQL evidence. Nodes with similar patterns (same structure, different parameters) can be summarized as a group with one representative example.
 
     BAD order — jumping non-linearly (Target -> Source -> Transform -> Views).
     BAD text — "Stores project data." or "Reads from Source." (no detail).

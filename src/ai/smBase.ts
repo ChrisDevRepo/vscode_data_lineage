@@ -75,6 +75,7 @@ export interface BaseWorkingMemory {
 /** Shared result shape returned by getResult(). Subclasses extend with SM-specific fields. */
 export interface SmResult {
   status: 'complete';
+  progress_line: string;
   originNodeId: string;
   fullNodes: Array<Record<string, unknown>>;
   edges: Array<[string, string, string]>;
@@ -143,6 +144,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected removedSet = new Set<string>();
   protected currentFocusNodeId: string | null = null;
   protected hopCount = 0;
+  protected lastProgressLine = '';
 
   // ── Two-tier memory ──
   protected shortMemory: ShortMemory = {
@@ -266,6 +268,30 @@ export abstract class HopStateMachine implements IHopStateMachine {
       pct: this.coveragePct,
     };
     return null;
+  }
+
+  /**
+   * Build a one-line progress summary after each successful submission.
+   * Included in tool response (progress_line) and shown via stream.progress().
+   */
+  protected buildProgressLine(
+    nodeName: string,
+    verdict: string,
+    prunedCount: number,
+    addedCount: number,
+    remaining: number,
+  ): void {
+    const visited = this.visited.size;
+    const total = visited + remaining;
+    let scopeChange = '';
+    if (prunedCount > 0) scopeChange = ` · pruned ${prunedCount}`;
+    if (addedCount > 0) scopeChange = ` · added ${addedCount}`;
+    this.lastProgressLine = `Hop ${this.hopCount} · ${nodeName} → ${verdict}${scopeChange} (${visited} of ${total})`;
+  }
+
+  /** Build completion progress line. */
+  protected buildCompletionLine(): void {
+    this.lastProgressLine = `Complete · ${this.visited.size} nodes analyzed · ${this.coveragePct}% coverage`;
   }
 
   /**
@@ -509,8 +535,11 @@ export abstract class HopStateMachine implements IHopStateMachine {
       this.log('trace', `[Result] EDGES | ${edges.map(([s, t, tp]) => `${s}→${t}(${tp})`).join(', ')}`);
     }
 
+    this.buildCompletionLine();
+
     return {
       status: 'complete',
+      progress_line: this.lastProgressLine,
       originNodeId: this.originNodeId!,
       fullNodes,
       edges,

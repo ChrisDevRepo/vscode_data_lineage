@@ -189,6 +189,8 @@ export function dispatchTool(
       const subResult = state.submitVerdicts({
         focusNodeId: input.focus_node_id as string,
         notes: input.notes as string | undefined,
+        badge_label: input.badge_label as string | undefined,
+        note_caption: input.note_caption as string | undefined,
         verdicts: (input.verdicts as Array<{
           neighbor_id: string; verdict: string;
           columns?: string[]; columns_to_trace?: string[];
@@ -308,8 +310,8 @@ export function dispatchTool(
       if (!state) return JSON.stringify({ error: 'no_active_exploration', hint: 'No active exploration. Call start_exploration first.' });
 
       const verdict = input.verdict as string | undefined;
-      if (!verdict || !['relevant', 'noted', 'irrelevant'].includes(verdict)) {
-        return JSON.stringify({ error: 'verdict_required', hint: 'verdict must be "relevant", "noted", or "irrelevant".' });
+      if (!verdict || !['relevant', 'pass', 'noted', 'irrelevant'].includes(verdict)) {
+        return JSON.stringify({ error: 'verdict_required', hint: 'verdict must be "relevant", "pass", or "irrelevant".' });
       }
 
       const subResult = state.submitFindings({
