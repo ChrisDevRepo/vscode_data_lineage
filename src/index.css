@@ -751,6 +751,19 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   filter: brightness(0.95);
 }
 
+/* Filter-narrowed dot indicator */
+.ln-filter-dot::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ln-button-bg);
+  pointer-events: none;
+}
+
 /* Dropdown panels */
 .ln-dropdown {
   background: var(--ln-widget-bg);

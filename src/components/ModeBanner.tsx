@@ -65,6 +65,9 @@ export const ModeBanner = memo(function ModeBanner({
 
       <div className="flex items-center gap-2 ml-auto flex-shrink-0">
         {extraControls}
+        {extraControls && onSaveAsBookmark && !saving && (
+          <div className="w-px h-4 ln-divider" />
+        )}
         {onSaveAsBookmark && !saving && (
           <Tooltip content="Save as a named bookmark">
             <button

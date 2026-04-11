@@ -394,7 +394,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 min-h-[420px]">
+        <div className="flex-1 overflow-y-auto px-6 py-5">
           {tab === 'overview'  && <TabOverview openExternal={openExternal} />}
           {tab === 'analysis'  && <TabAnalysis />}
           {tab === 'database'  && <TabDatabase openExternal={openExternal} />}

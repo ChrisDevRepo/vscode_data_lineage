@@ -9,6 +9,7 @@ interface ExternalRefsDropdownProps {
   externalRefTypes: Set<'file' | 'db'>;
   onToggleMaster: () => void;
   onToggleSubType: (subType: 'file' | 'db') => void;
+  isNarrowed?: boolean;
 }
 
 export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
@@ -16,11 +17,13 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   externalRefTypes,
   onToggleMaster,
   onToggleSubType,
+  isNarrowed = false,
 }: ExternalRefsDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
 
   return (
     <>
+      <div className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}>
       <Tooltip content="External References">
         <Button
           ref={refs.setReference}
@@ -46,6 +49,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
         </svg>
       </Button>
       </Tooltip>
+      </div>
 
       <FloatingPortal>
         {isOpen && (

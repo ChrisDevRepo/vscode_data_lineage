@@ -379,7 +379,7 @@ export function GraphCanvas({
         pendingZoomTimerRef.current = window.setTimeout(() => {
           if (pendingZoomRef.current) {
             log(`[Filter] pendingZoom: "${pendingZoomRef.current}" not found after ${PENDING_ZOOM_TIMEOUT_MS}ms (active timeout)`);
-            notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter or increase the node limit to include it.`);
+            notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
             pendingZoomRef.current = null;
             pendingClickRef.current = null;
           }
@@ -432,7 +432,7 @@ export function GraphCanvas({
       if (!nodeExists) {
         if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
           log(`[Filter] pendingZoom: "${zoomTarget}" not found after ${elapsed}ms, expiring (node may have been filtered out)`);
-          notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter or increase the node limit to include it.`);
+          notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter to include it.`);
           pendingZoomRef.current = null;
           pendingClickRef.current = null;
           if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
@@ -618,6 +618,14 @@ export function GraphCanvas({
     if (!trace.selectedNodeId) return null;
     return (displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId;
   }, [trace.selectedNodeId, displayNodes]);
+
+  // In trace/path/analysis mode, derive legend schemas from actually visible nodes
+  const legendSchemas = useMemo(() => {
+    const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
+      || trace.mode === 'filtered' || trace.mode === 'analysis';
+    if (!isTraceActive) return renderedSchemas || [];
+    return [...new Set(localNodes.map(n => (n.data as CustomNodeData).schema))].filter(Boolean).sort();
+  }, [trace.mode, localNodes, renderedSchemas]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -849,14 +857,14 @@ export function GraphCanvas({
           </div>
         )}
 
-        <Legend schemas={renderedSchemas || []} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        <Legend schemas={legendSchemas} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (
           <BookmarkInfoCard
             profile={activeAdvancedProfile}
             nodeCount={localNodes.length}
-            schemaCount={(renderedSchemas || []).length}
+            schemaCount={legendSchemas.length}
             staleNodeNames={bookmarkStaleNames ?? []}
           />
         )}
@@ -871,7 +879,7 @@ export function GraphCanvas({
               aiMetadata: aiPreview.aiMetadata,
             }}
             nodeCount={localNodes.length}
-            schemaCount={(renderedSchemas || []).length}
+            schemaCount={legendSchemas.length}
             staleNodeNames={[]}
           />
         )}

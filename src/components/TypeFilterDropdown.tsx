@@ -9,6 +9,7 @@ import { useDropdown } from '../hooks/useDropdown';
 interface TypeFilterDropdownProps {
   types: Set<ObjectType>;
   onToggleType: (type: ObjectType) => void;
+  isNarrowed?: boolean;
 }
 
 const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function', 'external'];
@@ -16,11 +17,13 @@ const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function', 'exte
 export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,
   onToggleType,
+  isNarrowed = false,
 }: TypeFilterDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
 
   return (
     <>
+      <div className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}>
       <Tooltip content="Filter Types">
         <Button
           ref={refs.setReference}
@@ -49,6 +52,7 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
         </svg>
       </Button>
       </Tooltip>
+      </div>
 
       <FloatingPortal>
         {isOpen && (

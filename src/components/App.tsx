@@ -570,7 +570,7 @@ export function App() {
     const schemas = includeNeighbors
       ? computeNeighborSchemas(model, schema)
       : new Set<string>([schema]);
-    const next = { ...filter, focusSchemas: new Set([schema]), schemas };
+    const next = { ...filter, focusSchemas: includeNeighbors ? new Set([schema]) : new Set<string>(), schemas };
     window.vscode?.postMessage({ type: 'log', text: `[Filter] applyStarSchema: schema="${schema}", schemas=[${[...schemas].join(',')}], forceLayout=${forceLayout}` });
     const count = rebuild(model, next, config, forceLayout);
     setFilter(next);

@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
@@ -75,14 +75,19 @@ function buildMetricsTooltip(
 ): string {
   const counts: Partial<Record<ObjectType, number>> = {};
   for (const n of allNodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
+  const total = allNodes.length;
+  const filtered = total > metrics.totalNodes;
   const typeRows: string[] = [];
-  const pad = String(metrics.totalNodes).length;
+  const pad = String(total).length;
   if (counts.table)     typeRows.push(`  ${String(counts.table).padStart(pad)} tables`);
   if (counts.view)      typeRows.push(`  ${String(counts.view).padStart(pad)} views`);
   if (counts.procedure) typeRows.push(`  ${String(counts.procedure).padStart(pad)} procedures`);
   if (counts.function)  typeRows.push(`  ${String(counts.function).padStart(pad)} functions`);
   if (counts.external)  typeRows.push(`  ${String(counts.external).padStart(pad)} external`);
-  return [`Objects: ${metrics.totalNodes}`, ...typeRows].join('\n');
+  const header = filtered
+    ? `Visible: ${metrics.totalNodes} / ${total} objects`
+    : `Objects: ${total}`;
+  return [header, ...typeRows].join('\n');
 }
 
 export const Toolbar = memo(function Toolbar({
@@ -140,6 +145,15 @@ export const Toolbar = memo(function Toolbar({
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
 
+  const activeFilterCount = useMemo(() => [
+    selectedSchemas.size < schemas.length && schemas.length > 0,
+    types.size < 5,
+    !showExternalRefs || externalRefTypes.size < 2,
+    exclusionPatterns.length > 0,
+    hideIsolated,
+    focusSchemas.size > 0,
+  ].filter(Boolean).length, [selectedSchemas.size, schemas.length, types.size, showExternalRefs, externalRefTypes.size, exclusionPatterns.length, hideIsolated, focusSchemas.size]);
+
   return (
     <>
       <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
@@ -184,14 +198,15 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} />
-        <TypeFilterDropdown types={types} onToggleType={onToggleType} />
+        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} isNarrowed={selectedSchemas.size < schemas.length && schemas.length > 0} />
+        <TypeFilterDropdown types={types} onToggleType={onToggleType} isNarrowed={types.size < 5} />
         {onToggleExternalRefs && onToggleExternalRefType && (
           <ExternalRefsDropdown
             showExternalRefs={showExternalRefs}
             externalRefTypes={externalRefTypes}
             onToggleMaster={onToggleExternalRefs}
             onToggleSubType={onToggleExternalRefType}
+            isNarrowed={!showExternalRefs || externalRefTypes.size < 2}
           />
         )}
         {onAddExclusionPattern && onRemoveExclusionPattern && (
@@ -266,14 +281,34 @@ export const Toolbar = memo(function Toolbar({
           )}
         </FloatingPortal>
 
-        <Tooltip content="Clear All Filters">
-          <Button onClick={onRefresh} variant="icon" aria-label="Clear All Filters">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
-            </svg>
-          </Button>
-        </Tooltip>
+        <div className="relative inline-flex">
+          <Tooltip content={activeFilterCount > 0 ? `Clear All Filters (${activeFilterCount} active)` : 'No active filters'}>
+            <Button onClick={onRefresh} variant="icon" aria-label="Clear All Filters">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
+              </svg>
+            </Button>
+          </Tooltip>
+          {activeFilterCount > 0 && (
+            <span
+              className="absolute -top-1 -right-1 flex items-center justify-center rounded-full pointer-events-none"
+              style={{
+                minWidth: '14px',
+                height: '14px',
+                fontSize: '9px',
+                fontWeight: 700,
+                padding: '0 3px',
+                background: 'var(--ln-button-bg)',
+                color: 'var(--ln-button-fg)',
+                lineHeight: 1,
+              }}
+              aria-label={`${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active`}
+            >
+              {activeFilterCount}
+            </span>
+          )}
+        </div>
 
         <div className="w-px h-6 ln-divider" />
 
@@ -318,6 +353,9 @@ export const Toolbar = memo(function Toolbar({
             <Tooltip content={buildMetricsTooltip(allNodes, metrics)} delay={400} multiline>
               <div className="flex-shrink-0 text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-center gap-1 pr-1 cursor-default select-none">
                 <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalNodes}</span>
+                {allNodes.length > metrics.totalNodes && (
+                  <span className="opacity-40">/ {allNodes.length}</span>
+                )}
                 <span className="opacity-60">objects</span>
               </div>
             </Tooltip>

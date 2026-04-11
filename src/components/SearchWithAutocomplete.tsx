@@ -30,11 +30,24 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     () => allNodes.filter(n => (n.schema === '' || selectedSchemas.has(n.schema)) && types.has(n.type)),
     [allNodes, selectedSchemas, types],
   );
+  const inViewIds = useMemo(() => new Set(filteredNodes.map(n => n.id)), [filteredNodes]);
+  const allSuggestions = useMemo(
+    () => filterSuggestions(allNodes, searchTerm),
+    [allNodes, searchTerm],
+  );
   const suggestions = useMemo(
-    () => filterSuggestions(filteredNodes, searchTerm),
-    [filteredNodes, searchTerm],
+    () => allSuggestions.filter(n => inViewIds.has(n.id)),
+    [allSuggestions, inViewIds],
+  );
+  const otherSuggestions = useMemo(
+    () => allSuggestions.filter(n => !inViewIds.has(n.id)),
+    [allSuggestions, inViewIds],
   );
 
+  const allVisibleSuggestions = useMemo(
+    () => [...suggestions, ...otherSuggestions],
+    [suggestions, otherSuggestions],
+  );
   const {
     selectedIndex,
     setSelectedIndex,
@@ -43,7 +56,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     inputRef,
     dropdownRef,
     handleArrowKeys,
-  } = useAutocomplete(suggestions, searchTerm);
+  } = useAutocomplete(allVisibleSuggestions, searchTerm);
 
   const { refs, floatingStyles } = useFloating({
     open: isOpen,
@@ -80,8 +93,8 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
           handleArrowKeys(e);
           if (e.key === 'Enter' && onExecuteSearch) {
             e.preventDefault();
-            if (suggestions.length > 0) {
-              const selected = suggestions[selectedIndex];
+            if (allVisibleSuggestions.length > 0) {
+              const selected = allVisibleSuggestions[selectedIndex];
               onExecuteSearch(selected.name, selected.schema);
             } else if (searchTerm.trim()) {
               onExecuteSearch(searchTerm.trim());
@@ -118,6 +131,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
         <FloatingPortal>
           <SuggestionList
             suggestions={suggestions}
+            otherSuggestions={otherSuggestions}
             selectedIndex={selectedIndex}
             onSelect={(node) => {
               if (onExecuteSearch) {

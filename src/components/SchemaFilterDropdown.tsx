@@ -12,6 +12,7 @@ interface SchemaFilterDropdownProps {
   onSelectAll?: (schemas: string[]) => void;
   onSelectNone?: (schemas: string[]) => void;
   onToggleFocusSchema: (schema: string) => void;
+  isNarrowed?: boolean;
 }
 
 export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
@@ -22,6 +23,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectAll,
   onSelectNone,
   onToggleFocusSchema,
+  isNarrowed = false,
 }: SchemaFilterDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [searchTerm, setSearchTerm] = useState('');
@@ -32,6 +34,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
 
   return (
     <>
+      <div className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}>
       <Tooltip content="Filter Schemas">
         <Button
           ref={refs.setReference}
@@ -55,6 +58,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
         </svg>
       </Button>
       </Tooltip>
+      </div>
 
       <FloatingPortal>
         {isOpen && (
