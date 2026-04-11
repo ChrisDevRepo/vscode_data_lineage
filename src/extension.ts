@@ -734,8 +734,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_submit_hop_analysis', {
-      prepareInvocation(_options, _token) {
-        return { invocationMessage: 'Processing hop verdicts…' };
+      prepareInvocation(options, _token) {
+        const input = options.input as { focus_node_id?: string };
+        const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
+        return { invocationMessage: name ? `Tracing ${name}…` : 'Processing hop verdicts…' };
       },
       invoke(options, _token) {
         try {
@@ -859,8 +861,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     }),
     vscode.lm.registerTool('lineage_submit_findings', {
-      prepareInvocation(_options, _token) {
-        return { invocationMessage: 'Recording findings…' };
+      prepareInvocation(options, _token) {
+        const input = options.input as { focus_node_id?: string };
+        const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
+        return { invocationMessage: name ? `Analyzing ${name}…` : 'Recording findings…' };
       },
       invoke(options, _token) {
         try {
@@ -1341,11 +1345,6 @@ export function activate(context: vscode.ExtensionContext) {
               // C5: Per-tool timing + result size + content preview
               logDebug(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} — ${Math.round(performance.now() - t0)}ms, ${chars} chars`);
               logTrace(outputChannel, 'AI', `Tool ${call.name.replace('lineage_', '')} result: ${trunc(resultJson, 300)}`);
-              // Show SM progress line to user after submit calls
-              if (call.name === 'lineage_submit_findings' || call.name === 'lineage_submit_hop_analysis') {
-                const plMatch = resultJson.match(/"progress_line":"([^"]+)"/);
-                if (plMatch?.[1]) stream.progress(plMatch[1].replace(/\\u00b7/g, '·'));
-              }
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               errorCount++;

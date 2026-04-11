@@ -28,7 +28,7 @@ export function buildSystemPromptBase(maxRounds: number): string {
     '   Chat text for: pure explanations, SQL generation, list/compare requests (no graph needed).\n' +
     '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
     '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow. Do not number badges yourself or write description when sections are provided.\n' +
-    ''
+    'PROGRESS: After each hop verdict, emit ONE line: "Hop N · [node_name] → verdict (visited X of S)".\n'
     // Callers append: summary/badges/sections/notes/highlights/description from aiOutputTemplates
   );
 }

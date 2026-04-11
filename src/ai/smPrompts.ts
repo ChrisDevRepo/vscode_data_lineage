@@ -97,8 +97,9 @@ const BLOCK = {
     '- scope=visited/pruned: already processed\n' +
     'prune_ids only works on scope=in_scope. add_ids only works on scope=available.',
 
-  /** Progress line — BB only (now SM-generated via stream.progress, no AI action needed) */
-  progress: '',
+  /** Progress line — BB only */
+  progress:
+    'After each submit_findings call, emit ONE line: "Hop N · [node_name] → verdict (visited X of S)".',
 
   /** Early completion — BB only */
   earlyComplete:
