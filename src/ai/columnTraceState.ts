@@ -97,6 +97,64 @@ export class ColumnTraceState extends HopStateMachine {
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
   }
 
+  // ─── Frontier coordinators (single mutation point for frontier + frontierIds sync) ─
+
+  private frontierPush(entry: FrontierEntry): void {
+    this.frontier.push(entry);
+    this.frontierIds.add(entry.nodeId);
+  }
+
+  /** Update existing frontier entry if present, otherwise push new. Returns action taken. */
+  private frontierUpdateOrPush(entry: FrontierEntry): 'updated' | 'pushed' {
+    if (this.frontierIds.has(entry.nodeId)) {
+      const idx = this.frontier.findIndex(f => f.nodeId === entry.nodeId);
+      if (idx >= 0) {
+        this.frontier[idx].activeColumns = entry.activeColumns;
+        this.frontier[idx].question = entry.question;
+        return 'updated';
+      }
+    }
+    this.frontierPush(entry);
+    return 'pushed';
+  }
+
+  /** Remove a frontier entry by nodeId (used by cascade prune). */
+  private frontierRemove(nodeId: string): boolean {
+    const idx = this.frontier.findIndex(f => f.nodeId === nodeId);
+    if (idx >= 0) {
+      this.frontier.splice(idx, 1);
+      this.frontierIds.delete(nodeId);
+      return true;
+    }
+    this.frontierIds.delete(nodeId);
+    return false;
+  }
+
+  // ─── Removed-node coordinators (sync removedSet + outOfScope + prunedEntries) ─
+
+  /** Mark a node as pruned by AI (reversible via restorePruned). */
+  private markPruned(nodeId: string, summary: string, undoData: { parentColumns: string[]; depth: number; parentNodeId: string | null }): void {
+    this.removedSet.add(nodeId);
+    this.outOfScope.push({ nodeId, reason: summary });
+    this.prunedEntries.set(nodeId, undoData);
+  }
+
+  /** Mark a node as cascade-removed (NOT reversible — not added to prunedEntries). */
+  private markCascadeRemoved(nodeId: string): void {
+    this.removedSet.add(nodeId);
+    this.outOfScope.push({ nodeId, reason: 'Cascade-removed (unreachable after prune)' });
+  }
+
+  /** Restore a previously pruned node. Returns undo data or undefined if not found. */
+  private restorePruned(nodeId: string): { parentColumns: string[]; depth: number; parentNodeId: string | null } | undefined {
+    const stored = this.prunedEntries.get(nodeId);
+    if (!stored) return undefined;
+    this.removedSet.delete(nodeId);
+    this.outOfScope = this.outOfScope.filter(e => e.nodeId !== nodeId);
+    this.prunedEntries.delete(nodeId);
+    return stored;
+  }
+
   protected getScopeDirection(): 'upstream' | 'downstream' | 'bidirectional' {
     return this.direction === 'up' ? 'upstream' : this.direction === 'down' ? 'downstream' : 'bidirectional';
   }
@@ -204,13 +262,12 @@ export class ColumnTraceState extends HopStateMachine {
     const neighbors = this.getDirectionalNeighbors(origin_.id);
     for (const nid of neighbors) {
       if (this.frontier.length >= this.maxFrontierSize) break;
-      this.frontier.push({
+      this.frontierPush({
         nodeId: nid,
         activeColumns: [...this.targetColumns],
         depth: 1,
         parentNodeId: origin_.id,
       });
-      this.frontierIds.add(nid);
     }
 
     // Add origin to visited + chain (root entry)
@@ -382,6 +439,9 @@ export class ColumnTraceState extends HopStateMachine {
       }
 
       const boundary = this.detectBoundary(nid);
+      // Skip cycle-back neighbors (already visited as focus node).
+      // Boundary merges (source/sink) are preserved — they were never focus nodes.
+      if (boundary === 'cycle') continue;
       const neighbor: HopNeighbor = {
         id: nid, s: nNode.schema, n: nNode.name, t: nNode.type,
         edge_direction: isUpstream ? 'upstream' : 'downstream',
@@ -457,206 +517,29 @@ export class ColumnTraceState extends HopStateMachine {
           this.log('debug', `submitVerdicts: revisit cap (${MAX_REVISITS}) reached`);
           return { error: 'revisit_cap_reached', hint: `Maximum ${MAX_REVISITS} revisits per trace. Remaining revisits: 0.` };
         }
-        continue; // no further validation needed for revisit
+        continue;
       }
       if (v.verdict === 'trace') {
-        if (!v.columnsOut?.length && this.targetColumns.length > 0) {
-          return { error: 'missing_columns', hint: `Verdict "trace" for ${v.nodeId} requires columnsOut (column mode).` };
-        }
-        // Column validation — always validate, never accept garbage, never auto-prune
-        if (v.columnsOut?.length) {
-          const neighbor = this.nodeMap.get(v.nodeId);
-          const neighborCols = getNodeColumns(v.nodeId, this.nodeMap, this.store ?? undefined);
-          if (neighborCols?.length) {
-            const validSet = new Set(neighborCols.map(c => c.name.toLowerCase()));
-            const invalid = v.columnsOut.filter(c => !validSet.has(c.toLowerCase()));
-            if (invalid.length > 0) {
-              this.rejectionsThisHop++;
-              this.rejectionHistory.push({ hop: this.hopCount, nodeId: v.nodeId, submitted: invalid, valid: neighborCols.map(c => c.name) });
-              this.log('debug', `REJECT (${this.rejectionsThisHop}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
-              return {
-                error: 'invalid_columns',
-                nodeId: v.nodeId,
-                invalid,
-                valid: neighborCols.map(c => c.name),
-                hint: this.rejectionsThisHop >= MAX_REJECTIONS_PER_HOP
-                  ? `Column rejected ${this.rejectionsThisHop} times. Fix the column name, or prune/pass this neighbor to continue the trace.`
-                  : 'Fix the column name from the valid list and resubmit.',
-              };
-            }
-          } else if (neighbor?.type === 'procedure') {
-            const focusId = this.currentFocusNodeId ?? '';
-            const isExec = this.edgeTypeMap.get(`${focusId}→${v.nodeId}`) === 'exec'
-              || this.edgeTypeMap.get(`${v.nodeId}→${focusId}`) === 'exec';
-            if (isExec) {
-              this.log('debug', `SP→SP exec: ${focusId} → ${v.nodeId} — column validation skipped`);
-            }
-          }
-        }
+        const colErr = this.validateTraceColumns(v.nodeId, v.columnsOut);
+        if (colErr) return colErr;
       }
     }
 
     // All validations passed — commit mutations
-    // Store notes on focus node's chain entry (blackboard pattern)
-    if (params.notes && this.currentFocusNodeId) {
-      let focusChain = this.chain.get(this.currentFocusNodeId);
-      if (!focusChain) {
-        // Focus node not yet in chain (e.g., first hop — auto-seeded by init, not verdicted)
-        const focusNode = this.nodeMap.get(this.currentFocusNodeId);
-        if (focusNode) {
-          focusChain = {
-            nodeId: this.currentFocusNodeId,
-            schema: focusNode.schema,
-            name: focusNode.name,
-            type: focusNode.type,
-            columnsIn: [...this.currentFocusActiveColumns],
-            columnsOut: [],
-            summary: '',
-            boundaryFlag: 'none', // Focus node is active traversal, not a revisit
-          };
-          this.chain.set(this.currentFocusNodeId, focusChain);
-        }
-      }
-      if (focusChain) {
-        focusChain.notes = params.notes;
-        // Wire CT to base class memory (matches BB pattern at blackboardState.ts:328-335)
-        this.storeDetail(this.currentFocusNodeId, params.notes, focusChain.summary || '', {
-          badge_label: params.badge_label,
-          note_caption: params.note_caption,
-        });
-        this.updateShortMemory(`${focusChain.name}: ${(focusChain.summary || params.notes).slice(0, 100)}`);
-      }
-    }
+    this.recordFocusNodeNotes(params);
+
     let advanced = 0;
+    let pruneCount = 0;
     for (const v of params.verdicts) {
-      const boundary = this.detectBoundary(v.nodeId);
-      const neighbor = this.nodeMap.get(v.nodeId);
-
-      if (v.verdict === 'prune') {
-        // Guard: reject prune if it would disconnect any chain node from origin
-        const chainIds = new Set(this.chain.keys());
-        if (chainIds.size > 0) {
-          const orphanedId = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, chainIds, v.nodeId);
-          if (orphanedId) {
-            this.log('info', `CT PRUNE REJECTED | ${v.nodeId} | would orphan chain node ${orphanedId}`);
-            continue;
-          }
-        }
-        this.removedSet.add(v.nodeId);
-        this.outOfScope.push({ nodeId: v.nodeId, reason: v.summary ?? 'Pruned by AI' });
-        // Store enough data to support revisit (shallow undo buffer)
-        this.prunedEntries.set(v.nodeId, {
-          parentColumns: [...this.currentFocusActiveColumns],
-          depth: this.currentFocusDepth + 1,
-          parentNodeId: this.currentFocusNodeId,
-        });
-        this.log('debug', `Verdict: ${v.nodeId} = prune ("${v.summary ?? ''}")`);
-        continue;
-      }
-
-      if (v.verdict === 'revisit') {
-        // Restore a previously pruned node to the frontier
-        const stored = this.prunedEntries.get(v.nodeId);
-        if (!stored) {
-          return { error: 'revisit_invalid', hint: `${v.nodeId} was not previously pruned — only pruned nodes can be revisited.` };
-        }
-        if (this.revisitCount >= MAX_REVISITS) {
-          return { error: 'revisit_cap_reached', hint: `Maximum ${MAX_REVISITS} revisits per trace. Remaining revisits: 0.` };
-        }
-        // Undo the prune
-        this.removedSet.delete(v.nodeId);
-        this.outOfScope = this.outOfScope.filter(e => e.nodeId !== v.nodeId);
-        this.prunedEntries.delete(v.nodeId);
-        this.revisitCount++;
-        // Re-add to frontier
-        const revisitColumns = v.columnsOut?.length ? v.columnsOut : stored.parentColumns;
-        this.frontier.push({
-          nodeId: v.nodeId,
-          activeColumns: revisitColumns,
-          depth: stored.depth,
-          parentNodeId: stored.parentNodeId,
-          question: v.question ?? `Revisiting ${v.nodeId} — previously pruned, now relevant.`,
-        });
-        this.frontierIds.add(v.nodeId);
-        advanced++;
-        this.log('info', `Verdict: ${v.nodeId} = REVISIT (${this.revisitCount}/${MAX_REVISITS}) → re-added to frontier`);
-        continue;
-      }
-
-      if (v.verdict === 'pass') {
-        // Passthrough uses verdict columnsOut if provided, else inherits current active columns
-        const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
-        this.passthroughMap.set(v.nodeId, [...passColumns]);
-        this.visited.add(v.nodeId); // Mark visited so it won't reappear as neighbor
-        if (boundary === 'none') {
-          const delta = this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth + 1); // Passthrough children are one level deeper
-          advanced += delta;
-          this.log('debug', `Verdict: ${v.nodeId} = pass, columns=[${passColumns}] → queued ${delta} children`); // Log children queued, not total
-        } else {
-          this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}), columns=[${passColumns}] → terminal`);
-        }
-        continue;
-      }
-
-      // trace — push the node ITSELF to frontier as next focus hop (not its children)
-      // Merge columns from converging paths (diamond pattern)
-      const existingChain = this.chain.get(v.nodeId);
-      if (existingChain) {
-        // Merge columnsIn (union of all incoming paths)
-        const mergedIn = new Set([...existingChain.columnsIn, ...this.currentFocusActiveColumns]);
-        existingChain.columnsIn = [...mergedIn];
-        if (v.columnsOut?.length) {
-          const mergedOut = new Set([...existingChain.columnsOut, ...v.columnsOut]);
-          existingChain.columnsOut = [...mergedOut];
-        }
-        this.log('debug', `Verdict: ${v.nodeId} = trace (merge into existing chain entry), columnsIn=[${existingChain.columnsIn}]`);
-      } else {
-        this.chain.set(v.nodeId, {
-          nodeId: v.nodeId,
-          schema: neighbor?.schema ?? '',
-          name: neighbor?.name ?? '',
-          type: neighbor?.type ?? '',
-          columnsIn: [...this.currentFocusActiveColumns],
-          columnsOut: v.columnsOut ?? [],
-          summary: v.summary ?? '',
-          boundaryFlag: boundary,
-        });
-        // Wire traced node to base class memory
-        if (v.summary) {
-          this.storeDetail(v.nodeId, v.summary, v.summary, {});
-        }
-      }
-
-      if (boundary === 'none') {
-        // If already in frontier (e.g., seeded by init), update existing entry with question + columns
-        const existingIdx = this.frontierIds.has(v.nodeId)
-          ? this.frontier.findIndex(f => f.nodeId === v.nodeId)
-          : -1;
-        if (existingIdx >= 0) {
-          this.frontier[existingIdx].activeColumns = v.columnsOut ?? this.frontier[existingIdx].activeColumns;
-          this.frontier[existingIdx].question = v.question;
-          this.log('debug', `Verdict: ${v.nodeId} = trace, updated existing frontier entry${v.question ? ` Q: "${v.question}"` : ''}`);
-        } else {
-          this.frontier.push({
-            nodeId: v.nodeId,
-            activeColumns: v.columnsOut ?? [],
-            depth: this.currentFocusDepth + 1,
-            parentNodeId: this.currentFocusNodeId ?? '',
-            question: v.question,
-          });
-          this.frontierIds.add(v.nodeId);
-          this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
-        }
-        advanced++;
-      } else {
-        this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
-      }
+      const result = this.applyVerdict(v);
+      if ('error' in result) return result;
+      advanced += result.advanced;
+      if (v.verdict === 'prune') pruneCount++;
     }
 
     // Cascade prune: remove frontier entries unreachable from origin after prunes
-    const removed = params.verdicts.filter(v => v.verdict === 'prune').length;
     let cascaded = 0;
-    if (removed > 0) {
+    if (pruneCount > 0) {
       cascaded = this.cascadePruneFrontier();
       if (cascaded > 0) this.log('info', `CT cascade: ${cascaded} frontier nodes removed (unreachable after prune)`);
     }
@@ -665,8 +548,206 @@ export class ColumnTraceState extends HopStateMachine {
     const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
-    this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
+    this.log('info', `Verdicts: ${relevant} relevant, ${pruneCount} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
     return { ok: true, advanced, frontierSize: this.frontier.length };
+  }
+
+  // ─── Verdict handlers (extracted from submitVerdicts for single-responsibility) ─
+
+  /** Store AI notes on the focus node's chain entry + wire to base class memory. */
+  private recordFocusNodeNotes(params: { notes?: string; badge_label?: string; note_caption?: string }): void {
+    if (!params.notes || !this.currentFocusNodeId) return;
+    let focusChain = this.chain.get(this.currentFocusNodeId);
+    if (!focusChain) {
+      const focusNode = this.nodeMap.get(this.currentFocusNodeId);
+      if (focusNode) {
+        focusChain = {
+          nodeId: this.currentFocusNodeId,
+          schema: focusNode.schema,
+          name: focusNode.name,
+          type: focusNode.type,
+          columnsIn: [...this.currentFocusActiveColumns],
+          columnsOut: [],
+          summary: '',
+          boundaryFlag: 'none',
+        };
+        this.chain.set(this.currentFocusNodeId, focusChain);
+      }
+    }
+    if (focusChain) {
+      focusChain.notes = params.notes;
+      this.storeDetail(this.currentFocusNodeId, params.notes, focusChain.summary || '', {
+        badge_label: params.badge_label,
+        note_caption: params.note_caption,
+      });
+      this.updateShortMemory(`${focusChain.name}: ${(focusChain.summary || params.notes).slice(0, 100)}`);
+    }
+  }
+
+  /** Validate column names for a trace verdict. Returns error object or null if valid. */
+  private validateTraceColumns(nodeId: string, columnsOut?: string[]): { error: string; hint?: string; nodeId?: string; invalid?: string[]; valid?: string[] } | null {
+    if (!columnsOut?.length && this.targetColumns.length > 0) {
+      return { error: 'missing_columns', hint: `Verdict "trace" for ${nodeId} requires columnsOut (column mode).` };
+    }
+    if (!columnsOut?.length) return null;
+    const neighbor = this.nodeMap.get(nodeId);
+    const neighborCols = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined);
+    if (neighborCols?.length) {
+      const validSet = new Set(neighborCols.map(c => c.name.toLowerCase()));
+      const invalid = columnsOut.filter(c => !validSet.has(c.toLowerCase()));
+      if (invalid.length > 0) {
+        this.rejectionsThisHop++;
+        this.rejectionHistory.push({ hop: this.hopCount, nodeId, submitted: invalid, valid: neighborCols.map(c => c.name) });
+        this.log('debug', `REJECT (${this.rejectionsThisHop}): columns [${invalid}] not found on ${nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
+        return {
+          error: 'invalid_columns',
+          nodeId,
+          invalid,
+          valid: neighborCols.map(c => c.name),
+          hint: this.rejectionsThisHop >= MAX_REJECTIONS_PER_HOP
+            ? `Column rejected ${this.rejectionsThisHop} times. Fix the column name, or prune/pass this neighbor to continue the trace.`
+            : 'Fix the column name from the valid list and resubmit.',
+        };
+      }
+    } else if (neighbor?.type === 'procedure') {
+      const focusId = this.currentFocusNodeId ?? '';
+      const isExec = this.edgeTypeMap.get(`${focusId}→${nodeId}`) === 'exec'
+        || this.edgeTypeMap.get(`${nodeId}→${focusId}`) === 'exec';
+      if (isExec) {
+        this.log('debug', `SP→SP exec: ${focusId} → ${nodeId} — column validation skipped`);
+      }
+    }
+    return null;
+  }
+
+  /** Dispatch a single verdict to its handler. Returns advanced count or error. */
+  private applyVerdict(v: {
+    nodeId: string;
+    verdict: HopVerdict;
+    columnsOut?: string[];
+    summary?: string;
+    question?: string;
+  }): { advanced: number } | { error: string; hint?: string } {
+    switch (v.verdict) {
+      case 'prune': return this.applyPrune(v);
+      case 'revisit': return this.applyRevisit(v);
+      case 'pass': return this.applyPass(v);
+      default: return this.applyTrace(v);
+    }
+  }
+
+  /** Prune: remove node from graph + cascade. SM-internal skip if chain/orphan guard fires. */
+  private applyPrune(v: { nodeId: string; summary?: string }): { advanced: number } {
+    // O(1) guard: chain nodes can never be pruned
+    if (this.chain.has(v.nodeId)) {
+      this.log('debug', `Verdict: ${v.nodeId} = prune → auto-skipped (already in chain)`);
+      return { advanced: 0 };
+    }
+    // O(V+E) guard: reject if prune would orphan a chain node
+    const chainIds = new Set(this.chain.keys());
+    if (chainIds.size > 0) {
+      const orphanedId = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, chainIds, v.nodeId);
+      if (orphanedId) {
+        this.log('debug', `Verdict: ${v.nodeId} = prune → skipped (would orphan chain node ${orphanedId})`);
+        return { advanced: 0 };
+      }
+    }
+    this.markPruned(v.nodeId, v.summary ?? 'Pruned by AI', {
+      parentColumns: [...this.currentFocusActiveColumns],
+      depth: this.currentFocusDepth + 1,
+      parentNodeId: this.currentFocusNodeId,
+    });
+    this.log('debug', `Verdict: ${v.nodeId} = prune ("${v.summary ?? ''}")`);
+    return { advanced: 0 };
+  }
+
+  /** Revisit: restore a previously pruned node to the frontier. AI-correctable error on invalid. */
+  private applyRevisit(v: { nodeId: string; columnsOut?: string[]; question?: string }): { advanced: number } | { error: string; hint?: string } {
+    if (!this.prunedEntries.has(v.nodeId)) {
+      return { error: 'revisit_invalid', hint: `${v.nodeId} was not previously pruned — only pruned nodes can be revisited.` };
+    }
+    if (this.revisitCount >= MAX_REVISITS) {
+      return { error: 'revisit_cap_reached', hint: `Maximum ${MAX_REVISITS} revisits per trace. Remaining revisits: 0.` };
+    }
+    const stored = this.restorePruned(v.nodeId)!;
+    this.revisitCount++;
+    const revisitColumns = v.columnsOut?.length ? v.columnsOut : stored.parentColumns;
+    this.frontierPush({
+      nodeId: v.nodeId,
+      activeColumns: revisitColumns,
+      depth: stored.depth,
+      parentNodeId: stored.parentNodeId,
+      question: v.question ?? `Revisiting ${v.nodeId} — previously pruned, now relevant.`,
+    });
+    this.log('info', `Verdict: ${v.nodeId} = REVISIT (${this.revisitCount}/${MAX_REVISITS}) → re-added to frontier`);
+    return { advanced: 1 };
+  }
+
+  /** Pass: mark as passthrough, queue children (not the node itself). */
+  private applyPass(v: { nodeId: string; columnsOut?: string[] }): { advanced: number } {
+    const boundary = this.detectBoundary(v.nodeId);
+    const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
+    this.passthroughMap.set(v.nodeId, [...passColumns]);
+    this.visited.add(v.nodeId);
+    if (boundary === 'none') {
+      const delta = this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth + 1);
+      this.log('debug', `Verdict: ${v.nodeId} = pass, columns=[${passColumns}] → queued ${delta} children`);
+      return { advanced: delta };
+    }
+    this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}), columns=[${passColumns}] → terminal`);
+    return { advanced: 0 };
+  }
+
+  /** Trace: add to chain (or merge if convergent path), push to frontier. */
+  private applyTrace(v: { nodeId: string; columnsOut?: string[]; summary?: string; question?: string }): { advanced: number } {
+    const boundary = this.detectBoundary(v.nodeId);
+    const neighbor = this.nodeMap.get(v.nodeId);
+
+    // Chain entry: merge or create
+    const existingChain = this.chain.get(v.nodeId);
+    if (existingChain) {
+      const mergedIn = new Set([...existingChain.columnsIn, ...this.currentFocusActiveColumns]);
+      existingChain.columnsIn = [...mergedIn];
+      if (v.columnsOut?.length) {
+        const mergedOut = new Set([...existingChain.columnsOut, ...v.columnsOut]);
+        existingChain.columnsOut = [...mergedOut];
+      }
+      this.log('debug', `Verdict: ${v.nodeId} = trace (merge into existing chain entry), columnsIn=[${existingChain.columnsIn}]`);
+    } else {
+      this.chain.set(v.nodeId, {
+        nodeId: v.nodeId,
+        schema: neighbor?.schema ?? '',
+        name: neighbor?.name ?? '',
+        type: neighbor?.type ?? '',
+        columnsIn: [...this.currentFocusActiveColumns],
+        columnsOut: v.columnsOut ?? [],
+        summary: v.summary ?? '',
+        boundaryFlag: boundary,
+      });
+      if (v.summary) {
+        this.storeDetail(v.nodeId, v.summary, v.summary, {});
+      }
+    }
+
+    // Frontier: update or push (non-boundary only)
+    if (boundary === 'none') {
+      const entry: FrontierEntry = {
+        nodeId: v.nodeId,
+        activeColumns: v.columnsOut ?? [],
+        depth: this.currentFocusDepth + 1,
+        parentNodeId: this.currentFocusNodeId ?? '',
+        question: v.question,
+      };
+      const action = this.frontierUpdateOrPush(entry);
+      if (action === 'updated') {
+        this.log('debug', `Verdict: ${v.nodeId} = trace, updated existing frontier entry${v.question ? ` Q: "${v.question}"` : ''}`);
+      } else {
+        this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
+      }
+      return { advanced: 1 };
+    }
+    this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
+    return { advanced: 0 };
   }
 
   // ─── submitBatch (inline mode) ──────────────────────────────────────────────
@@ -955,8 +1036,7 @@ export class ColumnTraceState extends HopStateMachine {
     let cascaded = 0;
     for (let i = this.frontier.length - 1; i >= 0; i--) {
       if (!reachable.has(this.frontier[i].nodeId)) {
-        this.removedSet.add(this.frontier[i].nodeId);
-        this.outOfScope.push({ nodeId: this.frontier[i].nodeId, reason: 'Cascade-removed (unreachable after prune)' });
+        this.markCascadeRemoved(this.frontier[i].nodeId);
         this.frontierIds.delete(this.frontier[i].nodeId);
         this.frontier.splice(i, 1);
         cascaded++;
@@ -975,13 +1055,12 @@ export class ColumnTraceState extends HopStateMachine {
         this.log('warn', `Frontier cap (${this.maxFrontierSize}) — ${nid} added to outOfScope`);
         continue;
       }
-      this.frontier.push({
+      this.frontierPush({
         nodeId: nid,
         activeColumns: [...activeColumns],
         depth: parentDepth + 1,
         parentNodeId: nodeId,
       });
-      this.frontierIds.add(nid);
       added++;
     }
     return added;
