@@ -61,3 +61,21 @@ SM stores and delivers — never filters, ranks, or evicts AI evidence.
 Detail depth: `relevant`/`trace` → full analysis; `pass` → summary; `irrelevant`/`prune` → summary + removed.
 
 One code path in `HopStateMachine` base class → BB, CT, CT_DEP inherit.
+
+**Working memory during hops:** `buildBaseWorkingMemory()` in base class provides `all_summaries`, `pending_questions`, `checklist` (hop, noted, total, coveragePct). BB extends with `remaining_agenda`, `user_question`. CT extends with `frontier_remaining`, `current_depth`. Both send as `working_memory` in hop context — same name, same core structure.
+
+**Pass verdict = lightweight focus hop (CT):** Pass nodes are queued as focus hops, NOT auto-expanded. AI sees the pass node's neighbors at the next hop and verdicts them individually. This prevents blind frontier expansion and gives AI control over scope growth.
+
+## State Machine OOP — Base vs Subclass
+
+Shared capabilities belong in `HopStateMachine` base class (`smBase.ts`):
+- Two-tier memory (short + detail) — base ✅
+- Working memory during hops (`buildBaseWorkingMemory()`) — base ✅
+- Boundary detection — base with direction override in CT ✅
+- Progress metadata (hop, depth, visited, chain, frontier) — base via checklist ✅
+
+Subclass-specific:
+- BB: agenda (priority queue), `add_ids`, `user_question`, map_overview
+- CT: frontier (FIFO), column tracking, rename validation, cascade prune
+
+Rule: If BOTH BB and CT need a capability, it goes in base. If only one needs it, subclass.

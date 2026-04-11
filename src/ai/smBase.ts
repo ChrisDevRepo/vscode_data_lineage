@@ -65,6 +65,13 @@ export interface ShortMemory {
   pending_questions: Array<{ nodeId: string; question: string }>;
 }
 
+/** Base working memory — shared by BB and CT during hops. Subclasses extend with SM-specific fields. */
+export interface BaseWorkingMemory {
+  all_summaries: Array<{ nodeId: string; summary: string }>;
+  pending_questions: Array<{ nodeId: string; question: string }>;
+  checklist: { current_hop: number; noted: number; total: number; coveragePct: number };
+}
+
 /** Shared result shape returned by getResult(). Subclasses extend with SM-specific fields. */
 export interface SmResult {
   status: 'complete';
@@ -277,6 +284,23 @@ export abstract class HopStateMachine implements IHopStateMachine {
     return {
       short_memory: { ...this.shortMemory },
       detail_slots: [...this.detailSlots.values()],
+    };
+  }
+
+  /**
+   * Build base working memory — shared core fields for both BB and CT during hops.
+   * Subclasses call this and extend with SM-specific fields (agenda, frontier, etc.).
+   */
+  protected buildBaseWorkingMemory(): BaseWorkingMemory {
+    return {
+      all_summaries: [...this.detailSlots.values()].map(s => ({ nodeId: s.nodeId, summary: s.summary })),
+      pending_questions: this.shortMemory.pending_questions,
+      checklist: {
+        current_hop: this.hopCount,
+        noted: this.detailSlots.size,
+        total: this.scopeNodeIds.size,
+        coveragePct: this.coveragePct,
+      },
     };
   }
 

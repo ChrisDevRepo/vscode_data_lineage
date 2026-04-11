@@ -723,11 +723,9 @@ export class BlackboardState extends HopStateMachine {
   }
 
   private buildWorkingMemory(): WorkingMemory {
-    const allSummaries: Array<{ nodeId: string; summary: string }> = [];
-    for (const slot of this.detailSlots.values()) {
-      allSummaries.push({ nodeId: slot.nodeId, summary: slot.summary });
-    }
+    const base = this.buildBaseWorkingMemory();
 
+    // BB-specific: pending questions from questionLog (richer than base shortMemory.pending_questions)
     const pendingQuestions: Array<{ nodeId: string; question: string }> = [];
     for (const q of this.questionLog) {
       if (!q.answered) pendingQuestions.push({ nodeId: q.nodeId, question: q.question });
@@ -742,10 +740,10 @@ export class BlackboardState extends HopStateMachine {
 
     const wm: WorkingMemory = {
       user_question: this.userQuestion,
-      all_summaries: allSummaries,
+      all_summaries: base.all_summaries,
       pending_questions: pendingQuestions,
       remaining_agenda,
-      checklist: { current_hop: this.hopCount, noted: this.detailSlots.size, total: this.scopeNodeIds.size, open: this.agenda.length, coveragePct: this.coveragePct },
+      checklist: { ...base.checklist, open: this.agenda.length },
     };
 
     if (this.invalidNodeIds.size > 0) {

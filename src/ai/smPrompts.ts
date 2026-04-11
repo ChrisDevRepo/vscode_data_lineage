@@ -36,18 +36,15 @@ const BLOCK = {
     '- pass → summary only (~100-200 chars): what passes through, from where to where.\n' +
     '- irrelevant/prune → brief summary only.',
 
-  /** Step 3 — summary for short memory (→ incremental index, visible every hop) */
-  writeSummary:
-    'Write a summary for short memory (~100-200 chars) — visible every future hop.\n' +
-    'Include: what this node does + what is still open (unanswered questions, paths to explore).',
-
-  /** Step 4 — semantic badge + note caption for enrich_view */
+  /** Step 3 — semantic badge + note caption (also used for short memory) */
   badgeAndNote:
     'badge_label (2-4 words): semantic ROLE label, e.g. "Source", "Transform", "Staging", "Output", "Validation", "Aggregation".\n' +
     'SELECTIVITY: Only assign badge_label to nodes with distinct functional roles. ' +
     'Passthrough nodes (SELECT *, simple staging, lookup joins) — skip badge_label, they will be mentioned in section text.\n' +
     'GROUPING: Nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
-    'note_caption (1 line): what this node does in this flow.',
+    'note_caption (~100-200 chars): stored in short memory, visible every future hop. ' +
+    'The SM auto-adds which neighbors you traced/pruned — do not repeat that. ' +
+    'Write your REASONING: what you learned, what it means for the question, what is still open.',
 
   /** Self-ask — answer your own question from the previous hop */
   selfAsk:
@@ -55,7 +52,8 @@ const BLOCK = {
 
   /** Verdict neighbors — shared by CT and CT_DEP */
   verdictNeighbors:
-    'Verdict each neighbor: trace (has logic, follow with columns), pass (no transforms, children queued), prune (irrelevant, cut).\n' +
+    'Verdict each neighbor: trace (has logic, follow with columns), pass (no transforms, revisited as lightweight hop), prune (irrelevant, cut).\n' +
+    'Pass nodes appear as focus hops — verdict their neighbors to control which paths continue.\n' +
     'Submit a verdict for every neighbor — skipped neighbors are silently lost.',
 
   /** Column tracking — CT only */
@@ -64,14 +62,18 @@ const BLOCK = {
     'Read the current node DDL to find the source column reference: SELECT neighbor.SourceCol AS OutputAlias → trace SourceCol into that neighbor.\n' +
     'Track renames across hops — each hop may use a different name for the same data.\n' +
     'SELECTIVITY: Trace only columns relevant to the question. Prune unrelated branches.\n' +
-    'Prefer trace over prune when uncertain.',
+    'When uncertain whether a column carries value to the target: trace. When a column only controls selection: prune.',
 
   /** Column lineage rule — CT column mode only */
   columnLineageRule:
     'COLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. ' +
     'Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. ' +
     'Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. ' +
-    'Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.',
+    'Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. ' +
+    'Classify each column reference: does it contribute VALUE to the output, or does it only control SELECTION ' +
+    '(which row, which branch, whether NULL)? Trace value contributors. Prune selection-only references. ' +
+    'When ALL output branches for a condition produce only literals (constants, not column references), ' +
+    'the condition column is selection-only — do not trace it upstream for value lineage.',
 
   /** Table node guidance — CT (column + dep) */
   tableNodes:
@@ -136,10 +138,9 @@ export function buildBbPrompt(): string {
     'For each node:',
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
-    `3. ${BLOCK.writeSummary}`,
-    `4. ${BLOCK.badgeAndNote}`,
-    `5. Generate sub-questions for neighbors you want to investigate (boosts their priority).`,
-    `6. prune_ids: remove from agenda (scope=in_scope only). add_ids: add to agenda (scope=available).`,
+    `3. ${BLOCK.badgeAndNote}`,
+    `4. Generate sub-questions for neighbors you want to investigate (boosts their priority).`,
+    `5. prune_ids: remove from agenda (scope=in_scope only). add_ids: add to agenda (scope=available).`,
     '',
     BLOCK.scopeTiers,
     '',
@@ -160,9 +161,8 @@ export function buildCtPrompt(): string {
     '',
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
-    `3. ${BLOCK.writeSummary}`,
-    `4. ${BLOCK.badgeAndNote}`,
-    `5. ${BLOCK.verdictNeighbors}`,
+    `3. ${BLOCK.badgeAndNote}`,
+    `4. ${BLOCK.verdictNeighbors}`,
     '',
     BLOCK.columnTracking,
     BLOCK.columnLineageRule,
@@ -183,9 +183,8 @@ export function buildCtDepPrompt(): string {
     '',
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
-    `3. ${BLOCK.writeSummary}`,
-    `4. ${BLOCK.badgeAndNote}`,
-    `5. ${BLOCK.verdictNeighbors}`,
+    `3. ${BLOCK.badgeAndNote}`,
+    `4. ${BLOCK.verdictNeighbors}`,
     '',
     BLOCK.tableNodes,
     BLOCK.revisit,

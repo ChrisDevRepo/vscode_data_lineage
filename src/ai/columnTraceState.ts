@@ -14,7 +14,7 @@ import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './t
 import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
-import { HopStateMachine, type BoundaryFlag, type HopNeighbor, type ShortMemory, type DetailSlot } from './smBase';
+import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type ShortMemory, type DetailSlot } from './smBase';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -302,10 +302,12 @@ export class ColumnTraceState extends HopStateMachine {
     verdicts_expected: number;
     ct_mode: 'hop_and_distill';
     hop: number;
+    current_depth: number;
     frontier_remaining: number;
     goal: { columns: string[]; direction: ColumnTraceDirection; origin: string | null };
     sub_question: string;
     path_so_far: Array<{ node_id: string; summary: string; columns_in: string[]; columns: string[]; notes?: string }>;
+    working_memory: BaseWorkingMemory & { frontier_remaining: number; current_depth: number };
     focus_node: Record<string, unknown>;
     active_columns: string[];
     neighbors: HopNeighbor[];
@@ -395,10 +397,16 @@ export class ColumnTraceState extends HopStateMachine {
       verdicts_expected: neighbors.length,
       ct_mode: 'hop_and_distill',
       hop: this.hopCount,
+      current_depth: entry.depth,
       frontier_remaining: this.frontier.length,
       goal: { columns: this.targetColumns, direction: this.direction, origin: this.originNodeId },
       sub_question: subQuestion,
       path_so_far: pathSoFar,
+      working_memory: {
+        ...this.buildBaseWorkingMemory(),
+        frontier_remaining: this.frontier.length,
+        current_depth: entry.depth,
+      },
       focus_node: strip(focusNode) as Record<string, unknown>,
       active_columns: entry.activeColumns,
       neighbors,
@@ -540,10 +548,25 @@ export class ColumnTraceState extends HopStateMachine {
       if (v.verdict === 'prune') pruneCount++;
     }
 
-    // 3. Update short memory (after verdicts — focusChain.summary now populated)
+    // 3. Update short memory (after verdicts — captures both chain and passthrough nodes)
+    //    Two parts: SM-generated metadata (traced/pruned) + AI-generated insight (notes)
+    //    SM adds the mechanical facts automatically. AI writes only the insight (FOUND/OPEN).
     const focusChain = this.chain.get(this.currentFocusNodeId!);
-    if (focusChain && params.notes) {
-      const entry = `${focusChain.name}: ${focusChain.summary || params.notes}`;
+    const focusName = focusChain?.name ?? this.nodeMap.get(this.currentFocusNodeId!)?.name ?? '';
+    const isPass = !focusChain && this.passthroughMap.has(this.currentFocusNodeId!);
+    if (focusName && (focusChain || isPass)) {
+      // SM metadata: which neighbors traced/pruned (AI doesn't need to repeat this)
+      const traced = params.verdicts.filter(v => v.verdict === 'trace').map(v => this.nodeMap.get(v.nodeId)?.name ?? v.nodeId);
+      const pruned = params.verdicts.filter(v => v.verdict === 'prune').map(v => this.nodeMap.get(v.nodeId)?.name ?? v.nodeId);
+      // AI insight: from note_caption (concise) or summary or notes (fallback)
+      const aiInsight = params.note_caption || focusChain?.summary || '';
+      // Compose: name + [pass] + AI insight + SM metadata
+      const parts: string[] = [];
+      if (isPass) parts.push('[pass]');
+      if (aiInsight) parts.push(aiInsight);
+      if (traced.length) parts.push(`→ traced: ${traced.join(', ')}`);
+      if (pruned.length) parts.push(`✕ pruned: ${pruned.join(', ')}`);
+      const entry = `${focusName}: ${parts.join(' | ')}`;
       const smErr = this.updateShortMemory(entry);
       if (smErr) return { error: 'notes_too_long', limit: this.shortMemoryHardLimit, hint: `Shorten your notes — aim for ~${this.shortMemorySoftLimit} chars.` };
     }
@@ -693,19 +716,28 @@ export class ColumnTraceState extends HopStateMachine {
     return { advanced: 1 };
   }
 
-  /** Pass: mark as passthrough, queue children (not the node itself). */
+  /** Pass: mark as passthrough, queue as lightweight focus hop (AI verdicts neighbors). */
   private applyPass(v: { nodeId: string; columnsOut?: string[] }): { advanced: number } {
     const boundary = this.detectBoundary(v.nodeId);
     const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
     this.passthroughMap.set(v.nodeId, [...passColumns]);
-    this.visited.add(v.nodeId);
-    if (boundary === 'none') {
-      const delta = this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth + 1);
-      this.log('debug', `Verdict: ${v.nodeId} = pass, columns=[${passColumns}] → queued ${delta} children`);
-      return { advanced: delta };
+    if (boundary !== 'none') {
+      this.visited.add(v.nodeId);
+      this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}) → terminal`);
+      return { advanced: 0 };
     }
-    this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}), columns=[${passColumns}] → terminal`);
-    return { advanced: 0 };
+    // Queue as lightweight focus hop — AI will see neighbors and verdict them
+    // NOT marked visited yet — will be visited when getHopContext() pops it
+    const entry: FrontierEntry = {
+      nodeId: v.nodeId,
+      activeColumns: passColumns,
+      depth: this.currentFocusDepth + 1,
+      parentNodeId: this.currentFocusNodeId ?? '',
+      question: `Passthrough — which neighbors carry [${passColumns.join(', ')}] upstream?`,
+    };
+    this.frontierUpdateOrPush(entry);
+    this.log('debug', `Verdict: ${v.nodeId} = pass → queued as focus hop (no auto-expand)`);
+    return { advanced: 1 };
   }
 
   /** Trace: add to chain (or merge if convergent path), push to frontier. */

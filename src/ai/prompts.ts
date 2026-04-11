@@ -20,7 +20,7 @@ export function buildSystemPromptBase(maxRounds: number): string {
     '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
     '3. For column questions: start_column_trace with columns. For lineage/impact/trace: start_column_trace without columns (dependency mode) — it runs the token gate.\n' +
     '   When tracing columns: provide INPUT column names, not output. Track renames.\n' +
-    '   Prefer trace over prune when uncertain.\n' +
+    '   When uncertain whether a column carries value to the target: trace. When a column only controls selection: prune.\n' +
     '   For broad exploration (business rules, documentation, patterns, investigations):\n' +
     '   use start_exploration to explore objects hop-by-hop with persistent memory.\n' +
     '   BFS (run_bfs_trace) is for scope discovery, not final trace results.\n' +
