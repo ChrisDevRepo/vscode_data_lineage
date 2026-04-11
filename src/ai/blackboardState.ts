@@ -90,6 +90,7 @@ export class BlackboardState extends HopStateMachine {
   // ── Public accessors ──
 
   get noteCount(): number { return this.detailSlots.size; }
+  get agendaRemaining(): number { return this.agenda.length; }
 
   get filterBreakdown(): { in_filter: number; outside_filter: number; total: number } {
     if (!this.filterSchemas) return { in_filter: this.scopeNodeIds.size, outside_filter: 0, total: this.scopeNodeIds.size };

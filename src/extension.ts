@@ -738,8 +738,9 @@ export function activate(context: vscode.ExtensionContext) {
       prepareInvocation(options, _token) {
         const input = options.input as { focus_node_id?: string };
         const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
-        const hop = (_columnTraceState?.hopNumber ?? 0) + 1;
-        return { invocationMessage: name ? `Hop ${hop} · Tracing ${name}…` : 'Processing hop verdicts…' };
+        const visited = (_columnTraceState?.visited_count ?? 0);
+        const total = visited + (_columnTraceState?.frontierSize ?? 0);
+        return { invocationMessage: name ? `Node ${visited} of ${total} · Tracing ${name}…` : 'Processing hop verdicts…' };
       },
       invoke(options, _token) {
         try {
@@ -885,8 +886,9 @@ export function activate(context: vscode.ExtensionContext) {
       prepareInvocation(options, _token) {
         const input = options.input as { focus_node_id?: string };
         const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
-        const hop = (_blackboardState?.hopNumber ?? 0) + 1; // +1: prepareInvocation runs before invoke increments
-        return { invocationMessage: name ? `Hop ${hop} · Analyzing ${name}…` : 'Recording findings…' };
+        const visited = (_blackboardState?.visitedCount ?? 0);
+        const total = visited + (_blackboardState?.agendaRemaining ?? 0);
+        return { invocationMessage: name ? `Node ${visited} of ${total} · Analyzing ${name}…` : 'Recording findings…' };
       },
       invoke(options, _token) {
         try {

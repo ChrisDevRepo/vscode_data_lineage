@@ -191,6 +191,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
   get inlineMode(): boolean { return this._inlineMode; }
 
   get hopNumber(): number { return this.hopCount; }
+  get visitedCount(): number { return this.visited.size; }
 
   get coveragePct(): number {
     return this.scopeNodeIds.size > 0
