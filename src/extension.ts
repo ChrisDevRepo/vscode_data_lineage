@@ -702,10 +702,11 @@ export function activate(context: vscode.ExtensionContext) {
           const g = requireGraph();
           const inputErr = validateToolInput(options.input, { columns: 'array' });
           if (inputErr) { logWarn(outputChannel, 'AI', `start_column_trace: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
-          const input = options.input as { columns?: string[]; direction?: string; origin?: string };
+          const input = options.input as { columns?: string[]; direction?: string; origin?: string; depth?: number };
           const columns = input.columns ?? [];
           const direction = (input.direction ?? 'up') as 'up' | 'down' | 'both';
-          logDebug(outputChannel, 'AI', `start_column_trace: columns=[${columns}], direction=${direction}, origin=${input.origin ?? 'auto'}`);
+          const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
+          logDebug(outputChannel, 'AI', `start_column_trace: columns=[${columns}], direction=${direction}, depth=${depth}, origin=${input.origin ?? 'auto'}`);
 
           _columnTraceState = new ColumnTraceState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
@@ -713,7 +714,7 @@ export function activate(context: vscode.ExtensionContext) {
             else logDebug(outputChannel, 'AI', `[CT] ${msg}`);
           }, { activeFilter: _aiFilter }, _columnStore);
 
-          const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction });
+          const initResult = _columnTraceState.init({ targetColumns: columns, origin: input.origin, direction, depth });
           if ('error' in initResult) return logAndReturn('start_column_trace', initResult);
 
           // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
@@ -737,7 +738,8 @@ export function activate(context: vscode.ExtensionContext) {
       prepareInvocation(options, _token) {
         const input = options.input as { focus_node_id?: string };
         const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
-        return { invocationMessage: name ? `Tracing ${name}…` : 'Processing hop verdicts…' };
+        const hop = (_columnTraceState?.hopNumber ?? 0) + 1;
+        return { invocationMessage: name ? `Hop ${hop} · Tracing ${name}…` : 'Processing hop verdicts…' };
       },
       invoke(options, _token) {
         try {
@@ -801,13 +803,14 @@ export function activate(context: vscode.ExtensionContext) {
           const g = requireGraph();
           const inputErr = validateToolInput(options.input, { question: 'string', origin: 'string' });
           if (inputErr) { logWarn(outputChannel, 'AI', `start_exploration: input validation failed — ${inputErr.hint}`); return toolResult(inputErr); }
-          const input = options.input as { question?: string; origin?: string; scope_direction?: string };
+          const input = options.input as { question?: string; origin?: string; scope_direction?: string; depth?: number };
           const question = input.question ?? '';
           const origin = input.origin ?? '';
           const scopeDirection = (['upstream', 'downstream', 'bidirectional'].includes(input.scope_direction ?? '')
             ? input.scope_direction as 'upstream' | 'downstream' | 'bidirectional'
             : 'bidirectional');
-          logDebug(outputChannel, 'AI', `start_exploration: origin=${origin}, direction=${scopeDirection}, question="${trunc(question, 200)}"`);
+          const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
+          logDebug(outputChannel, 'AI', `start_exploration: origin=${origin}, direction=${scopeDirection}, depth=${depth}, question="${trunc(question, 200)}"`);
 
           _blackboardState = new BlackboardState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
@@ -819,7 +822,7 @@ export function activate(context: vscode.ExtensionContext) {
             scopeDirection,
           }, _columnStore);
 
-          const initResult = _blackboardState.init({ question, origin });
+          const initResult = _blackboardState.init({ question, origin, depth });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);
 
           // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
@@ -860,11 +863,30 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (err) { return toolError('start_exploration', err); }
       },
     }),
+    vscode.lm.registerTool('lineage_expand_frontier', {
+      prepareInvocation(_options, _token) {
+        return { invocationMessage: 'Expanding exploration scope…' };
+      },
+      invoke(options, _token) {
+        try {
+          if (!isAiEnabled()) return disabled();
+          if (!_blackboardState) {
+            logWarn(outputChannel, 'AI', `expand_frontier: no active exploration state machine`);
+            return logAndReturn('expand_frontier', { error: 'no_active_exploration', hint: 'No active exploration. Call start_exploration first.' });
+          }
+          const input = options.input as { extra_hops?: number };
+          const extraHops = typeof input.extra_hops === 'number' ? Math.max(1, Math.min(Math.round(input.extra_hops), 5)) : 2;
+          const result = _blackboardState.expandFrontier(extraHops);
+          return logAndReturn('expand_frontier', { ok: true, ...result, hint: result.added > 0 ? `Added ${result.added} nodes to agenda. Continue with submit_findings.` : 'No new nodes found beyond current scope boundary.' });
+        } catch (err) { return toolError('expand_frontier', err); }
+      },
+    }),
     vscode.lm.registerTool('lineage_submit_findings', {
       prepareInvocation(options, _token) {
         const input = options.input as { focus_node_id?: string };
         const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
-        return { invocationMessage: name ? `Analyzing ${name}…` : 'Recording findings…' };
+        const hop = (_blackboardState?.hopNumber ?? 0) + 1; // +1: prepareInvocation runs before invoke increments
+        return { invocationMessage: name ? `Hop ${hop} · Analyzing ${name}…` : 'Recording findings…' };
       },
       invoke(options, _token) {
         try {

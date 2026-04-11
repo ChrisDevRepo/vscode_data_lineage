@@ -52,6 +52,8 @@ Extension host holds full model regardless. AI tools + BFS operate on full model
 
 SM stores and delivers — never filters, ranks, or evicts AI evidence.
 
+**Bounded BFS scope:** Initial scope is depth-limited (default 5 hops). AI controls scope via start node + direction + depth. Expansion: `expand_frontier` (BB, batch BFS from boundary) or `add_ids` (individual nodes auto-expand scope). Contraction: `prune_ids` with cascade. SM never pre-decides what's relevant.
+
 **Inline vs hop-by-hop:** `shouldSmInline()` in `tokenBudget.ts` gates delivery. Small scopes → inline (all DDL at once, batch verdicts). Larger scopes → hop-by-hop with two-tier memory. Both use same SM for verdict validation.
 
 **Two memories (hop-by-hop only):**

@@ -7,6 +7,7 @@
 ## Guards
 
 - `ai.maxRounds` (user setting, default 50) — hard stop
+- `depth` parameter (default 5) — BFS depth limit on `start_exploration` and `start_column_trace`. AI controls initial scope size. Expansion: `expand_frontier` (BB, batch) or `add_ids` (individual nodes auto-expand scope). Contraction: `prune_ids` with cascade.
 - `shouldSmInline()` (token + node count) — delivery gate for CT and BB: scope ≤ `ai.inlineNodeCap` (10) AND under `ai.inlineTokenBudget` (10K) → inline (all DDL at once, memory skipped); exceeds either → hop-by-hop SM with sliding memory. Deep traces need memory for column rename tracking.
 - `BFS_INLINE_NODE_CAP` (200) — BFS results exceeding this recommend state machine delivery
 - `action_required` gate — blocks non-search tools until AI responds. Only for structural flow control (`analyze_and_respond`). Search tools never gate — they use `ai_hint` (non-blocking). AI is autonomous for search, schema resolution, and discovery.
@@ -24,10 +25,10 @@ State machines receive `_aiFilter` for REPORTING — never for filtering or cons
 
 ## Tools
 
-12 tools (8 classic + 2 CT + 2 BB), registered via `vscode.lm.registerTool()`:
+13 tools (8 classic + 2 CT + 3 BB), registered via `vscode.lm.registerTool()`:
 - Classic: get_context, search_objects, get_object_detail, run_bfs_trace, run_analysis, search_ddl, get_ddl_batch, enrich_view
 - CT: start_column_trace, submit_hop_analysis
-- BB: start_exploration, submit_findings
+- BB: start_exploration, submit_findings, expand_frontier
 
 **Dynamic filtering per round (5 phases):**
 - `discover`: all tools visible

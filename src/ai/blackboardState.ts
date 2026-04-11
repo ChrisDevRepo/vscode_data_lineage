@@ -114,6 +114,7 @@ export class BlackboardState extends HopStateMachine {
   init(params: {
     question: string;
     origin: string;
+    depth?: number;
   }): { ok: true; scopeSize: number; agendaSize: number; originNode: Record<string, unknown>; map: MapOverview }
      | { error: string; hint?: string; scope_size?: number; in_filter?: number; outside_filter?: number } {
 
@@ -138,8 +139,8 @@ export class BlackboardState extends HopStateMachine {
 
     this.originNodeId = originNode.id;
 
-    // Compute scope
-    const scopeIds = this.bfsScope(originNode.id, this.scopeDirection);
+    // Compute scope (depth-limited BFS — AI controls scope via depth + expand_frontier)
+    const scopeIds = this.bfsScope(originNode.id, this.scopeDirection, params.depth);
     this.scopeNodeIds = scopeIds;
 
     // Hard gate: bidirectional on large scope
@@ -166,8 +167,8 @@ export class BlackboardState extends HopStateMachine {
     const map = this.buildMapOverview();
 
     this._status = 'initialized';
-    this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
-    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
+    this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
+    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
     this.log('debug', `BB INIT scope nodes | [${[...scopeIds].map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
 
     return {
@@ -257,7 +258,6 @@ export class BlackboardState extends HopStateMachine {
     return {
       bb_mode: 'exploring',
       hop: this.hopCount,
-      ...(this.lastProgressLine && { progress_line: this.lastProgressLine }),
       focus_node: focusNode,
       neighbors,
       current_task: currentTask,
@@ -626,6 +626,89 @@ export class BlackboardState extends HopStateMachine {
         questionsAnswered,
       },
     };
+  }
+
+  // ─── Scope expansion ───────────────────────────────────────────────────────
+
+  /**
+   * Extend scope by N more BFS hops from the current boundary.
+   * Frontier nodes = scope nodes with graph neighbors outside scope (not removed).
+   * New nodes are added to both scopeNodeIds and agenda.
+   */
+  expandFrontier(extraHops: number): { added: number; agenda_size: number } {
+    if (this._status !== 'initialized' && this._status !== 'exploring' && this._status !== 'awaiting_findings') {
+      return { added: 0, agenda_size: this.agenda.length };
+    }
+
+    const hops = Math.max(1, Math.min(Math.round(extraHops), 5));
+
+    // Find frontier: scope nodes whose graph neighbors include non-scope, non-removed nodes
+    const frontierIds = new Set<string>();
+    const neighborFn = (id: string): string[] =>
+      this.scopeDirection === 'upstream'   ? this.graph.inNeighbors(id) :
+      this.scopeDirection === 'downstream' ? this.graph.outNeighbors(id) :
+                                             this.graph.neighbors(id);
+
+    for (const id of this.scopeNodeIds) {
+      if (this.removedSet.has(id)) continue;
+      for (const nid of neighborFn(id)) {
+        if (!this.scopeNodeIds.has(nid) && !this.removedSet.has(nid)) {
+          frontierIds.add(id);
+          break;
+        }
+      }
+    }
+
+    if (frontierIds.size === 0) {
+      this.log('info', `BB EXPAND | no frontier nodes — scope fully explored`);
+      return { added: 0, agenda_size: this.agenda.length };
+    }
+
+    // BFS from frontier for extraHops levels
+    const newNodes = new Set<string>();
+    const queue: Array<{ id: string; depth: number }> = [];
+    for (const fid of frontierIds) {
+      for (const nid of neighborFn(fid)) {
+        if (!this.scopeNodeIds.has(nid) && !this.removedSet.has(nid) && !newNodes.has(nid)) {
+          if (this.filterSchemas) {
+            const schema = (this.nodeMap.get(nid)?.schema ?? '').toLowerCase();
+            if (!this.filterSchemas.has(schema)) continue;
+          }
+          newNodes.add(nid);
+          queue.push({ id: nid, depth: 1 });
+        }
+      }
+    }
+
+    let idx = 0;
+    while (idx < queue.length) {
+      const { id, depth } = queue[idx++];
+      if (depth >= hops) continue;
+      for (const nid of neighborFn(id)) {
+        if (this.scopeNodeIds.has(nid) || this.removedSet.has(nid) || newNodes.has(nid)) continue;
+        if (this.filterSchemas) {
+          const schema = (this.nodeMap.get(nid)?.schema ?? '').toLowerCase();
+          if (!this.filterSchemas.has(schema)) continue;
+        }
+        newNodes.add(nid);
+        queue.push({ id: nid, depth: depth + 1 });
+      }
+    }
+
+    // Add new nodes to scope + agenda
+    let added = 0;
+    for (const nid of newNodes) {
+      if (!this.nodeMap.has(nid)) continue; // skip nodes not in model
+      this.scopeNodeIds.add(nid);
+      if (!this.visited.has(nid) && !this.agendaIds.has(nid) && this.agenda.length < this.maxAgendaSize) {
+        this.agenda.push({ nodeId: nid, priority: 0, depth: 0 });
+        this.agendaIds.add(nid);
+        added++;
+      }
+    }
+
+    this.log('info', `BB EXPAND | frontier=${frontierIds.size} | extra_hops=${hops} | new_scope=${newNodes.size} | added_to_agenda=${added} | agenda=${this.agenda.length}`);
+    return { added, agenda_size: this.agenda.length };
   }
 
   // ─── Private: Agenda management ───────────────────────────────────────────

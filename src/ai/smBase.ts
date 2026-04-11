@@ -190,6 +190,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
   get slotCount(): number { return this.detailSlots.size; }
   get inlineMode(): boolean { return this._inlineMode; }
 
+  get hopNumber(): number { return this.hopCount; }
+
   get coveragePct(): number {
     return this.scopeNodeIds.size > 0
       ? Math.round((this.detailSlots.size / this.scopeNodeIds.size) * 100)
@@ -279,14 +281,12 @@ export abstract class HopStateMachine implements IHopStateMachine {
     verdict: string,
     prunedCount: number,
     addedCount: number,
-    remaining: number,
+    _remaining: number,
   ): void {
-    const visited = this.visited.size;
-    const total = visited + remaining;
     let scopeChange = '';
     if (prunedCount > 0) scopeChange = ` · pruned ${prunedCount}`;
     if (addedCount > 0) scopeChange = ` · added ${addedCount}`;
-    this.lastProgressLine = `Hop ${this.hopCount} · ${nodeName} → ${verdict}${scopeChange} (${visited} of ${total})`;
+    this.lastProgressLine = `Hop ${this.hopCount} · ${nodeName} → ${verdict}${scopeChange}`;
   }
 
   /** Build completion progress line. */
@@ -333,16 +333,18 @@ export abstract class HopStateMachine implements IHopStateMachine {
   // ── Shared helpers (extracted from BB+CT duplication) ──
 
   /**
-   * BFS scope computation — direction-aware, filter-respecting.
+   * BFS scope computation — direction-aware, filter-respecting, depth-limited.
    * @param direction 'upstream' | 'downstream' | 'bidirectional'
+   * @param maxDepth Maximum BFS depth from startId (undefined = unlimited)
    */
-  protected bfsScope(startId: string, direction: 'upstream' | 'downstream' | 'bidirectional'): Set<string> {
+  protected bfsScope(startId: string, direction: 'upstream' | 'downstream' | 'bidirectional', maxDepth?: number): Set<string> {
     if (!this.graph.hasNode(startId)) return new Set([startId]);
     const seen = new Set<string>([startId]);
-    const queue = [startId];
+    const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
     let idx = 0;
     while (idx < queue.length) {
-      const id = queue[idx++];
+      const { id, depth } = queue[idx++];
+      if (maxDepth !== undefined && depth >= maxDepth) continue;
       const neighbors =
         direction === 'upstream'   ? this.graph.inNeighbors(id) :
         direction === 'downstream' ? this.graph.outNeighbors(id) :
@@ -354,7 +356,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
           if (!this.filterSchemas.has(schema)) continue;
         }
         seen.add(nid);
-        queue.push(nid);
+        queue.push({ id: nid, depth: depth + 1 });
         if (seen.size >= BFS_SCOPE_CAP) return seen;
       }
     }

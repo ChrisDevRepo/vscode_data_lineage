@@ -165,6 +165,7 @@ export class ColumnTraceState extends HopStateMachine {
     targetColumns: string[];
     origin?: string;
     direction?: ColumnTraceDirection;
+    depth?: number;
   }): { ok: true; scopeSize: number; originNode: Record<string, unknown> }
      | { error: string; hint?: string; candidates?: Array<{ id: string; name: string; type: string }> } {
 
@@ -253,8 +254,8 @@ export class ColumnTraceState extends HopStateMachine {
     const origin_ = originNode!;
     this.originNodeId = origin_.id;
 
-    // Compute scope via NeighborIndex BFS (direction-aware)
-    const scopeIds = this.bfsScopeViaIndex(origin_.id);
+    // Compute scope via NeighborIndex BFS (direction-aware, depth-limited)
+    const scopeIds = this.bfsScopeViaIndex(origin_.id, params.depth);
     this.scopeNodeIds = scopeIds;
     this.scopeSize = scopeIds.size;
 
@@ -284,8 +285,8 @@ export class ColumnTraceState extends HopStateMachine {
     });
 
     this._status = 'initialized';
-    this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
-    this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
+    this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
+    this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
 
     return {
       ok: true,
@@ -397,7 +398,6 @@ export class ColumnTraceState extends HopStateMachine {
       verdicts_expected: neighbors.length,
       ct_mode: 'hop_and_distill',
       hop: this.hopCount,
-      ...(this.lastProgressLine && { progress_line: this.lastProgressLine }),
       current_depth: entry.depth,
       frontier_remaining: this.frontier.length,
       goal: { columns: this.targetColumns, direction: this.direction, origin: this.originNodeId },
@@ -1120,17 +1120,18 @@ export class ColumnTraceState extends HopStateMachine {
   }
 
   /** Direction-aware BFS via NeighborIndex to compute reachable scope. */
-  private bfsScopeViaIndex(startId: string): Set<string> {
+  private bfsScopeViaIndex(startId: string, maxDepth?: number): Set<string> {
     const seen = new Set<string>([startId]);
-    const queue = [startId];
+    const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
     let idx = 0;
     while (idx < queue.length) {
-      const id = queue[idx++];
+      const { id, depth } = queue[idx++];
+      if (maxDepth !== undefined && depth >= maxDepth) continue;
       const neighbors = this.getDirectionalNeighbors(id);
       for (const nid of neighbors) {
         if (!seen.has(nid)) {
           seen.add(nid);
-          queue.push(nid);
+          queue.push({ id: nid, depth: depth + 1 });
           if (seen.size >= BFS_SCOPE_CAP) return seen;
         }
       }

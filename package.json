@@ -931,6 +931,10 @@
             "origin": {
               "type": "string",
               "description": "Starting object ID. Optional — omit if unknown, the tool will auto-discover."
+            },
+            "depth": {
+              "type": "number",
+              "description": "BFS depth limit from origin (default 5). Controls scope for cascade prune and coverage tracking."
             }
           }
         }
@@ -1020,7 +1024,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start a broad exploration of database objects for business rules, documentation, or investigations.",
-        "modelDescription": "Start a broad exploration of database objects. Use for questions about business rules, documentation, SQL patterns, or investigations across many objects.\n\nProvide an origin node — the state machine runs BFS to build the exploration map, seeds the agenda, and returns the first hop.\n\nscope_direction controls what BFS finds — ALWAYS specify it:\n- 'upstream': \"what are the sources / what feeds into X?\" — reverse BFS, finds ancestors only (inbound edges). Use for tables, views.\n- 'downstream': \"what does X affect / what reads from X?\" — forward BFS, finds descendants only (outbound edges). Use for impact analysis.\n- 'bidirectional': full connected context — all edges. Only suitable for SPs/functions or when graph is small. Tables/views with high degree will REJECT without explicit direction.\nIf you omit scope_direction on a highly-connected node the SM will return scope_too_broad and require you to resubmit with a direction. The user's active schema filter is applied as a BFS boundary — exploration stays within filtered schemas.\n\nReturns: scope map (nodes + edges) + first hop context with focus node DDL + neighbors.\n\nAfter receiving: analyze the focus node DDL/columns. Record your findings:\n- findings: detailed analysis (~500 chars) — stored permanently in long-term memory\n- summary: one-line digest (~100 chars) — shown in working memory for all future hops\n- questions: sub-questions for neighbors you want to investigate (boosts their agenda priority)\n- prune_ids: neighbor node IDs to prune (utility functions, unrelated objects). Cascades downstream.\n\nThe state machine manages your memory:\n- Long-term: full findings stored per node (never lost)\n- Working: ALL summaries + ALL pending questions returned each hop\n- Checklist: noted/total/open counts\n\ncurrent_task: your own question from a previous hop — answer it.\n\nDo NOT use for column-level tracing — use start_column_trace instead.",
+        "modelDescription": "Start a broad exploration of database objects. Use for questions about business rules, documentation, SQL patterns, or investigations across many objects.\n\nProvide an origin node — the state machine runs depth-limited BFS to build the initial exploration scope and seeds the agenda.\n\ndepth controls how many BFS hops from origin are included in the initial scope (default 5). Start with the default; use expand_frontier to extend if you reach the boundary and the question is not fully answered. Individual nodes can also be added via add_ids in submit_findings.\n\nscope_direction controls what BFS finds — ALWAYS specify it:\n- 'upstream': \"what are the sources / what feeds into X?\" — reverse BFS, finds ancestors only (inbound edges). Use for tables, views.\n- 'downstream': \"what does X affect / what reads from X?\" — forward BFS, finds descendants only (outbound edges). Use for impact analysis.\n- 'bidirectional': full connected context — all edges. Only suitable for SPs/functions or when graph is small. Tables/views with high degree will REJECT without explicit direction.\nIf you omit scope_direction on a highly-connected node the SM will return scope_too_broad and require you to resubmit with a direction. The user's active schema filter is applied as a BFS boundary — exploration stays within filtered schemas.\n\nReturns: scope map (nodes + edges) + first hop context with focus node DDL + neighbors.\n\nAfter receiving: analyze the focus node DDL/columns. Record your findings:\n- findings: detailed analysis (~500 chars) — stored permanently in long-term memory\n- summary: one-line digest (~100 chars) — shown in working memory for all future hops\n- questions: sub-questions for neighbors you want to investigate (boosts their agenda priority)\n- prune_ids: neighbor node IDs to prune (utility functions, unrelated objects). Cascades downstream.\n\nThe state machine manages your memory:\n- Long-term: full findings stored per node (never lost)\n- Working: ALL summaries + ALL pending questions returned each hop\n- Checklist: noted/total/open counts\n\ncurrent_task: your own question from a previous hop — answer it.\n\nDo NOT use for column-level tracing — use start_column_trace instead.",
         "tags": [
           "lineage",
           "lineage-bb"
@@ -1034,7 +1038,7 @@
             },
             "origin": {
               "type": "string",
-              "description": "Starting node ID. SM runs BFS from here to build the exploration map. Use search_objects to find."
+              "description": "Starting node ID. SM runs depth-limited BFS from here to seed the exploration agenda. Use search_objects to find."
             },
             "scope_direction": {
               "type": "string",
@@ -1044,12 +1048,39 @@
                 "bidirectional"
               ],
               "description": "BFS direction. 'upstream': find all ancestors/sources (inbound edges — what feeds X). 'downstream': find all descendants/consumers (outbound edges — what X affects). 'bidirectional': full connected component (all edges, only for SPs or small graphs). Required for tables/views with high degree."
+            },
+            "depth": {
+              "type": "number",
+              "description": "BFS depth limit from origin (default 5). Controls initial scope size. Use expand_frontier to extend if you reach the boundary."
             }
           },
           "required": [
             "question",
             "origin"
           ]
+        }
+      },
+      {
+        "name": "lineage_expand_frontier",
+        "toolReferenceName": "lineage_expand_frontier",
+        "displayName": "Expand Frontier",
+        "userDescription": "Extend exploration scope by additional BFS hops from the current boundary.",
+        "modelDescription": "Extend exploration scope by N more BFS hops from the current scope boundary. Use when agenda is nearly empty but the question is not fully answered. Returns count of newly added nodes.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "lineage",
+          "lineage-bb"
+        ],
+        "icon": "$(expand-all)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "extra_hops": {
+              "type": "number",
+              "description": "Additional BFS depth from boundary (default 2, max 5)"
+            }
+          }
         }
       },
       {

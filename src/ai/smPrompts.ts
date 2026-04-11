@@ -95,11 +95,8 @@ const BLOCK = {
     '- scope=available + in_filter=false: in model but outside user filter — ask user: "Schema X has relevant objects, should I include it?"\n' +
     '- scope=external: referenced in DDL but not in loaded model — note as external reference in findings\n' +
     '- scope=visited/pruned: already processed\n' +
-    'prune_ids only works on scope=in_scope. add_ids only works on scope=available.',
-
-  /** Progress line — BB only */
-  progress:
-    'After each submit_findings call, emit ONE line: "Hop N · [node_name] → verdict (visited X of S)".',
+    'prune_ids only works on scope=in_scope. add_ids only works on scope=available.\n' +
+    'SCOPE EXPANSION: If agenda is nearly empty but question is unanswered, use expand_frontier to extend BFS scope by additional hops from the current boundary.',
 
   /** Early completion — BB only */
   earlyComplete:
@@ -148,7 +145,6 @@ export function buildBbPrompt(): string {
     BLOCK.scopeTiers,
     '',
     BLOCK.selfAsk,
-    BLOCK.progress,
     BLOCK.earlyComplete,
     BLOCK.workingMemory,
     BLOCK.detailMemory,
