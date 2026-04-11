@@ -101,7 +101,7 @@ export function App() {
   });
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
-  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount } =
+  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config, model);
 
   // Allows callbacks defined before useOverviewMode to reset the auto-trigger guard.
@@ -464,6 +464,22 @@ export function App() {
     vscodeApi.postMessage({ type: 'rebuild' });
   }, [vscodeApi, model]);
 
+  // ── Derived state: effective graph and nodes matching what's rendered ──────
+  // When trace synthesizes out-of-filter nodes, the graphology graph and node set
+  // must include those nodes for interactions (neighbors, context menu, delete).
+  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
+    || trace.mode === 'filtered' || trace.mode === 'analysis';
+
+  const effectiveGraph = useMemo(
+    () => (isTraceActive && traceGraph) ? traceGraph : graph,
+    [isTraceActive, traceGraph, graph]
+  );
+
+  const effectiveNodes = useMemo(
+    () => isTraceActive ? tracedNodes : flowNodes,
+    [isTraceActive, tracedNodes, flowNodes]
+  );
+
   const handleNodeClick = useCallback(
     (nodeId: string, findQuery?: string) => {
       const toggled = highlightedNodeId === nodeId ? null : nodeId;
@@ -492,7 +508,7 @@ export function App() {
 
   const handleNodeContextMenu = useCallback(
     (nodeId: string, x: number, y: number) => {
-      const node = flowNodes.find((n) => n.id === nodeId);
+      const node = effectiveNodes.find((n) => n.id === nodeId);
       if (!node) return;
       setContextMenu({
         x: Math.min(x, window.innerWidth - 200),
@@ -506,7 +522,7 @@ export function App() {
         fullName: String(node.data.fullName),
       });
     },
-    [flowNodes]
+    [effectiveNodes]
   );
 
   const handleViewDdl = useCallback(
@@ -688,27 +704,26 @@ export function App() {
     setHighlightedNodeId(null);
     setInfoBarNodeId(null);
 
-    if (type === 'orphans' && filter.hideIsolated) {
+    const currentFilter = filterRef.current;
+    if (type === 'orphans' && currentFilter.hideIsolated) {
       // Pre-save filter (with hideIsolated: true) before we change it,
       // so the mode-lock useEffect restores the correct value on exit.
       // When switching from another analysis type, preModFilterRef is already set — don't overwrite it.
-      if (!preModFilterRef.current) preModFilterRef.current = filter;
-      const nextFilter = { ...filter, hideIsolated: false };
+      if (!preModFilterRef.current) preModFilterRef.current = currentFilter;
+      const nextFilter = { ...currentFilter, hideIsolated: false };
       setFilter(nextFilter);
-      // When switching analysis types, don't null analysisMode (which would trigger mode-lock exit
-      // and restore the old filter, undoing hideIsolated:false). Just set pending and rebuild.
-      if (!analysisMode) setAnalysisMode(null);
       pendingAnalysisRef.current = 'orphans';
       if (model) buildFromModel(model, nextFilter, config);
-    } else {
-      if (graph) {
-        const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
-        const totalNodes = result.groups.reduce((sum, g) => sum + g.nodeIds.length, 0);
-        window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis run: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
-        setAnalysisMode({ type, result, activeGroupId: null });
-      }
+      return;
     }
-  }, [endTrace, filter, model, graph, config, buildFromModel]);
+
+    if (graph) {
+      const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+      const totalNodes = result.groups.reduce((sum, g) => sum + g.nodeIds.length, 0);
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis run: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
+      setAnalysisMode({ type, result, activeGroupId: null });
+    }
+  }, [endTrace, model, graph, config, buildFromModel]);
 
   useEffect(() => {
     if (pendingAnalysisRef.current && graph) {
@@ -727,14 +742,14 @@ export function App() {
       if (e.key !== 'Delete') return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (!highlightedNodeId) return;
-      const node = flowNodes.find((n) => n.id === highlightedNodeId);
+      const node = effectiveNodes.find((n) => n.id === highlightedNodeId);
       if (!node) return;
       const pattern = `^${escapeRegexLiteral(String(node.data.schema))}\\.${escapeRegexLiteral(String(node.data.label))}$`;
       handleAddExclusionPattern(pattern);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [highlightedNodeId, flowNodes, handleAddExclusionPattern]);
+  }, [highlightedNodeId, effectiveNodes, handleAddExclusionPattern]);
 
   const closeAnalysis = useCallback(() => {
     // Filter restore is handled by the isModeLocked useEffect when analysisMode → null
@@ -1122,6 +1137,10 @@ export function App() {
     vscodeApi.postMessage({ type: 'delete-view', projectId: activeProjectId, profileId });
   }, [activeProjectId, activeViewId, lastOpenedId, vscodeApi]);
 
+  // Object-level IDs that passed all filters — authoritative for search visibility in overview mode.
+  // Must be above early returns to satisfy Rules of Hooks.
+  const filteredObjectIds = useMemo(() => new Set(flowNodes.map(n => n.id)), [flowNodes]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
@@ -1186,11 +1205,8 @@ export function App() {
     );
   }
 
-  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'filtered' || trace.mode === 'analysis';
   const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
   const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
-  // Object-level IDs that passed all filters — authoritative for search visibility in overview mode.
-  const filteredObjectIds = useMemo(() => new Set(flowNodes.map(n => n.id)), [flowNodes]);
 
   return (
     <ReactFlowProvider>
@@ -1204,7 +1220,7 @@ export function App() {
         filter={filter}
         metrics={metrics}
         highlightedNodeId={highlightedNodeId}
-        graph={graph}
+        graph={effectiveGraph}
         config={config}
         model={model}
         infoBarNodeId={infoBarNodeId}

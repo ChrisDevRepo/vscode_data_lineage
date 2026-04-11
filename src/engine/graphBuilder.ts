@@ -254,7 +254,7 @@ export function applyTraceToFlow(
   config: ExtensionConfig = DEFAULT_CONFIG,
   model?: DatabaseModel | null,
   synthesizeOutOfFilter?: boolean
-): { nodes: FlowNode[]; edges: FlowEdge[] } {
+): { nodes: FlowNode[]; edges: FlowEdge[]; graph?: Graph } {
   if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
     return { nodes: flowNodes, edges: flowEdges };
   }
@@ -364,6 +364,19 @@ export function applyTraceToFlow(
     }
   }
 
+  // Build graphology graph for the traced subgraph when synthesis added out-of-filter nodes.
+  // Reuses buildGraphologyGraph to honor the same attribute/edge contract as buildGraph().
+  let traceGraph: Graph | undefined;
+  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
+    const nodeIdSet = new Set(filteredNodes.map(n => n.id));
+    const traceModel: DatabaseModel = {
+      ...model,
+      nodes: model.nodes.filter(n => nodeIdSet.has(n.id)),
+      edges: model.edges.filter(e => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)),
+    };
+    traceGraph = buildGraphologyGraph(traceModel);
+  }
+
   // RELAYOUT the traced subset — dispatch layout by analysis type
   let positions: Map<string, { x: number; y: number }>;
   if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {
@@ -397,7 +410,7 @@ export function applyTraceToFlow(
     },
   }));
 
-  return { nodes, edges };
+  return { nodes, edges, graph: traceGraph };
 }
 
 // ─── Shared Dagre Layout Helper ─────────────────────────────────────────────

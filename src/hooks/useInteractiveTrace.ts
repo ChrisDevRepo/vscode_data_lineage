@@ -9,6 +9,7 @@ interface UseInteractiveTraceReturn {
   trace: TraceState;
   tracedNodes: FlowNode<CustomNodeData>[];
   tracedEdges: FlowEdge[];
+  traceGraph: Graph | null;
   startTraceConfig: (nodeId: string) => void;
   startTraceImmediate: (nodeId: string) => void;
   applyTrace: (upstreamLevels: number, downstreamLevels: number) => void;
@@ -289,18 +290,18 @@ export function useInteractiveTrace(
   }, [fullGraph, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.tracedNodeIds, useFullModel, trace.autoPromoted]);
 
   // Memoize trace application to avoid re-rendering all nodes
-  const { tracedNodes, tracedEdges } = useMemo(
-    (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[] } => {
+  const { tracedNodes, tracedEdges, traceGraph } = useMemo(
+    (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[]; traceGraph: Graph | null } => {
       if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
-        return { tracedNodes: flowNodes, tracedEdges: flowEdges };
+        return { tracedNodes: flowNodes, tracedEdges: flowEdges, traceGraph: null };
       }
 
       const synthesize = useFullModel || !!trace.autoPromoted;
-      const { nodes, edges } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model, synthesize);
-      return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges };
+      const { nodes, edges, graph: tGraph } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model, synthesize);
+      return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges, traceGraph: tGraph ?? null };
     },
     [flowNodes, flowEdges, trace, config, model, useFullModel]
   );
 
-  return { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount };
+  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount };
 }
