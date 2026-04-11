@@ -8,10 +8,7 @@ interface UseOverviewModeOptions {
   config: ExtensionConfig;
   /** Sorted comma-separated schema names — changing this value resets the auto-trigger guard. */
   schemasKey: string;
-  /** Called when entering focus from overview — always sets the schema (never toggles off).
-   *  Returns the post-filter node count so the caller can decide on fallback. */
-  onSetFocusSchema: (schema: string, forceLayout: boolean) => number;
-  /** Fallback: focus only the target schema (no neighbors) when neighbor selection too large. */
+  /** Focus only the target schema (no neighbors) — used for schema drill-down and quick search. */
   onSetFocusSchemaOnly: (schema: string, forceLayout: boolean) => number;
 }
 
@@ -31,17 +28,16 @@ export function useOverviewMode({
   filteredCount,
   config,
   schemasKey,
-  onSetFocusSchema,
   onSetFocusSchemaOnly,
 }: UseOverviewModeOptions): UseOverviewModeResult {
   const [graphMode, setGraphMode] = useState<GraphMode>('full');
   const [enteredFocusFromOverview, setEnteredFocusFromOverview] = useState(false);
   // Once the user manually overrides mode, stop auto-triggering for this model session.
   const userChoseMode = useRef(false);
-  // When true, the forceOverviewThreshold auto-trigger is suppressed for ONE render cycle.
-  // This prevents the auto-trigger from reverting graphMode='full' immediately after
-  // enterFocusFromOverview sets it — the subsequent rebuild will lower filteredCount.
-  const suppressForceOverview = useRef(false);
+  // Set by enterFocusFromOverview, consumed by the schemasKey effect. Prevents the
+  // schemasKey effect from resetting userChoseMode when the schema change was caused
+  // by a drill-down (not a manual schema selection in the dropdown).
+  const drillDownInProgress = useRef(false);
 
   // Reset when a new model is loaded — re-evaluate auto-trigger
   const prevModelRef = useRef<DatabaseModel | null>(null);
@@ -49,39 +45,31 @@ export function useOverviewMode({
     if (model !== prevModelRef.current) {
       prevModelRef.current = model;
       userChoseMode.current = false;
-      suppressForceOverview.current = false;
+      drillDownInProgress.current = false;
       setEnteredFocusFromOverview(false);
     }
   }, [model]);
 
-  // Reset auto-trigger guard when schema selection changes (not on other filter changes)
+  // Reset auto-trigger guard when schema selection changes (not on other filter changes).
+  // Skip reset when the schema change was caused by a drill-down — the user intentionally
+  // drilled into a schema and should stay in full view until they manually change schemas.
   const prevSchemasKey = useRef(schemasKey);
   useEffect(() => {
     if (schemasKey !== prevSchemasKey.current) {
       prevSchemasKey.current = schemasKey;
-      userChoseMode.current = false;
+      if (drillDownInProgress.current) {
+        drillDownInProgress.current = false;
+        log(`[Filter] Schema changed (drill-down) — userChoseMode preserved`);
+      } else {
+        userChoseMode.current = false;
+        setEnteredFocusFromOverview(false);
+      }
     }
   }, [schemasKey]);
 
   // Bidirectional auto-trigger: overview when above threshold, full when at/below threshold.
-  // Force guard: override userChoseMode when far above threshold (soft safety net).
   useEffect(() => {
     if (!config.overview.enabled) return;
-
-    // Soft guard — force overview when node count is far above threshold.
-    // Suppressed for one cycle after enterFocusFromOverview to let the rebuild land first.
-    if (filteredCount > config.overview.forceOverviewThreshold) {
-      if (suppressForceOverview.current) {
-        suppressForceOverview.current = false;
-        log(`[Filter] Mode auto: overview suppressed (search drill-down in progress, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold})`);
-        return;
-      }
-      log(`[Filter] Switched to Overview — ${filteredCount} objects exceed display threshold`, 'info');
-      setGraphMode('overview');
-      return;
-    }
-    suppressForceOverview.current = false;
-
     if (userChoseMode.current) return;
     if (filteredCount > config.overview.threshold) {
       log(`[Filter] Switched to Overview — ${filteredCount} objects`, 'info');
@@ -91,7 +79,7 @@ export function useOverviewMode({
       setGraphMode('full');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredCount, config.overview.enabled, config.overview.threshold, config.overview.forceOverviewThreshold]);
+  }, [filteredCount, config.overview.enabled, config.overview.threshold]);
 
   const toggleMode = useCallback(() => {
     userChoseMode.current = true;
@@ -107,26 +95,20 @@ export function useOverviewMode({
     (schema: string) => {
       log(`[Filter] Focusing on schema "${schema}"`, 'info');
       userChoseMode.current = true;
-      suppressForceOverview.current = true;
+      drillDownInProgress.current = true;
       setEnteredFocusFromOverview(true);
       setGraphMode('full');
 
-      // Primary attempt: focus schema + neighbors with forceLayout so dagre runs immediately
-      const resultCount = onSetFocusSchema(schema, true);
-      log(`[Filter] Mode focus: focusSchema+neighbors resultCount=${resultCount}, forceOverviewThreshold=${config.overview.forceOverviewThreshold}`);
-
-      // Fallback: if neighbor selection still exceeds threshold, narrow to just the target schema
-      if (resultCount > config.overview.forceOverviewThreshold) {
-        log(`[Filter] Mode focus: neighbor selection too large (${resultCount}), falling back to schema-only`);
-        onSetFocusSchemaOnly(schema, true);
-      }
+      // Drill down to target schema only (no neighbors).
+      // Neighbors are only auto-selected via the star button in the schema dropdown.
+      onSetFocusSchemaOnly(schema, true);
     },
-    [onSetFocusSchema, onSetFocusSchemaOnly, config.overview.forceOverviewThreshold]
+    [onSetFocusSchemaOnly]
   );
 
   const resetUserChoice = useCallback(() => {
     userChoseMode.current = false;
-    suppressForceOverview.current = false;
+    drillDownInProgress.current = false;
   }, []);
 
   return { graphMode, enteredFocusFromOverview, toggleMode, enterFocusFromOverview, resetUserChoice };

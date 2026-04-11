@@ -198,14 +198,6 @@
             "markdownDescription": "Node count above which schema overview mode auto-activates on initial load. Only applies when `overview.enabled` is `true`.",
             "scope": "resource"
           },
-          "dataLineageViz.overview.forceOverviewThreshold": {
-            "type": "number",
-            "default": 300,
-            "minimum": 10,
-            "maximum": 2000,
-            "markdownDescription": "Node count above which overview mode is forced even after manual toggle (soft guard). Prevents accidentally rendering very large graphs. Must be >= `overview.threshold`.",
-            "scope": "resource"
-          },
           "dataLineageViz.parseRulesFile": {
             "type": "string",
             "default": "",
@@ -442,7 +434,7 @@
             "default": 10,
             "minimum": 1,
             "maximum": 100,
-            "markdownDescription": "Maximum scope nodes for inline (quick) delivery. When a trace or exploration scope has more nodes than this, the AI explores hop-by-hop with persistent memory for deeper analysis. Deep mode tracks column renames and transformations across many pipeline stages. Lower values favor accuracy; higher values favor speed."
+            "markdownDescription": "Maximum scope nodes for inline (quick) delivery. When a trace or exploration scope has more nodes than this, the AI explores hop-by-hop with persistent memory for deeper analysis. Deep mode tracks column renames and transformations across many dependency stages. Lower values favor accuracy; higher values favor speed."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
@@ -753,7 +745,7 @@
             "title": {
               "type": "string",
               "maxLength": 80,
-              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the pipeline and its key computation: '[Subject] — [formula or method]'. GOOD: 'TotalRevenue — Qty × UnitPrice, 6-hop ETL to FactSalesReport'. Omit if graph name is sufficient."
+              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the analysis subject and its key finding: '[Subject] — [computation, pattern, or finding]'. GOOD: 'TotalRevenue — Qty × UnitPrice, 6-hop chain to FactSalesReport'. Omit if graph name is sufficient."
             },
             "intro": {
               "type": "string",
@@ -762,7 +754,7 @@
             "closing": {
               "type": "string",
               "maxLength": 400,
-              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider. Use ONLY for a cross-cutting risk or design note that spans the whole pipeline. Prefix risks with ⚠️. GOOD: '⚠️ If vwPriceList returns NULL, TotalRevenue = Qty × 0.' Omit if nothing material to add."
+              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider. Use ONLY for a cross-cutting risk or design note that spans the whole graph. Prefix risks with ⚠️. GOOD: '⚠️ If vwPriceList returns NULL, TotalRevenue = Qty × 0.' Omit if nothing material to add."
             },
             "description": {
               "type": "string",

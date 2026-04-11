@@ -252,7 +252,8 @@ export function applyTraceToFlow(
   flowEdges: FlowEdge[],
   trace: TraceState,
   config: ExtensionConfig = DEFAULT_CONFIG,
-  model?: DatabaseModel | null
+  model?: DatabaseModel | null,
+  synthesizeOutOfFilter?: boolean
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
   if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
     return { nodes: flowNodes, edges: flowEdges };
@@ -269,8 +270,8 @@ export function applyTraceToFlow(
     console.warn(`[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`);
   }
 
-  // Synthesize FlowNodes for path nodes outside the current filter
-  if (filteredNodes.length < trace.tracedNodeIds.size && trace.mode === 'path-applied' && model) {
+  // Synthesize FlowNodes for path/unfiltered-trace nodes outside the current filter
+  if (filteredNodes.length < trace.tracedNodeIds.size && (trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
     const flowNodeIdSet = new Set(filteredNodes.map(n => n.id));
     const modelNodeMap = new Map(model.nodes.map(n => [n.id, n]));
     for (const id of trace.tracedNodeIds) {
@@ -319,8 +320,8 @@ export function applyTraceToFlow(
     return traced;
   });
 
-  // Synthesize FlowEdges for path edges outside the current filter
-  if (trace.mode === 'path-applied' && model) {
+  // Synthesize FlowEdges for path/unfiltered-trace edges outside the current filter
+  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
     const existingEdgeIds = new Set(filteredEdges.map(e => e.id));
     for (const edgeId of trace.tracedEdgeIds) {
       if (existingEdgeIds.has(edgeId)) continue;
@@ -340,7 +341,7 @@ export function applyTraceToFlow(
   }
 
   // Recalculate in/out degree for synthesized nodes from the final edge set
-  if (trace.mode === 'path-applied' && model) {
+  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
     const synthesizedIds = new Set(
       filteredNodes.filter(n => n.data.inDegree === 0 && n.data.outDegree === 0).map(n => n.id)
     );

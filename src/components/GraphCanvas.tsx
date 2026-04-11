@@ -40,6 +40,7 @@ import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseMode
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
+import { notifyUser } from '../utils/notify';
 
 // IMPORTANT: nodeTypes must be defined at module level — not inside the component.
 // If defined inside, React Flow remounts all nodes on every render.
@@ -150,6 +151,12 @@ interface GraphCanvasProps {
   pendingViewport?: { x: number; y: number; zoom: number };
   /** Called after pendingPositions have been applied so the parent can clear them. */
   onPendingPositionsApplied?: () => void;
+  /** Whether trace BFS uses the full (unfiltered) model. */
+  useFullModel?: boolean;
+  /** Toggle between filtered and full-model trace. */
+  onToggleFullModel?: () => void;
+  /** Number of trace nodes hidden by the active filter. */
+  filteredOutCount?: number;
 }
 
 export function GraphCanvas({
@@ -221,6 +228,9 @@ export function GraphCanvas({
   pendingPositions,
   pendingViewport,
   onPendingPositionsApplied,
+  useFullModel,
+  onToggleFullModel,
+  filteredOutCount,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -230,6 +240,8 @@ export function GraphCanvas({
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
   /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
   const pendingZoomSetAt = useRef<number>(0);
+  /** Active timer — guarantees the pendingZoom warning fires even if flowNodes stops changing. */
+  const pendingZoomTimerRef = useRef<number | null>(null);
   // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
@@ -326,6 +338,7 @@ export function GraphCanvas({
         );
       } else {
         log(`[Filter] zoomToNode: "${nodeId}" — no position (layout pending?)`);
+        notifyUser(`Could not focus "${nodeId}". The node may have been filtered out during a view transition.`);
       }
     });
   }, [getNode, setCenter, log]);
@@ -357,12 +370,24 @@ export function GraphCanvas({
         pendingZoomRef.current = modelNode.id;
         pendingClickRef.current = { id: modelNode.id };
         pendingZoomSetAt.current = Date.now();
+        // Active timeout — guarantees warning fires even if flowNodes stops changing
+        if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+        pendingZoomTimerRef.current = window.setTimeout(() => {
+          if (pendingZoomRef.current) {
+            log(`[Filter] pendingZoom: "${pendingZoomRef.current}" not found after ${PENDING_ZOOM_TIMEOUT_MS}ms (active timeout)`);
+            notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter or increase the node limit to include it.`);
+            pendingZoomRef.current = null;
+            pendingClickRef.current = null;
+          }
+        }, PENDING_ZOOM_TIMEOUT_MS);
         onSchemaNodeDoubleClick?.(modelNode.schema);
       } else {
         log(`[Filter] Quick Jump: "${label}" → not found in model (${model.nodes.length} nodes)`);
+        notifyUser(`"${label}" was not found in the loaded model.`);
       }
     } else {
       log(`[Filter] Quick Jump: "${label}" → not found in ${flowNodes.length} visible nodes`);
+      notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
   }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick, log]);
 
@@ -403,12 +428,10 @@ export function GraphCanvas({
       if (!nodeExists) {
         if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
           log(`[Filter] pendingZoom: "${zoomTarget}" not found after ${elapsed}ms, expiring (node may have been filtered out)`);
-          window.vscode?.postMessage({
-            type: 'show-warning',
-            text: `"${zoomTarget}" is not visible in the current view. Adjust your schema filter or increase the node limit to include it.`
-          });
+          notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter or increase the node limit to include it.`);
           pendingZoomRef.current = null;
           pendingClickRef.current = null;
+          if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
           // Fall through to fitView
         } else {
           log(`[Filter] pendingZoom: "${zoomTarget}" not yet in flowNodes (len=${flowNodes.length}, elapsed=${elapsed}ms), deferring`);
@@ -418,6 +441,7 @@ export function GraphCanvas({
         log(`[Filter] pendingZoom: "${zoomTarget}" found in flowNodes, zooming+clicking`);
         pendingZoomRef.current = null;
         pendingClickRef.current = null;
+        if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
         zoomToNode(zoomTarget);
         // Defer click to next frame so highlight survives the filter-changed rebuild
         // that may still be in-flight from the overview→full transition.
@@ -676,6 +700,9 @@ export function GraphCanvas({
           onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
           onReset={() => onResetAll()}
           onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
+          useFullModel={useFullModel ?? false}
+          onToggleFullModel={onToggleFullModel ?? (() => {})}
+          filteredOutCount={filteredOutCount ?? 0}
         />
       )}
 

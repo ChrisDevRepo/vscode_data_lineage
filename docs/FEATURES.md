@@ -21,7 +21,6 @@ The extension separates **data loading** (`maxNodes`) from **graph rendering** (
 | `maxNodes` | 750 (up to 10000) | Objects loaded from dacpac / database |
 | `renderLimit` | 750 (up to 5000) | Nodes the GUI will layout and render |
 | `overview.threshold` | 150 | Auto-activates schema overview |
-| `overview.forceOverviewThreshold` | 300 | Forces overview even after manual toggle |
 
 When `renderLimit` is exceeded, the graph shows a "limit reached" message instead of rendering. The full lineage model, DDL, and AI chat remain fully functional — only the visual graph is gated.
 
@@ -249,11 +248,12 @@ For broader investigations — business rules, documentation, or pattern discove
 
 ### Tips
 
-- **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Try *"how is sales calculated — show me the lineage in the app"*.
+- **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Results depend on DDL completeness — always verify against your database.
 - **Start a new chat for each topic.** The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press `Ctrl+L` to start fresh.
 - **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark. You can then explore the view interactively, trace further, or export it.
-- **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"* and it answers from your live session state.
-- **Be specific with object names.** `@lineage trace from Sales.SalesOrderDetail` works better than `trace from the sales order table`.
+- **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"*.
+- **Be specific with object names.** Use `Sales.SalesOrderDetail` rather than *"the sales order table"*.
+- **Customize output.** Command Palette → *Create AI Output Templates* to tailor the AI response format. See [AI prompt templates guide](AI_PROMPTS.md).
 - **Narrow BFS scope on large graphs.** Ask for 1–2 levels first, then expand if you need more depth.
 - **Try a bigger model for large databases.** Models with 128K+ context auto-scale to show more results and larger DDL.
 
@@ -303,7 +303,7 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 
 | Group | Key settings |
 |-------|-------------|
-| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `overview.forceOverviewThreshold`, `parseRulesFile` |
+| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
 | **Database Connection** | `dmvQueryTimeout`, `dmvQueriesFile` |
 | **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold` |
 | **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |

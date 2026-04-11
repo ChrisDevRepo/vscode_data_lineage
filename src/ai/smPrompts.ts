@@ -30,7 +30,7 @@ const BLOCK = {
     '  TRANSFORMS: expressions, CASE/COALESCE, computed columns (quote the SQL fragment)\n' +
     '  JOINS: join conditions (table.col = table.col)\n' +
     '  FILTERS: WHERE/HAVING business rules\n' +
-    '  DATA FLOW: INSERT INTO / SELECT FROM / MERGE\n' +
+    '  DATA FLOW: how data enters and leaves this node (INSERT/SELECT/MERGE/EXEC/dynamic SQL)\n' +
     '  QUESTION RELEVANCE: how this node answers the user question\n' +
     '  Quote SQL verbatim — paraphrases lose grounding.\n' +
     '- pass → summary only (~100-200 chars): what passes through, from where to where.\n' +
@@ -43,8 +43,8 @@ const BLOCK = {
 
   /** Step 4 — semantic badge + note caption for enrich_view */
   badgeAndNote:
-    'badge_label (2-4 words): semantic ROLE label, e.g. "Source", "ETL", "Staging", "Final output".\n' +
-    'SELECTIVITY: Only assign badge_label to nodes with distinct pipeline roles. ' +
+    'badge_label (2-4 words): semantic ROLE label, e.g. "Source", "Transform", "Staging", "Output", "Validation", "Aggregation".\n' +
+    'SELECTIVITY: Only assign badge_label to nodes with distinct functional roles. ' +
     'Passthrough nodes (SELECT *, simple staging, lookup joins) — skip badge_label, they will be mentioned in section text.\n' +
     'GROUPING: Nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
     'note_caption (1 line): what this node does in this flow.',
@@ -117,7 +117,7 @@ const BLOCK = {
     '- If a slot lacks evidence for a claim, omit the claim — do not invent\n' +
     '- Group nodes by role in answering the question, not by schema\n' +
     '- If detail memory is insufficient for a node, use get_object_detail to re-read its DDL\n' +
-    'suggested_sections groups your badge_labels into sections ordered by pipeline depth.\n' +
+    'suggested_sections groups your badge_labels into sections ordered by dependency depth.\n' +
     'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
     'adjust labels if needed, and write text per section from your detail memory findings.',
 } as const;

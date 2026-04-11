@@ -17,13 +17,9 @@
 
 ## Scope Awareness
 
-State machines receive `_aiFilter` (user's active schema/type filter) for REPORTING — never for filtering or constraining.
-
-- `get_context` reports both scopes: `visible_nodes` (filtered) + `model_stats.nodes` (full model)
-- `search_objects` tags each result with `in_user_filter` flag + `filter_context` (active vs all schemas). AI reasons about user visibility.
-- `start_exploration` returns `scope_preview` with `in_user_filter` / `outside_filter` counts
-- BB hop neighbors tagged: `scope` (in_scope/available/pruned/external/visited) + `in_filter` (boolean)
-- BFS trace includes `depth_limited_nodes` — boundary nodes at max depth with `connections_beyond` count
+State machines receive `_aiFilter` for REPORTING — never for filtering or constraining.
+- Tools tag results with `in_user_filter` / `scope` / `in_filter` so AI reasons about user visibility
+- BFS includes `depth_limited_nodes` with `connections_beyond` count
 - Classic tools (search, detail, DDL, BFS) always operate on FULL model regardless of filter
 
 ## Tools
@@ -40,13 +36,6 @@ State machines receive `_aiFilter` (user's active schema/type filter) for REPORT
 - `ct_done`: classic tools restored, **BFS excluded** (SM result is authoritative)
 - `bb_active`: classic + BB tools (CT hidden, mutual exclusion)
 - `bb_done`: classic tools restored, **BFS excluded** (SM result is authoritative)
-
-## Delivery Mode Gate
-
-`shouldSmInline()` in `tokenBudget.ts` — AND logic:
-- Scope <= `ai.inlineNodeCap` (default 10) AND scope DDL <= `ai.inlineTokenBudget` (default 10K tokens)
-- **Below both:** inline — all DDL in `scope_nodes`, batch verdicts, memory skipped
-- **Above either:** hop-by-hop — one node per hop, short_memory + detail_slots built per hop
 
 ## State Machine Types
 
@@ -65,7 +54,6 @@ Activated for all CT/BB traces (inline mode skips memory, not the SM):
 **Type 1 Verdicts:** `relevant` / `pass` / `irrelevant` — unified concept across all SM types (see below). On `irrelevant`, BFS cascade prunes all agenda nodes unreachable from origin. Diamond-safe. Runtime coerces legacy `noted` → `pass`.
 **Type 1 Neighbor pruning:** `prune_ids` in `submit_findings` — AI lists neighbor node IDs to remove from agenda. Each triggers `cascadePrune()` (BFS from origin, removes unreachable nodes). Cuts UDF/utility bridges to reduce scope. Same prune concept as CT/Dep Type 2/3.
 **Type 1 Agenda:** Question-priority queue (BFS default=0, question-boosted=2). Self-Ask decomposition.
-**Type 1 autoSkipTypes:** `BlackboardConfig.autoSkipTypes?: ObjectType[]` — capability exists in BB but is currently unused. The `/document` command that passed this config was removed (commit `9af9f6d`). Extension never activates it. Dead config pending cleanup.
 
 ## Unified Node Classification (all SM types)
 
@@ -89,7 +77,4 @@ SM enforces: `pass` verdict → `badge_label` stripped, `analysis` stored as sum
 
 ## Prompts
 
-- System prompt (hardcoded, `src/ai/prompts.ts`): role + 5 behavioral rules
-- Mode-specific prompt (injected once at ct_active or bb_active, built by `src/ai/smPrompts.ts`): column trace, dependency trace, or exploration mode. Composed from named BLOCK constants.
-- Tool `modelDescription` (package.json): per-tool when/what/format
-- Output format (`assets/aiOutputTemplates.yaml`): user-configurable (presentation layer only)
+System: `src/ai/prompts.ts`. Mode-specific: `src/ai/smPrompts.ts` (BLOCK constants). Tool descriptions: `package.json`. Output format: `assets/aiOutputTemplates.yaml` (user-configurable).

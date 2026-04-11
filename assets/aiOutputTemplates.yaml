@@ -19,18 +19,18 @@ summary:
 
 title:
   instruction: >
-    Optional. ≤80 chars. Names the pipeline and its key computation:
-    "[Subject] — [what it computes or key formula]".
+    Optional. ≤80 chars. Names the analysis subject and its key finding:
+    "[Subject] — [key computation, pattern, or finding]".
     Include the final output object if space allows. Omit step counts and numbers.
     BAD: "TotalRevenue" (too vague), "Revenue Lineage Analysis Report" (too long, generic).
-    GOOD: "TotalRevenue — Qty × UnitPrice, 6-hop ETL to FactSalesReport"
+    GOOD: "TotalRevenue — Qty × UnitPrice, 6-hop chain to FactSalesReport"
   example: "TotalRevenue — Qty × UnitPrice, 6-hop ETL to FactSalesReport"
 
 intro:
   instruction: >
     Optional. 2–4 sentences as a standalone paragraph BEFORE the numbered sections.
-    Answer: what does this pipeline compute? where does the data originate? what are
-    the key structural pre-conditions or facts the reader needs before diving into steps?
+    Answer: what does the analysis reveal? where does the data originate? what are
+    the key structural pre-conditions or facts the reader needs before diving into details?
     No bullet lists. No headings. Do NOT repeat content from any section — context only.
     BAD: "This graph shows how TotalRevenue flows from Source to Target." (graph walkthrough)
     GOOD: "TotalRevenue is the product of Qty and UnitPrice — both computed independently
@@ -53,14 +53,18 @@ sections:
     the reader to follow. label has no leading number (system assigns step numbers).
 
     Same label on multiple nodes groups them. One section per unique label.
-    Create 3-6 sections that capture the pipeline's logical stages, not one per node.
+    Create 3-6 sections that capture the logical stages of the analysis, not one per node.
     Multiple nodes under one label = one section. Unlabeled nodes go in section text, not node_ids.
     Use the suggested_sections from the completion result as your starting structure.
     Passthrough nodes (rename-only views, simple SELECTs) — mention in one sentence inside
     the section that uses them, do NOT include in node_ids, no separate section.
 
-    CLASSIFY the question before writing. business logic -> formulas, column renames, risks.
-    technical -> execution and rebuild details. documentation -> both.
+    CLASSIFY the question before writing:
+    business logic -> formulas, column renames, risks.
+    technical -> execution details, rebuild order, performance.
+    impact -> affected downstream objects, breaking change risk.
+    documentation -> business logic + technical combined.
+    pattern/investigation -> SQL idioms, anti-patterns, data quality observations.
 
     In section text use the format that fits the content:
     Column rename or mapping -> | From | To | Notes | table.
@@ -69,10 +73,10 @@ sections:
     Risk or data quality issue -> warning prefix with ⚠️.
     Write 3-8 sentences or items per section — not a one-liner, not an object inventory.
 
-    BAD order — jumping non-linearly (Target -> Source -> ETL -> Views).
+    BAD order — jumping non-linearly (Target -> Source -> Transform -> Views).
     BAD text — "Stores project data." or "Reads from Source." (no detail).
-    GOOD order — follow the pipeline in one direction without skipping
-    (e.g. Source -> ETL -> Target, or Target -> ETL -> Source).
+    GOOD order — follow the dependency chain in one direction without skipping
+    (e.g. Source -> Transform -> Target, or Target -> Transform -> Source).
     GOOD text — "`spBuildSalesReport` computes `TotalRevenue = Qty x UnitPrice` at INSERT.
     Reads `Qty` from **Staging View** (rename `OrderQty -> Qty`), `UnitPrice` from **Price View**
     (PriceMaster lookup via 3-CTE chain)."
@@ -82,9 +86,9 @@ closing:
   instruction: >
     Optional. 1–2 sentences AFTER the sections, separated by a --- divider.
     Use ONLY for a cross-cutting risk, data quality issue, or design note that applies
-    to the WHOLE pipeline and doesn't fit in any single section. Prefix risks with ⚠️.
-    Omit if nothing material to add — most pipelines do not need a closing.
-    BAD: "Overall this pipeline correctly computes TotalRevenue." (summary — never repeat what was just said)
+    to the WHOLE graph and doesn't fit in any single section. Prefix risks with ⚠️.
+    Omit if nothing material to add — most analyses do not need a closing.
+    BAD: "Overall this correctly computes TotalRevenue." (summary — never repeat what was just said)
     GOOD: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 —
     verify price coverage before each INSERT run."
   example: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 — verify price coverage before each INSERT run."

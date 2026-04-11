@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useEffect, type ReactNode } from 'react';
+import { memo, useState, useRef, useEffect, type ReactNode, type ReactElement } from 'react';
 import { Tooltip } from './ui/Tooltip';
 
 export type BannerVariant = 'trace' | 'analysis' | 'ai';
@@ -10,6 +10,8 @@ interface ModeBannerProps {
   subtitle: ReactNode;
   onClose: () => void;
   onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  /** Extra controls rendered in the action area (before Save as Bookmark). */
+  extraControls?: ReactElement | null;
 }
 
 const VARIANT_CLASS: Record<BannerVariant, string> = {
@@ -25,6 +27,7 @@ export const ModeBanner = memo(function ModeBanner({
   subtitle,
   onClose,
   onSaveAsBookmark,
+  extraControls,
 }: ModeBannerProps) {
   const [saving, setSaving] = useState(false);
   const [saveName, setSaveName] = useState('');
@@ -61,6 +64,7 @@ export const ModeBanner = memo(function ModeBanner({
       <span className="text-xs ln-text-muted truncate">{subtitle}</span>
 
       <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+        {extraControls}
         {onSaveAsBookmark && !saving && (
           <Tooltip content="Save as a named bookmark">
             <button

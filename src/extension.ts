@@ -2637,7 +2637,6 @@ function buildDebugDump(context: vscode.ExtensionContext): string {
   configLine('layout.minimapEnabled:', 'layout.minimapEnabled', cfg.get<boolean>('layout.minimapEnabled', d.layout.minimapEnabled), d.layout.minimapEnabled);
   configLine('overview.enabled:', 'overview.enabled', cfg.get<boolean>('overview.enabled', d.overview.enabled), d.overview.enabled);
   configLine('overview.threshold:', 'overview.threshold', cfg.get<number>('overview.threshold', d.overview.threshold), d.overview.threshold);
-  configLine('overview.forceThreshold:', 'overview.forceOverviewThreshold', cfg.get<number>('overview.forceOverviewThreshold', d.overview.forceOverviewThreshold), d.overview.forceOverviewThreshold);
   configLine('externalRefs.enabled:', 'externalRefs.enabled', cfg.get<boolean>('externalRefs.enabled', d.externalRefs.enabled), d.externalRefs.enabled);
   configLine('trace.upstreamLevels:', 'trace.defaultUpstreamLevels', cfg.get<number>('trace.defaultUpstreamLevels', d.trace.defaultUpstreamLevels), d.trace.defaultUpstreamLevels);
   configLine('trace.downstreamLevels:', 'trace.defaultDownstreamLevels', cfg.get<number>('trace.defaultDownstreamLevels', d.trace.defaultDownstreamLevels), d.trace.defaultDownstreamLevels);
@@ -2761,10 +2760,6 @@ async function readExtensionConfig(): Promise<ExtensionConfigMessage> {
     overview: {
       enabled: cfg.get<boolean>('overview.enabled', DEFAULT_CONFIG.overview.enabled),
       threshold: clamp(cfg.get<number>('overview.threshold', DEFAULT_CONFIG.overview.threshold), 10, 1000, DEFAULT_CONFIG.overview.threshold),
-      forceOverviewThreshold: Math.max(
-        clamp(cfg.get<number>('overview.forceOverviewThreshold', DEFAULT_CONFIG.overview.forceOverviewThreshold), 10, 2000, DEFAULT_CONFIG.overview.forceOverviewThreshold),
-        clamp(cfg.get<number>('overview.threshold', DEFAULT_CONFIG.overview.threshold), 10, 1000, DEFAULT_CONFIG.overview.threshold),
-      ),
     },
     renderLimit: clamp(cfg.get<number>('renderLimit', DEFAULT_CONFIG.renderLimit), 100, 5000, DEFAULT_CONFIG.renderLimit),
   };

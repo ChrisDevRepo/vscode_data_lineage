@@ -101,7 +101,7 @@ export function App() {
   });
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
-  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
+  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config, model);
 
   // Allows callbacks defined before useOverviewMode to reset the auto-trigger guard.
@@ -592,7 +592,6 @@ export function App() {
     filteredCount,
     config,
     schemasKey,
-    onSetFocusSchema: (schema, forceLayout) => applyStarSchema(schema, { forceLayout }),
     onSetFocusSchemaOnly: (schema, forceLayout) => applyStarSchema(schema, { forceLayout, includeNeighbors: false }),
   });
 
@@ -932,12 +931,12 @@ export function App() {
   useEffect(() => {
     const wasOverview = prevGraphModeRef.current === 'overview';
     prevGraphModeRef.current = graphMode;
-    if (wasOverview && graphMode === 'full' && !enteredFocusFromOverview && model && filteredCount > config.overview.forceOverviewThreshold) {
-      window.vscode?.postMessage({ type: 'log', text: `[Filter] Mode switch rebuild: overview→full, ${filteredCount} nodes > forceThreshold=${config.overview.forceOverviewThreshold}, forceLayout=true` });
-      rebuild(model, filter, config, true);
+    if (wasOverview && graphMode === 'full' && !enteredFocusFromOverview &&
+        modelRef.current && filteredCount > configRef.current.overview.threshold) {
+      window.vscode?.postMessage({ type: 'log', text: `[Filter] Mode switch rebuild: overview→full, ${filteredCount} nodes > threshold=${configRef.current.overview.threshold}, forceLayout=true` });
+      rebuildRef.current(modelRef.current, filterRef.current, configRef.current, true);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphMode]);
+  }, [graphMode, enteredFocusFromOverview, filteredCount]);
 
   // ── Saved Views ─────────────────────────────────────────────────────────────
 
@@ -1257,6 +1256,9 @@ export function App() {
         pendingPositions={pendingPositions}
         pendingViewport={pendingViewport}
         onPendingPositionsApplied={handlePendingPositionsApplied}
+        useFullModel={useFullModel}
+        onToggleFullModel={toggleUseFullModel}
+        filteredOutCount={traceFilteredOutCount}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);

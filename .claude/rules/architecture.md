@@ -53,28 +53,12 @@ Extension host holds full model regardless. AI tools + BFS operate on full model
 
 SM stores and delivers — never filters, ranks, or evicts AI evidence.
 
-**Inline vs hop-by-hop:** `shouldSmInline()` in `tokenBudget.ts` gates delivery mode. Small scopes (≤ `ai.inlineNodeCap` AND under `ai.inlineTokenBudget`) → inline: all DDL delivered at once, memory storage skipped. AI submits all verdicts via batch API (one call). Larger scopes → hop-by-hop with two-tier memory below. Both modes use the same SM for verdict validation.
+**Inline vs hop-by-hop:** `shouldSmInline()` in `tokenBudget.ts` gates delivery. Small scopes → inline (all DDL at once, batch verdicts). Larger scopes → hop-by-hop with two-tier memory. Both use same SM for verdict validation.
 
-**Two memories (hop-by-hop mode only) — different purposes:**
-- **Short memory** (`narrative[]`): incremental index. ~100-200 chars per hop. Tracks what was loaded and what's still open. The AI sees ALL entries at every hop — this is how it stays on track.
-- **Detail memory** (`detailSlots` Map): grounded evidence per node. Stored in local RAM (unlimited). Delivered at full fidelity — no budget pressure, no eviction. The AI does NOT see these during exploration — they come back only at synthesis.
+**Two memories (hop-by-hop only):**
+- **Short memory** (`narrative[]`): incremental index, ~100-200 chars/hop, all entries visible every hop
+- **Detail memory** (`detailSlots` Map): grounded evidence per node, local RAM, full fidelity, no eviction. Delivered only at synthesis.
 
-**In inline mode:** `storeDetail()` stores only labels/captions (for `suggested_sections`). `updateShortMemory()` is skipped entirely — AI has all DDL in context.
+Detail depth: `relevant`/`trace` → full analysis; `pass` → summary; `irrelevant`/`prune` → summary + removed.
 
-**Detail memory depth depends on node classification:**
-- `relevant`/`trace`: full extractive analysis (structured SQL evidence — columns, transforms, joins, filters, data flow)
-- `pass`: summary only — what passes through, from where to where
-- `irrelevant`/`prune`: summary only, node removed from graph
-
-**Synthesis:** detail slots are the AI's ONLY evidence for `enrich_view`. If insufficient, AI re-reads DDL via `get_object_detail` in done phase.
-
-**Design basis:** MemGPT/Letta (archival storage, no eviction), Chain-of-Note (self-contained notes), Self-RAG (retrieval on demand).
-
-One code path in `HopStateMachine` base class → BB, CT, CT_DEP all inherit.
-
-## Code Quality Gates
-
-- **No magic numbers** — use `DEFAULT_CONFIG` from `types.ts`
-- **No speculative types** — add when feature is implemented (YAGNI)
-- **No pre-release deps** — stable releases only
-- **Function size** — decompose at >100 lines
+One code path in `HopStateMachine` base class → BB, CT, CT_DEP inherit.

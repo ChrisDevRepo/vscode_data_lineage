@@ -3,10 +3,9 @@
  *
  * Suite A — Auto-trigger on threshold
  * Suite C — Manual toggle
- * Suite D — Schema focus entry
+ * Suite D — Schema focus entry and drill-down protection
  * Suite E — Reset on model/schema change
  * Suite F — resetUserChoice
- * Suite G — Force overview threshold (soft guard)
  */
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
@@ -21,10 +20,9 @@ function makeModel(): DatabaseModel {
 }
 
 const THRESHOLD = 3;
-const FORCE_THRESHOLD = 6;
 
-function defaultConfig(threshold = THRESHOLD, forceOverviewThreshold = FORCE_THRESHOLD) {
-  return { ...DEFAULT_CONFIG, overview: { enabled: true, threshold, forceOverviewThreshold } };
+function defaultConfig(threshold = THRESHOLD) {
+  return { ...DEFAULT_CONFIG, overview: { enabled: true, threshold } };
 }
 
 type HookProps = Parameters<typeof useOverviewMode>[0];
@@ -35,7 +33,6 @@ function defaultProps(overrides?: Partial<HookProps>): HookProps {
     filteredCount: 2, // below threshold
     config: defaultConfig(),
     schemasKey: 'dbo',
-    onSetFocusSchema: vi.fn().mockReturnValue(0),
     onSetFocusSchemaOnly: vi.fn().mockReturnValue(0),
     ...overrides,
   };
@@ -65,7 +62,7 @@ describe('Suite A — Auto-trigger on threshold', () => {
   });
 
   it('A4: does not auto-trigger when overview.enabled is false', () => {
-    const config = { ...defaultConfig(), overview: { enabled: false, threshold: THRESHOLD, forceOverviewThreshold: FORCE_THRESHOLD } };
+    const config = { ...defaultConfig(), overview: { enabled: false, threshold: THRESHOLD } };
     const props = defaultProps({ filteredCount: THRESHOLD + 1, config });
     const { result } = renderHook(() => useOverviewMode(props));
     expect(result.current.graphMode).toBe('full');
@@ -128,16 +125,16 @@ describe('Suite D — Schema focus entry', () => {
     expect(result.current.enteredFocusFromOverview).toBe(true);
   });
 
-  it('D13: calls onSetFocusSchema with schema name and forceLayout=true', () => {
+  it('D13: calls onSetFocusSchemaOnly with schema name and forceLayout=true', () => {
     const spy = vi.fn().mockReturnValue(0);
-    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchema: spy });
+    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchemaOnly: spy });
     const { result } = renderHook(() => useOverviewMode(props));
 
     act(() => result.current.enterFocusFromOverview('Sales'));
     expect(spy).toHaveBeenCalledWith('Sales', true);
   });
 
-  it('D14: sets guard after focus entry', () => {
+  it('D14: sets guard after focus entry — persists across filter changes', () => {
     const props = defaultProps({ filteredCount: THRESHOLD + 1 });
     const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
 
@@ -149,42 +146,61 @@ describe('Suite D — Schema focus entry', () => {
     expect(result.current.graphMode).toBe('full');
   });
 
-  it('D14b: forceOverview suppressed for one cycle after enterFocusFromOverview', () => {
-    const spy = vi.fn().mockReturnValue(FORCE_THRESHOLD + 1);
-    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchema: spy });
+  it('D14b: drill-down protection persists across multiple filter changes', () => {
+    const spy = vi.fn().mockReturnValue(0);
+    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchemaOnly: spy });
     const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
     expect(result.current.graphMode).toBe('overview');
 
+    // Drill down — schemasKey changes (simulates filter narrowing to one schema)
     act(() => result.current.enterFocusFromOverview('Sales'));
     expect(result.current.graphMode).toBe('full');
 
-    // First rerender with count above forceOverviewThreshold — suppressed
-    rerender({ ...props, filteredCount: FORCE_THRESHOLD + 1 });
+    // Simulate schemasKey change from drill-down
+    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 2 });
     expect(result.current.graphMode).toBe('full');
 
-    // Suppression clears after one cycle — next high-count rerender re-triggers overview
-    rerender({ ...props, filteredCount: FORCE_THRESHOLD + 2 });
-    expect(result.current.graphMode).toBe('overview');
+    // Multiple subsequent filter changes (type toggles) — guard holds
+    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 3 });
+    expect(result.current.graphMode).toBe('full');
+
+    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 5 });
+    expect(result.current.graphMode).toBe('full');
   });
 
-  it('D14c: enterFocusFromOverview falls back to schema-only when neighbor count exceeds threshold', () => {
-    const focusSpy = vi.fn().mockReturnValue(FORCE_THRESHOLD + 1); // neighbors too large
-    const schemaOnlySpy = vi.fn().mockReturnValue(THRESHOLD); // schema-only fits
+  it('D14c: enterFocusFromOverview always uses schema-only (no neighbors)', () => {
+    const schemaOnlySpy = vi.fn().mockReturnValue(THRESHOLD);
     const props = defaultProps({
       filteredCount: THRESHOLD + 1,
-      onSetFocusSchema: focusSpy,
       onSetFocusSchemaOnly: schemaOnlySpy,
     });
     const { result } = renderHook(() => useOverviewMode(props));
 
     act(() => result.current.enterFocusFromOverview('Sales'));
-    // Primary attempt called first, then fallback
-    expect(focusSpy).toHaveBeenCalledWith('Sales', true);
     expect(schemaOnlySpy).toHaveBeenCalledWith('Sales', true);
-    const focusOrder = focusSpy.mock.invocationCallOrder[0];
-    const schemaOnlyOrder = schemaOnlySpy.mock.invocationCallOrder[0];
-    expect(focusOrder).toBeLessThan(schemaOnlyOrder);
+    expect(schemaOnlySpy).toHaveBeenCalledTimes(1);
     expect(result.current.graphMode).toBe('full');
+  });
+
+  it('D14d: manual schema change after drill-down re-enables auto-trigger', () => {
+    const spy = vi.fn().mockReturnValue(0);
+    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchemaOnly: spy });
+    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
+    expect(result.current.graphMode).toBe('overview');
+
+    // Drill down — schemasKey narrows to 'Sales'
+    act(() => result.current.enterFocusFromOverview('Sales'));
+    expect(result.current.graphMode).toBe('full');
+
+    // Drill-down schemasKey change — guard preserved
+    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 2 });
+    expect(result.current.graphMode).toBe('full');
+
+    // User manually changes schemas in dropdown — guard reset, auto-trigger re-evaluates.
+    // filteredCount also changes (different schemas = different count).
+    rerender({ ...props, schemasKey: 'dbo,Sales,HR', filteredCount: THRESHOLD + 3 });
+    expect(result.current.graphMode).toBe('overview');
+    expect(result.current.enteredFocusFromOverview).toBe(false);
   });
 });
 
@@ -233,15 +249,22 @@ describe('Suite E — Reset on model/schema change', () => {
     expect(result.current.graphMode).toBe('overview');
   });
 
-  it('E18: schemasKey change does NOT clear enteredFocusFromOverview', () => {
-    const props = defaultProps({ filteredCount: THRESHOLD + 1 });
+  it('E18: manual schemasKey change after drill-down clears enteredFocusFromOverview', () => {
+    // Start with multiple schemas so drill-down narrows the key
+    const props = defaultProps({ filteredCount: THRESHOLD + 1, schemasKey: 'dbo,Sales' });
     const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
 
-    act(() => result.current.enterFocusFromOverview('dbo'));
+    // Drill down into 'Sales' — schemasKey narrows
+    act(() => result.current.enterFocusFromOverview('Sales'));
     expect(result.current.enteredFocusFromOverview).toBe(true);
 
-    rerender({ ...props, schemasKey: 'dbo,Sales' });
+    // Drill-down schemasKey change — enteredFocusFromOverview preserved (drillDownInProgress consumed)
+    rerender({ ...props, schemasKey: 'Sales' });
     expect(result.current.enteredFocusFromOverview).toBe(true);
+
+    // Manual schemasKey change — enteredFocusFromOverview cleared
+    rerender({ ...props, schemasKey: 'dbo,Sales,HR' });
+    expect(result.current.enteredFocusFromOverview).toBe(false);
   });
 });
 
@@ -263,36 +286,5 @@ describe('Suite F — resetUserChoice', () => {
     rerender({ ...props, filteredCount: THRESHOLD });
     rerender({ ...props, filteredCount: THRESHOLD + 2 });
     expect(result.current.graphMode).toBe('overview');
-  });
-});
-
-// ─── Suite G — Force overview threshold (soft guard) ────────────────────────
-
-describe('Suite G — Force overview threshold (soft guard)', () => {
-  it('G20: forces overview when node count exceeds forceOverviewThreshold even after manual toggle', () => {
-    const props = defaultProps({ filteredCount: THRESHOLD + 1 });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-    expect(result.current.graphMode).toBe('overview');
-
-    // manual toggle to full (guard set)
-    act(() => result.current.toggleMode());
-    expect(result.current.graphMode).toBe('full');
-
-    // exceed force threshold — soft guard overrides userChoseMode
-    rerender({ ...props, filteredCount: FORCE_THRESHOLD + 1 });
-    expect(result.current.graphMode).toBe('overview');
-  });
-
-  it('G21: does not force overview when between threshold and forceOverviewThreshold with guard set', () => {
-    const props = defaultProps({ filteredCount: THRESHOLD + 1 });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-
-    // manual toggle to full (guard set)
-    act(() => result.current.toggleMode());
-    expect(result.current.graphMode).toBe('full');
-
-    // still between threshold and forceOverviewThreshold — guard holds
-    rerender({ ...props, filteredCount: FORCE_THRESHOLD });
-    expect(result.current.graphMode).toBe('full');
   });
 });

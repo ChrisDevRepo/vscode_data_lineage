@@ -325,10 +325,9 @@ export interface ExternalRefsConfig {
 export interface OverviewConfig {
   /** When false, schema overview mode is completely disabled — graph always shows full object view. */
   enabled: boolean;
-  /** Node count above which overview auto-activates on initial load (post-filter). */
+  /** Node count above which overview auto-activates on initial load (post-filter).
+   *  Also used as the dagre-skip threshold — no point computing layout for nodes shown as schema bubbles. */
   threshold: number;
-  /** Node count above which overview is forced even after manual toggle (soft guard). */
-  forceOverviewThreshold: number;
 }
 
 export interface ExtensionConfig {
@@ -358,7 +357,7 @@ export const DEFAULT_CONFIG = {
   tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
   dmvQueryTimeout: 120,
   externalRefs: { enabled: true },
-  overview: { enabled: true, threshold: 150, forceOverviewThreshold: 300 },
+  overview: { enabled: true, threshold: 150 },
   renderLimit: 750,
 } satisfies ExtensionConfig;
 

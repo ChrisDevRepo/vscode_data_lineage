@@ -74,9 +74,9 @@ export function useGraphology(): UseGraphologyReturn {
     setRenderLimitHit(0);
 
     // Guard 2: overview threshold — build graph for traces/metrics, skip expensive dagre layout.
-    // Bypassed when forceLayout=true (user manually toggled overview→full).
-    if (!forceLayout && count > config.overview.forceOverviewThreshold) {
-      log(`[Filter] Guard: overview threshold (${count} > forceOverviewThreshold=${config.overview.forceOverviewThreshold}, forceLayout=false) — skipping dagre`);
+    // Bypassed when forceLayout=true (user manually toggled overview→full or drilled down).
+    if (!forceLayout && count > config.overview.threshold) {
+      log(`[Filter] Guard: overview threshold (${count} > threshold=${config.overview.threshold}, forceLayout=false) — skipping dagre`);
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
       setFlowEdges(result.flowEdges);
