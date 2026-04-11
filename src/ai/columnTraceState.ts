@@ -494,7 +494,7 @@ export class ColumnTraceState extends HopStateMachine {
     }>;
   }): { ok: true; advanced: number; frontierSize: number }
      | { error: 'invalid_columns'; nodeId: string; invalid: string[]; valid: string[] }
-     | { error: string; hint?: string } {
+     | { error: string; hint?: string; limit?: number } {
 
     if (this._status !== 'awaiting_verdicts') {
       this.log('debug', `submitVerdicts: invalid status "${this._status}"`);
@@ -526,8 +526,11 @@ export class ColumnTraceState extends HopStateMachine {
     }
 
     // All validations passed — commit mutations
-    this.recordFocusNodeNotes(params);
 
+    // 1. Store detail memory (before verdicts — doesn't depend on summary)
+    this.storeFocusNodeDetail(params);
+
+    // 2. Apply verdicts (populates chain summaries via applyTrace)
     let advanced = 0;
     let pruneCount = 0;
     for (const v of params.verdicts) {
@@ -535,6 +538,14 @@ export class ColumnTraceState extends HopStateMachine {
       if ('error' in result) return result;
       advanced += result.advanced;
       if (v.verdict === 'prune') pruneCount++;
+    }
+
+    // 3. Update short memory (after verdicts — focusChain.summary now populated)
+    const focusChain = this.chain.get(this.currentFocusNodeId!);
+    if (focusChain && params.notes) {
+      const entry = `${focusChain.name}: ${focusChain.summary || params.notes}`;
+      const smErr = this.updateShortMemory(entry);
+      if (smErr) return { error: 'notes_too_long', limit: this.shortMemoryHardLimit, hint: `Shorten your notes — aim for ~${this.shortMemorySoftLimit} chars.` };
     }
 
     // Cascade prune: remove frontier entries unreachable from origin after prunes
@@ -554,8 +565,8 @@ export class ColumnTraceState extends HopStateMachine {
 
   // ─── Verdict handlers (extracted from submitVerdicts for single-responsibility) ─
 
-  /** Store AI notes on the focus node's chain entry + wire to base class memory. */
-  private recordFocusNodeNotes(params: { notes?: string; badge_label?: string; note_caption?: string }): void {
+  /** Store AI notes in the focus node's chain entry + detail memory. Short memory is updated separately after verdicts. */
+  private storeFocusNodeDetail(params: { notes?: string; badge_label?: string; note_caption?: string }): void {
     if (!params.notes || !this.currentFocusNodeId) return;
     let focusChain = this.chain.get(this.currentFocusNodeId);
     if (!focusChain) {
@@ -580,7 +591,6 @@ export class ColumnTraceState extends HopStateMachine {
         badge_label: params.badge_label,
         note_caption: params.note_caption,
       });
-      this.updateShortMemory(`${focusChain.name}: ${(focusChain.summary || params.notes).slice(0, 100)}`);
     }
   }
 

@@ -103,6 +103,11 @@ const BFS_SCOPE_CAP = 10_000;
 const DEFAULT_FINDINGS_LIMIT = 5000;
 const DEFAULT_SUMMARY_LIMIT = 500;
 
+/** Short memory soft limit — AI target for per-hop narrative entries (chars). */
+const DEFAULT_SHORT_MEMORY_SOFT_LIMIT = 500;
+/** Short memory hard limit — rejection threshold (chars). ~300 tokens; attention degrades above this. */
+const DEFAULT_SHORT_MEMORY_HARD_LIMIT = 1200;
+
 // ─── Abstract Base ──────────────────────────────────────────────────────────
 
 export abstract class HopStateMachine implements IHopStateMachine {
@@ -119,6 +124,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected readonly filterSchemas: Set<string> | null;
   protected readonly findingsHardLimit: number;
   protected readonly summaryHardLimit: number;
+  protected readonly shortMemorySoftLimit: number;
+  protected readonly shortMemoryHardLimit: number;
 
   // ── Shared mutable state ──
   protected _status: SmStatus = 'created';
@@ -146,6 +153,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
       activeFilter?: SerializedFilterState | null;
       findingsHardLimit?: number;
       summaryHardLimit?: number;
+      shortMemorySoftLimit?: number;
+      shortMemoryHardLimit?: number;
     },
     store?: ColumnStore | null,
   ) {
@@ -159,6 +168,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
       : null;
     this.findingsHardLimit = config.findingsHardLimit ?? DEFAULT_FINDINGS_LIMIT;
     this.summaryHardLimit = config.summaryHardLimit ?? DEFAULT_SUMMARY_LIMIT;
+    this.shortMemorySoftLimit = config.shortMemorySoftLimit ?? DEFAULT_SHORT_MEMORY_SOFT_LIMIT;
+    this.shortMemoryHardLimit = config.shortMemoryHardLimit ?? DEFAULT_SHORT_MEMORY_HARD_LIMIT;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -228,17 +239,26 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   /**
    * Append a finding to short memory narrative.
-   * Called after each hop to maintain the compressed thread.
+   * Central gate — validates soft/hard character limits. Never truncates.
+   * Returns error string if rejected (> hard limit), null if accepted.
    * Skipped in inline mode — AI has all DDL in context.
    */
-  updateShortMemory(hopSummary: string): void {
-    if (this._inlineMode) return;
+  updateShortMemory(hopSummary: string): string | null {
+    if (this._inlineMode) return null;
+    if (hopSummary.length > this.shortMemoryHardLimit) {
+      this.log('debug', `short memory rejected: ${hopSummary.length} chars (limit ${this.shortMemoryHardLimit}, aim for ~${this.shortMemorySoftLimit})`);
+      return `short_memory_too_long: ${hopSummary.length} chars exceeds ${this.shortMemoryHardLimit} (aim for ~${this.shortMemorySoftLimit})`;
+    }
+    if (hopSummary.length > this.shortMemorySoftLimit) {
+      this.log('debug', `short memory long: ${hopSummary.length} chars (soft limit ${this.shortMemorySoftLimit})`);
+    }
     this.shortMemory.narrative.push(hopSummary);
     this.shortMemory.coverage = {
       noted: this.detailSlots.size,
       total: this.scopeNodeIds.size,
       pct: this.coveragePct,
     };
+    return null;
   }
 
   /**

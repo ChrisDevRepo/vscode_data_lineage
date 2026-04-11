@@ -242,6 +242,10 @@ export function GraphCanvas({
   const pendingZoomSetAt = useRef<number>(0);
   /** Active timer — guarantees the pendingZoom warning fires even if flowNodes stops changing. */
   const pendingZoomTimerRef = useRef<number | null>(null);
+  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
+  useEffect(() => () => {
+    if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+  }, []);
   // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;

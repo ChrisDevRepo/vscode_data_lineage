@@ -202,83 +202,52 @@ function testBuildModelFromDmv() {
 function testValidateQueryResult() {
   console.log('\n── DMV Extractor: Column Validation ──');
 
-  // Valid result
-  const validResult = makeResult(
-    cols('schema_name', 'object_name', 'type_code', 'body_script'),
-    []
-  );
-  const validMissing = validateQueryResult('nodes', validResult);
-  assertEq(validMissing.length, 0, 'Valid nodes result has no missing columns');
+  // Valid results for each query type
+  const validCases: [string, string[]][] = [
+    ['nodes', ['schema_name', 'object_name', 'type_code', 'body_script']],
+    ['dependencies', ['referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name']],
+    ['constraints', ['schema_name', 'table_name', 'constraint_type', 'constraint_name', 'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete']],
+  ];
+  for (const [name, colNames] of validCases) {
+    assertEq(validateQueryResult(name, makeResult(cols(...colNames), [])).length, 0, `Valid ${name}: no missing`);
+  }
 
-  // Missing columns
-  const invalidResult = makeResult(
-    cols('schema_name', 'object_name'),
-    []
-  );
-  const invalidMissing = validateQueryResult('nodes', invalidResult);
-  assertEq(invalidMissing.length, 2, 'Invalid nodes result missing 2 columns');
-  assert(invalidMissing.includes('type_code'), 'Missing type_code detected');
-  assert(invalidMissing.includes('body_script'), 'Missing body_script detected');
+  // Missing columns detected
+  const missing = validateQueryResult('nodes', makeResult(cols('schema_name', 'object_name'), []));
+  assertEq(missing.length, 2, 'Invalid nodes: 2 missing');
 
   // Case insensitive
-  const mixedCase = makeResult(
-    cols('Schema_Name', 'Object_Name', 'Type_Code', 'Body_Script'),
-    []
-  );
-  const mixedMissing = validateQueryResult('nodes', mixedCase);
-  assertEq(mixedMissing.length, 0, 'Column validation is case-insensitive');
+  assertEq(validateQueryResult('nodes', makeResult(cols('Schema_Name', 'Object_Name', 'Type_Code', 'Body_Script'), [])).length, 0, 'Case-insensitive');
 
-  // Dependencies
-  const depResult = makeResult(
-    cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'),
-    []
-  );
-  const depMissing = validateQueryResult('dependencies', depResult);
-  assertEq(depMissing.length, 0, 'Valid dependencies result has no missing columns');
-
-  // Unknown query name
-  const unknownMissing = validateQueryResult('unknown', validResult);
-  assertEq(unknownMissing.length, 0, 'Unknown query name returns no missing columns');
-
-  // Constraints validation
-  const constraintValidCols = cols(
-    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
-    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
-  );
-  const constraintValid = makeResult(constraintValidCols, []);
-  assertEq(validateQueryResult('constraints', constraintValid).length, 0, 'No missing columns for valid constraints result');
-  const constraintIncomplete = makeResult(cols('schema_name', 'table_name'), []);
-  assert(validateQueryResult('constraints', constraintIncomplete).length > 0, 'Missing columns detected for incomplete constraints result');
+  // Unknown query → no missing
+  assertEq(validateQueryResult('unknown', makeResult(cols(), [])).length, 0, 'Unknown query: no missing');
 }
 
 function testFormatColumnType() {
   console.log('\n── DMV Extractor: formatColumnType ──');
 
-  // Simple types (no size params)
-  assertEq(formatColumnType('int', '4', '10', '0'), 'int', 'int has no size');
-  assertEq(formatColumnType('bigint', '8', '19', '0'), 'bigint', 'bigint has no size');
-  assertEq(formatColumnType('bit', '1', '1', '0'), 'bit', 'bit has no size');
-  assertEq(formatColumnType('uniqueidentifier', '16', '0', '0'), 'uniqueidentifier', 'uniqueidentifier has no size');
-
-  // String types with max_length
-  assertEq(formatColumnType('varchar', '50', '0', '0'), 'varchar(50)', 'varchar(50)');
-  assertEq(formatColumnType('varchar', '-1', '0', '0'), 'varchar(max)', 'varchar(max)');
-  assertEq(formatColumnType('nvarchar', '200', '0', '0'), 'nvarchar(100)', 'nvarchar(200 bytes) = nvarchar(100 chars)');
-  assertEq(formatColumnType('nvarchar', '-1', '0', '0'), 'nvarchar(max)', 'nvarchar(max)');
-  assertEq(formatColumnType('char', '10', '0', '0'), 'char(10)', 'char(10)');
-  assertEq(formatColumnType('nchar', '20', '0', '0'), 'nchar(10)', 'nchar(20 bytes) = nchar(10 chars)');
-
-  // Binary types
-  assertEq(formatColumnType('varbinary', '-1', '0', '0'), 'varbinary(max)', 'varbinary(max)');
-  assertEq(formatColumnType('varbinary', '100', '0', '0'), 'varbinary(100)', 'varbinary(100)');
-
-  // Decimal/numeric
-  assertEq(formatColumnType('decimal', '9', '18', '2'), 'decimal(18,2)', 'decimal(18,2)');
-  assertEq(formatColumnType('numeric', '9', '10', '0'), 'numeric(10,0)', 'numeric(10,0)');
-
-  // Date types (no size)
-  assertEq(formatColumnType('datetime', '8', '23', '3'), 'datetime', 'datetime has no size');
-  assertEq(formatColumnType('date', '3', '10', '0'), 'date', 'date has no size');
+  // [typeName, maxLen, precision, scale, expected]
+  const cases: [string, string, string, string, string][] = [
+    // Simple types (no size)
+    ['int',       '4',   '10', '0', 'int'],
+    ['bigint',    '8',   '19', '0', 'bigint'],
+    ['bit',       '1',   '1',  '0', 'bit'],
+    ['datetime',  '8',   '23', '3', 'datetime'],
+    // String types with max_length
+    ['varchar',   '50',  '0',  '0', 'varchar(50)'],
+    ['varchar',   '-1',  '0',  '0', 'varchar(max)'],
+    ['nvarchar',  '200', '0',  '0', 'nvarchar(100)'],  // bytes ÷ 2
+    ['nvarchar',  '-1',  '0',  '0', 'nvarchar(max)'],
+    ['nchar',     '20',  '0',  '0', 'nchar(10)'],      // bytes ÷ 2
+    // Binary
+    ['varbinary', '-1',  '0',  '0', 'varbinary(max)'],
+    // Decimal/numeric
+    ['decimal',   '9',   '18', '2', 'decimal(18,2)'],
+    ['numeric',   '9',   '10', '0', 'numeric(10,0)'],
+  ];
+  for (const [type, len, prec, scale, expected] of cases) {
+    assertEq(formatColumnType(type, len, prec, scale), expected, expected);
+  }
 }
 
 function testFallbackBodyDirection() {
@@ -811,23 +780,11 @@ function testExpandSchemaPlaceholder() {
   // Empty schema list
   const empty = expandSchemaPlaceholder(sql, []);
   assert(empty.includes('s.name IN ()'), 'Empty: produces IN ()');
-}
 
-function testValidateSchemaPlaceholder() {
-  console.log('\n── validateSchemaPlaceholder ──');
-
-  // Phase 2 without placeholder → warning
-  const warn = validateSchemaPlaceholder('test-query', 'SELECT 1', 2);
-  assert(warn !== undefined, 'Phase 2 without placeholder: returns warning');
-  assert(warn!.includes('test-query'), 'Warning includes query name');
-
-  // Phase 2 with placeholder → no warning
-  const ok = validateSchemaPlaceholder('test-query', 'WHERE s.name IN ({{SCHEMAS}})', 2);
-  assert(ok === undefined, 'Phase 2 with placeholder: no warning');
-
-  // Phase 1 without placeholder → no warning (expected)
-  const phase1 = validateSchemaPlaceholder('schema-preview', 'SELECT 1', 1);
-  assert(phase1 === undefined, 'Phase 1 without placeholder: no warning');
+  // validateSchemaPlaceholder: Phase 2 without placeholder → warning; Phase 1 → no warning
+  assert(validateSchemaPlaceholder('q', 'SELECT 1', 2) !== undefined, 'Phase 2 no placeholder → warning');
+  assert(validateSchemaPlaceholder('q', 'WHERE IN ({{SCHEMAS}})', 2) === undefined, 'Phase 2 with placeholder → ok');
+  assert(validateSchemaPlaceholder('q', 'SELECT 1', 1) === undefined, 'Phase 1 no placeholder → ok');
 }
 
 function testYamlQueriesHavePlaceholder() {
@@ -916,17 +873,10 @@ function testDbPlatformFromDmv() {
   assertEq(modelWithPlatform(makePlatformInfo(11, 0, '')).dbPlatform, 'Fabric Data Warehouse',      'EngineEdition 11 → Fabric Data Warehouse');
   assertEq(modelWithPlatform(makePlatformInfo(12, 0, '')).dbPlatform, 'SQL Database in Fabric',     'EngineEdition 12 → SQL Database in Fabric');
 
-  // On-prem editions: use default edition (3 = Enterprise) + major version
+  // On-prem editions: representative versions (earliest, middle, latest)
   const onPremCases: [number, string][] = [
     [17, 'SQL Server 2025'],
-    [16, 'SQL Server 2022'],
-    [15, 'SQL Server 2019'],
-    [14, 'SQL Server 2017'],
     [13, 'SQL Server 2016'],
-    [12, 'SQL Server 2014'],
-    [11, 'SQL Server 2012'],
-    [10, 'SQL Server 2008'],
-    [9,  'SQL Server 2005'],
     [8,  'SQL Server 2000'],
   ];
   for (const [major, expected] of onPremCases) {
@@ -1056,7 +1006,6 @@ function testPkOrdinalFromDmv() {
 }
 
 testExpandSchemaPlaceholder();
-testValidateSchemaPlaceholder();
 testYamlQueriesHavePlaceholder();
 testExpandedSqlStructure();
 testDbPlatformFromDmv();

@@ -33,6 +33,8 @@ export { shouldInline, shouldSmInline, estimateTokens, getEffectiveBudget, setIn
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
 const BFS_INLINE_NODE_CAP = 200;
+/** Max results returned in fallback (cross-schema) search. */
+const FALLBACK_RESULT_LIMIT = 10;
 
 // ─── Input validation ────────────────────────────────────────────────────────
 
@@ -326,13 +328,13 @@ export function searchObjects(
         effectiveQuery,
         typeSet,
         undefined, // no schema filter
-        10,
+        FALLBACK_RESULT_LIMIT,
         mode,
       );
       if (fallbackHits.length > 0) {
         const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
         // Return fallback results as primary — AI can proceed immediately
-        const fallbackResults = fallbackHits.slice(0, 10).map(n => ({
+        const fallbackResults = fallbackHits.slice(0, FALLBACK_RESULT_LIMIT).map(n => ({
           ...presentNode(n, model.neighborIndex),
           match: 'name' as const,
           in_user_filter: filterSchemaSet ? filterSchemaSet.has(n.schema.toLowerCase()) : true,

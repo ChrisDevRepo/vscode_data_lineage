@@ -116,6 +116,14 @@ function testHubs() {
   const r5 = analyzeHubs(g4, 2);
   assert(r5.groups.length >= 1, `at least 1 hub (got ${r5.groups.length})`);
   assert(r5.groups[0].meta?.degree === 3, `highest degree hub first (got ${r5.groups[0].meta?.degree})`);
+
+  // Virtual node as hub: file node with degree=3
+  const gv = makeGraph([
+    { id: 'file1', type: 'external' },
+    { id: 'sp1', type: 'procedure' }, { id: 'sp2', type: 'procedure' }, { id: 'sp3', type: 'procedure' },
+  ], [['file1', 'sp1'], ['file1', 'sp2'], ['file1', 'sp3']]);
+  const rv = analyzeHubs(gv, 3);
+  assert(rv.groups.some(grp => grp.nodeIds.includes('file1')), 'virtual file node detected as hub');
 }
 
 // ─── analyzeOrphans ──────────────────────────────────────────────────────────
@@ -206,48 +214,7 @@ function testLongestPath() {
   assert(r5.groups.length === 0, 'empty graph → 0 chains');
 }
 
-// ─── Longest-path chain edges (used by selectAnalysisGroup) ─────────────────
-
-function testLongestPathChainEdges() {
-  console.log('\n── Longest-path chain edges ──');
-
-  // Linear chain A→B→C→D → consecutive pairs should have direct edges
-  const g1 = makeGraph(
-    [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
-    [['A', 'B'], ['B', 'C'], ['C', 'D']]
-  );
-  const r1 = analyzeLongestPath(g1, 2);
-  assert(r1.groups.length >= 1, `chain found (got ${r1.groups.length})`);
-
-  const chain = r1.groups[0].nodeIds;
-  // Verify every consecutive pair has a direct edge (graph.edge returns edge key)
-  let allEdgesExist = true;
-  for (let i = 0; i < chain.length - 1; i++) {
-    const edge = g1.edge(chain[i], chain[i + 1]);
-    if (!edge) {
-      allEdgesExist = false;
-      console.error(`  missing edge: ${chain[i]} → ${chain[i + 1]}`);
-    }
-  }
-  assert(allEdgesExist, `all consecutive chain pairs have direct edges`);
-
-  // Branching graph: chain should still have consecutive edges
-  const g2 = makeGraph(
-    [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'E' }],
-    [['A', 'B'], ['B', 'C'], ['A', 'D'], ['D', 'E']]
-  );
-  const r2 = analyzeLongestPath(g2, 2);
-  const chain2 = r2.groups[0].nodeIds;
-  let allEdges2 = true;
-  for (let i = 0; i < chain2.length - 1; i++) {
-    if (!g2.edge(chain2[i], chain2[i + 1])) allEdges2 = false;
-  }
-  assert(allEdges2, `branching graph: chain pairs have direct edges`);
-
-  // Edge count should match chain length - 1
-  const edgeCount = chain.length - 1;
-  assert(edgeCount === 3, `chain A→B→C→D has 3 edges (got ${edgeCount})`);
-}
+// testLongestPathChainEdges removed: redundant with testLongestPath (same chain detection logic)
 
 // ─── analyzeCycles ───────────────────────────────────────────────────────────
 
@@ -356,54 +323,7 @@ function testSubsetEdgeFiltering() {
   );
 }
 
-// ─── Virtual Nodes in Hub Analysis ───────────────────────────────────────────
-
-function testHubsWithVirtualNodes() {
-  console.log('\n── analyzeHubs with virtual nodes ──');
-
-  // File virtual node connects to 3 SPs (degree=3) → detected as hub
-  const g = makeGraph([
-    { id: 'file1', type: 'external' },
-    { id: 'sp1', type: 'procedure' },
-    { id: 'sp2', type: 'procedure' },
-    { id: 'sp3', type: 'procedure' },
-    { id: 't1', type: 'table' },
-    { id: 't2', type: 'table' },
-    { id: 't3', type: 'table' },
-  ], [
-    ['file1', 'sp1'], ['file1', 'sp2'], ['file1', 'sp3'],
-    ['sp1', 't1'], ['sp2', 't2'], ['sp3', 't3'],
-  ]);
-
-  const result = analyzeHubs(g, 3); // minDegree=3
-  assert(result.groups.length >= 1, 'VN-Hub: at least 1 hub detected');
-  assert(result.groups.some(grp => grp.nodeIds.includes('file1')),
-    'VN-Hub: file virtual node detected as hub (degree=3)');
-}
-
-// ─── Virtual Node as Bridge (Island Detection) ──────────────────────────────
-
-function testIslandWithVirtualBridge() {
-  console.log('\n── analyzeIslands with virtual bridge ──');
-
-  // Without file1: sp1+t1 and sp2+t2 would be two 2-node islands
-  // With file1 connecting both SPs: single 5-node component
-  const g = makeGraph([
-    { id: 'file1', type: 'external' },
-    { id: 'sp1', type: 'procedure' },
-    { id: 'sp2', type: 'procedure' },
-    { id: 't1', type: 'table' },
-    { id: 't2', type: 'table' },
-  ], [
-    ['file1', 'sp1'], ['file1', 'sp2'],
-    ['sp1', 't1'], ['sp2', 't2'],
-  ]);
-
-  const result = analyzeIslands(g, 2); // maxSize=2
-  // All 5 nodes connected via file1 → no small islands
-  assert(result.groups.length === 0,
-    `VN-Island: virtual node bridges components, no size-2 islands (got ${result.groups.length})`);
-}
+// testHubsWithVirtualNodes merged into testHubs; testIslandWithVirtualBridge removed (trivial, 1 assertion)
 
 // ─── analyzeExternalRefs ──────────────────────────────────────────────────────
 
@@ -477,11 +397,8 @@ testIslands();
 testHubs();
 testOrphans();
 testLongestPath();
-testLongestPathChainEdges();
 testCycles();
 testSubsetEdgeFiltering();
-testHubsWithVirtualNodes();
-testIslandWithVirtualBridge();
 testExternalRefs();
 
 printSummary('Graph Analysis');

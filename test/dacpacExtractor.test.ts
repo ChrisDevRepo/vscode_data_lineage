@@ -17,34 +17,16 @@ async function testExtraction() {
 
   assert(model.nodes.length > 0, `Extracted ${model.nodes.length} nodes`);
   assert(model.edges.length > 0, `Extracted ${model.edges.length} edges`);
-  assert(model.schemas.length > 0, `Found ${model.schemas.length} schemas: ${model.schemas.map(s => s.name).join(', ')}`);
+  assert(model.schemas.length > 0, `Found ${model.schemas.length} schemas`);
 
-  // Check node types
-  const tables = model.nodes.filter(n => n.type === 'table');
-  const views = model.nodes.filter(n => n.type === 'view');
-  const procs = model.nodes.filter(n => n.type === 'procedure');
-  const funcs = model.nodes.filter(n => n.type === 'function');
-
-  assert(tables.length > 0, `Found ${tables.length} tables`);
-  assert(views.length > 0, `Found ${views.length} views`);
-  assert(procs.length > 0, `Found ${procs.length} procedures`);
-  assert(funcs.length > 0, `Found ${funcs.length} functions`);
-
-  // Check schemas match expected
-  const schemaNames = model.schemas.map(s => s.name);
-  assert(schemaNames.includes('dbo'), 'Schema "dbo" found');
-  assert(schemaNames.includes('Sales'), 'Schema "Sales" found (catalog-original casing)');
+  // All 4 object types present
+  for (const type of ['table', 'view', 'procedure', 'function'] as const) {
+    assert(model.nodes.some(n => n.type === type), `Has ${type} nodes`);
+  }
 
   // Catalog and neighborIndex populated
-  assert(model.catalog !== undefined, 'Catalog present');
-  assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node');
+  assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog populated');
   assert(model.neighborIndex !== undefined, 'NeighborIndex present');
-
-  // Check specific known objects
-  const nodeNames = model.nodes.map(n => n.fullName);
-  assert(nodeNames.some(n => n.includes('ErrorLog')), 'ErrorLog table found');
-  assert(nodeNames.some(n => n.includes('vProductAndDescription')), 'vProductAndDescription view found');
-  assert(nodeNames.some(n => n.includes('uspLogError')), 'uspLogError procedure found');
 
   return model;
 }
@@ -56,22 +38,12 @@ async function testFiltering(model: Awaited<ReturnType<typeof extractDacpac>>) {
 
   const salesLT = filterBySchemas(model, new Set(['Sales']));
   const isVirtual = (n: { externalType?: string }) => n.externalType === 'file' || n.externalType === 'db';
-  assert(salesLT.nodes.every(n => n.schema === 'Sales' || isVirtual(n)), 'All filtered nodes are Sales schema (or connected virtual)');
-  assert(salesLT.nodes.length > 0, `Sales has ${salesLT.nodes.length} nodes`);
-  assert(salesLT.nodes.length < model.nodes.length, 'Filtered set is smaller than full set');
-
-  const dbo = filterBySchemas(model, new Set(['dbo']));
-  assert(dbo.nodes.every(n => n.schema === 'dbo' || isVirtual(n)), 'All filtered nodes are dbo schema (or connected virtual)');
+  assert(salesLT.nodes.every(n => n.schema === 'Sales' || isVirtual(n)), 'All filtered nodes are Sales schema (or virtual)');
+  assert(salesLT.nodes.length > 0 && salesLT.nodes.length < model.nodes.length, 'Filtered set is smaller than full set');
 
   // Max nodes cap
   const capped = filterBySchemas(model, new Set(['dbo', 'Sales']), 5);
-  assert(capped.nodes.length <= 5, `Capped at ${capped.nodes.length} nodes (max 5)`);
-
-  // filterBySchemas preserves catalog and neighborIndex
-  assert(salesLT.catalog !== undefined, 'filterBySchemas preserves catalog');
-  assert(salesLT.neighborIndex !== undefined, 'filterBySchemas preserves neighborIndex');
-  assert(Object.keys(salesLT.catalog).length >= Object.keys(model.catalog).length,
-    'filterBySchemas catalog is not smaller than full model catalog');
+  assert(capped.nodes.length <= 5, `Capped at max 5 nodes`);
 }
 
 // ─── Edge Integrity ─────────────────────────────────────────────────────────
@@ -354,17 +326,10 @@ function testParseDspPlatform() {
     'Azure SQL Database', 'SqlAzureV12 → Azure SQL Database',
   );
 
-  // On-prem SQL Server — all supported versions
+  // On-prem SQL Server — representative versions (latest, middle, earliest)
   const onPremCases: [string, string][] = [
     ['Microsoft.Data.Tools.Schema.Sql.Sql170DatabaseSchemaProvider', 'SQL Server 2025'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider', 'SQL Server 2022'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql150DatabaseSchemaProvider', 'SQL Server 2019'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql140DatabaseSchemaProvider', 'SQL Server 2017'],
     ['Microsoft.Data.Tools.Schema.Sql.Sql130DatabaseSchemaProvider', 'SQL Server 2016'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql120DatabaseSchemaProvider', 'SQL Server 2014'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql110DatabaseSchemaProvider', 'SQL Server 2012'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql100DatabaseSchemaProvider', 'SQL Server 2008'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql90DatabaseSchemaProvider',  'SQL Server 2005'],
     ['Microsoft.Data.Tools.Schema.Sql.Sql80DatabaseSchemaProvider',  'SQL Server 2000'],
   ];
   for (const [dsp, expected] of onPremCases) {

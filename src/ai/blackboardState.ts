@@ -319,14 +319,10 @@ export class BlackboardState extends HopStateMachine {
       return { error: 'node_pruned', hint: `${focusNodeId} was cascade-removed. It cannot be analyzed.` };
     }
 
-    // Hard limits — reject, never truncate
+    // Findings hard limit — reject, never truncate
     if (findings.length > this.findingsHardLimit) {
       this.log('debug', `BB submitFindings: findings too long (${findings.length} > ${this.findingsHardLimit})`);
       return { error: 'findings_too_long', limit: this.findingsHardLimit };
-    }
-    if (summary.length > this.summaryHardLimit) {
-      this.log('debug', `BB submitFindings: summary too long (${summary.length} > ${this.summaryHardLimit})`);
-      return { error: 'summary_too_long', limit: this.summaryHardLimit };
     }
 
     // Store detail memory slot — passthrough and irrelevant store summary only (minimal memory)
@@ -337,8 +333,9 @@ export class BlackboardState extends HopStateMachine {
       note_caption: params.note_caption,
     });
 
-    // Update short memory
-    this.updateShortMemory(`${this.nodeMap.get(focusNodeId)?.name ?? focusNodeId}: ${summary}`);
+    // Update short memory — base class validates soft/hard limits
+    const smErr = this.updateShortMemory(`${this.nodeMap.get(focusNodeId)?.name ?? focusNodeId}: ${summary}`);
+    if (smErr) return { error: 'summary_too_long', limit: this.shortMemoryHardLimit };
 
     // Mark any pending questions for this node as answered
     for (const q of this.questionLog) {

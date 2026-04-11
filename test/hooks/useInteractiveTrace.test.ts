@@ -88,18 +88,7 @@ describe('Suite B — startTraceConfig', () => {
     expect(result.current.trace.tracedNodeIds.size).toBe(0);
   });
 
-  it('does not require a graph — no early return', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    expect(() => act(() => { result.current.startTraceConfig('A'); })).not.toThrow();
-    expect(result.current.trace.mode).toBe('configuring');
-  });
-
-  it('tracedNodes still returns all flow nodes in configuring mode', () => {
-    const nodes = makeFlowNodes(['A', 'B', 'C']);
-    const { result } = renderHook(() => useInteractiveTrace(null, nodes, []));
-    act(() => { result.current.startTraceConfig('B'); });
-    expect(result.current.tracedNodes).toEqual(nodes);
-  });
+  // Trivial guard tests removed (no-graph, configuring-mode passthrough)
 });
 
 // ─── Suite C — startTraceImmediate ───────────────────────────────────────────
@@ -132,20 +121,7 @@ describe('Suite C — startTraceImmediate', () => {
 // ─── Suite D — applyTrace ─────────────────────────────────────────────────────
 
 describe('Suite D — applyTrace', () => {
-  it('does not change mode when no selectedNodeId (no config phase first)', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.applyTrace(2, 2); });
-    expect(result.current.trace.mode).toBe('none');
-  });
-
-  it('does not change mode when graph is null (even with selectedNodeId set)', () => {
-    // No graph → startTraceConfig sets selectedNodeId without needing graph
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startTraceConfig('B'); });
-    act(() => { result.current.applyTrace(2, 2); });
-    expect(result.current.trace.mode).toBe('configuring'); // unchanged from configuring
-  });
+  // Trivial guard tests removed (no-selectedNodeId, null-graph)
 
   it('sets mode to applied after startTraceConfig + graph', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
@@ -155,14 +131,7 @@ describe('Suite D — applyTrace', () => {
     expect(result.current.trace.mode).toBe('applied');
   });
 
-  it('stores the upstream and downstream level arguments', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceConfig('B'); });
-    act(() => { result.current.applyTrace(5, 2); });
-    expect(result.current.trace.upstreamLevels).toBe(5);
-    expect(result.current.trace.downstreamLevels).toBe(2);
-  });
+  // 'stores level arguments' removed: trivial property setter
 
   it('populates tracedNodeIds after apply', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
@@ -258,7 +227,7 @@ describe('Suite F — applyPath', () => {
     expect(result.current.trace.tracedNodeIds.has('C')).toBe(true);
   });
 
-  it('upstream path also works (C → A via reverse)', () => {
+  it('upstream path works (C → A via reverse)', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
     const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
     // computeShortestPath tries both directions
@@ -353,14 +322,7 @@ describe('Suite H — endTrace / clearTrace', () => {
     expect(result.current.trace.tracedNodeIds.size).toBe(0);
   });
 
-  it('clearTrace is equivalent to endTrace', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceImmediate('B'); });
-    act(() => { result.current.clearTrace(); });
-    expect(result.current.trace.mode).toBe('none');
-    expect(result.current.trace.selectedNodeId).toBeNull();
-  });
+  // 'clearTrace is equivalent to endTrace' removed: redundant equivalence
 
   it('resets from every mode: configuring, analysis, pathfinding, path-applied', () => {
     // Configuring

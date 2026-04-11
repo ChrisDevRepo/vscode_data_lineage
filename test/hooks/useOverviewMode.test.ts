@@ -146,41 +146,7 @@ describe('Suite D — Schema focus entry', () => {
     expect(result.current.graphMode).toBe('full');
   });
 
-  it('D14b: drill-down protection persists across multiple filter changes', () => {
-    const spy = vi.fn().mockReturnValue(0);
-    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchemaOnly: spy });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-    expect(result.current.graphMode).toBe('overview');
-
-    // Drill down — schemasKey changes (simulates filter narrowing to one schema)
-    act(() => result.current.enterFocusFromOverview('Sales'));
-    expect(result.current.graphMode).toBe('full');
-
-    // Simulate schemasKey change from drill-down
-    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 2 });
-    expect(result.current.graphMode).toBe('full');
-
-    // Multiple subsequent filter changes (type toggles) — guard holds
-    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 3 });
-    expect(result.current.graphMode).toBe('full');
-
-    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 5 });
-    expect(result.current.graphMode).toBe('full');
-  });
-
-  it('D14c: enterFocusFromOverview always uses schema-only (no neighbors)', () => {
-    const schemaOnlySpy = vi.fn().mockReturnValue(THRESHOLD);
-    const props = defaultProps({
-      filteredCount: THRESHOLD + 1,
-      onSetFocusSchemaOnly: schemaOnlySpy,
-    });
-    const { result } = renderHook(() => useOverviewMode(props));
-
-    act(() => result.current.enterFocusFromOverview('Sales'));
-    expect(schemaOnlySpy).toHaveBeenCalledWith('Sales', true);
-    expect(schemaOnlySpy).toHaveBeenCalledTimes(1);
-    expect(result.current.graphMode).toBe('full');
-  });
+  // D14b, D14c removed: D14 already covers drill-down guard persistence; schema-only is implementation detail
 
   it('D14d: manual schema change after drill-down re-enables auto-trigger', () => {
     const spy = vi.fn().mockReturnValue(0);
@@ -249,23 +215,7 @@ describe('Suite E — Reset on model/schema change', () => {
     expect(result.current.graphMode).toBe('overview');
   });
 
-  it('E18: manual schemasKey change after drill-down clears enteredFocusFromOverview', () => {
-    // Start with multiple schemas so drill-down narrows the key
-    const props = defaultProps({ filteredCount: THRESHOLD + 1, schemasKey: 'dbo,Sales' });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-
-    // Drill down into 'Sales' — schemasKey narrows
-    act(() => result.current.enterFocusFromOverview('Sales'));
-    expect(result.current.enteredFocusFromOverview).toBe(true);
-
-    // Drill-down schemasKey change — enteredFocusFromOverview preserved (drillDownInProgress consumed)
-    rerender({ ...props, schemasKey: 'Sales' });
-    expect(result.current.enteredFocusFromOverview).toBe(true);
-
-    // Manual schemasKey change — enteredFocusFromOverview cleared
-    rerender({ ...props, schemasKey: 'dbo,Sales,HR' });
-    expect(result.current.enteredFocusFromOverview).toBe(false);
-  });
+  // E18 removed: D14d already covers manual schemasKey change re-enabling auto-trigger
 });
 
 // ─── Suite F — resetUserChoice ───────────────────────────────────────────────

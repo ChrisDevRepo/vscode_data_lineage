@@ -196,26 +196,8 @@ describe('Suite E — focusSchemas is UI-only', () => {
     expect(result.current.flowNodes.length).toBe(4);
   });
 
-  it('focusSchemas set with all schemas selected → all nodes still pass (no pipeline filtering)', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter({ focusSchemas: new Set(['dbo']) })); });
-    // focusSchemas is UI-only — all 4 nodes from both schemas pass through
-    expect(result.current.flowNodes.length).toBe(4);
-  });
-
-  it('schemas=dbo only → 3 dbo nodes (schema filter does the work, not focusSchemas)', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter({ schemas: new Set(['dbo']), focusSchemas: new Set() })); });
-    expect(result.current.flowNodes.length).toBe(3);
-    expect(result.current.flowNodes.some(n => n.id === SALES_T2.id)).toBe(false);
-  });
-
-  it('schemas=sales only → 1 node (schema filter does the work)', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter({ schemas: new Set(['sales']), focusSchemas: new Set() })); });
-    expect(result.current.flowNodes.length).toBe(1);
-    expect(result.current.flowNodes[0].id).toBe(SALES_T2.id);
-  });
+  // Redundant focusSchemas tests removed: 'no focus schemas' already proves UI-only behavior;
+  // schema filtering is tested in Suite A
 
   it('cross-schema: both schemas selected → both nodes appear regardless of focusSchemas', () => {
     const salesSp = node('sales', 'sp', 'procedure');
