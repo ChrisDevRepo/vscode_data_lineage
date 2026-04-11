@@ -110,6 +110,9 @@ interface GraphCanvasProps {
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
   graphMode?: GraphMode;
+  /** Object-level node IDs that passed all filters (from useGraphology flowNodes).
+   *  In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth. */
+  filteredObjectIds?: Set<string>;
   onSchemaNodeDoubleClick?: (schemaName: string) => void;
   /** Called when user saves a trace/path result as an advanced bookmark. */
   onSaveTraceBookmark?: (
@@ -215,6 +218,7 @@ export function GraphCanvas({
   isFilterDirty,
   isModeLocked = false,
   graphMode = 'full',
+  filteredObjectIds,
   onSchemaNodeDoubleClick,
   onSaveTraceBookmark,
   onSaveAnalysisBookmark,
@@ -608,10 +612,12 @@ export function GraphCanvas({
   );
 
   // IDs of nodes currently rendered in the graph (after all filters: type, focus-schema,
-  // search, maxNodes cap). Used by NodeInfoBar to show ⊘ on neighbors not in view.
+  // search, maxNodes cap). Used by NodeInfoBar to show ⊘ on neighbors not in view,
+  // and by quick search to split "in view" vs "not in current view" suggestions.
+  // In overview mode localNodes are schema aggregates — use filteredObjectIds instead.
   const visibleNodeIds = useMemo(
-    () => new Set(localNodes.map(n => n.id)),
-    [localNodes],
+    () => (graphMode === 'overview' && filteredObjectIds) ? filteredObjectIds : new Set(localNodes.map(n => n.id)),
+    [localNodes, graphMode, filteredObjectIds],
   );
 
   const selectedNodeLabel = useMemo(() => {

@@ -1241,7 +1241,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   margin-top: 2px;
 }
 
-.ln-detail-search mark {
+.ln-detail-search-result mark {
   background: var(--vscode-editor-findMatchHighlightBackground, #ea5c0055);
   color: inherit;
   border-radius: 2px;

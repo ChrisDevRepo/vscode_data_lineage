@@ -1189,6 +1189,8 @@ export function App() {
   const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'filtered' || trace.mode === 'analysis';
   const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
   const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
+  // Object-level IDs that passed all filters — authoritative for search visibility in overview mode.
+  const filteredObjectIds = useMemo(() => new Set(flowNodes.map(n => n.id)), [flowNodes]);
 
   return (
     <ReactFlowProvider>
@@ -1196,6 +1198,7 @@ export function App() {
         flowNodes={renderNodes}
         flowEdges={renderEdges}
         graphMode={graphMode}
+        filteredObjectIds={filteredObjectIds}
         onSchemaNodeDoubleClick={enterFocusFromOverview}
         trace={trace}
         filter={filter}

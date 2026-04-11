@@ -16,6 +16,7 @@
 - **Schema-aware AI queries** — `@lineage` scopes searches to active schema filter
 - **Find Path ignores filters** — searches the full model regardless of active filters
 - **Reliable search from overview** — drill-down from schema overview works without race conditions
+- **Search visibility in overview mode** — quick search and detail search correctly show objects as "in view," highlight matching object names, and keep snippet marks visible
 
 ## [0.9.7] - 2026-03-31
 
