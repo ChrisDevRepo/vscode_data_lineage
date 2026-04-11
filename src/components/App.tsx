@@ -433,12 +433,16 @@ export function App() {
     if (model) {
       overviewActionsRef.current.resetUserChoice();
       clearTrace(() => {
-        const f = getResetFilter(model);
+        const f = {
+          ...getResetFilter(model),
+          hideIsolated: filter.hideIsolated,
+          exclusionPatterns: filter.exclusionPatterns,
+        };
         setFilter(f);
         rebuild(model, f, config);
       });
     }
-  }, [model, config, rebuild, clearTrace]);
+  }, [model, config, rebuild, clearTrace, filter.hideIsolated, filter.exclusionPatterns]);
 
   const handleResetAll = useCallback(() => {
     if (model) {
