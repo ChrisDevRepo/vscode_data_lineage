@@ -24,15 +24,14 @@ State machines receive `_aiFilter` for REPORTING — never for filtering or cons
 
 ## Tools
 
-14 tools (8 classic + 2 CT + 2 BB + 2 batch), registered via `vscode.lm.registerTool()`:
+12 tools (8 classic + 2 CT + 2 BB), registered via `vscode.lm.registerTool()`:
 - Classic: get_context, search_objects, get_object_detail, run_bfs_trace, run_analysis, search_ddl, get_ddl_batch, enrich_view
 - CT: start_column_trace, submit_hop_analysis
 - BB: start_exploration, submit_findings
-- Batch (inline mode only): submit_batch_hop (CT), submit_batch_findings (BB)
 
 **Dynamic filtering per round (5 phases):**
 - `discover`: all tools visible
-- `ct_active`: CT tools (hop-by-hop or batch)
+- `ct_active`: CT tools only
 - `ct_done`: classic tools restored, **BFS excluded** (SM result is authoritative)
 - `bb_active`: classic + BB tools (CT hidden, mutual exclusion)
 - `bb_done`: classic tools restored, **BFS excluded** (SM result is authoritative)

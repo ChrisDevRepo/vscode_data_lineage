@@ -319,10 +319,12 @@ export class BlackboardState extends HopStateMachine {
       return { error: 'node_pruned', hint: `${focusNodeId} was cascade-removed. It cannot be analyzed.` };
     }
 
-    // Findings hard limit — reject, never truncate
-    if (findings.length > this.findingsHardLimit) {
-      this.log('debug', `BB submitFindings: findings too long (${findings.length} > ${this.findingsHardLimit})`);
-      return { error: 'findings_too_long', limit: this.findingsHardLimit };
+    // Detail memory hard limits — reject, never truncate
+    const sizeErr = this.validateSubmissionSize(findings, summary);
+    if (sizeErr) {
+      this.log('debug', `BB submitFindings: ${sizeErr}`);
+      const isFindings = sizeErr.startsWith('findings');
+      return { error: isFindings ? 'findings_too_long' : 'summary_too_long', limit: isFindings ? this.findingsHardLimit : this.summaryHardLimit };
     }
 
     // Store detail memory slot — passthrough and irrelevant store summary only (minimal memory)

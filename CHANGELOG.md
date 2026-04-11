@@ -3,19 +3,19 @@
 ## [0.9.8] - 2026-04-06
 
 ### Added
-- **Structured graph descriptions** — AI annotations are organized into labeled sections (e.g. "Source", "ETL", "Target") ordered by data flow. Badge numbers on nodes match heading numbers in the description panel.
-- **"Show in Graph" button** — One-click button after AI trace or exploration completes, with follow-up suggestions for visualization.
+- **Structured graph descriptions** — AI results organized into labeled sections ordered by data flow, with matching badge numbers on nodes
+- **"Show in Graph" button** — one-click after AI trace completes
 
 ### Changed
-- **Faster AI analysis on small scopes** — Traces with ≤10 nodes deliver all data at once for faster results. Larger scopes automatically switch to hop-by-hop exploration with persistent memory, tracking column renames across deep pipelines. Controlled by `ai.inlineTokenBudget` and `ai.inlineNodeCap` settings.
-- **More accurate AI findings** — AI citations now reference verbatim SQL evidence (column names, join conditions, transforms) instead of generic summaries.
-- **Badge numbers by data-flow order** — Step numbers follow data-flow depth, ensuring consistent ordering between graph and description panel.
-- **Clearer trace progress** — Progress changed from "~Y remaining" (fluctuating) to "visited X of S" (monotonically increasing).
+- **Faster AI on small scopes** — small traces deliver all data at once; larger scopes use hop-by-hop with persistent memory
+- **More accurate AI findings** — citations reference verbatim SQL evidence instead of generic summaries
+- **Clearer trace progress** — "visited X of S" replaces fluctuating estimates
 
 ### Fixed
-- **Schema-aware AI queries** — When a schema filter is active, `@lineage` now scopes searches and analysis to those schemas by default.
-- **Find Path ignores filters** — Right-click "Find Path" now searches the full model, finding paths through nodes hidden by schema/type filters.
-- **Reliable search from overview** — Searching from schema overview mode now drills down correctly without race conditions.
+- **AI memory reliability** — centralized short memory validation with soft/hard limits; removed silent truncation and duplicated checks
+- **Schema-aware AI queries** — `@lineage` scopes searches to active schema filter
+- **Find Path ignores filters** — searches the full model regardless of active filters
+- **Reliable search from overview** — drill-down from schema overview works without race conditions
 
 ## [0.9.7] - 2026-03-31
 

@@ -41,11 +41,10 @@ Shared types defined ONCE in `types.ts`. Never shadow with local aliases.
 | Setting | Default | Controls |
 |---------|---------|----------|
 | `maxNodes` | 750 (max 10000) | Objects loaded into DatabaseModel |
-| `renderLimit` | 750 | Nodes passed to dagre + React Flow |
+| `renderLimit` | 750 (max 5000) | Nodes passed to dagre + React Flow |
 | `overview.threshold` | 150 | Auto-activates schema overview |
-| `forceOverviewThreshold` | 300 | Forces overview after manual toggle |
 
-**Guard chain:** maxNodes → schema/type filters → renderLimit (BEFORE dagre) → forceOverview → overview.threshold
+**Guard chain:** maxNodes → schema/type filters → renderLimit (BEFORE dagre) → overview.threshold
 
 Extension host holds full model regardless. AI tools + BFS operate on full model — no render bottleneck. Graphology BFS is O(V+E), handles 10k+ nodes in milliseconds.
 
