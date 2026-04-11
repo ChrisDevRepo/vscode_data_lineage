@@ -662,6 +662,7 @@ export function GraphCanvas({
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}
+        visibleNodeIds={visibleNodeIds}
         metrics={metrics}
         filterProfiles={filterProfiles}
         activeProjectId={activeProjectId}

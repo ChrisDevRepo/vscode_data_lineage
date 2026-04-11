@@ -398,6 +398,8 @@ export interface TraceState {
   downstreamLevels: number;
   tracedNodeIds: Set<string>;
   tracedEdgeIds: Set<string>;
+  /** BFS auto-promoted to fullGraph because the target node was filtered out. */
+  autoPromoted?: boolean;
 }
 
 // ─── Graph Analysis Types ────────────────────────────────────────────────────

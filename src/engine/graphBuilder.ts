@@ -259,6 +259,9 @@ export function applyTraceToFlow(
     return { nodes: flowNodes, edges: flowEdges };
   }
   if (trace.tracedNodeIds.size === 0) {
+    const msg = `[Trace] applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode} — returning unchanged`;
+    console.warn(msg);
+    window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
     return { nodes: flowNodes, edges: flowEdges };
   }
 
@@ -266,8 +269,9 @@ export function applyTraceToFlow(
   const filteredNodes = flowNodes.filter((n) => trace.tracedNodeIds.has(n.id));
 
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
-    // Pure utility — no outputChannel available; console.warn is the allowed exception per CLAUDE.md §4
-    console.warn(`[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`);
+    const msg = `[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`;
+    console.warn(msg);
+    window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
   }
 
   // Synthesize FlowNodes for path/unfiltered-trace nodes outside the current filter

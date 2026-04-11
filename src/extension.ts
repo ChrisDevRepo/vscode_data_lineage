@@ -2199,6 +2199,7 @@ function openPanel(context: vscode.ExtensionContext, title: string, loadDemo = f
       'log': (msg) => {
         const lvl = msg.level ?? 'debug';
         if (lvl === 'info') logInfo(outputChannel, 'Bridge', msg.text);
+        else if (lvl === 'warn') logWarn(outputChannel, 'Bridge', msg.text);
         else if (lvl === 'trace') logTrace(outputChannel, 'Bridge', msg.text);
         else logDebug(outputChannel, 'Bridge', msg.text);
       },
@@ -2417,7 +2418,7 @@ type WebviewMessage =
   | { type: 'save-view'; projectId: string; profile: import('./engine/projectStore').FilterProfile }
   | { type: 'save-wizard-view'; view: 'main' | 'projects' }
   | { type: 'delete-view'; projectId: string; profileId: string }
-  | { type: 'log'; text: string; level?: 'info' | 'debug' | 'trace' }
+  | { type: 'log'; text: string; level?: 'info' | 'warn' | 'debug' | 'trace' }
   | { type: 'error'; error: string; stack?: string }
   | { type: 'show-warning'; text: string }
   | { type: 'open-external'; url?: string }

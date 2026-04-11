@@ -61,6 +61,8 @@ interface ToolbarProps {
   /** When true, graph is in schema overview mode — export is disabled. */
   isOverview?: boolean;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
+  /** Authoritative set of node IDs currently rendered (after all filters). */
+  visibleNodeIds: Set<string>;
   metrics: {
     totalNodes: number;
     totalEdges: number;
@@ -134,6 +136,7 @@ export const Toolbar = memo(function Toolbar({
   isModeLocked = false,
   isOverview = false,
   allNodes = [],
+  visibleNodeIds,
   metrics,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -184,8 +187,7 @@ export const Toolbar = memo(function Toolbar({
             onExecuteSearch={onExecuteSearch}
             onStartTrace={isModeLocked || isAnalysisActive ? undefined : onStartTrace}
             allNodes={allNodes}
-            selectedSchemas={selectedSchemas}
-            types={types}
+            visibleNodeIds={visibleNodeIds}
           />
         </div>
         <Tooltip content="Detail Search (full-text search in SQL bodies)">

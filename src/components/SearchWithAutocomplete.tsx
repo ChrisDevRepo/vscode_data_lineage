@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, useState } from 'react';
 import { FloatingPortal, useFloating, offset, flip, shift, size, autoUpdate } from '@floating-ui/react';
-import { ObjectType } from '../engine/types';
+import type { ObjectType } from '../engine/types';
 import { filterSuggestions } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
@@ -11,26 +11,21 @@ interface SearchWithAutocompleteProps {
   onExecuteSearch?: (name: string, schema?: string) => void;
   onStartTrace?: (nodeId: string) => void;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
-  selectedSchemas: Set<string>;
-  types: Set<ObjectType>;
+  /** Authoritative set of node IDs currently rendered (after all filters). */
+  visibleNodeIds: Set<string>;
 }
 
 export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   onExecuteSearch,
   onStartTrace,
   allNodes = [],
-  selectedSchemas,
-  types,
+  visibleNodeIds,
 }: SearchWithAutocompleteProps) {
   // Search term is local state — keystrokes only re-render this component,
   // not the entire App/GraphCanvas tree. The parent is notified only on Enter.
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredNodes = useMemo(
-    () => allNodes.filter(n => (n.schema === '' || selectedSchemas.has(n.schema)) && types.has(n.type)),
-    [allNodes, selectedSchemas, types],
-  );
-  const inViewIds = useMemo(() => new Set(filteredNodes.map(n => n.id)), [filteredNodes]);
+  const inViewIds = visibleNodeIds;
   const allSuggestions = useMemo(
     () => filterSuggestions(allNodes, searchTerm),
     [allNodes, searchTerm],
