@@ -1347,7 +1347,10 @@ export function activate(context: vscode.ExtensionContext) {
                   const textPart = result.content[0];
                   if (textPart instanceof vscode.LanguageModelTextPart) {
                     const data = JSON.parse(textPart.value);
-                    if (typeof data?.progress_line === 'string') stream.progress(data.progress_line);
+                    if (typeof data?.progress_line === 'string') {
+                      stream.progress(data.progress_line);
+                      stream.markdown(data.progress_line + '\n\n');
+                    }
                   }
                 } catch { /* non-critical — progress display only */ }
               }
