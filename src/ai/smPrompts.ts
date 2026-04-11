@@ -147,7 +147,6 @@ export function buildBbPrompt(): string {
     BLOCK.scopeTiers,
     '',
     BLOCK.selfAsk,
-    BLOCK.progress,
     BLOCK.earlyComplete,
     BLOCK.workingMemory,
     BLOCK.detailMemory,
