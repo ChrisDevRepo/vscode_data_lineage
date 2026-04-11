@@ -106,7 +106,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                 onKeyDown={handleKeyDown}
                 placeholder="Pattern, e.g. %tmp% or ^dbo\.stg_"
                 className="flex-1 text-xs rounded px-2 py-1.5 min-w-0 ln-input"
-                style={inputError ? { outline: '1px solid var(--vscode-inputValidation-errorBorder, #f44)' } : undefined}
+                style={inputError ? { outline: '1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground))' } : undefined}
                 aria-label="Enter exclusion pattern"
                 aria-invalid={inputError}
                 spellCheck={false}
@@ -121,7 +121,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
               </Tooltip>
             </div>
             {inputError && (
-              <p className="px-3 pb-1.5 text-[11px]" style={{ color: 'var(--vscode-inputValidation-errorForeground, #f44)' }}>
+              <p className="px-3 pb-1.5 text-[11px]" style={{ color: 'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground))' }}>
                 Invalid pattern — check regex syntax
               </p>
             )}

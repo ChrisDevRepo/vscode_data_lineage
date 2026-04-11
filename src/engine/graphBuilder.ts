@@ -5,6 +5,7 @@ import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';
 import { getSchemaColor } from '../utils/schemaColors';
+import { notifyUser } from '../utils/notify';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -260,8 +261,8 @@ export function applyTraceToFlow(
   }
   if (trace.tracedNodeIds.size === 0) {
     const msg = `[Trace] applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode} — returning unchanged`;
-    console.warn(msg);
     window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
+    notifyUser('Trace produced no results. The traced nodes may have been removed or filtered out.');
     return { nodes: flowNodes, edges: flowEdges };
   }
 
@@ -270,8 +271,8 @@ export function applyTraceToFlow(
 
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
     const msg = `[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`;
-    console.warn(msg);
     window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
+    notifyUser('Traced nodes are not visible in the current view. Adjust your schema or type filters to include them.');
   }
 
   // Synthesize FlowNodes for path/unfiltered-trace nodes outside the current filter

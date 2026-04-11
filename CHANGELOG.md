@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.8] - 2026-04-06
+## [0.9.8] - 2026-04-11
 
 ### Added
 - **Structured graph descriptions** — AI results organized into labeled sections ordered by data flow, with matching badge numbers on nodes
