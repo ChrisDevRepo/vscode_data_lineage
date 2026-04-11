@@ -60,7 +60,9 @@ const BLOCK = {
 
   /** Column tracking — CT only */
   columnTracking:
-    'COLUMN TRACKING: trace INPUT column names, not output. Track renames across hops.\n' +
+    'COLUMN TRACKING: columns in verdicts must be the names AS THEY APPEAR in the neighbor, not the output alias in the current node.\n' +
+    'Read the current node DDL to find the source column reference: SELECT neighbor.SourceCol AS OutputAlias → trace SourceCol into that neighbor.\n' +
+    'Track renames across hops — each hop may use a different name for the same data.\n' +
     'SELECTIVITY: Trace only columns relevant to the question. Prune unrelated branches.\n' +
     'Prefer trace over prune when uncertain.',
 
