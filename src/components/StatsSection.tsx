@@ -378,8 +378,7 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
       <div className="flex items-center justify-between mb-2">
-        <div className="text-xs font-semibold tracking-wider flex items-center gap-2"
-          style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
+        <div className="ln-section-label flex items-center gap-2">
           <span>STATISTICS</span>
           {isLoading && <Spinner />}
         </div>

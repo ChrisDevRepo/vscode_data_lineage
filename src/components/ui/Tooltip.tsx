@@ -84,7 +84,7 @@ export const Tooltip = memo(function Tooltip({
             style={{
               ...floatingStyles,
               ...(typeof content !== 'string'
-                ? { maxWidth }
+                ? { whiteSpace: 'normal', overflowWrap: 'break-word', maxWidth }
                 : multiline
                   ? { whiteSpace: 'pre-wrap', overflowWrap: 'break-word', maxWidth, minWidth: Math.min(200, maxWidth) }
                   : {}),

@@ -70,7 +70,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                 className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                 aria-label="Toggle all external references"
               />
-              <span className="text-sm">External Refs</span>
+              <span className="text-sm ln-text">External Refs</span>
             </div>
 
             {/* Sub-filters (only interactive when master is ON) */}
@@ -84,7 +84,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                   className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                   aria-label="Toggle file source references"
                 />
-                <span className="text-sm">File Sources</span>
+                <span className="text-sm ln-text">File Sources</span>
               </div>
               <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('db')}>
                 <input
@@ -95,7 +95,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
                   className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                   aria-label="Toggle cross-database references"
                 />
-                <span className="text-sm">Cross-Database</span>
+                <span className="text-sm ln-text">Cross-Database</span>
               </div>
             </div>
           </div>

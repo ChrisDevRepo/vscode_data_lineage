@@ -177,7 +177,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
         {/* Scrollable body */}
         <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Type label */}
-          <div className="text-xs font-semibold tracking-wider" style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
+          <div className="ln-section-label">
             {typeLabel}
           </div>
 

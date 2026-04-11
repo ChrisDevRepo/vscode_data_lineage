@@ -75,7 +75,7 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
                     className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
                   />
                   <span className="text-sm" style={{ color: 'var(--ln-fg-dim)' }}>{TYPE_COLORS[type].icon}</span>
-                  <span className="text-sm">{TYPE_LABELS[type]}</span>
+                  <span className="text-sm ln-text">{TYPE_LABELS[type]}</span>
                 </div>
               );
             })}

@@ -218,17 +218,7 @@ export const Toolbar = memo(function Toolbar({
           </Tooltip>
           {activeFilterCount > 0 && (
             <span
-              className="absolute -top-1 -right-1 flex items-center justify-center rounded-full pointer-events-none"
-              style={{
-                minWidth: '14px',
-                height: '14px',
-                fontSize: '9px',
-                fontWeight: 700,
-                padding: '0 3px',
-                background: 'var(--ln-button-bg)',
-                color: 'var(--ln-button-fg)',
-                lineHeight: 1,
-              }}
+              className="absolute -top-1 -right-1 flex items-center justify-center rounded-full pointer-events-none ln-counter-badge"
               aria-label={`${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active`}
             >
               {activeFilterCount}

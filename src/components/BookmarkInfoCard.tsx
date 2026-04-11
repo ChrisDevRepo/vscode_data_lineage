@@ -106,7 +106,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
               style={{
                 background: 'var(--ln-validation-warning-bg)',
                 border: '1px solid var(--ln-validation-warning-border)',
-                color: 'var(--ln-validation-warning-fg)',
+                color: 'var(--ln-warning-fg)',
               }}
             >
               <span className="font-semibold">Not found: </span>

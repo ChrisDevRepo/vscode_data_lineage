@@ -5,8 +5,7 @@ import { Tooltip } from './ui/Tooltip';
 export function ForeignKeysSection({ fks, findQuery }: { fks: ForeignKeyInfo[]; findQuery?: string }) {
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
-      <div className="text-xs font-semibold tracking-wider mb-2"
-        style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
+      <div className="ln-section-label mb-2">
         FOREIGN KEYS
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>

@@ -81,8 +81,8 @@ export function SuggestionList({
   return (
     <div
       ref={dropdownRef}
-      className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-hidden ln-dropdown ${className}`}
-      style={style}
+      className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-y-auto ln-dropdown ${className}`}
+      style={{ ...style, maxHeight: 320 }}
     >
       {suggestions.map((node, index) => (
         <SuggestionRow

@@ -122,7 +122,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                         {focusSchemas.has(schema) ? '⭐' : '☆'}
                       </button>
                     </Tooltip>
-                    <span className="flex-1 text-sm">{schema}</span>
+                    <span className="flex-1 text-sm ln-text">{schema}</span>
                   </div>
                 );
               })}

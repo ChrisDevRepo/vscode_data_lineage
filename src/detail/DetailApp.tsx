@@ -96,7 +96,7 @@ export function DetailApp() {
       <div
         style={{
           padding: 20,
-          color: 'var(--vscode-foreground)',
+          color: 'var(--ln-fg)',
           fontSize: 13,
         }}
       >

@@ -584,7 +584,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   border-radius: 8px;
   background: var(--ln-bg);
   color: var(--ln-fg);
-  font-family: monospace;
+  font-family: var(--vscode-editor-font-family, monospace);
 }
 .ln-error-boundary h2 {
   color: var(--ln-validation-error-border);
@@ -764,10 +764,35 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   pointer-events: none;
 }
 
+/* Section label (column table, FK, stats headers) */
+.ln-section-label {
+  font-size: 0.75rem;           /* text-xs */
+  font-weight: 600;             /* font-semibold */
+  letter-spacing: 0.08em;       /* tracking-wider */
+  color: var(--ln-fg-dim);
+}
+
+/* Counter badge (filter count, exclusion count) */
+.ln-counter-badge {
+  min-width: 14px;
+  height: 14px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 3px;
+  line-height: 1;
+  background: var(--ln-button-bg);
+  color: var(--ln-button-fg);
+}
+
 /* Dropdown panels */
 .ln-dropdown {
   background: var(--ln-widget-bg);
+  color: var(--ln-fg);
   border: 1px solid var(--ln-widget-border);
+}
+body[data-vscode-theme-kind="vscode-high-contrast"] .ln-dropdown,
+body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
+  border-color: var(--vscode-contrastBorder);
 }
 
 /* List items with hover */
@@ -922,6 +947,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
 .ln-bookmark-banner {
   background: var(--ln-bg-secondary);
   border-bottom: 1px solid var(--ln-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ln-border) transparent;
 }
 
 /* Advanced bookmark info card (floating bottom-left) */
@@ -938,7 +966,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
 }
 
 /* ─── Generic Mode Banner ──────────────────────────────────────────────── */
-.ln-mode-banner { background: var(--ln-bg-secondary); border-bottom: 1px solid var(--ln-border); border-left: 3px solid transparent; }
+.ln-mode-banner { background: var(--ln-bg-secondary); border-bottom: 1px solid var(--ln-border); border-left: 3px solid transparent; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--ln-border) transparent; }
 .ln-mode-banner--trace    { background: var(--ln-warning-bg);  border-left-color: var(--ln-warning-fg);  border-bottom-color: var(--ln-warning-border); }
 .ln-mode-banner--analysis { background: var(--ln-analysis-bg); border-left-color: var(--ln-analysis-icon); border-bottom-color: var(--ln-analysis-border); }
 .ln-mode-banner--ai       { background: var(--ln-ai-bg);       border-left-color: var(--ln-ai-icon);     border-bottom-color: var(--ln-ai-border); }
@@ -955,12 +983,18 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
 .ln-trace-config {
   background: var(--vscode-editor-inactiveSelectionBackground, rgba(0, 0, 0, 0.04));
   border-bottom: 1px solid var(--ln-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ln-border) transparent;
 }
 
 /* Node info bar */
 .ln-infobar {
   background: var(--ln-toolbar-bg);
   border-top: 1px solid var(--ln-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ln-border) transparent;
 }
 
 /* Status messages */
@@ -1136,6 +1170,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 /* #region Sidebar + Analysis */
 .ln-sidebar {
   width: 360px;
+  max-width: calc(100vw - 40px);
   max-height: calc(100vh - 120px);
   overflow-y: auto;
   background: var(--ln-widget-bg);
