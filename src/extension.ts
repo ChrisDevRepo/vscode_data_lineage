@@ -1100,12 +1100,16 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Single system prompt — explore-first data provider
       // Prepend active schema context when user has a filter selected (same injection pattern as _aiOutputTemplates)
+      const platformCtx = _aiModel?.dbPlatform
+        ? `Database platform: ${_aiModel.dbPlatform}. Use platform-appropriate SQL syntax and capabilities in analysis.\n`
+        : '';
       const schemaCtx = (_aiFilter?.schemas?.length ?? 0) > 0
         ? `Working context: user has schema(s) [${_aiFilter!.schemas.join(', ')}] selected.\n` +
           `Default all searches, SQL generation, and analysis to these schemas.\n` +
           `If answering the question requires objects from other schemas, ask the user first.\n\n`
         : '';
       const systemPrompt =
+        platformCtx +
         schemaCtx +
         buildSystemPromptBase(MAX_ROUNDS) +
         `   summary: ${_aiOutputTemplates.summary}\n` +

@@ -361,12 +361,6 @@ export function App() {
 
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
-  // Clear stale highlight when the referenced node is removed by a filter change
-  useEffect(() => {
-    if (highlightedNodeId && flowNodes.length > 0 && !flowNodes.some(n => n.id === highlightedNodeId)) {
-      setHighlightedNodeId(null);
-    }
-  }, [highlightedNodeId, flowNodes]);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
@@ -479,6 +473,15 @@ export function App() {
     () => isTraceActive ? tracedNodes : flowNodes,
     [isTraceActive, tracedNodes, flowNodes]
   );
+
+  // Clear stale highlight when the referenced node is removed by a filter change.
+  // Uses effectiveNodes (not flowNodes) so synthesized out-of-filter nodes in
+  // trace/path mode are recognized and don't get their highlight immediately cleared.
+  useEffect(() => {
+    if (highlightedNodeId && effectiveNodes.length > 0 && !effectiveNodes.some(n => n.id === highlightedNodeId)) {
+      setHighlightedNodeId(null);
+    }
+  }, [highlightedNodeId, effectiveNodes]);
 
   const handleNodeClick = useCallback(
     (nodeId: string, findQuery?: string) => {

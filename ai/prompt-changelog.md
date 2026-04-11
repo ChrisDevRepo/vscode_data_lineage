@@ -1,5 +1,22 @@
 # AI Prompt Changelog
 
+## 2026-04-11 — Progress line (SM-generated) + proportional section depth + findings depth scaling
+
+**Problem:** CadenceWorker BB trace (30 nodes, 27 hops) took ~4 minutes with near-silence for the user. Section text was too shallow — 5 EV_Case procs grouped under one section got ~2 sentences total. Detail memory stored 300-1266 chars per node but synthesis compressed it because prompt said "3-8 sentences per section" and "3-6 sections."
+
+**Changes:**
+1. `src/ai/smBase.ts` — `buildProgressLine()` + `buildCompletionLine()` in base class (OOP shared by BB + CT). Returns `progress_line` field in getHopContext and getResult responses. Format: `Hop N · Name → verdict · pruned X (visited of total)`.
+2. `src/extension.ts` — Parse `progress_line` from submit tool results, show via `stream.progress()`. User sees real-time hop-by-hop feedback independent of AI behavior.
+3. `src/ai/prompts.ts` — Removed AI-side PROGRESS instruction (line 31). No longer needed — stream.progress() handles it.
+4. `src/ai/smPrompts.ts` — `BLOCK.progress` emptied (was BB-only instruction). `BLOCK.writeFindings`: removed "300-1500 chars" soft target, replaced with proportional guidance (simple ~200, moderate ~800, complex ~2000-4000). `BLOCK.detailMemory` SYNTHESIS CONTRACT: added per-node citation rule by distinctness (distinct logic = cite each, similar = summarize group).
+5. `assets/aiOutputTemplates.yaml` — Section count: "3-6" → scope-scaled ranges (2-4 / 4-8 / 10-12). Section text: "3-8 sentences" → content-driven scaling (3-8 focused, 5-15 broad). Per-node citation for distinct business rules.
+
+**Design basis:** MemMachine (2026, ground-truth-preserving memory), A-Mem Zettelkasten (structured per-node citation), token-budget-aware reasoning (removing fixed caps prevents "token elasticity" — forced compression causes worse synthesis). Retrieval optimization > ingestion optimization.
+
+**Commit:** c2be445. Also includes bridge sync: dispatcher.ts CT badge_label/note_caption + BB 'pass' verdict acceptance.
+
+---
+
 ## 2026-04-09 — Unified node classification: relevant / pass / irrelevant
 
 **Problem:** BB had three verdicts (`relevant`, `noted`, `irrelevant`) but `noted` was dead code — zero behavioral difference from `relevant` in the SM. AI used it as a safe middle ground, producing no pruning and visiting every node. CT already had `pass` for passthrough nodes.
