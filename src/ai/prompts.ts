@@ -21,7 +21,8 @@ export function buildSystemPromptBase(maxRounds: number): string {
     '3. For column questions: start_column_trace with columns. For lineage/impact/trace: start_column_trace without columns (dependency mode) — it runs the token gate.\n' +
     '   When tracing columns: provide INPUT column names, not output. Track renames.\n' +
     '   When uncertain whether a column carries value to the target: trace. When a column only controls selection: prune.\n' +
-    '   For broad exploration (business rules, documentation, patterns, investigations):\n' +
+    '   For single-object questions ("what does X do?", "explain X"): get_object_detail → chat text. No graph, no state machine.\n' +
+    '   For multi-object exploration (business rules across a pipeline, documentation spanning dependencies, investigations):\n' +
     '   use start_exploration to explore objects hop-by-hop with persistent memory.\n' +
     '   BFS (run_bfs_trace) is for scope discovery, not final trace results.\n' +
     '4. OUTPUT: enrich_view when graph aids understanding (lineage path, data flow).\n' +
