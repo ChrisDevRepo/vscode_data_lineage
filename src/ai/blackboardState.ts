@@ -330,8 +330,8 @@ export class BlackboardState extends HopStateMachine {
       return { error: isFindings ? 'findings_too_long' : 'summary_too_long', limit: isFindings ? this.findingsHardLimit : this.summaryHardLimit };
     }
 
-    // Store detail memory slot — passthrough and irrelevant store summary only (minimal memory)
-    const useFullFindings = verdict === 'relevant';
+    // Store detail memory slot — relevant + pass store full findings; irrelevant stores summary only
+    const useFullFindings = verdict !== 'irrelevant';
     this.storeDetail(focusNodeId, useFullFindings ? findings : summary, summary, {
       tags,
       badge_label: verdict === 'relevant' ? params.badge_label : undefined,
