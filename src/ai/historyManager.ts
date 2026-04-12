@@ -34,6 +34,45 @@ export function compactNoiseResult(toolName: string, resultJson: string): string
   return null;
 }
 
+// ─── COMPACT: shrink stale SM hop results after completion ──────────────────
+
+/** Tool names whose results should be compacted once the owning SM is complete. */
+const BB_HOP_TOOLS = new Set(['lineage_submit_findings', 'lineage_start_exploration']);
+const CT_HOP_TOOLS = new Set(['lineage_submit_hop_analysis', 'lineage_start_column_trace']);
+
+/**
+ * If a tool result is from a completed SM's hop phase, return a compact 1-line summary.
+ * During active hops (smComplete=false), returns null — full results preserved.
+ * After SM completion, hop results are stale: the synthesis result already contains
+ * all accumulated evidence via detail_slots + short_memory.
+ */
+export function compactStaleHopResult(
+  toolName: string,
+  resultJson: string,
+  bbComplete: boolean,
+  ctComplete: boolean,
+): string | null {
+  const isBbTool = BB_HOP_TOOLS.has(toolName);
+  const isCtTool = CT_HOP_TOOLS.has(toolName);
+  if (!isBbTool && !isCtTool) return null;
+  if (isBbTool && !bbComplete) return null;
+  if (isCtTool && !ctComplete) return null;
+
+  const shortName = toolName.replace('lineage_', '');
+  try {
+    const parsed = JSON.parse(resultJson);
+    const node = parsed.focus_node?.n ?? parsed.originNode?.n ?? '';
+    const hop = parsed.hop ?? '';
+    const status = parsed.bb_mode ?? parsed.status ?? '';
+    return JSON.stringify({
+      _compacted: true,
+      summary: `${shortName} → ${node ? node + ' · ' : ''}${hop ? 'hop ' + hop + ' · ' : ''}${status}`,
+    });
+  } catch {
+    return JSON.stringify({ _compacted: true, summary: `${shortName} → (compacted)` });
+  }
+}
+
 // ─── EVICT: constants for context-pressure eviction ─────────────────────────
 
 /**

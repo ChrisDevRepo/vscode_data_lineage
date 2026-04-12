@@ -41,7 +41,7 @@ import {
 } from './engine/projectStore';
 import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIViewMetadata } from './engine/projectStore';
 import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
-import { compactNoiseResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
+import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
 import { buildSystemPromptBase } from './ai/prompts';
 import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt, buildSynthesisReminder } from './ai/smPrompts';
@@ -1102,6 +1102,17 @@ export function activate(context: vscode.ExtensionContext) {
                   const compact = compactNoiseResult(toolName, contentStr);
                   if (compact) contentStr = compact;
 
+                  // DROP: compact stale SM hop results from completed state machines
+                  // After SM completion, hop results are stale — synthesis has all evidence.
+                  if (!compact) {
+                    const hopCompact = compactStaleHopResult(
+                      toolName, contentStr,
+                      _blackboardState?.status === 'complete',
+                      _columnTraceState?.status === 'complete',
+                    );
+                    if (hopCompact) contentStr = hopCompact;
+                  }
+
                   return new vscode.LanguageModelToolResultPart(
                     callId,
                     [new vscode.LanguageModelTextPart(contentStr)],
@@ -1186,10 +1197,12 @@ export function activate(context: vscode.ExtensionContext) {
               // tool_result blocks that cause API 400 errors.
               const removed = historyMessages.shift()!;
               evicted++;
+              // Always pair-remove: an orphaned tool_result is a hard 400 error,
+              // which is worse than dropping below MIN_HISTORY_MESSAGES by 1.
               if (removed.role === vscode.LanguageModelChatMessageRole.Assistant &&
                   Array.isArray(removed.content) &&
                   (removed.content as unknown[]).some(p => p instanceof vscode.LanguageModelToolCallPart) &&
-                  historyMessages.length > MIN_HISTORY_MESSAGES) {
+                  historyMessages.length > 0) {
                 historyMessages.shift(); // remove paired tool_result User message
                 evicted++;
               }
@@ -1200,20 +1213,26 @@ export function activate(context: vscode.ExtensionContext) {
             if (evicted > 0) {
               // Post-eviction: remove orphaned tool_result messages whose tool_use was evicted.
               // Walk forward: for each User message containing ToolResultParts, verify the
-              // immediately preceding Assistant message has matching ToolCallParts.
+              // immediately preceding Assistant message has ToolCallParts with MATCHING callIds.
               let orphansRemoved = 0;
               for (let i = 0; i < historyMessages.length; i++) {
                 const msg = historyMessages[i];
                 if (msg.role !== vscode.LanguageModelChatMessageRole.User || !Array.isArray(msg.content)) continue;
-                const hasToolResult = (msg.content as unknown[]).some(p => p instanceof vscode.LanguageModelToolResultPart);
-                if (!hasToolResult) continue;
-                // Check preceding message for matching tool_use
+                const resultCallIds = (msg.content as unknown[])
+                  .filter(p => p instanceof vscode.LanguageModelToolResultPart)
+                  .map(p => (p as vscode.LanguageModelToolResultPart).callId);
+                if (resultCallIds.length === 0) continue;
+                // Collect callIds from the preceding Assistant message's ToolCallParts
                 const prev = i > 0 ? historyMessages[i - 1] : undefined;
-                const prevHasToolCall = prev &&
-                  prev.role === vscode.LanguageModelChatMessageRole.Assistant &&
-                  Array.isArray(prev.content) &&
-                  (prev.content as unknown[]).some(p => p instanceof vscode.LanguageModelToolCallPart);
-                if (!prevHasToolCall) {
+                const prevCallIds = new Set<string>();
+                if (prev && prev.role === vscode.LanguageModelChatMessageRole.Assistant && Array.isArray(prev.content)) {
+                  for (const p of prev.content as unknown[]) {
+                    if (p instanceof vscode.LanguageModelToolCallPart) prevCallIds.add(p.callId);
+                  }
+                }
+                // Orphan if ANY result callId has no matching call callId
+                const hasOrphan = resultCallIds.some(id => !prevCallIds.has(id));
+                if (hasOrphan) {
                   historyMessages.splice(i, 1);
                   orphansRemoved++;
                   i--; // re-check this index after splice

@@ -889,34 +889,72 @@ export function autoFixEnrichView(
     fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Convert LaTeX environments to markdown-compatible math
+  // 4. Convert LaTeX to markdown-compatible math — best-effort, never reject
   const fixLatex = (text: string): { text: string; changed: boolean } => {
     let changed = false;
     let result = text;
-    // \begin{cases}...\end{cases} → ```math block with case notation
+
+    // 4a. \begin{cases}...\end{cases} → ```math block with case notation
     result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
       return '\n```math\n' + lines.join('\n') + '\n```\n';
     });
-    // \begin{aligned}...\end{aligned} → ```math block
+    // 4b. \begin{aligned}...\end{aligned} → ```math block
     result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
       return '\n```math\n' + lines.join('\n') + '\n```\n';
     });
-    // Generic \begin{env}...\end{env} → ```math block
+    // 4c. Generic \begin{env}...\end{env} → ```math block
     result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
       changed = true;
       return '\n```math\n' + (body as string).trim() + '\n```\n';
     });
+
+    // 4d. $$...$$ display math → ```math fenced block
+    result = result.replace(/\$\$([\s\S]*?)\$\$/g, (_match, body: string) => {
+      changed = true;
+      return '\n```math\n' + (body as string).trim() + '\n```\n';
+    });
+
+    // 4e. Standalone LaTeX macros on their own line (not inside ```math) → wrap in ```math
+    // Matches lines containing \frac, \sum, \prod, \int, \sqrt, \lim, \log, \max, \min
+    const LATEX_MACRO_RE = /\\(?:frac|sum|prod|int|sqrt|lim|log|max|min|cdot|times|div|pm|leq|geq|neq|approx)\b/;
+    const lines = result.split('\n');
+    let insideFence = false;
+    for (let li = 0; li < lines.length; li++) {
+      const trimmed = lines[li].trim();
+      if (!insideFence && trimmed.startsWith('```')) { insideFence = true; continue; }
+      if (insideFence && trimmed === '```') { insideFence = false; continue; }
+      if (insideFence) continue;
+      // Skip lines that are inline code or already have $ delimiters
+      if (trimmed.startsWith('`') || /\$/.test(trimmed)) continue;
+      if (LATEX_MACRO_RE.test(trimmed)) {
+        changed = true;
+        lines[li] = '```math\n' + trimmed + '\n```';
+      }
+    }
+    if (changed) result = lines.join('\n');
+
+    // 4f. Balance unmatched $$ — if odd count remains, append closing $$
+    const ddCount = (result.match(/\$\$/g) || []).length;
+    if (ddCount % 2 !== 0) {
+      changed = true;
+      result += '\n$$';
+      // Convert all remaining $$...$$ pairs
+      result = result.replace(/\$\$([\s\S]*?)\$\$/g, (_match, body: string) => {
+        return '\n```math\n' + (body as string).trim() + '\n```\n';
+      });
+    }
+
     return { text: result, changed };
   };
 
-  // Apply LaTeX fix to description and section text
+  // Apply LaTeX fix to description, section text, and notes
   if (fixed.description) {
     const r = fixLatex(fixed.description);
-    if (r.changed) { fixed = { ...fixed, description: r.text }; fixes.push('Converted LaTeX environments to ```math blocks in description'); }
+    if (r.changed) { fixed = { ...fixed, description: r.text }; fixes.push('Converted LaTeX to ```math blocks in description'); }
   }
   if (fixed.sections) {
     let sectionFixed = false;
@@ -926,7 +964,17 @@ export function autoFixEnrichView(
       if (r.changed) { sectionFixed = true; return { ...s, text: r.text }; }
       return s;
     });
-    if (sectionFixed) { fixed = { ...fixed, sections: newSections }; fixes.push('Converted LaTeX environments to ```math blocks in sections'); }
+    if (sectionFixed) { fixed = { ...fixed, sections: newSections }; fixes.push('Converted LaTeX to ```math blocks in sections'); }
+  }
+  if (fixed.notes) {
+    let noteFixed = false;
+    const newNotes = fixed.notes.map(n => {
+      if (!n.text) return n;
+      const r = fixLatex(n.text);
+      if (r.changed) { noteFixed = true; return { ...n, text: r.text }; }
+      return n;
+    });
+    if (noteFixed) { fixed = { ...fixed, notes: newNotes }; fixes.push('Converted LaTeX to ```math blocks in notes'); }
   }
 
   // node_ids fallback removed — enrich_view requires SM result graph.
@@ -956,25 +1004,11 @@ export function autoFixEnrichView(
   return { input: fixed, fixes };
 }
 
-/** Validate markdown format — returns error strings (empty = valid). */
+/** Validate markdown format — returns error strings (empty = valid).
+ *  LaTeX issues are handled by autofix (fixLatex) — never rejected here.
+ *  Only structural breaks that corrupt all subsequent rendering are rejected. */
 export function validateMarkdownFormat(md: string): string[] {
   const errors: string[] = [];
-
-  // Reject \begin{...} environments (fragile in remark-math, breaks rendering)
-  const beginMatch = md.match(/\\begin\{([^}]+)\}/);
-  if (beginMatch) {
-    errors.push(
-      `description contains \\begin{${beginMatch[1]}} — use a \`\`\`math block for simple formulas or rewrite as a table`,
-    );
-  }
-
-  // Reject unbalanced $$ delimiters (odd count → unclosed block corrupts all subsequent markdown)
-  const ddCount = (md.match(/\$\$/g) || []).length;
-  if (ddCount % 2 !== 0) {
-    errors.push(
-      'description has unbalanced $$ delimiters — use ```math fenced blocks for display math',
-    );
-  }
 
   // Reject unclosed fenced blocks (walk lines, track open/close state)
   let insideFence = false;
