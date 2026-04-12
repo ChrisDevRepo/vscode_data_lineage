@@ -24,7 +24,7 @@ const BLOCK = {
   /** Step 2 — record detailed findings (→ detail memory slot) */
   writeFindings:
     'Write findings to detail memory — document this node comprehensively:\n' +
-    '- relevant/trace → full analysis (hard limit 8000 chars). Use the budget: simple passthrough ~300 chars, moderate transform ~1000-2000 chars, complex multi-CTE SP ~3000-6000 chars. Self-contained — written as if documenting this node for a technical reference.\n' +
+    '- relevant/trace → full analysis (hard limit 8000 chars). Use the budget: simple passthrough ~300 chars, moderate transform ~1000-2000 chars, complex multi-CTE SP ~3000-6000 chars. Self-contained — written to answer the user\'s question. Lead with BUSINESS MEANING: what does this logic accomplish? Then cite SQL expressions as evidence. When a node computes a formula, write it in ```math notation.\n' +
     '  Include each aspect present:\n' +
     '  COLUMNS: key column names, types, constraints (PK/FK/nullable)\n' +
     '  TRANSFORMS: expressions, CASE/COALESCE, computed columns (quote the SQL fragment)\n' +
