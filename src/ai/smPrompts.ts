@@ -18,7 +18,7 @@ const BLOCK = {
   verdictCategories:
     'NODE CLASSIFICATION (three categories):\n' +
     '- relevant (BB) / trace (CT): node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS relevant — even if its connection to the question is indirect.\n' +
-    '- pass: node is a pure passthrough with NO transforms (SELECT *, identity view, staging table with no logic) → summary only, no badge_label\n' +
+    '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use relevant.\n' +
     '- irrelevant (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the pipeline → removed from graph',
 
   /** Step 2 — record detailed findings (→ detail memory slot) */
