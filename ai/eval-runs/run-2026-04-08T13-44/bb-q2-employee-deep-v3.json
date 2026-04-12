@@ -1,0 +1,120 @@
+{
+  "test": "bb-q2-employee-deep-v3",
+  "date": "2026-04-08T13:44:00Z",
+  "sessionId": "s_1775671200258_qw1d9i",
+  "question": "What objects depend on the Employee table and how is Employee data consumed?",
+  "origin": "[HumanResources].[Employee]",
+  "scope_direction": "downstream",
+  "model": "haiku (simulated by claude-sonnet-4-6)",
+  "result": {
+    "nodes_found": [
+      "ufnGetContactInformation",
+      "uspGetEmployeeManagers",
+      "uspGetManagerEmployees",
+      "vEmployee",
+      "vEmployeeDepartment",
+      "vEmployeeDepartmentHistory",
+      "vSalesPerson",
+      "vSalesPersonSalesByFiscalYears"
+    ],
+    "delivery": "sm",
+    "hops": 8,
+    "sections": [
+      "Contact Resolver",
+      "Manager Hierarchy",
+      "Subordinate Tree",
+      "Employee Directory",
+      "Current Department",
+      "Dept History",
+      "Sales Rep Profile",
+      "Fiscal Year Sales"
+    ],
+    "prune_decisions": [],
+    "text_response": "The HumanResources.Employee table is consumed by 8 downstream objects across 3 schemas:\n\n**HR Views:**\n- vEmployee: Full employee directory view joining Employee with Person, Address, Phone, Email tables\n- vEmployeeDepartment: Current department roster (EndDate IS NULL filter) with Department.GroupName\n- vEmployeeDepartmentHistory: Full historical dept assignments including Shift data, no EndDate filter\n\n**Org Hierarchy Procedures:**\n- uspGetEmployeeManagers: Recursive CTE (MAXRECURSION 25) traverses OrganizationNode hierarchy upward — returns full manager chain for a given employee\n- uspGetManagerEmployees: Mirror procedure traverses downward — returns all subordinates under a given manager\n\n**Sales Views:**\n- vSalesPerson: Sales rep profile combining SalesPerson + Employee (JobTitle) + full address + SalesTerritory + Quota/YTD\n- vSalesPersonSalesByFiscalYears: PIVOT view aggregating SUM(SubTotal) per fiscal year (FY = calendar year + 6 months) for 2002/2003/2004 — Employee used for JobTitle\n\n**Multi-role Function:**\n- ufnGetContactInformation: Table-valued function resolving PersonID to contact type (Employee/Vendor/Store/Consumer) — Employee path reads JobTitle\n\nEmployee data consumed: primarily BusinessEntityID (join key) and JobTitle (surfaced in all views and the contact function). OrganizationNode (hierarchyid) consumed exclusively by the two recursive org hierarchy procedures.",
+    "hop_log": [
+      {
+        "hop": 1,
+        "focus_node": "ufnGetContactInformation",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      },
+      {
+        "hop": 2,
+        "focus_node": "uspGetEmployeeManagers",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      },
+      {
+        "hop": 3,
+        "focus_node": "uspGetManagerEmployees",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      },
+      {
+        "hop": 4,
+        "focus_node": "vEmployee",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      },
+      {
+        "hop": 5,
+        "focus_node": "vEmployeeDepartment",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      },
+      {
+        "hop": 6,
+        "focus_node": "vEmployeeDepartmentHistory",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      },
+      {
+        "hop": 7,
+        "focus_node": "vSalesPerson",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      },
+      {
+        "hop": 8,
+        "focus_node": "vSalesPersonSalesByFiscalYears",
+        "verdict": "relevant",
+        "prune_ids": [],
+        "add_ids": [],
+        "error": null,
+        "error_detail": null
+      }
+    ]
+  },
+  "sm_final_result": {
+    "status": "complete",
+    "stats": {
+      "hops": 8,
+      "noted": 8,
+      "scopeSize": 9,
+      "coveragePct": 89,
+      "questionsAsked": 0,
+      "questionsAnswered": 0
+    }
+  }
+}

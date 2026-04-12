@@ -1,0 +1,1147 @@
+{
+  "result": {
+    "ok": true,
+    "advanced": 0,
+    "frontierSize": 0,
+    "result": {
+      "status": "complete",
+      "targetColumns": [
+        "TotalRevenue"
+      ],
+      "originNodeId": "[ai].[factsalesreport]",
+      "direction": "up",
+      "chain": [
+        {
+          "nodeId": "[ai].[factsalesreport]",
+          "schema": "ai",
+          "name": "FactSalesReport",
+          "type": "table",
+          "columnsIn": [
+            "TotalRevenue"
+          ],
+          "columnsOut": [],
+          "summary": "Trace origin",
+          "boundaryFlag": "none",
+          "index": "1/19"
+        },
+        {
+          "nodeId": "[ai].[spbuildsalesreport]",
+          "schema": "ai",
+          "name": "spBuildSalesReport",
+          "type": "procedure",
+          "columnsIn": [
+            "TotalRevenue"
+          ],
+          "columnsOut": [],
+          "summary": "",
+          "boundaryFlag": "none",
+          "notes": "TotalRevenue computed as Qty * UnitPrice (line 498). Two critical branches: Qty from vwConsolidatedSales, UnitPrice from vwPriceList. AdjustedRevenue uses TotalRevenue-Discount (secondary). Other neighbors (CustomerMaster, CustomerSegmentMap, RegionLookup) used only for context/filters, not revenue computation.",
+          "index": "2/19"
+        },
+        {
+          "nodeId": "[ai].[vwconsolidatedsales]",
+          "schema": "ai",
+          "name": "vwConsolidatedSales",
+          "type": "view",
+          "columnsIn": [
+            "TotalRevenue"
+          ],
+          "columnsOut": [
+            "Qty"
+          ],
+          "summary": "Source of Qty column",
+          "boundaryFlag": "none",
+          "notes": "Simple view that renames OrderQty to Qty. DimCalendar used only for filtering (WHERE clause), not contributing to Qty value. SalesStaging is the actual source of OrderQty.",
+          "index": "3/19"
+        },
+        {
+          "nodeId": "[ai].[vwpricelist]",
+          "schema": "ai",
+          "name": "vwPriceList",
+          "type": "view",
+          "columnsIn": [
+            "TotalRevenue"
+          ],
+          "columnsOut": [
+            "UnitPrice"
+          ],
+          "summary": "Source of UnitPrice column",
+          "boundaryFlag": "none",
+          "notes": "Multi-CTE view (3 renames: ListPrice?BasePrice?AdjPrice?UnitPrice). Pure transformation with 1.0 multiplier (no external source for adjustment). PriceMaster is the single source of ListPrice data.",
+          "index": "4/19"
+        },
+        {
+          "nodeId": "[ai].[salesstaging]",
+          "schema": "ai",
+          "name": "SalesStaging",
+          "type": "table",
+          "columnsIn": [
+            "Qty"
+          ],
+          "columnsOut": [
+            "OrderQty"
+          ],
+          "summary": "Source of OrderQty (renamed to Qty)",
+          "boundaryFlag": "none",
+          "notes": "Staging table with OrderQty. Two upstream procedures: spArchiveOldOrders (likely removes old rows) and spLoadSalesStaging (likely loads fresh data). Need to check both for OrderQty contribution.",
+          "index": "5/19"
+        },
+        {
+          "nodeId": "[ai].[pricemaster]",
+          "schema": "ai",
+          "name": "PriceMaster",
+          "type": "table",
+          "columnsIn": [
+            "UnitPrice"
+          ],
+          "columnsOut": [
+            "ListPrice"
+          ],
+          "summary": "Source of ListPrice, which becomes UnitPrice through CTE transforms",
+          "boundaryFlag": "none",
+          "notes": "Source table for ListPrice (Qty is independent). PriceMaster is maintained by spRefreshPrices.",
+          "index": "6/19"
+        },
+        {
+          "nodeId": "[ai].[sparchiveoldorders]",
+          "schema": "ai",
+          "name": "spArchiveOldOrders",
+          "type": "procedure",
+          "columnsIn": [
+            "OrderQty"
+          ],
+          "columnsOut": [
+            "OrderQty"
+          ],
+          "summary": "Check if this procedure writes/modifies OrderQty in SalesStaging",
+          "boundaryFlag": "none",
+          "notes": "Reads OrderQty from SalesStaging and archives to ArchiveOrders, then deletes from SalesStaging. This is data maintenance/lifecycle, not source. Does not CREATE OrderQty. Cycle detected: reads what already exists.",
+          "index": "7/19"
+        },
+        {
+          "nodeId": "[ai].[sploadsalesstaging]",
+          "schema": "ai",
+          "name": "spLoadSalesStaging",
+          "type": "procedure",
+          "columnsIn": [
+            "OrderQty"
+          ],
+          "columnsOut": [
+            "OrderQty"
+          ],
+          "summary": "Check if this procedure writes/modifies OrderQty in SalesStaging",
+          "boundaryFlag": "none",
+          "notes": "TRUNCATE+INSERT loader. Selects OrderQty from vwRawOrders and inserts into SalesStaging. DimCalendar used only for UPDATE (DateKey backfill), not for OrderQty value. vwRawOrders is the actual source.",
+          "index": "8/19"
+        },
+        {
+          "nodeId": "[ai].[sprefreshprices]",
+          "schema": "ai",
+          "name": "spRefreshPrices",
+          "type": "procedure",
+          "columnsIn": [
+            "ListPrice"
+          ],
+          "columnsOut": [
+            "ListPrice"
+          ],
+          "summary": "Procedure that inserts/updates ListPrice in PriceMaster",
+          "boundaryFlag": "none",
+          "notes": "ListPrice = CostPrice * (1 + MarkupPct). Two critical inputs: CostPrice from SupplierPrices, MarkupPct from MarkupRules. RegionLookup (CROSS JOIN source) and CurrencyConfig (filter-only) are not part of ListPrice computation.",
+          "index": "9/19"
+        },
+        {
+          "nodeId": "[ai].[vwraworders]",
+          "schema": "ai",
+          "name": "vwRawOrders",
+          "type": "view",
+          "columnsIn": [
+            "OrderQty"
+          ],
+          "columnsOut": [
+            "OrderQty"
+          ],
+          "summary": "Source view for OrderQty and other staging columns",
+          "boundaryFlag": "none",
+          "notes": "Simple SELECT * passthrough view with IsValid filter. CleanedOrders is the single source of all columns including OrderQty.",
+          "index": "10/19"
+        },
+        {
+          "nodeId": "[ai].[supplierprices]",
+          "schema": "ai",
+          "name": "SupplierPrices",
+          "type": "table",
+          "columnsIn": [
+            "ListPrice"
+          ],
+          "columnsOut": [
+            "CostPrice"
+          ],
+          "summary": "Source of CostPrice in ListPrice formula",
+          "boundaryFlag": "source",
+          "index": "11/19"
+        },
+        {
+          "nodeId": "[ai].[markuprules]",
+          "schema": "ai",
+          "name": "MarkupRules",
+          "type": "table",
+          "columnsIn": [
+            "ListPrice"
+          ],
+          "columnsOut": [
+            "MarkupPct"
+          ],
+          "summary": "Source of MarkupPct in ListPrice formula",
+          "boundaryFlag": "source",
+          "index": "12/19"
+        },
+        {
+          "nodeId": "[ai].[cleanedorders]",
+          "schema": "ai",
+          "name": "CleanedOrders",
+          "type": "table",
+          "columnsIn": [
+            "OrderQty"
+          ],
+          "columnsOut": [
+            "OrderQty"
+          ],
+          "summary": "Source table of OrderQty (passthrough via SELECT *)",
+          "boundaryFlag": "none",
+          "notes": "Staging table for cleaned orders with OrderQty. Fed by spCleanOrders.",
+          "index": "13/19"
+        },
+        {
+          "nodeId": "[ai].[spcleanorders]",
+          "schema": "ai",
+          "name": "spCleanOrders",
+          "type": "procedure",
+          "columnsIn": [
+            "OrderQty"
+          ],
+          "columnsOut": [
+            "OrderQty"
+          ],
+          "summary": "Procedure that cleans/validates order data and populates CleanedOrders",
+          "boundaryFlag": "none",
+          "notes": "Cleaning/dedup procedure. RawQty from RawOrderImport is renamed to OrderQty via COALESCE. CustomerMaster is used only for enrichment (JOIN for CustomerName), not for Qty value. CleanedOrders is the target table.",
+          "index": "14/19"
+        },
+        {
+          "nodeId": "[ai].[raworderimport]",
+          "schema": "ai",
+          "name": "RawOrderImport",
+          "type": "table",
+          "columnsIn": [
+            "OrderQty"
+          ],
+          "columnsOut": [
+            "RawQty"
+          ],
+          "summary": "Source of RawQty (renamed to OrderQty)",
+          "boundaryFlag": "none",
+          "notes": "Raw import table with RawQty. Fed by spImportOrders from external source.",
+          "index": "15/19"
+        },
+        {
+          "nodeId": "[ai].[spimportorders]",
+          "schema": "ai",
+          "name": "spImportOrders",
+          "type": "procedure",
+          "columnsIn": [
+            "RawQty"
+          ],
+          "columnsOut": [
+            "RawQty"
+          ],
+          "summary": "Import procedure that populates RawOrderImport",
+          "boundaryFlag": "none",
+          "notes": "Import procedure from external sources. Renames Quantity?RawQty. ActiveRegions is filter-only (WHERE clause). vwExternalOrders is the actual data source.",
+          "index": "16/19"
+        },
+        {
+          "nodeId": "[ai].[vwexternalorders]",
+          "schema": "ai",
+          "name": "vwExternalOrders",
+          "type": "view",
+          "columnsIn": [
+            "RawQty"
+          ],
+          "columnsOut": [
+            "Quantity"
+          ],
+          "summary": "External orders view with Quantity (renamed to RawQty)",
+          "boundaryFlag": "none",
+          "notes": "UNION view with two quantity sources: SAP has Quantity column directly, Oracle has ItemCount renamed to Quantity. Both are external data sources (source boundaries).",
+          "index": "17/19"
+        },
+        {
+          "nodeId": "[ai].[saporders]",
+          "schema": "ai",
+          "name": "SAPOrders",
+          "type": "table",
+          "columnsIn": [
+            "Quantity"
+          ],
+          "columnsOut": [
+            "Quantity"
+          ],
+          "summary": "SAP external system - Quantity flows directly",
+          "boundaryFlag": "source",
+          "index": "18/19"
+        },
+        {
+          "nodeId": "[ai].[oracleorders]",
+          "schema": "ai",
+          "name": "OracleOrders",
+          "type": "table",
+          "columnsIn": [
+            "Quantity"
+          ],
+          "columnsOut": [
+            "ItemCount"
+          ],
+          "summary": "Oracle external system - ItemCount renamed to Quantity",
+          "boundaryFlag": "source",
+          "index": "19/19"
+        }
+      ],
+      "fullNodes": [
+        {
+          "id": "[ai].[factsalesreport]",
+          "s": "ai",
+          "n": "FactSalesReport",
+          "t": "table",
+          "cols": [
+            {
+              "n": "ReportID",
+              "t": "bigint",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "ReportDate",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "Region",
+              "t": "nvarchar(50)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "varchar(10)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "CustomerSegment",
+              "t": "varchar(50)",
+              "nl": "NULL"
+            },
+            {
+              "n": "Qty",
+              "t": "int",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "UnitPrice",
+              "t": "decimal(18,4)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "TotalRevenue",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "Discount",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "AdjustedRevenue",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "CreatedAt",
+              "t": "datetime2",
+              "nl": "NOT NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[spbuildsalesreport]",
+          "s": "ai",
+          "n": "spBuildSalesReport",
+          "t": "procedure",
+          "ddl": "-- ─── spBuildSalesReport (Level 1 — THE BIG ONE, ~150 lines) ────────────────\n-- TotalRevenue = Qty * UnitPrice (COMPUTED COLUMN SPLIT)\n-- AdjustedRevenue = TotalRevenue - Discount\n-- CustomerSegment from CustomerSegmentMap (dead end for revenue)\n-- RegionLookup for Region name (dead end for revenue)\n-- Multi-step: #SalesBase → UPDATE with prices → final INSERT\nCREATE PROCEDURE [ai].[spBuildSalesReport]\n    @ReportDate       DATE          = NULL,\n    @RegionFilter     VARCHAR(10)   = NULL,    -- NULL = all regions\n    @FiscalYearOverride INT         = NULL,    -- NULL = current fiscal year\n    @IncludeZeroQty   BIT           = 0,       -- include zero-qty rows in report\n    @RebuildMode      VARCHAR(10)   = 'APPEND',-- APPEND / FULL / DELTA\n    @DryRun           BIT           = 0,\n    @DebugLevel       INT           = 0        -- 0=off, 1=basic, 2=verbose\nAS\nBEGIN\n    /*\n    ════════════════════════════════════════════════════════════════════════════════\n    spBuildSalesReport — Master report builder for FactSalesReport\n    ════════════════════════════════════════════════════════════════════════════════\n    VERSION HISTORY:\n    ────────────────\n    v1.0 (2023-Q4) Initial version — single query, no temp tables\n    v1.1 (2024-Q1) Added CustomerSegment enrichment from CustomerMaster\n    v1.2 (2024-Q2) Split TotalRevenue into Qty * UnitPrice for auditability\n                   (Previously was a pre-computed column from SalesStaging)\n    v2.0 (2024-Q3) Major refactor: multi-step temp table approach\n                   - Added #SalesBase, #PriceEnriched, #SegmentEnriched\n                   - Added RegionLookup for display names\n                   - Added vwDiscountCalc for discount computation\n    v2.1 (2024-Q4) Added @RebuildMode parameter (APPEND/FULL/DELTA)\n    v3.0 (2025-Q1) Performance: removed intermediate #PriceEnriched table\n                   Now updates #SalesBase in-place\n    v3.1 (2025-Q2) Added concurrency control with sp_getapplock\n    v3.2 (2025-Q3) Added @DebugLevel, @DryRun parameters\n    v4.0 (2025-Q4) Added fiscal year override and region filter\n    v4.1 (2026-Q1) Fixed NULL handling in CustomerSegment CASE expression\n                   (Bug #4821: anonymous orders getting 'Unclassified' instead of 'Anonymous')\n    COLUMN FLOW:\n    ────────────\n    The key revenue columns flow through this SP as follows:\n    - Qty: vwConsolidatedSales.Qty → #SalesBase.Qty → FactSalesReport.Qty\n    - UnitPrice: vwPriceList.UnitPrice → #SalesBase.UnitPrice → FactSalesReport.UnitPrice\n    - TotalRevenue: computed as Qty * UnitPrice in the final INSERT\n    - Discount: vwDiscountCalc.Discount → #SalesBase.Discount → FactSalesReport.Discount\n    - AdjustedRevenue: computed as TotalRevenue - Discount in the final INSERT\n    - CustomerSegment: CustomerSegmentMap.SegmentName → #SalesBase.CustomerSegment\n      (NOT part of revenue calculation — enrichment only)\n    - Region: RegionLookup.RegionName → #SalesBase.RegionName\n      (NOT part of revenue calculation — display only)\n    DEPENDENCIES:\n    ─────────────\n    READ:  ai.vwConsolidatedSales, ai.vwPriceList, ai.vwDiscountCalc,\n           ai.CustomerMaster, ai.CustomerSegmentMap, ai.RegionLookup\n    WRITE: ai.FactSalesReport, ai.ErrorLog\n    EXEC:  ai.spLogAudit\n    PERMISSIONS REQUIRED:\n    ─────────────────────\n    SELECT on all read dependencies\n    INSERT/DELETE on ai.FactSalesReport\n    INSERT on ai.ErrorLog\n    EXECUTE on ai.spLogAudit\n    ESTIMATED RUNTIME:\n    ──────────────────\n    ~2-5 seconds for 10K rows, ~30-60 seconds for 500K rows\n    Bottleneck is Step 2 (price lookup) due to vwPriceList CTE complexity\n    ════════════════════════════════════════════════════════════════════════════════\n    */\n    SET NOCOUNT ON;\n    SET XACT_ABORT OFF;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- PARAMETER INITIALIZATION AND VALIDATION\n    -- ═══════════════════════════════════════════════════════════════════════\n    IF @ReportDate IS NULL\n        SET @ReportDate = CAST(GETDATE() AS DATE);\n    IF @RebuildMode NOT IN ('APPEND', 'FULL', 'DELTA')\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spBuildSalesReport.Validate', 50010,\n            'Invalid @RebuildMode: ' + ISNULL(@RebuildMode, 'NULL'));\n        RETURN;\n    END;\n    DECLARE @StartTime     DATETIME2 = SYSUTCDATETIME();\n    DECLARE @StepStart     DATETIME2;\n    DECLARE @InsertedRows   INT = 0;\n    DECLARE @StepRowCount  INT = 0;\n    DECLARE @WarningCount  INT = 0;\n    DECLARE @ErrorCount    INT = 0;\n    DECLARE @DeletedRows   INT = 0;\n    DECLARE @StatusMsg     NVARCHAR(MAX) = N'';\n    DECLARE @CurrentStep   VARCHAR(50);\n    DECLARE @FiscalYear    INT = ISNULL(@FiscalYearOverride, YEAR(GETDATE()));\n    -- Acquire advisory lock to prevent concurrent builds\n    DECLARE @LockResult INT;\n    EXEC @LockResult = sp_getapplock\n        @Resource   = 'spBuildSalesReport_Lock',\n        @LockMode   = 'Exclusive',\n        @LockOwner  = 'Session',\n        @LockTimeout = 30000;\n    IF @LockResult < 0\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spBuildSalesReport.Lock', 50011,\n            'Could not acquire lock. Another build may be running. Result=' + CAST(@LockResult AS VARCHAR));\n        RETURN;\n    END;\n    -- Debug output\n    IF @DebugLevel >= 1\n    BEGIN\n        DECLARE @DebugMsg NVARCHAR(MAX) = CONCAT(\n            N'[spBuildSalesReport] Starting build. Parameters: ',\n            N'ReportDate=', FORMAT(@ReportDate, 'yyyy-MM-dd'),\n            N', Region=', ISNULL(@RegionFilter, 'ALL'),\n            N', FiscalYear=', @FiscalYear,\n            N', Mode=', @RebuildMode,\n            N', DryRun=', @DryRun,\n            N', Debug=', @DebugLevel\n        );\n        RAISERROR(@DebugMsg, 0, 1) WITH NOWAIT;\n    END;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 0: Handle rebuild modes\n    -- FULL = delete existing data for this report date and rebuild\n    -- DELTA = only process new staging rows since last build\n    -- APPEND = add new rows (default)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step0_RebuildMode';\n    IF @RebuildMode = 'FULL'\n    BEGIN\n        DELETE FROM [ai].[FactSalesReport]\n        WHERE ReportDate = @ReportDate\n          AND (@RegionFilter IS NULL OR RegionCode = @RegionFilter);\n        SET @DeletedRows = @@ROWCOUNT;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'FULL rebuild: deleted ', @DeletedRows, N' existing rows. ');\n        IF @DebugLevel >= 1\n            RAISERROR('[Step0] Deleted %d existing rows for FULL rebuild', 0, 1, @DeletedRows) WITH NOWAIT;\n    END;\n    /* ═══════════════════════════════════════════════════════════════════════\n       DELTA MODE IMPLEMENTATION (partially implemented, deferred to v5.0)\n       The idea was to track which staging rows have already been processed\n       using a watermark table. This would avoid re-processing rows that\n       are already in FactSalesReport.\n       CREATE TABLE [ai].[BuildWatermark] (\n           RegionCode VARCHAR(10),\n           LastStagingID BIGINT,\n           LastBuildDate DATETIME2,\n           PRIMARY KEY (RegionCode)\n       );\n       IF @RebuildMode = 'DELTA'\n       BEGIN\n           -- Get watermark\n           SELECT @LastStagingID = ISNULL(MAX(LastStagingID), 0)\n           FROM [ai].[BuildWatermark]\n           WHERE @RegionFilter IS NULL OR RegionCode = @RegionFilter;\n           -- Only process rows newer than watermark\n           -- WHERE cs.StagingID > @LastStagingID\n       END;\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 1: Build base sales data from consolidated view into #SalesBase\n    -- The Qty column flows from vwConsolidatedSales (which renames OrderQty to Qty)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step1_Extract';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        SELECT\n            cs.StagingID,\n            cs.Qty,\n            cs.OrderAmount,\n            cs.RegionCode,\n            cs.OrderDate,\n            cs.CustomerID,\n            cs.CustomerName,\n            CAST(NULL AS DECIMAL(18,4))   AS UnitPrice,\n            CAST(NULL AS DECIMAL(18,2))   AS Discount,\n            CAST(NULL AS VARCHAR(50))     AS CustomerSegment,\n            CAST(NULL AS NVARCHAR(100))   AS RegionName,\n            CAST(0 AS BIT)               AS IsProcessed,\n            CAST(0 AS BIT)               AS HasPriceMatch,\n            CAST(0 AS BIT)               AS HasSegmentMatch,\n            CAST(NULL AS NVARCHAR(500))   AS ProcessingNotes\n        INTO #SalesBase\n        FROM [ai].[vwConsolidatedSales] cs\n        WHERE (@RegionFilter IS NULL OR cs.RegionCode = @RegionFilter);\n        SET @StepRowCount = @@ROWCOUNT;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step1] Extracted %d rows from vwConsolidatedSales', 0, 1, @StepRowCount) WITH NOWAIT;\n        IF @StepRowCount = 0\n        BEGIN\n            SET @StatusMsg = @StatusMsg + N'No data in vwConsolidatedSales for given filters. ';\n            SET @WarningCount = @WarningCount + 1;\n            -- Don't return — still log the empty run\n        END;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step1', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        SET @ErrorCount = @ErrorCount + 1;\n        GOTO Cleanup;\n    END CATCH;\n    -- Create index on temp table for performance\n    CREATE NONCLUSTERED INDEX IX_SalesBase_Region ON #SalesBase (RegionCode);\n    CREATE NONCLUSTERED INDEX IX_SalesBase_Customer ON #SalesBase (CustomerID) WHERE CustomerID IS NOT NULL;\n    CREATE NONCLUSTERED INDEX IX_SalesBase_Staging ON #SalesBase (StagingID);\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 2: Enrich with UnitPrice from price list\n    -- UnitPrice comes from vwPriceList (which is a 3-CTE rename chain:\n    --   PriceMaster.ListPrice → BasePrice → AdjPrice → UnitPrice)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step2_PriceEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    /* Old approach v1 (pre-2024-Q2):\n       SELECT TotalRevenue FROM ai.SalesStaging\n       This pulled a pre-computed TotalRevenue. Removed when we split into\n       Qty * UnitPrice for better auditability and drill-down capability.\n       UPDATE #SalesBase SET UnitPrice = s.TotalRevenue / NULLIF(s.OrderQty, 0)\n       FROM ai.SalesStaging s WHERE s.StagingID = #SalesBase.StagingID\n    */\n    /* Old approach v2 (2024-Q2 to 2025-Q1):\n       Used a separate #PriceEnriched temp table and JOIN:\n       SELECT sb.*, pl.UnitPrice\n       INTO #PriceEnriched\n       FROM #SalesBase sb\n       LEFT JOIN [ai].[vwPriceList] pl ON sb.RegionCode = pl.RegionCode;\n       DROP TABLE #SalesBase;\n       SELECT * INTO #SalesBase FROM #PriceEnriched;\n       DROP TABLE #PriceEnriched;\n       Removed in v3.0 for simplification — now updates in-place.\n    */\n    -- v1 used hardcoded price of 9.99 here (removed 2025-Q1)\n    -- v2 used per-product pricing (removed when ProductCode was dropped from staging)\n    -- v3 (current): region-level pricing from vwPriceList\n    BEGIN TRY\n        UPDATE sb\n        SET sb.UnitPrice = COALESCE(pl.UnitPrice, 0),\n            sb.HasPriceMatch = CASE WHEN pl.UnitPrice IS NOT NULL THEN 1 ELSE 0 END,\n            sb.ProcessingNotes = CASE\n                WHEN pl.UnitPrice IS NULL THEN 'No price match for region ' + sb.RegionCode\n                WHEN pl.UnitPrice = 0 THEN 'Zero price for region ' + sb.RegionCode\n                ELSE NULL\n            END\n        FROM #SalesBase sb\n        LEFT JOIN [ai].[vwPriceList] pl\n            ON sb.RegionCode = pl.RegionCode;\n        -- NOTE: ProductCode join removed in simplification — uses region-level price\n        -- NOTE: EffectiveFrom date filter would go here if we had date-specific pricing\n        SET @StepRowCount = @@ROWCOUNT;\n        -- Count rows without price matches (warning condition)\n        DECLARE @NoPriceCount INT;\n        SELECT @NoPriceCount = COUNT(*) FROM #SalesBase WHERE HasPriceMatch = 0;\n        IF @NoPriceCount > 0\n        BEGIN\n            SET @WarningCount = @WarningCount + 1;\n            SET @StatusMsg = @StatusMsg + CONCAT(N'Warning: ', @NoPriceCount, N' rows have no price match. ');\n        END;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step2] Price enrichment: %d rows updated, %d without price', 0, 1, @StepRowCount, @NoPriceCount) WITH NOWAIT;\n        IF @DebugLevel >= 2\n        BEGIN\n            -- Verbose: show price distribution\n            SELECT\n                RegionCode,\n                COUNT(*) AS [RowCount],\n                MIN(UnitPrice) AS MinPrice,\n                MAX(UnitPrice) AS MaxPrice,\n                AVG(UnitPrice) AS AvgPrice,\n                SUM(CASE WHEN HasPriceMatch = 0 THEN 1 ELSE 0 END) AS NoPriceRows\n            FROM #SalesBase\n            GROUP BY RegionCode;\n        END;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step2', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        SET @ErrorCount = @ErrorCount + 1;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 3: Enrich with Discount from discount calc view\n    -- Discount comes from vwDiscountCalc (multi-CTE rename chain:\n    --   OrderAmount → BaseAmt → DiscountVal → Discount)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step3_DiscountEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        UPDATE sb\n        SET sb.Discount = COALESCE(dc.Discount, 0)\n        FROM #SalesBase sb\n        LEFT JOIN [ai].[vwDiscountCalc] dc\n            ON sb.StagingID = dc.StagingID;\n        SET @StepRowCount = @@ROWCOUNT;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step3] Discount enrichment: %d rows updated', 0, 1, @StepRowCount) WITH NOWAIT;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step3', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        -- Non-fatal: continue with Discount = 0\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + N'Discount enrichment failed; using 0. ';\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 4: Enrich with CustomerSegment (dead end for revenue trace)\n    -- CustomerSegmentMap is NOT in the revenue computation path.\n    -- This only populates the CustomerSegment display column.\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step4_SegmentEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        UPDATE sb\n        SET sb.CustomerSegment = csm.SegmentName,\n            sb.HasSegmentMatch = CASE WHEN csm.SegmentName IS NOT NULL THEN 1 ELSE 0 END\n        FROM #SalesBase sb\n        INNER JOIN [ai].[CustomerMaster] cm\n            ON sb.CustomerID = cm.CustomerID\n        LEFT JOIN [ai].[CustomerSegmentMap] csm\n            ON cm.CustomerTier = csm.CustomerTier\n           AND cm.RegionCode   = csm.RegionCode;\n        SET @StepRowCount = @@ROWCOUNT;\n        /* Old segment logic (pre v2.0):\n           Used a direct CASE expression instead of CustomerSegmentMap:\n           UPDATE sb SET sb.CustomerSegment = CASE\n               WHEN cm.AnnualSpend > 100000 THEN 'Enterprise'\n               WHEN cm.AnnualSpend > 10000  THEN 'Mid-Market'\n               WHEN cm.AnnualSpend > 1000   THEN 'SMB'\n               ELSE 'Consumer'\n           END\n           FROM #SalesBase sb JOIN ai.CustomerMaster cm ON sb.CustomerID = cm.CustomerID\n           Removed because AnnualSpend column was deprecated in CustomerMaster.\n        */\n        IF @DebugLevel >= 1\n            RAISERROR('[Step4] Segment enrichment: %d rows matched', 0, 1, @StepRowCount) WITH NOWAIT;\n        IF @DebugLevel >= 2\n        BEGIN\n            -- Verbose: segment distribution\n            SELECT\n                COALESCE(CustomerSegment, '(none)') AS Segment,\n                COUNT(*) AS [RowCount],\n                SUM(Qty) AS TotalQty,\n                SUM(CAST(Qty AS DECIMAL(18,2)) * UnitPrice) AS EstRevenue\n            FROM #SalesBase\n            GROUP BY CustomerSegment;\n        END;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step4', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        -- Non-fatal\n        SET @WarningCount = @WarningCount + 1;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 5: Enrich with Region name (dead end for revenue trace)\n    -- RegionLookup provides display name only, NOT revenue data\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step5_RegionEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        UPDATE sb\n        SET sb.RegionName = rl.RegionName\n        FROM #SalesBase sb\n        LEFT JOIN [ai].[RegionLookup] rl\n            ON sb.RegionCode = rl.RegionCode;\n        SET @StepRowCount = @@ROWCOUNT;\n        -- Fill in missing region names with code\n        UPDATE #SalesBase\n        SET RegionName = RegionCode\n        WHERE RegionName IS NULL;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step5] Region enrichment: %d rows updated', 0, 1, @StepRowCount) WITH NOWAIT;\n    END TRY\n    BEGIN CATCH\n        -- Non-fatal: use RegionCode as fallback\n        UPDATE #SalesBase SET RegionName = RegionCode WHERE RegionName IS NULL;\n        SET @WarningCount = @WarningCount + 1;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 6: Pre-insert validation and quality checks\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step6_PreInsertValidation';\n    -- 6a: Check for NULL Qty (should never happen, but defensive)\n    DECLARE @NullQtyCount INT;\n    SELECT @NullQtyCount = COUNT(*) FROM #SalesBase WHERE Qty IS NULL;\n    IF @NullQtyCount > 0\n    BEGIN\n        UPDATE #SalesBase SET Qty = 0 WHERE Qty IS NULL;\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Fixed ', @NullQtyCount, N' NULL Qty rows. ');\n    END;\n    -- 6b: Check for NULL UnitPrice\n    DECLARE @NullPriceCount INT;\n    SELECT @NullPriceCount = COUNT(*) FROM #SalesBase WHERE UnitPrice IS NULL;\n    IF @NullPriceCount > 0\n    BEGIN\n        UPDATE #SalesBase SET UnitPrice = 0 WHERE UnitPrice IS NULL;\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Fixed ', @NullPriceCount, N' NULL UnitPrice rows. ');\n    END;\n    -- 6c: Check for negative values (data quality anomaly)\n    DECLARE @NegativeQty INT, @NegativePrice INT;\n    SELECT @NegativeQty = COUNT(*) FROM #SalesBase WHERE Qty < 0;\n    SELECT @NegativePrice = COUNT(*) FROM #SalesBase WHERE UnitPrice < 0;\n    IF @NegativeQty > 0 OR @NegativePrice > 0\n    BEGIN\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Negative values: Qty=', @NegativeQty, N', Price=', @NegativePrice, N'. ');\n    END;\n    -- 6d: Check for suspicious outliers (revenue > 1M per row)\n    DECLARE @OutlierCount INT;\n    SELECT @OutlierCount = COUNT(*)\n    FROM #SalesBase\n    WHERE CAST(Qty AS DECIMAL(18,2)) * UnitPrice > 1000000;\n    IF @OutlierCount > 0\n    BEGIN\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Outlier rows (revenue>1M): ', @OutlierCount, N'. ');\n        -- Log outlier details for investigation\n        IF @DebugLevel >= 2\n        BEGIN\n            SELECT TOP 10\n                StagingID, RegionCode, Qty, UnitPrice,\n                CAST(Qty AS DECIMAL(18,2)) * UnitPrice AS EstRevenue,\n                'OUTLIER' AS Flag\n            FROM #SalesBase\n            WHERE CAST(Qty AS DECIMAL(18,2)) * UnitPrice > 1000000\n            ORDER BY CAST(Qty AS DECIMAL(18,2)) * UnitPrice DESC;\n        END;\n    END;\n    -- 6e: Mark all valid rows as processed\n    UPDATE #SalesBase\n    SET IsProcessed = 1\n    WHERE (@IncludeZeroQty = 1 OR Qty > 0)\n      AND UnitPrice >= 0;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 7: Compute summary statistics BEFORE insert (for reporting)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step7_PreInsertStats';\n    DECLARE @PreInsertStats TABLE (\n        RegionCode  VARCHAR(10),\n        [RowCount]  INT,\n        TotalQty    BIGINT,\n        TotalRevenue DECIMAL(18,2),\n        AvgPrice    DECIMAL(18,4),\n        MinPrice    DECIMAL(18,4),\n        MaxPrice    DECIMAL(18,4)\n    );\n    INSERT INTO @PreInsertStats\n    SELECT\n        RegionCode,\n        COUNT(*),\n        SUM(CAST(Qty AS BIGINT)),\n        SUM(CAST(Qty AS DECIMAL(18,2)) * UnitPrice),\n        AVG(UnitPrice),\n        MIN(UnitPrice),\n        MAX(UnitPrice)\n    FROM #SalesBase\n    WHERE IsProcessed = 1\n    GROUP BY RegionCode;\n    IF @DebugLevel >= 2\n        SELECT * FROM @PreInsertStats ORDER BY RegionCode;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 8: Final INSERT into FactSalesReport\n    -- ═══════════════════════════════════════════════════════════════════════\n    --  TotalRevenue    = Qty * UnitPrice     <== THIS IS THE KEY COMPUTATION\n    --  AdjustedRevenue = (Qty * UnitPrice) - Discount\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step8_Insert';\n    SET @StepStart = SYSUTCDATETIME();\n    IF @DryRun = 1\n    BEGIN\n        -- Dry run: show what WOULD be inserted\n        SELECT\n            'DRY_RUN' AS Mode,\n            COUNT(*) AS WouldInsertRows,\n            SUM(CAST(sb.Qty AS DECIMAL(18,2)) * sb.UnitPrice) AS WouldInsertRevenue,\n            MIN(sb.OrderDate) AS MinDate,\n            MAX(sb.OrderDate) AS MaxDate,\n            COUNT(DISTINCT sb.RegionCode) AS DistinctRegions\n        FROM #SalesBase sb\n        WHERE sb.IsProcessed = 1;\n        SET @InsertedRows = 0;\n        SET @StatusMsg = @StatusMsg + N'DRY RUN — no data inserted. ';\n    END\n    ELSE\n    BEGIN\n        BEGIN TRY\n            INSERT INTO [ai].[FactSalesReport]\n                (ReportDate, Region, RegionCode, CustomerSegment,\n                 Qty, UnitPrice, TotalRevenue, Discount, AdjustedRevenue, OrderDate)\n            SELECT\n                @ReportDate,\n                COALESCE(sb.RegionName, sb.RegionCode),\n                sb.RegionCode,\n                CASE\n                    WHEN sb.CustomerSegment IS NOT NULL THEN sb.CustomerSegment\n                    WHEN sb.CustomerID IS NOT NULL      THEN 'Unclassified'\n                    ELSE 'Anonymous'\n                END,\n                sb.Qty,\n                sb.UnitPrice,\n                sb.Qty * sb.UnitPrice                                AS TotalRevenue,\n                sb.Discount,\n                (sb.Qty * sb.UnitPrice) - COALESCE(sb.Discount, 0)  AS AdjustedRevenue,\n                sb.OrderDate\n            FROM #SalesBase sb\n            WHERE sb.IsProcessed = 1;\n            SET @InsertedRows = @@ROWCOUNT;\n            IF @DebugLevel >= 1\n                RAISERROR('[Step8] Inserted %d rows into FactSalesReport', 0, 1, @InsertedRows) WITH NOWAIT;\n        END TRY\n        BEGIN CATCH\n            INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n            VALUES ('spBuildSalesReport.Step8', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n            SET @ErrorCount = @ErrorCount + 1;\n            GOTO Cleanup;\n        END CATCH;\n    END;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 9: Post-insert verification\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step9_PostVerify';\n    IF @DryRun = 0 AND @InsertedRows > 0\n    BEGIN\n        -- Verify row count in target matches what we inserted\n        DECLARE @VerifyCount INT;\n        SELECT @VerifyCount = COUNT(*)\n        FROM [ai].[FactSalesReport]\n        WHERE ReportDate = @ReportDate\n          AND (@RegionFilter IS NULL OR RegionCode = @RegionFilter)\n          AND CreatedAt >= @StartTime;\n        IF @VerifyCount <> @InsertedRows\n        BEGIN\n            SET @WarningCount = @WarningCount + 1;\n            SET @StatusMsg = @StatusMsg + CONCAT(\n                N'Post-verify mismatch: expected ', @InsertedRows,\n                N', found ', @VerifyCount, N'. ');\n        END;\n        -- Check for negative TotalRevenue (should never happen with Qty>0 and UnitPrice>0)\n        DECLARE @NegRevCount INT;\n        SELECT @NegRevCount = COUNT(*)\n        FROM [ai].[FactSalesReport]\n        WHERE ReportDate = @ReportDate\n          AND TotalRevenue < 0\n          AND CreatedAt >= @StartTime;\n        IF @NegRevCount > 0\n        BEGIN\n            SET @WarningCount = @WarningCount + 1;\n            SET @StatusMsg = @StatusMsg + CONCAT(N'Negative TotalRevenue: ', @NegRevCount, N' rows. ');\n        END;\n        IF @DebugLevel >= 2\n        BEGIN\n            -- Post-insert summary by region\n            SELECT\n                RegionCode,\n                COUNT(*) AS Rows,\n                SUM(TotalRevenue) AS Revenue,\n                SUM(AdjustedRevenue) AS AdjRevenue,\n                SUM(Discount) AS TotalDiscount\n            FROM [ai].[FactSalesReport]\n            WHERE ReportDate = @ReportDate AND CreatedAt >= @StartTime\n            GROUP BY RegionCode\n            ORDER BY SUM(TotalRevenue) DESC;\n        END;\n    END;\n    /* ═══════════════════════════════════════════════════════════════════════\n       CROSS-CHECK WITH SOURCE DATA (disabled — too slow for production)\n       This used to compare FactSalesReport totals against raw SalesStaging\n       totals to detect data loss. Disabled in v3.1 because the cross-check\n       itself was taking longer than the build.\n       SELECT\n           'SalesStaging' AS Source,\n           COUNT(*) AS [RowCount],\n           SUM(OrderQty) AS TotalQty,\n           SUM(OrderAmount) AS TotalAmount\n       FROM [ai].[SalesStaging]\n       WHERE IsValid = 1\n       UNION ALL\n       SELECT\n           'FactSalesReport',\n           COUNT(*),\n           SUM(Qty),\n           SUM(TotalRevenue)\n       FROM [ai].[FactSalesReport]\n       WHERE ReportDate = @ReportDate;\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- CLEANUP: Drop temp tables, release lock, log audit\n    -- ═══════════════════════════════════════════════════════════════════════\n    Cleanup:\n    SET @CurrentStep = 'Cleanup';\n    DROP TABLE IF EXISTS #SalesBase;\n    DECLARE @Duration INT = DATEDIFF(MILLISECOND, @StartTime, SYSUTCDATETIME());\n    DECLARE @AuditMsg NVARCHAR(MAX) = CONCAT(\n        N'Report built: ', @InsertedRows, N' rows in ', @Duration, N'ms. ',\n        N'Date: ', FORMAT(@ReportDate, 'yyyy-MM-dd'), N'. ',\n        N'Mode: ', @RebuildMode, N'. ',\n        N'Deleted: ', @DeletedRows, N'. ',\n        N'Warnings: ', @WarningCount, N'. ',\n        N'Errors: ', @ErrorCount, N'. ',\n        @StatusMsg\n    );\n    EXEC [ai].[spLogAudit]\n        @EventType    = 'BUILD',\n        @ObjectName   = 'FactSalesReport',\n        @AffectedRows = @InsertedRows,\n        @Message      = @AuditMsg;\n    -- Release advisory lock\n    EXEC sp_releaseapplock @Resource = 'spBuildSalesReport_Lock', @LockOwner = 'Session';\n    IF @DebugLevel >= 1\n        RAISERROR('[Complete] %d rows, %d warnings, %d errors, %dms', 0, 1,\n            @InsertedRows, @WarningCount, @ErrorCount, @Duration) WITH NOWAIT;\nEND;"
+        },
+        {
+          "id": "[ai].[vwconsolidatedsales]",
+          "s": "ai",
+          "n": "vwConsolidatedSales",
+          "t": "view",
+          "ddl": "-- Level 2a: renames OrderQty→Qty, joins DimCalendar for filter ONLY\nCREATE VIEW [ai].[vwConsolidatedSales]\nAS\n    SELECT\n        s.StagingID,\n        s.OrderQty         AS Qty,\n        s.OrderAmount,\n        s.RegionCode,\n        s.OrderDate,\n        s.CustomerID,\n        s.CustomerName\n    FROM [ai].[SalesStaging] s\n    -- DimCalendar is a FILTER-ONLY join: no columns selected from dc\n    INNER JOIN [ai].[DimCalendar] dc\n        ON s.OrderDateKey = dc.DateKey\n    WHERE dc.FiscalYear = YEAR(GETDATE())\n      AND dc.IsBusinessDay = 1",
+          "cols": [
+            {
+              "n": "StagingID",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "Qty",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "OrderAmount",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerID",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerName",
+              "t": "—",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[vwpricelist]",
+          "s": "ai",
+          "n": "vwPriceList",
+          "t": "view",
+          "ddl": "-- Level 2b: multi-CTE view with 3 renames (ListPrice→BasePrice→AdjPrice→UnitPrice)\nCREATE VIEW [ai].[vwPriceList]\nAS\n    WITH CTE_Raw AS (\n        -- Stage 1: raw prices from PriceMaster\n        SELECT\n            ProductCode,\n            RegionCode,\n            ListPrice        AS BasePrice,\n            EffectiveFrom,\n            EffectiveTo\n        FROM [ai].[PriceMaster]\n        WHERE EffectiveTo IS NULL   -- only current prices\n    ),\n    CTE_Adjusted AS (\n        -- Stage 2: apply seasonal adjustment factor (1.0 = no change)\n        -- NOTE: the adjustment is a fixed multiplier here, no extra table\n        SELECT\n            ProductCode,\n            RegionCode,\n            BasePrice * 1.0  AS AdjPrice,\n            EffectiveFrom\n        FROM CTE_Raw\n    ),\n    CTE_Final AS (\n        -- Stage 3: final rename to UnitPrice\n        -- v1 had this as NetPrice but was renamed in Q3 2025\n        SELECT\n            ProductCode,\n            RegionCode,\n            AdjPrice         AS UnitPrice,\n            EffectiveFrom\n        FROM CTE_Adjusted\n    )\n    SELECT\n        ProductCode,\n        RegionCode,\n        UnitPrice,\n        EffectiveFrom\n    FROM CTE_Final",
+          "cols": [
+            {
+              "n": "ProductCode",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "UnitPrice",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "EffectiveFrom",
+              "t": "—",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[salesstaging]",
+          "s": "ai",
+          "n": "SalesStaging",
+          "t": "table",
+          "cols": [
+            {
+              "n": "StagingID",
+              "t": "bigint",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "OrderQty",
+              "t": "int",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderAmount",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "varchar(10)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderDateKey",
+              "t": "int",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerID",
+              "t": "int",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerName",
+              "t": "nvarchar(100)",
+              "nl": "NULL"
+            },
+            {
+              "n": "IsValid",
+              "t": "bit",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "StagedAt",
+              "t": "datetime2",
+              "nl": "NOT NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[pricemaster]",
+          "s": "ai",
+          "n": "PriceMaster",
+          "t": "table",
+          "cols": [
+            {
+              "n": "ProductCode",
+              "t": "varchar(20)",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "RegionCode",
+              "t": "varchar(10)",
+              "nl": "NOT NULL",
+              "pk": 2
+            },
+            {
+              "n": "ListPrice",
+              "t": "decimal(18,4)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "EffectiveFrom",
+              "t": "date",
+              "nl": "NOT NULL",
+              "pk": 3
+            },
+            {
+              "n": "EffectiveTo",
+              "t": "date",
+              "nl": "NULL"
+            },
+            {
+              "n": "LastRefreshed",
+              "t": "datetime2",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[sparchiveoldorders]",
+          "s": "ai",
+          "n": "spArchiveOldOrders",
+          "t": "procedure",
+          "ddl": "-- ─── spArchiveOldOrders (dead-end: downstream, reads SalesStaging→ArchiveOrders) ─\nCREATE PROCEDURE [ai].[spArchiveOldOrders]\n    @CutoffDate DATE = NULL\nAS\nBEGIN\n    SET NOCOUNT ON;\n    IF @CutoffDate IS NULL\n        SET @CutoffDate = DATEADD(YEAR, -2, GETDATE());\n    INSERT INTO [ai].[ArchiveOrders] (OrderQty, OrderAmount, RegionCode, OrderDate)\n    SELECT OrderQty, OrderAmount, RegionCode, OrderDate\n    FROM [ai].[SalesStaging]\n    WHERE OrderDate < @CutoffDate;\n    DELETE FROM [ai].[SalesStaging]\n    WHERE OrderDate < @CutoffDate;\n    EXEC [ai].[spLogAudit]\n        @EventType  = 'ARCHIVE',\n        @ObjectName = 'SalesStaging',\n        @AffectedRows = @@ROWCOUNT;\nEND;"
+        },
+        {
+          "id": "[ai].[sploadsalesstaging]",
+          "s": "ai",
+          "n": "spLoadSalesStaging",
+          "t": "procedure",
+          "ddl": "-- ─── spLoadSalesStaging (Level 4 — SELECT * passthrough) ────────────────────\nCREATE PROCEDURE [ai].[spLoadSalesStaging]\nAS\nBEGIN\n    SET NOCOUNT ON;\n    -- TRUNCATE and reload pattern — SELECT * passes ALL columns through\n    TRUNCATE TABLE [ai].[SalesStaging];\n    -- SELECT * means every column from vwRawOrders flows through unchanged\n    -- This includes OrderQty, OrderAmount, RegionCode, OrderDate, etc.\n    -- The view uses SELECT * from CleanedOrders — all columns pass through\n    INSERT INTO [ai].[SalesStaging]\n        (OrderQty, OrderAmount, RegionCode, OrderDate, CustomerID, CustomerName, IsValid)\n    SELECT\n        v.OrderQty, v.OrderAmount, v.RegionCode, v.OrderDate,\n        v.CustomerID, v.CustomerName, v.IsValid\n    FROM [ai].[vwRawOrders] v;\n    -- Backfill DateKey for calendar join\n    UPDATE s\n    SET s.OrderDateKey = dc.DateKey\n    FROM [ai].[SalesStaging] s\n    INNER JOIN [ai].[DimCalendar] dc\n        ON s.OrderDate = dc.FullDate;\n    EXEC [ai].[spLogAudit]\n        @EventType  = 'LOAD',\n        @ObjectName = 'SalesStaging',\n        @AffectedRows = @@ROWCOUNT;\nEND;"
+        },
+        {
+          "id": "[ai].[sprefreshprices]",
+          "s": "ai",
+          "n": "spRefreshPrices",
+          "t": "procedure",
+          "ddl": "-- ─── spRefreshPrices (Branch B, Level 4b) ───────────────────────────────────\n-- Loads PriceMaster from SupplierPrices + MarkupRules\n-- CurrencyConfig is a FILTER-ONLY join (no columns flow to ListPrice)\nCREATE PROCEDURE [ai].[spRefreshPrices]\nAS\nBEGIN\n    SET NOCOUNT ON;\n    -- Step 1: Load raw supplier costs into temp\n    -- NOTE: CurrencyConfig is only used for filtering, NOT for price calculation\n    SELECT\n        sp.ProductCode,\n        sp.CostPrice,\n        sp.Currency,\n        sp.EffectiveFrom,\n        r.RegionCode\n    INTO #SupplierCosts\n    FROM [ai].[SupplierPrices] sp\n    CROSS JOIN [ai].[RegionLookup] r\n    -- CurrencyConfig: FILTER ONLY — controls which currencies we accept\n    INNER JOIN [ai].[CurrencyConfig] cc\n        ON sp.Currency = cc.Code\n    WHERE cc.IsBase = 1\n      AND sp.EffectiveTo IS NULL;\n    -- Step 2: Apply markup rules to compute ListPrice\n    -- TODO: also pull TotalRevenue from ai.LegacyFacts (table doesn't exist, old note)\n    SELECT\n        sc.ProductCode,\n        sc.RegionCode,\n        sc.CostPrice * (1 + COALESCE(m.MarkupPct, 0.15)) AS ListPrice,\n        sc.EffectiveFrom\n    INTO #PricedItems\n    FROM #SupplierCosts sc\n    LEFT JOIN [ai].[MarkupRules] m\n        ON sc.RegionCode = m.RegionCode\n       AND m.ValidTo IS NULL;\n    /* Old approach: SELECT TotalRevenue FROM ai.SalesStaging\n       This was the v1 logic that pulled prices from sales data.\n       Removed in Q2 2025 when we switched to supplier-based pricing.\n       SELECT s.OrderAmount AS ListPrice, s.RegionCode\n       FROM ai.SalesStaging s\n       WHERE s.IsValid = 1\n    */\n    -- Step 3: Upsert into PriceMaster\n    MERGE [ai].[PriceMaster] AS tgt\n    USING #PricedItems AS src\n        ON  tgt.ProductCode   = src.ProductCode\n        AND tgt.RegionCode    = src.RegionCode\n        AND tgt.EffectiveFrom = src.EffectiveFrom\n    WHEN MATCHED THEN\n        UPDATE SET\n            tgt.ListPrice     = src.ListPrice,\n            tgt.LastRefreshed = SYSUTCDATETIME()\n    WHEN NOT MATCHED THEN\n        INSERT (ProductCode, RegionCode, ListPrice, EffectiveFrom, LastRefreshed)\n        VALUES (src.ProductCode, src.RegionCode, src.ListPrice, src.EffectiveFrom, SYSUTCDATETIME());\n    -- Cleanup\n    DROP TABLE #SupplierCosts;\n    DROP TABLE #PricedItems;\n    EXEC [ai].[spLogAudit]\n        @EventType  = 'REFRESH',\n        @ObjectName = 'PriceMaster',\n        @AffectedRows = @@ROWCOUNT;\nEND;"
+        },
+        {
+          "id": "[ai].[vwraworders]",
+          "s": "ai",
+          "n": "vwRawOrders",
+          "t": "view",
+          "ddl": "-- Level 5: SELECT * passthrough with filter\nCREATE VIEW [ai].[vwRawOrders]\nAS\n    -- Simple passthrough: all columns flow through, only rows are filtered\n    SELECT *\n    FROM [ai].[CleanedOrders]\n    WHERE IsValid = 1",
+          "cols": [
+            {
+              "n": "CleanedID",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "OrderQty",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "OrderAmount",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerID",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerName",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "IsValid",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "CleanedAt",
+              "t": "—",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[supplierprices]",
+          "s": "ai",
+          "n": "SupplierPrices",
+          "t": "table",
+          "cols": [
+            {
+              "n": "SupplierID",
+              "t": "int",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "ProductCode",
+              "t": "varchar(20)",
+              "nl": "NOT NULL",
+              "pk": 2
+            },
+            {
+              "n": "CostPrice",
+              "t": "decimal(18,4)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "Currency",
+              "t": "varchar(3)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "EffectiveFrom",
+              "t": "date",
+              "nl": "NOT NULL",
+              "pk": 3
+            },
+            {
+              "n": "EffectiveTo",
+              "t": "date",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[markuprules]",
+          "s": "ai",
+          "n": "MarkupRules",
+          "t": "table",
+          "cols": [
+            {
+              "n": "RuleID",
+              "t": "int",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "ProductGroup",
+              "t": "varchar(20)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "varchar(10)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "MarkupPct",
+              "t": "decimal(5,4)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "ValidFrom",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "ValidTo",
+              "t": "date",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[cleanedorders]",
+          "s": "ai",
+          "n": "CleanedOrders",
+          "t": "table",
+          "cols": [
+            {
+              "n": "CleanedID",
+              "t": "bigint",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "OrderQty",
+              "t": "int",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderAmount",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "varchar(10)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "CustomerID",
+              "t": "int",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerName",
+              "t": "nvarchar(100)",
+              "nl": "NULL"
+            },
+            {
+              "n": "IsValid",
+              "t": "bit",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "CleanedAt",
+              "t": "datetime2",
+              "nl": "NOT NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[spcleanorders]",
+          "s": "ai",
+          "n": "spCleanOrders",
+          "t": "procedure",
+          "ddl": "-- ─── spCleanOrders (Level 7 — multi-temp, CTE, COALESCE, EXEC dead end) ────\n-- Renames: RawQty→OrderQty (via COALESCE), RawAmount→OrderAmount\n-- CustomerMaster join enriches CustomerName (dead end for Qty trace)\n-- EXEC spLogAudit = dead end (audit, no data columns)\nCREATE PROCEDURE [ai].[spCleanOrders]\n    @BatchFilter     INT          = NULL,  -- NULL = all batches\n    @MaxAgeHours     INT          = 168,   -- only clean orders &lt; 7 days old\n    @DedupStrategy   VARCHAR(20)  = 'LATEST', -- LATEST / FIRST / SUM\n    @ValidateAmounts BIT          = 1,\n    @DebugLevel      INT          = 0\nAS\nBEGIN\n    /*\n    ════════════════════════════════════════════════════════════════════════════════\n    spCleanOrders — Deduplication, enrichment, and quality control pipeline\n    COLUMN FLOW (the only thing that matters for lineage):\n    ─────────────────────────────────────────────────────────\n    RawOrderImport.RawQty    → COALESCE(r.RawQty, 0) AS OrderQty → #Deduped.OrderQty\n    RawOrderImport.RawAmount → COALESCE(r.RawAmount, 0) AS OrderAmount → #Deduped.OrderAmount\n    #Deduped → #Enriched (adds CustomerName from CustomerMaster, dead end for Qty)\n    #Enriched.OrderQty → CleanedOrders.OrderQty (passthrough)\n    #Enriched.OrderAmount → CleanedOrders.OrderAmount (passthrough)\n    DEAD ENDS:\n    ──────────\n    - CustomerMaster: joined for CustomerName enrichment only, does NOT feed OrderQty\n    - spLogAudit: EXEC call for audit trail, no data columns flow\n    - TierCode: computed from CustomerMaster.CustomerTier, used for stats only\n    VERSION HISTORY:\n    ────────────────\n    v1.0 (2024-Q1) Simple INSERT...SELECT with dedup CTE\n    v1.1 (2024-Q2) Added CustomerMaster enrichment for downstream segment analysis\n    v2.0 (2024-Q3) Refactored to multi-temp table approach for better error isolation\n    v2.1 (2024-Q4) Added @DedupStrategy parameter (LATEST vs FIRST vs SUM)\n    v3.0 (2025-Q1) Added data quality validation steps (amounts, dates, regions)\n    v3.1 (2025-Q2) Added statistical profiling for monitoring dashboard\n    v3.2 (2025-Q3) Added @DebugLevel parameter, concurrency control\n    v4.0 (2025-Q4) Performance: added index hints for large batch processing\n    v4.1 (2026-Q1) Fixed edge case: NULL CustomerRef causing cross-join explosion\n                   (Bug #4782: CustomerMaster LEFT JOIN produced cartesian when CustomerRef IS NULL)\n    ════════════════════════════════════════════════════════════════════════════════\n    */\n    SET NOCOUNT ON;\n    SET XACT_ABORT OFF;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- INITIALIZATION\n    -- ═══════════════════════════════════════════════════════════════════════\n    DECLARE @StartTime       DATETIME2 = SYSUTCDATETIME();\n    DECLARE @StepStart       DATETIME2;\n    DECLARE @RowsBefore      INT = 0;\n    DECLARE @RowsAfter       INT = 0;\n    DECLARE @DuplicateCount  INT = 0;\n    DECLARE @InvalidCount    INT = 0;\n    DECLARE @EnrichedCount   INT = 0;\n    DECLARE @WarningCount    INT = 0;\n    DECLARE @ErrorCount      INT = 0;\n    DECLARE @CurrentStep     VARCHAR(50);\n    DECLARE @StatusMsg       NVARCHAR(MAX) = N'';\n    DECLARE @CutoffTime      DATETIME2 = DATEADD(HOUR, -@MaxAgeHours, SYSUTCDATETIME());\n    -- Validate parameters\n    IF @DedupStrategy NOT IN ('LATEST', 'FIRST', 'SUM')\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spCleanOrders.Validate', 50020,\n            'Invalid @DedupStrategy: ' + ISNULL(@DedupStrategy, 'NULL'));\n        RETURN;\n    END;\n    IF @MaxAgeHours < 1 OR @MaxAgeHours > 8760\n    BEGIN\n        SET @MaxAgeHours = 168;\n        SET @WarningCount = @WarningCount + 1;\n    END;\n    -- Concurrency control\n    DECLARE @LockResult INT;\n    EXEC @LockResult = sp_getapplock\n        @Resource   = 'spCleanOrders_Lock',\n        @LockMode   = 'Exclusive',\n        @LockOwner  = 'Session',\n        @LockTimeout = 10000;\n    IF @LockResult < 0\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spCleanOrders.Lock', 50021,\n            'Could not acquire lock. Result=' + CAST(@LockResult AS VARCHAR));\n        RETURN;\n    END;\n    IF @DebugLevel >= 1\n    BEGIN\n        DECLARE @DebugMsg NVARCHAR(500) = CONCAT(\n            N'[spCleanOrders] Starting. Batch=', ISNULL(CAST(@BatchFilter AS NVARCHAR), 'ALL'),\n            N', MaxAge=', @MaxAgeHours, N'h, Dedup=', @DedupStrategy,\n            N', ValidateAmounts=', @ValidateAmounts);\n        RAISERROR(@DebugMsg, 0, 1) WITH NOWAIT;\n    END;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 1: Pre-clean profiling — collect stats on raw input data\n    -- This helps identify data quality trends over time.\n    -- None of these stats affect the actual data flow.\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step1_Profile';\n    SET @StepStart = SYSUTCDATETIME();\n    DECLARE @InputProfile TABLE (\n        Metric        VARCHAR(50),\n        NumericValue  DECIMAL(18,2),\n        TextValue     VARCHAR(200)\n    );\n    INSERT INTO @InputProfile\n    SELECT 'TotalRawRows', COUNT(*), NULL\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime\n    UNION ALL\n    SELECT 'AvgRawQty', AVG(CAST(RawQty AS DECIMAL(18,2))), NULL\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime\n    UNION ALL\n    SELECT 'MaxRawQty', MAX(CAST(RawQty AS DECIMAL(18,2))), NULL\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime\n    UNION ALL\n    SELECT 'NullQtyCount', SUM(CASE WHEN RawQty IS NULL THEN 1 ELSE 0 END), NULL\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime\n    UNION ALL\n    SELECT 'NegativeQtyCount', SUM(CASE WHEN RawQty < 0 THEN 1 ELSE 0 END), NULL\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime\n    UNION ALL\n    SELECT 'DistinctRegions', COUNT(DISTINCT RegionCode), NULL\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime\n    UNION ALL\n    SELECT 'DistinctSources', COUNT(DISTINCT SourceSystem), NULL\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime\n    UNION ALL\n    SELECT 'DateRange', DATEDIFF(DAY, MIN(OrderDate), MAX(OrderDate)),\n           CONCAT(FORMAT(MIN(OrderDate), 'yyyy-MM-dd'), ' to ', FORMAT(MAX(OrderDate), 'yyyy-MM-dd'))\n    FROM [ai].[RawOrderImport]\n    WHERE (@BatchFilter IS NULL OR BatchID = @BatchFilter)\n      AND ImportedAt >= @CutoffTime;\n    IF @DebugLevel >= 2\n        SELECT * FROM @InputProfile;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 2: Deduplicate raw orders into #Deduped\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- Uses CTE with ROW_NUMBER for deduplication.\n    -- The COLUMN RENAME happens here:\n    --   RawOrderImport.RawQty    → COALESCE(r.RawQty, 0) AS OrderQty\n    --   RawOrderImport.RawAmount → COALESCE(r.RawAmount, 0) AS OrderAmount\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step2_Dedup';\n    SET @StepStart = SYSUTCDATETIME();\n    -- Pre-create #Deduped (required: SQL Server disallows multiple SELECT INTO for same temp table)\n    CREATE TABLE #Deduped (\n        ImportID       BIGINT,\n        OrderQty       INT           NOT NULL,\n        OrderAmount    DECIMAL(18,2) NOT NULL,\n        RegionCode     VARCHAR(10)   NOT NULL,\n        OrderDate      DATE          NOT NULL,\n        CustomerRef    VARCHAR(50)   NULL,\n        SourceSystem   VARCHAR(10)   NULL,\n        IsValid        BIT           NOT NULL DEFAULT 0,\n        ValidationMsg  NVARCHAR(500) NULL\n    );\n    BEGIN TRY\n        IF @DedupStrategy = 'LATEST'\n        BEGIN\n            ;WITH CTE_Ranked AS (\n                SELECT\n                    r.ImportID,\n                    COALESCE(r.RawQty, 0)     AS OrderQty,\n                    COALESCE(r.RawAmount, 0)  AS OrderAmount,\n                    r.RegionCode,\n                    r.OrderDate,\n                    r.CustomerRef,\n                    r.SourceSystem,\n                    ROW_NUMBER() OVER (\n                        PARTITION BY r.RegionCode, r.OrderDate, r.RawQty\n                        ORDER BY r.ImportedAt DESC\n                    ) AS DupRank\n                FROM [ai].[RawOrderImport] r\n                WHERE r.BatchID IS NOT NULL\n                  AND (@BatchFilter IS NULL OR r.BatchID = @BatchFilter)\n                  AND r.ImportedAt >= @CutoffTime\n            )\n            INSERT INTO #Deduped (ImportID, OrderQty, OrderAmount, RegionCode, OrderDate, CustomerRef, SourceSystem)\n            SELECT ImportID, OrderQty, OrderAmount, RegionCode, OrderDate, CustomerRef, SourceSystem\n            FROM CTE_Ranked\n            WHERE DupRank = 1;\n        END\n        ELSE IF @DedupStrategy = 'FIRST'\n        BEGIN\n            ;WITH CTE_Ranked AS (\n                SELECT\n                    r.ImportID,\n                    COALESCE(r.RawQty, 0)     AS OrderQty,\n                    COALESCE(r.RawAmount, 0)  AS OrderAmount,\n                    r.RegionCode,\n                    r.OrderDate,\n                    r.CustomerRef,\n                    r.SourceSystem,\n                    ROW_NUMBER() OVER (\n                        PARTITION BY r.RegionCode, r.OrderDate, r.RawQty\n                        ORDER BY r.ImportedAt ASC  -- FIRST instead of LATEST\n                    ) AS DupRank\n                FROM [ai].[RawOrderImport] r\n                WHERE r.BatchID IS NOT NULL\n                  AND (@BatchFilter IS NULL OR r.BatchID = @BatchFilter)\n                  AND r.ImportedAt >= @CutoffTime\n            )\n            INSERT INTO #Deduped (ImportID, OrderQty, OrderAmount, RegionCode, OrderDate, CustomerRef, SourceSystem)\n            SELECT ImportID, OrderQty, OrderAmount, RegionCode, OrderDate, CustomerRef, SourceSystem\n            FROM CTE_Ranked\n            WHERE DupRank = 1;\n        END\n        ELSE  -- SUM strategy: aggregate duplicates\n        BEGIN\n            INSERT INTO #Deduped (ImportID, OrderQty, OrderAmount, RegionCode, OrderDate, CustomerRef, SourceSystem)\n            SELECT\n                MIN(r.ImportID),\n                COALESCE(SUM(r.RawQty), 0),\n                COALESCE(SUM(r.RawAmount), 0),\n                r.RegionCode,\n                r.OrderDate,\n                MIN(r.CustomerRef),\n                MIN(r.SourceSystem)\n            FROM [ai].[RawOrderImport] r\n            WHERE r.BatchID IS NOT NULL\n              AND (@BatchFilter IS NULL OR r.BatchID = @BatchFilter)\n              AND r.ImportedAt >= @CutoffTime\n            GROUP BY r.RegionCode, r.OrderDate;\n        END;\n        SET @RowsBefore = @@ROWCOUNT;\n        -- Count duplicates that were eliminated\n        SELECT @DuplicateCount = COUNT(*)\n        FROM [ai].[RawOrderImport] r\n        WHERE r.BatchID IS NOT NULL\n          AND (@BatchFilter IS NULL OR r.BatchID = @BatchFilter)\n          AND r.ImportedAt >= @CutoffTime;\n        SET @DuplicateCount = @DuplicateCount - @RowsBefore;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step2] Deduplication: %d rows (eliminated %d dupes)', 0, 1, @RowsBefore, @DuplicateCount) WITH NOWAIT;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spCleanOrders.Step2', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        SET @ErrorCount = @ErrorCount + 1;\n        GOTO CleanupClean;\n    END CATCH;\n    /* ═══════════════════════════════════════════════════════════════════════\n       OLD DEDUP APPROACH (pre v2.0):\n       Used DELETE with self-join instead of CTE + ROW_NUMBER.\n       This was O(n^2) and caused tempdb spills on batches > 50K rows.\n       DELETE d1\n       FROM [ai].[RawOrderImport] d1\n       INNER JOIN [ai].[RawOrderImport] d2\n           ON  d1.RegionCode = d2.RegionCode\n           AND d1.OrderDate  = d2.OrderDate\n           AND d1.RawQty     = d2.RawQty\n           AND d1.ImportID   > d2.ImportID;\n       -- v1.5 tried using MERGE for dedup:\n       -- MERGE [ai].[CleanedOrders] AS tgt\n       -- USING (SELECT DISTINCT RawQty AS OrderQty, RawAmount AS OrderAmount, ...\n       --        FROM [ai].[RawOrderImport]) AS src\n       -- ON tgt.OrderDate = src.OrderDate AND tgt.RegionCode = src.RegionCode\n       -- WHEN NOT MATCHED THEN INSERT ...\n       -- WHEN MATCHED THEN UPDATE SET tgt.OrderQty = src.OrderQty\n       -- This was abandoned because MERGE has well-known bugs with parallel plans\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 3: Data quality validation on #Deduped\n    -- Validates amounts, dates, and region codes.\n    -- Does NOT change OrderQty or OrderAmount values — only flags rows.\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step3_Validate';\n    SET @StepStart = SYSUTCDATETIME();\n    IF @ValidateAmounts = 1\n    BEGIN\n        -- 3a: Flag zero-qty AND zero-amount (completely empty orders)\n        UPDATE #Deduped\n        SET ValidationMsg = 'Empty order: zero qty and zero amount',\n            IsValid = 0\n        WHERE OrderQty = 0 AND OrderAmount = 0;\n        -- 3b: Flag negative amounts\n        UPDATE #Deduped\n        SET ValidationMsg = COALESCE(ValidationMsg + '; ', '') + 'Negative amount: ' + CAST(OrderAmount AS VARCHAR),\n            IsValid = 0\n        WHERE OrderAmount < 0;\n        -- 3c: Flag outlier amounts (> 5M per order)\n        UPDATE #Deduped\n        SET ValidationMsg = COALESCE(ValidationMsg + '; ', '') + 'Outlier amount: ' + CAST(OrderAmount AS VARCHAR)\n        WHERE OrderAmount > 5000000;\n        -- 3d: Flag future dates\n        UPDATE #Deduped\n        SET ValidationMsg = COALESCE(ValidationMsg + '; ', '') + 'Future date: ' + FORMAT(OrderDate, 'yyyy-MM-dd')\n        WHERE OrderDate > DATEADD(DAY, 1, GETDATE());\n        -- 3e: Flag very old dates (> 5 years)\n        UPDATE #Deduped\n        SET ValidationMsg = COALESCE(ValidationMsg + '; ', '') + 'Old date: ' + FORMAT(OrderDate, 'yyyy-MM-dd')\n        WHERE OrderDate < DATEADD(YEAR, -5, GETDATE());\n        -- Mark remaining rows as valid\n        UPDATE #Deduped SET IsValid = 1 WHERE IsValid = 0 AND ValidationMsg IS NULL;\n        -- Actually all rows without validation messages are valid\n        UPDATE #Deduped SET IsValid = 1 WHERE ValidationMsg IS NULL;\n        SELECT @InvalidCount = COUNT(*) FROM #Deduped WHERE IsValid = 0;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step3] Validation: %d invalid rows flagged', 0, 1, @InvalidCount) WITH NOWAIT;\n    END\n    ELSE\n    BEGIN\n        -- Skip validation: mark all as valid\n        UPDATE #Deduped SET IsValid = 1;\n    END;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 4: Enrich with customer data into #Enriched\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- CustomerMaster provides CustomerName (NOT relevant to OrderQty/OrderAmount)\n    -- CustomerID is resolved from CustomerRef by casting to INT\n    --\n    -- IMPORTANT: CustomerMaster is a DEAD END for column lineage.\n    -- Only CustomerName and TierCode come from it. Neither affects OrderQty.\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step4_Enrich';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        SELECT\n            d.ImportID,\n            d.OrderQty,\n            d.OrderAmount,\n            d.RegionCode,\n            d.OrderDate,\n            d.SourceSystem,\n            cm.CustomerID,\n            cm.CustomerName,\n            -- CustomerMaster.CustomerTier feeds segment logic, NOT revenue columns\n            CASE\n                WHEN cm.CustomerTier = 'Premium'  THEN 1\n                WHEN cm.CustomerTier = 'Standard' THEN 0\n                ELSE -1\n            END AS TierCode,\n            d.IsValid,\n            d.ValidationMsg,\n            CASE\n                WHEN cm.CustomerID IS NOT NULL THEN 'matched'\n                WHEN d.CustomerRef IS NOT NULL THEN 'unmatched'\n                ELSE 'anonymous'\n            END AS CustomerMatchStatus\n        INTO #Enriched\n        FROM #Deduped d\n        LEFT JOIN [ai].[CustomerMaster] cm\n            ON d.CustomerRef = CAST(cm.CustomerID AS VARCHAR(50))\n           AND cm.IsActive = 1;\n        SET @EnrichedCount = @@ROWCOUNT;\n        /* Old enrichment approach (pre v4.1):\n           This used a subquery that caused cartesian explosion when CustomerRef was NULL:\n           LEFT JOIN [ai].[CustomerMaster] cm ON cm.CustomerID = TRY_CAST(d.CustomerRef AS INT)\n           Bug #4782: when CustomerRef = NULL, TRY_CAST returns NULL which matches all NULL CustomerIDs\n        */\n        IF @DebugLevel >= 1\n        BEGIN\n            DECLARE @MatchedCount INT, @UnmatchedCount INT, @AnonCount INT;\n            SELECT @MatchedCount = SUM(CASE WHEN CustomerMatchStatus = 'matched' THEN 1 ELSE 0 END),\n                   @UnmatchedCount = SUM(CASE WHEN CustomerMatchStatus = 'unmatched' THEN 1 ELSE 0 END),\n                   @AnonCount = SUM(CASE WHEN CustomerMatchStatus = 'anonymous' THEN 1 ELSE 0 END)\n            FROM #Enriched;\n            RAISERROR('[Step4] Enrichment: %d matched, %d unmatched, %d anonymous', 0, 1,\n                @MatchedCount, @UnmatchedCount, @AnonCount) WITH NOWAIT;\n        END;\n        IF @DebugLevel >= 2\n        BEGIN\n            -- Tier distribution (for monitoring dashboard)\n            SELECT\n                CASE TierCode WHEN 1 THEN 'Premium' WHEN 0 THEN 'Standard' ELSE 'Other' END AS Tier,\n                COUNT(*) AS [RowCount],\n                SUM(OrderQty) AS TotalQty,\n                SUM(OrderAmount) AS TotalAmount,\n                AVG(OrderAmount) AS AvgAmount\n            FROM #Enriched\n            GROUP BY TierCode\n            ORDER BY TierCode;\n            -- Source system breakdown\n            SELECT\n                SourceSystem,\n                COUNT(*) AS [RowCount],\n                SUM(OrderQty) AS TotalQty,\n                SUM(OrderAmount) AS TotalAmount\n            FROM #Enriched\n            GROUP BY SourceSystem;\n        END;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spCleanOrders.Step4', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        SET @ErrorCount = @ErrorCount + 1;\n        GOTO CleanupClean;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 5: Insert into CleanedOrders from #Enriched\n    -- This is the ACTUAL data flow for OrderQty and OrderAmount\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step5_Insert';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        INSERT INTO [ai].[CleanedOrders]\n            (OrderQty, OrderAmount, RegionCode, OrderDate, CustomerID, CustomerName, IsValid)\n        SELECT\n            e.OrderQty,\n            e.OrderAmount,\n            e.RegionCode,\n            e.OrderDate,\n            e.CustomerID,\n            e.CustomerName,\n            CASE\n                WHEN e.IsValid = 0                              THEN 0\n                WHEN e.OrderQty > 0 AND e.OrderAmount > 0      THEN 1\n                WHEN e.OrderQty = 0 AND e.OrderAmount > 0      THEN 1  -- zero-qty but has amount\n                WHEN e.OrderQty > 0 AND e.OrderAmount = 0      THEN 1  -- has qty, free items\n                ELSE 0\n            END AS IsValid\n        FROM #Enriched e\n        WHERE e.IsValid = 1;  -- only insert validated rows\n        SET @RowsAfter = @@ROWCOUNT;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step5] Inserted %d rows into CleanedOrders', 0, 1, @RowsAfter) WITH NOWAIT;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spCleanOrders.Step5', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        SET @ErrorCount = @ErrorCount + 1;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 6: Post-insert statistics\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step6_PostStats';\n    DECLARE @PostStats TABLE (\n        RegionCode VARCHAR(10),\n        InsertedRows INT,\n        TotalQty BIGINT,\n        TotalAmount DECIMAL(18,2),\n        AvgQty DECIMAL(18,2),\n        MaxQty INT\n    );\n    INSERT INTO @PostStats\n    SELECT\n        RegionCode,\n        COUNT(*),\n        SUM(CAST(OrderQty AS BIGINT)),\n        SUM(OrderAmount),\n        AVG(CAST(OrderQty AS DECIMAL(18,2))),\n        MAX(OrderQty)\n    FROM [ai].[CleanedOrders]\n    WHERE CleanedAt >= @StartTime\n    GROUP BY RegionCode;\n    IF @DebugLevel >= 2\n        SELECT * FROM @PostStats ORDER BY RegionCode;\n    /* ═══════════════════════════════════════════════════════════════════════\n       DATA LINEAGE VERIFICATION QUERY (for manual audit)\n       Traces the column rename from RawQty to OrderQty:\n       SELECT\n           roi.ImportID,\n           roi.RawQty        AS 'RawOrderImport.RawQty',\n           co.OrderQty       AS 'CleanedOrders.OrderQty',\n           CASE WHEN COALESCE(roi.RawQty, 0) = co.OrderQty THEN 'MATCH' ELSE 'MISMATCH' END AS QtyCheck,\n           roi.RawAmount     AS 'RawOrderImport.RawAmount',\n           co.OrderAmount    AS 'CleanedOrders.OrderAmount',\n           CASE WHEN COALESCE(roi.RawAmount, 0) = co.OrderAmount THEN 'MATCH' ELSE 'MISMATCH' END AS AmtCheck\n       FROM [ai].[RawOrderImport] roi\n       INNER JOIN [ai].[CleanedOrders] co\n           ON roi.OrderDate = co.OrderDate\n          AND roi.RegionCode = co.RegionCode\n          AND COALESCE(roi.RawQty, 0) = co.OrderQty\n       WHERE roi.ImportedAt >= DATEADD(HOUR, -1, GETDATE())\n       ORDER BY roi.ImportedAt DESC;\n       -- Expected: RawQty should equal OrderQty (after COALESCE of NULLs to 0)\n       -- Any MISMATCH indicates a bug in the cleaning pipeline\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- CLEANUP: Drop temp tables, release lock, audit\n    -- ═══════════════════════════════════════════════════════════════════════\n    CleanupClean:\n    DROP TABLE IF EXISTS #Deduped;\n    DROP TABLE IF EXISTS #Enriched;\n    DECLARE @Duration INT = DATEDIFF(MILLISECOND, @StartTime, SYSUTCDATETIME());\n    SET @StatusMsg = CONCAT(\n        N'Clean: ', @RowsAfter, N'/', @RowsBefore, N' rows',\n        N' (', @DuplicateCount, N' dupes, ', @InvalidCount, N' invalid)',\n        N' Strategy=', @DedupStrategy,\n        N' in ', @Duration, N'ms',\n        CASE WHEN @WarningCount > 0 THEN CONCAT(N' [', @WarningCount, N' warnings]') ELSE N'' END,\n        CASE WHEN @ErrorCount > 0 THEN CONCAT(N' [', @ErrorCount, N' errors]') ELSE N'' END\n    );\n    -- Audit (dead end: no data columns flow through this EXEC)\n    EXEC [ai].[spLogAudit]\n        @EventType    = 'CLEAN',\n        @ObjectName   = 'CleanedOrders',\n        @AffectedRows = @RowsAfter,\n        @Message      = @StatusMsg;\n    -- Release lock\n    EXEC sp_releaseapplock @Resource = 'spCleanOrders_Lock', @LockOwner = 'Session';\n    IF @DebugLevel >= 1\n        RAISERROR('[Complete] %d rows cleaned in %dms', 0, 1, @RowsAfter, @Duration) WITH NOWAIT;\nEND;"
+        },
+        {
+          "id": "[ai].[raworderimport]",
+          "s": "ai",
+          "n": "RawOrderImport",
+          "t": "table",
+          "cols": [
+            {
+              "n": "ImportID",
+              "t": "bigint",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "RawQty",
+              "t": "int",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "RawAmount",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "varchar(10)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "SourceSystem",
+              "t": "varchar(10)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "BatchID",
+              "t": "int",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerRef",
+              "t": "varchar(50)",
+              "nl": "NULL"
+            },
+            {
+              "n": "ImportedAt",
+              "t": "datetime2",
+              "nl": "NOT NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[spimportorders]",
+          "s": "ai",
+          "n": "spImportOrders",
+          "t": "procedure",
+          "ddl": "-- ─── spImportOrders (Level 9 — large SP ~180 lines, batch bloat) ────────────\n-- Renames: ext.Quantity→RawQty, ext.Amount→RawAmount\n-- ActiveRegions is a FILTER-ONLY subquery (no data columns)\nCREATE PROCEDURE [ai].[spImportOrders]\n    @BatchSize       INT = 10000,\n    @LookbackDays    INT = 90,\n    @DryRun          BIT = 0,\n    @ForceReimport   BIT = 0,\n    @SourceFilter    VARCHAR(10) = NULL,  -- NULL = all sources, 'SAP', 'Oracle'\n    @MaxRetries      INT = 3\nAS\nBEGIN\n    SET NOCOUNT ON;\n    SET XACT_ABORT OFF;  -- we handle errors manually per step\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- PARAMETER VALIDATION AND INITIALIZATION\n    -- ═══════════════════════════════════════════════════════════════════════\n    DECLARE @BatchID         INT = NEXT VALUE FOR dbo.BatchSeq;\n    DECLARE @TotalRows       INT = 0;\n    DECLARE @ProcessedRows   INT = 0;\n    DECLARE @ErrorCount      INT = 0;\n    DECLARE @WarningCount    INT = 0;\n    DECLARE @DuplicateCount  INT = 0;\n    DECLARE @NegativeCount   INT = 0;\n    DECLARE @StartTime       DATETIME2 = SYSUTCDATETIME();\n    DECLARE @StepStart       DATETIME2;\n    DECLARE @RetryCount      INT = 0;\n    DECLARE @CurrentStep     VARCHAR(50) = 'Init';\n    DECLARE @StatusMsg       NVARCHAR(MAX) = N'';\n    -- Validate @BatchSize range\n    IF @BatchSize < 100 OR @BatchSize > 1000000\n    BEGIN\n        SET @BatchSize = 10000;\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + N'BatchSize out of range, reset to 10000. ';\n    END;\n    -- Validate @LookbackDays\n    IF @LookbackDays < 1 OR @LookbackDays > 365\n    BEGIN\n        SET @LookbackDays = 90;\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + N'LookbackDays out of range, reset to 90. ';\n    END;\n    -- Validate @SourceFilter\n    IF @SourceFilter IS NOT NULL AND @SourceFilter NOT IN ('SAP', 'Oracle')\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spImportOrders.Validate', 50001,\n            'Invalid @SourceFilter: ' + ISNULL(@SourceFilter, 'NULL') + '. Must be SAP, Oracle, or NULL.');\n        RETURN;\n    END;\n    -- Check for concurrent execution (advisory lock pattern)\n    DECLARE @LockResult INT;\n    EXEC @LockResult = sp_getapplock\n        @Resource = 'spImportOrders_Lock',\n        @LockMode = 'Exclusive',\n        @LockOwner = 'Session',\n        @LockTimeout = 5000;\n    IF @LockResult < 0\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spImportOrders.Lock', 50002,\n            'Could not acquire lock — another instance may be running. LockResult=' + CAST(@LockResult AS VARCHAR));\n        RETURN;\n    END;\n    -- v2: renamed Qty to Quantity here (WRONG COMMENT: it's actually the opposite)\n    -- v3: added SourceFilter parameter (2025-Q2)\n    -- v4: added retry logic for transient failures (2025-Q3)\n    -- SELECT Amount, Price, Discount FROM ai.OldPricing  (commented out, never existed)\n    -- SELECT TotalRevenue, GrossAmount FROM ai.FactSalesReport  -- old reconciliation query\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 1: Pull from external orders into temp batch table\n    -- The ACTUAL column mapping happens here:\n    --   vwExternalOrders.Quantity → #RawBatch.RawQty (RENAME)\n    --   vwExternalOrders.Amount   → #RawBatch.RawAmount (RENAME)\n    -- ActiveRegions is FILTER ONLY — no data columns flow through\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step1_Extract';\n    SET @StepStart = SYSUTCDATETIME();\n    DECLARE @ExtractRetry INT = 0;\n    WHILE @ExtractRetry <= @MaxRetries\n    BEGIN\n        BEGIN TRY\n            IF OBJECT_ID('tempdb..#RawBatch') IS NOT NULL\n                DROP TABLE #RawBatch;\n            SELECT\n                ext.Quantity     AS RawQty,\n                ext.Amount       AS RawAmount,\n                ext.RegionCode,\n                ext.OrderDate,\n                ext.SourceSystem,\n                @BatchID         AS BatchID,\n                CAST(NULL AS VARCHAR(50)) AS CustomerRef,\n                CAST(0 AS BIT)   AS IsValidated,\n                CAST(0 AS BIT)   AS IsDuplicate,\n                ROW_NUMBER() OVER (\n                    PARTITION BY ext.SourceSystem, ext.OrderDate\n                    ORDER BY ext.OrderID\n                )                AS RowSeq,\n                CAST(NULL AS VARCHAR(200)) AS ValidationMessage\n            INTO #RawBatch\n            FROM [ai].[vwExternalOrders] ext\n            -- ActiveRegions: FILTER ONLY — controls which regions we import from\n            -- No columns from ActiveRegions flow into RawQty or RawAmount\n            WHERE ext.RegionCode IN (\n                SELECT ar.RegionCode\n                FROM [ai].[ActiveRegions] ar\n                WHERE ar.IsActive = 1\n            )\n            AND ext.OrderDate >= DATEADD(DAY, -@LookbackDays, GETDATE())\n            AND (@SourceFilter IS NULL OR ext.SourceSystem = @SourceFilter);\n            SET @TotalRows = @@ROWCOUNT;\n            BREAK;  -- success, exit retry loop\n        END TRY\n        BEGIN CATCH\n            SET @ExtractRetry = @ExtractRetry + 1;\n            IF @ExtractRetry > @MaxRetries\n            BEGIN\n                INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n                VALUES ('spImportOrders.Step1', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n                EXEC sp_releaseapplock @Resource = 'spImportOrders_Lock', @LockOwner = 'Session';\n                RETURN;\n            END;\n            -- Transient error: wait and retry\n            WAITFOR DELAY '00:00:02';\n        END CATCH;\n    END;\n    /* ═══════════════════════════════════════════════════════════════════════\n       DIAGNOSTIC: Uncomment this block to dump raw batch for debugging.\n       This was used during the SAP→Oracle migration in 2024.\n       SELECT TOP 100\n           RawQty, RawAmount, RegionCode, OrderDate, SourceSystem,\n           'DEBUG_DUMP' AS DebugFlag\n       FROM #RawBatch\n       ORDER BY OrderDate DESC;\n       -- Also tried joining back to check:\n       -- SELECT rb.RawQty AS ImportedQty, ext.Quantity AS OriginalQty,\n       --        rb.RawAmount AS ImportedAmt, ext.Amount AS OriginalAmt\n       -- FROM #RawBatch rb\n       -- JOIN [ai].[vwExternalOrders] ext ON rb.OrderDate = ext.OrderDate\n       -- WHERE rb.SourceSystem = ext.SourceSystem;\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 2: Data quality validation\n    -- These validations modify #RawBatch in-place but do NOT change the\n    -- column mapping. RawQty and RawAmount are the data-carrying columns.\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step2_Validate';\n    SET @StepStart = SYSUTCDATETIME();\n    -- 2a: Remove duplicates within batch (keep first by RowSeq)\n    UPDATE #RawBatch\n    SET IsDuplicate = 1\n    WHERE RowSeq > 1;\n    SET @DuplicateCount = @@ROWCOUNT;\n    DELETE FROM #RawBatch\n    WHERE IsDuplicate = 1;\n    -- 2b: Remove rows that already exist in RawOrderImport (dedup against target)\n    IF @ForceReimport = 0\n    BEGIN\n        DELETE rb\n        FROM #RawBatch rb\n        INNER JOIN [ai].[RawOrderImport] roi\n            ON  rb.OrderDate    = roi.OrderDate\n            AND rb.RegionCode   = roi.RegionCode\n            AND rb.RawQty       = roi.RawQty\n            AND rb.RawAmount    = roi.RawAmount\n            AND rb.SourceSystem = roi.SourceSystem;\n        SET @DuplicateCount = @DuplicateCount + @@ROWCOUNT;\n    END;\n    -- 2c: Flag negative quantities (data quality)\n    UPDATE #RawBatch\n    SET RawQty = 0,\n        ValidationMessage = COALESCE(ValidationMessage + '; ', '') + 'Negative qty corrected'\n    WHERE RawQty < 0;\n    SET @NegativeCount = @@ROWCOUNT;\n    -- 2d: Flag suspicious amounts (> 10M or < 0)\n    UPDATE #RawBatch\n    SET ValidationMessage = COALESCE(ValidationMessage + '; ', '') + 'Suspicious amount: ' + CAST(RawAmount AS VARCHAR)\n    WHERE RawAmount > 10000000 OR RawAmount < 0;\n    SET @WarningCount = @WarningCount + @@ROWCOUNT;\n    -- 2e: Validate region codes against ActiveRegions (belt-and-suspenders check)\n    UPDATE rb\n    SET rb.ValidationMessage = COALESCE(rb.ValidationMessage + '; ', '') + 'Unknown region'\n    FROM #RawBatch rb\n    WHERE NOT EXISTS (\n        SELECT 1 FROM [ai].[ActiveRegions] ar\n        WHERE ar.RegionCode = rb.RegionCode AND ar.IsActive = 1\n    );\n    -- 2f: Mark all surviving rows as validated\n    UPDATE #RawBatch\n    SET IsValidated = 1\n    WHERE ValidationMessage IS NULL OR ValidationMessage NOT LIKE '%Unknown region%';\n    /* ═══════════════════════════════════════════════════════════════════════\n       OLD BATCH PARTITIONING LOGIC (removed Q4 2025)\n       This used to process in chunks of @BatchSize with OFFSET/FETCH.\n       Now we just INSERT the whole batch at once since volumes are lower.\n       DECLARE @ChunkStart INT = 0;\n       WHILE @ChunkStart < @TotalRows\n       BEGIN\n           INSERT INTO [ai].[RawOrderImport]\n               (RawQty, RawAmount, RegionCode, OrderDate, SourceSystem, BatchID)\n           SELECT RawQty, RawAmount, RegionCode, OrderDate, SourceSystem, BatchID\n           FROM #RawBatch\n           WHERE IsValidated = 1\n           ORDER BY RowSeq\n           OFFSET @ChunkStart ROWS\n           FETCH NEXT @BatchSize ROWS ONLY;\n           SET @ChunkStart = @ChunkStart + @@ROWCOUNT;\n           -- Yield point for long-running batches\n           IF @ChunkStart % 50000 = 0\n               WAITFOR DELAY '00:00:01';\n       END;\n       -- v2 considered using BULK INSERT from staging file:\n       -- BULK INSERT [ai].[RawOrderImport]\n       -- FROM '\\\\fileserver\\imports\\raw_orders.csv'\n       -- WITH (FIELDTERMINATOR = ',', ROWTERMINATOR = '\\n', FIRSTROW = 2);\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 3: Insert validated batch into RawOrderImport\n    -- This is the ACTUAL data flow: #RawBatch → RawOrderImport\n    -- Only validated, non-duplicate rows are inserted.\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step3_Insert';\n    SET @StepStart = SYSUTCDATETIME();\n    IF @DryRun = 1\n    BEGIN\n        -- Dry run: report what WOULD be inserted without committing\n        SELECT\n            @BatchID AS BatchID,\n            COUNT(*) AS WouldInsertRows,\n            SUM(CASE WHEN IsValidated = 1 THEN 1 ELSE 0 END) AS ValidRows,\n            SUM(CASE WHEN IsValidated = 0 THEN 1 ELSE 0 END) AS InvalidRows,\n            MIN(OrderDate) AS MinDate,\n            MAX(OrderDate) AS MaxDate,\n            COUNT(DISTINCT RegionCode) AS DistinctRegions,\n            COUNT(DISTINCT SourceSystem) AS DistinctSources\n        FROM #RawBatch;\n        SET @ProcessedRows = 0;\n    END\n    ELSE\n    BEGIN\n        DECLARE @InsertRetry INT = 0;\n        WHILE @InsertRetry <= @MaxRetries\n        BEGIN\n            BEGIN TRY\n                INSERT INTO [ai].[RawOrderImport]\n                    (RawQty, RawAmount, RegionCode, OrderDate, SourceSystem, BatchID)\n                SELECT\n                    rb.RawQty,\n                    rb.RawAmount,\n                    rb.RegionCode,\n                    rb.OrderDate,\n                    rb.SourceSystem,\n                    rb.BatchID\n                FROM #RawBatch rb\n                WHERE rb.IsValidated = 1;\n                SET @ProcessedRows = @@ROWCOUNT;\n                BREAK;  -- success\n            END TRY\n            BEGIN CATCH\n                SET @InsertRetry = @InsertRetry + 1;\n                IF @InsertRetry > @MaxRetries\n                BEGIN\n                    INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n                    VALUES ('spImportOrders.Step3', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n                    SET @ErrorCount = @ErrorCount + 1;\n                    BREAK;\n                END;\n                WAITFOR DELAY '00:00:02';\n            END CATCH;\n        END;\n    END;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 4: Post-insert statistics and validation\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step4_PostValidate';\n    -- Verify row counts match between #RawBatch and RawOrderImport\n    DECLARE @VerifyCount INT;\n    SELECT @VerifyCount = COUNT(*)\n    FROM [ai].[RawOrderImport]\n    WHERE BatchID = @BatchID;\n    IF @VerifyCount <> @ProcessedRows AND @DryRun = 0\n    BEGIN\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + N'Row count mismatch: expected '\n            + CAST(@ProcessedRows AS NVARCHAR) + N', found '\n            + CAST(@VerifyCount AS NVARCHAR) + N'. ';\n    END;\n    -- Compute batch statistics for monitoring\n    DECLARE @BatchStats TABLE (\n        Metric VARCHAR(50),\n        Value  DECIMAL(18,2)\n    );\n    INSERT INTO @BatchStats\n    SELECT 'AvgQty', AVG(CAST(RawQty AS DECIMAL(18,2))) FROM #RawBatch WHERE IsValidated = 1\n    UNION ALL\n    SELECT 'MaxQty', MAX(CAST(RawQty AS DECIMAL(18,2))) FROM #RawBatch WHERE IsValidated = 1\n    UNION ALL\n    SELECT 'AvgAmount', AVG(RawAmount) FROM #RawBatch WHERE IsValidated = 1\n    UNION ALL\n    SELECT 'MaxAmount', MAX(RawAmount) FROM #RawBatch WHERE IsValidated = 1\n    UNION ALL\n    SELECT 'TotalAmount', SUM(RawAmount) FROM #RawBatch WHERE IsValidated = 1\n    UNION ALL\n    SELECT 'Duplicates', @DuplicateCount\n    UNION ALL\n    SELECT 'NegativeQty', @NegativeCount;\n    /* ═══════════════════════════════════════════════════════════════════════\n       RECONCILIATION QUERY (for manual verification after import)\n       Compares source counts with imported counts.\n       SELECT\n           src.SourceSystem,\n           src.TotalOrders AS SourceCount,\n           imp.ImportedOrders AS ImportCount,\n           src.TotalOrders - ISNULL(imp.ImportedOrders, 0) AS Delta,\n           src.TotalQty AS SourceQty,\n           imp.ImportedQty AS ImportQty,\n           src.TotalAmount AS SourceAmount,\n           imp.ImportedAmount AS ImportAmount\n       FROM (\n           SELECT SourceSystem,\n                  COUNT(*) AS TotalOrders,\n                  SUM(Quantity) AS TotalQty,\n                  SUM(Amount) AS TotalAmount\n           FROM [ai].[vwExternalOrders]\n           WHERE OrderDate >= DATEADD(DAY, -90, GETDATE())\n           GROUP BY SourceSystem\n       ) src\n       LEFT JOIN (\n           SELECT SourceSystem,\n                  COUNT(*) AS ImportedOrders,\n                  SUM(RawQty) AS ImportedQty,\n                  SUM(RawAmount) AS ImportedAmount\n           FROM [ai].[RawOrderImport]\n           WHERE BatchID = @BatchID\n           GROUP BY SourceSystem\n       ) imp ON src.SourceSystem = imp.SourceSystem;\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 5: Logging, cleanup, and lock release\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step5_Cleanup';\n    DROP TABLE IF EXISTS #RawBatch;\n    DECLARE @Duration INT = DATEDIFF(MILLISECOND, @StartTime, SYSUTCDATETIME());\n    -- Build comprehensive status message\n    SET @StatusMsg = @StatusMsg + CONCAT(\n        N'Batch ', @BatchID, N': ',\n        @ProcessedRows, N'/', @TotalRows, N' rows',\n        N' (', @DuplicateCount, N' dupes, ',\n        @NegativeCount, N' neg-qty, ',\n        @WarningCount, N' warnings, ',\n        @ErrorCount, N' errors)',\n        N' in ', @Duration, N'ms',\n        CASE WHEN @DryRun = 1 THEN N' [DRY RUN]' ELSE N'' END,\n        CASE WHEN @SourceFilter IS NOT NULL THEN N' [filter=' + @SourceFilter + N']' ELSE N'' END\n    );\n    EXEC [ai].[spLogAudit]\n        @EventType  = 'IMPORT',\n        @ObjectName = 'RawOrderImport',\n        @AffectedRows = @ProcessedRows,\n        @Message    = @StatusMsg;\n    -- TODO: add monitoring alert if @ErrorCount > 0\n    -- TODO: also pull TotalRevenue from ai.LegacyFacts for reconciliation\n    --       (^^ old note, LegacyFacts was decommissioned in 2024)\n    -- TODO: add Prometheus metrics push for batch duration + row count\n    -- TODO: integrate with Azure Monitor custom metrics\n    -- TODO: consider switching to polybase external table for direct-read\n    --       instead of import-then-read pattern (blocked on IT security review)\n    IF @ErrorCount > 0\n    BEGIN\n        DECLARE @ErrMsg NVARCHAR(MAX) = CONCAT(\n            N'Import completed with ', @ErrorCount, N' errors. ',\n            N'Processed: ', @ProcessedRows, N'/', @TotalRows,\n            N' in ', @Duration, N'ms. ',\n            N'BatchID: ', @BatchID, N'. ',\n            N'Retries: extract=', @ExtractRetry, N', insert=', @InsertRetry, N'. ',\n            @StatusMsg\n        );\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spImportOrders.Summary', 0, @ErrMsg);\n    END;\n    -- Release advisory lock\n    EXEC sp_releaseapplock @Resource = 'spImportOrders_Lock', @LockOwner = 'Session';\nEND;"
+        },
+        {
+          "id": "[ai].[vwexternalorders]",
+          "s": "ai",
+          "n": "vwExternalOrders",
+          "t": "view",
+          "ddl": "-- ============================================================================\n-- VIEWS\n-- ============================================================================\n-- Level 10: UNION ALL with rename (ItemCount→Quantity from Oracle)\nCREATE VIEW [ai].[vwExternalOrders]\nAS\n    -- SAP source: columns map directly\n    SELECT\n        OrderID,\n        Quantity,\n        Amount,\n        RegionCode,\n        OrderDate,\n        'SAP' AS SourceSystem\n    FROM [ai].[SAPOrders]\n    UNION ALL\n    -- Oracle source: renames ItemCount→Quantity, TotalValue→Amount, Area→RegionCode\n    SELECT\n        OrderID,\n        ItemCount      AS Quantity,\n        TotalValue     AS Amount,\n        Area           AS RegionCode,\n        TxDate         AS OrderDate,\n        'Oracle' AS SourceSystem\n    FROM [ai].[OracleOrders]",
+          "cols": [
+            {
+              "n": "OrderID",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "Quantity",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "Amount",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "—",
+              "nl": "NULL"
+            },
+            {
+              "n": "SourceSystem",
+              "t": "—",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[saporders]",
+          "s": "ai",
+          "n": "SAPOrders",
+          "t": "table",
+          "cols": [
+            {
+              "n": "OrderID",
+              "t": "int",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "Quantity",
+              "t": "int",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "Amount",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "RegionCode",
+              "t": "varchar(10)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OrderDate",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "SAPDocNum",
+              "t": "varchar(20)",
+              "nl": "NULL"
+            },
+            {
+              "n": "CurrencyCode",
+              "t": "varchar(3)",
+              "nl": "NULL"
+            },
+            {
+              "n": "CustomerRef",
+              "t": "varchar(50)",
+              "nl": "NULL"
+            }
+          ]
+        },
+        {
+          "id": "[ai].[oracleorders]",
+          "s": "ai",
+          "n": "OracleOrders",
+          "t": "table",
+          "cols": [
+            {
+              "n": "OrderID",
+              "t": "int",
+              "nl": "NOT NULL",
+              "pk": 1
+            },
+            {
+              "n": "ItemCount",
+              "t": "int",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "TotalValue",
+              "t": "decimal(18,2)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "Area",
+              "t": "varchar(50)",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "TxDate",
+              "t": "date",
+              "nl": "NOT NULL"
+            },
+            {
+              "n": "OracleRef",
+              "t": "varchar(30)",
+              "nl": "NULL"
+            },
+            {
+              "n": "WarehouseCode",
+              "t": "varchar(10)",
+              "nl": "NULL"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        [
+          "[ai].[salesstaging]",
+          "[ai].[sparchiveoldorders]",
+          "read"
+        ],
+        [
+          "[ai].[sparchiveoldorders]",
+          "[ai].[salesstaging]",
+          "read"
+        ],
+        [
+          "[ai].[vwconsolidatedsales]",
+          "[ai].[spbuildsalesreport]",
+          "read"
+        ],
+        [
+          "[ai].[vwpricelist]",
+          "[ai].[spbuildsalesreport]",
+          "read"
+        ],
+        [
+          "[ai].[factsalesreport]",
+          "[ai].[spbuildsalesreport]",
+          "read"
+        ],
+        [
+          "[ai].[spbuildsalesreport]",
+          "[ai].[factsalesreport]",
+          "read"
+        ],
+        [
+          "[ai].[raworderimport]",
+          "[ai].[spcleanorders]",
+          "read"
+        ],
+        [
+          "[ai].[cleanedorders]",
+          "[ai].[spcleanorders]",
+          "read"
+        ],
+        [
+          "[ai].[spcleanorders]",
+          "[ai].[cleanedorders]",
+          "read"
+        ],
+        [
+          "[ai].[vwexternalorders]",
+          "[ai].[spimportorders]",
+          "read"
+        ],
+        [
+          "[ai].[raworderimport]",
+          "[ai].[spimportorders]",
+          "read"
+        ],
+        [
+          "[ai].[spimportorders]",
+          "[ai].[raworderimport]",
+          "read"
+        ],
+        [
+          "[ai].[vwraworders]",
+          "[ai].[sploadsalesstaging]",
+          "read"
+        ],
+        [
+          "[ai].[salesstaging]",
+          "[ai].[sploadsalesstaging]",
+          "read"
+        ],
+        [
+          "[ai].[sploadsalesstaging]",
+          "[ai].[salesstaging]",
+          "read"
+        ],
+        [
+          "[ai].[supplierprices]",
+          "[ai].[sprefreshprices]",
+          "read"
+        ],
+        [
+          "[ai].[markuprules]",
+          "[ai].[sprefreshprices]",
+          "read"
+        ],
+        [
+          "[ai].[sprefreshprices]",
+          "[ai].[pricemaster]",
+          "read"
+        ],
+        [
+          "[ai].[salesstaging]",
+          "[ai].[vwconsolidatedsales]",
+          "read"
+        ],
+        [
+          "[ai].[saporders]",
+          "[ai].[vwexternalorders]",
+          "read"
+        ],
+        [
+          "[ai].[oracleorders]",
+          "[ai].[vwexternalorders]",
+          "read"
+        ],
+        [
+          "[ai].[pricemaster]",
+          "[ai].[vwpricelist]",
+          "read"
+        ],
+        [
+          "[ai].[cleanedorders]",
+          "[ai].[vwraworders]",
+          "read"
+        ]
+      ],
+      "outOfScope": [
+        {
+          "nodeId": "[ai].[vwdiscountcalc]",
+          "reason": "Used only for AdjustedRevenue computation (TotalRevenue - Discount), not TotalRevenue itself"
+        },
+        {
+          "nodeId": "[ai].[customermaster]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[customersegmentmap]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[regionlookup]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[factsalesreport]",
+          "reason": "Target table, not source"
+        },
+        {
+          "nodeId": "[ai].[dimcalendar]",
+          "reason": "Filter-only join (used in WHERE clause), not contributing to Qty values"
+        },
+        {
+          "nodeId": "[ai].[dimcalendar]",
+          "reason": "Used only for DateKey backfill (UPDATE), not for OrderQty value"
+        },
+        {
+          "nodeId": "[ai].[regionlookup]",
+          "reason": "CROSS JOIN only for region expansion, not part of ListPrice value"
+        },
+        {
+          "nodeId": "[ai].[currencyconfig]",
+          "reason": "Filter-only join (WHERE IsBase=1), not contributing to ListPrice"
+        },
+        {
+          "nodeId": "[ai].[customermaster]",
+          "reason": "Used only for JOIN enrichment (CustomerName), not part of Qty computation"
+        },
+        {
+          "nodeId": "[ai].[activeregions]",
+          "reason": "Filter-only table (WHERE clause), not part of Quantity value"
+        }
+      ],
+      "stats": {
+        "hops": 14,
+        "examined": 15,
+        "relevant": 19,
+        "removed": 8,
+        "passthrough": 0
+      }
+    }
+  },
+  "_meta": {
+    "tool": "lineage_submit_hop_analysis",
+    "sessionId": "s_1775498367294_jv8xop",
+    "durationMs": 3
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "test_id": "scope-bb-external",
+  "timestamp": "2026-04-12T10:00",
+  "nodes_found": ["spBuildSalesReport", "vwConsolidatedSales", "vwPriceList", "vwDiscountCalc", "CustomerMaster", "CustomerSegmentMap", "RegionLookup", "SalesStaging", "DimCalendar", "PriceMaster", "DiscountRules", "spRefreshSegments", "spArchiveOldOrders", "spLoadSalesStaging", "spRefreshPrices", "vwRawOrders", "SupplierPrices", "CurrencyConfig", "MarkupRules"],
+  "external_refs_noted": ["CleanedOrders"],
+  "delivery": "sm",
+  "hops": 19,
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 20,
+    "scope_token_estimate": 4000,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 20, "outside_filter": 0},
+    "agenda_initial": 19,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "spBuildSalesReport", "verdict": "relevant", "error": null},
+    {"hop": 2, "focus_node": "vwConsolidatedSales", "verdict": "relevant", "error": null},
+    {"hop": 3, "focus_node": "vwPriceList", "verdict": "relevant", "error": null},
+    {"hop": 4, "focus_node": "vwDiscountCalc", "verdict": "relevant", "error": null},
+    {"hop": 5, "focus_node": "CustomerMaster", "verdict": "pass", "error": null},
+    {"hop": 6, "focus_node": "CustomerSegmentMap", "verdict": "irrelevant", "error": null},
+    {"hop": 7, "focus_node": "RegionLookup", "verdict": "irrelevant", "error": null},
+    {"hop": 8, "focus_node": "SalesStaging", "verdict": "relevant", "error": null},
+    {"hop": 9, "focus_node": "DimCalendar", "verdict": "pass", "error": null},
+    {"hop": 10, "focus_node": "PriceMaster", "verdict": "relevant", "error": null},
+    {"hop": 11, "focus_node": "DiscountRules", "verdict": "relevant", "error": null},
+    {"hop": 12, "focus_node": "spRefreshSegments", "verdict": "irrelevant", "error": null},
+    {"hop": 13, "focus_node": "spArchiveOldOrders", "verdict": "irrelevant", "error": null},
+    {"hop": 14, "focus_node": "spLoadSalesStaging", "verdict": "relevant", "error": null},
+    {"hop": 15, "focus_node": "spRefreshPrices", "verdict": "relevant", "error": null},
+    {"hop": 16, "focus_node": "vwRawOrders", "verdict": "relevant", "error": null},
+    {"hop": 17, "focus_node": "SupplierPrices", "verdict": "relevant", "error": null},
+    {"hop": 18, "focus_node": "CurrencyConfig", "verdict": "pass", "error": null},
+    {"hop": 19, "focus_node": "MarkupRules", "verdict": "relevant", "error": null}
+  ],
+  "notes": "Scope test PASS: external ref (CleanedOrders) noted. 19 hops, 20-node scope with depth=5. Bounded BFS working correctly."
+}

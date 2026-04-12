@@ -1,0 +1,37 @@
+{
+  "test_id": "ct-q2-adjustedrevenue",
+  "timestamp": "2026-04-12T10:00",
+  "chain_path": ["FactSalesReport", "spBuildSalesReport", "vwConsolidatedSales", "SalesStaging", "spLoadSalesStaging", "vwRawOrders", "CleanedOrders"],
+  "source_nodes": ["CleanedOrders", "spRefreshPrices", "spRefreshSegments"],
+  "delivery": "sm",
+  "hops": 12,
+  "column_renames": [
+    {"from": "Qty", "to": "OrderQty", "at_node": "vwConsolidatedSales"},
+    {"from": "UnitPrice", "to": "ListPrice", "at_node": "vwPriceList"},
+    {"from": "Discount", "to": "Discount", "at_node": "vwDiscountCalc"}
+  ],
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 20,
+    "scope_token_estimate": 4000,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 20, "outside_filter": 0},
+    "agenda_initial": 20,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "spBuildSalesReport", "neighbor_count": 6, "verdicts": [{"neighbor": "vwConsolidatedSales", "verdict": "trace", "columns": ["Qty", "OrderAmount"]}, {"neighbor": "vwPriceList", "verdict": "trace", "columns": ["UnitPrice"]}, {"neighbor": "vwDiscountCalc", "verdict": "trace", "columns": ["Discount"]}, {"neighbor": "CustomerMaster", "verdict": "pass"}, {"neighbor": "CustomerSegmentMap", "verdict": "pass"}, {"neighbor": "RegionLookup", "verdict": "pass"}], "error": null},
+    {"hop": 2, "focus_node": "vwConsolidatedSales", "neighbor_count": 2, "error": null},
+    {"hop": 3, "focus_node": "vwPriceList", "neighbor_count": 1, "error": null},
+    {"hop": 4, "focus_node": "vwDiscountCalc", "neighbor_count": 1, "error": null},
+    {"hop": 5, "focus_node": "SalesStaging", "neighbor_count": 2, "error": null},
+    {"hop": 6, "focus_node": "spLoadSalesStaging", "neighbor_count": 1, "error": null},
+    {"hop": 7, "focus_node": "PriceMaster", "neighbor_count": 1, "error": null},
+    {"hop": 8, "focus_node": "spRefreshSegments", "neighbor_count": 0, "error": null},
+    {"hop": 9, "focus_node": "vwRawOrders", "neighbor_count": 1, "error": null},
+    {"hop": 10, "focus_node": "spRefreshPrices", "neighbor_count": 0, "error": null},
+    {"hop": 11, "focus_node": "CleanedOrders", "neighbor_count": 0, "error": null}
+  ],
+  "notes": "3 branches correctly identified (Qty/OrderAmount, UnitPrice, Discount). But depth=5 limits scope — SAPOrders, OracleOrders, SupplierPrices, MarkupRules NOT reached as terminal sources. spRefreshPrices and spRefreshSegments are terminal within scope but not the expected ultimate sources. This is a depth limitation, not an SM bug."
+}

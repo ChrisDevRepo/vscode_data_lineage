@@ -1,0 +1,11 @@
+{
+  "test_id": "bb-q2-employee-deep",
+  "grade": "FAIL",
+  "delivery": "sm",
+  "nodes_found": ["Employee","ufnGetContactInformation","uspGetEmployeeManagers","uspGetManagerEmployees","vEmployee","vEmployeeDepartment","vEmployeeDepartmentHistory","vSalesPerson","vSalesPersonSalesByFiscalYears"],
+  "hops": 8,
+  "missing_required": ["uspUpdateEmployeeHireInfo","uspUpdateEmployeeLogin","uspUpdateEmployeePersonalInfo"],
+  "root_cause": "scope_direction=downstream misses upstream write-SPs; test definition bug",
+  "vs_baseline": "TEST_BUG",
+  "tokens": 55748
+}

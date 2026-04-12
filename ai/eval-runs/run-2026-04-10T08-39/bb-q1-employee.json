@@ -1,0 +1,30 @@
+{
+  "test_id": "bb-q1-employee",
+  "nodes_found": ["uspUpdateEmployeeHireInfo", "uspUpdateEmployeeLogin", "uspUpdateEmployeePersonalInfo", "ufnGetContactInformation", "uspGetEmployeeManagers", "uspGetManagerEmployees", "vEmployee", "vEmployeeDepartment", "vEmployeeDepartmentHistory", "vSalesPerson", "vSalesPersonSalesByFiscalYears"],
+  "delivery": "sm",
+  "hops": 12,
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 46,
+    "scope_token_estimate": 8500,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 46, "outside_filter": 0},
+    "agenda_initial": 45,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "uspUpdateEmployeeHireInfo", "focus_node_id": "[humanresources].[uspupdateemployeehireinfo]", "neighbor_count": 3, "verdict": "relevant", "badge_label": "Direct Writer", "prune_ids": 20, "error": null},
+    {"hop": 2, "focus_node": "uspUpdateEmployeeLogin", "focus_node_id": "[humanresources].[uspupdateemployeelogin]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Direct Writer", "prune_ids": 1, "error": null},
+    {"hop": 3, "focus_node": "uspUpdateEmployeePersonalInfo", "focus_node_id": "[humanresources].[uspupdateemployeepersonalinfo]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Direct Writer", "prune_ids": 1, "error": null},
+    {"hop": 4, "focus_node": "ufnGetContactInformation", "focus_node_id": "[dbo].[ufngetcontactinformation]", "neighbor_count": 7, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 6, "error": null},
+    {"hop": 5, "focus_node": "uspGetEmployeeManagers", "focus_node_id": "[dbo].[uspgetemployeemanagers]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 1, "error": null},
+    {"hop": 6, "focus_node": "uspGetManagerEmployees", "focus_node_id": "[dbo].[uspgetmanageremployees]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 1, "error": null},
+    {"hop": 7, "focus_node": "vEmployee", "focus_node_id": "[humanresources].[vemployee]", "neighbor_count": 9, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 8, "error": null},
+    {"hop": 8, "focus_node": "vEmployeeDepartment", "focus_node_id": "[humanresources].[vemployeedepartment]", "neighbor_count": 4, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 3, "error": null},
+    {"hop": 9, "focus_node": "vEmployeeDepartmentHistory", "focus_node_id": "[humanresources].[vemployeedepartmenthistory]", "neighbor_count": 5, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 4, "error": null},
+    {"hop": 10, "focus_node": "vSalesPerson", "focus_node_id": "[sales].[vsalesperson]", "neighbor_count": 10, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 10, "error": null},
+    {"hop": 11, "focus_node": "vSalesPersonSalesByFiscalYears", "focus_node_id": "[sales].[vsalespersonsalesbyfiscalyears]", "neighbor_count": 5, "verdict": "relevant", "badge_label": "Direct Reader", "prune_ids": 4, "error": null},
+    {"hop": 12, "focus_node": "SalesOrderHeader", "focus_node_id": "[sales].[salesorderheader]", "neighbor_count": 1, "verdict": "irrelevant", "badge_label": null, "prune_ids": 0, "error": null}
+  ]
+}

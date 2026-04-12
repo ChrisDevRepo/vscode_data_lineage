@@ -1,0 +1,179 @@
+{
+  "result": {
+    "ok": true,
+    "scopeSize": 28,
+    "originNode": {
+      "id": "[ai].[factsalesreport]",
+      "s": "ai",
+      "n": "FactSalesReport",
+      "t": "table",
+      "deg": 2
+    },
+    "hop_context": {
+      "trace_status": "in_progress",
+      "action_required": "submit_hop_analysis",
+      "verdicts_expected": 7,
+      "ct_mode": "hop_and_distill",
+      "hop": 1,
+      "frontier_remaining": 0,
+      "goal": {
+        "columns": [
+          "TotalRevenue"
+        ],
+        "direction": "up",
+        "origin": "[ai].[factsalesreport]"
+      },
+      "sub_question": "Analyze [ai].[spbuildsalesreport] for columns [TotalRevenue]. Which neighbors carry these columns?",
+      "path_so_far": [],
+      "focus_node": {
+        "id": "[ai].[spbuildsalesreport]",
+        "s": "ai",
+        "n": "spBuildSalesReport",
+        "t": "procedure",
+        "ct_ddl": "-- ─── spBuildSalesReport (Level 1 — THE BIG ONE, ~150 lines) ────────────────\n-- TotalRevenue = Qty * UnitPrice (COMPUTED COLUMN SPLIT)\n-- AdjustedRevenue = TotalRevenue - Discount\n-- CustomerSegment from CustomerSegmentMap (dead end for revenue)\n-- RegionLookup for Region name (dead end for revenue)\n-- Multi-step: #SalesBase → UPDATE with prices → final INSERT\nCREATE PROCEDURE [ai].[spBuildSalesReport]\n    @ReportDate       DATE          = NULL,\n    @RegionFilter     VARCHAR(10)   = NULL,    -- NULL = all regions\n    @FiscalYearOverride INT         = NULL,    -- NULL = current fiscal year\n    @IncludeZeroQty   BIT           = 0,       -- include zero-qty rows in report\n    @RebuildMode      VARCHAR(10)   = 'APPEND',-- APPEND / FULL / DELTA\n    @DryRun           BIT           = 0,\n    @DebugLevel       INT           = 0        -- 0=off, 1=basic, 2=verbose\nAS\nBEGIN\n    /*\n    ════════════════════════════════════════════════════════════════════════════════\n    spBuildSalesReport — Master report builder for FactSalesReport\n    ════════════════════════════════════════════════════════════════════════════════\n    VERSION HISTORY:\n    ────────────────\n    v1.0 (2023-Q4) Initial version — single query, no temp tables\n    v1.1 (2024-Q1) Added CustomerSegment enrichment from CustomerMaster\n    v1.2 (2024-Q2) Split TotalRevenue into Qty * UnitPrice for auditability\n                   (Previously was a pre-computed column from SalesStaging)\n    v2.0 (2024-Q3) Major refactor: multi-step temp table approach\n                   - Added #SalesBase, #PriceEnriched, #SegmentEnriched\n                   - Added RegionLookup for display names\n                   - Added vwDiscountCalc for discount computation\n    v2.1 (2024-Q4) Added @RebuildMode parameter (APPEND/FULL/DELTA)\n    v3.0 (2025-Q1) Performance: removed intermediate #PriceEnriched table\n                   Now updates #SalesBase in-place\n    v3.1 (2025-Q2) Added concurrency control with sp_getapplock\n    v3.2 (2025-Q3) Added @DebugLevel, @DryRun parameters\n    v4.0 (2025-Q4) Added fiscal year override and region filter\n    v4.1 (2026-Q1) Fixed NULL handling in CustomerSegment CASE expression\n                   (Bug #4821: anonymous orders getting 'Unclassified' instead of 'Anonymous')\n    COLUMN FLOW:\n    ────────────\n    The key revenue columns flow through this SP as follows:\n    - Qty: vwConsolidatedSales.Qty → #SalesBase.Qty → FactSalesReport.Qty\n    - UnitPrice: vwPriceList.UnitPrice → #SalesBase.UnitPrice → FactSalesReport.UnitPrice\n    - TotalRevenue: computed as Qty * UnitPrice in the final INSERT\n    - Discount: vwDiscountCalc.Discount → #SalesBase.Discount → FactSalesReport.Discount\n    - AdjustedRevenue: computed as TotalRevenue - Discount in the final INSERT\n    - CustomerSegment: CustomerSegmentMap.SegmentName → #SalesBase.CustomerSegment\n      (NOT part of revenue calculation — enrichment only)\n    - Region: RegionLookup.RegionName → #SalesBase.RegionName\n      (NOT part of revenue calculation — display only)\n    DEPENDENCIES:\n    ─────────────\n    READ:  ai.vwConsolidatedSales, ai.vwPriceList, ai.vwDiscountCalc,\n           ai.CustomerMaster, ai.CustomerSegmentMap, ai.RegionLookup\n    WRITE: ai.FactSalesReport, ai.ErrorLog\n    EXEC:  ai.spLogAudit\n    PERMISSIONS REQUIRED:\n    ─────────────────────\n    SELECT on all read dependencies\n    INSERT/DELETE on ai.FactSalesReport\n    INSERT on ai.ErrorLog\n    EXECUTE on ai.spLogAudit\n    ESTIMATED RUNTIME:\n    ──────────────────\n    ~2-5 seconds for 10K rows, ~30-60 seconds for 500K rows\n    Bottleneck is Step 2 (price lookup) due to vwPriceList CTE complexity\n    ════════════════════════════════════════════════════════════════════════════════\n    */\n    SET NOCOUNT ON;\n    SET XACT_ABORT OFF;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- PARAMETER INITIALIZATION AND VALIDATION\n    -- ═══════════════════════════════════════════════════════════════════════\n    IF @ReportDate IS NULL\n        SET @ReportDate = CAST(GETDATE() AS DATE);\n    IF @RebuildMode NOT IN ('APPEND', 'FULL', 'DELTA')\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spBuildSalesReport.Validate', 50010,\n            'Invalid @RebuildMode: ' + ISNULL(@RebuildMode, 'NULL'));\n        RETURN;\n    END;\n    DECLARE @StartTime     DATETIME2 = SYSUTCDATETIME();\n    DECLARE @StepStart     DATETIME2;\n    DECLARE @InsertedRows   INT = 0;\n    DECLARE @StepRowCount  INT = 0;\n    DECLARE @WarningCount  INT = 0;\n    DECLARE @ErrorCount    INT = 0;\n    DECLARE @DeletedRows   INT = 0;\n    DECLARE @StatusMsg     NVARCHAR(MAX) = N'';\n    DECLARE @CurrentStep   VARCHAR(50);\n    DECLARE @FiscalYear    INT = ISNULL(@FiscalYearOverride, YEAR(GETDATE()));\n    -- Acquire advisory lock to prevent concurrent builds\n    DECLARE @LockResult INT;\n    EXEC @LockResult = sp_getapplock\n        @Resource   = 'spBuildSalesReport_Lock',\n        @LockMode   = 'Exclusive',\n        @LockOwner  = 'Session',\n        @LockTimeout = 30000;\n    IF @LockResult < 0\n    BEGIN\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage)\n        VALUES ('spBuildSalesReport.Lock', 50011,\n            'Could not acquire lock. Another build may be running. Result=' + CAST(@LockResult AS VARCHAR));\n        RETURN;\n    END;\n    -- Debug output\n    IF @DebugLevel >= 1\n    BEGIN\n        DECLARE @DebugMsg NVARCHAR(MAX) = CONCAT(\n            N'[spBuildSalesReport] Starting build. Parameters: ',\n            N'ReportDate=', FORMAT(@ReportDate, 'yyyy-MM-dd'),\n            N', Region=', ISNULL(@RegionFilter, 'ALL'),\n            N', FiscalYear=', @FiscalYear,\n            N', Mode=', @RebuildMode,\n            N', DryRun=', @DryRun,\n            N', Debug=', @DebugLevel\n        );\n        RAISERROR(@DebugMsg, 0, 1) WITH NOWAIT;\n    END;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 0: Handle rebuild modes\n    -- FULL = delete existing data for this report date and rebuild\n    -- DELTA = only process new staging rows since last build\n    -- APPEND = add new rows (default)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step0_RebuildMode';\n    IF @RebuildMode = 'FULL'\n    BEGIN\n        DELETE FROM [ai].[FactSalesReport]\n        WHERE ReportDate = @ReportDate\n          AND (@RegionFilter IS NULL OR RegionCode = @RegionFilter);\n        SET @DeletedRows = @@ROWCOUNT;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'FULL rebuild: deleted ', @DeletedRows, N' existing rows. ');\n        IF @DebugLevel >= 1\n            RAISERROR('[Step0] Deleted %d existing rows for FULL rebuild', 0, 1, @DeletedRows) WITH NOWAIT;\n    END;\n    /* ═══════════════════════════════════════════════════════════════════════\n       DELTA MODE IMPLEMENTATION (partially implemented, deferred to v5.0)\n       The idea was to track which staging rows have already been processed\n       using a watermark table. This would avoid re-processing rows that\n       are already in FactSalesReport.\n       CREATE TABLE [ai].[BuildWatermark] (\n           RegionCode VARCHAR(10),\n           LastStagingID BIGINT,\n           LastBuildDate DATETIME2,\n           PRIMARY KEY (RegionCode)\n       );\n       IF @RebuildMode = 'DELTA'\n       BEGIN\n           -- Get watermark\n           SELECT @LastStagingID = ISNULL(MAX(LastStagingID), 0)\n           FROM [ai].[BuildWatermark]\n           WHERE @RegionFilter IS NULL OR RegionCode = @RegionFilter;\n           -- Only process rows newer than watermark\n           -- WHERE cs.StagingID > @LastStagingID\n       END;\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 1: Build base sales data from consolidated view into #SalesBase\n    -- The Qty column flows from vwConsolidatedSales (which renames OrderQty to Qty)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step1_Extract';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        SELECT\n            cs.StagingID,\n            cs.Qty,\n            cs.OrderAmount,\n            cs.RegionCode,\n            cs.OrderDate,\n            cs.CustomerID,\n            cs.CustomerName,\n            CAST(NULL AS DECIMAL(18,4))   AS UnitPrice,\n            CAST(NULL AS DECIMAL(18,2))   AS Discount,\n            CAST(NULL AS VARCHAR(50))     AS CustomerSegment,\n            CAST(NULL AS NVARCHAR(100))   AS RegionName,\n            CAST(0 AS BIT)               AS IsProcessed,\n            CAST(0 AS BIT)               AS HasPriceMatch,\n            CAST(0 AS BIT)               AS HasSegmentMatch,\n            CAST(NULL AS NVARCHAR(500))   AS ProcessingNotes\n        INTO #SalesBase\n        FROM [ai].[vwConsolidatedSales] cs\n        WHERE (@RegionFilter IS NULL OR cs.RegionCode = @RegionFilter);\n        SET @StepRowCount = @@ROWCOUNT;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step1] Extracted %d rows from vwConsolidatedSales', 0, 1, @StepRowCount) WITH NOWAIT;\n        IF @StepRowCount = 0\n        BEGIN\n            SET @StatusMsg = @StatusMsg + N'No data in vwConsolidatedSales for given filters. ';\n            SET @WarningCount = @WarningCount + 1;\n            -- Don't return — still log the empty run\n        END;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step1', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        SET @ErrorCount = @ErrorCount + 1;\n        GOTO Cleanup;\n    END CATCH;\n    -- Create index on temp table for performance\n    CREATE NONCLUSTERED INDEX IX_SalesBase_Region ON #SalesBase (RegionCode);\n    CREATE NONCLUSTERED INDEX IX_SalesBase_Customer ON #SalesBase (CustomerID) WHERE CustomerID IS NOT NULL;\n    CREATE NONCLUSTERED INDEX IX_SalesBase_Staging ON #SalesBase (StagingID);\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 2: Enrich with UnitPrice from price list\n    -- UnitPrice comes from vwPriceList (which is a 3-CTE rename chain:\n    --   PriceMaster.ListPrice → BasePrice → AdjPrice → UnitPrice)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step2_PriceEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    /* Old approach v1 (pre-2024-Q2):\n       SELECT TotalRevenue FROM ai.SalesStaging\n       This pulled a pre-computed TotalRevenue. Removed when we split into\n       Qty * UnitPrice for better auditability and drill-down capability.\n       UPDATE #SalesBase SET UnitPrice = s.TotalRevenue / NULLIF(s.OrderQty, 0)\n       FROM ai.SalesStaging s WHERE s.StagingID = #SalesBase.StagingID\n    */\n    /* Old approach v2 (2024-Q2 to 2025-Q1):\n       Used a separate #PriceEnriched temp table and JOIN:\n       SELECT sb.*, pl.UnitPrice\n       INTO #PriceEnriched\n       FROM #SalesBase sb\n       LEFT JOIN [ai].[vwPriceList] pl ON sb.RegionCode = pl.RegionCode;\n       DROP TABLE #SalesBase;\n       SELECT * INTO #SalesBase FROM #PriceEnriched;\n       DROP TABLE #PriceEnriched;\n       Removed in v3.0 for simplification — now updates in-place.\n    */\n    -- v1 used hardcoded price of 9.99 here (removed 2025-Q1)\n    -- v2 used per-product pricing (removed when ProductCode was dropped from staging)\n    -- v3 (current): region-level pricing from vwPriceList\n    BEGIN TRY\n        UPDATE sb\n        SET sb.UnitPrice = COALESCE(pl.UnitPrice, 0),\n            sb.HasPriceMatch = CASE WHEN pl.UnitPrice IS NOT NULL THEN 1 ELSE 0 END,\n            sb.ProcessingNotes = CASE\n                WHEN pl.UnitPrice IS NULL THEN 'No price match for region ' + sb.RegionCode\n                WHEN pl.UnitPrice = 0 THEN 'Zero price for region ' + sb.RegionCode\n                ELSE NULL\n            END\n        FROM #SalesBase sb\n        LEFT JOIN [ai].[vwPriceList] pl\n            ON sb.RegionCode = pl.RegionCode;\n        -- NOTE: ProductCode join removed in simplification — uses region-level price\n        -- NOTE: EffectiveFrom date filter would go here if we had date-specific pricing\n        SET @StepRowCount = @@ROWCOUNT;\n        -- Count rows without price matches (warning condition)\n        DECLARE @NoPriceCount INT;\n        SELECT @NoPriceCount = COUNT(*) FROM #SalesBase WHERE HasPriceMatch = 0;\n        IF @NoPriceCount > 0\n        BEGIN\n            SET @WarningCount = @WarningCount + 1;\n            SET @StatusMsg = @StatusMsg + CONCAT(N'Warning: ', @NoPriceCount, N' rows have no price match. ');\n        END;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step2] Price enrichment: %d rows updated, %d without price', 0, 1, @StepRowCount, @NoPriceCount) WITH NOWAIT;\n        IF @DebugLevel >= 2\n        BEGIN\n            -- Verbose: show price distribution\n            SELECT\n                RegionCode,\n                COUNT(*) AS [RowCount],\n                MIN(UnitPrice) AS MinPrice,\n                MAX(UnitPrice) AS MaxPrice,\n                AVG(UnitPrice) AS AvgPrice,\n                SUM(CASE WHEN HasPriceMatch = 0 THEN 1 ELSE 0 END) AS NoPriceRows\n            FROM #SalesBase\n            GROUP BY RegionCode;\n        END;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step2', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        SET @ErrorCount = @ErrorCount + 1;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 3: Enrich with Discount from discount calc view\n    -- Discount comes from vwDiscountCalc (multi-CTE rename chain:\n    --   OrderAmount → BaseAmt → DiscountVal → Discount)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step3_DiscountEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        UPDATE sb\n        SET sb.Discount = COALESCE(dc.Discount, 0)\n        FROM #SalesBase sb\n        LEFT JOIN [ai].[vwDiscountCalc] dc\n            ON sb.StagingID = dc.StagingID;\n        SET @StepRowCount = @@ROWCOUNT;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step3] Discount enrichment: %d rows updated', 0, 1, @StepRowCount) WITH NOWAIT;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step3', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        -- Non-fatal: continue with Discount = 0\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + N'Discount enrichment failed; using 0. ';\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 4: Enrich with CustomerSegment (dead end for revenue trace)\n    -- CustomerSegmentMap is NOT in the revenue computation path.\n    -- This only populates the CustomerSegment display column.\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step4_SegmentEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        UPDATE sb\n        SET sb.CustomerSegment = csm.SegmentName,\n            sb.HasSegmentMatch = CASE WHEN csm.SegmentName IS NOT NULL THEN 1 ELSE 0 END\n        FROM #SalesBase sb\n        INNER JOIN [ai].[CustomerMaster] cm\n            ON sb.CustomerID = cm.CustomerID\n        LEFT JOIN [ai].[CustomerSegmentMap] csm\n            ON cm.CustomerTier = csm.CustomerTier\n           AND cm.RegionCode   = csm.RegionCode;\n        SET @StepRowCount = @@ROWCOUNT;\n        /* Old segment logic (pre v2.0):\n           Used a direct CASE expression instead of CustomerSegmentMap:\n           UPDATE sb SET sb.CustomerSegment = CASE\n               WHEN cm.AnnualSpend > 100000 THEN 'Enterprise'\n               WHEN cm.AnnualSpend > 10000  THEN 'Mid-Market'\n               WHEN cm.AnnualSpend > 1000   THEN 'SMB'\n               ELSE 'Consumer'\n           END\n           FROM #SalesBase sb JOIN ai.CustomerMaster cm ON sb.CustomerID = cm.CustomerID\n           Removed because AnnualSpend column was deprecated in CustomerMaster.\n        */\n        IF @DebugLevel >= 1\n            RAISERROR('[Step4] Segment enrichment: %d rows matched', 0, 1, @StepRowCount) WITH NOWAIT;\n        IF @DebugLevel >= 2\n        BEGIN\n            -- Verbose: segment distribution\n            SELECT\n                COALESCE(CustomerSegment, '(none)') AS Segment,\n                COUNT(*) AS [RowCount],\n                SUM(Qty) AS TotalQty,\n                SUM(CAST(Qty AS DECIMAL(18,2)) * UnitPrice) AS EstRevenue\n            FROM #SalesBase\n            GROUP BY CustomerSegment;\n        END;\n    END TRY\n    BEGIN CATCH\n        INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n        VALUES ('spBuildSalesReport.Step4', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n        -- Non-fatal\n        SET @WarningCount = @WarningCount + 1;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 5: Enrich with Region name (dead end for revenue trace)\n    -- RegionLookup provides display name only, NOT revenue data\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step5_RegionEnrich';\n    SET @StepStart = SYSUTCDATETIME();\n    BEGIN TRY\n        UPDATE sb\n        SET sb.RegionName = rl.RegionName\n        FROM #SalesBase sb\n        LEFT JOIN [ai].[RegionLookup] rl\n            ON sb.RegionCode = rl.RegionCode;\n        SET @StepRowCount = @@ROWCOUNT;\n        -- Fill in missing region names with code\n        UPDATE #SalesBase\n        SET RegionName = RegionCode\n        WHERE RegionName IS NULL;\n        IF @DebugLevel >= 1\n            RAISERROR('[Step5] Region enrichment: %d rows updated', 0, 1, @StepRowCount) WITH NOWAIT;\n    END TRY\n    BEGIN CATCH\n        -- Non-fatal: use RegionCode as fallback\n        UPDATE #SalesBase SET RegionName = RegionCode WHERE RegionName IS NULL;\n        SET @WarningCount = @WarningCount + 1;\n    END CATCH;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 6: Pre-insert validation and quality checks\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step6_PreInsertValidation';\n    -- 6a: Check for NULL Qty (should never happen, but defensive)\n    DECLARE @NullQtyCount INT;\n    SELECT @NullQtyCount = COUNT(*) FROM #SalesBase WHERE Qty IS NULL;\n    IF @NullQtyCount > 0\n    BEGIN\n        UPDATE #SalesBase SET Qty = 0 WHERE Qty IS NULL;\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Fixed ', @NullQtyCount, N' NULL Qty rows. ');\n    END;\n    -- 6b: Check for NULL UnitPrice\n    DECLARE @NullPriceCount INT;\n    SELECT @NullPriceCount = COUNT(*) FROM #SalesBase WHERE UnitPrice IS NULL;\n    IF @NullPriceCount > 0\n    BEGIN\n        UPDATE #SalesBase SET UnitPrice = 0 WHERE UnitPrice IS NULL;\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Fixed ', @NullPriceCount, N' NULL UnitPrice rows. ');\n    END;\n    -- 6c: Check for negative values (data quality anomaly)\n    DECLARE @NegativeQty INT, @NegativePrice INT;\n    SELECT @NegativeQty = COUNT(*) FROM #SalesBase WHERE Qty < 0;\n    SELECT @NegativePrice = COUNT(*) FROM #SalesBase WHERE UnitPrice < 0;\n    IF @NegativeQty > 0 OR @NegativePrice > 0\n    BEGIN\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Negative values: Qty=', @NegativeQty, N', Price=', @NegativePrice, N'. ');\n    END;\n    -- 6d: Check for suspicious outliers (revenue > 1M per row)\n    DECLARE @OutlierCount INT;\n    SELECT @OutlierCount = COUNT(*)\n    FROM #SalesBase\n    WHERE CAST(Qty AS DECIMAL(18,2)) * UnitPrice > 1000000;\n    IF @OutlierCount > 0\n    BEGIN\n        SET @WarningCount = @WarningCount + 1;\n        SET @StatusMsg = @StatusMsg + CONCAT(N'Outlier rows (revenue>1M): ', @OutlierCount, N'. ');\n        -- Log outlier details for investigation\n        IF @DebugLevel >= 2\n        BEGIN\n            SELECT TOP 10\n                StagingID, RegionCode, Qty, UnitPrice,\n                CAST(Qty AS DECIMAL(18,2)) * UnitPrice AS EstRevenue,\n                'OUTLIER' AS Flag\n            FROM #SalesBase\n            WHERE CAST(Qty AS DECIMAL(18,2)) * UnitPrice > 1000000\n            ORDER BY CAST(Qty AS DECIMAL(18,2)) * UnitPrice DESC;\n        END;\n    END;\n    -- 6e: Mark all valid rows as processed\n    UPDATE #SalesBase\n    SET IsProcessed = 1\n    WHERE (@IncludeZeroQty = 1 OR Qty > 0)\n      AND UnitPrice >= 0;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 7: Compute summary statistics BEFORE insert (for reporting)\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step7_PreInsertStats';\n    DECLARE @PreInsertStats TABLE (\n        RegionCode  VARCHAR(10),\n        [RowCount]  INT,\n        TotalQty    BIGINT,\n        TotalRevenue DECIMAL(18,2),\n        AvgPrice    DECIMAL(18,4),\n        MinPrice    DECIMAL(18,4),\n        MaxPrice    DECIMAL(18,4)\n    );\n    INSERT INTO @PreInsertStats\n    SELECT\n        RegionCode,\n        COUNT(*),\n        SUM(CAST(Qty AS BIGINT)),\n        SUM(CAST(Qty AS DECIMAL(18,2)) * UnitPrice),\n        AVG(UnitPrice),\n        MIN(UnitPrice),\n        MAX(UnitPrice)\n    FROM #SalesBase\n    WHERE IsProcessed = 1\n    GROUP BY RegionCode;\n    IF @DebugLevel >= 2\n        SELECT * FROM @PreInsertStats ORDER BY RegionCode;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 8: Final INSERT into FactSalesReport\n    -- ═══════════════════════════════════════════════════════════════════════\n    --  TotalRevenue    = Qty * UnitPrice     <== THIS IS THE KEY COMPUTATION\n    --  AdjustedRevenue = (Qty * UnitPrice) - Discount\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step8_Insert';\n    SET @StepStart = SYSUTCDATETIME();\n    IF @DryRun = 1\n    BEGIN\n        -- Dry run: show what WOULD be inserted\n        SELECT\n            'DRY_RUN' AS Mode,\n            COUNT(*) AS WouldInsertRows,\n            SUM(CAST(sb.Qty AS DECIMAL(18,2)) * sb.UnitPrice) AS WouldInsertRevenue,\n            MIN(sb.OrderDate) AS MinDate,\n            MAX(sb.OrderDate) AS MaxDate,\n            COUNT(DISTINCT sb.RegionCode) AS DistinctRegions\n        FROM #SalesBase sb\n        WHERE sb.IsProcessed = 1;\n        SET @InsertedRows = 0;\n        SET @StatusMsg = @StatusMsg + N'DRY RUN — no data inserted. ';\n    END\n    ELSE\n    BEGIN\n        BEGIN TRY\n            INSERT INTO [ai].[FactSalesReport]\n                (ReportDate, Region, RegionCode, CustomerSegment,\n                 Qty, UnitPrice, TotalRevenue, Discount, AdjustedRevenue, OrderDate)\n            SELECT\n                @ReportDate,\n                COALESCE(sb.RegionName, sb.RegionCode),\n                sb.RegionCode,\n                CASE\n                    WHEN sb.CustomerSegment IS NOT NULL THEN sb.CustomerSegment\n                    WHEN sb.CustomerID IS NOT NULL      THEN 'Unclassified'\n                    ELSE 'Anonymous'\n                END,\n                sb.Qty,\n                sb.UnitPrice,\n                sb.Qty * sb.UnitPrice                                AS TotalRevenue,\n                sb.Discount,\n                (sb.Qty * sb.UnitPrice) - COALESCE(sb.Discount, 0)  AS AdjustedRevenue,\n                sb.OrderDate\n            FROM #SalesBase sb\n            WHERE sb.IsProcessed = 1;\n            SET @InsertedRows = @@ROWCOUNT;\n            IF @DebugLevel >= 1\n                RAISERROR('[Step8] Inserted %d rows into FactSalesReport', 0, 1, @InsertedRows) WITH NOWAIT;\n        END TRY\n        BEGIN CATCH\n            INSERT INTO [ai].[ErrorLog] (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)\n            VALUES ('spBuildSalesReport.Step8', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());\n            SET @ErrorCount = @ErrorCount + 1;\n            GOTO Cleanup;\n        END CATCH;\n    END;\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- STEP 9: Post-insert verification\n    -- ═══════════════════════════════════════════════════════════════════════\n    SET @CurrentStep = 'Step9_PostVerify';\n    IF @DryRun = 0 AND @InsertedRows > 0\n    BEGIN\n        -- Verify row count in target matches what we inserted\n        DECLARE @VerifyCount INT;\n        SELECT @VerifyCount = COUNT(*)\n        FROM [ai].[FactSalesReport]\n        WHERE ReportDate = @ReportDate\n          AND (@RegionFilter IS NULL OR RegionCode = @RegionFilter)\n          AND CreatedAt >= @StartTime;\n        IF @VerifyCount <> @InsertedRows\n        BEGIN\n            SET @WarningCount = @WarningCount + 1;\n            SET @StatusMsg = @StatusMsg + CONCAT(\n                N'Post-verify mismatch: expected ', @InsertedRows,\n                N', found ', @VerifyCount, N'. ');\n        END;\n        -- Check for negative TotalRevenue (should never happen with Qty>0 and UnitPrice>0)\n        DECLARE @NegRevCount INT;\n        SELECT @NegRevCount = COUNT(*)\n        FROM [ai].[FactSalesReport]\n        WHERE ReportDate = @ReportDate\n          AND TotalRevenue < 0\n          AND CreatedAt >= @StartTime;\n        IF @NegRevCount > 0\n        BEGIN\n            SET @WarningCount = @WarningCount + 1;\n            SET @StatusMsg = @StatusMsg + CONCAT(N'Negative TotalRevenue: ', @NegRevCount, N' rows. ');\n        END;\n        IF @DebugLevel >= 2\n        BEGIN\n            -- Post-insert summary by region\n            SELECT\n                RegionCode,\n                COUNT(*) AS Rows,\n                SUM(TotalRevenue) AS Revenue,\n                SUM(AdjustedRevenue) AS AdjRevenue,\n                SUM(Discount) AS TotalDiscount\n            FROM [ai].[FactSalesReport]\n            WHERE ReportDate = @ReportDate AND CreatedAt >= @StartTime\n            GROUP BY RegionCode\n            ORDER BY SUM(TotalRevenue) DESC;\n        END;\n    END;\n    /* ═══════════════════════════════════════════════════════════════════════\n       CROSS-CHECK WITH SOURCE DATA (disabled — too slow for production)\n       This used to compare FactSalesReport totals against raw SalesStaging\n       totals to detect data loss. Disabled in v3.1 because the cross-check\n       itself was taking longer than the build.\n       SELECT\n           'SalesStaging' AS Source,\n           COUNT(*) AS [RowCount],\n           SUM(OrderQty) AS TotalQty,\n           SUM(OrderAmount) AS TotalAmount\n       FROM [ai].[SalesStaging]\n       WHERE IsValid = 1\n       UNION ALL\n       SELECT\n           'FactSalesReport',\n           COUNT(*),\n           SUM(Qty),\n           SUM(TotalRevenue)\n       FROM [ai].[FactSalesReport]\n       WHERE ReportDate = @ReportDate;\n    ═══════════════════════════════════════════════════════════════════════ */\n    -- ═══════════════════════════════════════════════════════════════════════\n    -- CLEANUP: Drop temp tables, release lock, log audit\n    -- ═══════════════════════════════════════════════════════════════════════\n    Cleanup:\n    SET @CurrentStep = 'Cleanup';\n    DROP TABLE IF EXISTS #SalesBase;\n    DECLARE @Duration INT = DATEDIFF(MILLISECOND, @StartTime, SYSUTCDATETIME());\n    DECLARE @AuditMsg NVARCHAR(MAX) = CONCAT(\n        N'Report built: ', @InsertedRows, N' rows in ', @Duration, N'ms. ',\n        N'Date: ', FORMAT(@ReportDate, 'yyyy-MM-dd'), N'. ',\n        N'Mode: ', @RebuildMode, N'. ',\n        N'Deleted: ', @DeletedRows, N'. ',\n        N'Warnings: ', @WarningCount, N'. ',\n        N'Errors: ', @ErrorCount, N'. ',\n        @StatusMsg\n    );\n    EXEC [ai].[spLogAudit]\n        @EventType    = 'BUILD',\n        @ObjectName   = 'FactSalesReport',\n        @AffectedRows = @InsertedRows,\n        @Message      = @AuditMsg;\n    -- Release advisory lock\n    EXEC sp_releaseapplock @Resource = 'spBuildSalesReport_Lock', @LockOwner = 'Session';\n    IF @DebugLevel >= 1\n        RAISERROR('[Complete] %d rows, %d warnings, %d errors, %dms', 0, 1,\n            @InsertedRows, @WarningCount, @ErrorCount, @Duration) WITH NOWAIT;\nEND;",
+        "active_columns": [
+          "TotalRevenue"
+        ]
+      },
+      "active_columns": [
+        "TotalRevenue"
+      ],
+      "neighbors": [
+        {
+          "id": "[ai].[vwconsolidatedsales]",
+          "s": "ai",
+          "n": "vwConsolidatedSales",
+          "t": "view",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "none",
+          "hasDdl": true,
+          "cols": [
+            "StagingID COMPUTED",
+            "Qty COMPUTED",
+            "OrderAmount COMPUTED",
+            "RegionCode COMPUTED",
+            "OrderDate COMPUTED",
+            "CustomerID COMPUTED",
+            "CustomerName COMPUTED"
+          ]
+        },
+        {
+          "id": "[ai].[vwpricelist]",
+          "s": "ai",
+          "n": "vwPriceList",
+          "t": "view",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "none",
+          "hasDdl": true,
+          "cols": [
+            "ProductCode COMPUTED",
+            "RegionCode COMPUTED",
+            "UnitPrice COMPUTED",
+            "EffectiveFrom COMPUTED"
+          ]
+        },
+        {
+          "id": "[ai].[vwdiscountcalc]",
+          "s": "ai",
+          "n": "vwDiscountCalc",
+          "t": "view",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "none",
+          "hasDdl": true,
+          "cols": [
+            "StagingID COMPUTED",
+            "Discount COMPUTED",
+            "RegionCode COMPUTED"
+          ]
+        },
+        {
+          "id": "[ai].[customermaster]",
+          "s": "ai",
+          "n": "CustomerMaster",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "source",
+          "hasDdl": false,
+          "boundary_reason": "No upstream SP writes to this object — source boundary",
+          "cols": [
+            "CustomerID, int, not null, PK",
+            "CustomerName, nvarchar(100), not null",
+            "CustomerTier, varchar(10), not null",
+            "RegionCode, varchar(10), nullable",
+            "CreatedDate, date, not null",
+            "IsActive, bit, not null"
+          ]
+        },
+        {
+          "id": "[ai].[customersegmentmap]",
+          "s": "ai",
+          "n": "CustomerSegmentMap",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "none",
+          "hasDdl": false,
+          "cols": [
+            "SegmentID, int, not null, PK",
+            "CustomerTier, varchar(10), not null",
+            "RegionCode, varchar(10), not null",
+            "SegmentName, varchar(50), not null",
+            "Priority, int, not null"
+          ]
+        },
+        {
+          "id": "[ai].[regionlookup]",
+          "s": "ai",
+          "n": "RegionLookup",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "source",
+          "hasDdl": false,
+          "boundary_reason": "No upstream SP writes to this object — source boundary",
+          "cols": [
+            "RegionCode, varchar(10), not null, PK",
+            "RegionName, nvarchar(50), not null",
+            "CountryCode, varchar(3), not null",
+            "TimeZone, varchar(50), nullable"
+          ]
+        },
+        {
+          "id": "[ai].[factsalesreport]",
+          "s": "ai",
+          "n": "FactSalesReport",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "cycle",
+          "hasDdl": false,
+          "boundary_reason": "Already visited — cycle detected",
+          "cols": [
+            "ReportID, bigint, not null, PK",
+            "ReportDate, date, not null",
+            "Region, nvarchar(50), not null",
+            "RegionCode, varchar(10), not null",
+            "CustomerSegment, varchar(50), nullable",
+            "Qty, int, not null",
+            "UnitPrice, decimal(18,4), not null",
+            "TotalRevenue, decimal(18,2), not null",
+            "Discount, decimal(18,2), not null",
+            "AdjustedRevenue, decimal(18,2), not null",
+            "OrderDate, date, not null",
+            "CreatedAt, datetime2, not null"
+          ]
+        }
+      ],
+      "out_of_scope_so_far": []
+    }
+  },
+  "_meta": {
+    "tool": "lineage_start_column_trace",
+    "sessionId": "s_1775478170262_vtb96e",
+    "durationMs": 1
+  }
+}

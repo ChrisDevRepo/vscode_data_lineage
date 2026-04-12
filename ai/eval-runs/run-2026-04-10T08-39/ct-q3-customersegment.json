@@ -1,0 +1,19 @@
+{
+  "test_id": "ct-q3-customersegment",
+  "chain_path": ["FactSalesReport", "spBuildSalesReport", "vwConsolidatedSales", "CustomerMaster", "CustomerSegmentMap"],
+  "column_renames": [{"from": "SegmentName", "to": "CustomerSegment", "at_node": "CustomerSegmentMap"}],
+  "branches": 1,
+  "source_nodes": ["CustomerSegmentMap"],
+  "pruned_nodes": ["vwPriceList", "vwDiscountCalc", "RegionLookup"],
+  "delivery": "sm",
+  "hops": 1,
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 28,
+    "scope_token_estimate": 6000,
+    "filter_active": false,
+    "filter_schemas": [],
+    "agenda_initial": 7,
+    "agenda_final": 0
+  }
+}

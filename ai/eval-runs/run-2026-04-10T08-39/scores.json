@@ -1,0 +1,220 @@
+{
+  "run": "2026-04-10T08-39",
+  "model": "claude-haiku-4-5-20251001",
+  "tests": {
+    "bb-q1-employee": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "11/11 required nodes found", "missing": []},
+        "node_precision": {"status": "PASS", "detail": "0 forbidden nodes", "found": []},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 15, "actual": 12},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"},
+        "scope_range": {"status": "PASS", "expected": "30-60", "actual": 46}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 46, "filter_active": false, "agenda_initial": 45, "agenda_final": 0},
+      "decision_quality": {"correct": 11, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "bb-q2-employee-deep": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "8/8 required nodes found", "missing": []},
+        "node_precision": {"status": "PASS", "detail": "0 forbidden nodes", "found": []},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 15, "actual": 8},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"},
+        "scope_range": {"status": "PASS", "expected": "5-15", "actual": 9}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 9, "filter_active": false, "agenda_initial": 8, "agenda_final": 0},
+      "decision_quality": {"correct": 8, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "bb-q4-sales": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "no required nodes (open-ended)"},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 20, "actual": 2},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 8, "filter_active": false, "agenda_initial": 1, "agenda_final": 0},
+      "decision_quality": {"correct": 2, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "bb-q5-cadenceworker": {
+      "grade": "FAIL",
+      "checks": {
+        "node_coverage": {"status": "FAIL", "detail": "6/12 required nodes found", "missing": ["spCadenceRule_INIT", "spCadenceRule_OOS", "spCadenceRule_RATE", "CadenceExtract_TEST", "CadenceRates_TEST", "vDataFilters"]},
+        "node_precision": {"status": "PASS", "detail": "0 forbidden nodes in result", "found": []},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 15, "actual": 12},
+        "completion": {"status": "WARN", "detail": "agenda_final=14 — did not exhaust agenda"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"},
+        "scope_range": {"status": "PASS", "expected": "10-40", "actual": 30}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 30, "filter_active": true, "filter_schemas": ["TRANSFORMATION_FINANCEHUB", "STAGING_FINANCEHUB", "CONSUMPTION_FINANCEHUB", "dbo"], "agenda_initial": 29, "agenda_final": 14},
+      "decision_quality": {"correct": 6, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "root_cause": "MODEL_CAP",
+      "root_cause_detail": "Haiku completed early with 14 agenda items remaining. Missing staging tables and INIT/OOS/RATE SPs never visited. Improved from baseline 3/12 to 6/12.",
+      "vs_baseline": "IMPROVED"
+    },
+    "bb-q6-production-filter": {
+      "grade": "PASS",
+      "checks": {
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 10, "actual": 0},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"},
+        "scope_range": {"status": "PASS", "expected": "1-15", "actual": 1},
+        "filter_check": {"status": "PASS", "filter_active": true, "filter_schemas": ["Production"]}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 1, "filter_active": true, "agenda_initial": 0, "agenda_final": 0},
+      "decision_quality": {"correct": 0, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "bb-q7-cadence-add-ids": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "spCadenceRule_INIT found", "missing": []},
+        "node_precision": {"status": "PASS", "detail": "udfDivideAsDec not in result"},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 15, "actual": 15},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"},
+        "filter_check": {"status": "PASS", "filter_active": true, "filter_schemas": ["TRANSFORMATION_FINANCEHUB"]}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 30, "filter_active": true, "agenda_initial": 29, "agenda_final": 0},
+      "decision_quality": {"correct": 15, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "bb-q8-scope-broad": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "no required nodes (open-ended)"},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 20, "actual": 13},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"},
+        "scope_range": {"status": "PASS", "expected": "10-60", "actual": 14}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 14, "filter_active": false, "agenda_initial": 13, "agenda_final": 0},
+      "decision_quality": {"correct": 13, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "bb-q9-cadence-early-complete": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "CadenceWorker found", "missing": []},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 10, "actual": 5},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "bb", "actual": "bb"}
+      },
+      "sm_metadata": {"sm_type": "bb", "scope_size": 88, "filter_active": true, "agenda_initial": 87, "agenda_final": 82},
+      "decision_quality": {"correct": 5, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "ct-q1-totalrevenue": {
+      "grade": "PARTIAL",
+      "checks": {
+        "source_nodes": {"status": "FAIL", "detail": "3/4 sources found", "missing": ["MarkupRules"], "found": ["SAPOrders", "OracleOrders", "SupplierPrices"]},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 15, "actual": 14},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "ct_columns", "actual": "ct_columns"},
+        "column_renames": {"status": "PASS", "expected_min": 7, "actual": 7},
+        "scope_range": {"status": "PASS", "expected": "10-30", "actual": 28}
+      },
+      "sm_metadata": {"sm_type": "ct_columns", "scope_size": 28, "filter_active": false, "agenda_initial": 28, "agenda_final": 0},
+      "decision_quality": {"correct": 12, "suboptimal": 1, "wrong": 1, "blocked": 0, "quality_pct": 86, "blocked_pct": 0},
+      "root_cause": "MODEL_CAP",
+      "root_cause_detail": "Haiku pruned MarkupRules as 'optional LEFT JOIN' but it IS a source (MarkupPct feeds ListPrice formula). Haiku variance — validation run got 4/4.",
+      "vs_baseline": "IMPROVED"
+    },
+    "ct-q2-adjustedrevenue": {
+      "grade": "PASS",
+      "checks": {
+        "source_nodes": {"status": "PASS", "detail": "4/4+ sources found (SAPOrders, OracleOrders, SupplierPrices, MarkupRules + DiscountRules)"},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 20, "actual": 15},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "ct_columns", "actual": "ct_columns"},
+        "column_renames": {"status": "PASS", "expected_min": 7, "actual": 10},
+        "scope_range": {"status": "PASS", "expected": "10-30", "actual": 28}
+      },
+      "sm_metadata": {"sm_type": "ct_columns", "scope_size": 28, "filter_active": false, "agenda_initial": 28, "agenda_final": 0},
+      "decision_quality": {"correct": 15, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "IMPROVED"
+    },
+    "ct-q3-customersegment": {
+      "grade": "PASS",
+      "checks": {
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 5, "actual": 1},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "ct_columns", "actual": "ct_columns"},
+        "column_renames": {"status": "PASS", "expected_min": 1, "actual": 1},
+        "scope_range": {"status": "PASS", "expected": "3-15", "actual": 28}
+      },
+      "sm_metadata": {"sm_type": "ct_columns", "scope_size": 28, "filter_active": false, "agenda_initial": 7, "agenda_final": 0},
+      "decision_quality": {"correct": 4, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "ct-q3-aw-businessentityid": {
+      "grade": "PASS",
+      "checks": {
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 5, "actual": 3},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "ct_columns", "actual": "ct_columns"},
+        "scope_range": {"status": "PASS", "expected": "3-15", "actual": 4}
+      },
+      "sm_metadata": {"sm_type": "ct_columns", "scope_size": 4, "filter_active": false, "agenda_initial": 2, "agenda_final": 0},
+      "decision_quality": {"correct": 3, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "ct-q4-tricky-rename": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "vwPriceList, PriceMaster, SupplierPrices all found"},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "WARN", "expected_max": 10, "actual": 15},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "ct_columns", "actual": "ct_columns"},
+        "column_renames": {"status": "PASS", "expected_min": 3, "actual": 9}
+      },
+      "sm_metadata": {"sm_type": "ct_columns", "scope_size": 23, "filter_active": false, "agenda_initial": 1, "agenda_final": 0},
+      "decision_quality": {"correct": 7, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    },
+    "dep-q1-vemployee": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {"status": "PASS", "detail": "Employee and Person found", "missing": []},
+        "delivery_mode": {"status": "PASS", "expected": "sm", "actual": "sm"},
+        "hop_count": {"status": "PASS", "expected_max": 10, "actual": 9},
+        "completion": {"status": "PASS"},
+        "sm_type": {"status": "PASS", "expected": "ct_deps", "actual": "ct_deps"},
+        "scope_range": {"status": "PASS", "expected": "3-20", "actual": 13}
+      },
+      "sm_metadata": {"sm_type": "ct_deps", "scope_size": 13, "filter_active": false, "agenda_initial": 8, "agenda_final": 0},
+      "decision_quality": {"correct": 9, "suboptimal": 0, "wrong": 0, "blocked": 0, "quality_pct": 100, "blocked_pct": 0},
+      "vs_baseline": "STABLE"
+    }
+  },
+  "summary": {
+    "total": 14,
+    "pass": 12,
+    "partial": 1,
+    "fail": 1,
+    "vs_baseline": {
+      "improved": 3,
+      "stable": 11,
+      "regressed": 0
+    }
+  }
+}

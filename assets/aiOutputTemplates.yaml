@@ -59,20 +59,18 @@ sections:
     Passthrough nodes (rename-only views, simple SELECTs) — mention in one sentence inside
     the section that uses them, do NOT include in node_ids, no separate section.
 
-    CLASSIFY the question before writing:
-    business logic -> formulas, column renames, risks.
-    technical -> execution details, rebuild order, performance.
-    impact -> affected downstream objects, breaking change risk.
-    documentation -> business logic + technical combined.
-    pattern/investigation -> SQL idioms, anti-patterns, data quality observations.
+    CLASSIFY the question (one or more may apply) — this drives section content:
+    WHAT the data means (business logic, column trace, impact, documentation) -> Lead with business meaning: formulas in ```math blocks, column rename | From | To | tables, what each value represents, which consumers are affected.
+    HOW the pipeline runs (performance, technical, patterns, documentation) -> Lead with execution: join strategies, scan patterns, constraint coverage, rebuild order, anti-patterns.
+    For blended questions or documentation: combine both — business meaning first, then technical detail.
 
     In section text use the format that fits the content:
     Column rename or mapping -> | From | To | Notes | table.
     Formula -> ```math block.
     Multi-step logic -> ordered 1. 2. 3. list.
     Risk or data quality issue -> warning prefix with ⚠️.
-    Transfer your detail memory findings into section text at full depth — cite SQL expressions, conditions, and data flow patterns from your findings. Group simple nodes (truncate+insert, passthrough) together. Name every column and expression explicitly: "various columns" → `ColA`, `ColB`, `ColC`. "certain conditions" → `WHERE Status = 'Active'`.
-    This IS the documentation — write it at full depth on the first call. There is no follow-up "explain more" step. Every formula, column mapping, and business rule from your findings must appear here.
+    Transfer evidence from your detail memory into section text at full depth — your slots are comprehensive documentation. Select and reproduce the evidence that answers the question. Do not re-summarize. Group simple nodes (truncate+insert, passthrough) together. Name every column and expression explicitly: "various columns" → `ColA`, `ColB`, `ColC`. "certain conditions" → `WHERE Status = 'Active'`.
+    This IS the documentation — write it at full depth on the first call. There is no follow-up "explain more" step.
 
     BAD order — jumping non-linearly (Target -> Source -> Transform -> Views).
     BAD text — "Stores project data." or "Reads from Source." (no detail).
@@ -81,7 +79,7 @@ sections:
     GOOD text — "`spBuildSalesReport` computes `TotalRevenue = Qty x UnitPrice` at INSERT.
     Reads `Qty` from **Staging View** (rename `OrderQty -> Qty`), `UnitPrice` from **Price View**
     (PriceMaster lookup via 3-CTE chain)."
-  example: '{ "label": "ETL", "node_ids": ["dbo.spCalcEV"], "text": "`spCalcEV` multiplies PlannedValue by earned ratio.\nReads from **Source**, writes to **Target**.\n| Input | Column | Notes |\n|---|---|---|\n| DimProject | PlannedValue | base budget |\n| FactTimesheet | Hours | actuals |" }'
+  example: '{ "label": "EV Calculation", "node_ids": ["dbo.spCalcEV"], "text": "`spCalcEV` computes Earned Value in Step 3 INSERT:\n```math\nEV = PlannedValue \\times \\frac{EarnedHours}{PlannedHours}\n```\n`PlannedValue` = project budget amount, read from `DimProject.BudgetAmount` (renamed in CTE_Budget).\n`EarnedHours` = approved hours worked: `SUM(t.Hours) WHERE t.IsApproved = 1` from `FactTimesheet`.\n`PlannedHours` = total planned hours from `DimProject.TotalPlannedHours` (passthrough, no transform).\n\nOutput written to `FactEV.EarnedValue` via MERGE.\n\n| Input | Source Column | Transform | Output |\n|---|---|---|---|\n| DimProject | BudgetAmount | rename | PlannedValue |\n| FactTimesheet | Hours | SUM, WHERE IsApproved=1 | EarnedHours |\n| DimProject | TotalPlannedHours | passthrough | PlannedHours |" }'
 
 closing:
   instruction: >

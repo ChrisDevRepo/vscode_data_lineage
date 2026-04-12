@@ -1,0 +1,23 @@
+{
+  "test_id": "ct-q1-totalrevenue",
+  "timestamp": "2026-04-11T21:00",
+  "model": "haiku",
+  "grade": "PARTIAL",
+  "chain_path": ["FactSalesReport", "spBuildSalesReport", "vwConsolidatedSales", "vwPriceList", "SalesStaging", "PriceMaster", "spLoadSalesStaging", "spRefreshPrices", "vwRawOrders", "SupplierPrices", "MarkupRules", "CleanedOrders", "spCleanOrders"],
+  "hops": 13,
+  "branches": 2,
+  "source_nodes": ["SupplierPrices", "MarkupRules"],
+  "pruned_nodes": ["DimCalendar", "spRefreshSegments", "CurrencyConfig", "vwDiscountCalc", "CustomerSegmentMap"],
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 28,
+    "filter_active": false
+  },
+  "issues": [
+    "Qty branch cut short at spCleanOrders — missing RawOrderImport, spImportOrders, vwExternalOrders, SAPOrders, OracleOrders",
+    "Only 2/4 source nodes found (SupplierPrices, MarkupRules) — missing SAPOrders, OracleOrders",
+    "spCleanOrders reported as having 0 upstream neighbors — incorrect",
+    "vwDiscountCalc, CustomerMaster, CustomerSegmentMap, RegionLookup verdicted as pass instead of prune — suboptimal"
+  ],
+  "haiku_variance_note": "Live UAT (auto): 19 nodes, 14 hops, all 4 sources found. Haiku: 13 nodes, only Price branch complete."
+}

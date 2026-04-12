@@ -1,0 +1,13 @@
+{
+  "test_id": "ct-q1-totalrevenue",
+  "nodes_found": ["FactSalesReport", "spBuildSalesReport", "vwConsolidatedSales", "vwPriceList", "vwDiscountCalc", "CustomerMaster", "CustomerSegmentMap", "RegionLookup"],
+  "delivery": "sm",
+  "hops": 1,
+  "chain_path": ["FactSalesReport", "spBuildSalesReport"],
+  "column_renames": [],
+  "branches": 0,
+  "source_nodes": [],
+  "pruned_nodes": [],
+  "error": "focus_mismatch in submit_hop_analysis — Haiku sent undefined focus_node_id",
+  "text_response": "FAILED — SM state lost after hop 1 due to focus_mismatch error. Only immediate neighbors found."
+}

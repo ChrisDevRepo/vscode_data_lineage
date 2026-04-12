@@ -1,0 +1,179 @@
+{
+  "test_id": "bb-q9-cadence-early-complete",
+  "nodes_found": [
+    "spCadenceRule_INIT",
+    "CadenceExtract_TEST",
+    "udfCreateKeyValuePair",
+    "udfConvertUnixTS",
+    "CadenceWorker",
+    "LogMessage",
+    "spCadenceRule_Alloc1a",
+    "spCadenceRule_Alloc1b",
+    "spCadenceRule_Alloc1c",
+    "spCadenceRule_Alloc1d",
+    "spCadenceRule_Alloc2",
+    "spCadenceRule_DEPT",
+    "spCadenceRule_EV_Case1",
+    "spCadenceRule_EV_Case2",
+    "spCadenceRule_EV_Case3",
+    "spCadenceRule_EV_Case4",
+    "spCadenceRule_EV_Case5",
+    "spCadenceRule_EXCP2",
+    "spCadenceRule_RATE",
+    "spCadenceRule_RECON",
+    "spCadenceRule_SpecExc1",
+    "spCadenceRule_SpecExc2",
+    "spCadenceRule_EV_Prep",
+    "spCadenceRule_OOS",
+    "vCadence_Compare_TEST",
+    "vCadenceAuditLog"
+  ],
+  "delivery": "sm",
+  "hops": 30,
+  "sections": [
+    "DATA_INITIALIZATION",
+    "SOURCE_DATA",
+    "UTILITY",
+    "DATA_HUB",
+    "LOGGING",
+    "ALLOCATION_RULE",
+    "EV_CALCULATION",
+    "TRANSFORMATION_RULE",
+    "FINALIZATION_RULE",
+    "OUTPUT_VIEW"
+  ],
+  "prune_decisions": [
+    {
+      "node": "ADMIN.*",
+      "reason": "Outside user filter (ADMIN schema)"
+    },
+    {
+      "node": "CONSUMPTION_BUSINESSDEVELOPMENT.*",
+      "reason": "Outside user filter - unrelated consumption layer"
+    }
+  ],
+  "text_response": "spCadenceRule_INIT (Stored Procedure in TRANSFORMATION_FINANCEHUB schema) is the initialization procedure for the Cadence financial calculations pipeline. Its purpose is to populate the CadenceWorker base table with financial records derived from the staging layer (CadenceExtract_TEST). The procedure: (1) Extracts the latest project names and filters for closed accounting periods, (2) Combines project budget, earned value (EV), and actual cost/hours data at the task and function-location levels from the staging extract, (3) Applies configuration parameters (EV allocation percentage, planned hours threshold) sourced from CONSUMPTION_FINANCEHUB.vDataFilters, (4) Performs initial calculations including function-level actual hours/cost allocation, and (5) Inserts records into CadenceWorker with metadata tracking via audit logs. The initialization step marks records as PENDING, which triggers a cascading pipeline of 15+ downstream allocation and calculation rules (spCadenceRule_Alloc1a/b/c/d, spCadenceRule_EV_Case1-5, spCadenceRule_DEPT, spCadenceRule_RATE, spCadenceRule_RECON, spCadenceRule_SpecExc1/2, etc.) that apply domain-specific business logic to allocate costs across organizational dimensions, compute earned value using multi-stage distribution methods, and perform period-end reconciliation adjustments before finalizing records as COMPLETED.",
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 70,
+    "scope_token_estimate": 14000,
+    "filter_active": true,
+    "filter_schemas": [
+      "TRANSFORMATION_FINANCEHUB",
+      "STAGING_FINANCEHUB",
+      "dbo"
+    ],
+    "filter_breakdown": {
+      "in_filter": 26,
+      "outside_filter": 44
+    },
+    "agenda_initial": 69,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {
+      "hop": 1,
+      "focus_node": "CadenceExtract_TEST",
+      "focus_node_id": "[staging_financehub].[cadenceextract_test]",
+      "neighbor_count": 1,
+      "verdict": "relevant",
+      "badge_label": "SOURCE_DATA",
+      "note_caption": "Raw Cadence extract data (task-country and function-location layers)",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 2,
+      "focus_node": "udfCreateKeyValuePair",
+      "focus_node_id": "[transformation_financehub].[udfcreatekeyvaluepair]",
+      "neighbor_count": 15,
+      "verdict": "noted",
+      "badge_label": "UTILITY",
+      "note_caption": "Supports INIT audit log generation",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 3,
+      "focus_node": "udfConvertUnixTS",
+      "focus_node_id": "[transformation_financehub].[udfconvertunixts]",
+      "neighbor_count": 15,
+      "verdict": "noted",
+      "badge_label": "UTILITY",
+      "note_caption": "Timestamps INIT audit log entries",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 4,
+      "focus_node": "CadenceWorker",
+      "focus_node_id": "[transformation_financehub].[cadenceworker]",
+      "neighbor_count": 30,
+      "verdict": "relevant",
+      "badge_label": "DATA_HUB",
+      "note_caption": "Base dataset for allocation and calculation rules",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 5,
+      "focus_node": "LogMessage",
+      "focus_node_id": "[dbo].[logmessage]",
+      "neighbor_count": 356,
+      "verdict": "noted",
+      "badge_label": "LOGGING",
+      "note_caption": "Records INIT execution and error events",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 6,
+      "focus_node": "spCadenceRule_Alloc1a",
+      "focus_node_id": "[transformation_financehub].[spcadencerule_alloc1a]",
+      "neighbor_count": 15,
+      "verdict": "relevant",
+      "badge_label": "ALLOCATION_RULE",
+      "note_caption": "Global-to-country actual cost/hours distribution",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 20,
+      "focus_node": "spCadenceRule_RECON",
+      "focus_node_id": "[transformation_financehub].[spcadencerule_recon]",
+      "neighbor_count": 8,
+      "verdict": "relevant",
+      "badge_label": "FINALIZATION_RULE",
+      "note_caption": "Distributes reconciliation EV adjustments",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 30,
+      "focus_node": "spDimAccountDetailsCognos_hist",
+      "focus_node_id": "[transformation_financehub].[spdimaccountdetailscognos_hist]",
+      "neighbor_count": 8,
+      "verdict": "noted",
+      "badge_label": "DIMENSION",
+      "note_caption": "Supporting dimension with SCD2 tracking",
+      "prune_ids": [],
+      "add_ids": [],
+      "error": null,
+      "error_detail": null
+    }
+  ]
+}

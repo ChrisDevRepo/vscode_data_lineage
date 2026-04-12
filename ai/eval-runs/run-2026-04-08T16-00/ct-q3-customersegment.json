@@ -1,0 +1,73 @@
+{
+  "test_id": "ct-q3-customersegment",
+  "chain_path": [
+    "FactSalesReport",
+    "spBuildSalesReport",
+    "CustomerSegmentMap",
+    "spRefreshSegments",
+    "CustomerMaster"
+  ],
+  "column_renames": [
+    {
+      "from": "SegmentName",
+      "to": "CustomerSegment",
+      "at_node": "spBuildSalesReport"
+    }
+  ],
+  "branches": 1,
+  "source_nodes": ["CustomerMaster"],
+  "pruned_nodes": ["vwConsolidatedSales", "vwPriceList", "vwDiscountCalc", "RegionLookup"],
+  "delivery": "sm",
+  "hops": 3,
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 28,
+    "scope_token_estimate": 5600,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 0, "outside_filter": 0},
+    "agenda_initial": 7,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {
+      "hop": 1,
+      "focus_node": "spBuildSalesReport",
+      "focus_node_id": "[ai].[spbuildsalesreport]",
+      "neighbor_count": 7,
+      "verdicts": [
+        {"neighbor": "CustomerSegmentMap", "neighbor_id": "[ai].[customersegmentmap]", "verdict": "trace", "columns": ["SegmentName"]},
+        {"neighbor": "CustomerMaster", "neighbor_id": "[ai].[customermaster]", "verdict": "trace", "columns": ["CustomerTier"]},
+        {"neighbor": "vwConsolidatedSales", "neighbor_id": "[ai].[vwconsolidatedsales]", "verdict": "prune", "columns": []},
+        {"neighbor": "vwPriceList", "neighbor_id": "[ai].[vwpricelist]", "verdict": "prune", "columns": []},
+        {"neighbor": "vwDiscountCalc", "neighbor_id": "[ai].[vwdiscountcalc]", "verdict": "prune", "columns": []},
+        {"neighbor": "RegionLookup", "neighbor_id": "[ai].[regionlookup]", "verdict": "prune", "columns": []},
+        {"neighbor": "FactSalesReport", "neighbor_id": "[ai].[factsalesreport]", "verdict": "pass", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 2,
+      "focus_node": "CustomerSegmentMap",
+      "focus_node_id": "[ai].[customersegmentmap]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "spRefreshSegments", "neighbor_id": "[ai].[sprefreshsegments]", "verdict": "trace", "columns": ["SegmentName"]}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 3,
+      "focus_node": "spRefreshSegments",
+      "focus_node_id": "[ai].[sprefreshsegments]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "CustomerMaster", "neighbor_id": "[ai].[customermaster]", "verdict": "trace", "columns": ["CustomerTier"]}
+      ],
+      "error": null,
+      "error_detail": null
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "run": "2026-04-11T14-30",
+  "rejections": [
+    {
+      "test_id": "ct-q3-customersegment",
+      "hop": 1,
+      "tool": "submit_hop_analysis",
+      "error_type": "wrong_column_traced",
+      "ai_sent": {"columns": ["CustomerID"], "neighbor": "vwConsolidatedSales"},
+      "classification": "HALLUCINATION",
+      "fix": "none — Haiku model variance. CT column prompts unchanged. Baseline had this test as PASS with 1 hop (likely inline). Same test passes on other runs."
+    }
+  ],
+  "summary": {
+    "HALLUCINATION": 1,
+    "DESIGN_CONFUSION": 0,
+    "VALID_REJECTION": 0,
+    "INFRA_BUG": 0
+  }
+}

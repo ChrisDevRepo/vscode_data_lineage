@@ -1,0 +1,29 @@
+{
+  "test_id": "dep-q1-vemployee",
+  "timestamp": "2026-04-12T10:00",
+  "chain_path": ["vEmployee", "Employee", "Person", "BusinessEntityAddress", "Address", "StateProvince", "CountryRegion", "PersonPhone", "PhoneNumberType", "EmailAddress"],
+  "nodes_found": ["vEmployee", "Employee", "Person", "BusinessEntityAddress", "Address", "StateProvince", "CountryRegion", "PersonPhone", "PhoneNumberType", "EmailAddress", "uspUpdateEmployeeHireInfo", "uspUpdateEmployeeLogin", "uspUpdateEmployeePersonalInfo"],
+  "delivery": "sm",
+  "hops": 9,
+  "sm_metadata": {
+    "sm_type": "ct_deps",
+    "scope_size": 13,
+    "scope_token_estimate": 2600,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 13, "outside_filter": 0},
+    "agenda_initial": 8,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "Employee", "focus_node_id": "[HumanResources].[Employee]", "neighbor_count": 3, "verdicts": [{"neighbor": "uspUpdateEmployeeHireInfo", "neighbor_id": "[HumanResources].[uspUpdateEmployeeHireInfo]", "verdict": "pass"}, {"neighbor": "uspUpdateEmployeeLogin", "neighbor_id": "[HumanResources].[uspUpdateEmployeeLogin]", "verdict": "pass"}, {"neighbor": "uspUpdateEmployeePersonalInfo", "neighbor_id": "[HumanResources].[uspUpdateEmployeePersonalInfo]", "verdict": "pass"}], "error": null, "error_detail": null},
+    {"hop": 2, "focus_node": "Person", "focus_node_id": "[Person].[Person]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 3, "focus_node": "BusinessEntityAddress", "focus_node_id": "[Person].[BusinessEntityAddress]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 4, "focus_node": "Address", "focus_node_id": "[Person].[Address]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 5, "focus_node": "StateProvince", "focus_node_id": "[Person].[StateProvince]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 6, "focus_node": "CountryRegion", "focus_node_id": "[Person].[CountryRegion]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 7, "focus_node": "PersonPhone", "focus_node_id": "[Person].[PersonPhone]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 8, "focus_node": "PhoneNumberType", "focus_node_id": "[Person].[PhoneNumberType]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 9, "focus_node": "EmailAddress", "focus_node_id": "[Person].[EmailAddress]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null}
+  ]
+}

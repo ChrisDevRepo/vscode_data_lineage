@@ -1,0 +1,12 @@
+{
+  "test_id": "bb-q4-sales",
+  "grade": "PASS",
+  "delivery": "inline",
+  "nodes_found": ["SalesOrderHeader","Address","CreditCard","CurrencyRate","Customer","SalesPerson","SalesTerritory","ShipMethod","vSalesPersonSalesByFiscalYears"],
+  "nodes_count": 9,
+  "hops": 0,
+  "prune_decisions": [],
+  "hop_log": [],
+  "vs_baseline": "STABLE",
+  "tokens": 59758
+}

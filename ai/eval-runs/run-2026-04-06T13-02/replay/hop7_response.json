@@ -1,0 +1,250 @@
+{
+  "result": {
+    "ok": true,
+    "advanced": 1,
+    "frontierSize": 2,
+    "hop_context": {
+      "trace_status": "in_progress",
+      "action_required": "submit_hop_analysis",
+      "verdicts_expected": 4,
+      "ct_mode": "hop_and_distill",
+      "hop": 8,
+      "frontier_remaining": 1,
+      "goal": {
+        "columns": [
+          "TotalRevenue"
+        ],
+        "direction": "up",
+        "origin": "[ai].[factsalesreport]"
+      },
+      "sub_question": "Where does spRefreshPrices source the ListPrice values? From external table or computed?",
+      "path_so_far": [
+        {
+          "node_id": "[ai].[spbuildsalesreport]",
+          "summary": "",
+          "columns_in": [
+            "TotalRevenue"
+          ],
+          "columns": [],
+          "notes": "TotalRevenue computed as Qty * UnitPrice (line 498). Two critical branches: Qty from vwConsolidatedSales, UnitPrice from vwPriceList. AdjustedRevenue uses TotalRevenue-Discount (secondary). Other neighbors (CustomerMaster, CustomerSegmentMap, RegionLookup) used only for context/filters, not revenue computation."
+        },
+        {
+          "node_id": "[ai].[vwconsolidatedsales]",
+          "summary": "Source of Qty column",
+          "columns_in": [
+            "TotalRevenue"
+          ],
+          "columns": [
+            "Qty"
+          ],
+          "notes": "Simple view that renames OrderQty to Qty. DimCalendar used only for filtering (WHERE clause), not contributing to Qty value. SalesStaging is the actual source of OrderQty."
+        },
+        {
+          "node_id": "[ai].[vwpricelist]",
+          "summary": "Source of UnitPrice column",
+          "columns_in": [
+            "TotalRevenue"
+          ],
+          "columns": [
+            "UnitPrice"
+          ],
+          "notes": "Multi-CTE view (3 renames: ListPrice?BasePrice?AdjPrice?UnitPrice). Pure transformation with 1.0 multiplier (no external source for adjustment). PriceMaster is the single source of ListPrice data."
+        },
+        {
+          "node_id": "[ai].[salesstaging]",
+          "summary": "Source of OrderQty (renamed to Qty)",
+          "columns_in": [
+            "Qty"
+          ],
+          "columns": [
+            "OrderQty"
+          ],
+          "notes": "Staging table with OrderQty. Two upstream procedures: spArchiveOldOrders (likely removes old rows) and spLoadSalesStaging (likely loads fresh data). Need to check both for OrderQty contribution."
+        },
+        {
+          "node_id": "[ai].[pricemaster]",
+          "summary": "Source of ListPrice, which becomes UnitPrice through CTE transforms",
+          "columns_in": [
+            "UnitPrice"
+          ],
+          "columns": [
+            "ListPrice"
+          ],
+          "notes": "Source table for ListPrice (Qty is independent). PriceMaster is maintained by spRefreshPrices."
+        },
+        {
+          "node_id": "[ai].[sparchiveoldorders]",
+          "summary": "Check if this procedure writes/modifies OrderQty in SalesStaging",
+          "columns_in": [
+            "OrderQty"
+          ],
+          "columns": [
+            "OrderQty"
+          ],
+          "notes": "Reads OrderQty from SalesStaging and archives to ArchiveOrders, then deletes from SalesStaging. This is data maintenance/lifecycle, not source. Does not CREATE OrderQty. Cycle detected: reads what already exists."
+        },
+        {
+          "node_id": "[ai].[sploadsalesstaging]",
+          "summary": "Check if this procedure writes/modifies OrderQty in SalesStaging",
+          "columns_in": [
+            "OrderQty"
+          ],
+          "columns": [
+            "OrderQty"
+          ],
+          "notes": "TRUNCATE+INSERT loader. Selects OrderQty from vwRawOrders and inserts into SalesStaging. DimCalendar used only for UPDATE (DateKey backfill), not for OrderQty value. vwRawOrders is the actual source."
+        },
+        {
+          "node_id": "[ai].[sprefreshprices]",
+          "summary": "Procedure that inserts/updates ListPrice in PriceMaster",
+          "columns_in": [
+            "ListPrice"
+          ],
+          "columns": [
+            "ListPrice"
+          ]
+        },
+        {
+          "node_id": "[ai].[vwraworders]",
+          "summary": "Source view for OrderQty and other staging columns",
+          "columns_in": [
+            "OrderQty"
+          ],
+          "columns": [
+            "OrderQty"
+          ]
+        }
+      ],
+      "focus_node": {
+        "id": "[ai].[sprefreshprices]",
+        "s": "ai",
+        "n": "spRefreshPrices",
+        "t": "procedure",
+        "ct_ddl": "-- ─── spRefreshPrices (Branch B, Level 4b) ───────────────────────────────────\n-- Loads PriceMaster from SupplierPrices + MarkupRules\n-- CurrencyConfig is a FILTER-ONLY join (no columns flow to ListPrice)\nCREATE PROCEDURE [ai].[spRefreshPrices]\nAS\nBEGIN\n    SET NOCOUNT ON;\n    -- Step 1: Load raw supplier costs into temp\n    -- NOTE: CurrencyConfig is only used for filtering, NOT for price calculation\n    SELECT\n        sp.ProductCode,\n        sp.CostPrice,\n        sp.Currency,\n        sp.EffectiveFrom,\n        r.RegionCode\n    INTO #SupplierCosts\n    FROM [ai].[SupplierPrices] sp\n    CROSS JOIN [ai].[RegionLookup] r\n    -- CurrencyConfig: FILTER ONLY — controls which currencies we accept\n    INNER JOIN [ai].[CurrencyConfig] cc\n        ON sp.Currency = cc.Code\n    WHERE cc.IsBase = 1\n      AND sp.EffectiveTo IS NULL;\n    -- Step 2: Apply markup rules to compute ListPrice\n    -- TODO: also pull TotalRevenue from ai.LegacyFacts (table doesn't exist, old note)\n    SELECT\n        sc.ProductCode,\n        sc.RegionCode,\n        sc.CostPrice * (1 + COALESCE(m.MarkupPct, 0.15)) AS ListPrice,\n        sc.EffectiveFrom\n    INTO #PricedItems\n    FROM #SupplierCosts sc\n    LEFT JOIN [ai].[MarkupRules] m\n        ON sc.RegionCode = m.RegionCode\n       AND m.ValidTo IS NULL;\n    /* Old approach: SELECT TotalRevenue FROM ai.SalesStaging\n       This was the v1 logic that pulled prices from sales data.\n       Removed in Q2 2025 when we switched to supplier-based pricing.\n       SELECT s.OrderAmount AS ListPrice, s.RegionCode\n       FROM ai.SalesStaging s\n       WHERE s.IsValid = 1\n    */\n    -- Step 3: Upsert into PriceMaster\n    MERGE [ai].[PriceMaster] AS tgt\n    USING #PricedItems AS src\n        ON  tgt.ProductCode   = src.ProductCode\n        AND tgt.RegionCode    = src.RegionCode\n        AND tgt.EffectiveFrom = src.EffectiveFrom\n    WHEN MATCHED THEN\n        UPDATE SET\n            tgt.ListPrice     = src.ListPrice,\n            tgt.LastRefreshed = SYSUTCDATETIME()\n    WHEN NOT MATCHED THEN\n        INSERT (ProductCode, RegionCode, ListPrice, EffectiveFrom, LastRefreshed)\n        VALUES (src.ProductCode, src.RegionCode, src.ListPrice, src.EffectiveFrom, SYSUTCDATETIME());\n    -- Cleanup\n    DROP TABLE #SupplierCosts;\n    DROP TABLE #PricedItems;\n    EXEC [ai].[spLogAudit]\n        @EventType  = 'REFRESH',\n        @ObjectName = 'PriceMaster',\n        @AffectedRows = @@ROWCOUNT;\nEND;",
+        "active_columns": [
+          "ListPrice"
+        ]
+      },
+      "active_columns": [
+        "ListPrice"
+      ],
+      "neighbors": [
+        {
+          "id": "[ai].[supplierprices]",
+          "s": "ai",
+          "n": "SupplierPrices",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "source",
+          "hasDdl": false,
+          "boundary_reason": "No upstream SP writes to this object — source boundary",
+          "cols": [
+            "SupplierID, int, not null, PK",
+            "ProductCode, varchar(20), not null, PK",
+            "CostPrice, decimal(18,4), not null",
+            "Currency, varchar(3), not null",
+            "EffectiveFrom, date, not null, PK",
+            "EffectiveTo, date, nullable"
+          ]
+        },
+        {
+          "id": "[ai].[regionlookup]",
+          "s": "ai",
+          "n": "RegionLookup",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "source",
+          "hasDdl": false,
+          "boundary_reason": "No upstream SP writes to this object — source boundary",
+          "cols": [
+            "RegionCode, varchar(10), not null, PK",
+            "RegionName, nvarchar(50), not null",
+            "CountryCode, varchar(3), not null",
+            "TimeZone, varchar(50), nullable"
+          ]
+        },
+        {
+          "id": "[ai].[currencyconfig]",
+          "s": "ai",
+          "n": "CurrencyConfig",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "source",
+          "hasDdl": false,
+          "boundary_reason": "No upstream SP writes to this object — source boundary",
+          "cols": [
+            "Code, varchar(3), not null, PK",
+            "CurrencyName, nvarchar(25), not null",
+            "IsBase, bit, not null",
+            "DecimalPlaces, tinyint, not null"
+          ]
+        },
+        {
+          "id": "[ai].[markuprules]",
+          "s": "ai",
+          "n": "MarkupRules",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "source",
+          "hasDdl": false,
+          "boundary_reason": "No upstream SP writes to this object — source boundary",
+          "cols": [
+            "RuleID, int, not null, PK",
+            "ProductGroup, varchar(20), not null",
+            "RegionCode, varchar(10), not null",
+            "MarkupPct, decimal(5,4), not null",
+            "ValidFrom, date, not null",
+            "ValidTo, date, nullable"
+          ]
+        }
+      ],
+      "out_of_scope_so_far": [
+        {
+          "nodeId": "[ai].[vwdiscountcalc]",
+          "reason": "Used only for AdjustedRevenue computation (TotalRevenue - Discount), not TotalRevenue itself"
+        },
+        {
+          "nodeId": "[ai].[customermaster]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[customersegmentmap]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[regionlookup]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[factsalesreport]",
+          "reason": "Target table, not source"
+        },
+        {
+          "nodeId": "[ai].[dimcalendar]",
+          "reason": "Filter-only join (used in WHERE clause), not contributing to Qty values"
+        },
+        {
+          "nodeId": "[ai].[dimcalendar]",
+          "reason": "Used only for DateKey backfill (UPDATE), not for OrderQty value"
+        }
+      ],
+      "revisitable": [
+        "[ai].[vwdiscountcalc]",
+        "[ai].[customermaster]",
+        "[ai].[customersegmentmap]",
+        "[ai].[regionlookup]",
+        "[ai].[factsalesreport]"
+      ],
+      "revisits_remaining": 3
+    }
+  },
+  "_meta": {
+    "tool": "lineage_submit_hop_analysis",
+    "sessionId": "s_1775498367294_jv8xop",
+    "durationMs": 0
+  }
+}

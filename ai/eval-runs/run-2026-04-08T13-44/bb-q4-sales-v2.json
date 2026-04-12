@@ -1,0 +1,11 @@
+{
+  "test_id": "bb-q4-sales",
+  "grade": "PASS",
+  "delivery": "sm",
+  "nodes_found": ["SalesOrderHeader","vSalesPersonSalesByFiscalYears","SalesPerson","SalesTerritory","Employee","Person","Customer","Address","CreditCard","CurrencyRate","ShipMethod"],
+  "nodes_count": 11,
+  "hops": 1,
+  "prune_decisions": [],
+  "vs_baseline": "INFRA_FIXED",
+  "tokens": 29112
+}

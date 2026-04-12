@@ -1,0 +1,22 @@
+{
+  "test_id": "ct-q3b-customersegment-tight",
+  "timestamp": "2026-04-11T21:00",
+  "model": "haiku",
+  "grade": "FAIL",
+  "chain_path": ["FactSalesReport", "spBuildSalesReport", "vwConsolidatedSales", "CustomerSegmentMap", "CustomerMaster", "SalesStaging", "spRefreshSegments", "spLoadSalesStaging", "vwRawOrders", "spArchiveOldOrders", "CleanedOrders", "spCleanOrders", "RawOrderImport", "spImportOrders", "ActiveRegions"],
+  "hops": 13,
+  "source_nodes": ["CustomerMaster", "ActiveRegions"],
+  "pruned_nodes": ["vwPriceList", "vwDiscountCalc", "RegionLookup", "vwExternalOrders"],
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 28,
+    "filter_active": false
+  },
+  "issues": [
+    "Traced CustomerID through entire staging pipeline — value-vs-selection not applied",
+    "15 nodes vs expected 4-5 (FactSalesReport, spBuildSalesReport, CustomerSegmentMap, spRefreshSegments)",
+    "Forbidden nodes present: SalesStaging, spLoadSalesStaging, vwRawOrders, CleanedOrders, spCleanOrders, RawOrderImport, spImportOrders",
+    "ActiveRegions listed as source — completely wrong for CustomerSegment"
+  ],
+  "haiku_variance_note": "Previous Haiku run: 7 nodes, 4 hops. Live UAT (auto): 4 nodes, 3 hops. This run: 15 nodes, 13 hops. High variance."
+}

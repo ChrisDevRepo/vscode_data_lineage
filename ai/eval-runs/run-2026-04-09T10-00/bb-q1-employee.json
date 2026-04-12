@@ -1,0 +1,12 @@
+{
+  "test_id": "bb-q1-employee",
+  "prompt_version": "writeFindings-v1+writeSummary-v1+no-eviction",
+  "nodes_found": ["uspUpdateEmployeeHireInfo","uspUpdateEmployeeLogin","uspUpdateEmployeePersonalInfo","uspGetEmployeeManagers","uspGetManagerEmployees","vEmployee","vEmployeeDepartment","vEmployeeDepartmentHistory","vSalesPerson","vSalesPersonSalesByFiscalYears"],
+  "nodes_missing": ["ufnGetContactInformation"],
+  "delivery": "sm",
+  "hops": 11,
+  "findings_lengths": [582,521,467,656,702,598,598,529,476,480,501],
+  "avg_findings_length": 555,
+  "grade": "PARTIAL",
+  "notes": "ufnGetContactInformation marked irrelevant — reads Employee as one branch among Vendor/Store/Customer. Agent correctly pruned utilities but over-pruned this one."
+}

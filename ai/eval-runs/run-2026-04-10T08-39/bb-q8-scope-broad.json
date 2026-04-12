@@ -1,0 +1,31 @@
+{
+  "test_id": "bb-q8-scope-broad",
+  "nodes_found": ["Person", "ufnGetContactInformation", "uspGetEmployeeManagers", "uspGetManagerEmployees", "vEmployee", "vEmployeeDepartment", "vEmployeeDepartmentHistory", "vAdditionalContactInfo", "vVendorWithContacts", "vIndividualCustomer", "vPersonDemographics", "vSalesPerson", "vSalesPersonSalesByFiscalYears", "vStoreWithContacts"],
+  "delivery": "sm",
+  "hops": 13,
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 14,
+    "scope_token_estimate": 8500,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 14, "outside_filter": 0},
+    "agenda_initial": 13,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "ufnGetContactInformation", "focus_node_id": "[dbo].[ufngetcontactinformation]", "neighbor_count": 7, "verdict": "relevant", "error": null},
+    {"hop": 2, "focus_node": "uspGetEmployeeManagers", "focus_node_id": "[dbo].[uspgetemployeemanagers]", "neighbor_count": 2, "verdict": "relevant", "error": null},
+    {"hop": 3, "focus_node": "uspGetManagerEmployees", "focus_node_id": "[dbo].[uspgetmanageremployees]", "neighbor_count": 2, "verdict": "relevant", "error": null},
+    {"hop": 4, "focus_node": "vEmployee", "focus_node_id": "[humanresources].[vemployee]", "neighbor_count": 9, "verdict": "relevant", "error": null},
+    {"hop": 5, "focus_node": "vEmployeeDepartment", "focus_node_id": "[humanresources].[vemployeedepartment]", "neighbor_count": 4, "verdict": "relevant", "error": null},
+    {"hop": 6, "focus_node": "vEmployeeDepartmentHistory", "focus_node_id": "[humanresources].[vemployeedepartmenthistory]", "neighbor_count": 5, "verdict": "relevant", "error": null},
+    {"hop": 7, "focus_node": "vAdditionalContactInfo", "focus_node_id": "[person].[vadditionalcontactinfo]", "neighbor_count": 1, "verdict": "relevant", "error": null},
+    {"hop": 8, "focus_node": "vVendorWithContacts", "focus_node_id": "[purchasing].[vvendorwithcontacts]", "neighbor_count": 7, "verdict": "relevant", "error": null},
+    {"hop": 9, "focus_node": "vIndividualCustomer", "focus_node_id": "[sales].[vindividualcustomer]", "neighbor_count": 10, "verdict": "relevant", "error": null},
+    {"hop": 10, "focus_node": "vPersonDemographics", "focus_node_id": "[sales].[vpersondemographics]", "neighbor_count": 1, "verdict": "relevant", "error": null},
+    {"hop": 11, "focus_node": "vSalesPerson", "focus_node_id": "[sales].[vsalesperson]", "neighbor_count": 10, "verdict": "relevant", "error": null},
+    {"hop": 12, "focus_node": "vSalesPersonSalesByFiscalYears", "focus_node_id": "[sales].[vsalespersonsalesbyfiscalyears]", "neighbor_count": 5, "verdict": "relevant", "error": null},
+    {"hop": 13, "focus_node": "vStoreWithContacts", "focus_node_id": "[sales].[vstorewithcontacts]", "neighbor_count": 7, "verdict": "relevant", "error": null}
+  ]
+}

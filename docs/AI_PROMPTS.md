@@ -88,7 +88,7 @@ sections:
   instruction: >
     One entry per unique badge label -- explains what you found at those nodes.
     label: must exactly match a badge text value (join key, case-sensitive).
-    text: markdown explaining findings -- logic, patterns, issues, performance, column mappings, formulas.
+    text: markdown explaining findings — question-adapted: business meaning for logic/column questions, execution patterns for performance, both for documentation. Formulas, column mappings, risk flags.
     System orders by data-flow depth and assembles ## headings with step numbers.
     Reference other groups by label name ("reads from **Source**"), never by number.
     Supported in text: **bold**, `code`, tables, $math$, ```math blocks.

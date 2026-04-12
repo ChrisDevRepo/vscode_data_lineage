@@ -1,0 +1,12 @@
+{
+  "test_id": "bb-q1-employee",
+  "grade": "FAIL",
+  "delivery": "sm",
+  "nodes_found": ["Employee","ufnGetContactInformation","uspGetEmployeeManagers","uspGetManagerEmployees","vEmployee","vEmployeeDepartment","vEmployeeDepartmentHistory","vSalesPerson","vSalesPersonSalesByFiscalYears"],
+  "nodes_count": 9,
+  "hops": 8,
+  "missing_required": ["uspUpdateEmployeeHireInfo","uspUpdateEmployeeLogin","uspUpdateEmployeePersonalInfo"],
+  "root_cause": "scope_direction=downstream misses upstream write-SPs; test definition bug (old BFS was always bidirectional)",
+  "vs_baseline": "TEST_BUG",
+  "tokens": 56991
+}

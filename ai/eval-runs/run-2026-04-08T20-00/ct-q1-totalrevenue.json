@@ -1,0 +1,208 @@
+{
+  "test_id": "ct-q1-totalrevenue",
+  "nodes_found": [
+    "FactSalesReport",
+    "spBuildSalesReport",
+    "vwConsolidatedSales",
+    "vwPriceList",
+    "SalesStaging",
+    "PriceMaster",
+    "spLoadSalesStaging",
+    "spArchiveOldOrders",
+    "spRefreshPrices",
+    "vwRawOrders",
+    "SupplierPrices",
+    "MarkupRules",
+    "CleanedOrders",
+    "spCleanOrders",
+    "RawOrderImport",
+    "spImportOrders",
+    "vwExternalOrders",
+    "SAPOrders",
+    "OracleOrders"
+  ],
+  "delivery": "sm",
+  "hops": 14,
+  "hop_log": [
+    {
+      "hop": 1,
+      "focus_node": "spBuildSalesReport",
+      "focus_node_id": "[ai].[spbuildsalesreport]",
+      "neighbor_count": 7,
+      "verdicts": [
+        {"neighbor": "vwConsolidatedSales", "neighbor_id": "[ai].[vwconsolidatedsales]", "verdict": "trace", "columns": ["Qty"]},
+        {"neighbor": "vwPriceList", "neighbor_id": "[ai].[vwpricelist]", "verdict": "trace", "columns": ["UnitPrice"]},
+        {"neighbor": "vwDiscountCalc", "neighbor_id": "[ai].[vwdiscountcalc]", "verdict": "prune", "columns": []},
+        {"neighbor": "CustomerMaster", "neighbor_id": "[ai].[customermaster]", "verdict": "prune", "columns": []},
+        {"neighbor": "CustomerSegmentMap", "neighbor_id": "[ai].[customersegmentmap]", "verdict": "prune", "columns": []},
+        {"neighbor": "RegionLookup", "neighbor_id": "[ai].[regionlookup]", "verdict": "prune", "columns": []},
+        {"neighbor": "FactSalesReport", "neighbor_id": "[ai].[factsalesreport]", "verdict": "prune", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 2,
+      "focus_node": "vwConsolidatedSales",
+      "focus_node_id": "[ai].[vwconsolidatedsales]",
+      "neighbor_count": 2,
+      "verdicts": [
+        {"neighbor": "SalesStaging", "neighbor_id": "[ai].[salesstaging]", "verdict": "trace", "columns": ["OrderQty"]},
+        {"neighbor": "DimCalendar", "neighbor_id": "[ai].[dimcalendar]", "verdict": "prune", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 3,
+      "focus_node": "vwPriceList",
+      "focus_node_id": "[ai].[vwpricelist]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "PriceMaster", "neighbor_id": "[ai].[pricemaster]", "verdict": "trace", "columns": ["ListPrice"]}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 4,
+      "focus_node": "SalesStaging",
+      "focus_node_id": "[ai].[salesstaging]",
+      "neighbor_count": 2,
+      "verdicts": [
+        {"neighbor": "spLoadSalesStaging", "neighbor_id": "[ai].[sploadsalesstaging]", "verdict": "trace", "columns": ["OrderQty"]},
+        {"neighbor": "spArchiveOldOrders", "neighbor_id": "[ai].[sparchiveoldorders]", "verdict": "trace", "columns": ["OrderQty"]}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 5,
+      "focus_node": "PriceMaster",
+      "focus_node_id": "[ai].[pricemaster]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "spRefreshPrices", "neighbor_id": "[ai].[sprefreshprices]", "verdict": "trace", "columns": ["ListPrice"]}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 6,
+      "focus_node": "spLoadSalesStaging",
+      "focus_node_id": "[ai].[sploadsalesstaging]",
+      "neighbor_count": 3,
+      "verdicts": [
+        {"neighbor": "vwRawOrders", "neighbor_id": "[ai].[vwraworders]", "verdict": "trace", "columns": ["OrderQty"]},
+        {"neighbor": "DimCalendar", "neighbor_id": "[ai].[dimcalendar]", "verdict": "prune", "columns": []},
+        {"neighbor": "SalesStaging", "neighbor_id": "[ai].[salesstaging]", "verdict": "prune", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 7,
+      "focus_node": "spArchiveOldOrders",
+      "focus_node_id": "[ai].[sparchiveoldorders]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "SalesStaging", "neighbor_id": "[ai].[salesstaging]", "verdict": "prune", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 8,
+      "focus_node": "spRefreshPrices",
+      "focus_node_id": "[ai].[sprefreshprices]",
+      "neighbor_count": 4,
+      "verdicts": [
+        {"neighbor": "SupplierPrices", "neighbor_id": "[ai].[supplierprices]", "verdict": "trace", "columns": ["CostPrice"]},
+        {"neighbor": "MarkupRules", "neighbor_id": "[ai].[markuprules]", "verdict": "trace", "columns": ["MarkupPct"]},
+        {"neighbor": "CurrencyConfig", "neighbor_id": "[ai].[currencyconfig]", "verdict": "prune", "columns": []},
+        {"neighbor": "RegionLookup", "neighbor_id": "[ai].[regionlookup]", "verdict": "prune", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 9,
+      "focus_node": "vwRawOrders",
+      "focus_node_id": "[ai].[vwraworders]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "CleanedOrders", "neighbor_id": "[ai].[cleanedorders]", "verdict": "trace", "columns": ["OrderQty"]}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 10,
+      "focus_node": "CleanedOrders",
+      "focus_node_id": "[ai].[cleanedorders]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "spCleanOrders", "neighbor_id": "[ai].[spcleanorders]", "verdict": "trace", "columns": ["OrderQty"]}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 11,
+      "focus_node": "spCleanOrders",
+      "focus_node_id": "[ai].[spcleanorders]",
+      "neighbor_count": 3,
+      "verdicts": [
+        {"neighbor": "RawOrderImport", "neighbor_id": "[ai].[raworderimport]", "verdict": "trace", "columns": ["RawQty"]},
+        {"neighbor": "CustomerMaster", "neighbor_id": "[ai].[customermaster]", "verdict": "prune", "columns": []},
+        {"neighbor": "CleanedOrders", "neighbor_id": "[ai].[cleanedorders]", "verdict": "prune", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 12,
+      "focus_node": "RawOrderImport",
+      "focus_node_id": "[ai].[raworderimport]",
+      "neighbor_count": 1,
+      "verdicts": [
+        {"neighbor": "spImportOrders", "neighbor_id": "[ai].[spimportorders]", "verdict": "trace", "columns": ["RawQty"]}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 13,
+      "focus_node": "spImportOrders",
+      "focus_node_id": "[ai].[spimportorders]",
+      "neighbor_count": 3,
+      "verdicts": [
+        {"neighbor": "vwExternalOrders", "neighbor_id": "[ai].[vwexternalorders]", "verdict": "trace", "columns": ["Quantity"]},
+        {"neighbor": "ActiveRegions", "neighbor_id": "[ai].[activeregions]", "verdict": "prune", "columns": []},
+        {"neighbor": "RawOrderImport", "neighbor_id": "[ai].[raworderimport]", "verdict": "prune", "columns": []}
+      ],
+      "error": null,
+      "error_detail": null
+    },
+    {
+      "hop": 14,
+      "focus_node": "vwExternalOrders",
+      "focus_node_id": "[ai].[vwexternalorders]",
+      "neighbor_count": 2,
+      "verdicts": [
+        {"neighbor": "SAPOrders", "neighbor_id": "[ai].[saporders]", "verdict": "trace", "columns": ["Quantity"]},
+        {"neighbor": "OracleOrders", "neighbor_id": "[ai].[oracleorders]", "verdict": "trace", "columns": ["ItemCount"]}
+      ],
+      "error": null,
+      "error_detail": null
+    }
+  ],
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 28,
+    "scope_token_estimate": null,
+    "filter_active": false,
+    "agenda_initial": 19,
+    "agenda_final": 0
+  }
+}

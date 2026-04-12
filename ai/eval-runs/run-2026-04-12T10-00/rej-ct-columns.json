@@ -1,0 +1,22 @@
+{
+  "test_id": "rej-ct-columns",
+  "timestamp": "2026-04-12T10:00",
+  "chain_path": ["FactSalesReport", "spBuildSalesReport"],
+  "nodes_found": ["spBuildSalesReport"],
+  "delivery": "sm",
+  "hops": 1,
+  "rejection_test": {"error_triggered": false, "error_type": "none", "recovery_successful": false},
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 28,
+    "scope_token_estimate": 5600,
+    "filter_active": false,
+    "filter_schemas": [],
+    "agenda_initial": 0,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "spBuildSalesReport", "focus_node_id": "[ai].[spbuildsalesreport]", "error": null, "error_detail": "Agent reports SM accepted INVALID_COL without rejection"}
+  ],
+  "notes": "PARTIAL: Agent claims column validation not enforced. Possible INFRA issue — agent may have sent columns in wrong field format (columns vs columns_to_trace), or the SM actually accepted it. Need investigation."
+}

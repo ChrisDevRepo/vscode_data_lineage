@@ -61,7 +61,7 @@ Three categories — one concept shared via `BLOCK.verdictCategories` in `smProm
 
 | Concept | BB verdict | CT verdict | Detail memory | Badge | Graph |
 |---------|-----------|-----------|---------------|-------|-------|
-| Has logic/transforms | `relevant` | `trace` | Full findings (300-1500 chars, extractive SQL evidence) | YES | Kept |
+| Has logic/transforms | `relevant` | `trace` | Full findings (300-6000 chars, comprehensive documentation — SQL evidence + business meaning, 8000 hard limit) | YES | Kept |
 | In path, no transforms | `pass` | `pass` | Summary only (~100-200 chars) | NO | Kept |
 | Not related to question | `irrelevant` | `prune` | Summary only | NO | Removed (cascade prune) |
 

@@ -1,0 +1,8 @@
+{
+  "test_id": "dep-q1-vemployee",
+  "chain_path": ["vEmployee","Employee","uspUpdateEmployeeHireInfo","uspUpdateEmployeeLogin","uspUpdateEmployeePersonalInfo","Person","BusinessEntityAddress","Address","StateProvince","CountryRegion","PersonPhone","PhoneNumberType","EmailAddress"],
+  "delivery": "sm",
+  "hops": 9,
+  "nodes_found": ["vEmployee","Employee","uspUpdateEmployeeHireInfo","uspUpdateEmployeeLogin","uspUpdateEmployeePersonalInfo","Person","BusinessEntityAddress","Address","StateProvince","CountryRegion","PersonPhone","PhoneNumberType","EmailAddress"],
+  "sm_metadata": {"sm_type": "ct_deps", "scope_size": 13, "filter_active": false}
+}

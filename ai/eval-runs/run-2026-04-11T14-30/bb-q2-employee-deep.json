@@ -1,0 +1,7 @@
+{
+  "test_id": "bb-q2-employee-deep",
+  "nodes_found": ["Employee","ufnGetContactInformation","uspGetEmployeeManagers","uspGetManagerEmployees","vEmployee","vEmployeeDepartment","vEmployeeDepartmentHistory","vSalesPerson","vSalesPersonSalesByFiscalYears"],
+  "delivery": "sm",
+  "hops": 8,
+  "sm_metadata": {"sm_type": "bb", "scope_size": 9, "filter_active": false}
+}

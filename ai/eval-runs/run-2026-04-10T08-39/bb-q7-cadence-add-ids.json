@@ -1,0 +1,34 @@
+{
+  "test_id": "bb-q7-cadence-add-ids",
+  "nodes_found": ["spCadenceRule_INIT", "spCadenceRule_Alloc1a", "spCadenceRule_Alloc1b", "spCadenceRule_Alloc1c", "spCadenceRule_Alloc1d", "spCadenceRule_Alloc2", "spCadenceRule_DEPT", "spCadenceRule_EV_Prep", "spCadenceRule_EV_Case1", "spCadenceRule_EV_Case2", "spCadenceRule_EV_Case3", "spCadenceRule_EV_Case4", "spCadenceRule_EV_Case5", "spCadenceRule_EXCP2", "spCadenceRule_OOS", "spCadenceRule_RATE", "spCadenceRule_RECON", "spCadenceRule_SpecExc1", "spCadenceRule_SpecExc2", "CadenceExtract_TEST", "CadenceRates_TEST", "DataFilters"],
+  "delivery": "sm",
+  "hops": 15,
+  "prune_decisions": [{"node": "utility functions", "reason": "18 UDFs pruned"}],
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 30,
+    "scope_token_estimate": 45000,
+    "filter_active": true,
+    "filter_schemas": ["TRANSFORMATION_FINANCEHUB"],
+    "filter_breakdown": {"in_filter": 30, "outside_filter": 0},
+    "agenda_initial": 29,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "spCadenceRule_INIT", "focus_node_id": "[transformation_financehub].[spcadencerule_init]", "verdict": "relevant", "error": null},
+    {"hop": 2, "focus_node": "spCadenceRule_Alloc1a", "verdict": "relevant", "error": null},
+    {"hop": 3, "focus_node": "spCadenceRule_Alloc1b", "verdict": "relevant", "error": null},
+    {"hop": 4, "focus_node": "spCadenceRule_Alloc1c", "verdict": "relevant", "error": null},
+    {"hop": 5, "focus_node": "spCadenceRule_Alloc1d", "verdict": "relevant", "error": null},
+    {"hop": 6, "focus_node": "spCadenceRule_Alloc2", "verdict": "relevant", "error": null},
+    {"hop": 7, "focus_node": "spCadenceRule_DEPT", "verdict": "relevant", "error": null},
+    {"hop": 8, "focus_node": "spCadenceRule_EV_Prep", "verdict": "relevant", "error": null},
+    {"hop": 9, "focus_node": "spCadenceRule_EV_Case1", "verdict": "relevant", "error": null},
+    {"hop": 10, "focus_node": "spCadenceRule_EV_Case2", "verdict": "relevant", "error": null},
+    {"hop": 11, "focus_node": "spCadenceRule_EV_Case3", "verdict": "relevant", "error": null},
+    {"hop": 12, "focus_node": "spCadenceRule_EV_Case4", "verdict": "relevant", "error": null},
+    {"hop": 13, "focus_node": "CadenceExtract_TEST", "verdict": "relevant", "error": null},
+    {"hop": 14, "focus_node": "CadenceRates_TEST", "verdict": "relevant", "error": null},
+    {"hop": 15, "focus_node": "DataFilters", "verdict": "relevant", "error": null}
+  ]
+}

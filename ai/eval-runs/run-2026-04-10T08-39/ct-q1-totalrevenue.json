@@ -1,0 +1,27 @@
+{
+  "test_id": "ct-q1-totalrevenue",
+  "chain_path": ["FactSalesReport", "spBuildSalesReport", "vwConsolidatedSales", "SalesStaging", "spLoadSalesStaging", "vwRawOrders", "CleanedOrders", "spCleanOrders", "RawOrderImport", "spImportOrders", "vwExternalOrders", "SAPOrders", "OracleOrders", "vwPriceList", "PriceMaster", "spRefreshPrices", "SupplierPrices"],
+  "column_renames": [
+    {"from": "OrderQty", "to": "Qty", "at_node": "vwConsolidatedSales"},
+    {"from": "RawQty", "to": "OrderQty", "at_node": "spCleanOrders"},
+    {"from": "Quantity", "to": "RawQty", "at_node": "spImportOrders"},
+    {"from": "ItemCount", "to": "Quantity", "at_node": "vwExternalOrders"},
+    {"from": "ListPrice", "to": "BasePrice", "at_node": "vwPriceList"},
+    {"from": "BasePrice", "to": "AdjPrice", "at_node": "vwPriceList"},
+    {"from": "AdjPrice", "to": "UnitPrice", "at_node": "vwPriceList"}
+  ],
+  "branches": 2,
+  "source_nodes": ["SAPOrders", "OracleOrders", "SupplierPrices"],
+  "pruned_nodes": ["DiscountRules", "CustomerSegmentMap", "RegionLookup", "CustomerMaster", "DimCalendar", "ActiveRegions", "CurrencyConfig", "MarkupRules"],
+  "delivery": "sm",
+  "hops": 14,
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 28,
+    "scope_token_estimate": 15000,
+    "filter_active": false,
+    "filter_schemas": [],
+    "agenda_initial": 28,
+    "agenda_final": 0
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "test_id": "bb-q1-employee",
+  "nodes_found": [
+    "Employee",
+    "uspUpdateEmployeeHireInfo",
+    "uspUpdateEmployeeLogin",
+    "uspUpdateEmployeePersonalInfo",
+    "ufnGetContactInformation",
+    "uspGetEmployeeManagers",
+    "uspGetManagerEmployees",
+    "vEmployee",
+    "vEmployeeDepartment",
+    "vEmployeeDepartmentHistory",
+    "vSalesPerson",
+    "vSalesPersonSalesByFiscalYears"
+  ],
+  "delivery": "inline",
+  "hops": 0,
+  "badges": [],
+  "prune_decisions": [],
+  "text_response": "Inline BFS found 12 nodes downstream of Employee. All expected dependents found except EmployeePayHistory."
+}

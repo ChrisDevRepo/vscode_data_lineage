@@ -108,7 +108,7 @@ export interface IHopStateMachine {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const BFS_SCOPE_CAP = 10_000;
-const DEFAULT_FINDINGS_LIMIT = 5000;
+const DEFAULT_FINDINGS_LIMIT = 8000;
 const DEFAULT_SUMMARY_LIMIT = 500;
 
 /** Short memory soft limit — AI target for per-hop narrative entries (chars). */

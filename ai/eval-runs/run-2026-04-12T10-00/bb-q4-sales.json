@@ -1,0 +1,33 @@
+{
+  "test_id": "bb-q4-sales",
+  "timestamp": "2026-04-12T10:00",
+  "nodes_found": ["vSalesPerson", "SalesPerson", "Employee", "Person", "BusinessEntityAddress", "Address", "StateProvince", "CountryRegion", "SalesTerritory", "EmailAddress", "PersonPhone", "PhoneNumberType", "uspUpdateEmployeeHireInfo", "uspUpdateEmployeeLogin", "uspUpdateEmployeePersonalInfo"],
+  "delivery": "sm",
+  "hops": 14,
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 15,
+    "scope_token_estimate": 3000,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 15, "outside_filter": 0},
+    "agenda_initial": 14,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "SalesPerson", "focus_node_id": "[sales].[salesperson]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Core Entity", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 2, "focus_node": "Employee", "focus_node_id": "[humanresources].[employee]", "neighbor_count": 3, "verdict": "relevant", "badge_label": "Master Table", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 3, "focus_node": "Person", "focus_node_id": "[person].[person]", "neighbor_count": 12, "verdict": "relevant", "badge_label": "Master Table", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 4, "focus_node": "BusinessEntityAddress", "focus_node_id": "[person].[businessentityaddress]", "neighbor_count": 5, "verdict": "pass", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 5, "focus_node": "Address", "focus_node_id": "[person].[address]", "neighbor_count": 5, "verdict": "pass", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 6, "focus_node": "StateProvince", "focus_node_id": "[person].[stateprovince]", "neighbor_count": 3, "verdict": "pass", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 7, "focus_node": "CountryRegion", "focus_node_id": "[person].[countryregion]", "neighbor_count": 2, "verdict": "pass", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 8, "focus_node": "SalesTerritory", "focus_node_id": "[sales].[salesterritory]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Lookup", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 9, "focus_node": "EmailAddress", "focus_node_id": "[person].[emailaddress]", "neighbor_count": 0, "verdict": "pass", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 10, "focus_node": "PersonPhone", "focus_node_id": "[person].[personphone]", "neighbor_count": 0, "verdict": "pass", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 11, "focus_node": "PhoneNumberType", "focus_node_id": "[person].[phonenumbertype]", "neighbor_count": 0, "verdict": "pass", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 12, "focus_node": "uspUpdateEmployeeHireInfo", "focus_node_id": "[humanresources].[uspupdateemployeehireinfo]", "neighbor_count": 0, "verdict": "relevant", "badge_label": "Source", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 13, "focus_node": "uspUpdateEmployeeLogin", "focus_node_id": "[humanresources].[uspupdateemployeelogin]", "neighbor_count": 0, "verdict": "relevant", "badge_label": "Source", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 14, "focus_node": "uspUpdateEmployeePersonalInfo", "focus_node_id": "[humanresources].[uspupdateemployeepersonalinfo]", "neighbor_count": 0, "verdict": "relevant", "badge_label": "Source", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null}
+  ]
+}

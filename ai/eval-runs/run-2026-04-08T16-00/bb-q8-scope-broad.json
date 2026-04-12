@@ -1,0 +1,29 @@
+{
+  "test_id": "bb-q8-scope-broad",
+  "nodes_found": ["Person","ufnGetContactInformation","uspGetEmployeeManagers","uspGetManagerEmployees","vEmployee","vEmployeeDepartment","vEmployeeDepartmentHistory","vAdditionalContactInfo","vVendorWithContacts","vIndividualCustomer","vPersonDemographics","vSalesPerson","vSalesPersonSalesByFiscalYears","vStoreWithContacts","Employee","Vendor","BusinessEntityContact","ContactType","Store","Customer","BusinessEntityAddress","Address","StateProvince","CountryRegion","PersonPhone","PhoneNumberType","EmailAddress","EmployeeDepartmentHistory","Department","Shift","AddressType","SalesPerson","SalesTerritory","SalesOrderHeader"],
+  "delivery": "sm",
+  "hops": 6,
+  "sections": ["HR & Employee Management","Contact Information","Geographic & Address Data","Sales & Customer Relations"],
+  "prune_decisions": [
+    {"node": "Department", "hop": 3, "reason": "Structural dependency only"},
+    {"node": "Shift", "hop": 3, "reason": "Peripheral HR reference"}
+  ],
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 46,
+    "scope_token_estimate": 9200,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 46, "outside_filter": 0},
+    "agenda_initial": 45,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "ufnGetContactInformation", "focus_node_id": "[dbo].[ufngetcontactinformation]", "neighbor_count": 7, "verdict": "relevant", "badge_label": "Contact Helper", "note_caption": "Returns person name + role title", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 2, "focus_node": "uspGetEmployeeManagers", "focus_node_id": "[dbo].[uspgetemployeemanagers]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Org Hierarchy", "note_caption": "Recursive manager chain lookup", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 3, "focus_node": "vEmployee", "focus_node_id": "[humanresources].[vemployee]", "neighbor_count": 9, "verdict": "relevant", "badge_label": "HR View", "note_caption": "Joined HR employee data", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 4, "focus_node": "vSalesPerson", "focus_node_id": "[sales].[vsalesperson]", "neighbor_count": 11, "verdict": "relevant", "badge_label": "Sales View", "note_caption": "Sales rep reporting view", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 5, "focus_node": "vIndividualCustomer", "focus_node_id": "[sales].[vindividualcustomer]", "neighbor_count": 10, "verdict": "relevant", "badge_label": "Customer View", "note_caption": "Individual customer data", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 6, "focus_node": "Address", "focus_node_id": "[person].[address]", "neighbor_count": 5, "verdict": "relevant", "badge_label": "Address Hub", "note_caption": "Central address storage", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null}
+  ]
+}

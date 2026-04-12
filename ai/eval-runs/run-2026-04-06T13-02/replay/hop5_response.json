@@ -1,0 +1,185 @@
+{
+  "result": {
+    "ok": true,
+    "advanced": 1,
+    "frontierSize": 3,
+    "hop_context": {
+      "trace_status": "in_progress",
+      "action_required": "submit_hop_analysis",
+      "verdicts_expected": 1,
+      "ct_mode": "hop_and_distill",
+      "hop": 6,
+      "frontier_remaining": 2,
+      "goal": {
+        "columns": [
+          "TotalRevenue"
+        ],
+        "direction": "up",
+        "origin": "[ai].[factsalesreport]"
+      },
+      "sub_question": "Does spArchiveOldOrders insert or update OrderQty, or does it only delete old rows?",
+      "path_so_far": [
+        {
+          "node_id": "[ai].[spbuildsalesreport]",
+          "summary": "",
+          "columns_in": [
+            "TotalRevenue"
+          ],
+          "columns": [],
+          "notes": "TotalRevenue computed as Qty * UnitPrice (line 498). Two critical branches: Qty from vwConsolidatedSales, UnitPrice from vwPriceList. AdjustedRevenue uses TotalRevenue-Discount (secondary). Other neighbors (CustomerMaster, CustomerSegmentMap, RegionLookup) used only for context/filters, not revenue computation."
+        },
+        {
+          "node_id": "[ai].[vwconsolidatedsales]",
+          "summary": "Source of Qty column",
+          "columns_in": [
+            "TotalRevenue"
+          ],
+          "columns": [
+            "Qty"
+          ],
+          "notes": "Simple view that renames OrderQty to Qty. DimCalendar used only for filtering (WHERE clause), not contributing to Qty value. SalesStaging is the actual source of OrderQty."
+        },
+        {
+          "node_id": "[ai].[vwpricelist]",
+          "summary": "Source of UnitPrice column",
+          "columns_in": [
+            "TotalRevenue"
+          ],
+          "columns": [
+            "UnitPrice"
+          ],
+          "notes": "Multi-CTE view (3 renames: ListPrice?BasePrice?AdjPrice?UnitPrice). Pure transformation with 1.0 multiplier (no external source for adjustment). PriceMaster is the single source of ListPrice data."
+        },
+        {
+          "node_id": "[ai].[salesstaging]",
+          "summary": "Source of OrderQty (renamed to Qty)",
+          "columns_in": [
+            "Qty"
+          ],
+          "columns": [
+            "OrderQty"
+          ],
+          "notes": "Staging table with OrderQty. Two upstream procedures: spArchiveOldOrders (likely removes old rows) and spLoadSalesStaging (likely loads fresh data). Need to check both for OrderQty contribution."
+        },
+        {
+          "node_id": "[ai].[pricemaster]",
+          "summary": "Source of ListPrice, which becomes UnitPrice through CTE transforms",
+          "columns_in": [
+            "UnitPrice"
+          ],
+          "columns": [
+            "ListPrice"
+          ],
+          "notes": "Source table for ListPrice (Qty is independent). PriceMaster is maintained by spRefreshPrices."
+        },
+        {
+          "node_id": "[ai].[sparchiveoldorders]",
+          "summary": "Check if this procedure writes/modifies OrderQty in SalesStaging",
+          "columns_in": [
+            "OrderQty"
+          ],
+          "columns": [
+            "OrderQty"
+          ]
+        },
+        {
+          "node_id": "[ai].[sploadsalesstaging]",
+          "summary": "Check if this procedure writes/modifies OrderQty in SalesStaging",
+          "columns_in": [
+            "OrderQty"
+          ],
+          "columns": [
+            "OrderQty"
+          ]
+        },
+        {
+          "node_id": "[ai].[sprefreshprices]",
+          "summary": "Procedure that inserts/updates ListPrice in PriceMaster",
+          "columns_in": [
+            "ListPrice"
+          ],
+          "columns": [
+            "ListPrice"
+          ]
+        }
+      ],
+      "focus_node": {
+        "id": "[ai].[sparchiveoldorders]",
+        "s": "ai",
+        "n": "spArchiveOldOrders",
+        "t": "procedure",
+        "ct_ddl": "-- ─── spArchiveOldOrders (dead-end: downstream, reads SalesStaging→ArchiveOrders) ─\nCREATE PROCEDURE [ai].[spArchiveOldOrders]\n    @CutoffDate DATE = NULL\nAS\nBEGIN\n    SET NOCOUNT ON;\n    IF @CutoffDate IS NULL\n        SET @CutoffDate = DATEADD(YEAR, -2, GETDATE());\n    INSERT INTO [ai].[ArchiveOrders] (OrderQty, OrderAmount, RegionCode, OrderDate)\n    SELECT OrderQty, OrderAmount, RegionCode, OrderDate\n    FROM [ai].[SalesStaging]\n    WHERE OrderDate < @CutoffDate;\n    DELETE FROM [ai].[SalesStaging]\n    WHERE OrderDate < @CutoffDate;\n    EXEC [ai].[spLogAudit]\n        @EventType  = 'ARCHIVE',\n        @ObjectName = 'SalesStaging',\n        @AffectedRows = @@ROWCOUNT;\nEND;",
+        "active_columns": [
+          "OrderQty"
+        ]
+      },
+      "active_columns": [
+        "OrderQty"
+      ],
+      "neighbors": [
+        {
+          "id": "[ai].[salesstaging]",
+          "s": "ai",
+          "n": "SalesStaging",
+          "t": "table",
+          "edge_direction": "upstream",
+          "edge_type": "read",
+          "boundary": "cycle",
+          "hasDdl": false,
+          "boundary_reason": "Already visited — cycle detected",
+          "cols": [
+            "StagingID, bigint, not null, PK",
+            "OrderQty, int, not null",
+            "OrderAmount, decimal(18,2), not null",
+            "RegionCode, varchar(10), not null",
+            "OrderDate, date, not null",
+            "OrderDateKey, int, nullable",
+            "CustomerID, int, nullable",
+            "CustomerName, nvarchar(100), nullable",
+            "IsValid, bit, not null",
+            "StagedAt, datetime2, not null"
+          ]
+        }
+      ],
+      "out_of_scope_so_far": [
+        {
+          "nodeId": "[ai].[vwdiscountcalc]",
+          "reason": "Used only for AdjustedRevenue computation (TotalRevenue - Discount), not TotalRevenue itself"
+        },
+        {
+          "nodeId": "[ai].[customermaster]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[customersegmentmap]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[regionlookup]",
+          "reason": "Context/lookup only, not part of revenue formula"
+        },
+        {
+          "nodeId": "[ai].[factsalesreport]",
+          "reason": "Target table, not source"
+        },
+        {
+          "nodeId": "[ai].[dimcalendar]",
+          "reason": "Filter-only join (used in WHERE clause), not contributing to Qty values"
+        }
+      ],
+      "revisitable": [
+        "[ai].[vwdiscountcalc]",
+        "[ai].[customermaster]",
+        "[ai].[customersegmentmap]",
+        "[ai].[regionlookup]",
+        "[ai].[factsalesreport]"
+      ],
+      "revisits_remaining": 3
+    }
+  },
+  "_meta": {
+    "tool": "lineage_submit_hop_analysis",
+    "sessionId": "s_1775498367294_jv8xop",
+    "durationMs": 1
+  }
+}

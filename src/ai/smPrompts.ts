@@ -23,16 +23,17 @@ const BLOCK = {
 
   /** Step 2 — record detailed findings (→ detail memory slot) */
   writeFindings:
-    'Write findings to detail memory — depth depends on classification:\n' +
-    '- relevant/trace → full analysis (hard limit 5000 chars). Match depth to complexity: simple passthrough ~200 chars, moderate transform ~800 chars, complex multi-CTE SP with formulas/joins/CASE logic ~2000-4000 chars. Self-contained, usable at synthesis.\n' +
-    '  Extract by aspect (include only those present):\n' +
-    '  COLUMNS: key column names and roles (verbatim from DDL)\n' +
+    'Write findings to detail memory — document this node comprehensively:\n' +
+    '- relevant/trace → full analysis (hard limit 8000 chars). Use the budget: simple passthrough ~300 chars, moderate transform ~1000-2000 chars, complex multi-CTE SP ~3000-6000 chars. Self-contained — written as if documenting this node for a technical reference.\n' +
+    '  Include each aspect present:\n' +
+    '  COLUMNS: key column names, types, constraints (PK/FK/nullable)\n' +
     '  TRANSFORMS: expressions, CASE/COALESCE, computed columns (quote the SQL fragment)\n' +
     '  JOINS: join conditions (table.col = table.col)\n' +
     '  FILTERS: WHERE/HAVING business rules\n' +
-    '  DATA FLOW: how data enters and leaves this node (INSERT/SELECT/MERGE/EXEC/dynamic SQL)\n' +
+    '  DATA FLOW: how data enters and leaves (INSERT/SELECT/MERGE/EXEC). Note the loading pattern: full (TRUNCATE+INSERT), incremental, SCD2, MERGE upsert.\n' +
     '  QUESTION RELEVANCE: how this node answers the user question\n' +
-    '  Quote SQL verbatim — paraphrases lose grounding.\n' +
+    '  OBSERVATIONS: DDL comments, version annotations, performance risks, or anti-patterns you notice.\n' +
+    '  Quote SQL verbatim — ground truth for synthesis. Then explain what each expression means in business terms.\n' +
     '- pass → summary only (~100-200 chars): what passes through, from where to where.\n' +
     '- irrelevant/prune → brief summary only.',
 
@@ -114,13 +115,17 @@ const BLOCK = {
     'At completion, your detail memory slots are returned — one per visited node, always at full fidelity.\n' +
     'These are your ONLY evidence for writing enrich_view. Raw DDL is NOT re-delivered.\n' +
     'Rules:\n' +
-    '- Every claim must cite a detail slot (node name + quoted SQL evidence from your findings)\n' +
+    '- Every claim must cite a detail slot. Your slots contain comprehensive documentation — reproduce the key evidence, do not compress or re-summarize.\n' +
     '- If a slot lacks evidence for a claim, omit the claim — do not invent\n' +
     '- Group nodes by role in answering the question, not by schema\n' +
     '- If detail memory is insufficient for a node, use get_object_detail to re-read its DDL\n' +
+    '- Adapt section content to the question (one or more may apply):\n' +
+    '  WHAT the data means (business logic, column trace, impact) → foreground formulas, rename chains, business meaning from your findings.\n' +
+    '  HOW the pipeline runs (performance, technical, patterns) → foreground execution patterns, join strategies, constraint gaps from your findings.\n' +
+    '  For documentation or blended questions: combine both perspectives.\n' +
     '- When a section groups multiple nodes, decide per-node depth by distinctness:\n' +
-    '  DISTINCT logic (different SQL expressions, different business rules) → cite each: node name, role, key SQL expression, business meaning.\n' +
-    '  SIMILAR logic (same pattern repeated, e.g. copy-and-load steps) → summarize the group with one representative example, then list variations.\n' +
+    '  DISTINCT logic → cite each: node name, role, key evidence, meaning.\n' +
+    '  SIMILAR logic → summarize the group with one representative, then list variations.\n' +
     'suggested_sections groups your badge_labels into sections ordered by dependency depth.\n' +
     'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
     'adjust labels if needed, and write text per section from your detail memory findings.',

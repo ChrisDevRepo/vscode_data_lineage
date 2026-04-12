@@ -1,0 +1,1 @@
+{"nodes_found":["FactSalesReport","spBuildSalesReport","vwConsolidatedSales","SalesStaging","vwPriceList","PriceMaster"],"delivery":"sm","hops":3,"chain_length":6,"column_renames":["TotalRevenue->Qty*UnitPrice","OrderQty->Qty","ListPrice->UnitPrice"],"column_rejections":[],"chain_continuity_ok":true}

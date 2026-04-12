@@ -1,0 +1,11 @@
+{
+  "test_id": "bb-q6-production-filter",
+  "grade": "PASS",
+  "delivery": "inline",
+  "nodes_found": ["Product","ufnGetProductDealerPrice","ufnGetProductListPrice","ufnGetProductStandardCost","uspGetBillOfMaterials","uspGetWhereUsedProductID","vProductAndDescription"],
+  "nodes_count": 7,
+  "hops": 0,
+  "filter": ["Production"],
+  "vs_baseline": "STABLE",
+  "tokens": 44198
+}

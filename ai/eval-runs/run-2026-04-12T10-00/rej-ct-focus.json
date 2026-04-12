@@ -1,0 +1,36 @@
+{
+  "test_id": "rej-ct-focus",
+  "timestamp": "2026-04-12T10:00",
+  "chain_path": ["FactSalesReport", "spBuildSalesReport", "vwConsolidatedSales", "vwPriceList", "vwDiscountCalc", "SalesStaging", "PriceMaster", "DiscountRules", "spRefreshPrices", "spLoadSalesStaging", "vwRawOrders", "SupplierPrices", "MarkupRules", "CleanedOrders", "spCleanOrders"],
+  "nodes_found": ["spBuildSalesReport", "vwConsolidatedSales", "vwPriceList", "vwDiscountCalc", "SalesStaging", "PriceMaster", "DiscountRules", "spRefreshPrices", "spLoadSalesStaging", "vwRawOrders", "SupplierPrices", "MarkupRules", "CleanedOrders", "spCleanOrders"],
+  "delivery": "sm",
+  "hops": 13,
+  "rejection_test": {"error_triggered": true, "error_type": "focus_mismatch", "recovery_successful": true},
+  "column_renames": [{"from": "OrderQty", "to": "Qty", "at_node": "vwConsolidatedSales"}, {"from": "ListPrice", "to": "UnitPrice", "at_node": "vwPriceList"}],
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 20,
+    "scope_token_estimate": 4000,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 20, "outside_filter": 0},
+    "agenda_initial": 6,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "spBuildSalesReport", "focus_node_id": "DELIBERATELY_WRONG", "error": "focus_mismatch", "error_detail": "Expected [ai].[spbuildsalesreport], got DELIBERATELY_WRONG"},
+    {"hop": 2, "focus_node": "spBuildSalesReport (recovery)", "focus_node_id": "[ai].[spbuildsalesreport]", "error": null},
+    {"hop": 3, "focus_node": "vwConsolidatedSales", "error": null},
+    {"hop": 4, "focus_node": "vwPriceList", "error": null},
+    {"hop": 5, "focus_node": "vwDiscountCalc", "error": null},
+    {"hop": 6, "focus_node": "SalesStaging", "error": null},
+    {"hop": 7, "focus_node": "PriceMaster", "error": null},
+    {"hop": 8, "focus_node": "DiscountRules", "error": null},
+    {"hop": 9, "focus_node": "spRefreshPrices", "error": null},
+    {"hop": 10, "focus_node": "spLoadSalesStaging", "error": null},
+    {"hop": 11, "focus_node": "vwRawOrders", "error": null},
+    {"hop": 12, "focus_node": "SupplierPrices", "error": null},
+    {"hop": 13, "focus_node": "MarkupRules", "error": null}
+  ],
+  "notes": "Rejection test PASS: focus_mismatch triggered on hop 1, recovered on hop 2. Full trace completed with 13 hops. Required nodes found: spBuildSalesReport, vwConsolidatedSales, vwPriceList."
+}

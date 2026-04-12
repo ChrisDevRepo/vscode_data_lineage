@@ -1,0 +1,27 @@
+{
+  "test_id": "bb-q2-employee-deep",
+  "timestamp": "2026-04-12T10:00",
+  "nodes_found": ["ufnGetContactInformation", "uspGetEmployeeManagers", "uspGetManagerEmployees", "vEmployee", "vEmployeeDepartment", "vEmployeeDepartmentHistory", "vSalesPerson", "vSalesPersonSalesByFiscalYears"],
+  "delivery": "sm",
+  "hops": 8,
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 9,
+    "scope_token_estimate": 1800,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 9, "outside_filter": 0},
+    "agenda_initial": 8,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "ufnGetContactInformation", "focus_node_id": "[dbo].[ufngetcontactinformation]", "neighbor_count": 7, "verdict": "relevant", "badge_label": "Contact", "note_caption": "Enriches Employee data with Person details", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 2, "focus_node": "uspGetEmployeeManagers", "focus_node_id": "[dbo].[uspgetemployeemanagers]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Hierarchy", "note_caption": "Recursive CTE on OrganizationNode", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 3, "focus_node": "uspGetManagerEmployees", "focus_node_id": "[dbo].[uspgetmanageremployees]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Hierarchy", "note_caption": "Inverse of GetEmployeeManagers", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 4, "focus_node": "vEmployee", "focus_node_id": "[humanresources].[vemployee]", "neighbor_count": 9, "verdict": "relevant", "badge_label": "Detail", "note_caption": "Enriches Employee with full address and contact", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 5, "focus_node": "vEmployeeDepartment", "focus_node_id": "[humanresources].[vemployeedepartment]", "neighbor_count": 4, "verdict": "relevant", "badge_label": "Org", "note_caption": "Filters to current assignments", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 6, "focus_node": "vEmployeeDepartmentHistory", "focus_node_id": "[humanresources].[vemployeedepartmenthistory]", "neighbor_count": 5, "verdict": "relevant", "badge_label": "Audit", "note_caption": "Includes both start and end dates", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 7, "focus_node": "vSalesPerson", "focus_node_id": "[sales].[vsalesperson]", "neighbor_count": 11, "verdict": "relevant", "badge_label": "Sales", "note_caption": "Includes sales quotas and YTD metrics", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 8, "focus_node": "vSalesPersonSalesByFiscalYears", "focus_node_id": "[sales].[vsalespersonsalesbyfiscalyears]", "neighbor_count": 6, "verdict": "relevant", "badge_label": "Analysis", "note_caption": "Fiscal year pivot on SalesOrderHeader", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null}
+  ]
+}

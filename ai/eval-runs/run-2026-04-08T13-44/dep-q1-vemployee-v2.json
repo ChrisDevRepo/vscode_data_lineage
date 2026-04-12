@@ -1,0 +1,10 @@
+{
+  "test_id": "dep-q1-vemployee",
+  "grade": "PASS",
+  "delivery": "sm",
+  "chain_path": ["vEmployee","Employee","Person","BusinessEntityAddress","Address","StateProvince","CountryRegion","PersonPhone","PhoneNumberType","EmailAddress"],
+  "hops": 9,
+  "nodes_required_check": {"Employee": true, "Person": true},
+  "vs_baseline": "STABLE",
+  "tokens": 45032
+}

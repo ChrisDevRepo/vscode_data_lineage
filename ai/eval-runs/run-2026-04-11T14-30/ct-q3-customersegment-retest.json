@@ -1,0 +1,11 @@
+{
+  "test_id": "ct-q3-customersegment",
+  "retest": true,
+  "chain_path": ["FactSalesReport","spBuildSalesReport","CustomerMaster","CustomerSegmentMap","spRefreshSegments"],
+  "column_renames": [{"from": "SegmentName", "to": "CustomerSegment", "at_node": "spBuildSalesReport"}],
+  "source_nodes": ["CustomerMaster"],
+  "delivery": "sm",
+  "hops": 10,
+  "sm_metadata": {"sm_type": "ct_columns", "scope_size": 28, "filter_active": false},
+  "fix_applied": "columnTracking prompt clarified: columns in verdicts must be names AS THEY APPEAR in neighbor, read DDL SELECT to find source column reference"
+}

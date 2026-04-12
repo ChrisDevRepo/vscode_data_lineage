@@ -1,0 +1,205 @@
+{
+  "run": "2026-04-11T14-30",
+  "model": "claude-haiku-4-5-20251001",
+  "change_tested": "Domain-agnostic prompts: de-pipeline smPrompts.ts, aiOutputTemplates.yaml, package.json",
+  "tests": {
+    "bb-q1-employee": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {
+          "status": "PASS",
+          "detail": "11/11 required nodes found",
+          "missing": []
+        },
+        "node_precision": {
+          "status": "PASS",
+          "detail": "0 forbidden nodes in result",
+          "found": []
+        },
+        "delivery_mode": {
+          "status": "PASS",
+          "expected": "sm",
+          "actual": "sm"
+        },
+        "hop_count": {
+          "status": "WARN",
+          "expected_max": 15,
+          "actual": 18
+        },
+        "completion": {
+          "status": "PASS"
+        },
+        "sm_type": {
+          "status": "PASS",
+          "expected": "bb",
+          "actual": "bb"
+        },
+        "scope_range": {
+          "status": "PASS",
+          "expected": "30-60",
+          "actual": 46
+        }
+      },
+      "vs_baseline": "STABLE"
+    },
+    "bb-q2-employee-deep": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {
+          "status": "PASS",
+          "detail": "8/8 required nodes found",
+          "missing": []
+        },
+        "node_precision": {
+          "status": "PASS",
+          "detail": "0 forbidden nodes in result",
+          "found": []
+        },
+        "delivery_mode": {
+          "status": "PASS",
+          "expected": "sm",
+          "actual": "sm"
+        },
+        "hop_count": {
+          "status": "PASS",
+          "expected_max": 15,
+          "actual": 8
+        },
+        "completion": {
+          "status": "PASS"
+        },
+        "sm_type": {
+          "status": "PASS",
+          "expected": "bb",
+          "actual": "bb"
+        },
+        "scope_range": {
+          "status": "PASS",
+          "expected": "5-15",
+          "actual": 9
+        }
+      },
+      "vs_baseline": "STABLE"
+    },
+    "ct-q3-customersegment": {
+      "grade": "PASS",
+      "checks": {
+        "chain_path": {
+          "status": "PASS",
+          "detail": "Retest after columnTracking fix \u2014 correct path found",
+          "actual": [
+            "FactSalesReport",
+            "spBuildSalesReport",
+            "CustomerMaster",
+            "CustomerSegmentMap",
+            "spRefreshSegments"
+          ]
+        },
+        "delivery_mode": {
+          "status": "PASS",
+          "expected": "sm",
+          "actual": "sm"
+        },
+        "hop_count": {
+          "status": "PASS",
+          "expected_max": 5,
+          "actual": 5
+        },
+        "completion": {
+          "status": "PASS"
+        },
+        "sm_type": {
+          "status": "PASS",
+          "expected": "ct_columns",
+          "actual": "ct_columns"
+        },
+        "scope_range": {
+          "status": "PASS",
+          "expected": "3-15",
+          "actual": 28
+        }
+      },
+      "vs_baseline": "STABLE",
+      "root_cause": "FIXED \u2014 columnTracking prompt clarified input vs output column names"
+    },
+    "dep-q1-vemployee": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {
+          "status": "PASS",
+          "detail": "2/2 required nodes found (Employee, Person)",
+          "missing": []
+        },
+        "delivery_mode": {
+          "status": "PASS",
+          "expected": "sm",
+          "actual": "sm"
+        },
+        "hop_count": {
+          "status": "PASS",
+          "expected_max": 10,
+          "actual": 9
+        },
+        "completion": {
+          "status": "PASS"
+        },
+        "sm_type": {
+          "status": "PASS",
+          "expected": "ct_deps",
+          "actual": "ct_deps"
+        },
+        "scope_range": {
+          "status": "PASS",
+          "expected": "3-20",
+          "actual": 13
+        }
+      },
+      "vs_baseline": "STABLE"
+    },
+    "bb-q6-production-filter": {
+      "grade": "PASS",
+      "checks": {
+        "node_coverage": {
+          "status": "PASS",
+          "detail": "filter test \u00e2\u20ac\u201d no required nodes",
+          "missing": []
+        },
+        "delivery_mode": {
+          "status": "PASS",
+          "expected": "sm",
+          "actual": "sm"
+        },
+        "hop_count": {
+          "status": "PASS",
+          "expected_max": 10,
+          "actual": 1
+        },
+        "completion": {
+          "status": "PASS"
+        },
+        "sm_type": {
+          "status": "PASS",
+          "expected": "bb",
+          "actual": "bb"
+        },
+        "scope_range": {
+          "status": "PASS",
+          "expected": "1-15",
+          "actual": 2
+        },
+        "filter_check": {
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        }
+      },
+      "vs_baseline": "STABLE"
+    }
+  },
+  "summary": {
+    "total": 5,
+    "pass": 5,
+    "partial": 0,
+    "fail": 0
+  }
+}

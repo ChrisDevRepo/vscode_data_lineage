@@ -1,0 +1,24 @@
+{
+  "test_id": "bb-q1-employee",
+  "nodes_found": ["ufnGetContactInformation","uspGetEmployeeManagers","uspGetManagerEmployees","uspUpdateEmployeeHireInfo","uspUpdateEmployeeLogin","uspUpdateEmployeePersonalInfo","vEmployee","vEmployeeDepartment","vEmployeeDepartmentHistory","vSalesPerson","vSalesPersonSalesByFiscalYears"],
+  "delivery": "sm",
+  "hops": 4,
+  "sections": ["Direct Writers","Direct Readers"],
+  "prune_decisions": [],
+  "sm_metadata": {
+    "sm_type": "bb",
+    "scope_size": 46,
+    "scope_token_estimate": 9200,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 46, "outside_filter": 0},
+    "agenda_initial": 45,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 0, "focus_node": "uspUpdateEmployeeHireInfo", "focus_node_id": "[humanresources].[uspupdateemployeehireinfo]", "neighbor_count": 3, "verdict": "relevant", "badge_label": "Analyzed", "note_caption": "Type: procedure", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 1, "focus_node": "uspUpdateEmployeePersonalInfo", "focus_node_id": "[humanresources].[uspupdateemployeepersonalinfo]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Analyzed", "note_caption": "Type: procedure", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 2, "focus_node": "ufnGetContactInformation", "focus_node_id": "[dbo].[ufngetcontactinformation]", "neighbor_count": 7, "verdict": "relevant", "badge_label": "Analyzed", "note_caption": "Type: function", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null},
+    {"hop": 3, "focus_node": "uspGetEmployeeManagers", "focus_node_id": "[dbo].[uspgetemployeemanagers]", "neighbor_count": 2, "verdict": "relevant", "badge_label": "Analyzed", "note_caption": "Type: procedure", "prune_ids": [], "add_ids": [], "error": null, "error_detail": null}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "run": "2026-04-08T16:00",
+  "rejections": [
+    {
+      "test_id": "bb-q4-sales",
+      "hop": 6,
+      "tool": "submit_findings",
+      "error_type": "rejected_prune_ids",
+      "ai_sent": {"prune_ids": ["[person].[stateprovince]","[person].[countryregion]","[person].[emailaddress]","[person].[personphone]","[person].[phonenumbertype]","[humanresources].[uspupdateemployeehireinfo]","[humanresources].[uspupdateemployeelogin]","[humanresources].[uspupdateemployeepersonalinfo]"]},
+      "sm_hint": "Direct neighbors of origin cannot be pruned — must visit instead",
+      "classification": "VALID_REJECTION",
+      "fix": "none — Guard 0 working correctly, agent tried to prune direct origin neighbors"
+    }
+  ],
+  "summary": {
+    "HALLUCINATION": 0,
+    "DESIGN_CONFUSION": 0,
+    "VALID_REJECTION": 1,
+    "INFRA_BUG": 0
+  }
+}

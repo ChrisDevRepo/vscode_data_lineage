@@ -1,0 +1,23 @@
+{
+  "test_id": "ct-q3-aw-businessentityid",
+  "timestamp": "2026-04-12T10:00",
+  "chain_path": ["Employee", "uspUpdateEmployeeHireInfo", "uspUpdateEmployeeLogin", "uspUpdateEmployeePersonalInfo"],
+  "nodes_found": ["Employee", "uspUpdateEmployeeHireInfo", "uspUpdateEmployeeLogin", "uspUpdateEmployeePersonalInfo"],
+  "delivery": "inline",
+  "hops": 3,
+  "sm_metadata": {
+    "sm_type": "ct_columns",
+    "scope_size": 4,
+    "scope_token_estimate": 800,
+    "filter_active": false,
+    "filter_schemas": [],
+    "filter_breakdown": {"in_filter": 4, "outside_filter": 0},
+    "agenda_initial": 2,
+    "agenda_final": 0
+  },
+  "hop_log": [
+    {"hop": 1, "focus_node": "uspUpdateEmployeeHireInfo", "focus_node_id": "[humanresources].[uspupdateemployeehireinfo]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 2, "focus_node": "uspUpdateEmployeeLogin", "focus_node_id": "[humanresources].[uspupdateemployeelogin]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null},
+    {"hop": 3, "focus_node": "uspUpdateEmployeePersonalInfo", "focus_node_id": "[humanresources].[uspupdateemployeepersonalinfo]", "neighbor_count": 0, "verdicts": [], "error": null, "error_detail": null}
+  ]
+}
