@@ -1,8 +1,0 @@
-{
-  "test_id": "bb-q6-production-filter",
-  "grade": "RATE_LIMIT",
-  "delivery": "unknown",
-  "root_cause": "Haiku API rate limit hit during execution",
-  "vs_baseline": "INCOMPLETE",
-  "tokens": 132
-}

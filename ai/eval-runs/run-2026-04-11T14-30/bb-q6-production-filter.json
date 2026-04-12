@@ -1,8 +1,0 @@
-{
-  "test_id": "bb-q6-production-filter",
-  "nodes_found": ["Product", "vProductAndDescription"],
-  "delivery": "sm",
-  "hops": 1,
-  "sm_metadata": {"sm_type": "bb", "scope_size": 2, "filter_active": true, "filter_schemas": ["Production"]},
-  "hop_log_summary": "Small scope (2 nodes). Product is root table, vProductAndDescription is sole downstream dependent."
-}

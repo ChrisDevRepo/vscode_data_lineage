@@ -1,7 +1,0 @@
-{
-  "test_id": "bb-q1-employee",
-  "nodes_found": ["uspUpdateEmployeeHireInfo","uspUpdateEmployeeLogin","uspUpdateEmployeePersonalInfo","ufnGetContactInformation","uspGetEmployeeManagers","uspGetManagerEmployees","vEmployee","vEmployeeDepartment","vEmployeeDepartmentHistory","vSalesPerson","vSalesPersonSalesByFiscalYears"],
-  "delivery": "sm",
-  "hops": 18,
-  "sm_metadata": {"sm_type": "bb", "scope_size": 46, "filter_active": false}
-}
