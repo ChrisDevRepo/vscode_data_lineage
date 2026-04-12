@@ -169,7 +169,8 @@ export function dispatchTool(
         { activeFilter: activeFilter ?? undefined }, columnStore ?? undefined,
       );
       columnTraceState.current = state;
-      const initResult = state.init({ targetColumns: columns, origin: input.origin as string | undefined, direction });
+      const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
+      const initResult = state.init({ targetColumns: columns, origin: input.origin as string | undefined, direction, depth });
       if ('error' in initResult) return JSON.stringify(initResult);
       // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
       const scopeDdlChars = state.estimateScopeDdlChars();
@@ -267,7 +268,8 @@ export function dispatchTool(
         columnStore ?? undefined,
       );
       bb.current = state;
-      const initResult = state.init({ question: (input.question as string) ?? '', origin: (input.origin as string) ?? '' });
+      const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
+      const initResult = state.init({ question: (input.question as string) ?? '', origin: (input.origin as string) ?? '', depth });
       if ('error' in initResult) return JSON.stringify(initResult);
 
       // Token budget + node count gate: inline (all DDL at once) vs hop-by-hop (sliding memory)
@@ -334,6 +336,17 @@ export function dispatchTool(
       const nextHop = state.getHopContext();
       if ('done' in nextHop) return JSON.stringify(state.getResult());
       return JSON.stringify({ ...subResult, ...nextHop });
+    }
+
+    case 'lineage_expand_frontier': {
+      const bb = blackboardState ?? { current: null };
+      const state = bb.current;
+      if (!state) return JSON.stringify({ error: 'no_active_exploration', hint: 'No active exploration. Call start_exploration first.' });
+      const extraHops = typeof input.extra_hops === 'number' ? Math.max(1, Math.min(Math.round(input.extra_hops), 5)) : 2;
+      const result = state.expandFrontier(extraHops);
+      const nextHop = state.getHopContext();
+      if ('done' in nextHop) return JSON.stringify(state.getResult());
+      return JSON.stringify({ ok: true, ...result, ...nextHop, hint: result.added > 0 ? `Added ${result.added} nodes to agenda.` : 'No new nodes beyond boundary.' });
     }
 
     default:

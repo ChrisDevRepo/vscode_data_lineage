@@ -27,7 +27,8 @@ export function buildSystemPromptBase(maxRounds: number): string {
     '4. OUTPUT: enrich_view when graph aids understanding (lineage path, data flow).\n' +
     '   Chat text for: pure explanations, SQL generation, list/compare requests (no graph needed).\n' +
     '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
-    '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow. Do not number badges yourself or write description when sections are provided.\n'
+    '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow. Do not number badges yourself or write description when sections are provided.\n' +
+    '6. MATH: In chat text use ```math fenced blocks for display formulas. Never use $$ delimiters.\n'
     // Callers append: summary/badges/sections/notes/highlights/description from aiOutputTemplates
   );
 }

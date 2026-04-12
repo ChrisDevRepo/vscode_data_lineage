@@ -78,7 +78,6 @@ export class ColumnTraceState extends HopStateMachine {
   private outOfScope: OutOfScopeEntry[] = [];
   private prunedEntries = new Map<string, { parentColumns: string[]; depth: number; parentNodeId: string | null }>();
   private revisitCount = 0;
-  private scopeSize = 0;
   private currentFocusActiveColumns: string[] = [];
   private currentFocusDepth = 0;
   private rejectionsThisHop = 0;
@@ -176,7 +175,6 @@ export class ColumnTraceState extends HopStateMachine {
     this.chain.clear();
     this.passthroughMap.clear();
     this.outOfScope = [];
-    this.scopeSize = 0;
     this.currentFocusActiveColumns = [];
     this.currentFocusDepth = 0;
     this.rejectionsThisHop = 0;
@@ -257,7 +255,6 @@ export class ColumnTraceState extends HopStateMachine {
     // Compute scope via NeighborIndex BFS (direction-aware, depth-limited)
     const scopeIds = this.bfsScopeViaIndex(origin_.id, params.depth);
     this.scopeNodeIds = scopeIds;
-    this.scopeSize = scopeIds.size;
 
     // Seed frontier with directional neighbors of origin
     const neighbors = this.getDirectionalNeighbors(origin_.id);
@@ -346,7 +343,7 @@ export class ColumnTraceState extends HopStateMachine {
 
     if (!entry || !node) {
       this._status = 'complete';
-      this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeSize} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
+      this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeNodeIds.size} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
       return { done: true };
     }
 
@@ -384,11 +381,11 @@ export class ColumnTraceState extends HopStateMachine {
           `Trace through upstream SPs/views that write to this table. ` +
           `Prune only downstream neighbors that merely SELECT from this table.`
         : `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`);
-    const pct = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
-    this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeSize} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
+    const pct = this.scopeNodeIds.size > 0 ? Math.round((this.visited.size / this.scopeNodeIds.size) * 100) : 0;
+    this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeNodeIds.size} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
     this.log('debug', `Hop ${this.hopCount} detail | ${node.id} (${node.type}) | task=${entry.question ? 'self-ask' : 'default'} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
     if (entry.depth >= DEPTH_WARNING_THRESHOLD) {
-      this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeSize}`);
+      this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeNodeIds.size}`);
     }
 
     this._status = 'awaiting_verdicts';
@@ -583,8 +580,8 @@ export class ColumnTraceState extends HopStateMachine {
     const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
     const totalRemoved = pruneCount + cascaded;
-    const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
-    this.log('info', `Verdicts: ${relevant} relevant, ${pruneCount} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
+    const pctDone = this.scopeNodeIds.size > 0 ? Math.round((this.visited.size / this.scopeNodeIds.size) * 100) : 0;
+    this.log('info', `Verdicts: ${relevant} relevant, ${pruneCount} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeNodeIds.size} (${pctDone}%) | chain=${this.chain.size}`);
 
     // Build progress line — summarize verdict for user display
     const parts: string[] = [];
@@ -946,8 +943,8 @@ export class ColumnTraceState extends HopStateMachine {
       passthrough: this.passthroughMap.size,
     };
 
-    const pruneRate = this.scopeSize > 0 ? Math.round(((this.scopeSize - stats.examined) / this.scopeSize) * 100) : 0;
-    this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeSize} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
+    const pruneRate = this.scopeNodeIds.size > 0 ? Math.round(((this.scopeNodeIds.size - stats.examined) / this.scopeNodeIds.size) * 100) : 0;
+    this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeNodeIds.size} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
     this.log('debug', `COMPLETE detail | fullNodes=${fullNodes.length} | edges=${edges.length} | outOfScope=${this.outOfScope.length} | revisits=${this.revisitCount}`);
 
     // Derive badge/note suggestions from chain entries.
@@ -1010,8 +1007,6 @@ export class ColumnTraceState extends HopStateMachine {
   get isAwaitingVerdicts(): boolean { return this._status === 'awaiting_verdicts'; }
   get hops(): number { return this.hopCount; }
   get frontierSize(): number { return this.frontier.length; }
-  get scope(): number { return this.scopeSize; }
-  get visited_count(): number { return this.visited.size; }
   get removedCount(): number { return this.removedSet.size; }
   get chainSize(): number { return this.chain.size; }
   get columns(): readonly string[] { return this.targetColumns; }

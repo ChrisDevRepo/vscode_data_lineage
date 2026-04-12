@@ -192,6 +192,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   get hopNumber(): number { return this.hopCount; }
   get visitedCount(): number { return this.visited.size; }
+  get scopeSize(): number { return this.scopeNodeIds.size; }
 
   get coveragePct(): number {
     return this.scopeNodeIds.size > 0

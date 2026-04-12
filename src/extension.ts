@@ -738,8 +738,8 @@ export function activate(context: vscode.ExtensionContext) {
       prepareInvocation(options, _token) {
         const input = options.input as { focus_node_id?: string };
         const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
-        const visited = (_columnTraceState?.visited_count ?? 0);
-        const total = visited + (_columnTraceState?.frontierSize ?? 0);
+        const visited = (_columnTraceState?.visitedCount ?? 0);
+        const total = _columnTraceState?.scopeSize ?? 0;
         return { invocationMessage: name ? `Node ${visited} of ${total} · Tracing ${name}…` : 'Processing hop verdicts…' };
       },
       invoke(options, _token) {
@@ -887,7 +887,7 @@ export function activate(context: vscode.ExtensionContext) {
         const input = options.input as { focus_node_id?: string };
         const name = input.focus_node_id?.replace(/\[|\]/g, '').split('.').pop() ?? '';
         const visited = (_blackboardState?.visitedCount ?? 0);
-        const total = visited + (_blackboardState?.agendaRemaining ?? 0);
+        const total = _blackboardState?.scopeSize ?? 0;
         return { invocationMessage: name ? `Node ${visited} of ${total} · Analyzing ${name}…` : 'Recording findings…' };
       },
       invoke(options, _token) {
@@ -1431,7 +1431,7 @@ export function activate(context: vscode.ExtensionContext) {
               phaseTransitions.push(`discover→ct_active@R${roundCount}`);
               lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'));
               logDebug(outputChannel, 'AI', `[CT] Phase → ct_active | Tools: ${lineageTools.map(t => t.name).join(', ')}`);
-              logDebug(outputChannel, 'AI', `[CT] Activation: status=${_columnTraceState.status}, columns=${_columnTraceState.columns.length}, scope=${_columnTraceState.scope}`);
+              logDebug(outputChannel, 'AI', `[CT] Activation: status=${_columnTraceState.status}, columns=${_columnTraceState.columns.length}, scope=${_columnTraceState.scopeSize}`);
 
               // Inject mode-specific prompt ONCE when entering CT mode
               const hasColumns = _columnTraceState.columns.length > 0;
@@ -1457,10 +1457,10 @@ export function activate(context: vscode.ExtensionContext) {
           if (_columnTraceState) {
             const st = _columnTraceState;
             if (hasCtStart && isCtSuccess) {
-              logInfo(outputChannel, 'AI', `Column trace started (${st.scope} objects in scope)`);
+              logInfo(outputChannel, 'AI', `Column trace started (${st.scopeSize} objects in scope)`);
             }
             if (hasCtSubmit && isTraceComplete) {
-              logInfo(outputChannel, 'AI', `Column trace complete (${st.hops} hops, ${st.visited_count} objects analyzed)`);
+              logInfo(outputChannel, 'AI', `Column trace complete (${st.hops} hops, ${st.visitedCount} objects analyzed)`);
             }
           }
 
@@ -1536,7 +1536,7 @@ export function activate(context: vscode.ExtensionContext) {
         const ctSnap = _columnTraceState as ColumnTraceState | null;
         const bbSnap = _blackboardState as BlackboardState | null;
         if (ctSnap) {
-          kpiParts.push(`ct_hops=${ctSnap.hops}, ct_visited=${ctSnap.visited_count}/${ctSnap.scope}, ct_frontier=${ctSnap.frontierSize}`);
+          kpiParts.push(`ct_hops=${ctSnap.hops}, ct_visited=${ctSnap.visitedCount}/${ctSnap.scopeSize}, ct_frontier=${ctSnap.frontierSize}`);
         }
         if (bbSnap) {
           kpiParts.push(`bb_notes=${bbSnap.noteCount}, bb_status=${bbSnap.status}`);
@@ -1606,13 +1606,10 @@ export function activate(context: vscode.ExtensionContext) {
       } else if (lastTools.some(t => t.includes('get_object_detail'))) {
         followups.push({ prompt: 'Trace the lineage from this object', label: 'Trace lineage' });
         followups.push({ prompt: 'What other objects reference this one?', label: 'Find references' });
-      } else if (lastTools.some(t => t.includes('analysis'))) {
+      } else if (lastTools.some(t => t.includes('run_analysis'))) {
         followups.push({ prompt: 'Show me the details of the top hub', label: 'Explore top hub' });
-      } else if (lastTools.some(t => t.includes('enrich_view'))) {
-        followups.push({ prompt: 'Explain the lineage in more detail', label: 'Detailed explanation' });
       } else if (lastTools.some(t => t.includes('submit_hop') || t.includes('submit_findings'))) {
         followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
-        followups.push({ prompt: 'Explain the full lineage path in detail', label: 'Detailed explanation' });
       }
 
       return followups;

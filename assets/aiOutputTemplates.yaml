@@ -72,6 +72,7 @@ sections:
     Multi-step logic -> ordered 1. 2. 3. list.
     Risk or data quality issue -> warning prefix with ⚠️.
     Transfer your detail memory findings into section text at full depth — cite SQL expressions, conditions, and data flow patterns from your findings. Group simple nodes (truncate+insert, passthrough) together. Name every column and expression explicitly: "various columns" → `ColA`, `ColB`, `ColC`. "certain conditions" → `WHERE Status = 'Active'`.
+    This IS the documentation — write it at full depth on the first call. There is no follow-up "explain more" step. Every formula, column mapping, and business rule from your findings must appear here.
 
     BAD order — jumping non-linearly (Target -> Source -> Transform -> Views).
     BAD text — "Stores project data." or "Reads from Source." (no detail).
