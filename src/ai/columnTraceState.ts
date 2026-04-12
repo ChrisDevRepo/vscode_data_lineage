@@ -829,8 +829,9 @@ export class ColumnTraceState extends HopStateMachine {
 
     const entryMap = new Map(entries.map(e => [e.nodeId.toLowerCase(), e]));
     let processed = 0;
+    let batchGuard = entryMap.size + this.frontier.length + 1;
 
-    while (true) {
+    while (batchGuard-- > 0) {
       // If already awaiting verdicts (first hop from init), use current focus.
       // Otherwise advance to next hop.
       if (this._status !== 'awaiting_verdicts') {
@@ -865,6 +866,7 @@ export class ColumnTraceState extends HopStateMachine {
       processed++;
     }
 
+    if (batchGuard <= 0) this.log('warn', `CT submitBatch: loop guard exhausted after ${processed} hops`);
     this.log('info', `Batch complete: ${processed} hops processed`);
     return { ok: true, result: this.getResult() };
   }

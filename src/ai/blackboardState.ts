@@ -200,7 +200,8 @@ export class BlackboardState extends HopStateMachine {
     // Pop highest-priority unvisited entry (iterative — no recursion)
     let entry: AgendaEntry | undefined;
     let node: LineageNode | undefined;
-    while (true) {
+    let loopGuard = this.agenda.length + 1;
+    while (loopGuard-- > 0) {
       entry = this.popNextAgendaEntry();
       if (!entry) {
         this._status = 'complete';
@@ -220,6 +221,12 @@ export class BlackboardState extends HopStateMachine {
         continue;
       }
       break;
+    }
+
+    if (!entry || !node) {
+      this.log('warn', 'BB getHopContext: loop guard exhausted — agenda/nodeMap desync');
+      this._status = 'complete';
+      return { done: true };
     }
 
     this.visited.add(entry.nodeId);
@@ -535,8 +542,9 @@ export class BlackboardState extends HopStateMachine {
 
     const entryMap = new Map(entries.map(e => [e.nodeId.toLowerCase(), e]));
     let processed = 0;
+    let batchGuard = entryMap.size + this.agenda.length + 1;
 
-    while (true) {
+    while (batchGuard-- > 0) {
       // If already awaiting findings (first hop from init), use current focus.
       // Otherwise advance to next hop.
       if (this._status !== 'awaiting_findings') {
@@ -582,6 +590,7 @@ export class BlackboardState extends HopStateMachine {
       }
     }
 
+    if (batchGuard <= 0) this.log('warn', `BB submitBatch: loop guard exhausted after ${processed} hops`);
     this.log('info', `Batch complete: ${processed} hops processed`);
     return { ok: true, result: this.getResult() };
   }
