@@ -17,9 +17,9 @@ const BLOCK = {
   /** Node classification — shared concept across all SM types */
   verdictCategories:
     'NODE CLASSIFICATION (three categories):\n' +
-    '- relevant (BB) / trace (CT): node has business logic, transforms, or answers the question → full analysis + badge_label\n' +
-    '- pass: node is in the path but no transforms (SELECT *, staging, identity view) → summary only, no badge_label\n' +
-    '- irrelevant (BB) / prune (CT): node has no connection to the question → removed from graph',
+    '- relevant (BB) / trace (CT): node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS relevant — even if its connection to the question is indirect.\n' +
+    '- pass: node is a pure passthrough with NO transforms (SELECT *, identity view, staging table with no logic) → summary only, no badge_label\n' +
+    '- irrelevant (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the pipeline → removed from graph',
 
   /** Step 2 — record detailed findings (→ detail memory slot) */
   writeFindings:
