@@ -267,7 +267,7 @@ Same structure as start_column_trace state machine response, with updated `hop`,
 | `focus_node_id` | YES | string | Must match current hop context |
 | `findings` | YES | string | Question-adapted evidence from DDL (200-4000 chars scaled to complexity, hard limit 5000). Structured by aspect: COLUMNS, TRANSFORMS, JOINS, FILTERS, DATA FLOW, QUESTION RELEVANCE. Depth prioritized by question type (business meaning vs execution patterns). Self-contained — usable at synthesis without re-reading DDL. |
 | `summary` | YES | string | Short memory entry (~100-200 chars, hard limit 500). What this node does + what's still open. Visible in working memory for ALL future hops. |
-| `verdict` | YES | enum | `relevant` — node has business logic/transforms (full findings + badge_label); `pass` — in the path but no transforms (summary stored, no badge); `irrelevant` — triggers BFS cascade prune. Runtime coerces legacy `noted` → `pass`. |
+| `verdict` | YES | enum | `relevant` — node has ANY business logic/transforms (full findings + badge_label); `pass` (= data passthrough) — pure wire, ZERO transforms (full findings stored, no badge); `irrelevant` — utility only, triggers BFS cascade prune. Runtime coerces legacy `noted` → `pass`. |
 | `tags` | No | string[] | Categorization: `business-rule`, `transform`, `source`, etc. |
 | `questions` | No | array | Self-Ask: `[{ node_id, question }]` — boosts target node's agenda priority to 2 |
 | `prune_ids` | No | string[] | Remove specific neighbor node IDs from agenda. Each triggers `cascadePrune()`. |

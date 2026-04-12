@@ -61,11 +61,11 @@ Three categories — one concept shared via `BLOCK.verdictCategories` in `smProm
 
 | Concept | BB verdict | CT verdict | Detail memory | Badge | Graph |
 |---------|-----------|-----------|---------------|-------|-------|
-| Has logic/transforms | `relevant` | `trace` | Full findings (300-6000 chars, comprehensive documentation — SQL evidence + business meaning, 8000 hard limit) | YES | Kept |
-| In path, no transforms | `pass` | `pass` | Summary only (~100-200 chars) | NO | Kept |
-| Not related to question | `irrelevant` | `prune` | Summary only | NO | Removed (cascade prune) |
+| Has ANY logic/transforms | `relevant` | `trace` | Full findings (business meaning + SQL evidence, 8000 hard limit) | YES | Kept |
+| Data passthrough (ZERO transforms) | `pass` | `pass` | Full findings stored (no evidence destruction) | NO | Kept |
+| Utility only (logging, error handling) | `irrelevant` | `prune` | Summary only | NO | Removed (cascade prune) |
 
-SM enforces: `pass` verdict → `badge_label` stripped, `analysis` stored as summary only. One OOP code path in `HopStateMachine` base class — BB and CT both call `storeDetail()`.
+SM enforces: `pass` verdict → `badge_label` stripped, full findings stored. `irrelevant` → summary only + cascade prune. One OOP code path in `HopStateMachine` base class — BB and CT both call `storeDetail()`. At synthesis, AI receives full findings for both `relevant` and `pass` nodes; `relevant` nodes get sections/badges, `pass` nodes are available as context.
 
 ## Key Rules
 

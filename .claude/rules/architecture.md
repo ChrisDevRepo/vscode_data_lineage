@@ -60,7 +60,7 @@ SM stores and delivers — never filters, ranks, or evicts AI evidence.
 - **Short memory** (`narrative[]`): incremental index, ~100-200 chars/hop, all entries visible every hop
 - **Detail memory** (`detailSlots` Map): grounded evidence per node, local RAM, full fidelity, no eviction. Delivered only at synthesis.
 
-Detail depth: `relevant`/`trace` → full analysis; `pass` → summary; `irrelevant`/`prune` → summary + removed.
+Detail depth: `relevant`/`trace` → full findings; `pass` → full findings (no evidence destruction); `irrelevant`/`prune` → summary only + removed from graph.
 
 One code path in `HopStateMachine` base class → BB, CT, CT_DEP inherit.
 
