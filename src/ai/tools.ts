@@ -862,9 +862,11 @@ export function autoFixEnrichView(
   let fixed = { ...input };
 
   // 0. Normalize escaped newlines in description (LLMs sometimes double-escape)
-  // Negative lookahead: skip \n/\t when followed by a letter (LaTeX macros: \text, \neq, \nu, \times…)
-  if (fixed.description && /\\n(?![a-zA-Z])/.test(fixed.description)) {
-    fixed = { ...fixed, description: fixed.description.replace(/\\n(?![a-zA-Z])/g, '\n').replace(/\\t(?![a-zA-Z])/g, '\t') };
+  // Protect known LaTeX macros: \text, \times, \theta, \tau, \to, \neq, \nu, \nabla, etc.
+  if (fixed.description && /\\n/.test(fixed.description)) {
+    fixed = { ...fixed, description: fixed.description
+      .replace(/\\n(?!(?:eq|eg|u|ot|abla|otin|i|mid|leq|geq)\b)/g, '\n')
+      .replace(/\\t(?!(?:ext|imes|au|heta|o|op|ilde|frac|herefore|riangle)\b)/g, '\t') };
     fixes.push('Normalized escaped newlines in description');
   }
 
@@ -890,119 +892,30 @@ export function autoFixEnrichView(
     fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Convert LaTeX to markdown-compatible math — best-effort, never reject
+  // 4. Convert LaTeX environments to $$-delimited math (remark-math handles $$ natively).
+  //    ```math fences are handled at render time by mathFenceToDelimiters().
+  //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
   const fixLatex = (text: string): { text: string; changed: boolean } => {
     let changed = false;
     let result = text;
 
-    // 4a. \begin{cases}...\end{cases} → ```math block with case notation
+    // 4a. \begin{cases}...\end{cases} → $$ block
     result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
-      return '\n```math\n' + lines.join('\n') + '\n```\n';
+      return '\n$$\n' + lines.join('\n') + '\n$$\n';
     });
-    // 4b. \begin{aligned}...\end{aligned} → ```math block
+    // 4b. \begin{aligned}...\end{aligned} → $$ block
     result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
-      return '\n```math\n' + lines.join('\n') + '\n```\n';
+      return '\n$$\n' + lines.join('\n') + '\n$$\n';
     });
-    // 4c. Generic \begin{env}...\end{env} → ```math block
+    // 4c. Generic \begin{env}...\end{env} → $$ block
     result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
       changed = true;
-      return '\n```math\n' + (body as string).trim() + '\n```\n';
+      return '\n$$\n' + (body as string).trim() + '\n$$\n';
     });
-
-    // 4d. $$...$$ display math → ```math fenced block
-    // Use pattern that won't span across paragraph boundaries (double newline)
-    result = result.replace(/\$\$([^$]*(?:\$(?!\$)[^$]*)*)\$\$/g, (_match, body: string) => {
-      changed = true;
-      return '\n```math\n' + (body as string).trim() + '\n```\n';
-    });
-
-    // 4e. Standalone LaTeX macros on their own line (not inside ```math) → wrap in ```math
-    // Re-split after 4a-4d injected multi-line replacements into single entries
-    const LATEX_MACRO_RE = /\\(?:frac|sum|prod|int|sqrt|lim|log|max|min|cdot|times|div|pm|leq|geq|neq|approx)\b/;
-    const lines = result.split('\n');
-    let insideFence = false;
-    for (let li = 0; li < lines.length; li++) {
-      const trimmed = lines[li].trim();
-      if (!insideFence && trimmed.startsWith('```')) { insideFence = true; continue; }
-      if (insideFence && trimmed === '```') { insideFence = false; continue; }
-      if (insideFence) continue;
-      // Skip lines that are inline code or already have $ delimiters
-      if (trimmed.startsWith('`') || /\$/.test(trimmed)) continue;
-      if (LATEX_MACRO_RE.test(trimmed)) {
-        changed = true;
-        lines[li] = '```math\n' + trimmed + '\n```';
-      }
-    }
-    result = lines.join('\n');
-
-    // 4f. Strip orphan $$ instead of trying to balance (prevents global corruption)
-    const ddCount = (result.match(/\$\$/g) || []).length;
-    if (ddCount % 2 !== 0) {
-      changed = true;
-      // Remove the last unmatched $$ — safer than appending one that could pair wrong
-      const lastIdx = result.lastIndexOf('$$');
-      if (lastIdx >= 0) {
-        result = result.slice(0, lastIdx) + result.slice(lastIdx + 2);
-      }
-    }
-
-    // 4g. Collapse nested/empty ```math fences left by prior steps
-    result = result.replace(/```math\s*```/g, '');          // empty math blocks
-    result = result.replace(/```\s*```math/g, '');           // adjacent close→open → merge
-    result = result.replace(/```math\s*\n\s*```math/g, '```math'); // nested open→open
-
-    // 4h. Per-formula validation — demote broken math blocks to plain code fences
-    const finalLines = result.split('\n');
-    const mathBlocks: Array<{ startLine: number; endLine: number }> = [];
-    let mathStart = -1;
-    for (let li = 0; li < finalLines.length; li++) {
-      const trimmed = finalLines[li].trim();
-      if (mathStart < 0 && trimmed === '```math') {
-        mathStart = li;
-      } else if (mathStart >= 0 && trimmed === '```') {
-        mathBlocks.push({ startLine: mathStart, endLine: li });
-        mathStart = -1;
-      } else if (mathStart >= 0 && trimmed === '```math') {
-        // Nested ```math inside open block — close the outer, start new
-        mathBlocks.push({ startLine: mathStart, endLine: li - 1 });
-        mathStart = li;
-      }
-    }
-    // Unclosed math block at EOF
-    if (mathStart >= 0) {
-      finalLines.push('```');
-      mathBlocks.push({ startLine: mathStart, endLine: finalLines.length - 1 });
-      changed = true;
-    }
-
-    for (const block of mathBlocks) {
-      const bodyLines = finalLines.slice(block.startLine + 1, block.endLine);
-      const body = bodyLines.join('\n').trim();
-      // Empty block — remove entirely
-      if (!body) {
-        for (let li = block.startLine; li <= block.endLine; li++) finalLines[li] = '';
-        changed = true;
-        continue;
-      }
-      // Check for unbalanced braces (heuristic for corrupted formula)
-      let depth = 0;
-      for (const ch of body) {
-        if (ch === '{') depth++;
-        else if (ch === '}') depth--;
-      }
-      if (depth !== 0) {
-        // Demote to plain code fence — renders as monospaced raw LaTeX
-        finalLines[block.startLine] = '```';
-        changed = true;
-      }
-    }
-    result = finalLines.filter(l => l !== '' || true).join('\n');
-    // Clean up runs of blank lines left by removed empty blocks
-    result = result.replace(/\n{3,}/g, '\n\n');
 
     return { text: result, changed };
   };
