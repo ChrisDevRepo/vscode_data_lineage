@@ -867,11 +867,73 @@ export function autoFixEnrichView(
     fixes.push('Normalized escaped newlines in description');
   }
 
+  // 1. Auto-truncate name at word boundary if too long
+  if (fixed.name && fixed.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) {
+    const truncated = fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, name: truncated || fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH) };
+    fixes.push(`Truncated name to ${ENRICH_VIEW_NAME_MAX_LENGTH} chars`);
+  }
+
+  // 2. Auto-truncate title at word boundary if too long
+  if (fixed.title && fixed.title.trim().length > 80) {
+    const truncated = fixed.title.slice(0, 80).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, title: truncated || fixed.title.slice(0, 80) };
+    fixes.push('Truncated title to 80 chars');
+  }
+
+  // 3. Auto-truncate summary at sentence boundary if too long
+  if (fixed.summary && fixed.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
+    const truncated = fixed.summary.slice(0, ENRICH_VIEW_SUMMARY_HARD_LIMIT);
+    const lastPeriod = truncated.lastIndexOf('.');
+    fixed = { ...fixed, summary: lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated.trimEnd() };
+    fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
+  }
+
+  // 4. Convert LaTeX environments to markdown-compatible math
+  const fixLatex = (text: string): { text: string; changed: boolean } => {
+    let changed = false;
+    let result = text;
+    // \begin{cases}...\end{cases} → ```math block with case notation
+    result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
+      changed = true;
+      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
+      return '\n```math\n' + lines.join('\n') + '\n```\n';
+    });
+    // \begin{aligned}...\end{aligned} → ```math block
+    result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
+      changed = true;
+      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
+      return '\n```math\n' + lines.join('\n') + '\n```\n';
+    });
+    // Generic \begin{env}...\end{env} → ```math block
+    result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
+      changed = true;
+      return '\n```math\n' + (body as string).trim() + '\n```\n';
+    });
+    return { text: result, changed };
+  };
+
+  // Apply LaTeX fix to description and section text
+  if (fixed.description) {
+    const r = fixLatex(fixed.description);
+    if (r.changed) { fixed = { ...fixed, description: r.text }; fixes.push('Converted LaTeX environments to ```math blocks in description'); }
+  }
+  if (fixed.sections) {
+    let sectionFixed = false;
+    const newSections = fixed.sections.map(s => {
+      if (!s.text) return s;
+      const r = fixLatex(s.text);
+      if (r.changed) { sectionFixed = true; return { ...s, text: r.text }; }
+      return s;
+    });
+    if (sectionFixed) { fixed = { ...fixed, sections: newSections }; fixes.push('Converted LaTeX environments to ```math blocks in sections'); }
+  }
+
   // node_ids fallback removed — enrich_view requires SM result graph.
   // resolvedNodeIds is always provided from SM (BB/CT).
   const nodeIdSet = new Set(resolvedNodeIds ?? []);
 
-  // 2. Drop empty notes & notes for nodes not in the resolved set
+  // 5. Drop empty notes & notes for nodes not in the resolved set
   if (fixed.notes) {
     const before = fixed.notes.length;
     const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
@@ -880,7 +942,7 @@ export function autoFixEnrichView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 3. Prune highlight_groups referencing nodes not in the resolved set
+  // 6. Prune highlight_groups referencing nodes not in the resolved set
   if (fixed.highlight_groups) {
     const before = fixed.highlight_groups.length;
     const pruned = fixed.highlight_groups

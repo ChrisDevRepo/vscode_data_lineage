@@ -437,7 +437,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   /**
    * Build a fullNode record for result assembly.
-   * Includes columns always. DDL only if includeAnalysis is true and node is a script type.
+   * Inline mode: includes columns (and DDL for script types) — AI has no detail memory.
+   * Hop-by-hop mode: metadata only {id, s, n, t, role} — detail_slots are the primary evidence.
    */
   protected buildFullNode(nodeId: string, role?: string): Record<string, unknown> {
     const node = this.nodeMap.get(nodeId);
@@ -446,9 +447,15 @@ export abstract class HopStateMachine implements IHopStateMachine {
       id: node.id, s: node.schema, n: node.name, t: node.type,
     };
     if (role) base.role = role;
-    const cols = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined);
-    if (cols?.length) {
-      base.cols = cols.map(c => presentColumnCompact(c));
+    if (this._inlineMode) {
+      const ddl = getNodeDdl(nodeId, this.nodeMap, this.store ?? undefined);
+      if (SCRIPT_TYPES.has(node.type) && ddl) {
+        base.ddl = ddl;
+      }
+      const cols = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined);
+      if (cols?.length) {
+        base.cols = cols.map(c => presentColumnCompact(c));
+      }
     }
     return strip(base) as Record<string, unknown>;
   }

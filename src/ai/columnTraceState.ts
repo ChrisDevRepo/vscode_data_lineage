@@ -11,7 +11,7 @@ import type { DatabaseModel, LineageNode } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
-import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
+import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
 import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type ShortMemory, type DetailSlot } from './smBase';
@@ -905,26 +905,14 @@ export class ColumnTraceState extends HopStateMachine {
       chainArr[i].index = `${i + 1}/${chainArr.length}`;
     }
 
-    // Build fullNodes: DDL for relevant, columns for passthrough
+    // Build fullNodes via base class — inlineMode gates DDL/cols inclusion
     const relevantIds = new Set(this.chain.keys());
     const allIds = new Set([...relevantIds, ...this.passthroughMap.keys()]);
     const fullNodes: Record<string, unknown>[] = [];
 
     for (const id of allIds) {
-      const node = this.nodeMap.get(id);
-      if (!node) continue;
-      const out: Record<string, unknown> = {
-        id: node.id, s: node.schema, n: node.name, t: node.type,
-      };
-      const idDdl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
-      if (relevantIds.has(id) && SCRIPT_TYPES.has(node.type) && idDdl) {
-        out.ddl = idDdl; // Full DDL — never truncated
-      }
-      const idCols = getNodeColumns(id, this.nodeMap, this.store ?? undefined);
-      if (idCols?.length) {
-        out.cols = idCols.map(c => strip(presentColumn(c)));
-      }
-      fullNodes.push(strip(out) as Record<string, unknown>);
+      const role = relevantIds.has(id) ? 'relevant' : 'passthrough';
+      fullNodes.push(this.buildFullNode(id, role));
     }
 
     // Build edges between chain + passthrough nodes

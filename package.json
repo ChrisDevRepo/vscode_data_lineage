@@ -831,7 +831,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Markdown description for this label group (1..1 per label). Explain what you found: formulas, column mappings, logic, risks. Supported: **bold**, `code`, tables, $math$, ```math blocks."
+                    "description": "Markdown description for this label group (1..1 per label). Explain what you found: formulas, column mappings, logic, risks. Supported: **bold**, `code`, tables, LaTeX math."
                   }
                 },
                 "required": [

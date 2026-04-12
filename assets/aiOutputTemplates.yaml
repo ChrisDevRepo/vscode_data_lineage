@@ -60,13 +60,13 @@ sections:
     the section that uses them, do NOT include in node_ids, no separate section.
 
     CLASSIFY the question (one or more may apply) — this drives section content:
-    WHAT the data means (business logic, column trace, impact, documentation) -> Lead with business meaning: formulas in ```math blocks, column rename | From | To | tables, what each value represents, which consumers are affected.
+    WHAT the data means (business logic, column trace, impact, documentation) -> Lead with business meaning: formulas in LaTeX math syntax, column rename | From | To | tables, what each value represents, which consumers are affected.
     HOW the pipeline runs (performance, technical, patterns, documentation) -> Lead with execution: join strategies, scan patterns, constraint coverage, rebuild order, anti-patterns.
     For blended questions or documentation: combine both — business meaning first, then technical detail.
 
     In section text use the format that fits the content:
     Column rename or mapping -> | From | To | Notes | table.
-    Formula -> ```math block.
+    Formula -> LaTeX math syntax.
     Multi-step logic -> ordered 1. 2. 3. list.
     Risk or data quality issue -> warning prefix with ⚠️.
     Transfer evidence from your detail memory into section text at full depth — your slots are comprehensive documentation. Select and reproduce the evidence that answers the question. Do not re-summarize. Group simple nodes (truncate+insert, passthrough) together. Name every column and expression explicitly: "various columns" → `ColA`, `ColB`, `ColC`. "certain conditions" → `WHERE Status = 'Active'`.
@@ -97,9 +97,8 @@ description:
     Fallback only -- used when sections[] is not provided. Prefer sections[] for structured output.
     If used: structured markdown with ## headings, one heading per logical group.
     Explain what you found -- logic, patterns, issues, performance, column mappings -- whatever is relevant.
-    Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX ($inline$, ```math blocks for display), code blocks.
-    For display math use ```math fenced blocks (not $$). One formula per block. For piecewise/conditional logic use a table or bullet list instead of \begin environments.
-    Not supported: mermaid, HTML, images, footnotes, LaTeX \begin environments.
+    Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX math, code blocks.
+    Not supported: mermaid, HTML, images, footnotes.
     BAD: A standalone essay with no headings, re-describing the graph structure.
     GOOD: "## FX Conversion\n`spConvertFX` multiplies Amount by DimRate.Rate where CurrencyCode = 'CHF'..."
   bad_example: "Data flows from staging through transformation to consumption."

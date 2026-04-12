@@ -920,8 +920,8 @@ export function activate(context: vscode.ExtensionContext) {
           const findings = input.findings ?? '';
           const summary = input.summary ?? '';
           const verdict = input.verdict as 'relevant' | 'pass' | 'irrelevant' | undefined;
-          if (!verdict || !['relevant', 'noted', 'irrelevant'].includes(verdict)) {
-            return logAndReturn('submit_findings', { error: 'verdict_required', hint: 'verdict must be "relevant", "noted", or "irrelevant".' });
+          if (!verdict || !['relevant', 'pass', 'irrelevant'].includes(verdict)) {
+            return logAndReturn('submit_findings', { error: 'verdict_required', hint: 'verdict must be "relevant", "pass", or "irrelevant".' });
           }
           const questions = (input.questions ?? []).map(q => ({
             nodeId: q.node_id ?? '',
@@ -1198,6 +1198,31 @@ export function activate(context: vscode.ExtensionContext) {
               if (newTokens <= budgetTokens) break;
             }
             if (evicted > 0) {
+              // Post-eviction: remove orphaned tool_result messages whose tool_use was evicted.
+              // Walk forward: for each User message containing ToolResultParts, verify the
+              // immediately preceding Assistant message has matching ToolCallParts.
+              let orphansRemoved = 0;
+              for (let i = 0; i < historyMessages.length; i++) {
+                const msg = historyMessages[i];
+                if (msg.role !== vscode.LanguageModelChatMessageRole.User || !Array.isArray(msg.content)) continue;
+                const hasToolResult = (msg.content as unknown[]).some(p => p instanceof vscode.LanguageModelToolResultPart);
+                if (!hasToolResult) continue;
+                // Check preceding message for matching tool_use
+                const prev = i > 0 ? historyMessages[i - 1] : undefined;
+                const prevHasToolCall = prev &&
+                  prev.role === vscode.LanguageModelChatMessageRole.Assistant &&
+                  Array.isArray(prev.content) &&
+                  (prev.content as unknown[]).some(p => p instanceof vscode.LanguageModelToolCallPart);
+                if (!prevHasToolCall) {
+                  historyMessages.splice(i, 1);
+                  orphansRemoved++;
+                  i--; // re-check this index after splice
+                }
+              }
+              if (orphansRemoved > 0) {
+                evicted += orphansRemoved;
+                logDebug(outputChannel, 'AI', `[History] Removed ${orphansRemoved} orphaned tool_result message(s) after eviction`);
+              }
               historyMessages.unshift(vscode.LanguageModelChatMessage.User(buildEvictionStub(evicted)));
               logWarn(outputChannel, 'AI', `[History] Evicted ${evicted} oldest message(s) — context pressure (${totalTokens} tokens > ${budgetTokens} budget)`);
             }
