@@ -1,79 +1,36 @@
 /**
- * Blackboard State Machine — Type 1: free-form exploration.
+ * Blackboard State Machine — free-form exploration with priority agenda.
  *
- * Passive SM: AI drives traversal via sub-questions, SM stores findings,
- * manages agenda priority, and delivers data per hop (DDL, cols, FKs).
+ * Extends HopStateMachine (smBase.ts) for shared state, memory, and helpers.
+ * BB-specific: agenda management, Self-Ask questions, scope expansion.
  *
  * Lifecycle: init() → getHopContext() ↔ submitFindings() loop → getResult()
- *
- * Grounded in: Blackboard Architecture (Erman 1980), MemGPT two-tier memory
- * (Packer 2023), Self-Ask decomposition (Press 2022).
- *
- * Zero VS Code imports. Logging via injected callback.
- *
- * @see tmp/ai-dataflow.md §3 SM Types
  */
 
 import type Graph from 'graphology';
-import type { DatabaseModel, LineageNode, ObjectType } from '../engine/types';
+import type { DatabaseModel, LineageNode } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
-import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, findBridgeNodes, bfsReachable, type LogFn } from './smGuards';
+import { buildHopFocusNode, SCRIPT_TYPES, getNodeDdl } from './tools';
+import { presentNode, strip, edgeApiType } from './aiPresenter';
+import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, bfsReachable, type LogFn } from './smGuards';
+import { HopStateMachine, type HopNeighbor, type SmResult, type DetailSlot } from './smBase';
 
-// ─── Public types ──────────────────────────────────────────────────────────────
-
-export type BlackboardStatus = 'created' | 'initialized' | 'exploring'
-                              | 'awaiting_findings' | 'complete' | 'error';
-
-export interface BlackboardNote {
-  nodeId: string;
-  schema: string;
-  name: string;
-  type: string;
-  findings: string;          // full detailed analysis (long-term memory slot)
-  summary: string;           // one-line digest (working memory)
-  tags?: string[];           // optional categorization
-  badge_label?: string;      // "4 INIT" — short step label for enrich_view badge
-  note_caption?: string;     // "Entry point — TRUNCATEs from staging" — 1-line caption for enrich_view note
-}
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface AgendaEntry {
   nodeId: string;
-  question?: string;         // Self-Ask: what to investigate at this node
-  priority: number;          // 0 = BFS default, 1 = neighbor of noted, 2 = question-boosted, 3 = mandatory (direct neighbor reinject)
-  depth: number;             // BFS depth from origin
+  question?: string;
+  priority: number;   // 0=BFS, 1=neighbor, 2=question-boosted, 3=mandatory (higher wins)
+  depth: number;
 }
 
 export interface BlackboardConfig {
-  maxAgendaSize?: number;         // default 200 — cap, not truncation
-  findingsHardLimit?: number;     // default 5000 chars — reject, never truncate
-  summaryHardLimit?: number;      // default 500 chars — reject, never truncate
-  activeFilter?: SerializedFilterState | null;  // user's active filter — applied as BFS schema boundary
-  scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';  // default 'bidirectional'; upstream=inNeighbors, downstream=outNeighbors
-}
-
-export type { LogFn } from './smGuards';
-
-// ─── Internal types ────────────────────────────────────────────────────────────
-
-type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
-
-interface HopNeighbor {
-  id: string;
-  s: string;
-  n: string;
-  t: string;
-  edge_direction: 'upstream' | 'downstream';
-  edge_type: string;
-  boundary: BoundaryFlag;
-  boundary_reason?: string;
-  scope: 'in_scope' | 'available' | 'pruned' | 'external' | 'visited';
-  in_filter: boolean;
-  cols?: string[];
-  fks?: string[];
-  hasDdl: boolean;
+  maxAgendaSize?: number;
+  findingsHardLimit?: number;
+  summaryHardLimit?: number;
+  activeFilter?: SerializedFilterState | null;
+  scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';
 }
 
 interface WorkingMemory {
@@ -81,7 +38,7 @@ interface WorkingMemory {
   all_summaries: Array<{ nodeId: string; summary: string }>;
   pending_questions: Array<{ nodeId: string; question: string }>;
   remaining_agenda: Array<{ id: string; name: string; type: string; priority: number }>;
-  invalid_nodes?: Array<{ id: string; reason: 'not_in_model' | 'out_of_scope' | 'not_in_filter' }>;
+  invalid_nodes?: Array<{ id: string; reason: string }>;
   checklist: { current_hop: number; noted: number; total: number; open: number; coveragePct: number };
 }
 
@@ -90,49 +47,24 @@ interface MapOverview {
   edges: Array<[string, string, string]>;
 }
 
-// ─── Constants ─────────────────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────
 
 const DEFAULT_MAX_AGENDA = 200;
-const DEFAULT_FINDINGS_HARD_LIMIT = 5000;
-const DEFAULT_SUMMARY_HARD_LIMIT = 500;
-const BFS_SCOPE_CAP = 10_000;
-const SCOPE_DIRECTION_GATE = 200;  // bidirectional scope above this requires explicit direction
-const CASCADE_REJECT_THRESHOLD = 0.5;  // reject prune if cascade removes >50% of remaining agenda
+const SCOPE_DIRECTION_GATE = 200;
+const CASCADE_REJECT_THRESHOLD = 0.5;
+const BFS_SCOPE_CAP = 10_000;  // mirror smBase.ts for log message only
 
-// ─── Class ─────────────────────────────────────────────────────────────────────
+// ─── Class ──────────────────────────────────────────────────────────────────
 
-export class BlackboardState {
-  private readonly model: DatabaseModel;
-  private readonly graph: Graph;
-  private readonly store: ColumnStore | null;
-  private readonly log: LogFn;
+export class BlackboardState extends HopStateMachine {
+
+  // BB-specific state
   private readonly maxAgendaSize: number;
-  private readonly findingsHardLimit: number;
-  private readonly summaryHardLimit: number;
-  private readonly activeFilter: SerializedFilterState | null;
-  private readonly filterSchemas: Set<string> | null;  // lowercased schema names from active filter — applied as BFS boundary
   private readonly scopeDirection: 'upstream' | 'downstream' | 'bidirectional';
-
-  // Lookup caches (built once in constructor)
-  private readonly nodeMap: Map<string, LineageNode>;
-  private readonly edgeTypeMap: Map<string, string>;
-  private readonly unrelatedMap: Map<string, string[]>;
-
-  // Lifecycle
-  private _status: BlackboardStatus = 'created';
-
-  // State
   private agenda: AgendaEntry[] = [];
   private agendaIds = new Set<string>();
-  private visited = new Set<string>();
-  private notes = new Map<string, BlackboardNote>();
   private questionLog: Array<{ nodeId: string; question: string; answered: boolean }> = [];
-  private scopeNodeIds = new Set<string>();
-  private originNodeId: string | null = null;
   private userQuestion = '';
-  private currentFocusNodeId: string | null = null;
-  private hopCount = 0;
-  private removedSet = new Set<string>();  // pruned + cascade-removed nodes
   private invalidNodeIds = new Map<string, 'not_in_model' | 'out_of_scope' | 'not_in_filter'>();
 
   constructor(
@@ -142,44 +74,59 @@ export class BlackboardState {
     config?: BlackboardConfig,
     store?: ColumnStore | null,
   ) {
-    this.model = model;
-    this.graph = graph;
-    this.store = store ?? null;
-    this.log = log;
+    super(model, graph, log, {
+      activeFilter: config?.activeFilter,
+      findingsHardLimit: config?.findingsHardLimit,
+      summaryHardLimit: config?.summaryHardLimit,
+    }, store);
     this.maxAgendaSize = config?.maxAgendaSize ?? DEFAULT_MAX_AGENDA;
-    this.findingsHardLimit = config?.findingsHardLimit ?? DEFAULT_FINDINGS_HARD_LIMIT;
-    this.summaryHardLimit = config?.summaryHardLimit ?? DEFAULT_SUMMARY_HARD_LIMIT;
-    this.activeFilter = config?.activeFilter ?? null;
-    this.filterSchemas = this.activeFilter?.schemas?.length
-      ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
-      : null;
     this.scopeDirection = config?.scopeDirection ?? 'bidirectional';
-    this.nodeMap = buildNodeMap(model);
-    this.edgeTypeMap = buildEdgeTypeMap(model);
-    this.unrelatedMap = buildUnrelatedMap(model);
   }
 
-  // ─── init ──────────────────────────────────────────────────────────────────
+  protected getScopeDirection(): 'upstream' | 'downstream' | 'bidirectional' {
+    return this.scopeDirection;
+  }
+
+  // ── Public accessors ──
+
+  get noteCount(): number { return this.detailSlots.size; }
+  get agendaRemaining(): number { return this.agenda.length; }
+  get question(): string { return this.userQuestion; }
+
+  get filterBreakdown(): { in_filter: number; outside_filter: number; total: number } {
+    if (!this.filterSchemas) return { in_filter: this.scopeNodeIds.size, outside_filter: 0, total: this.scopeNodeIds.size };
+    let inFilter = 0;
+    for (const id of this.scopeNodeIds) {
+      if (this.isInFilter(id)) inFilter++;
+    }
+    return { in_filter: inFilter, outside_filter: this.scopeNodeIds.size - inFilter, total: this.scopeNodeIds.size };
+  }
+
+  schemaBreakdown(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const id of this.scopeNodeIds) {
+      const node = this.nodeMap.get(id);
+      if (node) counts[node.schema] = (counts[node.schema] || 0) + 1;
+    }
+    return counts;
+  }
+
+  // ─── init ─────────────────────────────────────────────────────────────────
 
   init(params: {
     question: string;
     origin: string;
+    depth?: number;
   }): { ok: true; scopeSize: number; agendaSize: number; originNode: Record<string, unknown>; map: MapOverview }
-     | { error: string; hint?: string } {
+     | { error: string; hint?: string; scope_size?: number; in_filter?: number; outside_filter?: number } {
 
-    // Reset all mutable state (safe to re-init)
+    // Reset all state
+    this.resetSharedState();
     this.agenda = [];
     this.agendaIds.clear();
-    this.visited.clear();
-    this.notes.clear();
     this.questionLog = [];
-    this.scopeNodeIds.clear();
-    this.originNodeId = null;
-    this.currentFocusNodeId = null;
-    this.hopCount = 0;
-    this.removedSet.clear();
+    this.userQuestion = '';
     this.invalidNodeIds.clear();
-    this._status = 'created';
 
     const { question, origin } = params;
     this.userQuestion = question;
@@ -194,13 +141,11 @@ export class BlackboardState {
 
     this.originNodeId = originNode.id;
 
-    // Compute scope — direction-aware BFS + filter boundary
-    const scopeIds = this.bfsScope(originNode.id);
+    // Compute scope (depth-limited BFS — AI controls scope via depth + expand_frontier)
+    const scopeIds = this.bfsScope(originNode.id, this.scopeDirection, params.depth);
     this.scopeNodeIds = scopeIds;
 
-    // Hard gate: bidirectional BFS on a large scope requires explicit direction declaration.
-    // Without a direction the AI gets a huge noisy map (e.g. 661 nodes for a central table).
-    // scopeNodeIds is set above so filterBreakdown is available.
+    // Hard gate: bidirectional on large scope
     if (scopeIds.size > SCOPE_DIRECTION_GATE && this.scopeDirection === 'bidirectional') {
       this._status = 'error';
       const bd = this.filterBreakdown;
@@ -210,11 +155,11 @@ export class BlackboardState {
         scope_size: scopeIds.size,
         in_filter: bd.in_filter,
         outside_filter: bd.outside_filter,
-        hint: `Scope is ${scopeIds.size} nodes (bidirectional BFS). Resubmit start_exploration with scope_direction='upstream' for source/ancestor queries or scope_direction='downstream' for impact/consumer queries.`,
-      } as unknown as ReturnType<BlackboardState['init']>;
+        hint: `Scope is ${scopeIds.size} nodes (bidirectional BFS). Resubmit with scope_direction='upstream' or 'downstream'.`,
+      };
     }
 
-    // Seed agenda with BFS-ordered nodes, respecting direction
+    // Seed agenda
     this.seedAgenda(originNode.id);
 
     // Mark origin as visited (it's implicitly noted as the starting point)
@@ -224,20 +169,20 @@ export class BlackboardState {
     const map = this.buildMapOverview();
 
     this._status = 'initialized';
-    this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
-    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
+    this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
+    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
     this.log('debug', `BB INIT scope nodes | [${[...scopeIds].map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
 
     return {
       ok: true,
       scopeSize: scopeIds.size,
       agendaSize: this.agenda.length,
-      originNode: strip(presentNode(originNode, this.model.neighborIndex)),
+      originNode: buildHopFocusNode(originNode, this.nodeMap, this.unrelatedMap, this.store ?? undefined, 'bb_ddl'),
       map,
     };
   }
 
-  // ─── getHopContext ─────────────────────────────────────────────────────────
+  // ─── getHopContext ────────────────────────────────────────────────────────
 
   getHopContext():
     | { bb_mode: 'exploring'; hop: number; focus_node: Record<string, unknown>;
@@ -252,15 +197,16 @@ export class BlackboardState {
       return { error: `Cannot get hop context in status "${this._status}"` };
     }
 
-    // Pop highest-priority unvisited entry from agenda (iterative — no recursion)
+    // Pop highest-priority unvisited entry (iterative — no recursion)
     let entry: AgendaEntry | undefined;
     let node: LineageNode | undefined;
-    while (true) {
+    let loopGuard = this.agenda.length + 1;
+    while (loopGuard-- > 0) {
       entry = this.popNextAgendaEntry();
       if (!entry) {
         this._status = 'complete';
         const outsideScope = this.scopeNodeIds.size - this.visited.size - this.removedSet.size;
-        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.notes.size} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
+        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.detailSlots.size} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
         return {
           done: true,
           ...(outsideScope > 0 && {
@@ -270,29 +216,49 @@ export class BlackboardState {
         };
       }
       node = this.nodeMap.get(entry.nodeId);
-      if (node) break;
-      this.log('warn', `BB node ${entry.nodeId} missing from model, skipping`);
+      if (!node) {
+        this.log('debug', `BB node ${entry.nodeId} missing from model, skipping`);
+        continue;
+      }
+      break;
+    }
+
+    if (!entry || !node) {
+      this.log('warn', 'BB getHopContext: loop guard exhausted — agenda/nodeMap desync');
+      this._status = 'complete';
+      return { done: true };
     }
 
     this.visited.add(entry.nodeId);
     this.hopCount++;
     this.currentFocusNodeId = entry.nodeId;
 
-    // Build focus node detail (same pattern as ColumnTraceState.getHopContext)
     const focusNode = buildHopFocusNode(node, this.nodeMap, this.unrelatedMap, this.store ?? undefined, 'bb_ddl');
 
-    // Build neighbor list
-    const neighbors = this.buildNeighborList(node.id);
+    // Build neighbors with scope info
+    const inIds = new Set<string>(this.graph.hasNode(entry.nodeId) ? this.graph.inNeighbors(entry.nodeId) as string[] : []);
+    const outIds = new Set<string>(this.graph.hasNode(entry.nodeId) ? this.graph.outNeighbors(entry.nodeId) as string[] : []);
+    const allNeighborIds = [...new Set<string>([...inIds, ...outIds])];
+    const neighbors = this.buildNeighborList(entry.nodeId, allNeighborIds, inIds);
 
-    // Current task: Self-Ask question or default
+    // Add BB-specific scope info to neighbors
+    for (const nb of neighbors) {
+      nb.scope =
+        this.visited.has(nb.id)     ? 'visited' :
+        this.removedSet.has(nb.id)  ? 'pruned' :
+        this.agendaIds.has(nb.id)   ? 'in_scope' :
+        !this.nodeMap.has(nb.id)    ? 'external' :
+                                      'available';
+      nb.in_filter = this.isInFilter(nb.id);
+    }
+
     const currentTask = entry.question
       ?? `Analyze ${node.id} — what is its role, business logic, and key data flows?`;
 
-    // Build working memory
     const workingMemory = this.buildWorkingMemory();
 
     this._status = 'awaiting_findings';
-    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.notes.size} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
+    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.detailSlots.size} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
     this.log('debug', `BB Hop ${this.hopCount} detail | ${node.id} (${node.type}) | priority=${entry.priority} | task=${entry.question ? 'self-ask' : 'default'} | memory: ${workingMemory.all_summaries.length} summaries, ${workingMemory.pending_questions.length} pending Qs | coverage=${this.coveragePct}%`);
     if (this.agenda.length > 0) {
       this.log('trace', `BB Hop ${this.hopCount} remaining | [${this.agenda.map(e => this.nodeMap.get(e.nodeId)?.name ?? e.nodeId).join(', ')}]`);
@@ -309,7 +275,7 @@ export class BlackboardState {
     };
   }
 
-  // ─── submitFindings ────────────────────────────────────────────────────────
+  // ─── submitFindings ───────────────────────────────────────────────────────
 
   submitFindings(params: {
     focusNodeId: string;
@@ -317,7 +283,7 @@ export class BlackboardState {
     summary: string;
     tags?: string[];
     questions?: Array<{ nodeId: string; question: string }>;
-    verdict: 'relevant' | 'noted' | 'irrelevant';
+    verdict: 'relevant' | 'pass' | 'irrelevant';
     pruneIds?: string[];
     addIds?: string[];
     complete?: boolean;
@@ -335,7 +301,14 @@ export class BlackboardState {
       return { error: `Cannot submit findings in status "${this._status}"` };
     }
 
-    const { focusNodeId, findings, summary, questions, verdict } = params;
+    const { focusNodeId, findings, summary, questions } = params;
+
+    // Coerce verdict — VS Code doesn't enforce JSON Schema enums on tool inputs
+    const rawVerdict = params.verdict as string;
+    const verdict: 'relevant' | 'pass' | 'irrelevant' =
+      rawVerdict === 'relevant' || rawVerdict === 'pass' || rawVerdict === 'irrelevant' ? rawVerdict
+      : rawVerdict === 'noted' ? 'pass'   // back-compat: treat legacy 'noted' as 'pass'
+      : 'relevant';                        // unknown → default to relevant (safe)
 
     // Coerce AI inputs — VS Code doesn't enforce JSON Schema types on tool inputs
     const tags = Array.isArray(params.tags) ? params.tags
@@ -350,38 +323,31 @@ export class BlackboardState {
       this.log('debug', `BB submitFindings: focus mismatch — expected="${this.currentFocusNodeId}", got="${focusNodeId}"`);
       return { error: `Focus node mismatch: expected "${this.currentFocusNodeId}", got "${focusNodeId}"` };
     }
-
     // Reject if node was already pruned (cascade edge case)
     if (this.removedSet.has(focusNodeId)) {
       this.log('debug', `BB submitFindings: node already pruned via cascade — ${focusNodeId}`);
       return { error: 'node_pruned', hint: `${focusNodeId} was cascade-removed. It cannot be analyzed.` };
     }
 
-    // Hard limits — reject, never truncate
-    if (findings.length > this.findingsHardLimit) {
-      this.log('debug', `BB submitFindings: findings too long (${findings.length} > ${this.findingsHardLimit})`);
-      return { error: 'findings_too_long', limit: this.findingsHardLimit };
-    }
-    if (summary.length > this.summaryHardLimit) {
-      this.log('debug', `BB submitFindings: summary too long (${summary.length} > ${this.summaryHardLimit})`);
-      return { error: 'summary_too_long', limit: this.summaryHardLimit };
+    // Detail memory hard limits — reject, never truncate
+    const sizeErr = this.validateSubmissionSize(findings, summary);
+    if (sizeErr) {
+      this.log('debug', `BB submitFindings: ${sizeErr}`);
+      const isFindings = sizeErr.startsWith('findings');
+      return { error: isFindings ? 'findings_too_long' : 'summary_too_long', limit: isFindings ? this.findingsHardLimit : this.summaryHardLimit };
     }
 
-    // Store note (long-term memory slot) — even for 'irrelevant' (minimal note)
-    const node = this.nodeMap.get(focusNodeId);
-    if (node) {
-      this.notes.set(focusNodeId, {
-        nodeId: focusNodeId,
-        schema: node.schema,
-        name: node.name,
-        type: node.type,
-        findings: verdict === 'irrelevant' ? summary : findings,
-        summary,
-        tags,
-        badge_label: params.badge_label,
-        note_caption: params.note_caption,
-      });
-    }
+    // Store detail memory slot — relevant + pass store full findings; irrelevant stores summary only
+    const useFullFindings = verdict !== 'irrelevant';
+    this.storeDetail(focusNodeId, useFullFindings ? findings : summary, summary, {
+      tags,
+      badge_label: verdict === 'relevant' ? params.badge_label : undefined,
+      note_caption: params.note_caption,
+    });
+
+    // Update short memory — base class validates soft/hard limits
+    const smErr = this.updateShortMemory(`${this.nodeMap.get(focusNodeId)?.name ?? focusNodeId}: ${summary}`);
+    if (smErr) return { error: 'summary_too_long', limit: this.shortMemoryHardLimit };
 
     // Mark any pending questions for this node as answered
     for (const q of this.questionLog) {
@@ -422,12 +388,14 @@ export class BlackboardState {
     }
 
     // Auto-add nodes to agenda (scope expansion for available neighbors)
+    let added = 0;
     if (params.addIds?.length) {
       for (const addId of params.addIds) {
         if (!this.nodeMap.has(addId)) { this.log('debug', `BB add_ids: ${addId} not in model, skipping`); continue; }
         if (this.visited.has(addId) || this.removedSet.has(addId)) { this.log('debug', `BB add_ids: ${addId} already visited/pruned, skipping`); continue; }
         this.addQuestion(addId, '(auto-added)');
         advanced++;
+        added++;
         this.log('info', `BB AUTO-ADD | ${addId} | agenda=${this.agenda.length}`);
       }
     }
@@ -441,7 +409,7 @@ export class BlackboardState {
         ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
       ]) : new Set();
 
-      const notedIdSet = new Set(this.notes.keys());
+      const notedIdSet = new Set(this.detailSlots.keys());
       for (const pruneId of pruneIds) {
         if (pruneId === this.originNodeId) continue;
         if (this.visited.has(pruneId)) continue;
@@ -487,7 +455,7 @@ export class BlackboardState {
         const cascadeCount = countCascadeIfPruned(this.graph, this.originNodeId!, this.removedSet, this.scopeNodeIds, this.agendaIds, pruneId);
         if (cascadeCount > this.agenda.length * CASCADE_REJECT_THRESHOLD) {
           rejectedPrunes.push({ id: pruneId, reason: `Cascade would remove ${cascadeCount} of ${this.agenda.length} remaining agenda nodes (>${50}%). Explore more nodes first or use a narrower prune.` });
-          this.log('warn', `BB PRUNE REJECTED | ${pruneId} | cascade=${cascadeCount} > 50% of agenda (${this.agenda.length})`);
+          this.log('debug', `BB PRUNE REJECTED | ${pruneId} | cascade=${cascadeCount} > 50% of agenda (${this.agenda.length})`);
           continue;
         }
 
@@ -504,7 +472,10 @@ export class BlackboardState {
 
     this._status = 'exploring';
     this.log('info', `BB submit | ${focusNodeId} | verdict=${verdict} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | pruned=${pruned} | agenda=${this.agenda.length}`);
-    this.log('debug', `BB submit detail | ${focusNodeId} | summary=${summary.length}ch | tags=[${tags?.join(',') ?? ''}] | advanced=${advanced} | notes_total=${this.notes.size} | coverage=${this.coveragePct}%`);
+    this.log('debug', `BB submit detail | ${focusNodeId} | summary=${summary.length}ch | tags=[${tags?.join(',') ?? ''}] | advanced=${advanced} | notes_total=${this.detailSlots.size} | coverage=${this.coveragePct}%`);
+
+    const nodeName = this.nodeMap.get(focusNodeId)?.name ?? focusNodeId;
+    this.buildProgressLine(nodeName, verdict, pruned, added);
 
     const base = {
       ok: true as const, advanced, agendaSize: this.agenda.length,
@@ -513,9 +484,8 @@ export class BlackboardState {
       ...(invalidQuestions.length > 0 && { invalid_questions: invalidQuestions }),
     };
 
-    // Early completion: AI signals it has enough findings. Validate direct neighbors first.
+    // Early completion
     if (params.complete) {
-      // Guard: direct neighbors of origin must be visited or removed before accepting complete
       const originDirectIds: Set<string> = this.originNodeId ? new Set([
         ...(this.scopeDirection !== 'downstream' ? this.graph.inNeighbors(this.originNodeId) : []),
         ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
@@ -524,7 +494,6 @@ export class BlackboardState {
         this.scopeNodeIds.has(id) && !this.visited.has(id) && !this.removedSet.has(id),
       );
       if (unvisitedDirect.length > 0) {
-        // Reinject as mandatory (priority=3)
         for (const id of unvisitedDirect) {
           if (!this.agendaIds.has(id)) {
             this.agenda.push({ nodeId: id, priority: 3, depth: 1 });
@@ -538,28 +507,100 @@ export class BlackboardState {
         this.log('info', `BB COMPLETE REJECTED | unvisited direct neighbors: [${names.join(', ')}]`);
         return { ...base, complete_rejected: { nodes: unvisitedDirect, names, hint: `Visit or mark these direct neighbors before completing: ${names.join(', ')}` } };
       }
-      this.log('info', `BB EARLY COMPLETE | notes=${this.notes.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
+      this.log('info', `BB EARLY COMPLETE | notes=${this.detailSlots.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
       return { ...base, early_complete: this.getResult() };
     }
 
     return base;
   }
 
-  // ─── getResult ─────────────────────────────────────────────────────────────
+  // ─── submitBatch (inline mode) ──────────────────────────────────────────────
 
-  getResult(): {
-    status: 'complete';
+  /**
+   * Batch submit all findings at once (inline mode only).
+   * AI provides findings keyed by node ID. SM loops agenda internally:
+   *   getHopContext() → match AI findings → submitFindings() → repeat
+   * Stops on first rejection or when agenda is empty / complete accepted.
+   */
+  submitBatch(entries: Array<{
+    nodeId: string;
+    findings: string;
+    summary: string;
+    verdict: 'relevant' | 'pass' | 'irrelevant';
+    badge_label?: string;
+    note_caption?: string;
+    prune_ids?: string[];
+    add_ids?: string[];
+    questions?: Array<{ node_id: string; question: string }>;
+    complete?: boolean;
+  }>): { ok: true; result: ReturnType<BlackboardState['getResult']> }
+     | { error: string; hint?: string; processed: number; failed_node?: string } {
+
+    if (!this._inlineMode) {
+      return { error: 'batch_not_inline', hint: 'Batch submit is only available in inline mode.', processed: 0 };
+    }
+
+    const entryMap = new Map(entries.map(e => [e.nodeId.toLowerCase(), e]));
+    let processed = 0;
+    let batchGuard = entryMap.size + this.agenda.length + 1;
+
+    while (batchGuard-- > 0) {
+      // If already awaiting findings (first hop from init), use current focus.
+      // Otherwise advance to next hop.
+      if (this._status !== 'awaiting_findings') {
+        const hop = this.getHopContext();
+        if ('done' in hop) break;
+        if ('error' in hop) return { error: (hop as { error: string }).error, hint: 'Internal hop error', processed, failed_node: this.currentFocusNodeId ?? undefined };
+      }
+
+      const focusId = this.currentFocusNodeId!;
+      const entry = entryMap.get(focusId.toLowerCase());
+      if (!entry) {
+        return {
+          error: 'missing_verdict',
+          hint: `No verdict provided for focus node ${focusId}. Provide a verdict and resubmit.`,
+          processed,
+          failed_node: focusId,
+        };
+      }
+
+      const result = this.submitFindings({
+        focusNodeId: focusId,
+        findings: entry.findings,
+        summary: entry.summary,
+        verdict: entry.verdict,
+        tags: undefined,
+        pruneIds: entry.prune_ids,
+        addIds: entry.add_ids,
+        questions: entry.questions?.map(q => ({ nodeId: q.node_id, question: q.question })),
+        complete: entry.complete,
+        badge_label: entry.badge_label,
+        note_caption: entry.note_caption,
+      });
+
+      if ('error' in result) {
+        return { error: result.error, hint: (result as { hint?: string }).hint, processed, failed_node: focusId };
+      }
+      processed++;
+
+      // Check if early_complete was accepted
+      if ('early_complete' in result && result.early_complete) {
+        this.log('info', `Batch early complete: ${processed} hops processed`);
+        return { ok: true, result: result.early_complete as ReturnType<BlackboardState['getResult']> };
+      }
+    }
+
+    if (batchGuard <= 0) this.log('warn', `BB submitBatch: loop guard exhausted after ${processed} hops`);
+    this.log('info', `Batch complete: ${processed} hops processed`);
+    return { ok: true, result: this.getResult() };
+  }
+
+  // ─── getResult ────────────────────────────────────────────────────────────
+
+  getResult(): SmResult & {
     question: string;
-    notes: BlackboardNote[];
-    fullNodes: Array<Record<string, unknown>>;
-    edges: Array<[string, string, string]>;
-    suggested_badges: Array<{ node_id: string; text: string }>;
-    suggested_notes: Array<{ node_id: string; text: string }>;
+    notes: DetailSlot[];
     skipped_nodes?: Array<{ nodeId: string; name: string; type: string; unanswered_question?: string }>;
-    stats: {
-      hops: number; noted: number; scopeSize: number; coveragePct: number;
-      questionsAsked: number; questionsAnswered: number;
-    };
   } | { error: string } {
 
     if (this._status === 'created' || this._status === 'awaiting_findings') {
@@ -567,75 +608,11 @@ export class BlackboardState {
       return { error: `Cannot get result in status "${this._status}"` };
     }
 
+    // Build shared result (fullNodes, edges, bridges, labels, notes, memory)
+    const shared = this.buildSharedResult();
     this._status = 'complete';
 
-    // Findings ARE the distilled DDL — no DDL re-inclusion.
-    // The AI already analyzed DDL per hop. Re-sending it causes attention dilution at synthesis.
-    const allNotes = [...this.notes.values()];
-    const notedIds = new Set(this.notes.keys());
-
-    // anchoredIds = noted nodes + origin — ensures hub/star edges (SP→origin) are included
-    // and bridge injection always has a connected anchor even when no noted-to-noted edges exist
-    const anchoredIds = new Set([...notedIds, this.originNodeId!]);
-
-    // Full nodes: origin first (role='origin'), then noted nodes — NO DDL (findings are sufficient)
-    const fullNodes: Array<Record<string, unknown>> = [];
-    const originNode = this.nodeMap.get(this.originNodeId!);
-    if (originNode) {
-      fullNodes.push(strip({ id: originNode.id, s: originNode.schema, n: originNode.name, t: originNode.type, role: 'origin' }));
-    }
-    for (const noteEntry of allNotes) {
-      const node = this.nodeMap.get(noteEntry.nodeId);
-      if (!node) continue;
-      const base: Record<string, unknown> = {
-        id: node.id, s: node.schema, n: node.name, t: node.type,
-      };
-      const cols = getNodeColumns(node.id, this.nodeMap, this.store ?? undefined);
-      if (cols?.length) {
-        base.cols = cols.map(c => presentColumnCompact(c));
-      }
-      fullNodes.push(strip(base));
-    }
-
-    // Edges: include all edges where both endpoints are in anchoredIds (noted nodes + origin)
-    const edges: Array<[string, string, string]> = [];
-    for (const e of this.model.edges) {
-      if (anchoredIds.has(e.source) && anchoredIds.has(e.target)) {
-        edges.push([e.source, e.target, edgeApiType(e.type)]);
-      }
-    }
-
-    // Bridge injection: reconnect orphan noted nodes via shortest path through graph
-    const bridgeResult = findBridgeNodes(this.graph, anchoredIds, edges, this.edgeTypeMap);
-    if (bridgeResult.bridgeNodes.length > 0) {
-      for (const bn of bridgeResult.bridgeNodes) {
-        fullNodes.push(strip({ id: bn.id, s: bn.schema, n: bn.name, t: bn.type, role: 'bridge' }));
-      }
-      edges.push(...bridgeResult.bridgeEdges);
-      this.log('info', `BB BRIDGE | orphans=${bridgeResult.orphanCount} | reconnected=${bridgeResult.reconnectedCount} | bridges=${bridgeResult.bridgeNodes.length} nodes, ${bridgeResult.bridgeEdges.length} edges`);
-    }
-
-    // Map-Reduce "reduce" step: assemble suggested output from per-hop fragments.
-    // AI wrote badge_label/note_caption during exploration when understanding was fresh.
-    // Fallback: auto-generate from hop number + node name / summary.
-    const suggested_badges = allNotes.map((n, i) => ({
-      node_id: n.nodeId,
-      text: n.badge_label ?? `${i + 1} ${n.name}`,
-    }));
-    const suggested_notes = allNotes.map(n => ({
-      node_id: n.nodeId,
-      text: n.note_caption ?? n.summary,
-    }));
-
-    const questionsAsked = this.questionLog.length;
-    const questionsAnswered = this.questionLog.filter(q => q.answered).length;
-
-    this.log('info', `BB RESULT | notes=${allNotes.length} | edges=${edges.length} | scope=${this.scopeNodeIds.size} | coverage=${this.coveragePct}% | hops=${this.hopCount} | questions=${questionsAnswered}/${questionsAsked}`);
-    this.log('debug', `BB RESULT detail | fullNodes=${fullNodes.length} | bridges=${bridgeResult.bridgeNodes.length} | model_edges=${this.model.edges.length} | pruned=${this.removedSet.size} | visited=${this.visited.size}`);
-    if (edges.length > 0) {
-      this.log('trace', `BB EDGES | ${edges.map(([s, t, tp]) => `${s}→${t}(${tp})`).join(', ')}`);
-    }
-
+    // BB-specific: skipped nodes (remaining agenda)
     const skippedNodes = this.agenda.map(a => {
       const n = this.nodeMap.get(a.nodeId);
       return {
@@ -646,82 +623,107 @@ export class BlackboardState {
       };
     });
 
+    const questionsAsked = this.questionLog.length;
+    const questionsAnswered = this.questionLog.filter(q => q.answered).length;
+
     return {
-      status: 'complete',
+      ...shared,
       question: this.userQuestion,
-      notes: allNotes,
-      fullNodes,
-      edges,
-      suggested_badges,
-      suggested_notes,
+      notes: shared.detail_slots,
       ...(skippedNodes.length > 0 ? { skipped_nodes: skippedNodes } : {}),
       stats: {
-        hops: this.hopCount,
-        noted: allNotes.length,
-        scopeSize: this.scopeNodeIds.size,
-        coveragePct: this.coveragePct,
+        ...shared.stats,
         questionsAsked,
         questionsAnswered,
       },
     };
   }
 
-  // ─── Public accessors ──────────────────────────────────────────────────────
+  // ─── Scope expansion ───────────────────────────────────────────────────────
 
-  get status(): BlackboardStatus { return this._status; }
-  get noteCount(): number { return this.notes.size; }
-  private get coveragePct(): number {
-    return this.scopeNodeIds.size > 0
-      ? Math.round((this.notes.size / this.scopeNodeIds.size) * 100) : 0;
-  }
+  /**
+   * Extend scope by N more BFS hops from the current boundary.
+   * Frontier nodes = scope nodes with graph neighbors outside scope (not removed).
+   * New nodes are added to both scopeNodeIds and agenda.
+   */
+  expandFrontier(extraHops: number): { added: number; agenda_size: number } {
+    if (this._status !== 'initialized' && this._status !== 'exploring' && this._status !== 'awaiting_findings') {
+      return { added: 0, agenda_size: this.agenda.length };
+    }
 
-  /** Estimate total DDL chars in scope (for token budget gate in extension.ts). */
-  estimateScopeDdlChars(): number {
-    let total = 0;
+    const hops = Math.max(1, Math.min(Math.round(extraHops), 5));
+
+    // Find frontier: scope nodes whose graph neighbors include non-scope, non-removed nodes
+    const frontierIds = new Set<string>();
+    const neighborFn = (id: string): string[] =>
+      this.scopeDirection === 'upstream'   ? this.graph.inNeighbors(id) :
+      this.scopeDirection === 'downstream' ? this.graph.outNeighbors(id) :
+                                             this.graph.neighbors(id);
+
     for (const id of this.scopeNodeIds) {
-      const node = this.nodeMap.get(id);
-      if (node && SCRIPT_TYPES.has(node.type)) {
-        const ddl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
-        if (ddl) total += ddl.length;
+      if (this.removedSet.has(id)) continue;
+      for (const nid of neighborFn(id)) {
+        if (!this.scopeNodeIds.has(nid) && !this.removedSet.has(nid)) {
+          frontierIds.add(id);
+          break;
+        }
       }
     }
-    return total;
-  }
 
-  // ─── Private helpers ───────────────────────────────────────────────────────
+    if (frontierIds.size === 0) {
+      this.log('info', `BB EXPAND | no frontier nodes — scope fully explored`);
+      return { added: 0, agenda_size: this.agenda.length };
+    }
 
-  /** Bidirectional BFS from origin to compute reachable scope.
-   *  Uses graphology Graph (built from model.edges — filtered to selected schemas).
-   *  neighborIndex is NOT used here — it contains cross-schema phantom edges. */
-  /** BFS scope from startId using scopeDirection (upstream/downstream/bidirectional).
-   *  Filter constraint: if filterSchemas is set, nodes outside the filter schemas are skipped —
-   *  the user's active GUI filter acts as a BFS boundary, not just a reporting tag. */
-  private bfsScope(startId: string): Set<string> {
-    if (!this.graph.hasNode(startId)) return new Set([startId]);
-    const seen = new Set<string>([startId]);
-    const queue = [startId];
+    // BFS from frontier for extraHops levels
+    const newNodes = new Set<string>();
+    const queue: Array<{ id: string; depth: number }> = [];
+    for (const fid of frontierIds) {
+      for (const nid of neighborFn(fid)) {
+        if (!this.scopeNodeIds.has(nid) && !this.removedSet.has(nid) && !newNodes.has(nid)) {
+          if (this.filterSchemas) {
+            const schema = (this.nodeMap.get(nid)?.schema ?? '').toLowerCase();
+            if (!this.filterSchemas.has(schema)) continue;
+          }
+          newNodes.add(nid);
+          queue.push({ id: nid, depth: 1 });
+        }
+      }
+    }
+
     let idx = 0;
     while (idx < queue.length) {
-      const id = queue[idx++];
-      const neighbors =
-        this.scopeDirection === 'upstream'   ? this.graph.inNeighbors(id) :
-        this.scopeDirection === 'downstream' ? this.graph.outNeighbors(id) :
-                                               this.graph.neighbors(id);
-      for (const nid of neighbors) {
-        if (seen.has(nid)) continue;
+      const { id, depth } = queue[idx++];
+      if (depth >= hops) continue;
+      for (const nid of neighborFn(id)) {
+        if (this.scopeNodeIds.has(nid) || this.removedSet.has(nid) || newNodes.has(nid)) continue;
         if (this.filterSchemas) {
           const schema = (this.nodeMap.get(nid)?.schema ?? '').toLowerCase();
           if (!this.filterSchemas.has(schema)) continue;
         }
-        seen.add(nid);
-        queue.push(nid);
-        if (seen.size >= BFS_SCOPE_CAP) return seen;
+        newNodes.add(nid);
+        queue.push({ id: nid, depth: depth + 1 });
       }
     }
-    return seen;
+
+    // Add new nodes to scope + agenda
+    let added = 0;
+    for (const nid of newNodes) {
+      if (!this.nodeMap.has(nid)) continue; // skip nodes not in model
+      this.scopeNodeIds.add(nid);
+      if (!this.visited.has(nid) && !this.agendaIds.has(nid) && this.agenda.length < this.maxAgendaSize) {
+        this.agenda.push({ nodeId: nid, priority: 0, depth: 0 });
+        this.agendaIds.add(nid);
+        added++;
+      }
+    }
+
+    this.log('info', `BB EXPAND | frontier=${frontierIds.size} | extra_hops=${hops} | new_scope=${newNodes.size} | added_to_agenda=${added} | agenda=${this.agenda.length}`);
+    return { added, agenda_size: this.agenda.length };
   }
 
-  /** Seed agenda with BFS-ordered nodes from origin, respecting scopeDirection. */
+  // ─── Private: Agenda management ───────────────────────────────────────────
+
   private seedAgenda(originId: string): void {
     if (!this.graph.hasNode(originId)) return;
     const queue: Array<{ id: string; depth: number }> = [];
@@ -732,7 +734,6 @@ export class BlackboardState {
       this.scopeDirection === 'downstream' ? this.graph.outNeighbors(id) :
                                              this.graph.neighbors(id);
 
-    // Start with origin's neighbors
     for (const nid of neighborFn(originId)) {
       if (!seen.has(nid) && this.scopeNodeIds.has(nid)) {
         seen.add(nid);
@@ -740,7 +741,6 @@ export class BlackboardState {
       }
     }
 
-    // BFS to fill agenda
     let idx = 0;
     while (idx < queue.length) {
       const { id, depth } = queue[idx++];
@@ -760,35 +760,26 @@ export class BlackboardState {
     }
   }
 
-  /** Pop the highest-priority unvisited entry from agenda. O(n) scan, no sort. */
   private popNextAgendaEntry(): AgendaEntry | undefined {
     while (this.agenda.length > 0) {
-      // Find highest-priority entry (FIFO within same priority: pick lowest index)
       let bestIdx = 0;
       for (let i = 1; i < this.agenda.length; i++) {
-        if (this.agenda[i].priority > this.agenda[bestIdx].priority) {
-          bestIdx = i;
-        }
+        if (this.agenda[i].priority > this.agenda[bestIdx].priority) bestIdx = i;
       }
       const entry = this.agenda[bestIdx];
       this.agenda.splice(bestIdx, 1);
       this.agendaIds.delete(entry.nodeId);
-      if (!this.visited.has(entry.nodeId) && this.nodeMap.has(entry.nodeId)) {
-        return entry;
-      }
+      if (!this.visited.has(entry.nodeId) && this.nodeMap.has(entry.nodeId)) return entry;
     }
     return undefined;
   }
 
-  /** Add a Self-Ask question, boosting the target node's agenda priority. */
   private addQuestion(nodeId: string, question: string): void {
     this.questionLog.push({ nodeId, question, answered: false });
-
     if (!this.nodeMap.has(nodeId)) {
       this.log('debug', `BB question for unknown node ${nodeId}, ignoring`);
       return;
     }
-
     if (this.visited.has(nodeId)) {
       this.log('debug', `BB question for already-visited ${nodeId}, skipping agenda boost`);
       return;
@@ -796,11 +787,9 @@ export class BlackboardState {
 
     const existing = this.agenda.find(e => e.nodeId === nodeId);
     if (existing) {
-      // Boost priority and attach question
       existing.priority = 2;
       existing.question = question;
     } else {
-      // Auto-expand scope if needed
       if (!this.scopeNodeIds.has(nodeId)) {
         this.scopeNodeIds.add(nodeId);
         this.log('debug', `BB auto-expanded scope: ${nodeId}`);
@@ -814,158 +803,10 @@ export class BlackboardState {
     }
   }
 
-  /** Build neighbor list with edge info, boundary detection, compact cols/FKs. */
-  private buildNeighborList(focusId: string): HopNeighbor[] {
-    if (!this.graph.hasNode(focusId)) return [];
-    const inIds = new Set(this.graph.inNeighbors(focusId));
-    const outIds = new Set(this.graph.outNeighbors(focusId));
-    const allNeighborIds = [...new Set([...inIds, ...outIds])];
-    const neighbors: HopNeighbor[] = [];
-
-    for (const nid of allNeighborIds) {
-      const nNode = this.nodeMap.get(nid);
-      if (!nNode) continue;
-
-      const isUpstream = inIds.has(nid);
-      const primaryKey = isUpstream ? `${nid}→${focusId}` : `${focusId}→${nid}`;
-      const reverseKey = isUpstream ? `${focusId}→${nid}` : `${nid}→${focusId}`;
-      let edgeType = this.edgeTypeMap.get(primaryKey) ?? this.edgeTypeMap.get(reverseKey) ?? 'read';
-
-      const boundary = this.detectBoundary(nid);
-
-      // Scope status: what is this neighbor's status in the exploration?
-      const scopeStatus: HopNeighbor['scope'] =
-        this.visited.has(nid)       ? 'visited' :
-        this.removedSet.has(nid)    ? 'pruned' :
-        this.agendaIds.has(nid)     ? 'in_scope' :
-        !this.nodeMap.has(nid)      ? 'external' :
-                                      'available';
-
-      const neighbor: HopNeighbor = {
-        id: nid,
-        s: nNode.schema,
-        n: nNode.name,
-        t: nNode.type,
-        edge_direction: isUpstream ? 'upstream' : 'downstream',
-        edge_type: edgeType,
-        boundary,
-        scope: scopeStatus,
-        in_filter: this.isInFilter(nid),
-        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!getNodeDdl(nid, this.nodeMap, this.store ?? undefined),
-      };
-
-      if (boundary !== 'none') {
-        neighbor.boundary_reason = this.boundaryReason(boundary, nNode);
-      }
-
-      const nCols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined);
-      if (nCols?.length) {
-        neighbor.cols = nCols.map(c => presentColumnCompact(c));
-      }
-
-      if (nNode.fks?.length) {
-        neighbor.fks = nNode.fks.map(fk => presentFkCompact(fk));
-      }
-
-      neighbors.push(neighbor);
-    }
-
-    return neighbors;
-  }
-
-  private detectBoundary(nodeId: string): BoundaryFlag {
-    const node = this.nodeMap.get(nodeId);
-    if (!node) return 'external';
-    if (node.type === 'external') return 'external';
-    if (this.visited.has(nodeId)) return 'cycle';
-    if (!this.graph.hasNode(nodeId)) return 'external';
-    // Bidirectional: source = no incoming, sink = no outgoing
-    if (this.graph.inDegree(nodeId) === 0) return 'source';
-    if (this.graph.outDegree(nodeId) === 0) return 'sink';
-    return 'none';
-  }
-
-  private boundaryReason(flag: BoundaryFlag, node: LineageNode): string {
-    switch (flag) {
-      case 'source': return 'No upstream dependencies — source boundary';
-      case 'sink': return 'No downstream consumers — sink boundary';
-      case 'external': return `External reference (${node.externalType ?? 'unknown'}) — no DDL available`;
-      case 'cycle': return 'Already visited — cycle detected';
-      default: return '';
-    }
-  }
-
-  /** Build working memory snapshot: ALL summaries, ALL pending questions, remaining agenda, checklist.
-   *  The remaining_agenda list is critical for the sliding-window memory model:
-   *  history compaction evicts the start_exploration scope map after ~4 rounds.
-   *  Without remaining_agenda in every hop, the AI cannot identify what nodes it still needs to visit,
-   *  leading to blind early-complete decisions (MemGPT invariant: WM must be sufficient for the next decision). */
-  private buildWorkingMemory(): WorkingMemory {
-    const allSummaries: Array<{ nodeId: string; summary: string }> = [];
-    for (const note of this.notes.values()) {
-      allSummaries.push({ nodeId: note.nodeId, summary: note.summary });
-    }
-
-    const pendingQuestions: Array<{ nodeId: string; question: string }> = [];
-    for (const q of this.questionLog) {
-      if (!q.answered) {
-        pendingQuestions.push({ nodeId: q.nodeId, question: q.question });
-      }
-    }
-
-    // Remaining agenda — priority-sorted, capped at 30 to bound token cost.
-    // Sorted descending so mandatory (3) and question-boosted (2) items appear first.
-    const sortedAgenda = [...this.agenda].sort((a, b) => b.priority - a.priority);
-    const remaining_agenda = sortedAgenda.slice(0, 30).map(e => {
-      const n = this.nodeMap.get(e.nodeId);
-      return { id: e.nodeId, name: n?.name ?? e.nodeId, type: n?.type ?? '?', priority: e.priority };
-    });
-
-    const wm: WorkingMemory = {
-      user_question: this.userQuestion,
-      all_summaries: allSummaries,
-      pending_questions: pendingQuestions,
-      remaining_agenda,
-      checklist: { current_hop: this.hopCount, noted: this.notes.size, total: this.scopeNodeIds.size, open: this.agenda.length, coveragePct: this.coveragePct },
-    };
-
-    if (this.invalidNodeIds.size > 0) {
-      wm.invalid_nodes = [...this.invalidNodeIds.entries()].map(([id, reason]) => ({ id, reason }));
-    }
-
-    return wm;
-  }
-
-  /** Build map overview for init response. */
-  private buildMapOverview(): MapOverview {
-    const nodes: Array<Record<string, unknown>> = [];
-    for (const id of this.scopeNodeIds) {
-      const node = this.nodeMap.get(id);
-      if (node) {
-        nodes.push(strip(presentNode(node, this.model.neighborIndex)));
-      }
-    }
-
-    // Edges between scope nodes only
-    const edges: Array<[string, string, string]> = [];
-    for (const e of this.model.edges) {
-      if (this.scopeNodeIds.has(e.source) && this.scopeNodeIds.has(e.target)) {
-        edges.push([e.source, e.target, edgeApiType(e.type)]);
-      }
-    }
-
-    return { nodes, edges };
-  }
-
-  // ─── Cascade pruning via BFS reachability ──────────────────────────────────
-
-  /** Cascade-remove agenda nodes unreachable from origin after pruning a node. */
   private cascadePrune(prunedId: string): number {
     this.removedSet.add(prunedId);
     this.log('debug', `BB cascadePrune: ${prunedId} | BFS reachability from ${this.originNodeId}`);
-    // prunedId is already in removedSet — bfsReachable excludes all of removedSet (mode: mixed = undirected)
     const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
-    // Remove unreachable agenda nodes
     let cascaded = 0;
     for (let i = this.agenda.length - 1; i >= 0; i--) {
       if (!reachable.has(this.agenda[i].nodeId)) {
@@ -981,32 +822,49 @@ export class BlackboardState {
     return cascaded;
   }
 
-  // ─── Scope reporting ────────────────────────────────────────────────────────
+  private buildWorkingMemory(): WorkingMemory {
+    const base = this.buildBaseWorkingMemory();
 
-  /** Check if a node's schema matches the user's active filter. */
-  isInFilter(nodeId: string): boolean {
-    if (!this.filterSchemas) return true; // no filter = everything matches
-    const node = this.nodeMap.get(nodeId);
-    return !!node && this.filterSchemas.has(node.schema.toLowerCase());
+    // BB-specific: pending questions from questionLog (richer than base shortMemory.pending_questions)
+    const pendingQuestions: Array<{ nodeId: string; question: string }> = [];
+    for (const q of this.questionLog) {
+      if (!q.answered) pendingQuestions.push({ nodeId: q.nodeId, question: q.question });
+    }
+
+    const sortedAgenda = [...this.agenda].sort((a, b) => b.priority - a.priority);
+    const MAX_AGENDA_PREVIEW = 30;
+    const remaining_agenda = sortedAgenda.slice(0, MAX_AGENDA_PREVIEW).map(e => {
+      const n = this.nodeMap.get(e.nodeId);
+      return { id: e.nodeId, name: n?.name ?? e.nodeId, type: n?.type ?? '?', priority: e.priority };
+    });
+
+    const wm: WorkingMemory = {
+      user_question: this.userQuestion,
+      all_summaries: base.all_summaries,
+      pending_questions: pendingQuestions,
+      remaining_agenda,
+      checklist: { ...base.checklist, open: this.agenda.length },
+    };
+
+    if (this.invalidNodeIds.size > 0) {
+      wm.invalid_nodes = [...this.invalidNodeIds.entries()].map(([id, reason]) => ({ id, reason }));
+    }
+
+    return wm;
   }
 
-  /** Count agenda/scope nodes per schema — for scope preview. */
-  schemaBreakdown(): Record<string, number> {
-    const counts: Record<string, number> = {};
+  private buildMapOverview(): MapOverview {
+    const nodes: Array<Record<string, unknown>> = [];
     for (const id of this.scopeNodeIds) {
       const node = this.nodeMap.get(id);
-      if (node) counts[node.schema] = (counts[node.schema] || 0) + 1;
+      if (node) nodes.push(strip(presentNode(node, this.model.neighborIndex)));
     }
-    return counts;
-  }
-
-  /** Count scope nodes matching vs outside user filter — for scope preview. */
-  get filterBreakdown(): { in_filter: number; outside_filter: number; total: number } {
-    if (!this.filterSchemas) return { in_filter: this.scopeNodeIds.size, outside_filter: 0, total: this.scopeNodeIds.size };
-    let inFilter = 0;
-    for (const id of this.scopeNodeIds) {
-      if (this.isInFilter(id)) inFilter++;
+    const edges: Array<[string, string, string]> = [];
+    for (const e of this.model.edges) {
+      if (this.scopeNodeIds.has(e.source) && this.scopeNodeIds.has(e.target)) {
+        edges.push([e.source, e.target, edgeApiType(e.type)]);
+      }
     }
-    return { in_filter: inFilter, outside_filter: this.scopeNodeIds.size - inFilter, total: this.scopeNodeIds.size };
+    return { nodes, edges };
   }
 }

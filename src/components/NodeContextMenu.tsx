@@ -87,8 +87,8 @@ export const NodeContextMenu = memo(function NodeContextMenu({
     <FloatingPortal>
       <div
         ref={refs.setFloating}
-        style={{ ...floatingStyles, zIndex: 50 }}
-        className="rounded-lg shadow-xl py-1 min-w-[180px] ln-modal"
+        style={{ ...floatingStyles, zIndex: 50, boxShadow: 'var(--ln-dropdown-shadow)' }}
+        className="rounded-lg py-1 min-w-[180px] ln-dropdown"
         {...getFloatingProps()}
       >
         <div className="px-3 py-1.5 text-xs truncate ln-text-dim ln-border-bottom">
@@ -99,7 +99,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           <>
             <button
               onClick={() => { onTrace(nodeId); onClose(); }}
-              className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
@@ -108,7 +108,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
             </button>
             <button
               onClick={() => { onFindPath(nodeId); onClose(); }}
-              className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
@@ -160,7 +160,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
                 onExcludeNode(`^${escapeRegexLiteral(schema)}\\.${escapeRegexLiteral(nodeName)}$`);
                 onClose();
               }}
-              className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />

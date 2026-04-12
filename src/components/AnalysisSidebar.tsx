@@ -180,8 +180,11 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
 }: AnalysisGroupItemProps) {
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={`ln-analysis-group-item ${isActive ? 'ln-analysis-group-active' : ''}`}
       onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
     >
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium truncate" style={{ color: 'var(--ln-fg)' }}>

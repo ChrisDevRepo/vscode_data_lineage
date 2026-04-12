@@ -35,17 +35,19 @@ source format into the shared intermediate types and nothing more.
 | `docs/PARSE_RULES.md` | Custom parse rules guide |
 | `docs/DMV_QUERIES.md` | Custom DMV queries guide |
 | `docs/PROFILING_PATTERNS.md` | Table profiling SQL patterns reference |
-| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateEnrichView`. Zero per-tool caps — delivery mode via `shouldInline()`. Imports presentation from `aiPresenter.ts`. Zero VS Code imports. |
-| `src/ai/tokenBudget.ts` | Single source of truth for token budget: `INLINE_TOKEN_BUDGET` (10K tokens), `shouldInline()`, `estimateTokens()`, `REGEX_MAX_LENGTH`. Gate for inline vs on-demand delivery. Zero VS Code imports. |
+| `src/ai/tools.ts` | AI tool pure functions (8 tools): 7 read-only queries + `validateEnrichView`. `shouldInline()` gates catalog/detail delivery mode (not CT/BB). Zero VS Code imports. |
+| `src/ai/tokenBudget.ts` | Token budget: `INLINE_TOKEN_BUDGET`, `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`, `REGEX_MAX_LENGTH`. CT/BB always use state machine; budget applies to catalog/detail tools only. Zero VS Code imports. |
+| `src/ai/prompts.ts` | Central prompt dispatcher: `buildSystemPromptBase()`, `CT_MODE_PROMPT`, `CT_DEP_MODE_PROMPT`, `BB_MODE_PROMPT`. Zero VS Code imports. |
 | `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()` (explicit type map with 'read' fallback). Zero business logic, zero VS Code imports. |
 | `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
 
 ## Build & Test
 
 ```bash
-npm run build    # Build extension + webview
-npm run watch    # Watch extension only
-npm test         # All unit tests
+npm run build         # Build extension + webview
+npm run watch         # Watch extension only
+npm test              # Unit tests (996 tsx + 112 vitest + snapshot)
+npm run test:internal # AI SM tests (184+98+66 = 348 tsx) — separate suite
 ```
 
 Press F5 to launch Extension Development Host.
@@ -61,10 +63,9 @@ Press F5 to launch Extension Development Host.
 | `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
 | `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
 | `test/projectStore.test.ts` | 136 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `test/ai-tools.test.ts` | 184 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
-| `test/column-trace-state.test.ts` | 98 | Column-trace state machine: lifecycle, init, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), synthetic model tests, bug regression (diamond merge, passthrough visited, depth, focus boundary) |
-| `test/blackboard-state.test.ts` | 66 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
-| `test/chat-loop.test.ts` | 28 | Orchestration loop: classic tool dispatch, dedup, CT multi-hop, round limit, BB tool visibility. Uses fake Copilot responses via `chatLoopTestHarness.ts` |
+| `test-internal/ai-tools.test.ts` | 184 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
+| `test-internal/column-trace-state.test.ts` | 98 | Column-trace state machine: lifecycle, init, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), synthetic model tests, bug regression (diamond merge, passthrough visited, depth, focus boundary) |
+| `test-internal/blackboard-state.test.ts` | 66 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
 | `test/hooks/useInteractiveTrace.test.ts` | 31 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
 | `test/hooks/useGraphology.test.ts` | 27 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
 | `test/hooks/useOverviewMode.test.ts` | 18 | Overview mode state machine: auto-trigger, manual toggle, threshold guards, resetUserChoice |
@@ -76,13 +77,13 @@ Press F5 to launch Extension Development Host.
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                            # All unit tests (1372 tsx + 112 vitest + snapshot)
+npm test                            # All unit tests (996 tsx + 112 vitest + snapshot)
 npm run test:snapshot               # Parser baseline check only
 npm run test:snapshot:update        # Regenerate test/aw-baseline.tsv after parser changes
 npm run test:coverage               # Vitest with v8 coverage (requires @vitest/coverage-v8)
 ```
 
-**tsx tests** (1566 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
+**tsx tests** (996 in `npm test`, 348 in `npm run test:internal`): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
 
 **Vitest tests** (112 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
 
@@ -227,8 +228,9 @@ npm test                               # all suites must pass
 | **bb_done** | `lineage` | All 12 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
 
 **Key files:**
-- `src/ai/tokenBudget.ts` — Single source of truth: `INLINE_TOKEN_BUDGET` (10K tokens, ~40K chars). Gate for delivery mode: inline (all data at once) vs on-demand (state machine hop-by-hop). Zero per-tool caps — only delivery mode changes. Zero VS Code imports.
-- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates delivery mode, not data size. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
+- `src/ai/tokenBudget.ts` — Token budget: `ai.inlineTokenBudget` setting (default 10K tokens), `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`. Budget gates catalog/detail delivery; CT/BB always use state machine. Zero VS Code imports.
+- `src/ai/prompts.ts` — Central prompt dispatcher: `buildSystemPromptBase()`, `CT_MODE_PROMPT`, `CT_DEP_MODE_PROMPT`, `BB_MODE_PROMPT`. Zero VS Code imports.
+- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates catalog/detail delivery. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
 - `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
 - `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
 - `src/ai/blackboardState.ts` — Type 1 Blackboard state machine: free-form exploration with two-tier memory (MemGPT pattern). Passive SM: AI drives traversal via sub-questions, SM stores findings, manages agenda priority. Zero VS Code imports.
@@ -251,11 +253,11 @@ npm test                               # all suites must pass
 | `lineage_start_exploration` | lineage, lineage-bb | read | Init BB state machine: free-form exploration with two-tier memory |
 | `lineage_submit_findings` | lineage, lineage-bb | read | Submit findings + summary, get next hop or final result |
 
-**Two guards only** (`src/ai/tokenBudget.ts`):
-1. `INLINE_TOKEN_BUDGET` (10K tokens, ~40K chars) — delivery mode gate: inline vs state machine
-2. `ai.maxRounds` (VS Code setting, default 25) — hard stop on tool rounds
+**Two guards** (`src/ai/tokenBudget.ts`):
+1. `ai.inlineTokenBudget` (VS Code setting, default 10K tokens) — catalog/detail delivery gate: inline vs on_demand hint. CT/BB always use state machine regardless.
+2. `ai.maxRounds` (VS Code setting, default 50) — hard stop on tool rounds
 
-**Zero-truncation guarantee:** No tool response is ever truncated, capped, or sliced. Fits budget → full data inline. Exceeds budget → state machine delivers per-hop, or lightweight response with follow-up hint. No per-tool caps exist.
+**Zero-truncation guarantee:** No tool response is ever truncated, capped, or sliced. Fits budget → full data inline. Exceeds budget → state machine or on_demand hint. No per-tool caps exist.
 
 **Conversation memory:** `context.history` is read each turn and prepended to `messages[]` so the model remembers earlier questions in the same chat session. Under context pressure (>75% of `maxInputTokens`), oldest turns are evicted (drop+log, not summarize).
 
@@ -267,7 +269,6 @@ npm test                               # all suites must pass
 - Graph traversal uses NeighborIndex (O(1) neighbor lookup), NOT graphology — deliberate separation from classic BFS
 - Column tracking: `activeColumns` per frontier entry, `columnsOut` for rename tracking (INSERT→SELECT mapping)
 - Boundary detection: source/sink/external/cycle — deterministic, no AI input
-- Inline delivery: when scope DDL fits `INLINE_TOKEN_BUDGET`, returns full BFS result in one shot (`status: 'inline'`), releases state machine
 - Column validation: tables only (case-insensitive, max 2 rejections/hop). SPs/views: accept on trust
 
 **Blackboard state machine** (`src/ai/blackboardState.ts`):
@@ -282,10 +283,9 @@ npm test                               # all suites must pass
 - CT: `goal: { columns, direction, origin }` repeated in every hop context — prevents losing track of original columns after renames
 - BB: `working_memory.user_question` repeated every hop — prevents losing sight of original investigation question
 
-**AI tests (4 tiers, 577 tests):**
-- `test/ai-tools.test.ts` (294) — pure tool functions: getContext, search, detail, BFS (level + path), analysis, DDL, validate, autoFix
-- `test/column-trace-state.test.ts` (156) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
-- `test/blackboard-state.test.ts` (82) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
-- `test/chat-loop.test.ts` (45) — orchestration loop via fake Copilot responses: explore-first design, tool visibility, dedup, round limit, history DROP, CT compaction, BB exploration. Harness: `test/chatLoopTestHarness.ts`
+**AI tests (3 tiers, 348 tests):** run via `npm run test:internal` (gitignored, local-only)
+- `test-internal/ai-tools.test.ts` (184) — pure tool functions: getContext, search, detail, BFS (level + path), analysis, DDL, validate, autoFix
+- `test-internal/column-trace-state.test.ts` (98) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
+- `test-internal/blackboard-state.test.ts` (66) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
 
-**UAT scenarios:** `tmp/ai-uat-scenarios.md` — all modes (classic C1-C5, hop H1-H7, routing R1-R6, edge cases E1-E4). Column-trace UAT: `tmp/ai-column-trace-test-scenarios.md` (Q1-Q3).
+**UAT scenarios:** `ai/test-all-modes.md` — all modes (classic C1-C5, hop H1-H7, routing R1-R6, edge cases E1-E4). Column-trace UAT: `ai/test-column-trace.md` (Q1-Q3).

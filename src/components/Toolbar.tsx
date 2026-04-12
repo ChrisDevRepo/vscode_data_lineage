@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
@@ -17,8 +17,6 @@ import type { FilterProfile } from '../engine/projectStore';
 interface ToolbarProps {
   types: Set<ObjectType>;
   onToggleType: (type: ObjectType) => void;
-  searchTerm: string;
-  onSearchChange: (term: string) => void;
   hideIsolated: boolean;
   onToggleIsolated: () => void;
   focusSchemas: Set<string>;
@@ -63,6 +61,8 @@ interface ToolbarProps {
   /** When true, graph is in schema overview mode — export is disabled. */
   isOverview?: boolean;
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
+  /** Authoritative set of node IDs currently rendered (after all filters). */
+  visibleNodeIds: Set<string>;
   metrics: {
     totalNodes: number;
     totalEdges: number;
@@ -77,21 +77,24 @@ function buildMetricsTooltip(
 ): string {
   const counts: Partial<Record<ObjectType, number>> = {};
   for (const n of allNodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
+  const total = allNodes.length;
+  const filtered = total > metrics.totalNodes;
   const typeRows: string[] = [];
-  const pad = String(metrics.totalNodes).length;
+  const pad = String(total).length;
   if (counts.table)     typeRows.push(`  ${String(counts.table).padStart(pad)} tables`);
   if (counts.view)      typeRows.push(`  ${String(counts.view).padStart(pad)} views`);
   if (counts.procedure) typeRows.push(`  ${String(counts.procedure).padStart(pad)} procedures`);
   if (counts.function)  typeRows.push(`  ${String(counts.function).padStart(pad)} functions`);
   if (counts.external)  typeRows.push(`  ${String(counts.external).padStart(pad)} external`);
-  return [`Objects: ${metrics.totalNodes}`, ...typeRows].join('\n');
+  const header = filtered
+    ? `Visible: ${metrics.totalNodes} / ${total} objects`
+    : `Objects: ${total}`;
+  return [header, ...typeRows].join('\n');
 }
 
 export const Toolbar = memo(function Toolbar({
   types,
   onToggleType,
-  searchTerm,
-  onSearchChange,
   hideIsolated,
   onToggleIsolated,
   focusSchemas,
@@ -133,6 +136,7 @@ export const Toolbar = memo(function Toolbar({
   isModeLocked = false,
   isOverview = false,
   allNodes = [],
+  visibleNodeIds,
   metrics,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -143,6 +147,13 @@ export const Toolbar = memo(function Toolbar({
 
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
+
+  const activeFilterCount = useMemo(() => [
+    selectedSchemas.size < schemas.length && schemas.length > 0,
+    types.size < 5,
+    !showExternalRefs || externalRefTypes.size < 2,
+    exclusionPatterns.length > 0,
+  ].filter(Boolean).length, [selectedSchemas.size, schemas.length, types.size, showExternalRefs, externalRefTypes.size, exclusionPatterns.length]);
 
   return (
     <>
@@ -173,13 +184,10 @@ export const Toolbar = memo(function Toolbar({
         {/* Search & Filters */}
         <div className="flex-1 min-w-[100px] max-w-[340px]">
           <SearchWithAutocomplete
-            searchTerm={searchTerm}
-            onSearchChange={onSearchChange}
             onExecuteSearch={onExecuteSearch}
             onStartTrace={isModeLocked || isAnalysisActive ? undefined : onStartTrace}
             allNodes={allNodes}
-            selectedSchemas={selectedSchemas}
-            types={types}
+            visibleNodeIds={visibleNodeIds}
           />
         </div>
         <Tooltip content="Detail Search (full-text search in SQL bodies)">
@@ -190,26 +198,38 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} />
-        <TypeFilterDropdown types={types} onToggleType={onToggleType} />
+        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} isNarrowed={selectedSchemas.size < schemas.length && schemas.length > 0} />
+        <TypeFilterDropdown types={types} onToggleType={onToggleType} isNarrowed={types.size < 5} />
         {onToggleExternalRefs && onToggleExternalRefType && (
           <ExternalRefsDropdown
             showExternalRefs={showExternalRefs}
             externalRefTypes={externalRefTypes}
             onToggleMaster={onToggleExternalRefs}
             onToggleSubType={onToggleExternalRefType}
+            isNarrowed={!showExternalRefs || externalRefTypes.size < 2}
           />
         )}
-        {onAddExclusionPattern && onRemoveExclusionPattern && (
-          <ExclusionDropdown
-            exclusionPatterns={exclusionPatterns}
-            onAddPattern={onAddExclusionPattern}
-            onRemovePattern={onRemoveExclusionPattern}
-          />
-        )}
+        <div className="relative inline-flex">
+          <Tooltip content={activeFilterCount > 0 ? `Clear All Filters (${activeFilterCount} active)` : 'No active filters'}>
+            <Button onClick={onRefresh} variant="icon" aria-label="Clear All Filters">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
+              </svg>
+            </Button>
+          </Tooltip>
+          {activeFilterCount > 0 && (
+            <span
+              className="absolute -top-1 -right-1 flex items-center justify-center rounded-full pointer-events-none ln-counter-badge"
+              aria-label={`${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active`}
+            >
+              {activeFilterCount}
+            </span>
+          )}
+        </div>
         <div className="w-px h-6 ln-divider" />
 
-        {/* Graph Controls: HideIsolated + Analysis + ClearFilters */}
+        {/* Display Preferences (sticky — not cleared by Clear All) */}
         <Tooltip content={analysisType === 'orphans' ? 'Disabled during Orphan analysis' : 'Hide Isolated Nodes'}>
           <Button onClick={onToggleIsolated} variant="icon" className={hideIsolated ? 'ln-btn-icon-active' : ''} disabled={analysisType === 'orphans'} aria-label="Hide Isolated Nodes" aria-pressed={hideIsolated}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -217,6 +237,13 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
+        {onAddExclusionPattern && onRemoveExclusionPattern && (
+          <ExclusionDropdown
+            exclusionPatterns={exclusionPatterns}
+            onAddPattern={onAddExclusionPattern}
+            onRemovePattern={onRemoveExclusionPattern}
+          />
+        )}
 
         {/* Analysis Dropdown */}
         <Tooltip content={isModeLocked && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
@@ -240,30 +267,32 @@ export const Toolbar = memo(function Toolbar({
               ref={analysis.refs.setFloating}
               style={{ ...analysis.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
               className="w-52 rounded-md shadow-lg z-50 ln-dropdown"
+              role="menu"
+              aria-label="Graph analysis tools"
               {...analysis.getFloatingProps()}
             >
               <div className="py-1">
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('islands'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('islands'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
                   Islands
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('hubs'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('hubs'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" /></svg>
                   Hubs
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('orphans'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('orphans'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>
                   Orphan Nodes
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('longest-path'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('longest-path'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
                   Longest Path
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('cycles'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('cycles'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
                   Cycles
                 </button>
-                <button className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('external-refs'); }}>
+                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('external-refs'); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
                   External Refs
                 </button>
@@ -271,15 +300,6 @@ export const Toolbar = memo(function Toolbar({
             </div>
           )}
         </FloatingPortal>
-
-        <Tooltip content="Clear All Filters">
-          <Button onClick={onRefresh} variant="icon" aria-label="Clear All Filters">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
-            </svg>
-          </Button>
-        </Tooltip>
 
         <div className="w-px h-6 ln-divider" />
 
@@ -324,10 +344,10 @@ export const Toolbar = memo(function Toolbar({
             <Tooltip content={buildMetricsTooltip(allNodes, metrics)} delay={400} multiline>
               <div className="flex-shrink-0 text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-center gap-1 pr-1 cursor-default select-none">
                 <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalNodes}</span>
+                {allNodes.length > metrics.totalNodes && (
+                  <span className="opacity-40">/ {allNodes.length}</span>
+                )}
                 <span className="opacity-60">objects</span>
-                <span className="opacity-30 mx-1">·</span>
-                <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalEdges}</span>
-                <span className="opacity-60">relations</span>
               </div>
             </Tooltip>
           </>

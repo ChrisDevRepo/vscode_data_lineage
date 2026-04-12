@@ -31,6 +31,8 @@ export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendPro
     >
       <button
         onClick={() => setCollapsed(!collapsed)}
+        aria-expanded={!collapsed}
+        aria-label="Toggle schema legend"
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-opacity-80 transition-colors text-left ln-legend-header"
       >
         <span className="text-[10px] font-normal uppercase tracking-wider">SCHEMAS</span>

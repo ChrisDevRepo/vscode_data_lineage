@@ -5,7 +5,7 @@
  * Suite B — Type filter
  * Suite C — Isolation filter (hideIsolated)
  * Suite D — Exclusion pattern filter
- * Suite E — Focus schema filter
+ * Suite E — focusSchemas is UI-only (no pipeline filtering)
  * Suite F — Allowlist filter
  * Suite G — External ref filter
  * Suite H — Graph + metrics state
@@ -184,32 +184,22 @@ describe('Suite D — exclusion pattern filter', () => {
   });
 });
 
-// ─── Suite E — Focus schema filter ───────────────────────────────────────────
+// ─── Suite E — focusSchemas is UI-only (no pipeline filtering) ──────────────
+// After the star-schema unification, focusSchemas drives only the star icon in
+// the dropdown. Schema narrowing is done by the handler setting filter.schemas.
+// The pipeline must NOT filter based on focusSchemas.
 
-describe('Suite E — focus schema filter', () => {
+describe('Suite E — focusSchemas is UI-only', () => {
   it('no focus schemas → all nodes pass through', () => {
     const { result } = renderHook(() => useGraphology());
     act(() => { result.current.buildFromModel(MODEL, makeFilter({ focusSchemas: new Set() })); });
     expect(result.current.flowNodes.length).toBe(4);
   });
 
-  it('focus=dbo → all 3 dbo nodes + their out-of-schema neighbors', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter({ focusSchemas: new Set(['dbo']) })); });
-    // All 3 dbo nodes; sales.t2 has no edge to dbo so excluded
-    expect(result.current.flowNodes.length).toBe(3);
-    expect(result.current.flowNodes.some(n => n.id === SALES_T2.id)).toBe(false);
-  });
+  // Redundant focusSchemas tests removed: 'no focus schemas' already proves UI-only behavior;
+  // schema filtering is tested in Suite A
 
-  it('focus=sales → only sales.t2 (isolated, no dbo neighbors)', () => {
-    const { result } = renderHook(() => useGraphology());
-    act(() => { result.current.buildFromModel(MODEL, makeFilter({ focusSchemas: new Set(['sales']) })); });
-    expect(result.current.flowNodes.length).toBe(1);
-    expect(result.current.flowNodes[0].id).toBe(SALES_T2.id);
-  });
-
-  it('focus schema includes cross-schema neighbors', () => {
-    // Build a model where sales.sp reads dbo.t
+  it('cross-schema: both schemas selected → both nodes appear regardless of focusSchemas', () => {
     const salesSp = node('sales', 'sp', 'procedure');
     const dboT = node('dbo', 't', 'table');
     const crossModel = makeModel([salesSp, dboT], [edge(salesSp.id, dboT.id)]);
@@ -220,7 +210,6 @@ describe('Suite E — focus schema filter', () => {
         makeFilter({ schemas: new Set(['sales', 'dbo']), focusSchemas: new Set(['sales']) })
       );
     });
-    // Focus on sales: salesSp is focus; dboT is its neighbor → both included
     expect(result.current.flowNodes.length).toBe(2);
   });
 });

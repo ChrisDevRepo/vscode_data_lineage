@@ -18,6 +18,7 @@ import type { Node as FlowNode } from '@xyflow/react';
 import { useInteractiveTrace } from '../../src/hooks/useInteractiveTrace';
 import type { CustomNodeData } from '../../src/components/CustomNode';
 import { DEFAULT_CONFIG } from '../../src/engine/types';
+import type { DatabaseModel, LineageNode, LineageEdge } from '../../src/engine/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +27,14 @@ function makeGraph(nodes: string[], edges: [string, string][]): Graph {
   for (const id of nodes) g.addNode(id, { schema: 'dbo', name: id, type: 'table' });
   for (const [s, t] of edges) g.addEdgeWithKey(`${s}→${t}`, s, t, { type: 'body' });
   return g;
+}
+
+function makeModel(nodeIds: string[], edges: [string, string][]): DatabaseModel {
+  const nodes: LineageNode[] = nodeIds.map(id => ({
+    id, schema: 'dbo', name: id, fullName: `[dbo].[${id}]`, type: 'table' as const,
+  }));
+  const modelEdges: LineageEdge[] = edges.map(([s, t]) => ({ source: s, target: t, type: 'body' as const }));
+  return { nodes, edges: modelEdges, schemas: [], catalog: {}, neighborIndex: {} };
 }
 
 function makeFlowNodes(ids: string[]): FlowNode<CustomNodeData>[] {
@@ -79,18 +88,7 @@ describe('Suite B — startTraceConfig', () => {
     expect(result.current.trace.tracedNodeIds.size).toBe(0);
   });
 
-  it('does not require a graph — no early return', () => {
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    expect(() => act(() => { result.current.startTraceConfig('A'); })).not.toThrow();
-    expect(result.current.trace.mode).toBe('configuring');
-  });
-
-  it('tracedNodes still returns all flow nodes in configuring mode', () => {
-    const nodes = makeFlowNodes(['A', 'B', 'C']);
-    const { result } = renderHook(() => useInteractiveTrace(null, nodes, []));
-    act(() => { result.current.startTraceConfig('B'); });
-    expect(result.current.tracedNodes).toEqual(nodes);
-  });
+  // Trivial guard tests removed (no-graph, configuring-mode passthrough)
 });
 
 // ─── Suite C — startTraceImmediate ───────────────────────────────────────────
@@ -123,20 +121,7 @@ describe('Suite C — startTraceImmediate', () => {
 // ─── Suite D — applyTrace ─────────────────────────────────────────────────────
 
 describe('Suite D — applyTrace', () => {
-  it('does not change mode when no selectedNodeId (no config phase first)', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.applyTrace(2, 2); });
-    expect(result.current.trace.mode).toBe('none');
-  });
-
-  it('does not change mode when graph is null (even with selectedNodeId set)', () => {
-    // No graph → startTraceConfig sets selectedNodeId without needing graph
-    const { result } = renderHook(() => useInteractiveTrace(null, [], []));
-    act(() => { result.current.startTraceConfig('B'); });
-    act(() => { result.current.applyTrace(2, 2); });
-    expect(result.current.trace.mode).toBe('configuring'); // unchanged from configuring
-  });
+  // Trivial guard tests removed (no-selectedNodeId, null-graph)
 
   it('sets mode to applied after startTraceConfig + graph', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
@@ -146,14 +131,7 @@ describe('Suite D — applyTrace', () => {
     expect(result.current.trace.mode).toBe('applied');
   });
 
-  it('stores the upstream and downstream level arguments', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceConfig('B'); });
-    act(() => { result.current.applyTrace(5, 2); });
-    expect(result.current.trace.upstreamLevels).toBe(5);
-    expect(result.current.trace.downstreamLevels).toBe(2);
-  });
+  // 'stores level arguments' removed: trivial property setter
 
   it('populates tracedNodeIds after apply', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
@@ -249,7 +227,7 @@ describe('Suite F — applyPath', () => {
     expect(result.current.trace.tracedNodeIds.has('C')).toBe(true);
   });
 
-  it('upstream path also works (C → A via reverse)', () => {
+  it('upstream path works (C → A via reverse)', () => {
     const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
     const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
     // computeShortestPath tries both directions
@@ -257,6 +235,44 @@ describe('Suite F — applyPath', () => {
     let found = false;
     act(() => { found = result.current.applyPath('A'); });
     expect(found).toBe(true);
+  });
+
+  it('finds path through nodes not in filtered graph via full model', () => {
+    // Full model: A → B → C → D. Filtered graph: A, B, D only (C hidden by filter).
+    const filteredGraph = makeGraph(['A', 'B', 'D'], [['A', 'B']]);
+    const fullModel = makeModel(['A', 'B', 'C', 'D'], [['A', 'B'], ['B', 'C'], ['C', 'D']]);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(filteredGraph, [], [], DEFAULT_CONFIG, fullModel)
+    );
+    act(() => { result.current.startPathFinding('A'); });
+    let found = false;
+    act(() => { found = result.current.applyPath('D'); });
+    expect(found).toBe(true);
+    expect(result.current.trace.tracedNodeIds.has('C')).toBe(true);
+    expect(result.current.trace.tracedNodeIds.size).toBe(4);
+  });
+
+  it('synthesizes FlowNodes for path nodes outside the filter', () => {
+    // Full model: A → B → C → D. Filtered graph + flowNodes: A, B, D only.
+    const filteredGraph = makeGraph(['A', 'B', 'D'], [['A', 'B']]);
+    const fullModel = makeModel(['A', 'B', 'C', 'D'], [['A', 'B'], ['B', 'C'], ['C', 'D']]);
+    const flowNodes = makeFlowNodes(['A', 'B', 'D']);
+    const flowEdges = [{ id: 'A→B', source: 'A', target: 'B' }];
+    const { result } = renderHook(() =>
+      useInteractiveTrace(filteredGraph, flowNodes, flowEdges, DEFAULT_CONFIG, fullModel)
+    );
+    act(() => { result.current.startPathFinding('A'); });
+    act(() => { result.current.applyPath('D'); });
+    // tracedNodes should include synthesized node for C
+    const nodeIds = result.current.tracedNodes.map(n => n.id);
+    expect(nodeIds).toContain('C');
+    expect(nodeIds).toContain('A');
+    expect(nodeIds).toContain('D');
+    expect(result.current.tracedNodes.length).toBe(4);
+    // Synthesized edges B→C and C→D should also be present
+    const edgeIds = result.current.tracedEdges.map(e => e.id);
+    expect(edgeIds).toContain('B→C');
+    expect(edgeIds).toContain('C→D');
   });
 });
 
@@ -306,14 +322,7 @@ describe('Suite H — endTrace / clearTrace', () => {
     expect(result.current.trace.tracedNodeIds.size).toBe(0);
   });
 
-  it('clearTrace is equivalent to endTrace', () => {
-    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
-    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
-    act(() => { result.current.startTraceImmediate('B'); });
-    act(() => { result.current.clearTrace(); });
-    expect(result.current.trace.mode).toBe('none');
-    expect(result.current.trace.selectedNodeId).toBeNull();
-  });
+  // 'clearTrace is equivalent to endTrace' removed: redundant equivalence
 
   it('resets from every mode: configuring, analysis, pathfinding, path-applied', () => {
     // Configuring

@@ -3,10 +3,9 @@
  *
  * Suite A — Auto-trigger on threshold
  * Suite C — Manual toggle
- * Suite D — Schema focus entry
+ * Suite D — Schema focus entry and drill-down protection
  * Suite E — Reset on model/schema change
  * Suite F — resetUserChoice
- * Suite G — Force overview threshold (soft guard)
  */
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
@@ -21,10 +20,9 @@ function makeModel(): DatabaseModel {
 }
 
 const THRESHOLD = 3;
-const FORCE_THRESHOLD = 6;
 
-function defaultConfig(threshold = THRESHOLD, forceOverviewThreshold = FORCE_THRESHOLD) {
-  return { ...DEFAULT_CONFIG, overview: { enabled: true, threshold, forceOverviewThreshold } };
+function defaultConfig(threshold = THRESHOLD) {
+  return { ...DEFAULT_CONFIG, overview: { enabled: true, threshold } };
 }
 
 type HookProps = Parameters<typeof useOverviewMode>[0];
@@ -35,7 +33,7 @@ function defaultProps(overrides?: Partial<HookProps>): HookProps {
     filteredCount: 2, // below threshold
     config: defaultConfig(),
     schemasKey: 'dbo',
-    onSetFocusSchema: vi.fn(),
+    onSetFocusSchemaOnly: vi.fn().mockReturnValue(0),
     ...overrides,
   };
 }
@@ -64,7 +62,7 @@ describe('Suite A — Auto-trigger on threshold', () => {
   });
 
   it('A4: does not auto-trigger when overview.enabled is false', () => {
-    const config = { ...defaultConfig(), overview: { enabled: false, threshold: THRESHOLD, forceOverviewThreshold: FORCE_THRESHOLD } };
+    const config = { ...defaultConfig(), overview: { enabled: false, threshold: THRESHOLD } };
     const props = defaultProps({ filteredCount: THRESHOLD + 1, config });
     const { result } = renderHook(() => useOverviewMode(props));
     expect(result.current.graphMode).toBe('full');
@@ -127,16 +125,16 @@ describe('Suite D — Schema focus entry', () => {
     expect(result.current.enteredFocusFromOverview).toBe(true);
   });
 
-  it('D13: calls onSetFocusSchema with schema name', () => {
-    const spy = vi.fn();
-    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchema: spy });
+  it('D13: calls onSetFocusSchemaOnly with schema name and forceLayout=true', () => {
+    const spy = vi.fn().mockReturnValue(0);
+    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchemaOnly: spy });
     const { result } = renderHook(() => useOverviewMode(props));
 
     act(() => result.current.enterFocusFromOverview('Sales'));
-    expect(spy).toHaveBeenCalledWith('Sales');
+    expect(spy).toHaveBeenCalledWith('Sales', true);
   });
 
-  it('D14: sets guard after focus entry', () => {
+  it('D14: sets guard after focus entry — persists across filter changes', () => {
     const props = defaultProps({ filteredCount: THRESHOLD + 1 });
     const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
 
@@ -146,6 +144,29 @@ describe('Suite D — Schema focus entry', () => {
     // rerender with high count — guard blocks
     rerender({ ...props, filteredCount: THRESHOLD + 2 });
     expect(result.current.graphMode).toBe('full');
+  });
+
+  // D14b, D14c removed: D14 already covers drill-down guard persistence; schema-only is implementation detail
+
+  it('D14d: manual schema change after drill-down re-enables auto-trigger', () => {
+    const spy = vi.fn().mockReturnValue(0);
+    const props = defaultProps({ filteredCount: THRESHOLD + 1, onSetFocusSchemaOnly: spy });
+    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
+    expect(result.current.graphMode).toBe('overview');
+
+    // Drill down — schemasKey narrows to 'Sales'
+    act(() => result.current.enterFocusFromOverview('Sales'));
+    expect(result.current.graphMode).toBe('full');
+
+    // Drill-down schemasKey change — guard preserved
+    rerender({ ...props, schemasKey: 'Sales', filteredCount: THRESHOLD + 2 });
+    expect(result.current.graphMode).toBe('full');
+
+    // User manually changes schemas in dropdown — guard reset, auto-trigger re-evaluates.
+    // filteredCount also changes (different schemas = different count).
+    rerender({ ...props, schemasKey: 'dbo,Sales,HR', filteredCount: THRESHOLD + 3 });
+    expect(result.current.graphMode).toBe('overview');
+    expect(result.current.enteredFocusFromOverview).toBe(false);
   });
 });
 
@@ -194,16 +215,7 @@ describe('Suite E — Reset on model/schema change', () => {
     expect(result.current.graphMode).toBe('overview');
   });
 
-  it('E18: schemasKey change does NOT clear enteredFocusFromOverview', () => {
-    const props = defaultProps({ filteredCount: THRESHOLD + 1 });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-
-    act(() => result.current.enterFocusFromOverview('dbo'));
-    expect(result.current.enteredFocusFromOverview).toBe(true);
-
-    rerender({ ...props, schemasKey: 'dbo,Sales' });
-    expect(result.current.enteredFocusFromOverview).toBe(true);
-  });
+  // E18 removed: D14d already covers manual schemasKey change re-enabling auto-trigger
 });
 
 // ─── Suite F — resetUserChoice ───────────────────────────────────────────────
@@ -224,36 +236,5 @@ describe('Suite F — resetUserChoice', () => {
     rerender({ ...props, filteredCount: THRESHOLD });
     rerender({ ...props, filteredCount: THRESHOLD + 2 });
     expect(result.current.graphMode).toBe('overview');
-  });
-});
-
-// ─── Suite G — Force overview threshold (soft guard) ────────────────────────
-
-describe('Suite G — Force overview threshold (soft guard)', () => {
-  it('G20: forces overview when node count exceeds forceOverviewThreshold even after manual toggle', () => {
-    const props = defaultProps({ filteredCount: THRESHOLD + 1 });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-    expect(result.current.graphMode).toBe('overview');
-
-    // manual toggle to full (guard set)
-    act(() => result.current.toggleMode());
-    expect(result.current.graphMode).toBe('full');
-
-    // exceed force threshold — soft guard overrides userChoseMode
-    rerender({ ...props, filteredCount: FORCE_THRESHOLD + 1 });
-    expect(result.current.graphMode).toBe('overview');
-  });
-
-  it('G21: does not force overview when between threshold and forceOverviewThreshold with guard set', () => {
-    const props = defaultProps({ filteredCount: THRESHOLD + 1 });
-    const { result, rerender } = renderHook((p: HookProps) => useOverviewMode(p), { initialProps: props });
-
-    // manual toggle to full (guard set)
-    act(() => result.current.toggleMode());
-    expect(result.current.graphMode).toBe('full');
-
-    // still between threshold and forceOverviewThreshold — guard holds
-    rerender({ ...props, filteredCount: FORCE_THRESHOLD });
-    expect(result.current.graphMode).toBe('full');
   });
 });

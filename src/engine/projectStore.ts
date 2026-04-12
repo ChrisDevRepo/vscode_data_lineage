@@ -22,7 +22,7 @@ export interface ProjectStore {
 export interface SerializedFilterState {
   schemas: string[];
   types: string[];
-  searchTerm: string;
+  searchTerm?: string;
   hideIsolated: boolean;
   focusSchemas: string[];
   showExternalRefs: boolean;
@@ -283,7 +283,7 @@ export function deserializeFilter(s: SerializedFilterState): FilterState {
   return {
     schemas: new Set(s.schemas),
     types: new Set(s.types) as FilterState['types'],
-    searchTerm: s.searchTerm,
+    searchTerm: s.searchTerm ?? '',
     hideIsolated: s.hideIsolated,
     focusSchemas: new Set(s.focusSchemas),
     showExternalRefs: s.showExternalRefs,

@@ -33,6 +33,24 @@ const DACPAC_TIMEOUT_MS = 20_000;
 const DB_TIMEOUT_MS = 60_000;
 const MIN_SPINNER_MS = 1200;
 
+/** Compute all schemas that have at least one edge connecting to a node in the target schema. */
+function computeNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
+  const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
+  const nodeById = new Map(model.nodes.map(n => [n.id, n]));
+  const neighborSchemas = new Set<string>([schema]);
+  for (const e of model.edges) {
+    if (focusNodeIds.has(e.source)) {
+      const target = nodeById.get(e.target);
+      if (target) neighborSchemas.add(target.schema);
+    }
+    if (focusNodeIds.has(e.target)) {
+      const source = nodeById.get(e.source);
+      if (source) neighborSchemas.add(source.schema);
+    }
+  }
+  return neighborSchemas;
+}
+
 interface ContextMenuState {
   x: number;
   y: number;
@@ -83,8 +101,8 @@ export function App() {
   });
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
-  const { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace } =
-    useInteractiveTrace(graph, flowNodes, flowEdges, config);
+  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount } =
+    useInteractiveTrace(graph, flowNodes, flowEdges, config, model);
 
   // Allows callbacks defined before useOverviewMode to reset the auto-trigger guard.
   const overviewActionsRef = useRef<{ resetUserChoice: () => void }>({
@@ -99,8 +117,14 @@ export function App() {
   const [, startTransition] = useTransition();
 
   const rebuild = useCallback(
-    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false) => {
-      startTransition(() => buildFromModel(m, f, cfg || config, forceLayout));
+    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false): number => {
+      // When forceLayout is true (overview→full drill-down), run synchronously to avoid
+      // the race condition where graphMode changes before flowNodes are ready.
+      if (forceLayout) {
+        return buildFromModel(m, f, cfg || config, true);
+      }
+      startTransition(() => { buildFromModel(m, f, cfg || config, false); });
+      return 0; // Count unavailable for deferred builds; callers requiring count use forceLayout
     },
     [buildFromModel, config]
   );
@@ -337,12 +361,6 @@ export function App() {
 
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
-  // Clear stale highlight when the referenced node is removed by a filter change
-  useEffect(() => {
-    if (highlightedNodeId && flowNodes.length > 0 && !flowNodes.some(n => n.id === highlightedNodeId)) {
-      setHighlightedNodeId(null);
-    }
-  }, [highlightedNodeId, flowNodes]);
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
@@ -409,12 +427,16 @@ export function App() {
     if (model) {
       overviewActionsRef.current.resetUserChoice();
       clearTrace(() => {
-        const f = getResetFilter(model);
+        const f = {
+          ...getResetFilter(model),
+          hideIsolated: filter.hideIsolated,
+          exclusionPatterns: filter.exclusionPatterns,
+        };
         setFilter(f);
         rebuild(model, f, config);
       });
     }
-  }, [model, config, rebuild, clearTrace]);
+  }, [model, config, rebuild, clearTrace, filter.hideIsolated, filter.exclusionPatterns]);
 
   const handleResetAll = useCallback(() => {
     if (model) {
@@ -436,16 +458,42 @@ export function App() {
     vscodeApi.postMessage({ type: 'rebuild' });
   }, [vscodeApi, model]);
 
+  // ── Derived state: effective graph and nodes matching what's rendered ──────
+  // When trace synthesizes out-of-filter nodes, the graphology graph and node set
+  // must include those nodes for interactions (neighbors, context menu, delete).
+  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
+    || trace.mode === 'filtered' || trace.mode === 'analysis';
+
+  const effectiveGraph = useMemo(
+    () => (isTraceActive && traceGraph) ? traceGraph : graph,
+    [isTraceActive, traceGraph, graph]
+  );
+
+  const effectiveNodes = useMemo(
+    () => isTraceActive ? tracedNodes : flowNodes,
+    [isTraceActive, tracedNodes, flowNodes]
+  );
+
+  // Clear stale highlight when the referenced node is removed by a filter change.
+  // Uses effectiveNodes (not flowNodes) so synthesized out-of-filter nodes in
+  // trace/path mode are recognized and don't get their highlight immediately cleared.
+  useEffect(() => {
+    if (highlightedNodeId && effectiveNodes.length > 0 && !effectiveNodes.some(n => n.id === highlightedNodeId)) {
+      setHighlightedNodeId(null);
+    }
+  }, [highlightedNodeId, effectiveNodes]);
+
   const handleNodeClick = useCallback(
     (nodeId: string, findQuery?: string) => {
-      setHighlightedNodeId(prev => {
-        const toggled = prev === nodeId ? null : nodeId;
-        setInfoBarNodeId(cur => cur !== null ? toggled : null);
-        return toggled;
-      });
+      const toggled = highlightedNodeId === nodeId ? null : nodeId;
+      setHighlightedNodeId(toggled);
+      setInfoBarNodeId(prev => prev !== null ? toggled : null);
 
       const node = model?.nodes.find(n => n.id === nodeId);
-      if (!node) return;
+      if (!node) {
+        window.vscode?.postMessage({ type: 'log', text: `[Bridge] handleNodeClick: "${nodeId}" not in model (${model?.nodes.length ?? 0} nodes)` });
+        return;
+      }
       if (isDetailOpen) {
         vscodeApi.postMessage({ type: 'update-detail', node, findQuery });
       } else if (findQuery) {
@@ -454,7 +502,7 @@ export function App() {
         setIsDetailOpen(true);
       }
     },
-    [model, vscodeApi, isDetailOpen]
+    [model, vscodeApi, isDetailOpen, highlightedNodeId]
   );
 
   const handleTraceApply = useCallback((config: { upstreamLevels: number; downstreamLevels: number }) => {
@@ -463,7 +511,7 @@ export function App() {
 
   const handleNodeContextMenu = useCallback(
     (nodeId: string, x: number, y: number) => {
-      const node = flowNodes.find((n) => n.id === nodeId);
+      const node = effectiveNodes.find((n) => n.id === nodeId);
       if (!node) return;
       setContextMenu({
         x: Math.min(x, window.innerWidth - 200),
@@ -477,7 +525,7 @@ export function App() {
         fullName: String(node.data.fullName),
       });
     },
-    [flowNodes]
+    [effectiveNodes]
   );
 
   const handleViewDdl = useCallback(
@@ -504,9 +552,8 @@ export function App() {
     [model, config, rebuild]
   );
 
-  const handleSearchChange = useCallback((term: string) => {
-    setFilter((prev) => ({ ...prev, searchTerm: term }));
-  }, []);
+  // searchTerm is now local to SearchWithAutocomplete — no longer part of filter state.
+  // Keystrokes only re-render the search component, not the entire App/GraphCanvas tree.
 
   const handleToggleIsolated = useCallback(() => {
     setFilter((prev) => {
@@ -516,69 +563,48 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  const handleToggleFocusSchema = useCallback((schema: string) => {
-    setFilter((prev) => {
-      const focusSchemas = new Set<string>();
-      const isUnfocusing = prev.focusSchemas.has(schema);
+  /** Unified star-schema handler. All three entry points (star button, overview double-click,
+   *  quick jump) route through this single function.
+   *  @param schema  Target schema, or null to unfocus.
+   *  @param options.toggle  If true, unfocus if already focused (star button behavior).
+   *  @param options.forceLayout  Bypass Guard 2 (overview→full drill-down).
+   *  @param options.includeNeighbors  If false, only include the target schema (fallback).
+   *  @returns Post-filter node count (0 when model is absent).
+   *  NOTE: Uses `{ ...filter }` spread (not functional setFilter updater) because we need
+   *  the synchronous count from rebuild() before calling setFilter. `filter` is in deps
+   *  so the closure is always current, but this does cause re-creation on every filter change. */
+  const applyStarSchema = useCallback((
+    schema: string | null,
+    options: { toggle?: boolean; forceLayout?: boolean; includeNeighbors?: boolean } = {}
+  ): number => {
+    const { toggle = false, forceLayout = false, includeNeighbors = true } = options;
+    if (!model) return 0;
 
-      if (!isUnfocusing) {
-        focusSchemas.add(schema);
-      }
+    // Unfocus: clear star, show all schemas
+    if (schema === null || (toggle && filter.focusSchemas.has(schema))) {
+      const allSchemas = new Set(model.schemas.map(s => s.name));
+      const next = { ...filter, focusSchemas: new Set<string>(), schemas: allSchemas };
+      const count = rebuild(model, next, config, forceLayout);
+      setFilter(next);
+      return count;
+    }
 
-      let schemas: Set<string>;
-      if (isUnfocusing) {
-        schemas = new Set(model?.schemas.map(s => s.name) || []);
-      } else if (model) {
-        const focusNodeIds = new Set(
-          model.nodes.filter(n => n.schema === schema).map(n => n.id)
-        );
-        const nodeById = new Map(model.nodes.map(n => [n.id, n]));
-        const neighborSchemas = new Set<string>([schema]);
-        for (const e of model.edges) {
-          if (focusNodeIds.has(e.source)) {
-            const target = nodeById.get(e.target);
-            if (target) neighborSchemas.add(target.schema);
-          }
-          if (focusNodeIds.has(e.target)) {
-            const source = nodeById.get(e.source);
-            if (source) neighborSchemas.add(source.schema);
-          }
-        }
-        schemas = neighborSchemas;
-      } else {
-        schemas = prev.schemas;
-      }
+    // Focus: compute neighbor schemas, set filter
+    const schemas = includeNeighbors
+      ? computeNeighborSchemas(model, schema)
+      : new Set<string>([schema]);
+    const next = { ...filter, focusSchemas: includeNeighbors ? new Set([schema]) : new Set<string>(), schemas };
+    window.vscode?.postMessage({ type: 'log', text: `[Filter] applyStarSchema: schema="${schema}", schemas=[${[...schemas].join(',')}], forceLayout=${forceLayout}` });
+    const count = rebuild(model, next, config, forceLayout);
+    setFilter(next);
+    return count;
+  }, [model, config, rebuild, filter]);
 
-      const next = { ...prev, focusSchemas, schemas };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
-
-  /** Called on schema bubble double-click — same as clicking the star button in the
-   *  schema dropdown. Sets focusSchemas + selects the schema + its neighbors. Always-set
-   *  (never toggles off, even if schema was already focused). */
-  const handleSetFocusSchema = useCallback((schema: string) => {
-    if (!model) return;
-    setFilter((prev) => {
-      const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
-      const nodeById = new Map(model.nodes.map(n => [n.id, n]));
-      const neighborSchemas = new Set<string>([schema]);
-      for (const e of model.edges) {
-        if (focusNodeIds.has(e.source)) {
-          const target = nodeById.get(e.target);
-          if (target) neighborSchemas.add(target.schema);
-        }
-        if (focusNodeIds.has(e.target)) {
-          const source = nodeById.get(e.source);
-          if (source) neighborSchemas.add(source.schema);
-        }
-      }
-      const next = { ...prev, focusSchemas: new Set([schema]), schemas: neighborSchemas };
-      rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+  // Star button in schema dropdown (toggle behavior)
+  const handleToggleFocusSchema = useCallback(
+    (schema: string) => { applyStarSchema(schema, { toggle: true }); },
+    [applyStarSchema]
+  );
 
   // ── Overview mode (schema-level view) ───────────────────────────────────────
 
@@ -589,7 +615,7 @@ export function App() {
     filteredCount,
     config,
     schemasKey,
-    onSetFocusSchema: handleSetFocusSchema,
+    onSetFocusSchemaOnly: (schema, forceLayout) => applyStarSchema(schema, { forceLayout, includeNeighbors: false }),
   });
 
   // Populate ref so handleRefresh/handleResetAll (defined earlier) can reset the guard.
@@ -681,31 +707,34 @@ export function App() {
     setHighlightedNodeId(null);
     setInfoBarNodeId(null);
 
-    if (type === 'orphans' && filter.hideIsolated) {
+    const currentFilter = filterRef.current;
+    if (type === 'orphans' && currentFilter.hideIsolated) {
       // Pre-save filter (with hideIsolated: true) before we change it,
       // so the mode-lock useEffect restores the correct value on exit.
       // When switching from another analysis type, preModFilterRef is already set — don't overwrite it.
-      if (!preModFilterRef.current) preModFilterRef.current = filter;
-      const nextFilter = { ...filter, hideIsolated: false };
+      if (!preModFilterRef.current) preModFilterRef.current = currentFilter;
+      const nextFilter = { ...currentFilter, hideIsolated: false };
       setFilter(nextFilter);
-      // When switching analysis types, don't null analysisMode (which would trigger mode-lock exit
-      // and restore the old filter, undoing hideIsolated:false). Just set pending and rebuild.
-      if (!analysisMode) setAnalysisMode(null);
       pendingAnalysisRef.current = 'orphans';
       if (model) buildFromModel(model, nextFilter, config);
-    } else {
-      if (graph) {
-        const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
-        setAnalysisMode({ type, result, activeGroupId: null });
-      }
+      return;
     }
-  }, [endTrace, filter, model, graph, config, buildFromModel]);
+
+    if (graph) {
+      const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+      const totalNodes = result.groups.reduce((sum, g) => sum + g.nodeIds.length, 0);
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis run: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
+      setAnalysisMode({ type, result, activeGroupId: null });
+    }
+  }, [endTrace, model, graph, config, buildFromModel]);
 
   useEffect(() => {
     if (pendingAnalysisRef.current && graph) {
       const type = pendingAnalysisRef.current;
       pendingAnalysisRef.current = null;
       const result = runAnalysis(graph, type, config.analysis, config.maxNodes);
+      const totalNodes = result.groups.reduce((sum, g) => sum + g.nodeIds.length, 0);
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis pending applied: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
       setAnalysisMode({ type, result, activeGroupId: null });
     }
   }, [graph, config.analysis, config.maxNodes]);
@@ -716,14 +745,14 @@ export function App() {
       if (e.key !== 'Delete') return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (!highlightedNodeId) return;
-      const node = flowNodes.find((n) => n.id === highlightedNodeId);
+      const node = effectiveNodes.find((n) => n.id === highlightedNodeId);
       if (!node) return;
       const pattern = `^${escapeRegexLiteral(String(node.data.schema))}\\.${escapeRegexLiteral(String(node.data.label))}$`;
       handleAddExclusionPattern(pattern);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [highlightedNodeId, flowNodes, handleAddExclusionPattern]);
+  }, [highlightedNodeId, effectiveNodes, handleAddExclusionPattern]);
 
   const closeAnalysis = useCallback(() => {
     // Filter restore is handled by the isModeLocked useEffect when analysisMode → null
@@ -917,17 +946,19 @@ export function App() {
     }
   }, [graphMode, enteredFocusFromOverview, view, vscodeApi]);
 
-  // When user toggles overview→full and dagre was skipped (Guard 2), trigger a full rebuild
-  // so dagre positions are computed before the node graph renders.
+  // When user manually toggles overview→full (not via search drill-down) and dagre was skipped
+  // (Guard 2), trigger a full rebuild so dagre positions are computed.
+  // Skipped when enteredFocusFromOverview=true — that path already rebuilds with forceLayout=true.
   const prevGraphModeRef = useRef(graphMode);
   useEffect(() => {
     const wasOverview = prevGraphModeRef.current === 'overview';
     prevGraphModeRef.current = graphMode;
-    if (wasOverview && graphMode === 'full' && model && filteredCount > config.overview.forceOverviewThreshold) {
-      rebuild(model, filter, config, true);
+    if (wasOverview && graphMode === 'full' && !enteredFocusFromOverview &&
+        modelRef.current && filteredCount > configRef.current.overview.threshold) {
+      window.vscode?.postMessage({ type: 'log', text: `[Filter] Mode switch rebuild: overview→full, ${filteredCount} nodes > threshold=${configRef.current.overview.threshold}, forceLayout=true` });
+      rebuildRef.current(modelRef.current, filterRef.current, configRef.current, true);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphMode]);
+  }, [graphMode, enteredFocusFromOverview, filteredCount]);
 
   // ── Saved Views ─────────────────────────────────────────────────────────────
 
@@ -935,11 +966,18 @@ export function App() {
   const filterProfiles = activeProject?.filterProfiles ?? [];
 
   // Sync active filter state to extension host so AI tools (search_objects, start_exploration etc.)
-  // can report filter context correctly. Fires on every filter mutation and on initial model load.
+  // can report filter context correctly. Fires on structural filter changes and initial model load.
+  // Excludes searchTerm — it's client-only (autocomplete) and would spam filter-changed on every keystroke.
+  const filterKeyForHost = useMemo(() => {
+    const { searchTerm: _, ...rest } = serializeFilter(filter);
+    return JSON.stringify(rest);
+  }, [filter]);
   useEffect(() => {
     if (!model) return;
-    vscodeApi.postMessage({ type: 'filter-changed', filter: serializeFilter(filter), savedViews: filterProfiles });
-  }, [filter, filterProfiles, model, vscodeApi]);
+    const { searchTerm: _, ...filterForHost } = serializeFilter(filter);
+    vscodeApi.postMessage({ type: 'filter-changed', filter: filterForHost, savedViews: filterProfiles, filteredCount, renderLimitHit });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKeyForHost, filterProfiles, model, vscodeApi]);
 
   const isViewModified = useMemo(() => {
     if (!activeViewId) return false;
@@ -1102,6 +1140,10 @@ export function App() {
     vscodeApi.postMessage({ type: 'delete-view', projectId: activeProjectId, profileId });
   }, [activeProjectId, activeViewId, lastOpenedId, vscodeApi]);
 
+  // Object-level IDs that passed all filters — authoritative for search visibility in overview mode.
+  // Must be above early returns to satisfy Rules of Hooks.
+  const filteredObjectIds = useMemo(() => new Set(flowNodes.map(n => n.id)), [flowNodes]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
@@ -1166,7 +1208,6 @@ export function App() {
     );
   }
 
-  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied' || trace.mode === 'filtered' || trace.mode === 'analysis';
   const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
   const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
 
@@ -1176,12 +1217,13 @@ export function App() {
         flowNodes={renderNodes}
         flowEdges={renderEdges}
         graphMode={graphMode}
+        filteredObjectIds={filteredObjectIds}
         onSchemaNodeDoubleClick={enterFocusFromOverview}
         trace={trace}
         filter={filter}
         metrics={metrics}
         highlightedNodeId={highlightedNodeId}
-        graph={graph}
+        graph={effectiveGraph}
         config={config}
         model={model}
         infoBarNodeId={infoBarNodeId}
@@ -1195,7 +1237,6 @@ export function App() {
         onTraceEnd={endTrace}
         onResetAll={handleResetAll}
         onToggleType={handleToggleType}
-        onSearchChange={handleSearchChange}
         onToggleIsolated={handleToggleIsolated}
         onToggleFocusSchema={handleToggleFocusSchema}
         onToggleSchema={handleToggleSchema}
@@ -1241,6 +1282,9 @@ export function App() {
         pendingPositions={pendingPositions}
         pendingViewport={pendingViewport}
         onPendingPositionsApplied={handlePendingPositionsApplied}
+        useFullModel={useFullModel}
+        onToggleFullModel={toggleUseFullModel}
+        filteredOutCount={traceFilteredOutCount}
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);

@@ -339,11 +339,11 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
       <div className="rounded-lg p-3 ln-help-analysis-card">
         <p className="text-xs font-semibold ln-text mb-1.5">Tips</p>
         <ul className="text-xs ln-text-muted space-y-1 list-disc pl-4">
-          <li><span className="font-medium ln-text">AI column-level analysis.</span> With Copilot Chat, the <code>@lineage</code> AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Results depend on DDL completeness — always verify against your database.</li>
-          <li><span className="font-medium ln-text">Ask the AI to create a view.</span> Say &quot;show me the full lineage for dbo.udfLeadingZeros in the app&quot; — it builds a filtered graph view with annotated nodes, saved as a bookmark. You can then explore the view interactively, trace further, or export it.</li>
-          <li><span className="font-medium ln-text">Context-aware.</span> The assistant knows your active filters, visible schemas, and current graph state. Ask &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
-          <li><span className="font-medium ln-text">Be specific with object names.</span> Use <code>Sales.SalesOrderDetail</code> rather than &quot;the sales order table&quot;.</li>
-          <li><span className="font-medium ln-text">Customize output.</span> Command Palette → <em>Create AI Output Templates</em> to tailor the AI&apos;s response format. <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md" openExternal={openExternal}>Guide ↗</ExtLink></li>
+          <li><span className="font-medium ln-text">AI lineage guidance.</span> Ask <code>@lineage</code> where a field comes from, then verify with your database DDL.</li>
+          <li><span className="font-medium ln-text">Create a focused view.</span> Ask for full lineage of an object in the app to generate an annotated bookmark view.</li>
+          <li><span className="font-medium ln-text">Use context questions.</span> Try &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
+          <li><span className="font-medium ln-text">Use exact names.</span> Prefer <code>Sales.SalesOrderDetail</code> over generic table descriptions.</li>
+          <li><span className="font-medium ln-text">Customize format.</span> Command Palette → <em>Create AI Output Templates</em>. <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md" openExternal={openExternal}>Guide ↗</ExtLink></li>
         </ul>
       </div>
 
@@ -394,7 +394,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 min-h-[420px]">
+        <div className="flex-1 overflow-y-auto px-6 py-5">
           {tab === 'overview'  && <TabOverview openExternal={openExternal} />}
           {tab === 'analysis'  && <TabAnalysis />}
           {tab === 'database'  && <TabDatabase openExternal={openExternal} />}

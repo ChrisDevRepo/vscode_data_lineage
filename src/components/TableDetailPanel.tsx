@@ -166,6 +166,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
           <Tooltip content="Close">
             <button
               onClick={onClose}
+              aria-label="Close detail panel"
               className="opacity-60 hover:opacity-100 cursor-pointer flex-shrink-0 ml-2"
               style={{ color: 'var(--ln-fg)', background: 'none', border: 'none', padding: 0 }}
             >
@@ -177,7 +178,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
         {/* Scrollable body */}
         <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Type label */}
-          <div className="text-xs font-semibold tracking-wider" style={{ color: 'var(--ln-fg-dim)', letterSpacing: '0.08em' }}>
+          <div className="ln-section-label">
             {typeLabel}
           </div>
 

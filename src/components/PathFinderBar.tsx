@@ -123,7 +123,7 @@ export const PathFinderBar = memo(function PathFinderBar({
           </span>
         )}
         {noConnection && (
-          <span className="text-xs flex-shrink-0 ln-text-warning">
+          <span role="status" className="text-xs flex-shrink-0 ln-text-warning">
             No connection found
           </span>
         )}

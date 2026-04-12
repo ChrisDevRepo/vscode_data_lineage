@@ -40,6 +40,7 @@ import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseMode
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
+import { notifyUser } from '../utils/notify';
 
 // IMPORTANT: nodeTypes must be defined at module level — not inside the component.
 // If defined inside, React Flow remounts all nodes on every render.
@@ -47,6 +48,8 @@ const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode } satisfies 
 
 const FIT_VIEW_PADDING = 0.15;
 const FIT_VIEW_DURATION = 250;
+/** Max time to wait for a pending zoom target to appear in flowNodes before giving up. */
+const PENDING_ZOOM_TIMEOUT_MS = 5000;
 
 interface GraphCanvasProps {
   flowNodes: FlowNode[];
@@ -64,7 +67,7 @@ interface GraphCanvasProps {
   onTraceEnd: (onComplete?: () => void) => void;
   onResetAll: () => void;
   onToggleType: (type: ObjectType) => void;
-  onSearchChange: (term: string) => void;
+  // searchTerm is local to SearchWithAutocomplete — no longer passed through props
   onToggleIsolated: () => void;
   onToggleFocusSchema: (schema: string) => void;
   onToggleSchema?: (schema: string) => void;
@@ -107,6 +110,9 @@ interface GraphCanvasProps {
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
   graphMode?: GraphMode;
+  /** Object-level node IDs that passed all filters (from useGraphology flowNodes).
+   *  In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth. */
+  filteredObjectIds?: Set<string>;
   onSchemaNodeDoubleClick?: (schemaName: string) => void;
   /** Called when user saves a trace/path result as an advanced bookmark. */
   onSaveTraceBookmark?: (
@@ -148,6 +154,12 @@ interface GraphCanvasProps {
   pendingViewport?: { x: number; y: number; zoom: number };
   /** Called after pendingPositions have been applied so the parent can clear them. */
   onPendingPositionsApplied?: () => void;
+  /** Whether trace BFS uses the full (unfiltered) model. */
+  useFullModel?: boolean;
+  /** Toggle between filtered and full-model trace. */
+  onToggleFullModel?: () => void;
+  /** Number of trace nodes hidden by the active filter. */
+  filteredOutCount?: number;
 }
 
 export function GraphCanvas({
@@ -166,7 +178,6 @@ export function GraphCanvas({
   onTraceEnd,
   onResetAll,
   onToggleType,
-  onSearchChange,
   onToggleIsolated,
   onToggleFocusSchema,
   onToggleSchema,
@@ -207,6 +218,7 @@ export function GraphCanvas({
   isFilterDirty,
   isModeLocked = false,
   graphMode = 'full',
+  filteredObjectIds,
   onSchemaNodeDoubleClick,
   onSaveTraceBookmark,
   onSaveAnalysisBookmark,
@@ -220,6 +232,9 @@ export function GraphCanvas({
   pendingPositions,
   pendingViewport,
   onPendingPositionsApplied,
+  useFullModel,
+  onToggleFullModel,
+  filteredOutCount,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
@@ -227,6 +242,14 @@ export function GraphCanvas({
   // Pending actions for post-rebuild drill-down (overview → full + zoom to node)
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
+  /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
+  const pendingZoomSetAt = useRef<number>(0);
+  /** Active timer — guarantees the pendingZoom warning fires even if flowNodes stops changing. */
+  const pendingZoomTimerRef = useRef<number | null>(null);
+  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
+  useEffect(() => () => {
+    if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+  }, []);
   // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
@@ -310,43 +333,71 @@ export function GraphCanvas({
   );
 
   // Zoom and center on a specific node
+  const log = useCallback((text: string, level: 'info' | 'debug' | 'trace' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level }), []);
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
+        log(`[Filter] zoomToNode: centering on "${nodeId}" at (${targetNode.position.x},${targetNode.position.y})`);
         setCenter(
           targetNode.position.x + NODE_WIDTH / 2,
           targetNode.position.y + NODE_HEIGHT / 2,
           { zoom: 0.8, duration: FIT_VIEW_DURATION }
         );
+      } else {
+        log(`[Filter] zoomToNode: "${nodeId}" — no position (layout pending?)`);
+        notifyUser(`Could not focus "${nodeId}". The node may have been filtered out during a view transition.`);
       }
     });
-  }, [getNode, setCenter]);
+  }, [getNode, setCenter, log]);
 
   // Execute search: find node and zoom to it (drills down from overview if needed)
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
+    const label = schema ? `[${schema}].[${name}]` : name;
+    log(`[Filter] Quick Jump: search="${label}", graphMode=${graphMode}, flowNodes=${flowNodes.length}`);
     const foundNode = schema
       ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
       : flowNodes.find(n => n.data.label === name);
 
     if (foundNode) {
+      log(`[Filter] Quick Jump: "${label}" → found ${foundNode.id}, zooming`);
       onNodeClick(foundNode.id);
       zoomToNode(foundNode.id);
       return;
     }
 
-    // Overview mode: node not in flowNodes — drill down to its schema
+    // Overview mode: node not in flowNodes — drill down to its schema.
+    // enterFocusFromOverview now rebuilds synchronously with forceLayout=true,
+    // so flowNodes will be ready on the next render when the useEffect fires.
     if (graphMode === 'overview' && model) {
       const modelNode = schema
         ? model.nodes.find(n => n.name === name && n.schema === schema)
         : model.nodes.find(n => n.name === name);
       if (modelNode) {
+        log(`[Filter] Quick Jump: "${label}" → drilling into schema "${modelNode.schema}" from overview`);
         pendingZoomRef.current = modelNode.id;
         pendingClickRef.current = { id: modelNode.id };
+        pendingZoomSetAt.current = Date.now();
+        // Active timeout — guarantees warning fires even if flowNodes stops changing
+        if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+        pendingZoomTimerRef.current = window.setTimeout(() => {
+          if (pendingZoomRef.current) {
+            log(`[Filter] pendingZoom: "${pendingZoomRef.current}" not found after ${PENDING_ZOOM_TIMEOUT_MS}ms (active timeout)`);
+            notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
+            pendingZoomRef.current = null;
+            pendingClickRef.current = null;
+          }
+        }, PENDING_ZOOM_TIMEOUT_MS);
         onSchemaNodeDoubleClick?.(modelNode.schema);
+      } else {
+        log(`[Filter] Quick Jump: "${label}" → not found in model (${model.nodes.length} nodes)`);
+        notifyUser(`"${label}" was not found in the loaded model.`);
       }
+    } else {
+      log(`[Filter] Quick Jump: "${label}" → not found in ${flowNodes.length} visible nodes`);
+      notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
-  }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick]);
+  }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick, log]);
 
   // Export current graph to Draw.io format (disabled in overview mode)
   const handleExportDrawio = useCallback(() => {
@@ -363,18 +414,50 @@ export function GraphCanvas({
 
   // Auto-fit view whenever the graph data changes — skipped when saved positions are being restored.
   // If a pending drill-down zoom target exists (overview → full), zoom to that node instead of fitView.
-  // flowNodes reference only changes on rebuild — not on highlight
+  // flowNodes reference only changes on rebuild — not on highlight.
+  //
+  // IMPORTANT: Only consume pendingZoomRef when the target node actually exists in the current
+  // flowNodes. During overview→full transitions the graphMode change can trigger a render with
+  // stale flowNodes before the rebuild's new nodes arrive. If we consumed the ref at that point
+  // the zoom would silently fail and be lost. By checking existence first, we keep the ref set
+  // until the correct flowNodes arrive on a subsequent render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) return;
     const zoomTarget = pendingZoomRef.current;
     const clickTarget = pendingClickRef.current;
     if (zoomTarget) {
-      pendingZoomRef.current = null;
-      pendingClickRef.current = null;
-      zoomToNode(zoomTarget);
-      if (clickTarget) onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm);
-      return;
+      // Verify the target node exists in the current flowNodes before consuming.
+      // During overview→full transitions the graphMode change may trigger a render
+      // with stale flowNodes before the rebuild arrives. Keep the ref set until the
+      // correct flowNodes land, or expire after PENDING_ZOOM_TIMEOUT_MS.
+      const nodeExists = flowNodes.some(n => n.id === zoomTarget);
+      const elapsed = Date.now() - pendingZoomSetAt.current;
+      if (!nodeExists) {
+        if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
+          log(`[Filter] pendingZoom: "${zoomTarget}" not found after ${elapsed}ms, expiring (node may have been filtered out)`);
+          notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter to include it.`);
+          pendingZoomRef.current = null;
+          pendingClickRef.current = null;
+          if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
+          // Fall through to fitView
+        } else {
+          log(`[Filter] pendingZoom: "${zoomTarget}" not yet in flowNodes (len=${flowNodes.length}, elapsed=${elapsed}ms), deferring`);
+          return; // Don't consume — wait for the next flowNodes update
+        }
+      } else {
+        log(`[Filter] pendingZoom: "${zoomTarget}" found in flowNodes, zooming+clicking`);
+        pendingZoomRef.current = null;
+        pendingClickRef.current = null;
+        if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
+        zoomToNode(zoomTarget);
+        // Defer click to next frame so highlight survives the filter-changed rebuild
+        // that may still be in-flight from the overview→full transition.
+        if (clickTarget) {
+          requestAnimationFrame(() => onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm));
+        }
+        return;
+      }
     }
     const raf = requestAnimationFrame(() => {
       fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
@@ -529,10 +612,12 @@ export function GraphCanvas({
   );
 
   // IDs of nodes currently rendered in the graph (after all filters: type, focus-schema,
-  // search, maxNodes cap). Used by NodeInfoBar to show ⊘ on neighbors not in view.
+  // search, maxNodes cap). Used by NodeInfoBar to show ⊘ on neighbors not in view,
+  // and by quick search to split "in view" vs "not in current view" suggestions.
+  // In overview mode localNodes are schema aggregates — use filteredObjectIds instead.
   const visibleNodeIds = useMemo(
-    () => new Set(localNodes.map(n => n.id)),
-    [localNodes],
+    () => (graphMode === 'overview' && filteredObjectIds) ? filteredObjectIds : new Set(localNodes.map(n => n.id)),
+    [localNodes, graphMode, filteredObjectIds],
   );
 
   const selectedNodeLabel = useMemo(() => {
@@ -540,13 +625,19 @@ export function GraphCanvas({
     return (displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId;
   }, [trace.selectedNodeId, displayNodes]);
 
+  // In trace/path/analysis mode, derive legend schemas from actually visible nodes
+  const legendSchemas = useMemo(() => {
+    const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
+      || trace.mode === 'filtered' || trace.mode === 'analysis';
+    if (!isTraceActive) return renderedSchemas || [];
+    return [...new Set(localNodes.map(n => (n.data as CustomNodeData).schema))].filter(Boolean).sort();
+  }, [trace.mode, localNodes, renderedSchemas]);
+
   return (
     <div className="flex flex-col h-screen">
       <Toolbar
         types={filter.types}
         onToggleType={onToggleType}
-        searchTerm={filter.searchTerm}
-        onSearchChange={onSearchChange}
         hideIsolated={filter.hideIsolated}
         onToggleIsolated={onToggleIsolated}
         focusSchemas={filter.focusSchemas}
@@ -577,6 +668,7 @@ export function GraphCanvas({
         onExecuteSearch={handleExecuteSearch}
         onStartTrace={onStartTraceImmediate}
         allNodes={allNodes}
+        visibleNodeIds={visibleNodeIds}
         metrics={metrics}
         filterProfiles={filterProfiles}
         activeProjectId={activeProjectId}
@@ -627,6 +719,9 @@ export function GraphCanvas({
           onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
           onReset={() => onResetAll()}
           onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
+          useFullModel={useFullModel ?? false}
+          onToggleFullModel={onToggleFullModel ?? (() => {})}
+          filteredOutCount={filteredOutCount ?? 0}
         />
       )}
 
@@ -769,14 +864,14 @@ export function GraphCanvas({
           </div>
         )}
 
-        <Legend schemas={renderedSchemas || []} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        <Legend schemas={legendSchemas} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (
           <BookmarkInfoCard
             profile={activeAdvancedProfile}
             nodeCount={localNodes.length}
-            schemaCount={(renderedSchemas || []).length}
+            schemaCount={legendSchemas.length}
             staleNodeNames={bookmarkStaleNames ?? []}
           />
         )}
@@ -791,7 +886,7 @@ export function GraphCanvas({
               aiMetadata: aiPreview.aiMetadata,
             }}
             nodeCount={localNodes.length}
-            schemaCount={(renderedSchemas || []).length}
+            schemaCount={legendSchemas.length}
             staleNodeNames={[]}
           />
         )}

@@ -1,14 +1,10 @@
 /**
  * History management for @lineage chat participant.
  *
- * Three operations on tool results re-injected into conversation history:
+ * Two operations on tool results re-injected into conversation history:
  * 1. DROP — remove error/empty results, replace with 1-line summary
- * 2. MERGE — deduplicate overlapping search results (keep superset)
- * 3. EVICT — under context pressure, drop oldest turns to fit token budget
+ * 2. EVICT — under context pressure, drop oldest turns to fit token budget
  *
- * Token budget decisions (inline vs on-demand) are made at tool call time
- * by shouldInline() in tokenBudget.ts. History manager never truncates data
- * within a single tool response — eviction operates at the turn level.
  * Zero VS Code imports — pure functions for testability.
  */
 
@@ -34,103 +30,51 @@ export function compactNoiseResult(toolName: string, resultJson: string): string
     if (parsed.results && Array.isArray(parsed.results) && parsed.results.length === 0) {
       return JSON.stringify({ summary: `${shortName} → 0 matches` });
     }
-  } catch { /* not JSON or parse error — keep as-is */ }
+  } catch (e) {
+    if (!(e instanceof SyntaxError)) console.debug('[AI] compactNoiseResult unexpected error:', e);
+    /* not JSON — keep as-is */
+  }
   return null;
 }
 
-// ─── MERGE: deduplicate overlapping results ─────────────────────────────────
+// ─── COMPACT: shrink stale SM hop results after completion ──────────────────
 
-interface ToolCallInfo {
-  callId: string;
-  name: string;
-  input: Record<string, unknown>;
-}
+/** Tool names whose results should be compacted once the owning SM is complete. */
+const BB_HOP_TOOLS = new Set(['lineage_submit_findings', 'lineage_start_exploration']);
+const CT_HOP_TOOLS = new Set(['lineage_submit_hop_analysis', 'lineage_start_column_trace']);
 
 /**
- * Given tool calls across all rounds of a response turn, identify duplicate/subset calls.
- * Returns a Set of callIds that should be DROPPED (subsets/duplicates).
+ * If a tool result is from a completed SM's hop phase, return a compact 1-line summary.
+ * During active hops (smComplete=false), returns null — full results preserved.
+ * After SM completion, hop results are stale: the synthesis result already contains
+ * all accumulated evidence via detail_slots + short_memory.
  */
-export function findMergeableCallIds(rounds: Array<{ toolCalls: ToolCallInfo[] }>): Set<string> {
-  const dropIds = new Set<string>();
-  const searchCalls: Array<{ callId: string; query: string; schemas: string[] | undefined }> = [];
+export function compactStaleHopResult(
+  toolName: string,
+  resultJson: string,
+  bbComplete: boolean,
+  ctComplete: boolean,
+): string | null {
+  const isBbTool = BB_HOP_TOOLS.has(toolName);
+  const isCtTool = CT_HOP_TOOLS.has(toolName);
+  if (!isBbTool && !isCtTool) return null;
+  if (isBbTool && !bbComplete) return null;
+  if (isCtTool && !ctComplete) return null;
 
-  // Collect all search_objects calls
-  for (const round of rounds) {
-    for (const tc of round.toolCalls) {
-      if (tc.name === 'lineage_search_objects' || tc.name === 'search_objects') {
-        const input = tc.input as Record<string, unknown>;
-        searchCalls.push({
-          callId: tc.callId,
-          query: (input.query as string || '').toLowerCase(),
-          schemas: input.schemas as string[] | undefined,
-        });
-      }
-    }
+  const shortName = toolName.replace('lineage_', '');
+  try {
+    const parsed = JSON.parse(resultJson);
+    const node = parsed.focus_node?.n ?? parsed.originNode?.n ?? '';
+    const hop = parsed.hop ?? '';
+    const status = parsed.bb_mode ?? parsed.status ?? '';
+    return JSON.stringify({
+      _compacted: true,
+      summary: `${shortName} → ${node ? node + ' · ' : ''}${hop ? 'hop ' + hop + ' · ' : ''}${status}`,
+    });
+  } catch (e) {
+    if (!(e instanceof SyntaxError)) console.debug('[AI] compactStaleHopResult unexpected error:', e);
+    return JSON.stringify({ _compacted: true, summary: `${shortName} → (compacted)` });
   }
-
-  // For each pair of search calls, if one is a subset of the other, drop the subset
-  for (let i = 0; i < searchCalls.length; i++) {
-    for (let j = i + 1; j < searchCalls.length; j++) {
-      const a = searchCalls[i];
-      const b = searchCalls[j];
-      // Same query text — check schema scope
-      if (a.query === b.query) {
-        const aHasSchemas = a.schemas && a.schemas.length > 0;
-        const bHasSchemas = b.schemas && b.schemas.length > 0;
-        if (aHasSchemas && !bHasSchemas) {
-          // b is broader (no schema filter) — drop a
-          dropIds.add(a.callId);
-        } else if (!aHasSchemas && bHasSchemas) {
-          // a is broader — drop b
-          dropIds.add(b.callId);
-        } else if (aHasSchemas && bHasSchemas) {
-          // Both have schemas — keep the one with more schemas (broader)
-          const aSet = new Set(a.schemas!.map(s => s.toLowerCase()));
-          const bSet = new Set(b.schemas!.map(s => s.toLowerCase()));
-          const aSubsetOfB = [...aSet].every(s => bSet.has(s));
-          const bSubsetOfA = [...bSet].every(s => aSet.has(s));
-          if (aSubsetOfB && !bSubsetOfA) dropIds.add(a.callId);
-          else if (bSubsetOfA && !aSubsetOfB) dropIds.add(b.callId);
-          else if (aSubsetOfB && bSubsetOfA) dropIds.add(a.callId); // identical — drop older
-        } else {
-          // Both have no schema filter, same query — drop older
-          dropIds.add(a.callId);
-        }
-      }
-    }
-  }
-
-  // Deduplicate BFS traces with same origin
-  const bfsCalls: Array<{ callId: string; id: string; upHops: number; downHops: number }> = [];
-  for (const round of rounds) {
-    for (const tc of round.toolCalls) {
-      if (tc.name === 'lineage_run_bfs_trace' || tc.name === 'run_bfs_trace') {
-        const input = tc.input as Record<string, unknown>;
-        bfsCalls.push({
-          callId: tc.callId,
-          id: (input.id as string || '').toLowerCase(),
-          upHops: (input.upstream_hops as number) ?? 3,
-          downHops: (input.downstream_hops as number) ?? 3,
-        });
-      }
-    }
-  }
-
-  for (let i = 0; i < bfsCalls.length; i++) {
-    for (let j = i + 1; j < bfsCalls.length; j++) {
-      const a = bfsCalls[i];
-      const b = bfsCalls[j];
-      if (a.id === b.id) {
-        // Same origin — keep the one with more hops
-        const aTotalHops = a.upHops + a.downHops;
-        const bTotalHops = b.upHops + b.downHops;
-        if (aTotalHops <= bTotalHops) dropIds.add(a.callId);
-        else dropIds.add(b.callId);
-      }
-    }
-  }
-
-  return dropIds;
 }
 
 // ─── EVICT: constants for context-pressure eviction ─────────────────────────

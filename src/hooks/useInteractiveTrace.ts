@@ -1,14 +1,15 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType } from '../engine/types';
-import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath } from '../engine/graphBuilder';
+import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel } from '../engine/types';
+import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
 
 interface UseInteractiveTraceReturn {
   trace: TraceState;
   tracedNodes: FlowNode<CustomNodeData>[];
   tracedEdges: FlowEdge[];
+  traceGraph: Graph | null;
   startTraceConfig: (nodeId: string) => void;
   startTraceImmediate: (nodeId: string) => void;
   applyTrace: (upstreamLevels: number, downstreamLevels: number) => void;
@@ -17,6 +18,9 @@ interface UseInteractiveTraceReturn {
   applyAnalysisSubset: (nodeIds: Set<string>, edgeIds: Set<string>, originId?: string, analysisType?: AnalysisType) => void;
   endTrace: (onComplete?: () => void) => void;
   clearTrace: (onComplete?: () => void) => void;
+  useFullModel: boolean;
+  toggleUseFullModel: () => void;
+  filteredOutCount: number;
 }
 
 // Initial trace state factory
@@ -30,13 +34,38 @@ const createInitialTrace = (config: ExtensionConfig): TraceState => ({
   tracedEdgeIds: new Set(),
 });
 
+/** Pick BFS graph — auto-promotes to fullGraph when node is filtered out. */
+function resolveBfsGraph(
+  nodeId: string,
+  preferFull: boolean,
+  graph: Graph | null,
+  fullGraph: Graph | null,
+): { bfsGraph: Graph | null; autoPromoted: boolean } {
+  const preferred = preferFull ? (fullGraph ?? graph) : graph;
+  if (preferred?.hasNode(nodeId)) return { bfsGraph: preferred, autoPromoted: false };
+  // Auto-fallback: node not in preferred graph, try fullGraph
+  if (!preferFull && fullGraph?.hasNode(nodeId)) return { bfsGraph: fullGraph, autoPromoted: true };
+  // Node not in any graph — caller gets the usual empty-result path
+  return { bfsGraph: preferred, autoPromoted: false };
+}
+
 export function useInteractiveTrace(
   graph: Graph | null,
   flowNodes: FlowNode<CustomNodeData>[],
   flowEdges: FlowEdge[],
-  config: ExtensionConfig = DEFAULT_CONFIG
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  model: DatabaseModel | null = null
 ): UseInteractiveTraceReturn {
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
+  const [useFullModel, setUseFullModel] = useState(false);
+
+  // Full (unfiltered) graph for path-finding and unfiltered trace —
+  // traverses all model nodes, not just the filtered subset.
+  const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
+
+  // Keep a ref to useFullModel so callbacks don't go stale
+  const useFullModelRef = useRef(useFullModel);
+  useFullModelRef.current = useFullModel;
 
   // Phase 1: Start configuring trace (show InlineTraceControls)
   const startTraceConfig = useCallback((nodeId: string) => {
@@ -53,22 +82,31 @@ export function useInteractiveTrace(
 
   // Immediate trace: apply with defaults without showing config UI
   const startTraceImmediate = useCallback((nodeId: string) => {
-    if (!graph) {
+    const { bfsGraph, autoPromoted } = resolveBfsGraph(nodeId, useFullModelRef.current, graph, fullGraph);
+    if (!bfsGraph) {
       window.vscode?.postMessage({ type: 'log', text: `[Trace] Immediate skipped — graph not ready` });
       return;
+    }
+    if (autoPromoted) {
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] "${nodeId}" not in filtered graph — auto-promoting to full model` });
     }
 
     const t0 = performance.now();
     const { nodeIds, edgeIds } = traceNodeWithLevels(
-      graph,
+      bfsGraph,
       nodeId,
       config.trace.defaultUpstreamLevels,
       config.trace.defaultDownstreamLevels
     );
     const ms = (performance.now() - t0).toFixed(1);
     window.vscode?.postMessage({ type: 'log', text:
-      `[Trace] Immediate: "${nodeId}" up=${config.trace.defaultUpstreamLevels} down=${config.trace.defaultDownstreamLevels} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
+      `[Trace] Immediate: "${nodeId}" up=${config.trace.defaultUpstreamLevels} down=${config.trace.defaultDownstreamLevels} fullModel=${useFullModelRef.current}${autoPromoted ? ' (auto-promoted)' : ''} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
     });
+
+    if (nodeIds.size === 0 && fullGraph?.hasNode(nodeId)) {
+      window.vscode?.postMessage({ type: 'log', level: 'warn', text:
+        `[Trace] 0 results for "${nodeId}" — exists in model but has no connections` });
+    }
 
     setTrace({
       mode: 'filtered',
@@ -78,27 +116,36 @@ export function useInteractiveTrace(
       downstreamLevels: config.trace.defaultDownstreamLevels,
       tracedNodeIds: nodeIds,
       tracedEdgeIds: edgeIds,
+      autoPromoted,
     });
-  }, [graph, config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels]);
+  }, [graph, fullGraph, config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels]);
 
   // Phase 2: Apply trace with levels (filter graph, keep controls visible briefly)
   const applyTrace = useCallback(
     (upstreamLevels: number, downstreamLevels: number) => {
-      if (!graph || !trace.selectedNodeId) {
-        window.vscode?.postMessage({ type: 'log', text: `[Trace] Apply skipped — graph=${!!graph} selectedNode=${trace.selectedNodeId}` });
+      if (!trace.selectedNodeId) {
+        window.vscode?.postMessage({ type: 'log', text: `[Trace] Apply skipped — no selectedNode` });
         return;
+      }
+      const { bfsGraph, autoPromoted } = resolveBfsGraph(trace.selectedNodeId, useFullModelRef.current, graph, fullGraph);
+      if (!bfsGraph) {
+        window.vscode?.postMessage({ type: 'log', text: `[Trace] Apply skipped — graph not ready` });
+        return;
+      }
+      if (autoPromoted) {
+        window.vscode?.postMessage({ type: 'log', text: `[Trace] "${trace.selectedNodeId}" not in filtered graph — auto-promoting to full model` });
       }
 
       const t0 = performance.now();
       const { nodeIds, edgeIds } = traceNodeWithLevels(
-        graph,
+        bfsGraph,
         trace.selectedNodeId,
         upstreamLevels,
         downstreamLevels
       );
       const ms = (performance.now() - t0).toFixed(1);
       window.vscode?.postMessage({ type: 'log', text:
-        `[Trace] Apply: "${trace.selectedNodeId}" up=${upstreamLevels} down=${downstreamLevels} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
+        `[Trace] Apply: "${trace.selectedNodeId}" up=${upstreamLevels} down=${downstreamLevels} fullModel=${useFullModelRef.current}${autoPromoted ? ' (auto-promoted)' : ''} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
       });
 
       setTrace({
@@ -109,9 +156,10 @@ export function useInteractiveTrace(
         downstreamLevels,
         tracedNodeIds: nodeIds,
         tracedEdgeIds: edgeIds,
+        autoPromoted,
       });
     },
-    [graph, trace.selectedNodeId]
+    [graph, fullGraph, trace.selectedNodeId]
   );
 
   // Start path finding mode (from right-click "Find Path")
@@ -128,14 +176,20 @@ export function useInteractiveTrace(
   }, []);
 
   // Compute and apply shortest path — returns true if path found
+  // Always prefers fullGraph so paths can traverse nodes hidden by filters.
   const applyPath = useCallback((targetNodeId: string): boolean => {
-    if (!graph || !trace.selectedNodeId) {
-      window.vscode?.postMessage({ type: 'log', text: `[Trace] Path skipped — graph=${!!graph} selectedNode=${trace.selectedNodeId}` });
+    if (!trace.selectedNodeId) {
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Path skipped — no selectedNode` });
+      return false;
+    }
+    const { bfsGraph: pathGraph } = resolveBfsGraph(trace.selectedNodeId, true, graph, fullGraph);
+    if (!pathGraph) {
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Path skipped — graph not ready` });
       return false;
     }
 
     const t0 = performance.now();
-    const result = computeShortestPath(graph, trace.selectedNodeId, targetNodeId);
+    const result = computeShortestPath(pathGraph, trace.selectedNodeId, targetNodeId);
     const ms = (performance.now() - t0).toFixed(1);
     if (!result) {
       window.vscode?.postMessage({ type: 'log', text:
@@ -157,7 +211,7 @@ export function useInteractiveTrace(
       tracedEdgeIds: result.edgeIds,
     });
     return true;
-  }, [graph, trace.selectedNodeId]);
+  }, [fullGraph, graph, trace.selectedNodeId]);
 
   // Apply analysis subset — reuses same rendering as trace/path
   const applyAnalysisSubset = useCallback((
@@ -181,8 +235,40 @@ export function useInteractiveTrace(
     });
   }, [flowNodes.length]);
 
+  // Toggle between filtered and full-model BFS — re-runs trace immediately
+  const toggleUseFullModel = useCallback(() => {
+    const next = !useFullModelRef.current;
+    setUseFullModel(next);
+
+    // Re-run trace on the alternate graph if a trace is active
+    const isTraceActive = trace.mode === 'applied' || trace.mode === 'filtered';
+    if (!isTraceActive || !trace.selectedNodeId) return;
+
+    const { bfsGraph } = resolveBfsGraph(trace.selectedNodeId, next, graph, fullGraph);
+    if (!bfsGraph) return;
+
+    const t0 = performance.now();
+    const { nodeIds, edgeIds } = traceNodeWithLevels(
+      bfsGraph,
+      trace.selectedNodeId,
+      trace.upstreamLevels,
+      trace.downstreamLevels
+    );
+    const ms = (performance.now() - t0).toFixed(1);
+    window.vscode?.postMessage({ type: 'log', text:
+      `[Trace] Toggle fullModel=${next}: "${trace.selectedNodeId}" → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
+    });
+
+    setTrace(prev => ({
+      ...prev,
+      tracedNodeIds: nodeIds,
+      tracedEdgeIds: edgeIds,
+    }));
+  }, [graph, fullGraph, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels]);
+
   const endTrace = useCallback((onComplete?: () => void) => {
     setTrace(createInitialTrace(config));
+    setUseFullModel(false);
     if (onComplete) {
       setTimeout(onComplete, 0);
     }
@@ -190,18 +276,32 @@ export function useInteractiveTrace(
 
   const clearTrace = endTrace;
 
+  // Compute how many nodes are hidden by the active filter (only when filter is inherited)
+  const filteredOutCount = useMemo(() => {
+    const isTraceActive = trace.mode === 'applied' || trace.mode === 'filtered';
+    if (useFullModel || trace.autoPromoted || !isTraceActive || !trace.selectedNodeId || !fullGraph) return 0;
+    const fullResult = traceNodeWithLevels(
+      fullGraph,
+      trace.selectedNodeId,
+      trace.upstreamLevels,
+      trace.downstreamLevels
+    );
+    return Math.max(0, fullResult.nodeIds.size - trace.tracedNodeIds.size);
+  }, [fullGraph, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.tracedNodeIds, useFullModel, trace.autoPromoted]);
+
   // Memoize trace application to avoid re-rendering all nodes
-  const { tracedNodes, tracedEdges } = useMemo(
-    (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[] } => {
+  const { tracedNodes, tracedEdges, traceGraph } = useMemo(
+    (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[]; traceGraph: Graph | null } => {
       if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
-        return { tracedNodes: flowNodes, tracedEdges: flowEdges };
+        return { tracedNodes: flowNodes, tracedEdges: flowEdges, traceGraph: null };
       }
 
-      const { nodes, edges } = applyTraceToFlow(flowNodes, flowEdges, trace, config);
-      return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges };
+      const synthesize = useFullModel || !!trace.autoPromoted;
+      const { nodes, edges, graph: tGraph } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model, synthesize);
+      return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges, traceGraph: tGraph ?? null };
     },
-    [flowNodes, flowEdges, trace, config]
+    [flowNodes, flowEdges, trace, config, model, useFullModel]
   );
 
-  return { trace, tracedNodes, tracedEdges, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace };
+  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount };
 }

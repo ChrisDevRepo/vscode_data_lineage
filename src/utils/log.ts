@@ -17,7 +17,8 @@ export type LogCategory =
   | 'AI'
   | 'Stats'
   | 'Detail'
-  | 'Bridge';
+  | 'Bridge'
+  | 'Filter';
 
 /** info — user-facing summary: `[CAT] Operation — key result (timing)` */
 export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {

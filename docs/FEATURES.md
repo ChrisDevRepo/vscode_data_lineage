@@ -21,7 +21,6 @@ The extension separates **data loading** (`maxNodes`) from **graph rendering** (
 | `maxNodes` | 750 (up to 10000) | Objects loaded from dacpac / database |
 | `renderLimit` | 750 (up to 5000) | Nodes the GUI will layout and render |
 | `overview.threshold` | 150 | Auto-activates schema overview |
-| `overview.forceOverviewThreshold` | 300 | Forces overview even after manual toggle |
 
 When `renderLimit` is exceeded, the graph shows a "limit reached" message instead of rendering. The full lineage model, DDL, and AI chat remain fully functional — only the visual graph is gated.
 
@@ -249,13 +248,43 @@ For broader investigations — business rules, documentation, or pattern discove
 
 ### Tips
 
-- **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Try *"how is sales calculated — show me the lineage in the app"*.
+- **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Results depend on DDL completeness — always verify against your database.
 - **Start a new chat for each topic.** The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press `Ctrl+L` to start fresh.
 - **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark. You can then explore the view interactively, trace further, or export it.
-- **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"* and it answers from your live session state.
-- **Be specific with object names.** `@lineage trace from Sales.SalesOrderDetail` works better than `trace from the sales order table`.
+- **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"*.
+- **Be specific with object names.** Use `Sales.SalesOrderDetail` rather than *"the sales order table"*.
+- **Customize output.** Command Palette → *Create AI Output Templates* to tailor the AI response format. See [AI prompt templates guide](AI_PROMPTS.md).
 - **Narrow BFS scope on large graphs.** Ask for 1–2 levels first, then expand if you need more depth.
 - **Try a bigger model for large databases.** Models with 128K+ context auto-scale to show more results and larger DDL.
+
+### How @lineage analyzes your database
+
+When you ask `@lineage` a question, it goes through four steps:
+
+1. **Search** — finds the relevant objects in your loaded model
+2. **Scope** — determines how many objects are involved (the "scope")
+3. **Analyze** — reads the SQL of each object and traces column flows
+4. **Annotate** — creates labeled graph views with section descriptions
+
+For step 3, the assistant automatically chooses between two analysis modes based on scope size:
+
+**Quick analysis** — for small scopes (≤10 objects and under token budget). The AI receives all SQL at once, reasons about everything in a single pass, and submits all decisions in one batch. This is fast and works well for straightforward questions like *"what reads from the Employee table?"* or *"trace BusinessEntityID upstream."*
+
+**Deep exploration** — for larger scopes (>10 objects or exceeding token budget). The AI examines one object at a time, building persistent memory as it goes. Each step records what was found — column renames, formulas, join conditions — so that information from early steps remains available 15 or 20 steps later.
+
+**Why does this matter?** In complex ETL pipelines, a column often changes names multiple times. For example, `ItemCount` in Oracle becomes `Quantity`, then `RawQty`, then `OrderQty`, then finally `Qty`. Without persistent memory, the AI loses track of earlier renames and produces incomplete traces. Deep exploration keeps this context across the entire pipeline.
+
+**Settings** — the defaults work well for most databases:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `ai.inlineTokenBudget` | `10000` | Token threshold — how much SQL data fits in quick mode |
+| `ai.inlineNodeCap` | `10` | Node threshold — how many objects fit in quick mode |
+
+Both thresholds must be within limits for quick mode. If either is exceeded, deep exploration is used.
+
+- **Increase `inlineNodeCap`** if your stored procedures are small and you prefer faster responses
+- **Decrease it** if you want more thorough analysis on every trace
 
 ### Requirements
 
@@ -274,7 +303,7 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 
 | Group | Key settings |
 |-------|-------------|
-| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `overview.forceOverviewThreshold`, `parseRulesFile` |
+| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
 | **Database Connection** | `dmvQueryTimeout`, `dmvQueriesFile` |
 | **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold` |
 | **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |

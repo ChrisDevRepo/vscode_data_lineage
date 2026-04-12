@@ -40,11 +40,9 @@ window.vscode = _vscodeApi;
 // Global error handlers — mirror main webview (index.tsx) so nothing is silent
 window.addEventListener('unhandledrejection', (event) => {
   const msg = event.reason instanceof Error ? event.reason.message : String(event.reason);
-  console.error('[Detail] Unhandled rejection:', msg);
   _vscodeApi.postMessage({ type: 'error', error: `[Detail] Unhandled rejection: ${msg}` });
 });
 window.addEventListener('error', (event) => {
-  console.error('[Detail] Uncaught error:', event.message);
   _vscodeApi.postMessage({ type: 'error', error: `[Detail] Uncaught error: ${event.message}` });
 });
 
@@ -98,7 +96,7 @@ export function DetailApp() {
       <div
         style={{
           padding: 20,
-          color: 'var(--vscode-foreground)',
+          color: 'var(--ln-fg)',
           fontSize: 13,
         }}
       >

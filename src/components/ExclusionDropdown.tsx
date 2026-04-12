@@ -78,17 +78,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
         </Tooltip>
         {count > 0 && (
           <span
-            className="absolute -top-1 -right-1 flex items-center justify-center rounded-full pointer-events-none"
-            style={{
-              minWidth: '14px',
-              height: '14px',
-              fontSize: '9px',
-              fontWeight: 700,
-              padding: '0 3px',
-              background: 'var(--ln-button-bg)',
-              color: 'var(--ln-button-fg)',
-              lineHeight: 1,
-            }}
+            className="absolute -top-1 -right-1 flex items-center justify-center rounded-full pointer-events-none ln-counter-badge"
             aria-label={`${count} exclusion rule${count === 1 ? '' : 's'} active`}
           >
             {count}
@@ -116,7 +106,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                 onKeyDown={handleKeyDown}
                 placeholder="Pattern, e.g. %tmp% or ^dbo\.stg_"
                 className="flex-1 text-xs rounded px-2 py-1.5 min-w-0 ln-input"
-                style={inputError ? { outline: '1px solid var(--vscode-inputValidation-errorBorder, #f44)' } : undefined}
+                style={inputError ? { outline: '1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground))' } : undefined}
                 aria-label="Enter exclusion pattern"
                 aria-invalid={inputError}
                 spellCheck={false}
@@ -131,7 +121,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
               </Tooltip>
             </div>
             {inputError && (
-              <p className="px-3 pb-1.5 text-[11px]" style={{ color: 'var(--vscode-inputValidation-errorForeground, #f44)' }}>
+              <p className="px-3 pb-1.5 text-[11px]" style={{ color: 'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground))' }}>
                 Invalid pattern — check regex syntax
               </p>
             )}

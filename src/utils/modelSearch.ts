@@ -143,5 +143,17 @@ function buildSnippet(body: string, term: string, contextLines: number): string 
 
   const start = Math.max(0, matchLine - (contextLines - 1));
   const end = Math.min(lines.length, matchLine + contextLines);
-  return lines.slice(start, end).map(l => l.trimEnd()).join('\n');
+  const termLower = term.toLowerCase();
+  const LINE_CAP = 50; // sidebar panel is ~50 monospace chars wide
+  return lines.slice(start, end).map(l => {
+    const trimmed = l.trimEnd();
+    const matchPos = trimmed.toLowerCase().indexOf(termLower);
+    if (matchPos < 0 || trimmed.length <= LINE_CAP) return trimmed;
+    // Trim long lines so the match stays within the visible panel width.
+    const windowStart = Math.max(0, matchPos - 10);
+    const windowEnd = Math.min(trimmed.length, windowStart + LINE_CAP);
+    return (windowStart > 0 ? '\u2026' : '') +
+      trimmed.slice(windowStart, windowEnd) +
+      (windowEnd < trimmed.length ? '\u2026' : '');
+  }).join('\n');
 }

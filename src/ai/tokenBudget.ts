@@ -1,35 +1,36 @@
 /**
- * Token budget — single source of truth for all AI delivery-mode decisions.
+ * Token budget — single source of truth for AI delivery-mode decisions.
  *
- * Two guards drive the entire system:
- *   1. INLINE_TOKEN_BUDGET (this file) — delivery mode gate: inline vs state machine
+ * Two guards drive the system:
+ *   1. ai.inlineTokenBudget (VS Code setting, default 10K) — delivery mode gate:
+ *      - Below budget → inline: AI gets all DDL at once, reasons in one pass (no sliding memory)
+ *      - Above budget → hop-by-hop: state machine with short_memory + detail_slots
+ *      Applies to: CT, BB, getContext(), runBfsTrace()
  *   2. ai.maxRounds (VS Code setting)  — hard stop on tool rounds (user-configurable)
  *
  * ZERO-TRUNCATION GUARANTEE:
  *   No tool response is ever truncated, capped, or sliced.
- *   - Fits budget → return full data inline
- *   - Exceeds budget → state machine delivers per-hop, or lightweight response with follow-up hint
  *   No data is ever lost. Only delivery mode changes.
  *
  * Zero VS Code imports — pure functions for testability.
  */
 
-// ─── The single budget constant ─────────────────────────────────────────────
+// ─── Inline token budget (configurable via VS Code setting) ────────────────
 
-/** Delivery mode gate: max estimated tokens for inline delivery (default). */
-export const INLINE_TOKEN_BUDGET = 20_000; // ~80K chars — forces state machine for scopes above ~20 scriptable nodes
+/** Default inline token budget — overridden per-request from VS Code setting `ai.inlineTokenBudget`. */
+const DEFAULT_INLINE_TOKEN_BUDGET = 10_000;
 
-/** Runtime override from VS Code setting `ai.inlineTokenBudget`. Set via setInlineBudgetOverride(). */
-let _budgetOverride: number | undefined;
+/** Runtime budget — set from VS Code setting at each request start. */
+let _inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
 
-/** Set runtime budget override from VS Code config. Pass `undefined` to reset to default. */
-export function setInlineBudgetOverride(budget: number | undefined): void {
-  _budgetOverride = budget;
+/** Set from VS Code setting (called per-request in extension.ts). */
+export function setInlineTokenBudget(value: number): void {
+  _inlineTokenBudget = value;
 }
 
-/** Effective budget: user override if set, otherwise INLINE_TOKEN_BUDGET. */
+/** Returns the configured inline token budget. */
 export function getEffectiveBudget(): number {
-  return _budgetOverride ?? INLINE_TOKEN_BUDGET;
+  return _inlineTokenBudget;
 }
 
 // ─── Estimation ─────────────────────────────────────────────────────────────
@@ -40,15 +41,39 @@ export function estimateTokens(chars: number): number {
 }
 
 /**
- * Should this payload be delivered inline (one-shot) or on-demand (state machine / follow-up tools)?
- *
- * @param payloadChars  Character count of the payload (used for heuristic estimation)
- * @param precomputedTokens  Optional: accurate token count from countTokens() API. Overrides heuristic when available.
- * @param budgetOverride  Optional: user-configured budget from `ai.inlineTokenBudget` setting. Falls back to INLINE_TOKEN_BUDGET.
+ * Should this payload be delivered inline (one-shot) or on-demand (follow-up tools)?
+ * Used by getContext(), runBfsTrace(), start_column_trace, and start_exploration.
  */
 export function shouldInline(payloadChars: number, precomputedTokens?: number): boolean {
   const tokens = precomputedTokens ?? estimateTokens(payloadChars);
   return tokens <= getEffectiveBudget();
+}
+
+// ─── SM inline node cap (configurable via VS Code setting) ────────────────
+
+/** Default node cap for inline SM delivery — overridden per-request from VS Code setting `ai.inlineNodeCap`. */
+const DEFAULT_SM_INLINE_NODE_CAP = 10;
+
+/** Runtime node cap — set from VS Code setting at each request start. */
+let _smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
+
+/** Set from VS Code setting (called per-request in extension.ts). */
+export function setSmInlineNodeCap(value: number): void {
+  _smInlineNodeCap = value;
+}
+
+/** Returns the configured inline node cap. */
+export function getSmInlineNodeCap(): number {
+  return _smInlineNodeCap;
+}
+
+/**
+ * Should CT/BB use inline delivery? Checks BOTH token budget AND node count.
+ * Small scopes (≤cap nodes AND under token budget) → inline (quick analysis).
+ * Larger scopes → hop-by-hop with sliding memory (deep exploration for rename tracking).
+ */
+export function shouldSmInline(payloadChars: number, scopeNodeCount: number): boolean {
+  return scopeNodeCount <= _smInlineNodeCap && shouldInline(payloadChars);
 }
 
 // ─── Context pressure ──────────────────────────────────────────────────────

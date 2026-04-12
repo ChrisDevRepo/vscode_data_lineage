@@ -201,6 +201,45 @@ export function findBridgeNodes(
   return { bridgeNodes, bridgeEdges, orphanCount: orphans.length, reconnectedCount: reconnected };
 }
 
+// ─── BFS Depth Map ───────────────────────────────────────────────────────────
+
+/**
+ * Directed BFS from originNodeId over a result-graph edge list.
+ * Returns the minimum distance (in hops) from origin to each reachable node.
+ * Used by blackboardState.ts getResult() to sort badge groups in data-flow order.
+ *
+ * @param edges  Flat edge list from ResultGraph — [source, target, type].
+ * @param originNodeId  The root node; gets depth 0.
+ * @returns Map<nodeId, depth>. Nodes unreachable from origin are absent (treated as Infinity).
+ */
+export function bfsDepthMap(
+  edges: ReadonlyArray<readonly [string, string, string]>,
+  originNodeId: string,
+): Map<string, number> {
+  // Build adjacency list (directed: source → targets)
+  const adj = new Map<string, string[]>();
+  for (const [s, t] of edges) {
+    let targets = adj.get(s);
+    if (!targets) { targets = []; adj.set(s, targets); }
+    targets.push(t);
+  }
+
+  const depth = new Map<string, number>();
+  depth.set(originNodeId, 0);
+  const queue = [originNodeId];
+  let idx = 0;
+  while (idx < queue.length) {
+    const id = queue[idx++];
+    const d = depth.get(id)!;
+    for (const nid of adj.get(id) ?? []) {
+      if (depth.has(nid)) continue;
+      depth.set(nid, d + 1);
+      queue.push(nid);
+    }
+  }
+  return depth;
+}
+
 // ─── Private BFS Utilities ───────────────────────────────────────────────────
 
 /**

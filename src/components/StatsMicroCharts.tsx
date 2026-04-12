@@ -6,11 +6,11 @@ import { Tooltip } from './ui/Tooltip';
 const BADGE_COLORS: Record<string, string> = {
   INT: 'var(--ln-analysis-icon)',      // blue
   DEC: 'var(--ln-analysis-icon)',      // blue
-  STR: '#22c55e',                       // green
-  DATE: '#a78bfa',                      // purple
-  TIME: '#a78bfa',                      // purple
+  STR: 'var(--ln-ai-gn)',             // green (themed)
+  DATE: 'var(--vscode-charts-purple, #a78bfa)', // purple (themed)
+  TIME: 'var(--vscode-charts-purple, #a78bfa)', // purple (themed)
   BIT: 'var(--ln-fg-muted)',           // gray
-  UUID: '#2dd4bf',                      // teal
+  UUID: 'var(--vscode-charts-green, #2dd4bf)',   // teal (themed)
   XML: 'var(--ln-fg-dim)',             // dim
   BIN: 'var(--ln-fg-dim)',             // dim
   TXT: 'var(--ln-fg-dim)',             // dim

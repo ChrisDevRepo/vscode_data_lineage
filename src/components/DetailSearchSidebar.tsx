@@ -2,6 +2,7 @@ import { useState, useMemo, useDeferredValue, memo } from 'react';
 import type { ObjectType, ColumnDef } from '../engine/types';
 import { SidePanel } from './SidePanel';
 import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
+import { highlightText } from './highlight';
 
 export interface DetailSearchNode {
   id: string;
@@ -113,7 +114,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                         onClick={() => onResultClick(r.node.id, term)}
                       >
                         <div className="text-xs font-medium" style={{ color: 'var(--ln-fg)' }}>
-                          [{r.node.schema}].{r.node.name}
+                          {highlightText(`[${r.node.schema}].${r.node.name}`, term)}
                         </div>
                         <div className="ln-detail-search-snippet">
                           {highlightSnippet(r.snippet)}

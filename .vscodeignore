@@ -44,6 +44,9 @@ manual-trace.ts
 bb_result.json
 *ct_hop*.json
 
+# AI dev artifacts (eval runs, replay JSON, prompt changelogs — internal only)
+ai/**
+
 # Misc
 PLAN*.md
 CLAUDE.md

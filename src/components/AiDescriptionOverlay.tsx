@@ -5,23 +5,40 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 
-/** Convert ```math fenced blocks to $$ delimiters that remark-math understands. */
+/** Convert ```math fenced blocks to $$ delimiters that remark-math understands.
+ *  Resilient: nested opens get closed, unclosed blocks get closed at EOF,
+ *  empty blocks are dropped. Broken LaTeX inside $$ is handled by
+ *  rehype-katex throwOnError:false (renders as raw text). */
 function mathFenceToDelimiters(md: string): string {
   const lines = md.split('\n');
   const result: string[] = [];
-  let insideMathFence = false;
+  let insideMath = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!insideMathFence && trimmed === '```math') {
-      insideMathFence = true;
+
+    if (!insideMath && trimmed === '```math') {
+      insideMath = true;
       result.push('$$');
-    } else if (insideMathFence && trimmed === '```') {
-      insideMathFence = false;
+    } else if (insideMath && trimmed === '```math') {
+      // Nested ```math — close current block first, open new one
       result.push('$$');
+      result.push('');
+      result.push('$$');
+    } else if (insideMath && trimmed === '```') {
+      insideMath = false;
+      result.push('$$');
+    } else if (!insideMath && trimmed.startsWith('```') && trimmed !== '```math') {
+      // Non-math fence (```sql, ```text, plain ```) — pass through as-is
+      result.push(line);
     } else {
       result.push(line);
     }
+  }
+
+  // Unclosed math block at EOF — close it so it doesn't eat remaining text
+  if (insideMath) {
+    result.push('$$');
   }
 
   return result.join('\n');
@@ -48,7 +65,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     navigator.clipboard.writeText(description).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    }).catch(err => console.error('[Webview] Clipboard write failed:', err));
+    }).catch(err => window.vscode?.postMessage({ type: 'error', error: `Clipboard write failed: ${err instanceof Error ? err.message : String(err)}` }));
   }
 
   return (

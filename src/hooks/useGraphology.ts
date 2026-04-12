@@ -18,7 +18,7 @@ interface UseGraphologyReturn {
   filteredCount: number;
   /** Unique schema names from nodes that survived all filters — for legend display. */
   renderedSchemas: string[];
-  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => void;
+  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => number;
 }
 
 export function useGraphology(): UseGraphologyReturn {
@@ -30,8 +30,10 @@ export function useGraphology(): UseGraphologyReturn {
   const [filteredCount, setFilteredCount] = useState(0);
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
-  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false) => {
+  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false): number => {
+    const log = (text: string, level: 'info' | 'debug' | 'trace' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
+    log(`[Filter] Schema: ${model.nodes.length} → ${filtered.nodes.length} nodes (${model.nodes.length - filtered.nodes.length} removed, maxNodes=${config.maxNodes})`);
 
     // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
@@ -48,8 +50,7 @@ export function useGraphology(): UseGraphologyReturn {
     const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 
     const exclusionFiltered = applyExclusionFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.exclusionPatterns);
-    const focusFiltered = applyFocusSchemaFilter(exclusionFiltered, filter.focusSchemas);
-    const isolationFiltered = applyIsolationFilter(focusFiltered, filter.hideIsolated);
+    const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
 
     const count = allowlistFiltered.nodes.length;
@@ -61,33 +62,39 @@ export function useGraphology(): UseGraphologyReturn {
 
     // Guard 1: hard render limit — skip everything
     if (count > config.renderLimit) {
+      log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
       setFlowNodes([]);
       setFlowEdges([]);
       setGraph(null);
       setMetrics(null);
       setRenderLimitHit(count);
-      return;
+      return count;
     }
 
     setRenderLimitHit(0);
 
     // Guard 2: overview threshold — build graph for traces/metrics, skip expensive dagre layout.
-    // Bypassed when forceLayout=true (user manually toggled overview→full).
-    if (!forceLayout && count > config.overview.forceOverviewThreshold) {
+    // Bypassed when forceLayout=true (user manually toggled overview→full or drilled down).
+    if (!forceLayout && count > config.overview.threshold) {
+      log(`[Filter] Guard: overview threshold (${count} > threshold=${config.overview.threshold}, forceLayout=false) — skipping dagre`);
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
-      return;
+      return count;
     }
 
     // Full mode — dagre runs
+    const t0 = performance.now();
     const result = buildGraph(allowlistFiltered, config);
+    const ms = (performance.now() - t0).toFixed(1);
+    log(`[Filter] Layout: dagre complete — ${result.flowNodes.length} nodes, ${result.flowEdges.length} edges (${ms}ms)`);
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
     setMetrics(getGraphMetrics(result.graph));
+    return count;
   }, []);
 
   return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel };
@@ -148,28 +155,3 @@ function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | und
   return { ...model, nodes, edges };
 }
 
-// ─── Focus Schema Filter ─────────────────────────────────────────────────────
-
-function applyFocusSchemaFilter(
-  model: DatabaseModel,
-  focusSchemas: Set<string>
-): DatabaseModel {
-  if (focusSchemas.size === 0) return model;
-
-  const focusNodeIds = new Set(
-    model.nodes.filter((n) => focusSchemas.has(n.schema)).map((n) => n.id)
-  );
-
-  const neighborIds = new Set<string>();
-  for (const e of model.edges) {
-    if (focusNodeIds.has(e.source)) neighborIds.add(e.target);
-    if (focusNodeIds.has(e.target)) neighborIds.add(e.source);
-  }
-
-  const keepIds = new Set([...focusNodeIds, ...neighborIds]);
-  const nodes = model.nodes.filter((n) => keepIds.has(n.id));
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-
-  return { ...model, nodes, edges };
-}

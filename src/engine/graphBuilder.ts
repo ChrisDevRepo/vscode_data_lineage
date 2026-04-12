@@ -5,6 +5,7 @@ import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';
 import { getSchemaColor } from '../utils/schemaColors';
+import { notifyUser } from '../utils/notify';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -15,6 +16,12 @@ export const SCHEMA_NODE_HEIGHT = 80;
 
 /** Typed tuple for React Flow edge label background padding. */
 const LABEL_BG_PAD: [number, number] = [4, 4];
+
+/** Default column count for grid-based analysis layouts. */
+const GRID_DEFAULT_COLS = 4;
+
+/** Padding between nodes in grid layout (px). */
+const GRID_CELL_PADDING = 40;
 
 /** Collect edges between traced nodes with direction-aware filtering.
  *  When only one direction is active (the other is 0), edges are filtered
@@ -74,7 +81,7 @@ export interface GraphResult {
 }
 
 /** Build graphology graph from model (shared by buildGraph and buildGraphNoLayout). */
-function buildGraphologyGraph(model: DatabaseModel): Graph {
+export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   for (const node of model.nodes) {
     graph.addNode(node.id, { ...node });
@@ -231,10 +238,10 @@ export function computeShortestPath(
 
 // ─── Analysis-Specific Layouts ──────────────────────────────────────────────
 
-function gridLayout(nodeIds: string[], cols: number = 4): Map<string, { x: number; y: number }> {
+function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
-  const cellW = NODE_WIDTH + 40;
-  const cellH = NODE_HEIGHT + 40;
+  const cellW = NODE_WIDTH + GRID_CELL_PADDING;
+  const cellH = NODE_HEIGHT + GRID_CELL_PADDING;
   nodeIds.forEach((id, i) => {
     positions.set(id, { x: (i % cols) * cellW, y: Math.floor(i / cols) * cellH });
   });
@@ -245,12 +252,17 @@ export function applyTraceToFlow(
   flowNodes: FlowNode[],
   flowEdges: FlowEdge[],
   trace: TraceState,
-  config: ExtensionConfig = DEFAULT_CONFIG
-): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  model?: DatabaseModel | null,
+  synthesizeOutOfFilter?: boolean
+): { nodes: FlowNode[]; edges: FlowEdge[]; graph?: Graph } {
   if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
     return { nodes: flowNodes, edges: flowEdges };
   }
   if (trace.tracedNodeIds.size === 0) {
+    const msg = `[Trace] applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode} — returning unchanged`;
+    window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
+    notifyUser('Trace produced no results. The traced nodes may have been removed or filtered out.');
     return { nodes: flowNodes, edges: flowEdges };
   }
 
@@ -258,8 +270,47 @@ export function applyTraceToFlow(
   const filteredNodes = flowNodes.filter((n) => trace.tracedNodeIds.has(n.id));
 
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
-    // Pure utility — no outputChannel available; console.warn is the allowed exception per CLAUDE.md §4
-    console.warn(`[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`);
+    const msg = `[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`;
+    window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
+    notifyUser('Traced nodes are not visible in the current view. Adjust your schema or type filters to include them.');
+  }
+
+  // Synthesize FlowNodes for path/unfiltered-trace nodes outside the current filter
+  if (filteredNodes.length < trace.tracedNodeIds.size && (trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
+    const flowNodeIdSet = new Set(filteredNodes.map(n => n.id));
+    const modelNodeMap = new Map(model.nodes.map(n => [n.id, n]));
+    for (const id of trace.tracedNodeIds) {
+      if (flowNodeIdSet.has(id)) continue;
+      const mn = modelNodeMap.get(id);
+      if (!mn) continue;
+      filteredNodes.push({
+        id: mn.id,
+        type: 'lineageNode',
+        position: { x: 0, y: 0 },
+        draggable: true,
+        selectable: true,
+        data: {
+          label: mn.name,
+          schema: mn.schema,
+          fullName: mn.fullName,
+          objectType: mn.type,
+          inDegree: 0,
+          outDegree: 0,
+          ...(mn.externalType && { externalType: mn.externalType }),
+          ...(mn.externalUrl && { externalUrl: mn.externalUrl }),
+          ...(mn.externalDatabase && { externalDatabase: mn.externalDatabase }),
+        },
+      });
+    }
+  } else if (filteredNodes.length < trace.tracedNodeIds.size) {
+    const flowNodeIdSet = new Set(flowNodes.map(n => n.id));
+    const missing = [...trace.tracedNodeIds].filter(id => !flowNodeIdSet.has(id));
+    if (missing.length > 0) {
+      window.vscode?.postMessage({ type: 'log', text:
+        `[Trace] Gap: BFS found ${trace.tracedNodeIds.size}, view has ${filteredNodes.length}. ` +
+        `Missing: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` (+${missing.length - 5} more)` : ''}`
+      });
+    }
   }
 
   // FILTER edges to only show traced subset
@@ -273,6 +324,59 @@ export function applyTraceToFlow(
     }
     return traced;
   });
+
+  // Synthesize FlowEdges for path/unfiltered-trace edges outside the current filter
+  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
+    const existingEdgeIds = new Set(filteredEdges.map(e => e.id));
+    for (const edgeId of trace.tracedEdgeIds) {
+      if (existingEdgeIds.has(edgeId)) continue;
+      const [src, tgt] = edgeId.split('→');
+      if (!src || !tgt) continue;
+      const bidir = `${src}↔${tgt}`;
+      const bidirRev = `${tgt}↔${src}`;
+      if (existingEdgeIds.has(bidir) || existingEdgeIds.has(bidirRev)) continue;
+      filteredEdges.push({
+        id: edgeId,
+        source: src,
+        target: tgt,
+        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+        style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.2 },
+      });
+    }
+  }
+
+  // Recalculate in/out degree for synthesized nodes from the final edge set
+  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
+    const synthesizedIds = new Set(
+      filteredNodes.filter(n => n.data.inDegree === 0 && n.data.outDegree === 0).map(n => n.id)
+    );
+    if (synthesizedIds.size > 0) {
+      const inCount = new Map<string, number>();
+      const outCount = new Map<string, number>();
+      for (const e of filteredEdges) {
+        if (synthesizedIds.has(e.target)) inCount.set(e.target, (inCount.get(e.target) ?? 0) + 1);
+        if (synthesizedIds.has(e.source)) outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1);
+      }
+      for (const n of filteredNodes) {
+        if (!synthesizedIds.has(n.id)) continue;
+        n.data.inDegree = inCount.get(n.id) ?? 0;
+        n.data.outDegree = outCount.get(n.id) ?? 0;
+      }
+    }
+  }
+
+  // Build graphology graph for the traced subgraph when synthesis added out-of-filter nodes.
+  // Reuses buildGraphologyGraph to honor the same attribute/edge contract as buildGraph().
+  let traceGraph: Graph | undefined;
+  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
+    const nodeIdSet = new Set(filteredNodes.map(n => n.id));
+    const traceModel: DatabaseModel = {
+      ...model,
+      nodes: model.nodes.filter(n => nodeIdSet.has(n.id)),
+      edges: model.edges.filter(e => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)),
+    };
+    traceGraph = buildGraphologyGraph(traceModel);
+  }
 
   // RELAYOUT the traced subset — dispatch layout by analysis type
   let positions: Map<string, { x: number; y: number }>;
@@ -307,7 +411,7 @@ export function applyTraceToFlow(
     },
   }));
 
-  return { nodes, edges };
+  return { nodes, edges, graph: traceGraph };
 }
 
 // ─── Shared Dagre Layout Helper ─────────────────────────────────────────────

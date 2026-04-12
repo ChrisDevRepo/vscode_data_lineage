@@ -28,11 +28,13 @@ import {
 
 // ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
 
-import { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
-export { shouldInline, estimateTokens, INLINE_TOKEN_BUDGET, getEffectiveBudget } from './tokenBudget';
+import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
+export { shouldInline, shouldSmInline, estimateTokens, getEffectiveBudget, setInlineTokenBudget, setSmInlineNodeCap } from './tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
 const BFS_INLINE_NODE_CAP = 200;
+/** Max results returned in fallback (cross-schema) search. */
+const FALLBACK_RESULT_LIMIT = 10;
 
 // ─── Input validation ────────────────────────────────────────────────────────
 
@@ -216,7 +218,7 @@ export function getContext(
 // ─── Query validation ───────────────────────────────────────────────────────
 
 /** Reject garbage queries (empty, single char, pure wildcards). */
-function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
+export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
     return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters.' };
@@ -326,13 +328,13 @@ export function searchObjects(
         effectiveQuery,
         typeSet,
         undefined, // no schema filter
-        10,
+        FALLBACK_RESULT_LIMIT,
         mode,
       );
       if (fallbackHits.length > 0) {
         const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
         // Return fallback results as primary — AI can proceed immediately
-        const fallbackResults = fallbackHits.slice(0, 10).map(n => ({
+        const fallbackResults = fallbackHits.slice(0, FALLBACK_RESULT_LIMIT).map(n => ({
           ...presentNode(n, model.neighborIndex),
           match: 'name' as const,
           in_user_filter: filterSchemaSet ? filterSchemaSet.has(n.schema.toLowerCase()) : true,
@@ -740,6 +742,9 @@ export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn
 export type EnrichViewInput = {
   name: string;
   summary: string;
+  title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
+  intro?: string;       // 2–4 sentence paragraph before the numbered sections
+  closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
   description?: string;
   prune_node_ids?: string[];
   layout_direction?: 'LR' | 'TB';
@@ -748,15 +753,16 @@ export type EnrichViewInput = {
     color: AIHighlightRole;
     node_ids: string[];
   }>;
-  badges?: Array<{
-    node_id: string;
-    text: string;
+  sections?: Array<{
+    label: string;       // PRIMARY KEY for document grouping — unique per section
+    node_ids?: string[]; // nodes that display this label as a badge chip (1..N)
+    text: string;        // markdown description for this label group (1..1 per label)
   }>;
   notes?: Array<{
     node_id: string;
     text: string;
   }>;
-  node_ids?: string[];  // fallback only: used when no stored result graph exists
+  // node_ids fallback removed — enrich_view requires SM result graph (BB or CT)
 };
 
 export type EnrichViewRequest = {
@@ -776,6 +782,72 @@ export type EnrichViewError = { success: false; errors: string[]; hint: string }
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
+ * Assign sequential numbers to sections in the AI's written order, derive badge chips
+ * from sections[].node_ids, and assemble the description markdown.
+ *
+ * Guarantees badge numbers on the graph are identical to ## heading numbers in the description.
+ * Sort key: AI-provided sections[] array index (narrative order).
+ * Strips leading numbers from AI-supplied labels ("3 Source" → "Source") — system is the
+ * single source of numbers.
+ *
+ * @param sections  AI-provided sections: each is a (label KEY, node_ids[] 1..N, text 1..1) tuple.
+ * @param opts      Optional title/intro/closing doc wrapper blocks.
+ */
+export function orderAndAssemble(
+  sections: Array<{ label: string; node_ids?: string[]; text: string }>,
+  opts?: { title?: string; intro?: string; closing?: string },
+): { badges: Array<{ node_id: string; text: string }>; description: string } {
+  // Strip leading "N " or "N. " so AI numbers don't interfere with label matching
+  const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.]?\s+/, '').trim();
+
+  // First occurrence index per label — preserves AI's narrative order
+  const labelToAiIndex = new Map<string, number>();
+  sections.forEach((sec, i) => {
+    const norm = stripLeadingNumber(sec.label);
+    if (!labelToAiIndex.has(norm)) labelToAiIndex.set(norm, i);
+  });
+
+  // Unique labels in AI's sections[] order
+  const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
+  uniqueLabels.sort((a, b) => (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0));
+
+  // Assign step number N per unique label (1-based, in AI's narrative order)
+  const labelToNumber = new Map<string, number>();
+  uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
+
+  // Build (node_id → label) map from sections[].node_ids
+  const nodeToLabel = new Map<string, string>();
+  for (const sec of sections) {
+    const label = stripLeadingNumber(sec.label);
+    for (const id of sec.node_ids ?? []) nodeToLabel.set(id, label);
+  }
+
+  // Emit numbered badge chips, dropping any node whose label has no matching section.
+  const numberedBadges = [...nodeToLabel.entries()]
+    .map(([node_id, label]) => {
+      const n = labelToNumber.get(label);
+      return n !== undefined ? { node_id, text: `${n} ${label}`, _n: n } : null;
+    })
+    .filter((b): b is { node_id: string; text: string; _n: number } => b !== null)
+    .sort((a, b) => a._n - b._n)
+    .map(({ node_id, text }) => ({ node_id, text }));
+
+  // Assemble markdown: title → intro → ## sections → closing
+  const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
+  const parts: string[] = [];
+  if (opts?.title)   parts.push(`# ${opts.title}`);
+  if (opts?.intro)   parts.push(opts.intro);
+  for (const label of uniqueLabels) {
+    const n = labelToNumber.get(label)!;
+    const text = sectionMap.get(label) ?? '';
+    parts.push(`## ${n} ${label}\n\n${text}`);
+  }
+  if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
+
+  return { badges: numberedBadges, description: parts.join('\n\n') };
+}
+
+/**
  * Auto-fix common issues in enrich_view input.
  * @param model — database model (only used for fallback catalog validation)
  * @param input — raw AI input
@@ -790,34 +862,95 @@ export function autoFixEnrichView(
   let fixed = { ...input };
 
   // 0. Normalize escaped newlines in description (LLMs sometimes double-escape)
+  // Protect known LaTeX macros: \text, \times, \theta, \tau, \to, \neq, \nu, \nabla, etc.
   if (fixed.description && /\\n/.test(fixed.description)) {
-    fixed = { ...fixed, description: fixed.description.replace(/\\n/g, '\n').replace(/\\t/g, '\t') };
+    fixed = { ...fixed, description: fixed.description
+      .replace(/\\n(?!(?:eq|eg|u|ot|abla|otin|i|mid|leq|geq)\b)/g, '\n')
+      .replace(/\\t(?!(?:ext|imes|au|heta|o|op|ilde|frac|herefore|riangle)\b)/g, '\t') };
     fixes.push('Normalized escaped newlines in description');
   }
 
-  // 1. Filter unknown node_ids — only for fallback mode (no stored graph)
-  if (!resolvedNodeIds && fixed.node_ids?.length) {
-    const unknown = fixed.node_ids.filter(id => !model.catalog[id]);
-    const valid = fixed.node_ids.filter(id => model.catalog[id]);
-    if (unknown.length > 0 && valid.length >= 1) {
-      fixes.push(`Removed ${unknown.length} unknown ID(s): ${unknown.slice(0, 3).join(', ')}${unknown.length > 3 ? ' ...' : ''}`);
-      fixed = { ...fixed, node_ids: valid };
-    }
+  // 1. Auto-truncate name at word boundary if too long
+  if (fixed.name && fixed.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) {
+    const truncated = fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, name: truncated || fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH) };
+    fixes.push(`Truncated name to ${ENRICH_VIEW_NAME_MAX_LENGTH} chars`);
   }
 
-  // Use resolved graph node set or fallback to input.node_ids
-  const nodeIdSet = new Set(resolvedNodeIds ?? fixed.node_ids ?? []);
-
-  // 2. Drop empty badges & badges for nodes not in the resolved set
-  if (fixed.badges) {
-    const before = fixed.badges.length;
-    const filtered = fixed.badges.filter(b => nodeIdSet.has(b.node_id) && b.text && b.text.trim().length > 0);
-    fixed = { ...fixed, badges: filtered };
-    const dropped = before - filtered.length;
-    if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned badge(s)`);
+  // 2. Auto-truncate title at word boundary if too long
+  if (fixed.title && fixed.title.trim().length > 80) {
+    const truncated = fixed.title.slice(0, 80).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, title: truncated || fixed.title.slice(0, 80) };
+    fixes.push('Truncated title to 80 chars');
   }
 
-  // 3. Drop empty notes & notes for nodes not in the resolved set
+  // 3. Auto-truncate summary at sentence boundary if too long
+  if (fixed.summary && fixed.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
+    const truncated = fixed.summary.slice(0, ENRICH_VIEW_SUMMARY_HARD_LIMIT);
+    const lastPeriod = truncated.lastIndexOf('.');
+    fixed = { ...fixed, summary: lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated.trimEnd() };
+    fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
+  }
+
+  // 4. Convert LaTeX environments to $$-delimited math (remark-math handles $$ natively).
+  //    ```math fences are handled at render time by mathFenceToDelimiters().
+  //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
+  const fixLatex = (text: string): { text: string; changed: boolean } => {
+    let changed = false;
+    let result = text;
+
+    // 4a. \begin{cases}...\end{cases} → $$ block
+    result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
+      changed = true;
+      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
+      return '\n$$\n' + lines.join('\n') + '\n$$\n';
+    });
+    // 4b. \begin{aligned}...\end{aligned} → $$ block
+    result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
+      changed = true;
+      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
+      return '\n$$\n' + lines.join('\n') + '\n$$\n';
+    });
+    // 4c. Generic \begin{env}...\end{env} → $$ block
+    result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
+      changed = true;
+      return '\n$$\n' + (body as string).trim() + '\n$$\n';
+    });
+
+    return { text: result, changed };
+  };
+
+  // Apply LaTeX fix to description, section text, and notes
+  if (fixed.description) {
+    const r = fixLatex(fixed.description);
+    if (r.changed) { fixed = { ...fixed, description: r.text }; fixes.push('Converted LaTeX to ```math blocks in description'); }
+  }
+  if (fixed.sections) {
+    let sectionFixed = false;
+    const newSections = fixed.sections.map(s => {
+      if (!s.text) return s;
+      const r = fixLatex(s.text);
+      if (r.changed) { sectionFixed = true; return { ...s, text: r.text }; }
+      return s;
+    });
+    if (sectionFixed) { fixed = { ...fixed, sections: newSections }; fixes.push('Converted LaTeX to ```math blocks in sections'); }
+  }
+  if (fixed.notes) {
+    let noteFixed = false;
+    const newNotes = fixed.notes.map(n => {
+      if (!n.text) return n;
+      const r = fixLatex(n.text);
+      if (r.changed) { noteFixed = true; return { ...n, text: r.text }; }
+      return n;
+    });
+    if (noteFixed) { fixed = { ...fixed, notes: newNotes }; fixes.push('Converted LaTeX to ```math blocks in notes'); }
+  }
+
+  // node_ids fallback removed — enrich_view requires SM result graph.
+  // resolvedNodeIds is always provided from SM (BB/CT).
+  const nodeIdSet = new Set(resolvedNodeIds ?? []);
+
+  // 5. Drop empty notes & notes for nodes not in the resolved set
   if (fixed.notes) {
     const before = fixed.notes.length;
     const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
@@ -826,7 +959,7 @@ export function autoFixEnrichView(
     if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
   }
 
-  // 4. Prune highlight_groups referencing nodes not in the resolved set
+  // 6. Prune highlight_groups referencing nodes not in the resolved set
   if (fixed.highlight_groups) {
     const before = fixed.highlight_groups.length;
     const pruned = fixed.highlight_groups
@@ -840,25 +973,11 @@ export function autoFixEnrichView(
   return { input: fixed, fixes };
 }
 
-/** Validate markdown format — returns error strings (empty = valid). */
+/** Validate markdown format — returns error strings (empty = valid).
+ *  LaTeX issues are handled by autofix (fixLatex) — never rejected here.
+ *  Only structural breaks that corrupt all subsequent rendering are rejected. */
 export function validateMarkdownFormat(md: string): string[] {
   const errors: string[] = [];
-
-  // Reject \begin{...} environments (fragile in remark-math, breaks rendering)
-  const beginMatch = md.match(/\\begin\{([^}]+)\}/);
-  if (beginMatch) {
-    errors.push(
-      `description contains \\begin{${beginMatch[1]}} — use a \`\`\`math block for simple formulas or rewrite as a table`,
-    );
-  }
-
-  // Reject unbalanced $$ delimiters (odd count → unclosed block corrupts all subsequent markdown)
-  const ddCount = (md.match(/\$\$/g) || []).length;
-  if (ddCount % 2 !== 0) {
-    errors.push(
-      'description has unbalanced $$ delimiters — use ```math fenced blocks for display math',
-    );
-  }
 
   // Reject unclosed fenced blocks (walk lines, track open/close state)
   let insideFence = false;
@@ -887,6 +1006,7 @@ export function validateMarkdownFormat(md: string): string[] {
 export function validateEnrichView(
   input: EnrichViewInput,
   resolvedNodeIds: string[],
+  assembledBadges?: Array<{ node_id: string; text: string }>,
 ): EnrichViewRequest | EnrichViewError {
   const errors: string[] = [];
 
@@ -899,6 +1019,14 @@ export function validateEnrichView(
     errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
+  // title/intro/closing optional — validate length and no-walkthrough
+  if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
+  const WALKTHROUGH_PREFIXES_DOC = ['this graph', 'this view', 'data flows', 'shows the', 'visualizes'];
+  if (input.intro && WALKTHROUGH_PREFIXES_DOC.some(p => input.intro!.trimStart().toLowerCase().startsWith(p))) {
+    errors.push('intro re-describes the graph structure — provide context: what is computed, where data originates');
+  }
+  if (input.closing && input.closing.trim().length > 400) errors.push('closing exceeds 400 characters — keep it to 1–2 sentences');
+
   // summary required + length: soft 120 (instructed), hard 300 (rejected)
   if (!input.summary || input.summary.trim().length === 0) {
     errors.push(`summary is required — one-line graph purpose (~120 chars, max ${ENRICH_VIEW_SUMMARY_HARD_LIMIT})`);
@@ -908,6 +1036,10 @@ export function validateEnrichView(
 
   // description optional — if provided, validate structure + markdown format
   if (input.description && input.description.trim().length > 0) {
+    // sections[] and description are mutually exclusive — sections is preferred
+    if (input.sections?.length) {
+      errors.push('Provide either sections[] or description — not both. Use sections[] for structured output; description is the fallback for unstructured answers only');
+    }
     // Must have structure: ## headings or multiple paragraphs
     if (!input.description.includes('##') && !input.description.includes('\n\n')) {
       errors.push('description must use ## headings or multiple paragraphs — not a single block of text');
@@ -916,10 +1048,38 @@ export function validateEnrichView(
     const descLower = input.description.trimStart().toLowerCase();
     const WALKTHROUGH_PREFIXES = ['traces how', 'shows the', 'data flows', 'this view shows', 'visualizes'];
     if (WALKTHROUGH_PREFIXES.some(p => descLower.startsWith(p))) {
-      errors.push('description re-describes the graph — explain business logic, formulas, column mappings instead');
+      errors.push('description re-describes the graph — explain what you found: formulas, column mappings, issues, patterns instead');
     }
     // Markdown format validation (LaTeX delimiters, math blocks)
     errors.push(...validateMarkdownFormat(input.description));
+  }
+
+  // sections validation — content must be substantive; node_ids (when provided) must be valid
+  if (input.sections?.length) {
+    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+    const resolvedSet = new Set(resolvedNodeIds);
+    for (const sec of input.sections) {
+      // Validate node_ids when AI uses the embedded form
+      if (sec.node_ids?.length) {
+        const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
+        if (unknownIds.length > 0) {
+          errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — use IDs from the result graph`);
+        }
+      }
+      if (!sec.text || sec.text.trim().length < 120) {
+        errors.push(`Section "${sec.label}" is too short — write 3-8 sentences or items explaining what you found (min 120 chars)`);
+      }
+      if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
+    }
+  }
+
+  // notes validation — must be specific, not generic one-word captions
+  if (input.notes?.length) {
+    for (const note of input.notes) {
+      if (!note.text || note.text.trim().length < 20) {
+        errors.push(`Note for "${note.node_id}" is too short — write a specific one-line caption (min 20 chars)`);
+      }
+    }
   }
 
   // highlight_groups validation (structural + color validity)
@@ -938,12 +1098,14 @@ export function validateEnrichView(
       if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
       else if (e.includes('summary')) failedFields.add('summary');
       else if (e.includes('description')) failedFields.add('description');
+      else if (e.startsWith('Section ')) failedFields.add('sections');
+      else if (e.startsWith('Note for ')) failedFields.add('notes');
       else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
       else if (e.includes('No nodes')) failedFields.add('nodes');
     }
     const fieldList = [...failedFields];
     const hint = fieldList.length === 1
-      ? `Fix ${fieldList[0]} only. Keep all other fields (badges, notes, summary, highlight_groups) exactly as submitted.`
+      ? `Fix ${fieldList[0]} only. Keep all other fields (notes, summary, highlight_groups) exactly as submitted.`
       : `Fix these fields: ${fieldList.join(', ')}. Keep all other fields exactly as submitted.`;
     return { success: false, errors, hint };
   }
@@ -956,7 +1118,7 @@ export function validateEnrichView(
     description: input.description,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
-    badges: input.badges ?? [],
+    badges: assembledBadges ?? [],
     notes: input.notes ?? [],
   };
 }

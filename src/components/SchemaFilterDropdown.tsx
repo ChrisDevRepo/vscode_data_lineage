@@ -12,6 +12,7 @@ interface SchemaFilterDropdownProps {
   onSelectAll?: (schemas: string[]) => void;
   onSelectNone?: (schemas: string[]) => void;
   onToggleFocusSchema: (schema: string) => void;
+  isNarrowed?: boolean;
 }
 
 export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
@@ -22,6 +23,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectAll,
   onSelectNone,
   onToggleFocusSchema,
+  isNarrowed = false,
 }: SchemaFilterDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
   const [searchTerm, setSearchTerm] = useState('');
@@ -32,11 +34,14 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
 
   return (
     <>
+      <div className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}>
       <Tooltip content="Filter Schemas">
         <Button
           ref={refs.setReference}
           onClick={toggle}
           variant="icon"
+          aria-expanded={isOpen}
+          aria-haspopup="listbox"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
         <svg
@@ -55,6 +60,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
         </svg>
       </Button>
       </Tooltip>
+      </div>
 
       <FloatingPortal>
         {isOpen && (
@@ -62,6 +68,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
             ref={refs.setFloating}
             style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
             className="w-96 rounded-md shadow-lg z-50 p-2 max-h-96 flex flex-col ln-dropdown"
+            role="listbox"
+            aria-label="Filter schemas"
             {...getFloatingProps()}
           >
             <div className="mb-2 flex items-center gap-2">
@@ -118,7 +126,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                         {focusSchemas.has(schema) ? '⭐' : '☆'}
                       </button>
                     </Tooltip>
-                    <span className="flex-1 text-sm">{schema}</span>
+                    <span className="flex-1 text-sm ln-text">{schema}</span>
                   </div>
                 );
               })}

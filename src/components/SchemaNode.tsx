@@ -44,7 +44,7 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
           padding: '4px 8px',
           fontSize: 10,
           fontWeight: 700,
-          color: 'var(--vscode-button-foreground, var(--ln-fg))',
+          color: 'var(--vscode-button-foreground, #fff)',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',

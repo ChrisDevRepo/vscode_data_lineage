@@ -1,28 +1,25 @@
 /**
  * Column-Trace State Machine — Hop-and-Distill pattern.
  *
- * Owns graph traversal, column tracking, frontier management, boundary detection,
- * column validation (reject/retry), and final assembly. Zero VS Code imports.
+ * Extends HopStateMachine (smBase.ts) for shared state, memory, and helpers.
+ * CT-specific: frontier management, column tracking, verdict handling, chain assembly.
  *
  * Lifecycle: init() → getHopContext() ↔ submitVerdicts() loop → getResult()
- *
- * @see tmp/ai-architecture-hop-and-distill.md
- * @see tmp/ai-implementation-plan-hop-and-distill.md
  */
 
-import type { DatabaseModel, LineageNode, ColumnDef, NeighborIndex, ObjectType } from '../engine/types';
+import type { DatabaseModel, LineageNode } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
-import { presentNode, presentColumn, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
+import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
+import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
+import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type ShortMemory, type DetailSlot } from './smBase';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
 export type ColumnTraceDirection = 'up' | 'down' | 'both';
 export type HopVerdict = 'trace' | 'prune' | 'pass' | 'revisit';
-export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 
 export interface FrontierEntry {
   nodeId: string;
@@ -55,23 +52,8 @@ export interface ColumnTraceConfig {
   activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
 }
 
-export type { LogFn } from './smGuards';
 
-// ─── Internal types ────────────────────────────────────────────────────────────
-
-interface HopNeighbor {
-  id: string;
-  s: string;
-  n: string;
-  t: string;
-  edge_direction: 'upstream' | 'downstream';
-  edge_type: string;
-  boundary: BoundaryFlag;
-  boundary_reason?: string;
-  cols?: string[];                 // compact column strings: "Amount decimal(18,2), not null, PK"
-  fks?: string[];                  // compact FK strings: "CustomerKey → dbo.DimCustomer"
-  hasDdl: boolean;
-}
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_REJECTIONS_PER_HOP = 2;
 const MAX_REVISITS = 3;            // cap on re-expanding pruned branches per trace
@@ -83,44 +65,22 @@ const DEPTH_WARNING_THRESHOLD = 10;     // log warning when trace depth exceeds 
 
 // ─── Class ─────────────────────────────────────────────────────────────────────
 
-export class ColumnTraceState {
-  private readonly model: DatabaseModel;
-  private readonly graph: Graph;
-  private readonly store: ColumnStore | null;
-  private readonly log: LogFn;
+export class ColumnTraceState extends HopStateMachine {
+
+  // CT-specific state
   private readonly maxFrontierSize: number;
-  private readonly activeFilter: SerializedFilterState | null;
-  private readonly filterSchemas: Set<string> | null;
-
-  // Lookup caches (built once in constructor)
-  private readonly nodeMap: Map<string, LineageNode>;
-  private readonly edgeTypeMap: Map<string, string>;
-  private readonly unrelatedMap: Map<string, string[]>;
-
-  // Lifecycle status — enforces valid transitions
-  private _status: 'created' | 'initialized' | 'hopping' | 'awaiting_verdicts' | 'complete' | 'error' = 'created';
-
-  // State (set by init, mutated by submitVerdicts)
   private direction: ColumnTraceDirection = 'up';
   private targetColumns: string[] = [];
-  private originNodeId: string | null = null;
   private frontier: FrontierEntry[] = [];
-  private frontierIds = new Set<string>(); // dedup: prevent same node queued twice
-  private visited = new Set<string>();
+  private frontierIds = new Set<string>();
   private chain = new Map<string, ChainEntry>();
-  private passthroughMap = new Map<string, string[]>(); // nodeId → columns at time of passthrough
-  private removedSet = new Set<string>();
+  private passthroughMap = new Map<string, string[]>();
   private outOfScope: OutOfScopeEntry[] = [];
   private prunedEntries = new Map<string, { parentColumns: string[]; depth: number; parentNodeId: string | null }>();
   private revisitCount = 0;
-  private hopCount = 0;
-  private scopeSize = 0;
-
-  // Current hop context (for submitVerdicts validation)
-  private currentFocusNodeId: string | null = null;
   private currentFocusActiveColumns: string[] = [];
   private currentFocusDepth = 0;
-  private rejectionsThisHop = 0;  // after MAX_REJECTIONS_PER_HOP → auto-prune the unresolvable neighbor
+  private rejectionsThisHop = 0;
   private rejectionHistory: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }> = [];
 
   constructor(
@@ -130,18 +90,72 @@ export class ColumnTraceState {
     config?: ColumnTraceConfig,
     store?: ColumnStore | null,
   ) {
-    this.model = model;
-    this.graph = graph;
-    this.store = store ?? null;
-    this.log = log;
+    super(model, graph, log, {
+      activeFilter: config?.activeFilter,
+    }, store);
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
-    this.activeFilter = config?.activeFilter ?? null;
-    this.filterSchemas = this.activeFilter?.schemas?.length
-      ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
-      : null;
-    this.nodeMap = buildNodeMap(model);
-    this.edgeTypeMap = buildEdgeTypeMap(model);
-    this.unrelatedMap = buildUnrelatedMap(model);
+  }
+
+  // ─── Frontier coordinators (single mutation point for frontier + frontierIds sync) ─
+
+  private frontierPush(entry: FrontierEntry): void {
+    this.frontier.push(entry);
+    this.frontierIds.add(entry.nodeId);
+  }
+
+  /** Update existing frontier entry if present, otherwise push new. Returns action taken. */
+  private frontierUpdateOrPush(entry: FrontierEntry): 'updated' | 'pushed' {
+    if (this.frontierIds.has(entry.nodeId)) {
+      const idx = this.frontier.findIndex(f => f.nodeId === entry.nodeId);
+      if (idx >= 0) {
+        this.frontier[idx].activeColumns = entry.activeColumns;
+        this.frontier[idx].question = entry.question;
+        return 'updated';
+      }
+    }
+    this.frontierPush(entry);
+    return 'pushed';
+  }
+
+  /** Remove a frontier entry by nodeId (used by cascade prune). */
+  private frontierRemove(nodeId: string): boolean {
+    const idx = this.frontier.findIndex(f => f.nodeId === nodeId);
+    if (idx >= 0) {
+      this.frontier.splice(idx, 1);
+      this.frontierIds.delete(nodeId);
+      return true;
+    }
+    this.frontierIds.delete(nodeId);
+    return false;
+  }
+
+  // ─── Removed-node coordinators (sync removedSet + outOfScope + prunedEntries) ─
+
+  /** Mark a node as pruned by AI (reversible via restorePruned). */
+  private markPruned(nodeId: string, summary: string, undoData: { parentColumns: string[]; depth: number; parentNodeId: string | null }): void {
+    this.removedSet.add(nodeId);
+    this.outOfScope.push({ nodeId, reason: summary });
+    this.prunedEntries.set(nodeId, undoData);
+  }
+
+  /** Mark a node as cascade-removed (NOT reversible — not added to prunedEntries). */
+  private markCascadeRemoved(nodeId: string): void {
+    this.removedSet.add(nodeId);
+    this.outOfScope.push({ nodeId, reason: 'Cascade-removed (unreachable after prune)' });
+  }
+
+  /** Restore a previously pruned node. Returns undo data or undefined if not found. */
+  private restorePruned(nodeId: string): { parentColumns: string[]; depth: number; parentNodeId: string | null } | undefined {
+    const stored = this.prunedEntries.get(nodeId);
+    if (!stored) return undefined;
+    this.removedSet.delete(nodeId);
+    this.outOfScope = this.outOfScope.filter(e => e.nodeId !== nodeId);
+    this.prunedEntries.delete(nodeId);
+    return stored;
+  }
+
+  protected getScopeDirection(): 'upstream' | 'downstream' | 'bidirectional' {
+    return this.direction === 'up' ? 'upstream' : this.direction === 'down' ? 'downstream' : 'bidirectional';
   }
 
   // ─── init ──────────────────────────────────────────────────────────────────
@@ -150,24 +164,23 @@ export class ColumnTraceState {
     targetColumns: string[];
     origin?: string;
     direction?: ColumnTraceDirection;
+    depth?: number;
   }): { ok: true; scopeSize: number; originNode: Record<string, unknown> }
      | { error: string; hint?: string; candidates?: Array<{ id: string; name: string; type: string }> } {
 
     // Reset all mutable state (safe to call init() again on same instance)
+    this.resetSharedState();
     this.frontier = [];
     this.frontierIds.clear();
-    this.visited.clear();
     this.chain.clear();
     this.passthroughMap.clear();
-    this.removedSet.clear();
     this.outOfScope = [];
-    this.hopCount = 0;
-    this.scopeSize = 0;
-    this.currentFocusNodeId = null;
     this.currentFocusActiveColumns = [];
     this.currentFocusDepth = 0;
     this.rejectionsThisHop = 0;
-    this._status = 'created';
+    this.prunedEntries.clear();
+    this.revisitCount = 0;
+    this.rejectionHistory = [];
 
     const { targetColumns: rawCols, origin, direction = 'up' } = params;
 
@@ -239,21 +252,20 @@ export class ColumnTraceState {
     const origin_ = originNode!;
     this.originNodeId = origin_.id;
 
-    // Compute scope via NeighborIndex BFS (direction-aware)
-    const scopeIds = this.bfsScope(origin_.id);
-    this.scopeSize = scopeIds.size;
+    // Compute scope via NeighborIndex BFS (direction-aware, depth-limited)
+    const scopeIds = this.bfsScopeViaIndex(origin_.id, params.depth);
+    this.scopeNodeIds = scopeIds;
 
     // Seed frontier with directional neighbors of origin
     const neighbors = this.getDirectionalNeighbors(origin_.id);
     for (const nid of neighbors) {
       if (this.frontier.length >= this.maxFrontierSize) break;
-      this.frontier.push({
+      this.frontierPush({
         nodeId: nid,
         activeColumns: [...this.targetColumns],
         depth: 1,
         parentNodeId: origin_.id,
       });
-      this.frontierIds.add(nid);
     }
 
     // Add origin to visited + chain (root entry)
@@ -270,8 +282,8 @@ export class ColumnTraceState {
     });
 
     this._status = 'initialized';
-    this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
-    this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
+    this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
+    this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
 
     return {
       ok: true,
@@ -288,10 +300,12 @@ export class ColumnTraceState {
     verdicts_expected: number;
     ct_mode: 'hop_and_distill';
     hop: number;
+    current_depth: number;
     frontier_remaining: number;
     goal: { columns: string[]; direction: ColumnTraceDirection; origin: string | null };
     sub_question: string;
-    path_so_far: Array<{ node_id: string; summary: string; columns_in: string[]; columns_out: string[]; notes?: string }>;
+    path_so_far: Array<{ node_id: string; summary: string; columns_in: string[]; columns: string[]; notes?: string }>;
+    working_memory: BaseWorkingMemory & { frontier_remaining: number; current_depth: number };
     focus_node: Record<string, unknown>;
     active_columns: string[];
     neighbors: HopNeighbor[];
@@ -318,7 +332,7 @@ export class ColumnTraceState {
       }
       const n = this.nodeMap.get(candidate.nodeId);
       if (!n) {
-        this.log('warn', `Node not in model: ${candidate.nodeId} — skipped`);
+        this.log('debug', `Node not in model: ${candidate.nodeId} — skipped`);
         this.visited.add(candidate.nodeId); // prevent re-encounter
         continue;
       }
@@ -329,7 +343,7 @@ export class ColumnTraceState {
 
     if (!entry || !node) {
       this._status = 'complete';
-      this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeSize} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
+      this.log('info', `Frontier drained — all paths exhausted | visited=${this.visited.size}/${this.scopeNodeIds.size} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
       return { done: true };
     }
 
@@ -345,78 +359,33 @@ export class ColumnTraceState {
     const focusNode = buildHopFocusNode(node, this.nodeMap, this.unrelatedMap, this.store ?? undefined, 'ct_ddl');
     focusNode.active_columns = entry.activeColumns;
 
-    // Build neighbor list
-    const neighborIds = this.getDirectionalNeighbors(entry.nodeId);
-    const nb = this.model.neighborIndex[entry.nodeId] ?? { in: [], out: [] };
-    const inSet = new Set(nb.in);
-    const neighbors: HopNeighbor[] = [];
-
-    for (const nid of neighborIds) {
-      const nNode = this.nodeMap.get(nid);
-      if (!nNode) continue;
-
-      // Per-neighbor direction: check whether this neighbor is in the focus node's in-set or out-set
-      const isUpstream = inSet.has(nid);
-      const primaryKey = isUpstream ? `${nid}→${entry.nodeId}` : `${entry.nodeId}→${nid}`;
-      const reverseKey = isUpstream ? `${entry.nodeId}→${nid}` : `${nid}→${entry.nodeId}`;
-      let edgeType = this.edgeTypeMap.get(primaryKey);
-      if (!edgeType) {
-        edgeType = this.edgeTypeMap.get(reverseKey);
-        if (edgeType) {
-          this.log('debug', `Edge ${primaryKey} not found, used reverse ${reverseKey} (${edgeType})`);
-        } else {
-          edgeType = 'read';
-        }
-      }
-
-      const boundary = this.detectBoundary(nid);
-      const neighbor: HopNeighbor = {
-        id: nid,
-        s: nNode.schema,
-        n: nNode.name,
-        t: nNode.type,
-        edge_direction: isUpstream ? 'upstream' : 'downstream',
-        edge_type: edgeType,
-        boundary,
-        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!getNodeDdl(nid, this.nodeMap, this.store ?? undefined),
-      };
-
-      if (boundary !== 'none') {
-        neighbor.boundary_reason = this.boundaryReason(boundary, nNode);
-      }
-
-      const nCols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined);
-      if (nCols?.length) {
-        neighbor.cols = nCols.map(c => presentColumnCompact(c));
-      }
-
-      // FK info on neighbor
-      if (nNode.fks?.length) {
-        neighbor.fks = nNode.fks.map(fk => presentFkCompact(fk));
-      }
-
-      neighbors.push(neighbor);
-    }
+    const neighbors = this.buildCtNeighborList(entry.nodeId);
 
     // Build path summary (two-level: summary for scan, notes for detail)
-    const pathSoFar: Array<{ node_id: string; summary: string; columns_in: string[]; columns_out: string[]; notes?: string }> = [];
+    const pathSoFar: Array<{ node_id: string; summary: string; columns_in: string[]; columns: string[]; notes?: string }> = [];
     for (const e of this.chain.values()) {
       if (e.nodeId === this.originNodeId && e.columnsOut.length === 0) continue;
-      pathSoFar.push({ node_id: e.nodeId, summary: e.summary, columns_in: e.columnsIn, columns_out: e.columnsOut, notes: e.notes });
+      pathSoFar.push({ node_id: e.nodeId, summary: e.summary, columns_in: e.columnsIn, columns: e.columnsOut, notes: e.notes });
     }
     for (const [ptId, ptCols] of this.passthroughMap) {
       if (this.chain.has(ptId)) continue; // Diamond: node already in chain via another path
-      pathSoFar.push({ node_id: ptId, summary: 'pass', columns_in: ptCols, columns_out: [] });
+      pathSoFar.push({ node_id: ptId, summary: 'pass', columns_in: ptCols, columns: [] });
     }
 
-    // sub_question: AI's own question from previous hop (self-ask) or default phrasing
+    // sub_question: AI's own question from previous hop (self-ask), or type-aware default
+    const isTableNode = !SCRIPT_TYPES.has(node.type);
     const subQuestion = entry.question
-      ?? `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`;
-    const pct = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
-    this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeSize} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
+      ?? (isTableNode
+        ? `This is a table (no DDL body). Tables store columns — they do not transform them. ` +
+          `Upstream neighbors that INSERT INTO this table carry column(s) [${entry.activeColumns.join(', ')}] upstream. ` +
+          `Trace through upstream SPs/views that write to this table. ` +
+          `Prune only downstream neighbors that merely SELECT from this table.`
+        : `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`);
+    const pct = this.scopeNodeIds.size > 0 ? Math.round((this.visited.size / this.scopeNodeIds.size) * 100) : 0;
+    this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeNodeIds.size} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
     this.log('debug', `Hop ${this.hopCount} detail | ${node.id} (${node.type}) | task=${entry.question ? 'self-ask' : 'default'} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
     if (entry.depth >= DEPTH_WARNING_THRESHOLD) {
-      this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeSize}`);
+      this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeNodeIds.size}`);
     }
 
     this._status = 'awaiting_verdicts';
@@ -426,10 +395,16 @@ export class ColumnTraceState {
       verdicts_expected: neighbors.length,
       ct_mode: 'hop_and_distill',
       hop: this.hopCount,
+      current_depth: entry.depth,
       frontier_remaining: this.frontier.length,
       goal: { columns: this.targetColumns, direction: this.direction, origin: this.originNodeId },
       sub_question: subQuestion,
       path_so_far: pathSoFar,
+      working_memory: {
+        ...this.buildBaseWorkingMemory(),
+        frontier_remaining: this.frontier.length,
+        current_depth: entry.depth,
+      },
       focus_node: strip(focusNode) as Record<string, unknown>,
       active_columns: entry.activeColumns,
       neighbors,
@@ -443,11 +418,79 @@ export class ColumnTraceState {
     };
   }
 
+  // ─── Shared: neighbor list builder ─────────────────────────────────────────
+
+  /** Build the neighbor list for a focus node. Used by getHopContext() and rebuildCurrentHopContext(). */
+  private buildCtNeighborList(focusNodeId: string): HopNeighbor[] {
+    const neighborIds = this.getDirectionalNeighbors(focusNodeId);
+    const nb = this.model.neighborIndex[focusNodeId] ?? { in: [], out: [] };
+    const inSet = new Set(nb.in);
+    const neighbors: HopNeighbor[] = [];
+
+    for (const nid of neighborIds) {
+      const nNode = this.nodeMap.get(nid);
+      if (!nNode) continue;
+
+      const isUpstream = inSet.has(nid);
+      const primaryKey = isUpstream ? `${nid}→${focusNodeId}` : `${focusNodeId}→${nid}`;
+      const reverseKey = isUpstream ? `${focusNodeId}→${nid}` : `${nid}→${focusNodeId}`;
+      let edgeType = this.edgeTypeMap.get(primaryKey);
+      if (!edgeType) {
+        edgeType = this.edgeTypeMap.get(reverseKey);
+        if (edgeType) {
+          this.log('debug', `Edge ${primaryKey} not found, used reverse ${reverseKey} (${edgeType})`);
+        } else {
+          edgeType = 'read';
+        }
+      }
+
+      const boundary = this.detectBoundary(nid);
+      // Skip cycle-back neighbors (already visited as focus node).
+      // Boundary merges (source/sink) are preserved — they were never focus nodes.
+      if (boundary === 'cycle') continue;
+      const neighbor: HopNeighbor = {
+        id: nid, s: nNode.schema, n: nNode.name, t: nNode.type,
+        edge_direction: isUpstream ? 'upstream' : 'downstream',
+        edge_type: edgeType, boundary,
+        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!getNodeDdl(nid, this.nodeMap, this.store ?? undefined),
+      };
+      if (boundary !== 'none') neighbor.boundary_reason = this.boundaryReason(boundary, nNode);
+      const nCols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined);
+      if (nCols?.length) neighbor.cols = nCols.map(c => presentColumnCompact(c));
+      if (nNode.fks?.length) neighbor.fks = nNode.fks.map(fk => presentFkCompact(fk));
+      neighbors.push(neighbor);
+    }
+
+    return neighbors;
+  }
+
+  // ─── rebuildCurrentHopContext (for error recovery — does NOT mutate state) ──
+
+  /** Rebuild the current hop context from cached fields. Used by focus_mismatch to resend context without advancing frontier. */
+  private rebuildCurrentHopContext(): Record<string, unknown> | null {
+    if (!this.currentFocusNodeId) return null;
+    const node = this.nodeMap.get(this.currentFocusNodeId);
+    if (!node) return null;
+
+    const focusNode = buildHopFocusNode(node, this.nodeMap, this.unrelatedMap, this.store ?? undefined, 'ct_ddl');
+    focusNode.active_columns = this.currentFocusActiveColumns;
+
+    return {
+      focus_node: strip(focusNode),
+      active_columns: this.currentFocusActiveColumns,
+      neighbors: this.buildCtNeighborList(this.currentFocusNodeId),
+      hop: this.hopCount,
+      frontier_remaining: this.frontier.length,
+    };
+  }
+
   // ─── submitVerdicts ────────────────────────────────────────────────────────
 
   submitVerdicts(params: {
     focusNodeId: string;
     notes?: string;              // free-form AI findings for the focus node
+    badge_label?: string;        // semantic role label for enrich_view (e.g. "Source", "ETL")
+    note_caption?: string;       // one-line caption for enrich_view note
     verdicts: Array<{
       nodeId: string;
       verdict: HopVerdict;
@@ -457,7 +500,7 @@ export class ColumnTraceState {
     }>;
   }): { ok: true; advanced: number; frontierSize: number }
      | { error: 'invalid_columns'; nodeId: string; invalid: string[]; valid: string[] }
-     | { error: string; hint?: string } {
+     | { error: string; hint?: string; limit?: number } {
 
     if (this._status !== 'awaiting_verdicts') {
       this.log('debug', `submitVerdicts: invalid status "${this._status}"`);
@@ -465,7 +508,8 @@ export class ColumnTraceState {
     }
     if (params.focusNodeId !== this.currentFocusNodeId) {
       this.log('debug', `submitVerdicts: focus mismatch — expected=${this.currentFocusNodeId}, got=${params.focusNodeId}`);
-      return { error: 'focus_mismatch', hint: `Expected focus ${this.currentFocusNodeId}, got ${params.focusNodeId}. Extract the id field from focus_node in the hop context response.` };
+      const hopContext = this.rebuildCurrentHopContext();
+      return { error: 'focus_mismatch', hint: `Expected focus ${this.currentFocusNodeId}, got ${params.focusNodeId}. Extract the id field from focus_node in the hop context response.`, ...(hopContext && { hop_context: hopContext }) };
     }
 
     // Validate all verdicts before committing (transactional)
@@ -479,194 +523,55 @@ export class ColumnTraceState {
           this.log('debug', `submitVerdicts: revisit cap (${MAX_REVISITS}) reached`);
           return { error: 'revisit_cap_reached', hint: `Maximum ${MAX_REVISITS} revisits per trace. Remaining revisits: 0.` };
         }
-        continue; // no further validation needed for revisit
+        continue;
       }
       if (v.verdict === 'trace') {
-        if (!v.columnsOut?.length && this.targetColumns.length > 0) {
-          return { error: 'missing_columns', hint: `Verdict "trace" for ${v.nodeId} requires columnsOut (column mode).` };
-        }
-        // Column validation — always validate, never accept garbage, never auto-prune
-        if (v.columnsOut?.length) {
-          const neighbor = this.nodeMap.get(v.nodeId);
-          const neighborCols = getNodeColumns(v.nodeId, this.nodeMap, this.store ?? undefined);
-          if (neighborCols?.length) {
-            const validSet = new Set(neighborCols.map(c => c.name.toLowerCase()));
-            const invalid = v.columnsOut.filter(c => !validSet.has(c.toLowerCase()));
-            if (invalid.length > 0) {
-              this.rejectionsThisHop++;
-              this.rejectionHistory.push({ hop: this.hopCount, nodeId: v.nodeId, submitted: invalid, valid: neighborCols.map(c => c.name) });
-              this.log('warn', `REJECT (${this.rejectionsThisHop}): columns [${invalid}] not found on ${v.nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
-              return {
-                error: 'invalid_columns',
-                nodeId: v.nodeId,
-                invalid,
-                valid: neighborCols.map(c => c.name),
-                hint: this.rejectionsThisHop >= MAX_REJECTIONS_PER_HOP
-                  ? `Column rejected ${this.rejectionsThisHop} times. Fix the column name, or prune/pass this neighbor to continue the trace.`
-                  : 'Fix the column name from the valid list and resubmit.',
-              };
-            }
-          } else if (neighbor?.type === 'procedure') {
-            const focusId = this.currentFocusNodeId ?? '';
-            const isExec = this.edgeTypeMap.get(`${focusId}→${v.nodeId}`) === 'exec'
-              || this.edgeTypeMap.get(`${v.nodeId}→${focusId}`) === 'exec';
-            if (isExec) {
-              this.log('debug', `SP→SP exec: ${focusId} → ${v.nodeId} — column validation skipped`);
-            }
-          }
-        }
+        const colErr = this.validateTraceColumns(v.nodeId, v.columnsOut);
+        if (colErr) return colErr;
       }
     }
 
     // All validations passed — commit mutations
-    // Store notes on focus node's chain entry (blackboard pattern)
-    if (params.notes && this.currentFocusNodeId) {
-      let focusChain = this.chain.get(this.currentFocusNodeId);
-      if (!focusChain) {
-        // Focus node not yet in chain (e.g., first hop — auto-seeded by init, not verdicted)
-        const focusNode = this.nodeMap.get(this.currentFocusNodeId);
-        if (focusNode) {
-          focusChain = {
-            nodeId: this.currentFocusNodeId,
-            schema: focusNode.schema,
-            name: focusNode.name,
-            type: focusNode.type,
-            columnsIn: [...this.currentFocusActiveColumns],
-            columnsOut: [],
-            summary: '',
-            boundaryFlag: 'none', // Focus node is active traversal, not a revisit
-          };
-          this.chain.set(this.currentFocusNodeId, focusChain);
-        }
-      }
-      if (focusChain) focusChain.notes = params.notes;
-    }
+
+    // 1. Store detail memory (before verdicts — doesn't depend on summary)
+    this.storeFocusNodeDetail(params);
+
+    // 2. Apply verdicts (populates chain summaries via applyTrace)
     let advanced = 0;
+    let pruneCount = 0;
     for (const v of params.verdicts) {
-      const boundary = this.detectBoundary(v.nodeId);
-      const neighbor = this.nodeMap.get(v.nodeId);
+      const result = this.applyVerdict(v);
+      if ('error' in result) return result;
+      advanced += result.advanced;
+      if (v.verdict === 'prune') pruneCount++;
+    }
 
-      if (v.verdict === 'prune') {
-        // Guard: reject prune if it would disconnect any chain node from origin
-        const chainIds = new Set(this.chain.keys());
-        if (chainIds.size > 0) {
-          const orphanedId = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, chainIds, v.nodeId);
-          if (orphanedId) {
-            this.log('info', `CT PRUNE REJECTED | ${v.nodeId} | would orphan chain node ${orphanedId}`);
-            continue;
-          }
-        }
-        this.removedSet.add(v.nodeId);
-        this.outOfScope.push({ nodeId: v.nodeId, reason: v.summary ?? 'Pruned by AI' });
-        // Store enough data to support revisit (shallow undo buffer)
-        this.prunedEntries.set(v.nodeId, {
-          parentColumns: [...this.currentFocusActiveColumns],
-          depth: this.currentFocusDepth + 1,
-          parentNodeId: this.currentFocusNodeId,
-        });
-        this.log('debug', `Verdict: ${v.nodeId} = prune ("${v.summary ?? ''}")`);
-        continue;
-      }
-
-      if (v.verdict === 'revisit') {
-        // Restore a previously pruned node to the frontier
-        const stored = this.prunedEntries.get(v.nodeId);
-        if (!stored) {
-          return { error: 'revisit_invalid', hint: `${v.nodeId} was not previously pruned — only pruned nodes can be revisited.` };
-        }
-        if (this.revisitCount >= MAX_REVISITS) {
-          return { error: 'revisit_cap_reached', hint: `Maximum ${MAX_REVISITS} revisits per trace. Remaining revisits: 0.` };
-        }
-        // Undo the prune
-        this.removedSet.delete(v.nodeId);
-        this.outOfScope = this.outOfScope.filter(e => e.nodeId !== v.nodeId);
-        this.prunedEntries.delete(v.nodeId);
-        this.revisitCount++;
-        // Re-add to frontier
-        const revisitColumns = v.columnsOut?.length ? v.columnsOut : stored.parentColumns;
-        this.frontier.push({
-          nodeId: v.nodeId,
-          activeColumns: revisitColumns,
-          depth: stored.depth,
-          parentNodeId: stored.parentNodeId,
-          question: v.question ?? `Revisiting ${v.nodeId} — previously pruned, now relevant.`,
-        });
-        this.frontierIds.add(v.nodeId);
-        advanced++;
-        this.log('info', `Verdict: ${v.nodeId} = REVISIT (${this.revisitCount}/${MAX_REVISITS}) → re-added to frontier`);
-        continue;
-      }
-
-      if (v.verdict === 'pass') {
-        // Passthrough uses verdict columnsOut if provided, else inherits current active columns
-        const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
-        this.passthroughMap.set(v.nodeId, [...passColumns]);
-        this.visited.add(v.nodeId); // Mark visited so it won't reappear as neighbor
-        if (boundary === 'none') {
-          const delta = this.advanceFrontier(v.nodeId, passColumns, this.currentFocusDepth + 1); // Passthrough children are one level deeper
-          advanced += delta;
-          this.log('debug', `Verdict: ${v.nodeId} = pass, columns=[${passColumns}] → queued ${delta} children`); // Log children queued, not total
-        } else {
-          this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}), columns=[${passColumns}] → terminal`);
-        }
-        continue;
-      }
-
-      // trace — push the node ITSELF to frontier as next focus hop (not its children)
-      // Merge columns from converging paths (diamond pattern)
-      const existingChain = this.chain.get(v.nodeId);
-      if (existingChain) {
-        // Merge columnsIn (union of all incoming paths)
-        const mergedIn = new Set([...existingChain.columnsIn, ...this.currentFocusActiveColumns]);
-        existingChain.columnsIn = [...mergedIn];
-        if (v.columnsOut?.length) {
-          const mergedOut = new Set([...existingChain.columnsOut, ...v.columnsOut]);
-          existingChain.columnsOut = [...mergedOut];
-        }
-        this.log('debug', `Verdict: ${v.nodeId} = trace (merge into existing chain entry), columnsIn=[${existingChain.columnsIn}]`);
-      } else {
-        this.chain.set(v.nodeId, {
-          nodeId: v.nodeId,
-          schema: neighbor?.schema ?? '',
-          name: neighbor?.name ?? '',
-          type: neighbor?.type ?? '',
-          columnsIn: [...this.currentFocusActiveColumns],
-          columnsOut: v.columnsOut ?? [],
-          summary: v.summary ?? '',
-          boundaryFlag: boundary,
-        });
-      }
-
-      if (boundary === 'none') {
-        // If already in frontier (e.g., seeded by init), update existing entry with question + columns
-        const existingIdx = this.frontierIds.has(v.nodeId)
-          ? this.frontier.findIndex(f => f.nodeId === v.nodeId)
-          : -1;
-        if (existingIdx >= 0) {
-          this.frontier[existingIdx].activeColumns = v.columnsOut ?? this.frontier[existingIdx].activeColumns;
-          this.frontier[existingIdx].question = v.question;
-          this.log('debug', `Verdict: ${v.nodeId} = trace, updated existing frontier entry${v.question ? ` Q: "${v.question}"` : ''}`);
-        } else {
-          this.frontier.push({
-            nodeId: v.nodeId,
-            activeColumns: v.columnsOut ?? [],
-            depth: this.currentFocusDepth + 1,
-            parentNodeId: this.currentFocusNodeId ?? '',
-            question: v.question,
-          });
-          this.frontierIds.add(v.nodeId);
-          this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
-        }
-        advanced++;
-      } else {
-        this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
-      }
+    // 3. Update short memory (after verdicts — captures both chain and passthrough nodes)
+    //    Two parts: SM-generated metadata (traced/pruned) + AI-generated insight (notes)
+    //    SM adds the mechanical facts automatically. AI writes only the insight (FOUND/OPEN).
+    const focusChain = this.chain.get(this.currentFocusNodeId!);
+    const focusName = focusChain?.name ?? this.nodeMap.get(this.currentFocusNodeId!)?.name ?? '';
+    const isPass = !focusChain && this.passthroughMap.has(this.currentFocusNodeId!);
+    if (focusName && (focusChain || isPass)) {
+      // SM metadata: which neighbors traced/pruned (AI doesn't need to repeat this)
+      const traced = params.verdicts.filter(v => v.verdict === 'trace').map(v => this.nodeMap.get(v.nodeId)?.name ?? v.nodeId);
+      const pruned = params.verdicts.filter(v => v.verdict === 'prune').map(v => this.nodeMap.get(v.nodeId)?.name ?? v.nodeId);
+      // AI insight: from note_caption (concise) or summary or notes (fallback)
+      const aiInsight = params.note_caption || focusChain?.summary || '';
+      // Compose: name + [pass] + AI insight + SM metadata
+      const parts: string[] = [];
+      if (isPass) parts.push('[pass]');
+      if (aiInsight) parts.push(aiInsight);
+      if (traced.length) parts.push(`→ traced: ${traced.join(', ')}`);
+      if (pruned.length) parts.push(`✕ pruned: ${pruned.join(', ')}`);
+      const entry = `${focusName}: ${parts.join(' | ')}`;
+      const smErr = this.updateShortMemory(entry);
+      if (smErr) return { error: 'notes_too_long', limit: this.shortMemoryHardLimit, hint: `Shorten your notes — aim for ~${this.shortMemorySoftLimit} chars.` };
     }
 
     // Cascade prune: remove frontier entries unreachable from origin after prunes
-    const removed = params.verdicts.filter(v => v.verdict === 'prune').length;
     let cascaded = 0;
-    if (removed > 0) {
+    if (pruneCount > 0) {
       cascaded = this.cascadePruneFrontier();
       if (cascaded > 0) this.log('info', `CT cascade: ${cascaded} frontier nodes removed (unreachable after prune)`);
     }
@@ -674,9 +579,296 @@ export class ColumnTraceState {
     this._status = 'hopping'; // ready for next getHopContext()
     const relevant = params.verdicts.filter(v => v.verdict === 'trace').length;
     const passthrough = params.verdicts.filter(v => v.verdict === 'pass').length;
-    const pctDone = this.scopeSize > 0 ? Math.round((this.visited.size / this.scopeSize) * 100) : 0;
-    this.log('info', `Verdicts: ${relevant} relevant, ${removed} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeSize} (${pctDone}%) | chain=${this.chain.size}`);
+    const totalRemoved = pruneCount + cascaded;
+    const pctDone = this.scopeNodeIds.size > 0 ? Math.round((this.visited.size / this.scopeNodeIds.size) * 100) : 0;
+    this.log('info', `Verdicts: ${relevant} relevant, ${pruneCount} removed${cascaded > 0 ? ` (+${cascaded} cascaded)` : ''}, ${passthrough} passthrough | +${advanced} to frontier → ${this.frontier.length} remaining | visited ${this.visited.size}/${this.scopeNodeIds.size} (${pctDone}%) | chain=${this.chain.size}`);
+
+    // Build progress line — summarize verdict for user display
+    const parts: string[] = [];
+    if (relevant > 0) parts.push(`${relevant} traced`);
+    if (passthrough > 0) parts.push(`${passthrough} pass`);
+    if (totalRemoved > 0) parts.push(`${totalRemoved} pruned`);
+    const verdictSummary = parts.join(', ') || 'no verdicts';
+    this.buildProgressLine(focusName, verdictSummary, totalRemoved, 0);
+
     return { ok: true, advanced, frontierSize: this.frontier.length };
+  }
+
+  // ─── Verdict handlers (extracted from submitVerdicts for single-responsibility) ─
+
+  /** Store AI notes in the focus node's chain entry + detail memory. Short memory is updated separately after verdicts. */
+  private storeFocusNodeDetail(params: { notes?: string; badge_label?: string; note_caption?: string }): void {
+    if (!params.notes || !this.currentFocusNodeId) return;
+    let focusChain = this.chain.get(this.currentFocusNodeId);
+    if (!focusChain) {
+      const focusNode = this.nodeMap.get(this.currentFocusNodeId);
+      if (focusNode) {
+        focusChain = {
+          nodeId: this.currentFocusNodeId,
+          schema: focusNode.schema,
+          name: focusNode.name,
+          type: focusNode.type,
+          columnsIn: [...this.currentFocusActiveColumns],
+          columnsOut: [],
+          summary: '',
+          boundaryFlag: 'none',
+        };
+        this.chain.set(this.currentFocusNodeId, focusChain);
+      }
+    }
+    if (focusChain) {
+      focusChain.notes = params.notes;
+      this.storeDetail(this.currentFocusNodeId, params.notes, focusChain.summary || '', {
+        badge_label: params.badge_label,
+        note_caption: params.note_caption,
+      });
+    }
+  }
+
+  /** Validate column names for a trace verdict. Returns error object or null if valid. */
+  private validateTraceColumns(nodeId: string, columnsOut?: string[]): { error: string; hint?: string; nodeId?: string; invalid?: string[]; valid?: string[] } | null {
+    if (!columnsOut?.length && this.targetColumns.length > 0) {
+      return { error: 'missing_columns', hint: `Verdict "trace" for ${nodeId} requires columnsOut (column mode).` };
+    }
+    if (!columnsOut?.length) return null;
+    const neighbor = this.nodeMap.get(nodeId);
+    const neighborCols = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined);
+    if (neighborCols?.length) {
+      const validSet = new Set(neighborCols.map(c => c.name.toLowerCase()));
+      const invalid = columnsOut.filter(c => !validSet.has(c.toLowerCase()));
+      if (invalid.length > 0) {
+        this.rejectionsThisHop++;
+        this.rejectionHistory.push({ hop: this.hopCount, nodeId, submitted: invalid, valid: neighborCols.map(c => c.name) });
+        this.log('debug', `REJECT (${this.rejectionsThisHop}): columns [${invalid}] not found on ${nodeId}. Valid: [${neighborCols.map(c => c.name)}]`);
+        return {
+          error: 'invalid_columns',
+          nodeId,
+          invalid,
+          valid: neighborCols.map(c => c.name),
+          hint: this.rejectionsThisHop >= MAX_REJECTIONS_PER_HOP
+            ? `Column rejected ${this.rejectionsThisHop} times. Fix the column name, or prune/pass this neighbor to continue the trace.`
+            : 'Fix the column name from the valid list and resubmit.',
+        };
+      }
+    } else if (neighbor?.type === 'procedure') {
+      const focusId = this.currentFocusNodeId ?? '';
+      const isExec = this.edgeTypeMap.get(`${focusId}→${nodeId}`) === 'exec'
+        || this.edgeTypeMap.get(`${nodeId}→${focusId}`) === 'exec';
+      if (isExec) {
+        this.log('debug', `SP→SP exec: ${focusId} → ${nodeId} — column validation skipped`);
+      }
+    }
+    return null;
+  }
+
+  /** Dispatch a single verdict to its handler. Returns advanced count or error. */
+  private applyVerdict(v: {
+    nodeId: string;
+    verdict: HopVerdict;
+    columnsOut?: string[];
+    summary?: string;
+    question?: string;
+  }): { advanced: number } | { error: string; hint?: string } {
+    switch (v.verdict) {
+      case 'prune': return this.applyPrune(v);
+      case 'revisit': return this.applyRevisit(v);
+      case 'pass': return this.applyPass(v);
+      default: return this.applyTrace(v);
+    }
+  }
+
+  /** Prune: remove node from graph + cascade. SM-internal skip if chain/orphan guard fires. */
+  private applyPrune(v: { nodeId: string; summary?: string }): { advanced: number } {
+    // O(1) guard: chain nodes can never be pruned
+    if (this.chain.has(v.nodeId)) {
+      this.log('debug', `Verdict: ${v.nodeId} = prune → auto-skipped (already in chain)`);
+      return { advanced: 0 };
+    }
+    // O(V+E) guard: reject if prune would orphan a chain node
+    const chainIds = new Set(this.chain.keys());
+    if (chainIds.size > 0) {
+      const orphanedId = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, chainIds, v.nodeId);
+      if (orphanedId) {
+        this.log('debug', `Verdict: ${v.nodeId} = prune → skipped (would orphan chain node ${orphanedId})`);
+        return { advanced: 0 };
+      }
+    }
+    this.markPruned(v.nodeId, v.summary ?? 'Pruned by AI', {
+      parentColumns: [...this.currentFocusActiveColumns],
+      depth: this.currentFocusDepth + 1,
+      parentNodeId: this.currentFocusNodeId,
+    });
+    this.log('debug', `Verdict: ${v.nodeId} = prune ("${v.summary ?? ''}")`);
+    return { advanced: 0 };
+  }
+
+  /** Revisit: restore a previously pruned node to the frontier. AI-correctable error on invalid. */
+  private applyRevisit(v: { nodeId: string; columnsOut?: string[]; question?: string }): { advanced: number } | { error: string; hint?: string } {
+    if (!this.prunedEntries.has(v.nodeId)) {
+      return { error: 'revisit_invalid', hint: `${v.nodeId} was not previously pruned — only pruned nodes can be revisited.` };
+    }
+    if (this.revisitCount >= MAX_REVISITS) {
+      return { error: 'revisit_cap_reached', hint: `Maximum ${MAX_REVISITS} revisits per trace. Remaining revisits: 0.` };
+    }
+    const stored = this.restorePruned(v.nodeId)!;
+    this.revisitCount++;
+    const revisitColumns = v.columnsOut?.length ? v.columnsOut : stored.parentColumns;
+    this.frontierPush({
+      nodeId: v.nodeId,
+      activeColumns: revisitColumns,
+      depth: stored.depth,
+      parentNodeId: stored.parentNodeId,
+      question: v.question ?? `Revisiting ${v.nodeId} — previously pruned, now relevant.`,
+    });
+    this.log('info', `Verdict: ${v.nodeId} = REVISIT (${this.revisitCount}/${MAX_REVISITS}) → re-added to frontier`);
+    return { advanced: 1 };
+  }
+
+  /** Pass: mark as passthrough, queue as lightweight focus hop (AI verdicts neighbors). */
+  private applyPass(v: { nodeId: string; columnsOut?: string[] }): { advanced: number } {
+    const boundary = this.detectBoundary(v.nodeId);
+    const passColumns = v.columnsOut?.length ? v.columnsOut : this.currentFocusActiveColumns;
+    this.passthroughMap.set(v.nodeId, [...passColumns]);
+    if (boundary !== 'none') {
+      this.visited.add(v.nodeId);
+      this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}) → terminal`);
+      return { advanced: 0 };
+    }
+    // Queue as lightweight focus hop — AI will see neighbors and verdict them
+    // NOT marked visited yet — will be visited when getHopContext() pops it
+    const entry: FrontierEntry = {
+      nodeId: v.nodeId,
+      activeColumns: passColumns,
+      depth: this.currentFocusDepth + 1,
+      parentNodeId: this.currentFocusNodeId ?? '',
+      question: `Passthrough — which neighbors carry [${passColumns.join(', ')}] upstream?`,
+    };
+    this.frontierUpdateOrPush(entry);
+    this.log('debug', `Verdict: ${v.nodeId} = pass → queued as focus hop (no auto-expand)`);
+    return { advanced: 1 };
+  }
+
+  /** Trace: add to chain (or merge if convergent path), push to frontier. */
+  private applyTrace(v: { nodeId: string; columnsOut?: string[]; summary?: string; question?: string }): { advanced: number } {
+    const boundary = this.detectBoundary(v.nodeId);
+    const neighbor = this.nodeMap.get(v.nodeId);
+
+    // Chain entry: merge or create
+    const existingChain = this.chain.get(v.nodeId);
+    if (existingChain) {
+      const mergedIn = new Set([...existingChain.columnsIn, ...this.currentFocusActiveColumns]);
+      existingChain.columnsIn = [...mergedIn];
+      if (v.columnsOut?.length) {
+        const mergedOut = new Set([...existingChain.columnsOut, ...v.columnsOut]);
+        existingChain.columnsOut = [...mergedOut];
+      }
+      this.log('debug', `Verdict: ${v.nodeId} = trace (merge into existing chain entry), columnsIn=[${existingChain.columnsIn}]`);
+    } else {
+      this.chain.set(v.nodeId, {
+        nodeId: v.nodeId,
+        schema: neighbor?.schema ?? '',
+        name: neighbor?.name ?? '',
+        type: neighbor?.type ?? '',
+        columnsIn: [...this.currentFocusActiveColumns],
+        columnsOut: v.columnsOut ?? [],
+        summary: v.summary ?? '',
+        boundaryFlag: boundary,
+      });
+      if (v.summary) {
+        this.storeDetail(v.nodeId, v.summary, v.summary, {});
+      }
+    }
+
+    // Frontier: update or push (non-boundary only)
+    if (boundary === 'none') {
+      const entry: FrontierEntry = {
+        nodeId: v.nodeId,
+        activeColumns: v.columnsOut ?? [],
+        depth: this.currentFocusDepth + 1,
+        parentNodeId: this.currentFocusNodeId ?? '',
+        question: v.question,
+      };
+      const action = this.frontierUpdateOrPush(entry);
+      if (action === 'updated') {
+        this.log('debug', `Verdict: ${v.nodeId} = trace, updated existing frontier entry${v.question ? ` Q: "${v.question}"` : ''}`);
+      } else {
+        this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
+      }
+      return { advanced: 1 };
+    }
+    this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
+    return { advanced: 0 };
+  }
+
+  // ─── submitBatch (inline mode) ──────────────────────────────────────────────
+
+  /**
+   * Batch submit all verdicts at once (inline mode only).
+   * AI provides verdicts keyed by node ID. SM loops frontier internally:
+   *   getHopContext() → match AI verdict → submitVerdicts() → repeat
+   * Stops on first rejection or when frontier is empty.
+   */
+  submitBatch(entries: Array<{
+    nodeId: string;
+    notes?: string;
+    badge_label?: string;
+    note_caption?: string;
+    verdicts: Array<{
+      nodeId: string;
+      verdict: HopVerdict;
+      columnsOut?: string[];
+      summary?: string;
+      question?: string;
+    }>;
+  }>): { ok: true; result: ReturnType<ColumnTraceState['getResult']> }
+     | { error: string; hint?: string; processed: number; failed_node?: string } {
+
+    if (!this._inlineMode) {
+      return { error: 'batch_not_inline', hint: 'Batch submit is only available in inline mode.', processed: 0 };
+    }
+
+    const entryMap = new Map(entries.map(e => [e.nodeId.toLowerCase(), e]));
+    let processed = 0;
+    let batchGuard = entryMap.size + this.frontier.length + 1;
+
+    while (batchGuard-- > 0) {
+      // If already awaiting verdicts (first hop from init), use current focus.
+      // Otherwise advance to next hop.
+      if (this._status !== 'awaiting_verdicts') {
+        const hop = this.getHopContext();
+        if ('done' in hop) break;
+        if ('error' in hop) return { error: hop.error, hint: 'Internal hop error', processed, failed_node: this.currentFocusNodeId ?? undefined };
+      }
+
+      const focusId = this.currentFocusNodeId!;
+      const entry = entryMap.get(focusId.toLowerCase());
+      if (!entry) {
+        // AI didn't provide verdict for this focus node — return partial result
+        return {
+          error: 'missing_verdict',
+          hint: `No verdict provided for focus node ${focusId}. Provide a verdict and resubmit.`,
+          processed,
+          failed_node: focusId,
+        };
+      }
+
+      const result = this.submitVerdicts({
+        focusNodeId: focusId,
+        notes: entry.notes,
+        badge_label: entry.badge_label,
+        note_caption: entry.note_caption,
+        verdicts: entry.verdicts,
+      });
+
+      if ('error' in result) {
+        return { error: result.error, hint: (result as { hint?: string }).hint, processed, failed_node: focusId };
+      }
+      processed++;
+    }
+
+    if (batchGuard <= 0) this.log('warn', `CT submitBatch: loop guard exhausted after ${processed} hops`);
+    this.log('info', `Batch complete: ${processed} hops processed`);
+    return { ok: true, result: this.getResult() };
   }
 
   // ─── getResult ─────────────────────────────────────────────────────────────
@@ -692,6 +884,11 @@ export class ColumnTraceState {
     outOfScope: OutOfScopeEntry[];
     stats: { hops: number; examined: number; relevant: number; removed: number; passthrough: number };
     column_rejections?: Array<{ hop: number; nodeId: string; submitted: string[]; valid: string[] }>;
+    suggested_labels: Array<{ node_id: string; text: string }>;
+    suggested_notes:  Array<{ node_id: string; text: string }>;
+    suggested_sections: Array<{ label: string; node_ids: string[] }>;
+    short_memory: ShortMemory;
+    detail_slots: DetailSlot[];
   } | { error: string; hint?: string } {
 
     if (this._status === 'created' || this._status === 'error' || this._status === 'awaiting_verdicts') {
@@ -710,26 +907,14 @@ export class ColumnTraceState {
       chainArr[i].index = `${i + 1}/${chainArr.length}`;
     }
 
-    // Build fullNodes: DDL for relevant, columns for passthrough
+    // Build fullNodes via base class — inlineMode gates DDL/cols inclusion
     const relevantIds = new Set(this.chain.keys());
     const allIds = new Set([...relevantIds, ...this.passthroughMap.keys()]);
     const fullNodes: Record<string, unknown>[] = [];
 
     for (const id of allIds) {
-      const node = this.nodeMap.get(id);
-      if (!node) continue;
-      const out: Record<string, unknown> = {
-        id: node.id, s: node.schema, n: node.name, t: node.type,
-      };
-      const idDdl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
-      if (relevantIds.has(id) && SCRIPT_TYPES.has(node.type) && idDdl) {
-        out.ddl = idDdl; // Full DDL — never truncated
-      }
-      const idCols = getNodeColumns(id, this.nodeMap, this.store ?? undefined);
-      if (idCols?.length) {
-        out.cols = idCols.map(c => strip(presentColumn(c)));
-      }
-      fullNodes.push(strip(out) as Record<string, unknown>);
+      const role = relevantIds.has(id) ? 'relevant' : 'passthrough';
+      fullNodes.push(this.buildFullNode(id, role));
     }
 
     // Build edges between chain + passthrough nodes
@@ -748,9 +933,47 @@ export class ColumnTraceState {
       passthrough: this.passthroughMap.size,
     };
 
-    const pruneRate = this.scopeSize > 0 ? Math.round(((this.scopeSize - stats.examined) / this.scopeSize) * 100) : 0;
-    this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeSize} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
+    const pruneRate = this.scopeNodeIds.size > 0 ? Math.round(((this.scopeNodeIds.size - stats.examined) / this.scopeNodeIds.size) * 100) : 0;
+    this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeNodeIds.size} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
     this.log('debug', `COMPLETE detail | fullNodes=${fullNodes.length} | edges=${edges.length} | outOfScope=${this.outOfScope.length} | revisits=${this.revisitCount}`);
+
+    // Derive badge/note suggestions from chain entries.
+    // Chain is already the curated traced set — every entry is a relevant node.
+    // badge_label from detail slot (AI-provided) falls back to node name.
+    // notes = AI's per-hop findings (richer). summary = verdict reason (always set).
+    const BADGE_NUM_RE = /^\d+[\.\s]+/;
+    const stripBadgeNum = (s: string) => s.replace(BADGE_NUM_RE, '').trim();
+    const suggested_labels = chainArr.map(e => {
+      const slot = this.detailSlots.get(e.nodeId);
+      const label = slot?.badge_label ? stripBadgeNum(slot.badge_label) : e.name;
+      return { node_id: e.nodeId, text: label };
+    });
+    const suggested_notes  = chainArr.map(e => {
+      const slot = this.detailSlots.get(e.nodeId);
+      return { node_id: e.nodeId, text: slot?.note_caption ?? e.notes ?? e.summary };
+    });
+
+    // Group per-node labels into sections by shared badge_label, depth-ordered.
+    // Uses the same depth ordering as the parent's getResult() — chainArr is already in BFS order.
+    const sectionMap = new Map<string, string[]>();
+    const sectionOrder: string[] = [];
+    for (const sl of suggested_labels) {
+      const slot = this.detailSlots.get(sl.node_id);
+      if (!slot?.badge_label) continue; // Only nodes with explicit badge_label form sections
+      const label = stripBadgeNum(slot.badge_label);
+      if (!sectionMap.has(label)) {
+        sectionMap.set(label, []);
+        sectionOrder.push(label);
+      }
+      sectionMap.get(label)!.push(sl.node_id);
+    }
+    const suggested_sections = sectionOrder.map(label => ({
+      label,
+      node_ids: sectionMap.get(label)!,
+    }));
+
+    // Attach both memory tiers (matches BB pattern via buildSharedResult → getMemoryForSynthesis)
+    const memory = this.getMemoryForSynthesis();
 
     return {
       status: 'complete',
@@ -759,19 +982,21 @@ export class ColumnTraceState {
       direction: this.direction,
       chain: chainArr, fullNodes, edges, outOfScope: this.outOfScope, stats,
       ...(this.rejectionHistory.length > 0 && { column_rejections: this.rejectionHistory }),
+      suggested_labels,
+      suggested_notes,
+      suggested_sections,
+      short_memory: memory.short_memory,
+      detail_slots: memory.detail_slots,
     };
   }
 
   // ─── Accessors ─────────────────────────────────────────────────────────────
 
-  get status(): string { return this._status; }
   get isInitialized(): boolean { return this._status !== 'created' && this._status !== 'error'; }
   get isComplete(): boolean { return this._status === 'complete'; }
   get isAwaitingVerdicts(): boolean { return this._status === 'awaiting_verdicts'; }
   get hops(): number { return this.hopCount; }
   get frontierSize(): number { return this.frontier.length; }
-  get scope(): number { return this.scopeSize; }
-  get visited_count(): number { return this.visited.size; }
   get removedCount(): number { return this.removedSet.size; }
   get chainSize(): number { return this.chain.size; }
   get columns(): readonly string[] { return this.targetColumns; }
@@ -808,7 +1033,7 @@ export class ColumnTraceState {
     }
   }
 
-  private detectBoundary(nodeId: string): BoundaryFlag {
+  protected override detectBoundary(nodeId: string): BoundaryFlag {
     const node = this.nodeMap.get(nodeId);
     if (!node) return 'external';
     if (node.type === 'external') return 'external';
@@ -819,7 +1044,7 @@ export class ColumnTraceState {
     return 'none';
   }
 
-  private boundaryReason(flag: BoundaryFlag, node: LineageNode): string {
+  protected override boundaryReason(flag: BoundaryFlag, node: LineageNode): string {
     switch (flag) {
       case 'source': return 'No upstream SP writes to this object — source boundary';
       case 'sink': return 'No downstream readers — sink boundary';
@@ -849,8 +1074,7 @@ export class ColumnTraceState {
     let cascaded = 0;
     for (let i = this.frontier.length - 1; i >= 0; i--) {
       if (!reachable.has(this.frontier[i].nodeId)) {
-        this.removedSet.add(this.frontier[i].nodeId);
-        this.outOfScope.push({ nodeId: this.frontier[i].nodeId, reason: 'Cascade-removed (unreachable after prune)' });
+        this.markCascadeRemoved(this.frontier[i].nodeId);
         this.frontierIds.delete(this.frontier[i].nodeId);
         this.frontier.splice(i, 1);
         cascaded++;
@@ -869,30 +1093,30 @@ export class ColumnTraceState {
         this.log('warn', `Frontier cap (${this.maxFrontierSize}) — ${nid} added to outOfScope`);
         continue;
       }
-      this.frontier.push({
+      this.frontierPush({
         nodeId: nid,
         activeColumns: [...activeColumns],
         depth: parentDepth + 1,
         parentNodeId: nodeId,
       });
-      this.frontierIds.add(nid);
       added++;
     }
     return added;
   }
 
-  /** Direction-aware BFS via NeighborIndex to compute reachable scope (no graphology needed). */
-  private bfsScope(startId: string): Set<string> {
+  /** Direction-aware BFS via NeighborIndex to compute reachable scope. */
+  private bfsScopeViaIndex(startId: string, maxDepth?: number): Set<string> {
     const seen = new Set<string>([startId]);
-    const queue = [startId];
+    const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
     let idx = 0;
     while (idx < queue.length) {
-      const id = queue[idx++];
+      const { id, depth } = queue[idx++];
+      if (maxDepth !== undefined && depth >= maxDepth) continue;
       const neighbors = this.getDirectionalNeighbors(id);
       for (const nid of neighbors) {
         if (!seen.has(nid)) {
           seen.add(nid);
-          queue.push(nid);
+          queue.push({ id: nid, depth: depth + 1 });
           if (seen.size >= BFS_SCOPE_CAP) return seen;
         }
       }
