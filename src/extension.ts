@@ -1283,6 +1283,22 @@ export function activate(context: vscode.ExtensionContext) {
         let actionRequiredPending = false;
         const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
 
+        /** Drop hop history at SM completion — detail_slots contain all evidence.
+         *  Keeps: system prompt + user question + last tool round (getResult() response).
+         *  Only for hop-by-hop mode (sliding memory); inline mode has no multi-hop history. */
+        const cleanContextForSynthesis = (smLabel: string) => {
+          const lastAssistant = messages[messages.length - 2]; // Assistant with final tool call
+          const lastResult = messages[messages.length - 1];     // User with getResult() response
+          const beforeCount = messages.length;
+          messages.length = 0;
+          messages.push(vscode.LanguageModelChatMessage.User(systemPrompt));
+          messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
+          messages.push(lastAssistant);
+          messages.push(lastResult);
+          logDebug(outputChannel, 'AI',
+            `[${smLabel}] Clean context for synthesis: ${beforeCount} → ${messages.length} messages`);
+        };
+
         while (roundCount < MAX_ROUNDS) {
           roundCount++;
 
@@ -1505,6 +1521,7 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'ct_done';
             phaseTransitions.push(`ct_active→ct_done@R${roundCount}`);
             lineageTools = smDoneTools();
+            if (!_columnTraceState.inlineMode) cleanContextForSynthesis('CT');
             logDebug(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
@@ -1550,6 +1567,7 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'bb_done';
             phaseTransitions.push(`bb_active→bb_done@R${roundCount}`);
             lineageTools = smDoneTools();
+            if (!_blackboardState.inlineMode) cleanContextForSynthesis('BB');
             logDebug(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
