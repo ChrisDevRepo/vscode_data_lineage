@@ -467,7 +467,7 @@ export class BlackboardState extends HopStateMachine {
     this.log('debug', `BB submit detail | ${focusNodeId} | summary=${summary.length}ch | tags=[${tags?.join(',') ?? ''}] | advanced=${advanced} | notes_total=${this.detailSlots.size} | coverage=${this.coveragePct}%`);
 
     const nodeName = this.nodeMap.get(focusNodeId)?.name ?? focusNodeId;
-    this.buildProgressLine(nodeName, verdict, pruned, added, this.agenda.length);
+    this.buildProgressLine(nodeName, verdict, pruned, added);
 
     const base = {
       ok: true as const, advanced, agendaSize: this.agenda.length,

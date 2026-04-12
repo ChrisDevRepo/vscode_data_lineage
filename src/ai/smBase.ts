@@ -283,7 +283,6 @@ export abstract class HopStateMachine implements IHopStateMachine {
     verdict: string,
     prunedCount: number,
     addedCount: number,
-    _remaining: number,
   ): void {
     let scopeChange = '';
     if (prunedCount > 0) scopeChange = ` · pruned ${prunedCount}`;

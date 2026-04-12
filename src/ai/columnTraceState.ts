@@ -589,7 +589,7 @@ export class ColumnTraceState extends HopStateMachine {
     if (passthrough > 0) parts.push(`${passthrough} pass`);
     if (totalRemoved > 0) parts.push(`${totalRemoved} pruned`);
     const verdictSummary = parts.join(', ') || 'no verdicts';
-    this.buildProgressLine(focusName, verdictSummary, totalRemoved, 0, this.frontier.length);
+    this.buildProgressLine(focusName, verdictSummary, totalRemoved, 0);
 
     return { ok: true, advanced, frontierSize: this.frontier.length };
   }
