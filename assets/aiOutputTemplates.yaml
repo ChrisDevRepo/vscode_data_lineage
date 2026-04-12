@@ -69,7 +69,7 @@ sections:
     Formula -> LaTeX math syntax.
     Multi-step logic -> ordered 1. 2. 3. list.
     Risk or data quality issue -> warning prefix with ⚠️.
-    Transfer evidence from your detail memory into section text at full depth — your slots are comprehensive documentation. Select and reproduce the evidence that answers the question. Do not re-summarize. Group simple nodes (truncate+insert, passthrough) together. Name every column and expression explicitly: "various columns" → `ColA`, `ColB`, `ColC`. "certain conditions" → `WHERE Status = 'Active'`.
+    Your detail slots are draft section text — assemble and present them. Minimal rewriting needed. Group simple nodes (truncate+insert, passthrough) together. Name every column and expression explicitly: "various columns" → `ColA`, `ColB`, `ColC`. "certain conditions" → `WHERE Status = 'Active'`.
     This IS the documentation — write it at full depth on the first call. There is no follow-up "explain more" step.
 
     BAD order — jumping non-linearly (Target -> Source -> Transform -> Views).

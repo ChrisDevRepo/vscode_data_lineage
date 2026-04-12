@@ -961,7 +961,7 @@
             },
             "notes": {
               "type": "string",
-              "description": "Your findings for the focus node — free-form text describing what you observed in the DDL"
+              "description": "Draft section text — business meaning first (formulas in LaTeX, column renames as | From | To | tables, what each value represents), then SQL as supporting evidence. This content becomes the final document."
             },
             "verdicts": {
               "type": "array",
@@ -1103,7 +1103,7 @@
             },
             "findings": {
               "type": "string",
-              "description": "Comprehensive analysis — business meaning first (what does this logic accomplish?), then SQL evidence (quote key expressions). Scale depth to complexity."
+              "description": "Draft section text — business meaning first (formulas in LaTeX, column renames as | From | To | tables, what each value represents), then SQL as supporting evidence. This content becomes the final document."
             },
             "summary": {
               "type": "string",

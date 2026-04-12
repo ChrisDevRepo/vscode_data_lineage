@@ -23,17 +23,22 @@ const BLOCK = {
 
   /** Step 2 — record detailed findings (→ detail memory slot) */
   writeFindings:
-    'Write findings to detail memory — document this node comprehensively:\n' +
-    '- relevant/trace → full analysis (hard limit 8000 chars). Use the budget: simple passthrough ~300 chars, moderate transform ~1000-2000 chars, complex multi-CTE SP ~3000-6000 chars. Self-contained — written to answer the user\'s question. Lead with BUSINESS MEANING: what does this logic accomplish? Then cite SQL expressions as evidence. When a node computes a formula, write it in LaTeX math syntax.\n' +
-    '  Include each aspect present:\n' +
-    '  COLUMNS: key column names, types, constraints (PK/FK/nullable)\n' +
-    '  TRANSFORMS: expressions, CASE/COALESCE, computed columns (quote the SQL fragment)\n' +
-    '  JOINS: join conditions (table.col = table.col)\n' +
-    '  FILTERS: WHERE/HAVING business rules\n' +
-    '  DATA FLOW: how data enters and leaves (INSERT/SELECT/MERGE/EXEC). Note the loading pattern: full (TRUNCATE+INSERT), incremental, SCD2, MERGE upsert.\n' +
-    '  QUESTION RELEVANCE: how this node answers the user question\n' +
-    '  OBSERVATIONS: DDL comments, version annotations, performance risks, or anti-patterns you notice.\n' +
-    '  Quote SQL verbatim — ground truth for synthesis. Then explain what each expression means in business terms.\n' +
+    'Write findings to detail memory — this content becomes the final document:\n' +
+    '- relevant/trace → full analysis (hard limit 8000 chars). Self-contained — written to answer the user\'s question.\n' +
+    '  CLASSIFY the question — this drives findings depth:\n' +
+    '    WHAT the data means → lead with business meaning: formulas in LaTeX math syntax, column renames as | From | To | Business meaning | table, what each value represents, which consumers are affected.\n' +
+    '    HOW the pipeline runs → lead with execution: join strategies, loading patterns, constraints, rebuild order.\n' +
+    '    For blended questions: combine both — business meaning first.\n' +
+    '  FORMAT to fit content:\n' +
+    '    Column rename or mapping → | From | To | Notes | table.\n' +
+    '    Formula → LaTeX math syntax.\n' +
+    '    Multi-step logic → ordered 1. 2. 3. list.\n' +
+    '    Risk or data quality → ⚠️ prefix.\n' +
+    '  Name every column and expression explicitly — never "various columns" or "certain conditions".\n' +
+    '  Quote key SQL as supporting evidence for your business explanation.\n' +
+    '  Write as draft section text — this content is assembled directly into the final document. Full depth, no follow-up step.\n' +
+    '  BAD: "COLUMNS: OrderID (int PK), Qty (decimal), UnitPrice (money)"\n' +
+    '  GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT. Reads Qty from staging (rename OrderQty → Qty), UnitPrice from price view (PriceMaster lookup).\\n| Source | Column | Transform | Output |\\n| FactOrders | OrderQty | rename | Qty |\\n| PriceMaster | ListPrice | markup formula | UnitPrice |"\n' +
     '- pass → summary only (~100-200 chars): what passes through, from where to where.\n' +
     '- irrelevant/prune → brief summary only.',
 
@@ -114,15 +119,12 @@ const BLOCK = {
     'SYNTHESIS GROUNDING CONTRACT:\n' +
     'At completion, your detail memory slots are returned — one per visited node, always at full fidelity.\n' +
     'These are your ONLY evidence for writing enrich_view. Raw DDL is NOT re-delivered.\n' +
+    'Your slots are draft section text — assemble them into enrich_view sections with minimal rewriting.\n' +
     'Rules:\n' +
-    '- Every claim must cite a detail slot. Your slots contain comprehensive documentation — reproduce the key evidence, do not compress or re-summarize.\n' +
+    '- Every claim must cite a detail slot. Do not compress or re-summarize — present at full depth.\n' +
     '- If a slot lacks evidence for a claim, omit the claim — do not invent\n' +
     '- Group nodes by role in answering the question, not by schema\n' +
-    '- If detail memory is insufficient for a node, use get_object_detail to re-read its DDL\n' +
-    '- Adapt section content to the question (one or more may apply):\n' +
-    '  WHAT the data means (business logic, column trace, impact) → foreground formulas, rename chains, business meaning from your findings.\n' +
-    '  HOW the pipeline runs (performance, technical, patterns) → foreground execution patterns, join strategies, constraint gaps from your findings.\n' +
-    '  For documentation or blended questions: combine both perspectives.\n' +
+    '- If a slot reads like a technical index (column types, raw SQL without explanation) rather than business narrative, call get_object_detail to re-read its DDL and extract the missing business interpretation\n' +
     '- When a section groups multiple nodes, decide per-node depth by distinctness:\n' +
     '  DISTINCT logic → cite each: node name, role, key evidence, meaning.\n' +
     '  SIMILAR logic → summarize the group with one representative, then list variations.\n' +
@@ -140,11 +142,10 @@ export function buildSynthesisReminder(question: string): string {
   return (
     'SYNTHESIS REMINDER — re-read before generating enrich_view:\n' +
     `- User question: "${question}"\n` +
-    '- Business meaning is PRIMARY. Technical detail is supporting evidence only.\n' +
-    '- Use LaTeX math syntax for formulas.\n' +
-    '- Every badged node (verdict=relevant): 3+ sentences with SQL evidence + business meaning.\n' +
-    '- Reproduce evidence from your detail slots — do not re-summarize.\n' +
-    '- Before writing enrich_view: review your detail slots. If any badged node lacks business meaning or formula evidence, call get_object_detail to re-read its DDL.'
+    '- Your detail slots are draft section text — assemble into enrich_view sections.\n' +
+    '- Every badged node: 3+ sentences with business meaning + SQL evidence.\n' +
+    '- Present at full depth — do not compress or re-summarize.\n' +
+    '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.'
   );
 }
 
