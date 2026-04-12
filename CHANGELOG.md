@@ -1,18 +1,25 @@
 # Changelog
 
-## [0.9.8] - 2026-04-11
+## [0.9.8] - 2026-04-12
 
 ### Added
 - **Structured graph descriptions** — AI results organized into labeled sections ordered by data flow, with matching badge numbers on nodes
 - **"Show in Graph" button** — one-click after AI trace completes
+- **`@lineage` loading pattern detection** — AI memory captures full/incremental/SCD2/MERGE patterns per node
+- **`@lineage` DDL observations** — AI memory captures code comments, version annotations, performance risks, anti-patterns
 
 ### Changed
+- **Question-adaptive AI output** — sections adapt to question type: business logic leads with formulas/renames, performance leads with execution patterns, documentation combines both
+- **Richer AI detail memory** — comprehensive per-node documentation with SQL evidence + business meaning (8000 char limit, up from 5000)
 - **Faster AI on small scopes** — small traces deliver all data at once; larger scopes use hop-by-hop with persistent memory
 - **More accurate AI findings** — citations reference verbatim SQL evidence instead of generic summaries
-- **Clearer trace progress** — "visited X of S" replaces fluctuating estimates
+- **Clearer trace progress** — "Node X of Y" shows stable scope total instead of dynamic frontier count
 
 ### Fixed
 - **AI memory reliability** — centralized short memory validation with soft/hard limits; removed silent truncation and duplicated checks
+- **`@lineage` follow-up links** — removed "Detailed explanation" link (documentation is now full-depth on first render); fixed "Explore top hub" matching wrong tools
+- **`@lineage` LaTeX in chat** — added rule to use ```math fenced blocks instead of $$ delimiters
+- **OOP scopeSize getter** — consolidated CT/BB scope accessors into base class; removed redundant CT private field
 - **Schema-aware AI queries** — `@lineage` scopes searches to active schema filter
 - **Find Path ignores filters** — searches the full model regardless of active filters
 - **Reliable search from overview** — drill-down from schema overview works without race conditions
