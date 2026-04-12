@@ -44,7 +44,7 @@ import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog }
 import { compactNoiseResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
 import { buildSystemPromptBase } from './ai/prompts';
-import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt } from './ai/smPrompts';
+import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt, buildSynthesisReminder } from './ai/smPrompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -784,6 +784,9 @@ export function activate(context: vscode.ExtensionContext) {
             // Store result graph for enrich_view
             if (!('error' in fullResult)) {
               storeCtResultGraph(fullResult);
+              // Inject synthesis reminder at END of result — highest attention zone
+              (fullResult as unknown as Record<string, unknown>).synthesis_reminder =
+                buildSynthesisReminder('column trace — focus on data flow and column transformations');
             }
             return logAndReturn('submit_hop_analysis', fullResult);
           }
@@ -955,6 +958,9 @@ export function activate(context: vscode.ExtensionContext) {
             const fullResult = _blackboardState.getResult();
             if (!('error' in fullResult)) {
               storeBbResultGraph(fullResult);
+              // Inject synthesis reminder at END of result — highest attention zone (Anthropic: +30%)
+              (fullResult as unknown as Record<string, unknown>).synthesis_reminder =
+                buildSynthesisReminder(_blackboardState.question);
             }
             return logAndReturn('submit_findings', fullResult);
           }

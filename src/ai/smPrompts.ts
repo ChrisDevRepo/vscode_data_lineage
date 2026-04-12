@@ -131,6 +131,23 @@ const BLOCK = {
     'adjust labels if needed, and write text per section from your detail memory findings.',
 } as const;
 
+// ─── Synthesis Reminder (injected at END of SM result — highest attention zone) ──
+
+/** Build a synthesis reminder appended to the SM result at completion.
+ *  Research: instructions at end of context improve quality by ~30% (Anthropic long-context guidance).
+ *  The buildBbPrompt()/buildCtPrompt() instructions from 26+ rounds ago are in the attention dead zone. */
+export function buildSynthesisReminder(question: string): string {
+  return (
+    'SYNTHESIS REMINDER — re-read before generating enrich_view:\n' +
+    `- User question: "${question}"\n` +
+    '- Business meaning is PRIMARY. Technical detail is supporting evidence only.\n' +
+    '- Use ```math blocks for formulas in section text.\n' +
+    '- Every badged node (verdict=relevant): 3+ sentences with SQL evidence + business meaning.\n' +
+    '- Reproduce evidence from your detail slots — do not re-summarize.\n' +
+    '- Before writing enrich_view: review your detail slots. If any badged node lacks business meaning or formula evidence, call get_object_detail to re-read its DDL.'
+  );
+}
+
 // ─── Mode Prompts (composed from blocks) ────────────────────────────────────
 
 /** BB — free exploration with agenda */
