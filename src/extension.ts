@@ -1602,7 +1602,17 @@ export function activate(context: vscode.ExtensionContext) {
         const modeLabel = _blackboardState ? 'exploration' : _columnTraceState ? 'trace' : 'discover';
         logInfo(outputChannel, 'AI', `Summary — model: ${request.model.id}, mode: ${modeLabel}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst} (${budgetPct}% of ${_aiMaxInputTokens})`);
         if (toolSequence.length > 0) {
-          logDebug(outputChannel, 'AI', `Tool sequence: ${toolSequence.join(' → ')}`);
+          // Compress consecutive repeated tool names: [a, b, b, b, c] → "a, b ×3, c"
+          const compressed: string[] = [];
+          let i = 0;
+          while (i < toolSequence.length) {
+            const name = toolSequence[i];
+            let count = 1;
+            while (i + count < toolSequence.length && toolSequence[i + count] === name) count++;
+            compressed.push(count > 1 ? `${name} ×${count}` : name);
+            i += count;
+          }
+          logDebug(outputChannel, 'AI', `Tool sequence: ${compressed.join(', ')}`);
         }
         // KPI summary — dedup, rejected, errors, phase transitions, state machine stats
         const kpiParts: string[] = [];
