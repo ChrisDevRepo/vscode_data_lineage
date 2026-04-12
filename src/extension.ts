@@ -1175,8 +1175,18 @@ export function activate(context: vscode.ExtensionContext) {
           if (totalTokens > budgetTokens) {
             let evicted = 0;
             while (historyMessages.length > MIN_HISTORY_MESSAGES) {
-              historyMessages.shift();
+              // Evict in pairs: if removing an Assistant message with tool calls,
+              // also remove the next User message (tool results) to avoid orphaned
+              // tool_result blocks that cause API 400 errors.
+              const removed = historyMessages.shift()!;
               evicted++;
+              if (removed.role === vscode.LanguageModelChatMessageRole.Assistant &&
+                  Array.isArray(removed.content) &&
+                  (removed.content as unknown[]).some(p => p instanceof vscode.LanguageModelToolCallPart) &&
+                  historyMessages.length > MIN_HISTORY_MESSAGES) {
+                historyMessages.shift(); // remove paired tool_result User message
+                evicted++;
+              }
               const newText = `${systemPrompt}\n${serializeMessages(historyMessages)}\n${effectivePrompt}`;
               const newTokens = await request.model.countTokens(newText);
               if (newTokens <= budgetTokens) break;
