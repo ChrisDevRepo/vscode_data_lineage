@@ -609,6 +609,35 @@ export abstract class HopStateMachine implements IHopStateMachine {
     this.detailSlots.clear();
   }
 
+  // ── State dump ──
+
+  /** Serialize full SM state to a plain object — shared foundation for dump command and eval reports. */
+  toJSON(): Record<string, unknown> {
+    return {
+      type: this.constructor.name,
+      status: this._status,
+      originNodeId: this.originNodeId,
+      inlineMode: this._inlineMode,
+      hopCount: this.hopCount,
+      scopeSize: this.scopeNodeIds.size,
+      visitedCount: this.visited.size,
+      removedCount: this.removedSet.size,
+      currentFocusNodeId: this.currentFocusNodeId,
+      lastProgressLine: this.lastProgressLine,
+      shortMemory: {
+        narrative: [...this.shortMemory.narrative],
+        coverage: { ...this.shortMemory.coverage },
+        pending_questions: this.shortMemory.pending_questions.map(q => ({ ...q })),
+      },
+      detailSlots: Object.fromEntries(
+        [...this.detailSlots.entries()].map(([k, v]) => [k, { ...v }]),
+      ),
+      scopeNodeIds: [...this.scopeNodeIds],
+      visited: [...this.visited],
+      removedSet: [...this.removedSet],
+    };
+  }
+
   // ── Abstract methods — subclass-specific ──
 
   /** Return the scope direction for boundary detection. */

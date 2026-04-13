@@ -343,6 +343,16 @@ async function main() {
         return respond(res, deleted ? 200 : 404, { deleted });
       }
 
+      // GET /session/:id/state — full SM state dump (shared toJSON)
+      if (method === 'GET' && url.startsWith('/session/') && url.endsWith('/state')) {
+        const id = decodeURIComponent(url.slice('/session/'.length, url.length - '/state'.length));
+        const session = sessions.get(id);
+        if (!session) return respond(res, 404, { error: 'session_not_found' });
+        const sm = session.columnTraceState?.current ?? session.blackboardState?.current;
+        if (!sm) return respond(res, 404, { error: 'no_active_sm', hint: 'No state machine is active in this session.' });
+        return respond(res, 200, sm.toJSON());
+      }
+
       // POST /filter — set session-level user filter (simulates VS Code schema/type filter)
       if (method === 'POST' && url === '/filter') {
         const body = await readBody(req);

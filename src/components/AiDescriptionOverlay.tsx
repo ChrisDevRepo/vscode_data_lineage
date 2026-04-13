@@ -41,6 +41,13 @@ function mathFenceToDelimiters(md: string): string {
     result.push('$$');
   }
 
+  // Safety net: odd $$ count means an unclosed display math block will cascade.
+  // Close it to prevent all subsequent content from being eaten.
+  const dollarCount = result.filter(l => l.trim() === '$$').length;
+  if (dollarCount % 2 !== 0) {
+    result.push('$$');
+  }
+
   return result.join('\n');
 }
 

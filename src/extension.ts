@@ -280,6 +280,37 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // Command: Dump SM State — serialize active state machine to JSON file
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dataLineageViz.dumpSmState', async () => {
+      const sm = _columnTraceState ?? _blackboardState;
+      if (!sm) {
+        vscode.window.showWarningMessage('Data Lineage: No active state machine to dump.');
+        return;
+      }
+      try {
+        const dump = JSON.stringify(sm.toJSON(), null, 2);
+        const now = new Date();
+        const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+        const wsFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!wsFolder) {
+          vscode.window.showWarningMessage('Data Lineage: No workspace folder open.');
+          return;
+        }
+        const dir = vscode.Uri.joinPath(wsFolder.uri, 'ai', 'sm-dumps');
+        await vscode.workspace.fs.createDirectory(dir);
+        const fileUri = vscode.Uri.joinPath(dir, `sm-${ts}.json`);
+        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(dump, 'utf-8'));
+        logInfo(outputChannel, 'AI', `SM state dumped to ${fileUri.fsPath}`);
+        const doc = await vscode.workspace.openTextDocument(fileUri);
+        await vscode.window.showTextDocument(doc);
+      } catch (err) {
+        logError(outputChannel, 'AI', 'Dump SM state', err);
+        vscode.window.showErrorMessage('Data Lineage: Failed to dump SM state.');
+      }
+    }),
+  );
+
   // Commands: Create YAML scaffold files (parse rules + DMV queries + AI output templates)
   context.subscriptions.push(
     vscode.commands.registerCommand('dataLineageViz.createParseRules', () =>

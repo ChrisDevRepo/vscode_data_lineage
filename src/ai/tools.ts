@@ -892,30 +892,135 @@ export function autoFixEnrichView(
     fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Convert LaTeX environments to $$-delimited math (remark-math handles $$ natively).
+  // 4. Normalize LaTeX for remark-math (requires $$ on own line, code-fence semantics).
   //    ```math fences are handled at render time by mathFenceToDelimiters().
   //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
   const fixLatex = (text: string): { text: string; changed: boolean } => {
     let changed = false;
     let result = text;
 
-    // 4a. \begin{cases}...\end{cases} → $$ block
+    // 4a. Ensure every $$ is on its own line (remark-math requirement).
+    //     Split "$$content" → "$$\ncontent" and "content$$" → "content\n$$".
+    {
+      const lines = result.split('\n');
+      const out: string[] = [];
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed === '$$') {
+          out.push('$$');
+        } else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
+          // $$content$$ on one line → split into 3 lines
+          changed = true;
+          out.push('$$');
+          out.push(trimmed.slice(2, -2).trim());
+          out.push('$$');
+        } else if (trimmed.startsWith('$$')) {
+          // $$content → split opening
+          changed = true;
+          out.push('$$');
+          out.push(trimmed.slice(2).trim());
+        } else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) {
+          // content$$ → split closing (skip table rows starting with |)
+          changed = true;
+          out.push(trimmed.slice(0, -2).trim());
+          out.push('$$');
+        } else {
+          out.push(line);
+        }
+      }
+      result = out.join('\n');
+    }
+
+    // 4b. Three-$$  piecewise pattern: $$\nformula\n$$\nconditions\n$$
+    //     AI uses bare $$ instead of \begin{cases} for conditionals.
+    //     Merge into single $$ block with \begin{cases}.
+    {
+      const lines = result.split('\n');
+      const out: string[] = [];
+      let i = 0;
+      while (i < lines.length) {
+        if (lines[i].trim() === '$$') {
+          // Collect math content until next $$
+          const formulaLines: string[] = [];
+          let j = i + 1;
+          while (j < lines.length && lines[j].trim() !== '$$') {
+            formulaLines.push(lines[j]);
+            j++;
+          }
+          // j is now at the second $$
+          if (j < lines.length && lines[j].trim() === '$$') {
+            // Check if there's a third $$ with plain text between
+            const conditionLines: string[] = [];
+            let k = j + 1;
+            while (k < lines.length && lines[k].trim() !== '$$') {
+              conditionLines.push(lines[k]);
+              k++;
+            }
+            const hasConditions = conditionLines.some(l => l.trim().length > 0);
+            const looksLikePlainText = conditionLines.some(l =>
+              /\b(if|otherwise|else|when|then)\b/i.test(l) && !/\\[a-zA-Z]/.test(l)
+            );
+            if (k < lines.length && lines[k].trim() === '$$' && hasConditions && looksLikePlainText) {
+              // Merge: formula + conditions → single $$ block with \begin{cases}
+              changed = true;
+              const formulaText = formulaLines.map(l => l.trim()).join(' ').trim();
+              const caseEntries = conditionLines
+                .filter(l => l.trim().length > 0)
+                .map(l => l.trim().replace(/\\/g, '\\\\'));
+              out.push('$$');
+              out.push(formulaText + ' \\begin{cases}');
+              for (let ci = 0; ci < caseEntries.length; ci++) {
+                const entry = caseEntries[ci];
+                // Split "value if condition" into "value & \\text{if condition}"
+                const ifMatch = entry.match(/^(.+?)\s+(if\s+.+)$/i);
+                const otherMatch = entry.match(/^(.+?)\s+(otherwise|else)$/i);
+                if (ifMatch) {
+                  out.push(ifMatch[1] + ' & \\text{' + ifMatch[2] + '}' + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
+                } else if (otherMatch) {
+                  out.push(otherMatch[1] + ' & \\text{' + otherMatch[2] + '}');
+                } else {
+                  out.push(entry + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
+                }
+              }
+              out.push('\\end{cases}');
+              out.push('$$');
+              i = k + 1;
+              continue;
+            }
+          }
+        }
+        out.push(lines[i]);
+        i++;
+      }
+      result = out.join('\n');
+    }
+
+    // 4c. \begin{cases}...\end{cases} → $$ block
     result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
       return '\n$$\n' + lines.join('\n') + '\n$$\n';
     });
-    // 4b. \begin{aligned}...\end{aligned} → $$ block
+    // 4d. \begin{aligned}...\end{aligned} → $$ block
     result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
       return '\n$$\n' + lines.join('\n') + '\n$$\n';
     });
-    // 4c. Generic \begin{env}...\end{env} → $$ block
+    // 4e. Generic \begin{env}...\end{env} → $$ block
     result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
       changed = true;
       return '\n$$\n' + (body as string).trim() + '\n$$\n';
     });
+
+    // 4f. Odd $$ count safety net — close unclosed math block to prevent cascade.
+    {
+      const dollarLines = result.split('\n').filter(l => l.trim() === '$$');
+      if (dollarLines.length % 2 !== 0) {
+        changed = true;
+        result += '\n$$\n';
+      }
+    }
 
     return { text: result, changed };
   };

@@ -853,6 +853,18 @@ export class BlackboardState extends HopStateMachine {
     return wm;
   }
 
+  override toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      scopeDirection: this.scopeDirection,
+      userQuestion: this.userQuestion,
+      agenda: this.agenda.map(a => ({ ...a })),
+      agendaSize: this.agenda.length,
+      questionLog: this.questionLog.map(q => ({ ...q })),
+      invalidNodeIds: Object.fromEntries(this.invalidNodeIds),
+    };
+  }
+
   private buildMapOverview(): MapOverview {
     const nodes: Array<Record<string, unknown>> = [];
     for (const id of this.scopeNodeIds) {

@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -137,6 +137,10 @@
         "command": "dataLineageViz.copyDebugInfo",
         "title": "Data Lineage: Copy Debug Info",
         "icon": "$(bug)"
+      },
+      {
+        "command": "dataLineageViz.dumpSmState",
+        "title": "Data Lineage: Dump SM State"
       }
     ],
     "keybindings": [],

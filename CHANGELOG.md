@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.9] - 2026-04-13
+
+### Added
+- **Dump SM State command** — serialize active state machine to JSON via Command Palette (`Data Lineage: Dump SM State`)
+
+### Fixed
+- **LaTeX rendering in graph descriptions** — normalize `$$` delimiters for remark-math, auto-convert piecewise patterns, close unclosed math blocks to prevent cascade failures
+
 ## [0.9.8] - 2026-04-12
 
 ### Added

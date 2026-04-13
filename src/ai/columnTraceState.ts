@@ -871,6 +871,29 @@ export class ColumnTraceState extends HopStateMachine {
     return { ok: true, result: this.getResult() };
   }
 
+  override toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      direction: this.direction,
+      targetColumns: [...this.targetColumns],
+      frontier: this.frontier.map(f => ({ ...f, activeColumns: [...f.activeColumns] })),
+      frontierSize: this.frontier.length,
+      chain: Object.fromEntries(
+        [...this.chain.entries()].map(([k, v]) => [k, { ...v, columnsIn: [...v.columnsIn], columnsOut: [...v.columnsOut] }]),
+      ),
+      chainSize: this.chain.size,
+      passthroughMap: Object.fromEntries(
+        [...this.passthroughMap.entries()].map(([k, v]) => [k, [...v]]),
+      ),
+      outOfScope: [...this.outOfScope],
+      prunedEntries: Object.fromEntries(
+        [...this.prunedEntries.entries()].map(([k, v]) => [k, { ...v, parentColumns: [...v.parentColumns] }]),
+      ),
+      revisitCount: this.revisitCount,
+      rejectionHistory: this.rejectionHistory.map(r => ({ ...r, submitted: [...r.submitted], valid: [...r.valid] })),
+    };
+  }
+
   // ─── getResult ─────────────────────────────────────────────────────────────
 
   getResult(): {
