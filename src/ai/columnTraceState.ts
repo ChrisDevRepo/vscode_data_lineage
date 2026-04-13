@@ -283,7 +283,6 @@ export class ColumnTraceState extends HopStateMachine {
 
     this._status = 'initialized';
     this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
-    this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
 
     return {
       ok: true,
@@ -320,25 +319,30 @@ export class ColumnTraceState extends HopStateMachine {
     // Pop next valid frontier entry (skip visited + missing nodes without recursion)
     let entry: FrontierEntry | undefined;
     let node: LineageNode | undefined;
+    let skipVisited = 0, skipPruned = 0, skipMissing = 0;
     while (this.frontier.length > 0) {
       const candidate = this.frontier.shift()!;
       if (this.visited.has(candidate.nodeId)) {
-        this.log('debug', `Frontier skip: ${candidate.nodeId} — already visited`);
+        skipVisited++;
         continue;
       }
       if (this.removedSet.has(candidate.nodeId)) {
-        this.log('debug', `Frontier skip: ${candidate.nodeId} — pruned (parent removed)`);
+        skipPruned++;
         continue;
       }
       const n = this.nodeMap.get(candidate.nodeId);
       if (!n) {
-        this.log('debug', `Node not in model: ${candidate.nodeId} — skipped`);
+        skipMissing++;
         this.visited.add(candidate.nodeId); // prevent re-encounter
         continue;
       }
       entry = candidate;
       node = n;
       break;
+    }
+    const totalSkipped = skipVisited + skipPruned + skipMissing;
+    if (totalSkipped > 0) {
+      this.log('debug', `Frontier: skipped ${totalSkipped} (visited=${skipVisited}, pruned=${skipPruned}, not_in_model=${skipMissing})`);
     }
 
     if (!entry || !node) {
@@ -383,7 +387,6 @@ export class ColumnTraceState extends HopStateMachine {
         : `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`);
     const pct = this.scopeNodeIds.size > 0 ? Math.round((this.visited.size / this.scopeNodeIds.size) * 100) : 0;
     this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeNodeIds.size} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
-    this.log('debug', `Hop ${this.hopCount} detail | ${node.id} (${node.type}) | task=${entry.question ? 'self-ask' : 'default'} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
     if (entry.depth >= DEPTH_WARNING_THRESHOLD) {
       this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeNodeIds.size}`);
     }
@@ -698,7 +701,6 @@ export class ColumnTraceState extends HopStateMachine {
       depth: this.currentFocusDepth + 1,
       parentNodeId: this.currentFocusNodeId,
     });
-    this.log('debug', `Verdict: ${v.nodeId} = prune ("${v.summary ?? ''}")`);
     return { advanced: 0 };
   }
 
@@ -731,7 +733,6 @@ export class ColumnTraceState extends HopStateMachine {
     this.passthroughMap.set(v.nodeId, [...passColumns]);
     if (boundary !== 'none') {
       this.visited.add(v.nodeId);
-      this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}) → terminal`);
       return { advanced: 0 };
     }
     // Queue as lightweight focus hop — AI will see neighbors and verdict them
@@ -744,7 +745,6 @@ export class ColumnTraceState extends HopStateMachine {
       question: `Passthrough — which neighbors carry [${passColumns.join(', ')}] upstream?`,
     };
     this.frontierUpdateOrPush(entry);
-    this.log('debug', `Verdict: ${v.nodeId} = pass → queued as focus hop (no auto-expand)`);
     return { advanced: 1 };
   }
 
@@ -762,7 +762,6 @@ export class ColumnTraceState extends HopStateMachine {
         const mergedOut = new Set([...existingChain.columnsOut, ...v.columnsOut]);
         existingChain.columnsOut = [...mergedOut];
       }
-      this.log('debug', `Verdict: ${v.nodeId} = trace (merge into existing chain entry), columnsIn=[${existingChain.columnsIn}]`);
     } else {
       this.chain.set(v.nodeId, {
         nodeId: v.nodeId,
@@ -788,15 +787,9 @@ export class ColumnTraceState extends HopStateMachine {
         parentNodeId: this.currentFocusNodeId ?? '',
         question: v.question,
       };
-      const action = this.frontierUpdateOrPush(entry);
-      if (action === 'updated') {
-        this.log('debug', `Verdict: ${v.nodeId} = trace, updated existing frontier entry${v.question ? ` Q: "${v.question}"` : ''}`);
-      } else {
-        this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
-      }
+      this.frontierUpdateOrPush(entry);
       return { advanced: 1 };
     }
-    this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
     return { advanced: 0 };
   }
 
@@ -958,7 +951,6 @@ export class ColumnTraceState extends HopStateMachine {
 
     const pruneRate = this.scopeNodeIds.size > 0 ? Math.round(((this.scopeNodeIds.size - stats.examined) / this.scopeNodeIds.size) * 100) : 0;
     this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeNodeIds.size} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
-    this.log('debug', `COMPLETE detail | fullNodes=${fullNodes.length} | edges=${edges.length} | outOfScope=${this.outOfScope.length} | revisits=${this.revisitCount}`);
 
     // Derive badge/note suggestions from chain entries.
     // Chain is already the curated traced set — every entry is a relevant node.

@@ -170,8 +170,7 @@ export class BlackboardState extends HopStateMachine {
 
     this._status = 'initialized';
     this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
-    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
-    this.log('debug', `BB INIT scope nodes | [${[...scopeIds].map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
+    this.log('trace', `BB INIT scope nodes | [${[...scopeIds].map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
 
     return {
       ok: true,
@@ -259,7 +258,6 @@ export class BlackboardState extends HopStateMachine {
 
     this._status = 'awaiting_findings';
     this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.detailSlots.size} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
-    this.log('debug', `BB Hop ${this.hopCount} detail | ${node.id} (${node.type}) | priority=${entry.priority} | task=${entry.question ? 'self-ask' : 'default'} | memory: ${workingMemory.all_summaries.length} summaries, ${workingMemory.pending_questions.length} pending Qs | coverage=${this.coveragePct}%`);
     if (this.agenda.length > 0) {
       this.log('trace', `BB Hop ${this.hopCount} remaining | [${this.agenda.map(e => this.nodeMap.get(e.nodeId)?.name ?? e.nodeId).join(', ')}]`);
     }
@@ -378,10 +376,7 @@ export class BlackboardState extends HopStateMachine {
         this.invalidNodeIds.set(inv.nodeId, 'not_in_model');
       }
       for (const q of valid) {
-        if (this.removedSet.has(q.nodeId)) {
-          this.log('debug', `BB question for pruned ${q.nodeId}, skipping`);
-          continue;
-        }
+        if (this.removedSet.has(q.nodeId)) { continue; }
         this.addQuestion(q.nodeId, q.question);
         advanced++;
       }
@@ -391,8 +386,8 @@ export class BlackboardState extends HopStateMachine {
     let added = 0;
     if (params.addIds?.length) {
       for (const addId of params.addIds) {
-        if (!this.nodeMap.has(addId)) { this.log('debug', `BB add_ids: ${addId} not in model, skipping`); continue; }
-        if (this.visited.has(addId) || this.removedSet.has(addId)) { this.log('debug', `BB add_ids: ${addId} already visited/pruned, skipping`); continue; }
+        if (!this.nodeMap.has(addId)) { continue; }
+        if (this.visited.has(addId) || this.removedSet.has(addId)) { continue; }
         this.addQuestion(addId, '(auto-added)');
         advanced++;
         added++;
@@ -465,14 +460,13 @@ export class BlackboardState extends HopStateMachine {
         const cascadedIds = [...this.removedSet].slice(removedBefore).filter(id => id !== pruneId);
         this.log('info', `BB PRUNE | ${pruneId} | cascade=${pruned} | agenda=${this.agenda.length}`);
         if (cascadedIds.length > 0) {
-          this.log('debug', `BB PRUNE cascade removed | [${cascadedIds.map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
+          this.log('trace', `BB PRUNE cascade removed | [${cascadedIds.map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
         }
       }
     }
 
     this._status = 'exploring';
     this.log('info', `BB submit | ${focusNodeId} | verdict=${verdict} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | pruned=${pruned} | agenda=${this.agenda.length}`);
-    this.log('debug', `BB submit detail | ${focusNodeId} | summary=${summary.length}ch | tags=[${tags?.join(',') ?? ''}] | advanced=${advanced} | notes_total=${this.detailSlots.size} | coverage=${this.coveragePct}%`);
 
     const nodeName = this.nodeMap.get(focusNodeId)?.name ?? focusNodeId;
     this.buildProgressLine(nodeName, verdict, pruned, added);

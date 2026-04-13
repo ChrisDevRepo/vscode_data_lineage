@@ -262,9 +262,6 @@ export abstract class HopStateMachine implements IHopStateMachine {
       this.log('debug', `short memory rejected: ${hopSummary.length} chars (limit ${this.shortMemoryHardLimit}, aim for ~${this.shortMemorySoftLimit})`);
       return `short_memory_too_long: ${hopSummary.length} chars exceeds ${this.shortMemoryHardLimit} (aim for ~${this.shortMemorySoftLimit})`;
     }
-    if (hopSummary.length > this.shortMemorySoftLimit) {
-      this.log('debug', `short memory long: ${hopSummary.length} chars (soft limit ${this.shortMemorySoftLimit})`);
-    }
     this.shortMemory.narrative.push(hopSummary);
     this.shortMemory.coverage = {
       noted: this.detailSlots.size,
@@ -540,7 +537,6 @@ export abstract class HopStateMachine implements IHopStateMachine {
     const memory = this.getMemoryForSynthesis();
 
     this.log('info', `[Result] notes=${slots.length} | edges=${edges.length} | scope=${this.scopeNodeIds.size} | coverage=${this.coveragePct}% | hops=${this.hopCount}`);
-    this.log('debug', `[Result] detail | fullNodes=${fullNodes.length} | bridges=${bridgeResult.bridgeNodes.length} | model_edges=${this.model.edges.length} | pruned=${this.removedSet.size} | visited=${this.visited.size}`);
     if (edges.length > 0) {
       this.log('trace', `[Result] EDGES | ${edges.map(([s, t, tp]) => `${s}→${t}(${tp})`).join(', ')}`);
     }

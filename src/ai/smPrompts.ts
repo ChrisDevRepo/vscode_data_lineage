@@ -149,6 +149,19 @@ export function buildSynthesisReminder(question: string): string {
   );
 }
 
+// ─── Synthesis Prompt (replaces mode prompt after SM completion) ─────────────
+
+/** Synthesis-only prompt — strips hop instructions (readDdl, writeFindings,
+ *  verdicts, scopeTiers, etc.) that are noise at synthesis. Only the grounding
+ *  contract remains. Swapped in by cleanHopContext at BB/CT completion. */
+export function buildSynthesisPrompt(): string {
+  return [
+    'SYNTHESIS MODE: The exploration is complete. Your detail memory slots are below.',
+    '',
+    BLOCK.detailMemory,
+  ].join('\n');
+}
+
 // ─── Mode Prompts (composed from blocks) ────────────────────────────────────
 
 /** BB — free exploration with agenda */

@@ -44,7 +44,7 @@ import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog }
 import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
 import { buildSystemPromptBase } from './ai/prompts';
-import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt, buildSynthesisReminder } from './ai/smPrompts';
+import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt, buildSynthesisPrompt, buildSynthesisReminder } from './ai/smPrompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -117,7 +117,6 @@ function storeBbResultGraph(fullResult: {
     suggested_notes: fullResult.suggested_notes,
     suggested_sections: fullResult.suggested_sections,
   };
-  logDebug(outputChannel, 'AI', `[ResultGraph] stored from BB: ${nodeIds.length} nodes (${fullResult.notes.length} noted, ${extraCount} origin+bridges), ${fullResult.edges.length} edges`);
 }
 
 /** Store CT result graph for enrich_view.
@@ -148,7 +147,6 @@ function storeCtResultGraph(fullResult: {
     suggested_notes:  fullResult.suggested_notes,
     suggested_sections: fullResult.suggested_sections,
   };
-  logDebug(outputChannel, 'AI', `[ResultGraph] stored from CT: ${allNodeIds.length} nodes (${chainIds.size} traced, ${allNodeIds.length - chainIds.size} passthrough), ${fullResult.edges.length} edges`);
 }
 
 let _columnStore:      ColumnStore = new ColumnStore(); // columns + DDL storage — populated on model load, cleared on reload
@@ -300,7 +298,7 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.workspace.fs.createDirectory(dir);
         const fileUri = vscode.Uri.joinPath(dir, `sm-${ts}.json`);
         await vscode.workspace.fs.writeFile(fileUri, Buffer.from(dump, 'utf-8'));
-        logInfo(outputChannel, 'AI', `SM state dumped to ${fileUri.fsPath}`);
+        logDebug(outputChannel, 'AI', `SM state dumped to ${fileUri.fsPath}`);
         const doc = await vscode.workspace.openTextDocument(fileUri);
         await vscode.window.showTextDocument(doc);
       } catch (err) {
@@ -578,7 +576,6 @@ export function activate(context: vscode.ExtensionContext) {
               const beforeCount = resolvedNodeIds.length;
               resolvedNodeIds = resolvedNodeIds.filter(id => !pruneSet.has(id));
               resolvedEdges = resolvedEdges.filter(([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt));
-              logDebug(outputChannel, 'AI', `enrich_view: pruned ${beforeCount - resolvedNodeIds.length} node(s), ${resolvedNodeIds.length} remaining`);
             }
             logDebug(outputChannel, 'AI', `enrich_view: using stored graph (${graphSource}, ${resolvedNodeIds.length} nodes, ${resolvedEdges.length} edges)`);
           } else {
@@ -642,7 +639,6 @@ export function activate(context: vscode.ExtensionContext) {
               rawInput.description = assembled.description;
             }
             rawInput.sections = undefined;  // consumed — clear to avoid mutual-exclusivity validation error
-            logDebug(outputChannel, 'AI', `enrich_view: orderAndAssemble — ${assembled.badges.length} badge(s), description ${assembled.description.length}ch`);
           }
 
           // ── 2. Auto-fix orphaned badges/notes/highlights ──
@@ -657,8 +653,6 @@ export function activate(context: vscode.ExtensionContext) {
             logWarn(outputChannel, 'AI', `enrich_view: validation failed — ${validation.errors?.join(', ')}`);
             return logAndReturn('enrich_view', validation);
           }
-          logDebug(outputChannel, 'AI', `enrich_view: validation passed`);
-
           if (!_aiCurrentProjectId) {
             logDebug(outputChannel, 'AI', `enrich_view: no saved project — preview-only mode`);
           }
@@ -1284,7 +1278,7 @@ export function activate(context: vscode.ExtensionContext) {
               logWarn(outputChannel, 'AI', `[History] Evicted ${evicted} oldest message(s) — context pressure (${totalTokens} tokens > ${budgetTokens} budget)`);
             }
           }
-        } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable — skipping context-pressure check'); }
+        } catch { /* countTokens unavailable — non-critical */ }
       }
 
       const messages: vscode.LanguageModelChatMessage[] = [
@@ -1292,8 +1286,6 @@ export function activate(context: vscode.ExtensionContext) {
         ...historyMessages,
         vscode.LanguageModelChatMessage.User(effectivePrompt),
       ];
-      logDebug(outputChannel, 'AI', `Messages: ${messages.length} total (1 system + ${historyMessages.length} history + 1 prompt)`);
-
       // Accumulators for this request's tool call rounds (persisted in ChatResult metadata)
       const toolCallRounds: ToolCallRound[] = [];
       const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
@@ -1349,7 +1341,7 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             inputTokenEstimate = await request.model.countTokens(serializeMessages(messages));
             lastInputTokenEstimate = inputTokenEstimate;
-          } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable on this model — skipping input estimate'); }
+          } catch { /* countTokens unavailable — non-critical */ }
 
           logDebug(outputChannel, 'AI', `Round ${roundCount}/${MAX_ROUNDS} [${activePhase}] — sending request`);
           const roundT0 = performance.now();
@@ -1377,7 +1369,7 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             outputTokenEstimate = await request.model.countTokens(responseText);
             totalOutputTokens += outputTokenEstimate;
-          } catch { logDebug(outputChannel, 'AI', 'countTokens unavailable — skipping output estimate'); }
+          } catch { /* countTokens unavailable — non-critical */ }
 
           // C4: Log model reasoning between tool calls
           if (responseText.length > 0) {
@@ -1386,8 +1378,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
 
           if (!toolCalls.length) {
-            logDebug(outputChannel, 'AI', `Round ${roundCount} complete — model responded without tool calls (${roundMs}ms)`);
-            logDebug(outputChannel, 'AI', `Exit: phase=${activePhase}, responseText=${responseText.length}ch`);
+            logDebug(outputChannel, 'AI', `Round ${roundCount} complete — no tool calls, phase=${activePhase} (${roundMs}ms)`);
             return;
           }
 
@@ -1548,8 +1539,7 @@ export function activate(context: vscode.ExtensionContext) {
               activePhase = 'ct_active';
               phaseTransitions.push(`discover→ct_active@R${roundCount}`);
               lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-ct'));
-              logDebug(outputChannel, 'AI', `[CT] Phase → ct_active | Tools: ${lineageTools.map(t => t.name).join(', ')}`);
-              logDebug(outputChannel, 'AI', `[CT] Activation: status=${_columnTraceState.status}, columns=${_columnTraceState.columns.length}, scope=${_columnTraceState.scopeSize}`);
+              logDebug(outputChannel, 'AI', `[CT] Phase → ct_active | status=${_columnTraceState.status}, columns=${_columnTraceState.columns.length}, scope=${_columnTraceState.scopeSize}`);
 
               // Inject mode-specific prompt ONCE when entering CT mode
               const hasColumns = _columnTraceState.columns.length > 0;
@@ -1563,7 +1553,10 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'ct_done';
             phaseTransitions.push(`ct_active→ct_done@R${roundCount}`);
             lineageTools = smDoneTools();
-            if (!_columnTraceState.inlineMode) cleanHopContext('CT');
+            if (!_columnTraceState.inlineMode) {
+              modePromptMsg = vscode.LanguageModelChatMessage.User(buildSynthesisPrompt());
+              cleanHopContext('CT');
+            }
             logDebug(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
@@ -1595,13 +1588,11 @@ export function activate(context: vscode.ExtensionContext) {
               phaseTransitions.push(`discover→bb_active@R${roundCount}`);
               // BB tools + research tools only — no BFS, enrich_view, or DDL batch (SM owns the graph)
               lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-bb') || t.tags.includes('lineage-research'));
-              logDebug(outputChannel, 'AI', `[BB] Phase → bb_active | Tools: ${lineageTools.map(t => t.name).join(', ')} (${lineageTools.length})`);
-              logDebug(outputChannel, 'AI', `[BB] Activation: status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
+              logDebug(outputChannel, 'AI', `[BB] Phase → bb_active | status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
 
               // Inject mode-specific prompt ONCE
               modePromptMsg = vscode.LanguageModelChatMessage.User(buildBbPrompt());
               messages.push(modePromptMsg);
-              logDebug(outputChannel, 'AI', `[BB] Mode prompt: EXPLORE`);
             } else {
               logDebug(outputChannel, 'AI', `[BB] Not activated: status=${_blackboardState?.status}, phase=${activePhase}`);
             }
@@ -1610,7 +1601,10 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'bb_done';
             phaseTransitions.push(`bb_active→bb_done@R${roundCount}`);
             lineageTools = smDoneTools();
-            if (!_blackboardState.inlineMode) cleanHopContext('BB');
+            if (!_blackboardState.inlineMode) {
+              modePromptMsg = vscode.LanguageModelChatMessage.User(buildSynthesisPrompt());
+              cleanHopContext('BB');
+            }
             logDebug(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
@@ -1688,7 +1682,6 @@ export function activate(context: vscode.ExtensionContext) {
         if (kpiParts.length > 0) {
           logDebug(outputChannel, 'AI', `KPIs — ${kpiParts.join(', ')}`);
         }
-        logDebug(outputChannel, 'AI', `Prompt: "${trunc(request.prompt, 200)}"`);
         logInfo(outputChannel, 'AI', `Session end`);
 
         // Store partial result when session ends with active SM (round/token exhaustion, AI stopped early).

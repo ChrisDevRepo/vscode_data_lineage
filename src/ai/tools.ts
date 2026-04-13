@@ -953,7 +953,7 @@ export function autoFixEnrichView(
           // Plain-text guard: condition lines must contain English flow words and no LaTeX commands.
           // This ensures double-escape of backslashes below is safe (no LaTeX to corrupt).
           const looksLikePlainText = conditionLines.some(l =>
-            /\b(if|otherwise|else|when|then)\b/i.test(l) && !/\\[a-zA-Z]/.test(l)
+            /\b(if|otherwise|else|when|then)\b/i.test(l)
           );
           const withinSpan = k < lines.length && (k - i) <= MAX_PIECEWISE_SPAN;
           if (withinSpan && lines[k].trim() === '$$' && hasConditions && looksLikePlainText) {
@@ -961,7 +961,7 @@ export function autoFixEnrichView(
             const formulaText = formulaLines.map(l => l.trim()).join(' ').trim();
             const caseEntries = conditionLines
               .filter(l => l.trim().length > 0)
-              .map(l => l.trim().replace(/\\/g, '\\\\'));
+              .map(l => l.trim().replace(/\\_/g, '_')); // un-escape markdown underscores
             out.push('$$');
             out.push(formulaText + ' \\begin{cases}');
             for (let ci = 0; ci < caseEntries.length; ci++) {
@@ -969,9 +969,14 @@ export function autoFixEnrichView(
               const ifMatch = entry.match(/^(.+?)\s+(if\s+.+)$/i);
               const otherMatch = entry.match(/^(.+?)\s+(otherwise|else)$/i);
               if (ifMatch) {
-                out.push(ifMatch[1] + ' & \\text{' + ifMatch[2] + '}' + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
+                // If condition contains LaTeX commands, emit raw; otherwise wrap in \text{}
+                const condHasLatex = /\\[a-zA-Z]/.test(ifMatch[2]);
+                const condition = condHasLatex ? ifMatch[2] : '\\text{' + ifMatch[2] + '}';
+                out.push(ifMatch[1] + ' & ' + condition + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
               } else if (otherMatch) {
-                out.push(otherMatch[1] + ' & \\text{' + otherMatch[2] + '}');
+                const condHasLatex = /\\[a-zA-Z]/.test(otherMatch[2]);
+                const condition = condHasLatex ? otherMatch[2] : '\\text{' + otherMatch[2] + '}';
+                out.push(otherMatch[1] + ' & ' + condition);
               } else {
                 out.push(entry + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
               }
@@ -989,28 +994,58 @@ export function autoFixEnrichView(
     return { text: out.join('\n'), changed };
   };
 
-  /** 4c–4e. Replace LaTeX environments (\begin{...}...\end{...}) with $$ blocks. */
-  const replaceLatexEnvironments = (text: string): { text: string; changed: boolean } => {
+  /** 4c. Wrap bare \begin{env}...\end{env} in $$ if not already inside a math block.
+   *  KaTeX renders cases/aligned/etc. natively — preserve the environment structure.
+   *  Only wraps environments outside existing $$ blocks (tracked via wrappedByUs flag). */
+  const wrapBareEnvironments = (text: string): { text: string; changed: boolean } => {
     let changed = false;
-    let result = text;
-    // \begin{cases}...\end{cases}
-    result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
-      changed = true;
-      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
-      return '\n$$\n' + lines.join('\n') + '\n$$\n';
-    });
-    // \begin{aligned}...\end{aligned}
-    result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
-      changed = true;
-      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
-      return '\n$$\n' + lines.join('\n') + '\n$$\n';
-    });
-    // Generic \begin{env}...\end{env}
-    result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
-      changed = true;
-      return '\n$$\n' + (body as string).trim() + '\n$$\n';
-    });
-    return { text: result, changed };
+    const lines = text.split('\n');
+    const out: string[] = [];
+    let insideMath = false;
+    let wrappedByUs = false; // true only when WE inserted the opening $$
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+
+      if (trimmed === '$$') {
+        insideMath = !insideMath;
+        wrappedByUs = false; // original delimiter, not ours
+        out.push(lines[i]);
+        continue;
+      }
+
+      // Single-line environment outside math: \begin{env}...\end{env} on one line
+      if (!insideMath && /^\\begin\{\w+\}/.test(trimmed) && /\\end\{\w+\}\s*$/.test(trimmed)) {
+        changed = true;
+        out.push('$$');
+        out.push(lines[i]);
+        out.push('$$');
+        continue;
+      }
+
+      // Multi-line bare \begin{env} outside math — insert opening $$
+      if (!insideMath && /^\\begin\{\w+\}/.test(trimmed)) {
+        changed = true;
+        out.push('$$');
+        insideMath = true;
+        wrappedByUs = true;
+        out.push(lines[i]);
+        continue;
+      }
+
+      // \end{env} inside a math block WE opened — close it
+      if (wrappedByUs && /\\end\{\w+\}\s*$/.test(trimmed)) {
+        out.push(lines[i]);
+        out.push('$$');
+        insideMath = false;
+        wrappedByUs = false;
+        continue;
+      }
+
+      out.push(lines[i]);
+    }
+
+    return { text: out.join('\n'), changed };
   };
 
   /** 4f. Odd $$ count safety net — close unclosed math block to prevent cascade.
@@ -1026,7 +1061,7 @@ export function autoFixEnrichView(
   const fixLatex = (text: string): { text: string; changed: boolean } => {
     let changed = false;
     let result = text;
-    for (const step of [splitDollarDelimiters, mergePiecewiseCases, replaceLatexEnvironments, closeUnclosedMathBlock]) {
+    for (const step of [splitDollarDelimiters, mergePiecewiseCases, wrapBareEnvironments, closeUnclosedMathBlock]) {
       const r = step(result);
       if (r.changed) { changed = true; result = r.text; }
     }
@@ -1106,6 +1141,19 @@ export function validateMarkdownFormat(md: string): string[] {
     errors.push(
       'description has an unclosed fenced block — ensure closing ``` is present',
     );
+  }
+
+  // Reject unbalanced $$ delimiters (odd count means an unclosed display math block)
+  let dollarCount = 0;
+  for (const line of md.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '$$') dollarCount++;
+    else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) dollarCount += 2;
+    else if (trimmed.startsWith('$$')) dollarCount++;
+    else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) dollarCount++;
+  }
+  if (dollarCount % 2 !== 0) {
+    errors.push('description has unbalanced $$ delimiters — odd number of $$ lines');
   }
 
   return errors;
