@@ -430,7 +430,7 @@ body {
 /* KaTeX parse errors — show as readable red text (matches VS Code behavior) */
 .ln-ai-description-md .katex-error {
   color: var(--vscode-errorForeground, #f44747);
-  font-size: 11px;
+  font-size: 0.85em;
   font-family: var(--vscode-editor-font-family, monospace);
   white-space: pre-wrap;
   word-break: break-word;

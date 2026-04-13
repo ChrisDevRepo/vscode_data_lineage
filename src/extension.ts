@@ -290,8 +290,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       try {
         const dump = JSON.stringify(sm.toJSON(), null, 2);
-        const now = new Date();
-        const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+        const ts = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
         const wsFolder = vscode.workspace.workspaceFolders?.[0];
         if (!wsFolder) {
           vscode.window.showWarningMessage('Data Lineage: No workspace folder open.');

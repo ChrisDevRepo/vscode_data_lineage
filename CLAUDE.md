@@ -67,6 +67,8 @@ Guard chain and thresholds: see `.claude/rules/architecture.md`. AI tools + BFS 
 
 All outputChannel calls use `logInfo/Debug/Warn/Error/Trace` from `src/utils/log.ts`. Details: `.claude/rules/logging.md`.
 
+**`console.warn` in pure utilities** (`sqlBodyParser.ts`, `modelBuilder.ts`): Technical debt, not policy. These modules lack logger injection so `console.warn` is a temporary fallback. Plan: inject an optional `WarnFn` parameter, extension passes `logWarn`, tests use default `console.warn`.
+
 ## AI Chat Participant (`@lineage`)
 
 Details: `.claude/rules/ai.md`. Canonical doc: `ai/dataflow.md`.

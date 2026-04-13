@@ -43,6 +43,7 @@ function mathFenceToDelimiters(md: string): string {
 
   // Safety net: odd $$ count means an unclosed display math block will cascade.
   // Close it to prevent all subsequent content from being eaten.
+  // Defense-in-depth: also checked server-side in autoFixEnrichView() (tools.ts).
   const dollarCount = result.filter(l => l.trim() === '$$').length;
   if (dollarCount % 2 !== 0) {
     result.push('$$');

@@ -895,133 +895,141 @@ export function autoFixEnrichView(
   // 4. Normalize LaTeX for remark-math (requires $$ on own line, code-fence semantics).
   //    ```math fences are handled at render time by mathFenceToDelimiters().
   //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
-  const fixLatex = (text: string): { text: string; changed: boolean } => {
+
+  /** 4a. Ensure every $$ is on its own line (remark-math requirement). */
+  const splitDollarDelimiters = (text: string): { text: string; changed: boolean } => {
+    let changed = false;
+    const lines = text.split('\n');
+    const out: string[] = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed === '$$') {
+        out.push('$$');
+      } else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
+        changed = true;
+        out.push('$$');
+        out.push(trimmed.slice(2, -2).trim());
+        out.push('$$');
+      } else if (trimmed.startsWith('$$')) {
+        changed = true;
+        out.push('$$');
+        out.push(trimmed.slice(2).trim());
+      } else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) {
+        changed = true;
+        out.push(trimmed.slice(0, -2).trim());
+        out.push('$$');
+      } else {
+        out.push(line);
+      }
+    }
+    return { text: out.join('\n'), changed };
+  };
+
+  /** 4b. Three-$$ piecewise pattern → single $$ block with \begin{cases}.
+   *  AI uses bare $$ instead of \begin{cases} for conditionals.
+   *  Adjacency guard: all three $$ groups must be within MAX_PIECEWISE_SPAN lines. */
+  const MAX_PIECEWISE_SPAN = 15;
+  const mergePiecewiseCases = (text: string): { text: string; changed: boolean } => {
+    let changed = false;
+    const lines = text.split('\n');
+    const out: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      if (lines[i].trim() === '$$') {
+        const formulaLines: string[] = [];
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim() !== '$$') {
+          formulaLines.push(lines[j]);
+          j++;
+        }
+        if (j < lines.length && lines[j].trim() === '$$') {
+          const conditionLines: string[] = [];
+          let k = j + 1;
+          while (k < lines.length && lines[k].trim() !== '$$') {
+            conditionLines.push(lines[k]);
+            k++;
+          }
+          const hasConditions = conditionLines.some(l => l.trim().length > 0);
+          // Plain-text guard: condition lines must contain English flow words and no LaTeX commands.
+          // This ensures double-escape of backslashes below is safe (no LaTeX to corrupt).
+          const looksLikePlainText = conditionLines.some(l =>
+            /\b(if|otherwise|else|when|then)\b/i.test(l) && !/\\[a-zA-Z]/.test(l)
+          );
+          const withinSpan = k < lines.length && (k - i) <= MAX_PIECEWISE_SPAN;
+          if (withinSpan && lines[k].trim() === '$$' && hasConditions && looksLikePlainText) {
+            changed = true;
+            const formulaText = formulaLines.map(l => l.trim()).join(' ').trim();
+            const caseEntries = conditionLines
+              .filter(l => l.trim().length > 0)
+              .map(l => l.trim().replace(/\\/g, '\\\\'));
+            out.push('$$');
+            out.push(formulaText + ' \\begin{cases}');
+            for (let ci = 0; ci < caseEntries.length; ci++) {
+              const entry = caseEntries[ci];
+              const ifMatch = entry.match(/^(.+?)\s+(if\s+.+)$/i);
+              const otherMatch = entry.match(/^(.+?)\s+(otherwise|else)$/i);
+              if (ifMatch) {
+                out.push(ifMatch[1] + ' & \\text{' + ifMatch[2] + '}' + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
+              } else if (otherMatch) {
+                out.push(otherMatch[1] + ' & \\text{' + otherMatch[2] + '}');
+              } else {
+                out.push(entry + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
+              }
+            }
+            out.push('\\end{cases}');
+            out.push('$$');
+            i = k + 1;
+            continue;
+          }
+        }
+      }
+      out.push(lines[i]);
+      i++;
+    }
+    return { text: out.join('\n'), changed };
+  };
+
+  /** 4c–4e. Replace LaTeX environments (\begin{...}...\end{...}) with $$ blocks. */
+  const replaceLatexEnvironments = (text: string): { text: string; changed: boolean } => {
     let changed = false;
     let result = text;
-
-    // 4a. Ensure every $$ is on its own line (remark-math requirement).
-    //     Split "$$content" → "$$\ncontent" and "content$$" → "content\n$$".
-    {
-      const lines = result.split('\n');
-      const out: string[] = [];
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed === '$$') {
-          out.push('$$');
-        } else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
-          // $$content$$ on one line → split into 3 lines
-          changed = true;
-          out.push('$$');
-          out.push(trimmed.slice(2, -2).trim());
-          out.push('$$');
-        } else if (trimmed.startsWith('$$')) {
-          // $$content → split opening
-          changed = true;
-          out.push('$$');
-          out.push(trimmed.slice(2).trim());
-        } else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) {
-          // content$$ → split closing (skip table rows starting with |)
-          changed = true;
-          out.push(trimmed.slice(0, -2).trim());
-          out.push('$$');
-        } else {
-          out.push(line);
-        }
-      }
-      result = out.join('\n');
-    }
-
-    // 4b. Three-$$  piecewise pattern: $$\nformula\n$$\nconditions\n$$
-    //     AI uses bare $$ instead of \begin{cases} for conditionals.
-    //     Merge into single $$ block with \begin{cases}.
-    {
-      const lines = result.split('\n');
-      const out: string[] = [];
-      let i = 0;
-      while (i < lines.length) {
-        if (lines[i].trim() === '$$') {
-          // Collect math content until next $$
-          const formulaLines: string[] = [];
-          let j = i + 1;
-          while (j < lines.length && lines[j].trim() !== '$$') {
-            formulaLines.push(lines[j]);
-            j++;
-          }
-          // j is now at the second $$
-          if (j < lines.length && lines[j].trim() === '$$') {
-            // Check if there's a third $$ with plain text between
-            const conditionLines: string[] = [];
-            let k = j + 1;
-            while (k < lines.length && lines[k].trim() !== '$$') {
-              conditionLines.push(lines[k]);
-              k++;
-            }
-            const hasConditions = conditionLines.some(l => l.trim().length > 0);
-            const looksLikePlainText = conditionLines.some(l =>
-              /\b(if|otherwise|else|when|then)\b/i.test(l) && !/\\[a-zA-Z]/.test(l)
-            );
-            if (k < lines.length && lines[k].trim() === '$$' && hasConditions && looksLikePlainText) {
-              // Merge: formula + conditions → single $$ block with \begin{cases}
-              changed = true;
-              const formulaText = formulaLines.map(l => l.trim()).join(' ').trim();
-              const caseEntries = conditionLines
-                .filter(l => l.trim().length > 0)
-                .map(l => l.trim().replace(/\\/g, '\\\\'));
-              out.push('$$');
-              out.push(formulaText + ' \\begin{cases}');
-              for (let ci = 0; ci < caseEntries.length; ci++) {
-                const entry = caseEntries[ci];
-                // Split "value if condition" into "value & \\text{if condition}"
-                const ifMatch = entry.match(/^(.+?)\s+(if\s+.+)$/i);
-                const otherMatch = entry.match(/^(.+?)\s+(otherwise|else)$/i);
-                if (ifMatch) {
-                  out.push(ifMatch[1] + ' & \\text{' + ifMatch[2] + '}' + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
-                } else if (otherMatch) {
-                  out.push(otherMatch[1] + ' & \\text{' + otherMatch[2] + '}');
-                } else {
-                  out.push(entry + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
-                }
-              }
-              out.push('\\end{cases}');
-              out.push('$$');
-              i = k + 1;
-              continue;
-            }
-          }
-        }
-        out.push(lines[i]);
-        i++;
-      }
-      result = out.join('\n');
-    }
-
-    // 4c. \begin{cases}...\end{cases} → $$ block
+    // \begin{cases}...\end{cases}
     result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
       return '\n$$\n' + lines.join('\n') + '\n$$\n';
     });
-    // 4d. \begin{aligned}...\end{aligned} → $$ block
+    // \begin{aligned}...\end{aligned}
     result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
       const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
       return '\n$$\n' + lines.join('\n') + '\n$$\n';
     });
-    // 4e. Generic \begin{env}...\end{env} → $$ block
+    // Generic \begin{env}...\end{env}
     result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
       changed = true;
       return '\n$$\n' + (body as string).trim() + '\n$$\n';
     });
+    return { text: result, changed };
+  };
 
-    // 4f. Odd $$ count safety net — close unclosed math block to prevent cascade.
-    {
-      const dollarLines = result.split('\n').filter(l => l.trim() === '$$');
-      if (dollarLines.length % 2 !== 0) {
-        changed = true;
-        result += '\n$$\n';
-      }
+  /** 4f. Odd $$ count safety net — close unclosed math block to prevent cascade.
+   *  Defense-in-depth: also checked client-side in mathFenceToDelimiters() (AiDescriptionOverlay). */
+  const closeUnclosedMathBlock = (text: string): { text: string; changed: boolean } => {
+    const dollarLines = text.split('\n').filter(l => l.trim() === '$$');
+    if (dollarLines.length % 2 !== 0) {
+      return { text: text + '\n$$\n', changed: true };
     }
+    return { text, changed: false };
+  };
 
+  const fixLatex = (text: string): { text: string; changed: boolean } => {
+    let changed = false;
+    let result = text;
+    for (const step of [splitDollarDelimiters, mergePiecewiseCases, replaceLatexEnvironments, closeUnclosedMathBlock]) {
+      const r = step(result);
+      if (r.changed) { changed = true; result = r.text; }
+    }
     return { text: result, changed };
   };
 
