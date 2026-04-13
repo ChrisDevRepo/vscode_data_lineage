@@ -896,6 +896,50 @@ export function autoFixEnrichView(
   //    ```math fences are handled at render time by mathFenceToDelimiters().
   //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
 
+  /** 4-pre. Strip corrupt \begin{env}...\end{env} whose body contains markdown.
+   *  AI sometimes wraps headings/prose inside \begin{cases}. This corrupts the
+   *  entire $$ block. Strip the markers and emit body as plain markdown.
+   *  Runs before all other steps, regardless of $$ context. */
+  const MARKDOWN_INDICATOR = /^#{1,6}\s|^```|^\|.*\|.*\|/; // heading, code fence, table row
+  const stripCorruptEnvironments = (text: string): { text: string; changed: boolean } => {
+    let changed = false;
+    const lines = text.split('\n');
+    const out: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      const beginMatch = trimmed.match(/\\begin\{(\w+)\}/);
+      if (beginMatch) {
+        const envName = beginMatch[1];
+        const endPattern = new RegExp('\\\\end\\{' + envName + '\\}\\s*$');
+        // Lookahead: find matching \end and check for markdown in body
+        let endIdx = -1;
+        let hasMarkdown = false;
+        for (let j = i + 1; j < lines.length; j++) {
+          if (MARKDOWN_INDICATOR.test(lines[j].trim())) hasMarkdown = true;
+          if (endPattern.test(lines[j].trim())) { endIdx = j; break; }
+        }
+        if (endIdx !== -1 && hasMarkdown) {
+          changed = true;
+          // Strip \begin{env} from this line, keep any preceding formula text
+          const before = trimmed.replace(/\s*\\begin\{\w+\}\s*$/, '').trim();
+          if (before) out.push(before);
+          // Emit body lines as plain markdown (strip \\ row separators that are LaTeX artifacts)
+          for (let j = i + 1; j < endIdx; j++) {
+            out.push(lines[j].replace(/\s*\\\\$/, ''));
+          }
+          // Strip \end{env} from last line, keep any text before it
+          const endBefore = lines[endIdx].trim().replace(/\\end\{\w+\}\s*$/, '').trim();
+          if (endBefore) out.push(endBefore);
+          i = endIdx;
+          continue;
+        }
+      }
+      out.push(lines[i]);
+    }
+    return { text: out.join('\n'), changed };
+  };
+
   /** 4a. Ensure every $$ is on its own line (remark-math requirement). */
   const splitDollarDelimiters = (text: string): { text: string; changed: boolean } => {
     let changed = false;
@@ -996,20 +1040,19 @@ export function autoFixEnrichView(
 
   /** 4c. Wrap bare \begin{env}...\end{env} in $$ if not already inside a math block.
    *  KaTeX renders cases/aligned/etc. natively — preserve the environment structure.
-   *  Only wraps environments outside existing $$ blocks (tracked via wrappedByUs flag). */
+   *  Only wraps environments outside existing $$ blocks.
+   *  Corrupt environments (containing markdown) are already stripped by stripCorruptEnvironments. */
   const wrapBareEnvironments = (text: string): { text: string; changed: boolean } => {
     let changed = false;
     const lines = text.split('\n');
     const out: string[] = [];
     let insideMath = false;
-    let wrappedByUs = false; // true only when WE inserted the opening $$
 
     for (let i = 0; i < lines.length; i++) {
       const trimmed = lines[i].trim();
 
       if (trimmed === '$$') {
         insideMath = !insideMath;
-        wrappedByUs = false; // original delimiter, not ours
         out.push(lines[i]);
         continue;
       }
@@ -1023,22 +1066,37 @@ export function autoFixEnrichView(
         continue;
       }
 
-      // Multi-line bare \begin{env} outside math — insert opening $$
-      if (!insideMath && /^\\begin\{\w+\}/.test(trimmed)) {
+      // Multi-line bare \begin{env} outside math — lookahead to find \end{env}
+      const beginMatch = !insideMath && trimmed.match(/^\\begin\{(\w+)\}/);
+      if (beginMatch) {
+        const envName = beginMatch[1];
+        const endPattern = new RegExp('\\\\end\\{' + envName + '\\}\\s*$');
+        let endIdx = -1;
+        for (let j = i + 1; j < lines.length; j++) {
+          if (endPattern.test(lines[j].trim())) { endIdx = j; break; }
+        }
+        if (endIdx !== -1) {
+          // Valid math environment — wrap in $$
+          changed = true;
+          out.push('$$');
+          for (let j = i; j <= endIdx; j++) out.push(lines[j]);
+          out.push('$$');
+          i = endIdx;
+          continue;
+        }
+        // No matching \end — orphan \begin, strip it
         changed = true;
-        out.push('$$');
-        insideMath = true;
-        wrappedByUs = true;
-        out.push(lines[i]);
+        const orphanStripped = trimmed.replace(/^\\begin\{\w+\}\s*/, '').trim();
+        if (orphanStripped) out.push(orphanStripped);
+        else out.push(lines[i]);
         continue;
       }
 
-      // \end{env} inside a math block WE opened — close it
-      if (wrappedByUs && /\\end\{\w+\}\s*$/.test(trimmed)) {
-        out.push(lines[i]);
-        out.push('$$');
-        insideMath = false;
-        wrappedByUs = false;
+      // Orphan \end{env} outside math — strip the marker
+      if (!insideMath && /\\end\{\w+\}\s*$/.test(trimmed)) {
+        changed = true;
+        const stripped = trimmed.replace(/\\end\{\w+\}\s*$/, '').trim();
+        if (stripped) out.push(stripped);
         continue;
       }
 
@@ -1061,7 +1119,7 @@ export function autoFixEnrichView(
   const fixLatex = (text: string): { text: string; changed: boolean } => {
     let changed = false;
     let result = text;
-    for (const step of [splitDollarDelimiters, mergePiecewiseCases, wrapBareEnvironments, closeUnclosedMathBlock]) {
+    for (const step of [stripCorruptEnvironments, splitDollarDelimiters, mergePiecewiseCases, wrapBareEnvironments, closeUnclosedMathBlock]) {
       const r = step(result);
       if (r.changed) { changed = true; result = r.text; }
     }
