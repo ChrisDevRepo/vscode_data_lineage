@@ -739,6 +739,10 @@ export function activate(context: vscode.ExtensionContext) {
           const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
           logDebug(outputChannel, 'AI', `start_column_trace: columns=[${columns}], direction=${direction}, depth=${depth}, origin=${input.origin ?? 'auto'}`);
 
+          // Reset both SMs — new trace replaces any prior SM
+          _columnTraceState = null;
+          _blackboardState = null;
+
           _columnTraceState = new ColumnTraceState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
             else if (level === 'warn') logWarn(outputChannel, 'AI', `[CT] ${msg}`);
@@ -846,6 +850,10 @@ export function activate(context: vscode.ExtensionContext) {
             : 'bidirectional');
           const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
           logDebug(outputChannel, 'AI', `start_exploration: origin=${origin}, direction=${scopeDirection}, depth=${depth}, question="${trunc(question, 200)}"`);
+
+          // Reset both SMs — new exploration replaces any prior SM
+          _columnTraceState = null;
+          _blackboardState = null;
 
           _blackboardState = new BlackboardState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
@@ -1023,8 +1031,8 @@ export function activate(context: vscode.ExtensionContext) {
       const aiConfig = vscode.workspace.getConfiguration('dataLineageViz');
       setInlineTokenBudget(aiConfig.get<number>('ai.inlineTokenBudget', 10_000));
       setSmInlineNodeCap(aiConfig.get<number>('ai.inlineNodeCap', 10));
-      _columnTraceState = null; // reset per request — each trace gets a fresh state machine
-      _blackboardState = null;  // reset per request — each exploration gets a fresh state machine
+      // SM intentionally NOT reset per request — persists across follow-up messages
+      // in the same chat session. Reset only when a new SM is created (start_exploration / start_column_trace).
       // _resultGraph intentionally NOT reset — it persists across turns so the
       // "Show in Graph" button (which opens a new chat turn) can consume the
       // last BFS result.  It is overwritten whenever a new trace runs.
@@ -1314,20 +1322,24 @@ export function activate(context: vscode.ExtensionContext) {
         let actionRequiredPending = false;
         const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
 
-        /** Drop hop history at SM completion — detail_slots contain all evidence.
-         *  Keeps: system prompt + user question + last tool round (getResult() response).
-         *  Only for hop-by-hop mode (sliding memory); inline mode has no multi-hop history. */
-        const cleanContextForSynthesis = (smLabel: string) => {
-          const lastAssistant = messages[messages.length - 2]; // Assistant with final tool call
-          const lastResult = messages[messages.length - 1];     // User with getResult() response
+        // Mode prompt reference — stored when injected at phase transition, re-injected after per-hop cleaning
+        let modePromptMsg: vscode.LanguageModelChatMessage | null = null;
+
+        /** Clean sliding-memory context — keeps system prompt + question + mode prompt + last tool round.
+         *  Used per-hop (sliding memory design: each hop is a fresh start) and at SM completion.
+         *  The working memory inside each hop result provides all continuity the AI needs. */
+        const cleanHopContext = (label: string) => {
+          const lastAssistant = messages[messages.length - 2]; // Assistant with tool call
+          const lastResult = messages[messages.length - 1];     // User with tool result (hop context or getResult)
           const beforeCount = messages.length;
           messages.length = 0;
           messages.push(vscode.LanguageModelChatMessage.User(systemPrompt));
           messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
+          if (modePromptMsg) messages.push(modePromptMsg);
           messages.push(lastAssistant);
           messages.push(lastResult);
           logDebug(outputChannel, 'AI',
-            `[${smLabel}] Clean context for synthesis: ${beforeCount} → ${messages.length} messages`);
+            `[${label}] Clean hop context: ${beforeCount} → ${messages.length} messages`);
         };
 
         while (roundCount < MAX_ROUNDS) {
@@ -1542,8 +1554,8 @@ export function activate(context: vscode.ExtensionContext) {
 
               // Inject mode-specific prompt ONCE when entering CT mode
               const hasColumns = _columnTraceState.columns.length > 0;
-              const modePrompt = hasColumns ? buildCtPrompt() : buildCtDepPrompt();
-              messages.push(vscode.LanguageModelChatMessage.User(modePrompt));
+              modePromptMsg = vscode.LanguageModelChatMessage.User(hasColumns ? buildCtPrompt() : buildCtDepPrompt());
+              messages.push(modePromptMsg);
             } else {
               logDebug(outputChannel, 'AI', `[CT] Not activated: status=${_columnTraceState?.status}, phase=${activePhase}`);
             }
@@ -1552,7 +1564,7 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'ct_done';
             phaseTransitions.push(`ct_active→ct_done@R${roundCount}`);
             lineageTools = smDoneTools();
-            if (!_columnTraceState.inlineMode) cleanContextForSynthesis('CT');
+            if (!_columnTraceState.inlineMode) cleanHopContext('CT');
             logDebug(outputChannel, 'AI', `[CT] Phase → ct_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
@@ -1588,7 +1600,8 @@ export function activate(context: vscode.ExtensionContext) {
               logDebug(outputChannel, 'AI', `[BB] Activation: status=${_blackboardState.status}, notes=${_blackboardState.noteCount}`);
 
               // Inject mode-specific prompt ONCE
-              messages.push(vscode.LanguageModelChatMessage.User(buildBbPrompt()));
+              modePromptMsg = vscode.LanguageModelChatMessage.User(buildBbPrompt());
+              messages.push(modePromptMsg);
               logDebug(outputChannel, 'AI', `[BB] Mode prompt: EXPLORE`);
             } else {
               logDebug(outputChannel, 'AI', `[BB] Not activated: status=${_blackboardState?.status}, phase=${activePhase}`);
@@ -1598,7 +1611,7 @@ export function activate(context: vscode.ExtensionContext) {
             activePhase = 'bb_done';
             phaseTransitions.push(`bb_active→bb_done@R${roundCount}`);
             lineageTools = smDoneTools();
-            if (!_blackboardState.inlineMode) cleanContextForSynthesis('BB');
+            if (!_blackboardState.inlineMode) cleanHopContext('BB');
             logDebug(outputChannel, 'AI', `[BB] Phase → bb_done | Classic tools restored (BFS excluded — SM result authoritative)`);
           }
 
@@ -1614,6 +1627,19 @@ export function activate(context: vscode.ExtensionContext) {
             if (hasSubFindings && _blackboardState.status === 'complete') {
               logInfo(outputChannel, 'AI', `Exploration complete (${_blackboardState.noteCount} findings)`);
             }
+          }
+
+          // ─── Per-hop context cleaning (sliding memory design) ─────────────────
+          // Each hop is a fresh start: system prompt + question + mode prompt + current hop result.
+          // The working memory inside each hop result carries all continuity.
+          // Only for hop-by-hop mode (not inline) and only when SM is actively hopping (not just completed).
+          const isHopSubmission = hasSubFindings || hasCtSubmit;
+          const smStillHopping =
+            (activePhase === 'bb_active' && _blackboardState && !_blackboardState.inlineMode && _blackboardState.status !== 'complete') ||
+            (activePhase === 'ct_active' && _columnTraceState && !_columnTraceState.inlineMode && _columnTraceState.status !== 'complete');
+          if (isHopSubmission && smStillHopping) {
+            const smLabel = activePhase === 'bb_active' ? 'BB' : 'CT';
+            cleanHopContext(smLabel);
           }
 
           // No budget hints or hard stops — let the model run until round limit or natural completion.
@@ -1665,6 +1691,27 @@ export function activate(context: vscode.ExtensionContext) {
         }
         logDebug(outputChannel, 'AI', `Prompt: "${trunc(request.prompt, 200)}"`);
         logInfo(outputChannel, 'AI', `Session end`);
+
+        // Store partial result when session ends with active SM (round/token exhaustion, AI stopped early).
+        // forceComplete() sets status to 'complete' so getResult() guards pass — unified OOP in base class.
+        if (!_resultGraph) {
+          if (bbSnap && bbSnap.status !== 'complete') {
+            bbSnap.forceComplete();
+            const partial = bbSnap.getResult();
+            if (!('error' in partial)) {
+              storeBbResultGraph(partial);
+              logInfo(outputChannel, 'AI', `[ResultGraph] stored partial BB (agenda=${bbSnap.agendaRemaining})`);
+            }
+          } else if (ctSnap && ctSnap.status !== 'complete') {
+            ctSnap.forceComplete();
+            const partial = ctSnap.getResult();
+            if (!('error' in partial)) {
+              storeCtResultGraph(partial);
+              logInfo(outputChannel, 'AI', `[ResultGraph] stored partial CT`);
+            }
+          }
+        }
+
         // B3: "Show in Graph" button — after BFS trace or SM completion (CT/BB)
         const alreadyEnriched = toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_enrich_view'));
         const hasBfs = toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'));
@@ -1727,8 +1774,11 @@ export function activate(context: vscode.ExtensionContext) {
         followups.push({ prompt: 'What other objects reference this one?', label: 'Find references' });
       } else if (lastTools.some(t => t.includes('run_analysis'))) {
         followups.push({ prompt: 'Show me the details of the top hub', label: 'Explore top hub' });
+      } else if (lastTools.some(t => t.includes('enrich_view'))) {
+        followups.push({ prompt: 'Explain the lineage in more detail', label: 'Detailed explanation' });
       } else if (lastTools.some(t => t.includes('submit_hop') || t.includes('submit_findings'))) {
         followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
+        followups.push({ prompt: 'Explain the full lineage path in detail', label: 'Detailed explanation' });
       }
 
       return followups;

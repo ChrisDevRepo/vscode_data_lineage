@@ -46,6 +46,10 @@ Activated for all CT/BB traces (inline mode skips memory, not the SM):
 
 **Detail Memory (hop-by-hop mode only):** Per-node extractive evidence stored in `detailSlots` Map (local RAM, unlimited). Structured by aspect: COLUMNS, TRANSFORMS, JOINS, FILTERS, DATA FLOW, QUESTION RELEVANCE. Always delivered at full fidelity — no eviction. SM is a data provider, never degrades evidence. AI's ONLY source at synthesis; can re-read DDL via `get_object_detail` in done phase if insufficient. **In inline mode** (small scopes), detail memory stores only labels/captions — AI has all DDL in context already.
 
+**Per-hop context cleaning:** After each hop submission (hop-by-hop mode only), the conversation messages are cleaned to: system prompt + user question + mode prompt + last tool call/result. Working memory inside the hop result is the ONLY cross-hop continuity. Context stays flat (~10-15K tokens) regardless of hop count.
+
+**SM persistence:** SM instances persist across follow-up messages in the same chat session. Destroyed only when `start_exploration` or `start_column_trace` creates a new SM. If a session ends before the SM completes, `forceComplete()` (base class) stores partial results in `_resultGraph`.
+
 **Type 2/3 Lifecycle:** `init()` → `getHopContext()` ↔ `submitVerdicts()` → frontier empty → `getResult()`
 **Type 2/3 Verdicts:** `trace` / `prune` / `pass` / `revisit` — FIFO frontier. `prune` triggers BFS cascade (removes unreachable frontier nodes). `revisit` restores a previously pruned node (max 3 per trace).
 

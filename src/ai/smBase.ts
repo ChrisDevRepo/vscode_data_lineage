@@ -609,6 +609,18 @@ export abstract class HopStateMachine implements IHopStateMachine {
     this.detailSlots.clear();
   }
 
+  // ── Lifecycle ──
+
+  /** Force SM to complete state — used when session ends before natural completion (round/token exhaustion).
+   *  Allows getResult() to extract partial results for enrich_view and "Show in Graph" button.
+   *  All SM types inherit this — unified OOP concept. */
+  forceComplete(): void {
+    if (this._status !== 'created') {
+      this.log('info', `Force complete: ${this._status} → complete`);
+      this._status = 'complete';
+    }
+  }
+
   // ── State dump ──
 
   /** Serialize full SM state to a plain object — shared foundation for dump command and eval reports. */

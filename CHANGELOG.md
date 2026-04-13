@@ -6,6 +6,8 @@
 - **Dump SM State command** — serialize active state machine to JSON via Command Palette (`Data Lineage: Dump SM State`)
 
 ### Fixed
+- **`@lineage` sliding memory** — per-hop context cleaning keeps AI context flat (~15K tokens) regardless of hop count, preventing token bloat that caused premature stops on large explorations
+- **`@lineage` state machine persistence** — SM and graph results survive follow-up messages in the same chat session; partial results stored when session ends before completion
 - **LaTeX rendering in graph descriptions** — normalize `$$` delimiters for remark-math, auto-convert piecewise patterns, close unclosed math blocks to prevent cascade failures
 
 ## [0.9.8] - 2026-04-12
