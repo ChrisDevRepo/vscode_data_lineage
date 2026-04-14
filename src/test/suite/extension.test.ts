@@ -1,19 +1,21 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 
-suite('Extension Test Suite', () => {
-	vscode.window.showInformationMessage('Start all tests.');
+suite('Extension Functional Integration Suite', () => {
+	vscode.window.showInformationMessage('Start all functional tests.');
 
-	test('Extension should be present', () => {
-		assert.ok(vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz'));
-	});
+	let extensionApi: any;
 
-	test('Extension should activate', async () => {
+	test('Extension should activate and return API', async () => {
 		const ext = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz');
-		if (ext) {
-			await ext.activate();
-			assert.strictEqual(ext.isActive, true);
-		}
+		assert.ok(ext, 'Extension should be present');
+		extensionApi = await ext.activate();
+		assert.ok(extensionApi, 'Extension should return an API');
+		
+		// Verify activation log exists via API
+		assert.ok(extensionApi.testLogCapture.some((l: string) => l.includes('[Config] Extension activated')), 'Should log activation');
 	});
 
 	test('Commands should be registered', async () => {
@@ -21,20 +23,89 @@ suite('Extension Test Suite', () => {
 		const expectedCommands = [
 			'dataLineageViz.open',
 			'dataLineageViz.openDemo',
-			'dataLineageViz.openSettings'
+			'dataLineageViz.openSettings',
+			'dataLineageViz.dumpSmState'
 		];
 		for (const cmd of expectedCommands) {
 			assert.ok(commands.includes(cmd), `Command ${cmd} should be registered`);
 		}
 	});
 
-	test('Command: Open Wizard should execute', async () => {
-		await vscode.commands.executeCommand('dataLineageViz.open');
-		// If we reached here without error, the command handler was found and invoked
+	test('Verify Demo Session State & Tracing', async function() {
+		this.timeout(15000);
+		const sess = extensionApi.getSession();
+
+		// Trigger demo load via real command
+		await vscode.commands.executeCommand('dataLineageViz.openDemo');
+		
+		// Poll for model loading
+		let retries = 30;
+		while (retries > 0 && !sess.model) {
+			await new Promise(resolve => setTimeout(resolve, 300));
+			retries--;
+		}
+
+		assert.ok(sess.model, 'Model should be loaded in session via command');
+		assert.strictEqual(sess.projectName, 'Demo', 'Project name should be Demo');
+		
+		// Verify logs from dacpac loading
+		assert.ok(extensionApi.testLogCapture.some((l: string) => l.includes('[Dacpac] Demo loaded')), 'Should log dacpac loading');
+
+		// BFS Check
+		const nodeId = '[person].[person]';
+		const neighbors = sess.model!.neighborIndex[nodeId];
+		assert.ok(neighbors && neighbors.out.length > 0, 'Person.Person should have downstream neighbors');
+		
+		// Search Check
+		const { searchCatalog } = await import('../../utils/modelSearch');
+		const results = searchCatalog(sess.model!.nodes, 'SalesOrder');
+		assert.ok(results.length > 0, 'Should find SalesOrder nodes');
 	});
 
-	test('Command: Open Demo should execute', async () => {
-		await vscode.commands.executeCommand('dataLineageViz.openDemo');
-		// If we reached here without error, the command handler was found and invoked
+	test('Command: dumpSmState should generate verified JSON', async function() {
+		this.timeout(10000);
+		const sess = extensionApi.getSession();
+		
+		// Mock a state machine
+		const testTimestamp = new Date().toISOString();
+		sess.stateMachine = {
+			status: 'complete',
+			coveragePct: 0.85,
+			slotCount: 3,
+			inlineMode: false,
+			scopeSize: 12,
+			toJSON: () => ({ 
+				test_run: true, 
+				nodes: ['table_a', 'table_b'],
+				timestamp: testTimestamp
+			}),
+			getHopContext: async () => ({}),
+			getResult: async () => ({})
+		} as any;
+
+		await vscode.commands.executeCommand('dataLineageViz.dumpSmState');
+		
+		const wsFolder = vscode.workspace.workspaceFolders?.[0];
+		assert.ok(wsFolder, 'Workspace folder should be open');
+		
+		const dumpsDir = path.join(wsFolder.uri.fsPath, 'ai', 'sm-dumps');
+		
+		let foundFile: string | null = null;
+		for (let i = 0; i < 15; i++) {
+			if (fs.existsSync(dumpsDir)) {
+				const files = fs.readdirSync(dumpsDir);
+				foundFile = files.find(f => f.startsWith('sm-') && f.endsWith('.json')) || null;
+				if (foundFile) break;
+			}
+			await new Promise(resolve => setTimeout(resolve, 500));
+		}
+		
+		assert.ok(foundFile, 'SM dump file should have been created');
+		
+		const content = fs.readFileSync(path.join(dumpsDir, foundFile!), 'utf-8');
+		const parsed = JSON.parse(content);
+		assert.strictEqual(parsed.test_run, true);
+		assert.strictEqual(parsed.timestamp, testTimestamp);
+		assert.deepStrictEqual(parsed.nodes, ['table_a', 'table_b']);
 	});
 });

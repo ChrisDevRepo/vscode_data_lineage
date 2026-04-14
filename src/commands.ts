@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { type AiSession } from './ai/session';
+import { getActivePanel } from './panelProvider';
 import { logInfo, logDebug, logError, logWarn, trunc } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 
@@ -19,6 +20,13 @@ export function registerCommands(
   return [
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
+    vscode.commands.registerCommand('dataLineageViz.openProject', (projectId: string) => {
+      openPanel(context, 'Data Lineage Viz');
+      const panel = getActivePanel();
+      if (panel) {
+        panel.webview.postMessage({ type: 'load-project', id: projectId });
+      }
+    }),
     vscode.commands.registerCommand('dataLineageViz.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz')
     ),

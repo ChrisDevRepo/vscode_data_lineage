@@ -23,6 +23,7 @@ export class AiSession {
   public views: FilterProfile[] = [];
   public projectName: string | null = null;
   public currentProjectId: string | null = null;
+  public isDbSession = false;
   public columnStore: ColumnStore;
 
   // ── AI reasoning State ──
@@ -142,7 +143,7 @@ export class AiSession {
 
 // ─── Singleton Management ────────────────────────────────────────────────────
 
-let _session: AiSession | null = null;
+const GLOBAL_SESSION_KEY = '__VSCODE_DL_AI_SESSION__';
 
 /**
  * Get the global AI session singleton.
@@ -150,8 +151,8 @@ let _session: AiSession | null = null;
  * Chat sessions are reset based on history age to prevent cross-window leaks.
  */
 export function getSession(): AiSession {
-  if (!_session) {
-    _session = new AiSession();
+  if (!(globalThis as any)[GLOBAL_SESSION_KEY]) {
+    (globalThis as any)[GLOBAL_SESSION_KEY] = new AiSession();
   }
-  return _session;
+  return (globalThis as any)[GLOBAL_SESSION_KEY];
 }

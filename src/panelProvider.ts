@@ -230,14 +230,26 @@ export function createMessageHandlers(
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: any = null;
 
-  function setCurrentModel(m: DatabaseModel, project?: { id: string; name: string } | null): void {
+  function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     const sess = getSession();
     sess.columnStore.clear();
     populateColumnStore(m, sess.columnStore);
     sess.model = m;
     sess.graph = buildBareGraph(m);
+    sess.isDbSession = isDb;
     if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
     host.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+  }
+
+  async function getDetailConfig() {
+    const cfg = host.getConfiguration();
+    const sess = getSession();
+    return {
+      isDbMode: sess.isDbSession,
+      statsEnabled: cfg.get<boolean>('tableStatistics.enabled', true),
+      excludeExternalTables: cfg.get<boolean>('tableStatistics.excludeExternalTables', false),
+      standardModeEnabled: cfg.get<boolean>('tableStatistics.standardModeEnabled', true),
+    };
   }
 
   function enrichNodeForDetail(node: LineageNode): LineageNode {
@@ -252,7 +264,7 @@ export function createMessageHandlers(
       host.log('info', 'Bridge', 'Webview ready');
       if (loadDemoFlag) {
         await handleLoadDemo(host, context, getSession, outputChannel, true, (m) => {
-          setCurrentModel(m, null);
+          setCurrentModel(m, false, null);
           getSession().projectName = 'Demo';
         });
         return;
@@ -274,12 +286,11 @@ export function createMessageHandlers(
     },
     'detail-ready': async (msg) => {
       if (detailPanel && lastDetailNode) {
-        const config = await readExtensionConfig(host, outputChannel);
         detailPanel.webview.postMessage({ 
           type: 'detail-update', 
           node: enrichNodeForDetail(lastDetailNode), 
           findQuery: msg.findQuery,
-          config
+          config: await getDetailConfig()
         });
       }
     },
@@ -301,12 +312,11 @@ export function createMessageHandlers(
         detailPanel.webview.onDidReceiveMessage(async (m) => {
           if (m.type === 'detail-ready') {
             if (lastDetailNode) {
-              const config = await readExtensionConfig(host, outputChannel);
               detailPanel?.webview.postMessage({ 
                 type: 'detail-update', 
                 node: enrichNodeForDetail(lastDetailNode), 
                 findQuery: m.findQuery || msg.findQuery,
-                config
+                config: await getDetailConfig()
               });
             }
           } else if (m.type === 'table-stats-request') {
@@ -319,12 +329,11 @@ export function createMessageHandlers(
         detailPanel.reveal(vscode.ViewColumn.Beside);
         if (msg.node) {
           detailPanel.title = `Detail: ${msg.node.name}`;
-          const config = await readExtensionConfig(host, outputChannel);
           detailPanel.webview.postMessage({ 
             type: 'detail-update', 
             node: enrichNodeForDetail(msg.node), 
             findQuery: msg.findQuery,
-            config
+            config: await getDetailConfig()
           });
         }
       }
@@ -334,12 +343,11 @@ export function createMessageHandlers(
       if (detailPanel && msg.node) {
         host.log('debug', 'Bridge', `update-detail: ${msg.node.id}`);
         detailPanel.title = `Detail: ${msg.node.name}`;
-        const config = await readExtensionConfig(host, outputChannel);
         detailPanel.webview.postMessage({ 
           type: 'detail-update', 
           node: enrichNodeForDetail(msg.node), 
           findQuery: msg.findQuery,
-          config
+          config: await getDetailConfig()
         });
       }
     },
@@ -604,7 +612,18 @@ export function createMessageHandlers(
   };
 }
 
-// ─── Helpers (Host-Aware) ───────────────────────────────────────────────────
+// ─── Internal API (Exported for testing) ───────────────────────────────────
+
+export { handleLoadDemo };
+
+export function setCurrentModelTest(m: DatabaseModel, getSession: () => AiSession, project?: { id: string; name: string } | null): void {
+  const sess = getSession();
+  sess.columnStore.clear();
+  populateColumnStore(m, sess.columnStore);
+  sess.model = m;
+  sess.graph = buildBareGraph(m);
+  if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
+}
 
 async function handleLoadDemo(host: BridgeHost, context: vscode.ExtensionContext, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, autoVisualize = false, onModelBuilt?: (model: DatabaseModel) => void) {
   const config = await readExtensionConfig(host, outputChannel);

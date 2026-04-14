@@ -202,6 +202,13 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
         return {};
       }
 
+      // Rotate session ID and reset reasoning state if this is a brand new chat
+      if (chatContext.history.length === 0) {
+        sess.regenerateSessionId();
+        sess.resetExploration();
+        logInfo(outputChannel, 'AI', `[${sess.id}] New chat session detected — state rotated`);
+      }
+
       logInfo(outputChannel, 'AI', `[${sess.id}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
       let activePhase: 'discover' | 'ct_active' | 'ct_done' | 'bb_active' | 'bb_done' = 'discover';
@@ -429,10 +436,6 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
         const totalTokenEst = lastInputTokenEstimate + totalOutputTokens + Math.round(totalToolResultChars / 4);
         logInfo(outputChannel, 'AI', `Summary — rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst}`);
         
-        if (sess.stateMachine?.status === 'complete') {
-          stream.markdown('\n\n' + buildSynthesisReminder(request.prompt));
-        }
-
         const smComplete = sess.stateMachine?.status === 'complete';
         const hasBfs = toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'));
         if (getActivePanel() && (hasBfs || smComplete)) {
@@ -464,4 +467,10 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
   });
 
   context.subscriptions.push(participant);
+
+  return {
+    getSession,
+    getActivePanel,
+    testLogCapture
+  };
 }

@@ -131,6 +131,14 @@ const BLOCK = {
     'suggested_sections groups your badge_labels into sections ordered by dependency depth.\n' +
     'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
     'adjust labels if needed, and write text per section from your detail memory findings.',
+
+  /** Handling user change requests for the graph results */
+  graphAdjustments:
+    'GRAPH ADJUSTMENTS: If the user requests to add or remove specific nodes:\n' +
+    '- To ADD: (Exploration mode only) Use add_ids to include nodes from scope=available. ' +
+    'Tell the user: "I can add them one by one using add_ids via the exploration state machine. Let me do that properly."\n' +
+    '- To REMOVE: Use prune_ids (Exploration) or verdict=prune (Column Trace) to cut branches. ' +
+    'You can also use prune_node_ids in enrich_view at synthesis to hide nodes from the final view.',
 } as const;
 
 // ─── Synthesis Reminder (injected at END of SM result — highest attention zone) ──
@@ -180,6 +188,8 @@ export function buildBbPrompt(): string {
     '',
     BLOCK.scopeTiers,
     '',
+    BLOCK.graphAdjustments,
+    '',
     BLOCK.selfAsk,
     BLOCK.earlyComplete,
     BLOCK.workingMemory,
@@ -204,6 +214,7 @@ export function buildCtPrompt(): string {
     BLOCK.tableNodes,
     BLOCK.revisit,
     BLOCK.fieldMapping,
+    BLOCK.graphAdjustments,
     BLOCK.selfAsk,
     BLOCK.detailMemory,
   ].join('\n');
@@ -224,6 +235,7 @@ export function buildCtDepPrompt(): string {
     BLOCK.tableNodes,
     BLOCK.revisit,
     BLOCK.fieldMapping,
+    BLOCK.graphAdjustments,
     BLOCK.selfAsk,
     BLOCK.detailMemory,
   ].join('\n');
