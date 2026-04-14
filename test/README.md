@@ -3,7 +3,7 @@
 ## Running Tests
 
 ```bash
-npm test                                       # Unit tests (996 tsx + 112 vitest + snapshot)
+npm test                                       # Unit tests (1118 tsx + 115 vitest + snapshot)
 npm run test:internal                          # AI SM tests (348 tsx) — separate suite
 npx tsx test/dacpacExtractor.test.ts           # Dacpac extractor tests (109 tests)
 npx tsx test/graphBuilder.test.ts              # Graph builder + trace tests (218 tests)

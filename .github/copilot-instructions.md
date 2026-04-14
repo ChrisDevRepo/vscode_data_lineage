@@ -41,14 +41,12 @@ source format into the shared intermediate types and nothing more.
 | `src/ai/aiPresenter.ts` | Compact LLM presentation layer: `strip()`, `presentNode/Column/Schema/Neighbor/Filter()`, `edgeApiType()` (explicit type map with 'read' fallback). Zero business logic, zero VS Code imports. |
 | `src/ai/graphUtils.ts` | `buildBareGraph()` — connection-only graphology graph for BFS in AI tools |
 
-## Build & Test
+## Testing Mandates
 
-```bash
-npm run build         # Build extension + webview
-npm run watch         # Watch extension only
-npm test              # Unit tests (996 tsx + 112 vitest + snapshot)
-npm run test:internal # AI SM tests (184+98+66 = 348 tsx) — separate suite
-```
+- **Deterministic Focus**: Only write tests for the **deterministic core** (SQL parsing, graph topology, BFS).
+- **No UI/Hook Tests**: Do NOT write unit tests for React components, hooks, or UI routing. These are low-value and brittle.
+- **Snapshot Baselines**: When changing `sqlBodyParser.ts` or `defaultParseRules.yaml`, you MUST run `npm run test:snapshot` and commit an updated `test/aw-baseline.tsv` if the changes are intended.
+- **Internal Eval-Loop**: Deep AI/semantic testing is handled internally via a private `eval-loop` and is not part of the public PR process.
 
 Press F5 to launch Extension Development Host.
 
@@ -56,16 +54,16 @@ Press F5 to launch Extension Development Host.
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 109 | Dacpac extraction, filtering, edge integrity, Fabric SDK, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
-| `test/graphBuilder.test.ts` | 218 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
+| `test/dacpacExtractor.test.ts` | 89 | Dacpac extraction, filtering, edge integrity, Fabric SDK, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
+| `test/graphBuilder.test.ts` | 127 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
 | `test/parser-edge-cases.test.ts` | 204 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
-| `test/graphAnalysis.test.ts` | 81 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
-| `test/dmvExtractor.test.ts` | 193 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
-| `test/tsql-complex.test.ts` | 55 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/projectStore.test.ts` | 136 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `test-internal/ai-tools.test.ts` | 184 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
-| `test-internal/column-trace-state.test.ts` | 98 | Column-trace state machine: lifecycle, init, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), synthetic model tests, bug regression (diamond merge, passthrough visited, depth, focus boundary) |
-| `test-internal/blackboard-state.test.ts` | 66 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
+| `test/graphAnalysis.test.ts` | 74 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
+| `test/dmvExtractor.test.ts` | 146 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
+| `test/tsql-complex.test.ts` | 5 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
+| `test/projectStore.test.ts` | 41 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
+| `test-internal/ai-tools.test.ts` | 255 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
+| `test-internal/column-trace-state.test.ts` | 113 | Column-trace state machine: lifecycle, init, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), synthetic model tests, bug regression (diamond merge, passthrough visited, depth, focus boundary) |
+| `test-internal/blackboard-state.test.ts` | 64 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
 | `test/hooks/useInteractiveTrace.test.ts` | 31 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
 | `test/hooks/useGraphology.test.ts` | 27 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
 | `test/hooks/useOverviewMode.test.ts` | 18 | Overview mode state machine: auto-trigger, manual toggle, threshold guards, resetUserChoice |
@@ -77,15 +75,15 @@ Press F5 to launch Extension Development Host.
 | `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
 
 ```bash
-npm test                            # All unit tests (996 tsx + 112 vitest + snapshot)
+npm test                            # All unit tests (1118 tsx + 115 vitest + snapshot)
 npm run test:snapshot               # Parser baseline check only
 npm run test:snapshot:update        # Regenerate test/aw-baseline.tsv after parser changes
 npm run test:coverage               # Vitest with v8 coverage (requires @vitest/coverage-v8)
 ```
 
-**tsx tests** (996 in `npm test`, 348 in `npm run test:internal`): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
+**tsx tests** (1118 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
 
-**Vitest tests** (112 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
+**Vitest tests** (115 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
 
 Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers must never appear in public source code, test files, or comments. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
 
@@ -283,9 +281,9 @@ npm test                               # all suites must pass
 - CT: `goal: { columns, direction, origin }` repeated in every hop context — prevents losing track of original columns after renames
 - BB: `working_memory.user_question` repeated every hop — prevents losing sight of original investigation question
 
-**AI tests (3 tiers, 348 tests):** run via `npm run test:internal` (gitignored, local-only)
-- `test-internal/ai-tools.test.ts` (184) — pure tool functions: getContext, search, detail, BFS (level + path), analysis, DDL, validate, autoFix
-- `test-internal/column-trace-state.test.ts` (98) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
-- `test-internal/blackboard-state.test.ts` (66) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
+**AI tests (3 tiers, 432 tests):** run via `npm run test:internal` (gitignored, local-only)
+- `test-internal/ai-tools.test.ts` (255) — pure tool functions: getContext, search, detail, BFS (level + path), analysis, DDL, validate, autoFix
+- `test-internal/column-trace-state.test.ts` (113) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
+- `test-internal/blackboard-state.test.ts` (64) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
 
 **UAT scenarios:** `ai/test-all-modes.md` — all modes (classic C1-C5, hop H1-H7, routing R1-R6, edge cases E1-E4). Column-trace UAT: `ai/test-column-trace.md` (Q1-Q3).

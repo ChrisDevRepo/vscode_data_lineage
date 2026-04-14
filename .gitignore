@@ -37,3 +37,6 @@ PLAN*.md
 .DS_Store
 Thumbs.db
 nul
+
+# Gemini CLI context
+GEMINI.md
