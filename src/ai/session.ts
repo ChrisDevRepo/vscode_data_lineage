@@ -1,7 +1,7 @@
 import type Graph from 'graphology';
 import type { DatabaseModel } from '../engine/types';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
-import type { ColumnStore } from '../engine/columnStore';
+import { ColumnStore } from '../engine/columnStore';
 import { AiMemoryManager } from './memoryManager';
 import type { ResultGraph, AiOutputTemplates, EMPTY_AI_TEMPLATES, SessionSummary, NodeRole } from './types';
 import type { IHopStateMachine } from './smBase';
