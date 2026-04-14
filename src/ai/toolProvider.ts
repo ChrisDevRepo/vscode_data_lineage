@@ -13,7 +13,8 @@ import {
 } from './tools';
 import { buildSynthesisReminder } from './smPrompts';
 import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
-import { type AIViewMetadata } from '../engine/projectStore';
+import { type AIViewMetadata, type SerializedFilterState } from '../engine/projectStore';
+import { type IHopStateMachine } from './smBase';
 
 /**
  * Registers all 12 @lineage AI Language Model tools.
@@ -351,9 +352,20 @@ export function registerAiTools(
 
           sess.resetExploration();
 
-          const activeFilter = schemaVal.valid 
-            ? { ...sess.filter, schemas: [...schemaVal.valid] } 
-            : sess.filter;
+          const filter = sess.filter;
+          if (!filter) throw new Error('No filter state available in session.');
+
+          const activeFilter: SerializedFilterState = {
+            schemas: schemaVal.valid ? [...schemaVal.valid] : (filter.schemas || []),
+            types: filter.types || [],
+            searchTerm: filter.searchTerm || '',
+            hideIsolated: !!filter.hideIsolated,
+            focusSchemas: filter.focusSchemas || [],
+            showExternalRefs: !!filter.showExternalRefs,
+            externalRefTypes: filter.externalRefTypes || [],
+            exclusionPatterns: filter.exclusionPatterns || [],
+            allowlistNodeIds: filter.allowlistNodeIds ? Array.from(filter.allowlistNodeIds) : undefined,
+          };
 
           const ct = new ColumnTraceState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
@@ -463,9 +475,20 @@ export function registerAiTools(
 
           sess.resetExploration();
 
-          const activeFilter = schemaVal.valid 
-            ? { ...sess.filter, schemas: [...schemaVal.valid] } 
-            : sess.filter;
+          const filter = sess.filter;
+          if (!filter) throw new Error('No filter state available in session.');
+
+          const activeFilter: SerializedFilterState = {
+            schemas: schemaVal.valid ? [...schemaVal.valid] : (filter.schemas || []),
+            types: filter.types || [],
+            searchTerm: filter.searchTerm || '',
+            hideIsolated: !!filter.hideIsolated,
+            focusSchemas: filter.focusSchemas || [],
+            showExternalRefs: !!filter.showExternalRefs,
+            externalRefTypes: filter.externalRefTypes || [],
+            exclusionPatterns: filter.exclusionPatterns || [],
+            allowlistNodeIds: filter.allowlistNodeIds ? Array.from(filter.allowlistNodeIds) : undefined,
+          };
 
           const bb = new BlackboardState(m, g, (level, msg) => {
             if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);

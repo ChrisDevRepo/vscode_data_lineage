@@ -14,8 +14,8 @@ import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './t
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
-import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type ShortMemory } from './smBase';
-import type { AiMemoryManager, DetailSlot } from './memoryManager';
+import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type SmResult } from './smBase';
+import type { AiMemoryManager, DetailSlot, ShortMemory } from './memoryManager';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -572,7 +572,7 @@ export class ColumnTraceState extends HopStateMachine {
       if (pruned.length) parts.push(`✕ pruned: ${pruned.join(', ')}`);
       const entry = `${focusName}: ${parts.join(' | ')}`;
       const smErr = this.updateShortMemory(entry);
-      if (smErr) return { error: 'notes_too_long', limit: this.shortMemoryHardLimit, hint: `Shorten your notes — aim for ~${this.shortMemorySoftLimit} chars.` };
+      if (smErr) return { error: 'notes_too_long', limit: this.summaryHardLimit, hint: `Shorten your notes — aim for ~${this.summarySoftLimit} chars.` };
     }
 
     // Cascade prune: remove frontier entries unreachable from origin after prunes

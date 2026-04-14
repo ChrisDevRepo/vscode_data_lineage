@@ -66,6 +66,9 @@ export interface SmResult {
   stats: Record<string, number>;
 }
 
+export type HopContext = any;
+export type HopCompletion = any;
+
 /**
  * Public caller contract for hop-by-hop state machines.
  */
@@ -74,6 +77,10 @@ export interface IHopStateMachine {
   readonly slotCount: number;
   readonly coveragePct: number;
   readonly inlineMode: boolean;
+  readonly scopeSize: number;
+  getHopContext(): HopContext;
+  getResult(): HopCompletion;
+  toJSON(): any;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -97,7 +104,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected readonly activeFilter: SerializedFilterState | null;
   protected readonly filterSchemas: Set<string> | null;
   protected readonly findingsHardLimit: number;
-  protected readonly summaryHardLimit: number;
+  public readonly summaryHardLimit: number;
+  public readonly summarySoftLimit: number;
   protected readonly memory: AiMemoryManager;
 
   // ── Shared mutable state ──
@@ -135,6 +143,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
       : null;
     this.findingsHardLimit = config.findingsHardLimit ?? DEFAULT_FINDINGS_LIMIT;
     this.summaryHardLimit = config.summaryHardLimit ?? DEFAULT_SUMMARY_LIMIT;
+    this.summarySoftLimit = Math.floor(this.summaryHardLimit * 0.8);
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
@@ -567,6 +576,9 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   /** Return the scope direction for boundary detection. */
   protected abstract getScopeDirection(): 'upstream' | 'downstream' | 'bidirectional';
+
+  public abstract getHopContext(): HopContext;
+  public abstract getResult(): HopCompletion;
 }
 
 // Re-export types used by extension.ts

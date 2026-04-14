@@ -347,7 +347,7 @@ export class BlackboardState extends HopStateMachine {
 
     // Update short memory — base class validates soft/hard limits
     const smErr = this.updateShortMemory(`${this.nodeMap.get(focusNodeId)?.name ?? focusNodeId}: ${summary}`);
-    if (smErr) return { error: 'summary_too_long', limit: this.shortMemoryHardLimit };
+    if (smErr) return { error: 'summary_too_long', limit: this.summaryHardLimit };
 
     // Mark any pending questions for this node as answered
     for (const q of this.questionLog) {

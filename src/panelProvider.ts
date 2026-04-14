@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import * as os from 'os';
 import { type AiSession } from './ai/session';
-import { logInfo, logDebug, logWarn, logError, logTrace, trunc } from './utils/log';
+import { logInfo, logDebug, logWarn, logError, logTrace, trunc, type LogCategory } from './utils/log';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -31,6 +31,29 @@ import {
 } from './engine/projectStore';
 import { buildBareGraph } from './ai/graphUtils';
 import { populateColumnStore } from './engine/modelBuilder';
+
+// ─── Types & Interfaces ──────────────────────────────────────────────────────
+
+/** 
+ * BridgeHost abstracts the VS Code specific parts of the bridge
+ * allowing the logic to be unit tested in a pure Node.js environment.
+ */
+export interface BridgeHost {
+  postMessage(msg: any): Thenable<boolean>;
+  log(level: 'info' | 'debug' | 'warn' | 'error' | 'trace', cat: LogCategory, text: string, err?: any): void;
+  showErrorMessage(msg: string): void;
+  executeCommand(command: string, ...args: any[]): Thenable<any>;
+  openExternal(url: string): Thenable<boolean>;
+  showOpenDialog(options: vscode.OpenDialogOptions): Thenable<vscode.Uri[] | undefined>;
+  showSaveDialog(options: vscode.SaveDialogOptions): Thenable<vscode.Uri | undefined>;
+  readFile(uri: vscode.Uri): Thenable<Uint8Array>;
+  writeFile(uri: vscode.Uri, content: Uint8Array): Thenable<void>;
+  withProgress<R>(options: vscode.ProgressOptions, task: (progress: vscode.Progress<any>, token: vscode.CancellationToken) => Thenable<R>): Thenable<R>;
+  getConfiguration(): vscode.WorkspaceConfiguration;
+  getExtensionUri(): vscode.Uri;
+  getGlobalState(): vscode.Memento;
+  getWorkspaceState(): vscode.Memento;
+}
 
 // ─── Panel State ─────────────────────────────────────────────────────────────
 
@@ -61,10 +84,10 @@ function getThemeClass(kind: vscode.ColorThemeKind): string {
     'vscode-light';
 }
 
-function isDacpacTooLarge(bytes: number): boolean {
+function isDacpacTooLarge(bytes: number, host: BridgeHost): boolean {
   if (bytes <= MAX_DACPAC_BYTES) return false;
   const mb = (bytes / 1024 / 1024).toFixed(1);
-  vscode.window.showErrorMessage(`Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`);
+  host.showErrorMessage(`Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`);
   return true;
 }
 
@@ -83,7 +106,30 @@ export function openPanel(
     activePanel.reveal();
     if (loadDemo) {
       activePanel.webview.postMessage({ type: 'auto-visualize-start' });
-      handleLoadDemo(activePanel, context, getSession, outputChannel, true).catch(() => {});
+      // Wrapped in a dummy host for handleLoadDemo compatibility
+      const dummyHost: BridgeHost = {
+        postMessage: (msg) => activePanel!.webview.postMessage(msg),
+        log: (level, cat, text, err) => {
+          if (level === 'info') logInfo(outputChannel, cat, text);
+          else if (level === 'warn') logWarn(outputChannel, cat, text);
+          else if (level === 'error') logError(outputChannel, cat, text, err);
+          else if (level === 'trace') logTrace(outputChannel, cat, text);
+          else logDebug(outputChannel, cat, text);
+        },
+        showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+        executeCommand: (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args),
+        openExternal: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
+        showOpenDialog: (opts) => vscode.window.showOpenDialog(opts),
+        showSaveDialog: (opts) => vscode.window.showSaveDialog(opts),
+        readFile: (uri) => vscode.workspace.fs.readFile(uri),
+        writeFile: (uri, content) => vscode.workspace.fs.writeFile(uri, content),
+        withProgress: (opts, task) => vscode.window.withProgress(opts, task),
+        getConfiguration: () => vscode.workspace.getConfiguration('dataLineageViz'),
+        getExtensionUri: () => context.extensionUri,
+        getGlobalState: () => context.globalState,
+        getWorkspaceState: () => context.workspaceState,
+      };
+      handleLoadDemo(dummyHost, context, getSession, outputChannel, true).catch(() => {});
     }
     return;
   }
@@ -100,6 +146,29 @@ export function openPanel(
 
   activePanel = panel;
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, loadDemo);
+
+  const host: BridgeHost = {
+    postMessage: (msg) => panel.webview.postMessage(msg),
+    log: (level, cat, text, err) => {
+      if (level === 'info') logInfo(outputChannel, cat, text);
+      else if (level === 'warn') logWarn(outputChannel, cat, text);
+      else if (level === 'error') logError(outputChannel, cat, text, err);
+      else if (level === 'trace') logTrace(outputChannel, cat, text);
+      else logDebug(outputChannel, cat, text);
+    },
+    showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+    executeCommand: (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args),
+    openExternal: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
+    showOpenDialog: (opts) => vscode.window.showOpenDialog(opts),
+    showSaveDialog: (opts) => vscode.window.showSaveDialog(opts),
+    readFile: (uri) => vscode.workspace.fs.readFile(uri),
+    writeFile: (uri, content) => vscode.workspace.fs.writeFile(uri, content),
+    withProgress: (opts, task) => vscode.window.withProgress(opts, task),
+    getConfiguration: () => vscode.workspace.getConfiguration('dataLineageViz'),
+    getExtensionUri: () => context.extensionUri,
+    getGlobalState: () => context.globalState,
+    getWorkspaceState: () => context.workspaceState,
+  };
 
   let detailPanel: vscode.WebviewPanel | undefined;
   let panelDisposed = false;
@@ -121,332 +190,7 @@ export function openPanel(
     vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
-  let cachedElements: XmlElement[] | null = null;
-  let cachedDspName = '';
-  let lastConnectionInfo: IConnectionInfo | undefined;
-  let allObjectsCache: SimpleExecuteResult | undefined;
-  let platformInfoCache: SimpleExecuteResult | undefined;
-
-  function setCurrentModel(m: DatabaseModel, project?: { id: string; name: string } | null): void {
-    const sess = getSession();
-    sess.columnStore.clear();
-    populateColumnStore(m, sess.columnStore);
-    sess.model = m;
-    sess.graph = buildBareGraph(m);
-    if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
-    vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
-  }
-
-  function enrichNodeForDetail(node: LineageNode): LineageNode {
-    const sess = getSession();
-    const cols = sess.columnStore.getColumns(node.id);
-    const ddl = sess.columnStore.getDdl(node.id);
-    return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
-  }
-
-  const handlers: Record<string, (msg: any) => Promise<void> | void> = {
-    'ready': async () => {
-      logInfo(outputChannel, 'Bridge', 'Webview ready');
-      if (loadDemo) {
-        await handleLoadDemo(panel, context, getSession, outputChannel, true, (m) => {
-          setCurrentModel(m, null);
-          getSession().projectName = 'Demo';
-        });
-        return;
-      }
-      if (context.globalState.get(PROJECT_STORE_KEY) === undefined) {
-        logInfo(outputChannel, 'Bridge', 'No project store found, triggering migration');
-        await migrateFromWorkspaceState(context);
-      }
-      const config = await readExtensionConfig(outputChannel, context.extensionUri);
-      const store = loadProjectStore(context);
-      const sess = getSession();
-      panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
-      if (sess.model && store.lastOpenedId) {
-        const project = store.projects.find((p: any) => p.id === store.lastOpenedId);
-        if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
-        logInfo(outputChannel, 'Bridge', `Restoring session for project: ${sess.projectName}`);
-        panel.webview.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
-      }
-    },
-    'open-dacpac': async () => {
-      logInfo(outputChannel, 'Bridge', 'Opening dacpac picker');
-      const uris = await vscode.window.showOpenDialog({ 
-        canSelectMany: false, 
-        filters: { 'DACPAC': ['dacpac'] },
-        title: 'Select a .dacpac file'
-      });
-      if (uris && uris.length > 0) {
-        logInfo(outputChannel, 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
-        const data = await vscode.workspace.fs.readFile(uris[0]);
-        if (isDacpacTooLarge(data.byteLength)) return;
-        const config = await readExtensionConfig(outputChannel, context.extensionUri);
-        const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
-        cachedElements = elements; cachedDspName = dspName;
-        panel.webview.postMessage({ 
-          type: 'dacpac-schema-preview', 
-          preview, 
-          config,
-          sourceName: path.basename(uris[0].fsPath, '.dacpac'),
-          filePath: uris[0].fsPath 
-        });
-      } else {
-        logInfo(outputChannel, 'Bridge', 'Dacpac picker cancelled');
-        panel.webview.postMessage({ type: 'db-cancelled' });
-      }
-    },
-    'load-project': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Loading project: ${msg.id}`);
-      if (statsConnectionUri) {
-        disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
-        statsConnectionUri = undefined;
-      }
-      const store = loadProjectStore(context);
-      const project = store.projects.find((p: any) => p.id === msg.id);
-      if (!project) {
-        logError(outputChannel, 'Bridge', 'Load project', new Error(`Project not found: ${msg.id}`));
-        panel.webview.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
-        return;
-      }
-
-      if (project.connection.type === 'dacpac') {
-        try {
-          const fileUri = vscode.Uri.file(project.connection.path);
-          logInfo(outputChannel, 'Bridge', `Reading dacpac file: ${fileUri.fsPath}`);
-          const data = await vscode.workspace.fs.readFile(fileUri);
-          if (isDacpacTooLarge(data.byteLength)) return;
-          
-          const refreshed = { ...project, updatedAt: new Date().toISOString() };
-          const updatedStore = updateProject(store, refreshed);
-          await saveProjectStore(context, updatedStore);
-          panel.webview.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
-
-          const config = await readExtensionConfig(outputChannel, context.extensionUri);
-          const schemas = project.connection.schemas;
-          
-          if (schemas && schemas.length > 0) {
-            logInfo(outputChannel, 'Bridge', `Extracting filtered dacpac for schemas: ${schemas.join(', ')}`);
-            if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
-            const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
-            setCurrentModel(model, { id: project.id, name: project.connection.displayName });
-            if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
-            panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
-          } else {
-            logInfo(outputChannel, 'Bridge', 'No schemas in project, showing preview');
-            const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
-            cachedElements = elements; cachedDspName = dspName;
-            panel.webview.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
-          }
-        } catch (err) {
-          if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
-            logWarn(outputChannel, 'Bridge', `Dacpac file not found: ${project.connection.path}`);
-            panel.webview.postMessage({ type: 'last-dacpac-gone' });
-          } else {
-            throw err;
-          }
-        }
-      } else {
-        await withDbProgress(panel, 'Loading project', outputChannel, async () => {
-          const result = await connectDirect(project.connection.connectionInfo as IConnectionInfo, outputChannel);
-          return result ?? await promptForConnection(outputChannel);
-        }, async (dbResult, progress, token) => {
-          lastConnectionInfo = dbResult.connectionInfo;
-          const schemas = project.connection.schemas;
-          if (!schemas || schemas.length === 0) {
-            await runDbPhase1(panel, dbResult.connectionUri, dbResult.connectionInfo, outputChannel, context.extensionUri, (r) => { allObjectsCache = r; });
-          } else {
-            await runDbPhase2(panel, dbResult.connectionUri, schemas, progress, token, outputChannel, context.extensionUri, allObjectsCache, project.connection.connectionInfo.database, project.connection.sourceName, platformInfoCache, (m) => {
-              setCurrentModel(m, { id: project.id, name: project.name });
-            });
-            const refreshed = { ...project, updatedAt: new Date().toISOString() };
-            const updatedStore = updateProject(store, refreshed);
-            await saveProjectStore(context, updatedStore);
-            panel.webview.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
-          }
-        });
-      }
-    },
-    'save-project': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Saving project: ${msg.project?.name}`);
-      if (!isValidProject(msg.project)) return;
-      const store = loadProjectStore(context);
-      const updated = updateProject(store, msg.project);
-      await saveProjectStore(context, updated);
-      const sess = getSession();
-      sess.currentProjectId = msg.project.id;
-      sess.projectName = msg.project.name;
-      panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-    },
-    'delete-project': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Deleting project: ${msg.id}`);
-      const store = loadProjectStore(context);
-      const updated = deleteProject(store, msg.id);
-      await saveProjectStore(context, updated);
-      panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-    },
-    'load-demo': async () => {
-      logInfo(outputChannel, 'Bridge', 'Loading demo');
-      await handleLoadDemo(panel, context, getSession, outputChannel, true, (m) => {
-        setCurrentModel(m, null);
-        getSession().projectName = 'Demo';
-      });
-    },
-    'dacpac-visualize': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      if (!cachedElements) {
-        logError(outputChannel, 'Bridge', 'Dacpac visualize', new Error('Session expired (cachedElements is null)'));
-        panel.webview.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
-        return;
-      }
-      const config = await readExtensionConfig(outputChannel, context.extensionUri);
-      if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
-      logInfo(outputChannel, 'Bridge', 'Running extractDacpacFiltered');
-      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
-      logInfo(outputChannel, 'Bridge', `Extracted ${model.nodes.length} nodes and ${model.edges.length} edges`);
-      const sess = getSession();
-      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
-      setCurrentModel(model, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
-      if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
-      panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: projectName });
-    },
-    'db-visualize': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      return withDbProgress(panel, 'Loading selected schemas', outputChannel, async () => {
-        if (!lastConnectionInfo) {
-          logError(outputChannel, 'Bridge', 'Database visualize', new Error('No stored connection info'));
-          panel.webview.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
-          return undefined;
-        }
-        return (await connectDirect(lastConnectionInfo, outputChannel)) ?? await promptForConnection(outputChannel);
-      }, async (conn, progress, token) => {
-        const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
-        const pendingProject = msg.projectName ? createProject(msg.projectName, {
-          type: 'database',
-          connectionInfo: stripSensitiveFields(conn.connectionInfo),
-          sourceName,
-          schemas: msg.schemas,
-        }) : null;
-
-        await runDbPhase2(panel, conn.connectionUri, msg.schemas, progress, token, outputChannel, context.extensionUri, allObjectsCache, conn.connectionInfo.database, sourceName, platformInfoCache, (m) => {
-          if (pendingProject) {
-            setCurrentModel(m, { id: pendingProject.id, name: pendingProject.name });
-          } else {
-            setCurrentModel(m);
-            getSession().projectName = sourceName;
-          }
-        });
-
-        if (pendingProject && !token.isCancellationRequested) {
-          const store = loadProjectStore(context);
-          const updated = updateProject(store, pendingProject);
-          await saveProjectStore(context, updated);
-          panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-        }
-      });
-    },
-    'show-detail': (msg) => {
-      logDebug(outputChannel, 'Bridge', `Showing detail for node: ${msg.node?.id}`);
-      if (!detailPanel) {
-        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', msg.node.name, vscode.ViewColumn.Beside, { enableScripts: true });
-        detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, context.extensionUri);
-        detailPanel.onDidDispose(() => { detailPanel = undefined; });
-        detailPanel.webview.onDidReceiveMessage(async (m) => {
-          if (m.type === 'table-stats-request') {
-            await handleTableStatsRequest(lastConnectionInfo, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel, context.extensionUri);
-          } else if (m.type === 'close-detail') {
-            detailPanel?.dispose();
-          }
-        });
-      }
-      detailPanel.webview.postMessage({ type: 'detail-update', node: enrichNodeForDetail(msg.node) });
-    },
-    'filter-changed': (msg) => {
-      const sess = getSession();
-      sess.filter = msg.filter;
-      sess.views = msg.savedViews;
-      if (msg.filteredCount !== undefined) _lastFilteredCount = msg.filteredCount;
-      if (msg.renderLimitHit !== undefined) _lastRenderLimitHit = msg.renderLimitHit;
-    },
-    'db-connect': () => {
-      logInfo(outputChannel, 'Bridge', 'Database connect requested');
-      return withDbProgress(panel, 'Connecting', outputChannel, () => promptForConnection(outputChannel), (conn) => {
-        lastConnectionInfo = conn.connectionInfo;
-        return runDbPhase1(panel, conn.connectionUri, conn.connectionInfo, outputChannel, context.extensionUri, (r) => { allObjectsCache = r; });
-      });
-    },
-    'check-mssql': () => {
-      const available = isMssqlAvailable();
-      logDebug(outputChannel, 'Bridge', `MSSQL extension availability check: ${available}`);
-      panel.webview.postMessage({ type: 'mssql-status', available });
-    },
-    'save-view': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Saving filter view: ${msg.profile?.name}`);
-      const store = loadProjectStore(context);
-      const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
-      await saveProjectStore(context, updated);
-      panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-    },
-    'save-wizard-view': async (msg) => {
-      const store = loadProjectStore(context);
-      await saveProjectStore(context, { ...store, lastWizardView: msg.view });
-    },
-    'delete-view': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Deleting filter view: ${msg.profileId}`);
-      const store = loadProjectStore(context);
-      const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
-      await saveProjectStore(context, updated);
-      panel.webview.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
-    },
-    'rebuild': async () => {
-      logInfo(outputChannel, 'Bridge', 'Rebuild requested');
-      const config = await readExtensionConfig(outputChannel, context.extensionUri);
-      if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
-      panel.webview.postMessage({ type: 'rebuild-config', config });
-    },
-    'reload': () => {
-      logInfo(outputChannel, 'Bridge', 'Reloading panel');
-      panel.dispose();
-      openPanel(context, title, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState, loadDemo);
-    },
-    'request-projects': () => {
-      logDebug(outputChannel, 'Bridge', 'Projects list requested');
-      const store = loadProjectStore(context);
-      panel.webview.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
-    },
-    'open-external': async (msg) => {
-      if (msg.url) {
-        logInfo(outputChannel, 'Bridge', `Opening external URL: ${msg.url}`);
-        await vscode.env.openExternal(vscode.Uri.parse(msg.url));
-      }
-    },
-    'open-settings': () => {
-      logInfo(outputChannel, 'Bridge', 'Opening extension settings');
-      vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz');
-    },
-    'export-file': async (msg) => {
-      logInfo(outputChannel, 'Bridge', `Exporting file: ${msg.defaultName}`);
-      const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(msg.defaultName) });
-      if (uri) {
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
-        vscode.commands.executeCommand('revealFileInOS', uri);
-      }
-    },
-    'overview-mode-changed': (msg) => {
-      _lastOverviewMode = msg.mode;
-    },
-    'log': (msg) => {
-      const lvl = msg.level ?? 'debug';
-      if (lvl === 'info') logInfo(outputChannel, 'Bridge', msg.text);
-      else if (lvl === 'warn') logWarn(outputChannel, 'Bridge', msg.text);
-      else if (lvl === 'trace') logTrace(outputChannel, 'Bridge', msg.text);
-      else logDebug(outputChannel, 'Bridge', msg.text);
-    },
-    'error': (msg) => {
-      logError(outputChannel, 'Bridge', 'Webview error', new Error(msg.error));
-      vscode.window.showErrorMessage(`Data Lineage Error: ${msg.error}`);
-    }
-  };
+  const handlers = createMessageHandlers(host, context, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState, loadDemo, (dp) => detailPanel = dp);
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     logDebug(outputChannel, 'Bridge', `Incoming: ${msg.type}`);
@@ -464,70 +208,411 @@ export function openPanel(
   }, undefined, context.subscriptions);
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Core Handler Logic ──────────────────────────────────────────────────────
 
-async function handleLoadDemo(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, autoVisualize = false, onModelBuilt?: (model: DatabaseModel) => void) {
-  const config = await readExtensionConfig(outputChannel, context.extensionUri);
+export function createMessageHandlers(
+  host: BridgeHost,
+  context: vscode.ExtensionContext,
+  getSession: () => AiSession,
+  outputChannel: vscode.LogOutputChannel,
+  loadProjectStore: (context: vscode.ExtensionContext) => any,
+  saveProjectStore: (context: vscode.ExtensionContext, store: any) => Promise<void>,
+  migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
+  loadDemoFlag: boolean,
+  setDetailPanel: (panel: vscode.WebviewPanel | undefined) => void
+): Record<string, (msg: any) => Promise<void> | void> {
+
+  let cachedElements: XmlElement[] | null = null;
+  let cachedDspName = '';
+  let lastConnectionInfo: IConnectionInfo | undefined;
+  let allObjectsCache: SimpleExecuteResult | undefined;
+  let platformInfoCache: SimpleExecuteResult | undefined;
+  let detailPanel: vscode.WebviewPanel | undefined;
+
+  function setCurrentModel(m: DatabaseModel, project?: { id: string; name: string } | null): void {
+    const sess = getSession();
+    sess.columnStore.clear();
+    populateColumnStore(m, sess.columnStore);
+    sess.model = m;
+    sess.graph = buildBareGraph(m);
+    if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
+    host.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+  }
+
+  function enrichNodeForDetail(node: LineageNode): LineageNode {
+    const sess = getSession();
+    const cols = sess.columnStore.getColumns(node.id);
+    const ddl = sess.columnStore.getDdl(node.id);
+    return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
+  }
+
+  return {
+    'ready': async () => {
+      host.log('info', 'Bridge', 'Webview ready');
+      if (loadDemoFlag) {
+        await handleLoadDemo(host, context, getSession, outputChannel, true, (m) => {
+          setCurrentModel(m, null);
+          getSession().projectName = 'Demo';
+        });
+        return;
+      }
+      if (host.getGlobalState().get(PROJECT_STORE_KEY) === undefined) {
+        host.log('info', 'Bridge', 'No project store found, triggering migration');
+        await migrateFromWorkspaceState(context);
+      }
+      const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+      const store = loadProjectStore(context);
+      const sess = getSession();
+      host.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
+      if (sess.model && store.lastOpenedId) {
+        const project = store.projects.find((p: any) => p.id === store.lastOpenedId);
+        if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
+        host.log('info', 'Bridge', `Restoring session for project: ${sess.projectName}`);
+        host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
+      }
+    },
+    'open-dacpac': async () => {
+      host.log('info', 'Bridge', 'Opening dacpac picker');
+      const uris = await host.showOpenDialog({ 
+        canSelectMany: false, 
+        filters: { 'DACPAC': ['dacpac'] },
+        title: 'Select a .dacpac file'
+      });
+      if (uris && uris.length > 0) {
+        host.log('info', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
+        const data = await host.readFile(uris[0]);
+        if (isDacpacTooLarge(data.byteLength, host)) return;
+        const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+        const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+        cachedElements = elements; cachedDspName = dspName;
+        host.postMessage({ 
+          type: 'dacpac-schema-preview', 
+          preview, 
+          config,
+          sourceName: path.basename(uris[0].fsPath, '.dacpac'),
+          filePath: uris[0].fsPath 
+        });
+      } else {
+        host.log('info', 'Bridge', 'Dacpac picker cancelled');
+        host.postMessage({ type: 'db-cancelled' });
+      }
+    },
+    'load-project': async (msg) => {
+      host.log('info', 'Bridge', `Loading project: ${msg.id}`);
+      if (statsConnectionUri) {
+        disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
+        statsConnectionUri = undefined;
+      }
+      const store = loadProjectStore(context);
+      const project = store.projects.find((p: any) => p.id === msg.id);
+      if (!project) {
+        host.log('error', 'Bridge', 'Load project', new Error(`Project not found: ${msg.id}`));
+        host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
+        return;
+      }
+
+      if (project.connection.type === 'dacpac') {
+        try {
+          const fileUri = vscode.Uri.file(project.connection.path);
+          host.log('info', 'Bridge', `Reading dacpac file: ${fileUri.fsPath}`);
+          const data = await host.readFile(fileUri);
+          if (isDacpacTooLarge(data.byteLength, host)) return;
+          
+          const refreshed = { ...project, updatedAt: new Date().toISOString() };
+          const updatedStore = updateProject(store, refreshed);
+          await saveProjectStore(context, updatedStore);
+          host.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
+
+          const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+          const schemas = project.connection.schemas;
+          
+          if (schemas && schemas.length > 0) {
+            host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${schemas.join(', ')}`);
+            if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
+            const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+            const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
+            setCurrentModel(model, { id: project.id, name: project.connection.displayName });
+            if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
+            host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
+          } else {
+            host.log('info', 'Bridge', 'No schemas in project, showing preview');
+            const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
+            cachedElements = elements; cachedDspName = dspName;
+            host.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
+          }
+        } catch (err) {
+          if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
+            host.log('warn', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
+            host.postMessage({ type: 'last-dacpac-gone' });
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        await withDbProgressHost(host, 'Loading project', outputChannel, async () => {
+          const result = await connectDirect(project.connection.connectionInfo as IConnectionInfo, outputChannel);
+          return result ?? await promptForConnection(outputChannel);
+        }, async (dbResult, progress, token) => {
+          lastConnectionInfo = dbResult.connectionInfo;
+          const schemas = project.connection.schemas;
+          if (!schemas || schemas.length === 0) {
+            await runDbPhase1Host(host, dbResult.connectionUri, dbResult.connectionInfo, outputChannel, host.getExtensionUri(), (r) => { allObjectsCache = r; });
+          } else {
+            await runDbPhase2Host(host, dbResult.connectionUri, schemas, progress, token, outputChannel, host.getExtensionUri(), allObjectsCache, project.connection.connectionInfo.database, project.connection.sourceName, platformInfoCache, (m) => {
+              setCurrentModel(m, { id: project.id, name: project.name });
+            });
+            const refreshed = { ...project, updatedAt: new Date().toISOString() };
+            const updatedStore = updateProject(store, refreshed);
+            await saveProjectStore(context, updatedStore);
+            host.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
+          }
+        });
+      }
+    },
+    'save-project': async (msg) => {
+      host.log('info', 'Bridge', `Saving project: ${msg.project?.name}`);
+      if (!isValidProject(msg.project)) return;
+      const store = loadProjectStore(context);
+      const updated = updateProject(store, msg.project);
+      await saveProjectStore(context, updated);
+      const sess = getSession();
+      sess.currentProjectId = msg.project.id;
+      sess.projectName = msg.project.name;
+      host.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+    },
+    'delete-project': async (msg) => {
+      host.log('info', 'Bridge', `Deleting project: ${msg.id}`);
+      const store = loadProjectStore(context);
+      const updated = deleteProject(store, msg.id);
+      await saveProjectStore(context, updated);
+      host.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+    },
+    'load-demo': async () => {
+      host.log('info', 'Bridge', 'Loading demo');
+      await handleLoadDemo(host, context, getSession, outputChannel, true, (m) => {
+        setCurrentModel(m, null);
+        getSession().projectName = 'Demo';
+      });
+    },
+    'dacpac-visualize': async (msg) => {
+      host.log('info', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
+      if (!cachedElements) {
+        host.log('error', 'Bridge', 'Dacpac visualize', new Error('Session expired (cachedElements is null)'));
+        host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
+        return;
+      }
+      const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+      if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
+      host.log('info', 'Bridge', 'Running extractDacpacFiltered');
+      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
+      host.log('info', 'Bridge', `Extracted ${model.nodes.length} nodes and ${model.edges.length} edges`);
+      const sess = getSession();
+      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
+      setCurrentModel(model, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
+      if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
+      host.postMessage({ type: 'dacpac-model', model, config, sourceName: projectName });
+    },
+    'db-visualize': async (msg) => {
+      host.log('info', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
+      return withDbProgressHost(host, 'Loading selected schemas', outputChannel, async () => {
+        if (!lastConnectionInfo) {
+          host.log('error', 'Bridge', 'Database visualize', new Error('No stored connection info'));
+          host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
+          return undefined;
+        }
+        return (await connectDirect(lastConnectionInfo, outputChannel)) ?? await promptForConnection(outputChannel);
+      }, async (conn, progress, token) => {
+        const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
+        const pendingProject = msg.projectName ? createProject(msg.projectName, {
+          type: 'database',
+          connectionInfo: stripSensitiveFields(conn.connectionInfo),
+          sourceName,
+          schemas: msg.schemas,
+        }) : null;
+
+        await runDbPhase2Host(host, conn.connectionUri, msg.schemas, progress, token, outputChannel, host.getExtensionUri(), allObjectsCache, conn.connectionInfo.database, sourceName, platformInfoCache, (m) => {
+          if (pendingProject) {
+            setCurrentModel(m, { id: pendingProject.id, name: pendingProject.name });
+          } else {
+            setCurrentModel(m);
+            getSession().projectName = sourceName;
+          }
+        });
+
+        if (pendingProject && !token.isCancellationRequested) {
+          const store = loadProjectStore(context);
+          const updated = updateProject(store, pendingProject);
+          await saveProjectStore(context, updated);
+          host.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+        }
+      });
+    },
+    'show-detail': (msg) => {
+      host.log('debug', 'Bridge', `Showing detail for node: ${msg.node?.id}`);
+      if (!detailPanel) {
+        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', msg.node.name, vscode.ViewColumn.Beside, { enableScripts: true });
+        detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, host.getExtensionUri());
+        detailPanel.onDidDispose(() => { detailPanel = undefined; setDetailPanel(undefined); });
+        setDetailPanel(detailPanel);
+        detailPanel.webview.onDidReceiveMessage(async (m) => {
+          if (m.type === 'table-stats-request') {
+            await handleTableStatsRequestHost(host, lastConnectionInfo, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel, host.getExtensionUri());
+          } else if (m.type === 'close-detail') {
+            detailPanel?.dispose();
+          }
+        });
+      }
+      detailPanel.webview.postMessage({ type: 'detail-update', node: enrichNodeForDetail(msg.node) });
+    },
+    'filter-changed': (msg) => {
+      const sess = getSession();
+      sess.filter = msg.filter;
+      sess.views = msg.savedViews;
+      if (msg.filteredCount !== undefined) _lastFilteredCount = msg.filteredCount;
+      if (msg.renderLimitHit !== undefined) _lastRenderLimitHit = msg.renderLimitHit;
+    },
+    'db-connect': () => {
+      host.log('info', 'Bridge', 'Database connect requested');
+      return withDbProgressHost(host, 'Connecting', outputChannel, () => promptForConnection(outputChannel), (conn) => {
+        lastConnectionInfo = conn.connectionInfo;
+        return runDbPhase1Host(host, conn.connectionUri, conn.connectionInfo, outputChannel, host.getExtensionUri(), (r) => { allObjectsCache = r; });
+      });
+    },
+    'check-mssql': () => {
+      const available = isMssqlAvailable();
+      host.log('debug', 'Bridge', `MSSQL extension availability check: ${available}`);
+      host.postMessage({ type: 'mssql-status', available });
+    },
+    'save-view': async (msg) => {
+      host.log('info', 'Bridge', `Saving filter view: ${msg.profile?.name}`);
+      const store = loadProjectStore(context);
+      const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
+      await saveProjectStore(context, updated);
+      host.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+    },
+    'save-wizard-view': async (msg) => {
+      const store = loadProjectStore(context);
+      await saveProjectStore(context, { ...store, lastWizardView: msg.view });
+    },
+    'delete-view': async (msg) => {
+      host.log('info', 'Bridge', `Deleting filter view: ${msg.profileId}`);
+      const store = loadProjectStore(context);
+      const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
+      await saveProjectStore(context, updated);
+      host.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+    },
+    'rebuild': async () => {
+      host.log('info', 'Bridge', 'Rebuild requested');
+      const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+      if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
+      host.postMessage({ type: 'rebuild-config', config });
+    },
+    'reload': () => {
+      host.log('info', 'Bridge', 'Reloading panel');
+      // This remains slightly coupled to VS Code UI via OpenPanel call
+      host.executeCommand('dataLineageViz.open');
+    },
+    'request-projects': () => {
+      host.log('debug', 'Bridge', 'Projects list requested');
+      const store = loadProjectStore(context);
+      host.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
+    },
+    'open-external': async (msg) => {
+      if (msg.url) {
+        host.log('info', 'Bridge', `Opening external URL: ${msg.url}`);
+        await host.openExternal(msg.url);
+      }
+    },
+    'open-settings': () => {
+      host.log('info', 'Bridge', 'Opening extension settings');
+      host.executeCommand('workbench.action.openSettings', 'dataLineageViz');
+    },
+    'export-file': async (msg) => {
+      host.log('info', 'Bridge', `Exporting file: ${msg.defaultName}`);
+      const uri = await host.showSaveDialog({ defaultUri: vscode.Uri.file(msg.defaultName) });
+      if (uri) {
+        await host.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
+        host.executeCommand('revealFileInOS', uri);
+      }
+    },
+    'overview-mode-changed': (msg) => {
+      _lastOverviewMode = msg.mode;
+    },
+    'log': (msg) => {
+      host.log(msg.level ?? 'debug', 'Bridge', msg.text);
+    },
+    'error': (msg) => {
+      host.log('error', 'Bridge', 'Webview error', new Error(msg.error));
+      host.showErrorMessage(`Data Lineage Error: ${msg.error}`);
+    }
+  };
+}
+
+// ─── Helpers (Host-Aware) ───────────────────────────────────────────────────
+
+async function handleLoadDemo(host: BridgeHost, context: vscode.ExtensionContext, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, autoVisualize = false, onModelBuilt?: (model: DatabaseModel) => void) {
+  const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
   try {
-    const demoUri = vscode.Uri.joinPath(context.extensionUri, 'assets', 'demo.dacpac');
-    logInfo(outputChannel, 'Dacpac', `Loading demo dacpac from: ${demoUri.fsPath}`);
-    const data = await vscode.workspace.fs.readFile(demoUri);
-    if (isDacpacTooLarge(data.byteLength)) return;
+    const demoUri = vscode.Uri.joinPath(host.getExtensionUri(), 'assets', 'demo.dacpac');
+    host.log('info', 'Dacpac', `Loading demo dacpac from: ${demoUri.fsPath}`);
+    const data = await host.readFile(demoUri);
+    if (isDacpacTooLarge(data.byteLength, host)) return;
     if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
     const model = await extractDacpac(data.buffer as ArrayBuffer);
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
-    logInfo(outputChannel, 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
-    panel.webview.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
+    host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
+    host.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
   } catch (err) {
-    logError(outputChannel, 'Dacpac', 'Load demo', err);
+    host.log('error', 'Dacpac', 'Load demo', err);
   }
 }
 
-async function runDbPhase1(panel: vscode.WebviewPanel, connectionUri: string, connectionInfo: IConnectionInfo, outputChannel: vscode.LogOutputChannel, extensionUri: vscode.Uri, onCacheAllObjects: (result: SimpleExecuteResult) => void) {
+async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connectionInfo: IConnectionInfo, outputChannel: vscode.LogOutputChannel, extensionUri: vscode.Uri, onCacheAllObjects: (result: SimpleExecuteResult) => void) {
   const queries = await loadDmvQueries(outputChannel, extensionUri);
   const previewQuery = queries.find(q => q.name === 'schema-preview');
   if (!previewQuery) throw new Error('Missing schema-preview query');
-  logInfo(outputChannel, 'DB', 'Running schema preview query');
+  host.log('info', 'DB', 'Running schema preview query');
   const resultMap = await executeDmvQueries(connectionUri, [previewQuery], outputChannel);
   const result = resultMap.get('schema-preview');
   if (!result) throw new Error('No schema preview result');
   const preview = buildSchemaPreview(result);
   const config = await readExtensionConfig(outputChannel, extensionUri);
-  panel.webview.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${connectionInfo.server} / ${connectionInfo.database}` });
+  host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${connectionInfo.server} / ${connectionInfo.database}` });
 }
 
-async function runDbPhase2(panel: vscode.WebviewPanel, connectionUri: string, schemas: string[], progress: vscode.Progress<any>, token: vscode.CancellationToken, outputChannel: vscode.LogOutputChannel, extensionUri: vscode.Uri, allObjects?: SimpleExecuteResult, currentDatabase?: string, sourceName?: string, platformInfo?: SimpleExecuteResult, onModelBuilt?: (model: DatabaseModel) => void) {
+async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas: string[], progress: vscode.Progress<any>, token: vscode.CancellationToken, outputChannel: vscode.LogOutputChannel, extensionUri: vscode.Uri, allObjects?: SimpleExecuteResult, currentDatabase?: string, sourceName?: string, platformInfo?: SimpleExecuteResult, onModelBuilt?: (model: DatabaseModel) => void) {
   const queries = await loadDmvQueries(outputChannel, extensionUri);
-  logInfo(outputChannel, 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
+  host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const resultMap = await executeDmvQueriesFiltered(connectionUri, queries, schemas, outputChannel, (step, total, label) => {
-    panel.webview.postMessage({ type: 'db-progress', step, total, label });
+    host.postMessage({ type: 'db-progress', step, total, label });
   });
   const dmvResults: DmvResults = { nodes: resultMap.get('nodes')!, columns: resultMap.get('columns')!, dependencies: resultMap.get('dependencies')!, allObjects, platformInfo };
   const config = await readExtensionConfig(outputChannel, extensionUri);
   const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes);
   onModelBuilt?.(model);
-  panel.webview.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
+  host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
 }
 
-async function withDbProgress(panel: vscode.WebviewPanel, title: string, outputChannel: vscode.LogOutputChannel, connectFn: () => Promise<any>, phaseFn: (res: any, progress: any, token: any) => Promise<void>) {
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
+async function withDbProgressHost(host: BridgeHost, title: string, outputChannel: vscode.LogOutputChannel, connectFn: () => Promise<any>, phaseFn: (res: any, progress: any, token: any) => Promise<void>) {
+  await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
     try {
       const res = await connectFn();
       if (res && !token.isCancellationRequested) {
         await phaseFn(res, progress, token);
       } else {
-        logInfo(outputChannel, 'DB', `${title} cancelled or failed to connect`);
-        panel.webview.postMessage({ type: 'db-cancelled' });
+        host.log('info', 'DB', `${title} cancelled or failed to connect`);
+        host.postMessage({ type: 'db-cancelled' });
       }
     } catch (err) {
-      logError(outputChannel, 'DB', title, err);
-      panel.webview.postMessage({ type: 'db-error', message: err instanceof Error ? err.message : String(err), phase: 'connect' });
+      host.log('error', 'DB', title, err);
+      host.postMessage({ type: 'db-error', message: err instanceof Error ? err.message : String(err), phase: 'connect' });
     }
   });
 }
 
-async function handleTableStatsRequest(
+async function handleTableStatsRequestHost(
+  host: BridgeHost,
   storedConnectionInfo: IConnectionInfo | undefined,
   panel: vscode.WebviewPanel,
   schema: string,
@@ -537,18 +622,18 @@ async function handleTableStatsRequest(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri
 ): Promise<void> {
-  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
-  const sampleThreshold = cfg.get<number>('tableStatistics.sampleThreshold', 500000);
-  const sampleSize = cfg.get<number>('tableStatistics.sampleSize', 1000);
-  const useApprox = cfg.get<boolean>('tableStatistics.useApproxDistinct', true);
-  const maxColumns = cfg.get<number>('tableStatistics.maxColumns', 100);
+  const cfg = host.getConfiguration();
+  const sampleThreshold = cfg.get('tableStatistics.sampleThreshold', 500000);
+  const sampleSize = cfg.get('tableStatistics.sampleSize', 1000);
+  const useApprox = cfg.get('tableStatistics.useApproxDistinct', true);
+  const maxColumns = cfg.get('tableStatistics.maxColumns', 100);
 
   try {
     if (!statsConnectionUri) {
-      logInfo(outputChannel, 'Stats', `Connecting for stats: ${schema}.${objectName}`);
+      host.log('info', 'Stats', `Connecting for stats: ${schema}.${objectName}`);
       const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
       if (!result) {
-        panel.webview.postMessage({ type: 'table-stats-error', message: 'Connection cancelled.' });
+        host.postMessage({ type: 'table-stats-error', message: 'Connection cancelled.' });
         return;
       }
       statsConnectionUri = result.connectionUri;
@@ -574,12 +659,14 @@ async function handleTableStatsRequest(
     const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
     const samplePercent = needsSampling ? computeSamplePercent(engineEdition, sampleSize, rowCount) : undefined;
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
-    panel.webview.postMessage({ type: 'table-stats-result', stats, mode });
+    host.postMessage({ type: 'table-stats-result', stats, mode });
   } catch (err) {
-    logError(outputChannel, 'Stats', 'Profiling', err);
-    panel.webview.postMessage({ type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) });
+    host.log('error', 'Stats', 'Profiling', err);
+    host.postMessage({ type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) });
   }
 }
+
+// ─── Shared UI Helpers (Stateless) ──────────────────────────────────────────
 
 function handleParseRulesResult(message: {
   loaded: number;

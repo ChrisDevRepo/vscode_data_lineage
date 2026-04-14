@@ -1219,6 +1219,7 @@
     "test:sql": "tsx test/tsql-complex.test.ts",
     "test:project": "tsx test/projectStore.test.ts",
     "test:ai": "tsx test-internal/ai-tools.test.ts",
+    "test:sanity": "npm run build:ext && node test/bundle-sanity.js",
     "test:snapshot": "tsx test/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx test/snapshot-aw-baseline.ts --update",
     "test:db": "tsx test-internal/integration-db.test.ts",
