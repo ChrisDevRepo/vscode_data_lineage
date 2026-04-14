@@ -27,4 +27,14 @@ suite('Extension Test Suite', () => {
 			assert.ok(commands.includes(cmd), `Command ${cmd} should be registered`);
 		}
 	});
+
+	test('Command: Open Wizard should execute', async () => {
+		await vscode.commands.executeCommand('dataLineageViz.open');
+		// If we reached here without error, the command handler was found and invoked
+	});
+
+	test('Command: Open Demo should execute', async () => {
+		await vscode.commands.executeCommand('dataLineageViz.openDemo');
+		// If we reached here without error, the command handler was found and invoked
+	});
 });

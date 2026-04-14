@@ -3,7 +3,7 @@ import type { DatabaseModel } from '../engine/types';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
 import { ColumnStore } from '../engine/columnStore';
 import { AiMemoryManager } from './memoryManager';
-import type { ResultGraph, AiOutputTemplates, EMPTY_AI_TEMPLATES, SessionSummary, NodeRole } from './types';
+import { type ResultGraph, type AiOutputTemplates, EMPTY_AI_TEMPLATES, type SessionSummary, type NodeRole } from './types';
 import type { IHopStateMachine } from './smBase';
 
 /**

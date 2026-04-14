@@ -89,19 +89,6 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     })
   );
-
-  // ─── AI Support Commands ───────────────────────────────────────────────────
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dataLineageViz.createAiOutputTemplates', () =>
-      createYamlScaffold(context, 'aiOutputTemplates.yaml', 'aiOutputTemplates.yaml', 'ai.outputTemplateFile')
-    ),
-    vscode.commands.registerCommand('dataLineageViz.aiCreateView', (originalPrompt: string) => {
-      const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${trunc(originalPrompt || '', 60)}"`;
-      vscode.commands.executeCommand('workbench.action.chat.open', {
-        query: `@lineage ${viewPrompt}`,
-      });
-    })
-  );
 }
 
 export function deactivate() {
@@ -152,33 +139,6 @@ async function loadAiOutputTemplates(
   }
 
   return builtIn;
-}
-
-async function createYamlScaffold(
-  context: vscode.ExtensionContext, fileName: string, sourceAsset: string, settingName: string
-): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
-    vscode.window.showWarningMessage('Open a workspace folder first.');
-    return;
-  }
-  const targetUri = vscode.Uri.joinPath(folder.uri, fileName);
-  try {
-    await vscode.workspace.fs.stat(targetUri);
-    const doc = await vscode.workspace.openTextDocument(targetUri);
-    await vscode.window.showTextDocument(doc);
-    return;
-  } catch (err) {
-    if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
-      const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', sourceAsset);
-      await vscode.workspace.fs.copy(sourceUri, targetUri);
-      const doc = await vscode.workspace.openTextDocument(targetUri);
-      await vscode.window.showTextDocument(doc);
-      vscode.window.showInformationMessage(`Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`);
-    } else {
-      throw err;
-    }
-  }
 }
 
 async function migrateFromWorkspaceState(
