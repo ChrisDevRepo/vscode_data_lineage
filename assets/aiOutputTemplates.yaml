@@ -15,7 +15,7 @@
 summary:
   instruction: >
     One-line graph purpose (~120 chars, max 300). Shown in the info card.
-  example: "Revenue lineage from SAP invoices through EV calculation to FactFinance."
+  example: "Revenue lineage from raw orders through price calculation to FactSalesReport."
 
 title:
   instruction: >
@@ -79,7 +79,7 @@ sections:
     GOOD text — "`spBuildSalesReport` computes `TotalRevenue = Qty x UnitPrice` at INSERT.
     Reads `Qty` from **Staging View** (rename `OrderQty -> Qty`), `UnitPrice` from **Price View**
     (PriceMaster lookup via 3-CTE chain)."
-  example: '{ "label": "EV Calculation", "node_ids": ["dbo.spCalcEV"], "text": "`spCalcEV` computes Earned Value in Step 3 INSERT:\n```math\nEV = PlannedValue \\times \\frac{EarnedHours}{PlannedHours}\n```\n`PlannedValue` = project budget amount, read from `DimProject.BudgetAmount` (renamed in CTE_Budget).\n`EarnedHours` = approved hours worked: `SUM(t.Hours) WHERE t.IsApproved = 1` from `FactTimesheet`.\n`PlannedHours` = total planned hours from `DimProject.TotalPlannedHours` (passthrough, no transform).\n\nOutput written to `FactEV.EarnedValue` via MERGE.\n\n| Input | Source Column | Transform | Output |\n|---|---|---|---|\n| DimProject | BudgetAmount | rename | PlannedValue |\n| FactTimesheet | Hours | SUM, WHERE IsApproved=1 | EarnedHours |\n| DimProject | TotalPlannedHours | passthrough | PlannedHours |" }'
+  example: '{ "label": "Revenue Calculation", "node_ids": ["dbo.spCalcRevenue"], "text": "`spCalcRevenue` computes TotalRevenue in Step 3 INSERT:\n```math\nTotalRevenue = Qty \\times UnitPrice\n```\n`Qty` = units sold, read from `FactOrders.OrderQty` (renamed in CTE_Orders).\n`UnitPrice` = list price after markup: `CostPrice * (1 + MarkupPct)` from `ProductPricing` (renamed in CTE_Price).\n\nOutput written to `FactSalesReport.TotalRevenue` via INSERT.\n\n| Input | Source Column | Transform | Output |\n|---|---|---|---|\n| FactOrders | OrderQty | rename | Qty |\n| ProductPricing | CostPrice | markup formula | UnitPrice |" }'
 
 closing:
   instruction: >
@@ -104,12 +104,12 @@ description:
   bad_example: "Data flows from staging through transformation to consumption."
   good_example: |
     ## Revenue Calculation
-    Revenue uses the **Earned Value (EV) methodology**:
+    Revenue is computed as **Qty × UnitPrice**:
     ```math
-    Revenue = PlannedValue \times \frac{EarnedHours}{PlannedHours}
+    TotalRevenue = Qty \times UnitPrice
     ```
-    `spCalcEV` reads `DimProject.PlannedValue` and `FactTimesheet.Hours`,
-    then `vw_Revenue` applies the Swiss filter: `WHERE CountryCode = 'CH'`.
+    `spCalcRevenue` reads `FactOrders.OrderQty` and `ProductPricing.CostPrice`,
+    then `vw_SalesData` applies the region filter: `WHERE RegionCode = 'WEST'`.
 
 highlights:
   instruction: >

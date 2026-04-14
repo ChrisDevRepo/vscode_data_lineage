@@ -43,7 +43,7 @@ import type { Project, ProjectStore, FilterProfile, SerializedFilterState, AIVie
 import { logInfo, logDebug, logWarn, logError, logTrace, trunc, sanitizeForLog } from './utils/log';
 import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './ai/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
-import { buildSystemPromptBase } from './ai/prompts';
+import { buildSystemPromptBase, buildPlatformContext, buildSchemaContext, buildTracePrompt, buildSearchPrompt, buildActionRequiredGate, ACTION_REQUIRED_PENDING_HINT } from './ai/prompts';
 import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt, buildSynthesisPrompt, buildSynthesisReminder } from './ai/smPrompts';
 
 // ─── Logging ────────────────────────────────────────────────────────────────
@@ -1060,9 +1060,9 @@ export function activate(context: vscode.ExtensionContext) {
           'lineage_start_column_trace', 'lineage_submit_hop_analysis', 'lineage_enrich_view',
         ]);
         lineageTools = lineageTools.filter(t => traceTools.has(t.name));
-        effectivePrompt = `Trace the data lineage for: ${request.prompt}.`;
+        effectivePrompt = buildTracePrompt(request.prompt);
       } else if (request.command === 'search') {
-        effectivePrompt = `Search for database objects matching: ${request.prompt}.`;
+        effectivePrompt = buildSearchPrompt(request.prompt);
       }
       if (request.command) {
         logInfo(outputChannel, 'AI', `Slash /${request.command} — prompt rewritten`);
@@ -1178,12 +1178,10 @@ export function activate(context: vscode.ExtensionContext) {
       // Single system prompt — explore-first data provider
       // Prepend active schema context when user has a filter selected (same injection pattern as _aiOutputTemplates)
       const platformCtx = _aiModel?.dbPlatform
-        ? `Database platform: ${_aiModel.dbPlatform}. Use platform-appropriate SQL syntax and capabilities in analysis.\n`
+        ? buildPlatformContext(_aiModel.dbPlatform)
         : '';
       const schemaCtx = (_aiFilter?.schemas?.length ?? 0) > 0
-        ? `Working context: user has schema(s) [${_aiFilter!.schemas.join(', ')}] selected.\n` +
-          `Default all searches, SQL generation, and analysis to these schemas.\n` +
-          `If answering the question requires objects from other schemas, ask the user first.\n\n`
+        ? buildSchemaContext(_aiFilter!.schemas)
         : '';
       const systemPrompt =
         platformCtx +
@@ -1442,7 +1440,7 @@ export function activate(context: vscode.ExtensionContext) {
               logWarn(outputChannel, 'AI', `[Gate] REJECTED ${call.name.replace('lineage_', '')} — action_required pending`);
               const gateReject = [new vscode.LanguageModelTextPart(JSON.stringify({
                 error: 'action_required_pending',
-                hint: 'You must present the previous action_required message to the user and wait for their response before calling tools.',
+                hint: ACTION_REQUIRED_PENDING_HINT,
               }))];
               resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, gateReject));
               continue;
@@ -1518,7 +1516,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
           if (actionGates.length > 0) {
             actionRequiredPending = true;
-            const gate = `STOP: ${actionGates.join(' | ')} — You MUST address this with the user before calling any more tools.`;
+            const gate = buildActionRequiredGate(actionGates);
             messages.push(new vscode.LanguageModelChatMessage(
               vscode.LanguageModelChatMessageRole.User, gate,
             ));

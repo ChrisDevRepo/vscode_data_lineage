@@ -12,8 +12,7 @@
 /** Build the base system prompt (rules 1-5). Caller appends template fields. */
 export function buildSystemPromptBase(maxRounds: number): string {
   return (
-    'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
-    `Budget: ${maxRounds} rounds.\n\n` +
+    'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n\n' +
     'RULES:\n' +
     '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user which object they mean.\n' +
     '   For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
@@ -33,3 +32,42 @@ export function buildSystemPromptBase(maxRounds: number): string {
     // Callers append: summary/badges/sections/notes/highlights/description from aiOutputTemplates
   );
 }
+
+// ─── Runtime Context Injections ──────────────────────────────────────────────
+
+/** Prepended to the system prompt when the loaded model has a known DB platform. */
+export function buildPlatformContext(dbPlatform: string): string {
+  return `Database platform: ${dbPlatform}. Use platform-appropriate SQL syntax and capabilities in analysis.\n`;
+}
+
+/** Prepended to the system prompt when the user has an active schema filter. */
+export function buildSchemaContext(schemas: string[]): string {
+  return (
+    `Working context: user has schema(s) [${schemas.join(', ')}] selected.\n` +
+    `Default all searches, SQL generation, and analysis to these schemas.\n` +
+    `If answering the question requires objects from other schemas, ask the user first.\n\n`
+  );
+}
+
+// ─── Slash Command Prompt Rewrites ────────────────────────────────────────────
+
+/** Rewrites the user prompt for the /trace slash command. */
+export function buildTracePrompt(userInput: string): string {
+  return `Trace the data lineage for: ${userInput}.`;
+}
+
+/** Rewrites the user prompt for the /search slash command. */
+export function buildSearchPrompt(userInput: string): string {
+  return `Search for database objects matching: ${userInput}.`;
+}
+
+// ─── Action-Required Gate ─────────────────────────────────────────────────────
+
+/** Injected as a User message after a tool returns action_required — blocks further tool calls. */
+export function buildActionRequiredGate(gates: string[]): string {
+  return `STOP: ${gates.join(' | ')} — You MUST address this with the user before calling any more tools.`;
+}
+
+/** hint value returned in the gate-rejection tool result while action_required is pending. */
+export const ACTION_REQUIRED_PENDING_HINT =
+  'You must present the previous action_required message to the user and wait for their response before calling tools.';
