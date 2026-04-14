@@ -892,238 +892,118 @@ export function autoFixEnrichView(
     fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Normalize LaTeX for remark-math (requires $$ on own line, code-fence semantics).
-  //    ```math fences are handled at render time by mathFenceToDelimiters().
-  //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
+  // 4. Convert $$ block math to ```math code fences.
+  //    Code fences are CommonMark structural elements — they can't break markdown.
+  //    Block math: rendered via components.code override in AiDescriptionOverlay.
+  //    Inline math ($...$): handled by remark-math + rehype-katex (span-level, safe).
 
-  /** 4-pre. Strip corrupt \begin{env}...\end{env} whose body contains markdown.
-   *  AI sometimes wraps headings/prose inside \begin{cases}. This corrupts the
-   *  entire $$ block. Strip the markers and emit body as plain markdown.
-   *  Runs before all other steps, regardless of $$ context. */
-  const MARKDOWN_INDICATOR = /^#{1,6}\s|^```|^\|.*\|.*\|/; // heading, code fence, table row
-  const stripCorruptEnvironments = (text: string): { text: string; changed: boolean } => {
-    let changed = false;
-    const lines = text.split('\n');
-    const out: string[] = [];
+  /** Detect lines that are clearly markdown, not math.
+   *  If found inside a math block, the block is force-closed before this line. */
+  const IS_MARKDOWN = /^#{1,6}\s|^```|^[-*+]\s|^>\s|`|\*\*\w/;
 
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      const beginMatch = trimmed.match(/\\begin\{(\w+)\}/);
-      if (beginMatch) {
-        const envName = beginMatch[1];
-        const endPattern = new RegExp('\\\\end\\{' + envName + '\\}\\s*$');
-        // Lookahead: find matching \end and check for markdown in body
-        let endIdx = -1;
-        let hasMarkdown = false;
-        for (let j = i + 1; j < lines.length; j++) {
-          if (MARKDOWN_INDICATOR.test(lines[j].trim())) hasMarkdown = true;
-          if (endPattern.test(lines[j].trim())) { endIdx = j; break; }
-        }
-        if (endIdx !== -1 && hasMarkdown) {
-          changed = true;
-          // Strip \begin{env} from this line, keep any preceding formula text
-          const before = trimmed.replace(/\s*\\begin\{\w+\}\s*$/, '').trim();
-          if (before) out.push(before);
-          // Emit body lines as plain markdown (strip \\ row separators that are LaTeX artifacts)
-          for (let j = i + 1; j < endIdx; j++) {
-            out.push(lines[j].replace(/\s*\\\\$/, ''));
-          }
-          // Strip \end{env} from last line, keep any text before it
-          const endBefore = lines[endIdx].trim().replace(/\\end\{\w+\}\s*$/, '').trim();
-          if (endBefore) out.push(endBefore);
-          i = endIdx;
-          continue;
-        }
-      }
-      out.push(lines[i]);
-    }
-    return { text: out.join('\n'), changed };
-  };
-
-  /** 4a. Ensure every $$ is on its own line (remark-math requirement). */
-  const splitDollarDelimiters = (text: string): { text: string; changed: boolean } => {
-    let changed = false;
-    const lines = text.split('\n');
-    const out: string[] = [];
-    for (const line of lines) {
+  /** Convert $$ block math to ```math code fences.
+   *  Single-pass: normalize $$ to own lines, then convert to fences.
+   *  If markdown appears inside a math block, force-close the fence.
+   *  Auto-close unclosed \begin{env} before fence end.
+   *  Strip orphan \end{env} and trailing \\ outside fences. */
+  const fixLatex = (text: string): { text: string; changed: boolean } => {
+    // Step 1: normalize $$ to own lines
+    const rawLines = text.split('\n');
+    const normalized: string[] = [];
+    for (const line of rawLines) {
       const trimmed = line.trim();
       if (trimmed === '$$') {
-        out.push('$$');
+        normalized.push('$$');
       } else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
-        changed = true;
-        out.push('$$');
-        out.push(trimmed.slice(2, -2).trim());
-        out.push('$$');
+        normalized.push('$$');
+        normalized.push(trimmed.slice(2, -2).trim());
+        normalized.push('$$');
       } else if (trimmed.startsWith('$$')) {
-        changed = true;
-        out.push('$$');
-        out.push(trimmed.slice(2).trim());
+        normalized.push('$$');
+        normalized.push(trimmed.slice(2).trim());
       } else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) {
-        changed = true;
-        out.push(trimmed.slice(0, -2).trim());
-        out.push('$$');
+        normalized.push(trimmed.slice(0, -2).trim());
+        normalized.push('$$');
       } else {
-        out.push(line);
+        normalized.push(line);
       }
     }
-    return { text: out.join('\n'), changed };
-  };
 
-  /** 4b. Three-$$ piecewise pattern → single $$ block with \begin{cases}.
-   *  AI uses bare $$ instead of \begin{cases} for conditionals.
-   *  Adjacency guard: all three $$ groups must be within MAX_PIECEWISE_SPAN lines. */
-  const MAX_PIECEWISE_SPAN = 15;
-  const mergePiecewiseCases = (text: string): { text: string; changed: boolean } => {
+    // Step 2: convert $$ open/close to ```math / ```
     let changed = false;
-    const lines = text.split('\n');
-    const out: string[] = [];
-    let i = 0;
-    while (i < lines.length) {
-      if (lines[i].trim() === '$$') {
-        const formulaLines: string[] = [];
-        let j = i + 1;
-        while (j < lines.length && lines[j].trim() !== '$$') {
-          formulaLines.push(lines[j]);
-          j++;
-        }
-        if (j < lines.length && lines[j].trim() === '$$') {
-          const conditionLines: string[] = [];
-          let k = j + 1;
-          while (k < lines.length && lines[k].trim() !== '$$') {
-            conditionLines.push(lines[k]);
-            k++;
-          }
-          const hasConditions = conditionLines.some(l => l.trim().length > 0);
-          // Plain-text guard: condition lines must contain English flow words and no LaTeX commands.
-          // This ensures double-escape of backslashes below is safe (no LaTeX to corrupt).
-          const looksLikePlainText = conditionLines.some(l =>
-            /\b(if|otherwise|else|when|then)\b/i.test(l)
-          );
-          const withinSpan = k < lines.length && (k - i) <= MAX_PIECEWISE_SPAN;
-          if (withinSpan && lines[k].trim() === '$$' && hasConditions && looksLikePlainText) {
-            changed = true;
-            const formulaText = formulaLines.map(l => l.trim()).join(' ').trim();
-            const caseEntries = conditionLines
-              .filter(l => l.trim().length > 0)
-              .map(l => l.trim().replace(/\\_/g, '_')); // un-escape markdown underscores
-            out.push('$$');
-            out.push(formulaText + ' \\begin{cases}');
-            for (let ci = 0; ci < caseEntries.length; ci++) {
-              const entry = caseEntries[ci];
-              const ifMatch = entry.match(/^(.+?)\s+(if\s+.+)$/i);
-              const otherMatch = entry.match(/^(.+?)\s+(otherwise|else)$/i);
-              if (ifMatch) {
-                // If condition contains LaTeX commands, emit raw; otherwise wrap in \text{}
-                const condHasLatex = /\\[a-zA-Z]/.test(ifMatch[2]);
-                const condition = condHasLatex ? ifMatch[2] : '\\text{' + ifMatch[2] + '}';
-                out.push(ifMatch[1] + ' & ' + condition + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
-              } else if (otherMatch) {
-                const condHasLatex = /\\[a-zA-Z]/.test(otherMatch[2]);
-                const condition = condHasLatex ? otherMatch[2] : '\\text{' + otherMatch[2] + '}';
-                out.push(otherMatch[1] + ' & ' + condition);
-              } else {
-                out.push(entry + (ci < caseEntries.length - 1 ? ' \\\\' : ''));
-              }
-            }
-            out.push('\\end{cases}');
-            out.push('$$');
-            i = k + 1;
-            continue;
-          }
-        }
-      }
-      out.push(lines[i]);
-      i++;
-    }
-    return { text: out.join('\n'), changed };
-  };
-
-  /** 4c. Wrap bare \begin{env}...\end{env} in $$ if not already inside a math block.
-   *  KaTeX renders cases/aligned/etc. natively — preserve the environment structure.
-   *  Only wraps environments outside existing $$ blocks.
-   *  Corrupt environments (containing markdown) are already stripped by stripCorruptEnvironments. */
-  const wrapBareEnvironments = (text: string): { text: string; changed: boolean } => {
-    let changed = false;
-    const lines = text.split('\n');
     const out: string[] = [];
     let insideMath = false;
+    const openEnvs: string[] = []; // stack of unclosed \begin{env}
 
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
+    const closeFence = () => {
+      // Auto-close unclosed \begin{env} before fence end
+      while (openEnvs.length > 0) {
+        out.push('\\end{' + openEnvs.pop() + '}');
+        changed = true;
+      }
+      out.push('```');
+      insideMath = false;
+    };
 
+    for (const line of normalized) {
+      const trimmed = line.trim();
+
+      // $$ delimiter
       if (trimmed === '$$') {
-        insideMath = !insideMath;
-        out.push(lines[i]);
-        continue;
-      }
-
-      // Single-line environment outside math: \begin{env}...\end{env} on one line
-      if (!insideMath && /^\\begin\{\w+\}/.test(trimmed) && /\\end\{\w+\}\s*$/.test(trimmed)) {
         changed = true;
-        out.push('$$');
-        out.push(lines[i]);
-        out.push('$$');
-        continue;
-      }
-
-      // Multi-line bare \begin{env} outside math — lookahead to find \end{env}
-      const beginMatch = !insideMath && trimmed.match(/^\\begin\{(\w+)\}/);
-      if (beginMatch) {
-        const envName = beginMatch[1];
-        const endPattern = new RegExp('\\\\end\\{' + envName + '\\}\\s*$');
-        let endIdx = -1;
-        for (let j = i + 1; j < lines.length; j++) {
-          if (endPattern.test(lines[j].trim())) { endIdx = j; break; }
+        if (!insideMath) {
+          out.push('```math');
+          insideMath = true;
+        } else {
+          closeFence();
         }
-        if (endIdx !== -1) {
-          // Valid math environment — wrap in $$
-          changed = true;
-          out.push('$$');
-          for (let j = i; j <= endIdx; j++) out.push(lines[j]);
-          out.push('$$');
-          i = endIdx;
-          continue;
+        continue;
+      }
+
+      // Inside math: check for markdown lines that shouldn't be here
+      if (insideMath && IS_MARKDOWN.test(trimmed)) {
+        changed = true;
+        closeFence();
+        // Emit the markdown line (strip trailing \\ which is a LaTeX artifact)
+        out.push(line.replace(/\s*\\\\$/, ''));
+        continue;
+      }
+
+      // Inside math: track \begin/\end for auto-close
+      if (insideMath) {
+        const beginMatch = trimmed.match(/\\begin\{(\w+)\}/);
+        if (beginMatch) openEnvs.push(beginMatch[1]);
+        const endMatch = trimmed.match(/\\end\{(\w+)\}/);
+        if (endMatch && openEnvs.length > 0 && openEnvs[openEnvs.length - 1] === endMatch[1]) {
+          openEnvs.pop();
         }
-        // No matching \end — orphan \begin, strip it
-        changed = true;
-        const orphanStripped = trimmed.replace(/^\\begin\{\w+\}\s*/, '').trim();
-        if (orphanStripped) out.push(orphanStripped);
-        else out.push(lines[i]);
+        out.push(line);
         continue;
       }
 
-      // Orphan \end{env} outside math — strip the marker
-      if (!insideMath && /\\end\{\w+\}\s*$/.test(trimmed)) {
+      // Outside math: strip orphan \end{env} on its own line
+      if (/^\\end\{\w+\}\s*$/.test(trimmed)) {
         changed = true;
-        const stripped = trimmed.replace(/\\end\{\w+\}\s*$/, '').trim();
-        if (stripped) out.push(stripped);
         continue;
       }
 
-      out.push(lines[i]);
+      // Outside math: strip trailing \\ (LaTeX row separator artifact)
+      if (/\\\\\s*$/.test(trimmed)) {
+        changed = true;
+        out.push(line.replace(/\s*\\\\$/, ''));
+        continue;
+      }
+
+      out.push(line);
+    }
+
+    // EOF inside math: close fence
+    if (insideMath) {
+      changed = true;
+      closeFence();
     }
 
     return { text: out.join('\n'), changed };
-  };
-
-  /** 4f. Odd $$ count safety net — close unclosed math block to prevent cascade.
-   *  Defense-in-depth: also checked client-side in mathFenceToDelimiters() (AiDescriptionOverlay). */
-  const closeUnclosedMathBlock = (text: string): { text: string; changed: boolean } => {
-    const dollarLines = text.split('\n').filter(l => l.trim() === '$$');
-    if (dollarLines.length % 2 !== 0) {
-      return { text: text + '\n$$\n', changed: true };
-    }
-    return { text, changed: false };
-  };
-
-  const fixLatex = (text: string): { text: string; changed: boolean } => {
-    let changed = false;
-    let result = text;
-    for (const step of [stripCorruptEnvironments, splitDollarDelimiters, mergePiecewiseCases, wrapBareEnvironments, closeUnclosedMathBlock]) {
-      const r = step(result);
-      if (r.changed) { changed = true; result = r.text; }
-    }
-    return { text: result, changed };
   };
 
   // Apply LaTeX fix to description, section text, and notes
@@ -1201,18 +1081,8 @@ export function validateMarkdownFormat(md: string): string[] {
     );
   }
 
-  // Reject unbalanced $$ delimiters (odd count means an unclosed display math block)
-  let dollarCount = 0;
-  for (const line of md.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '$$') dollarCount++;
-    else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) dollarCount += 2;
-    else if (trimmed.startsWith('$$')) dollarCount++;
-    else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) dollarCount++;
-  }
-  if (dollarCount % 2 !== 0) {
-    errors.push('description has unbalanced $$ delimiters — odd number of $$ lines');
-  }
+  // $$ balance check removed — fixLatex converts all $$ to ```math fences.
+  // Code fences are structurally safe (CommonMark) and can't break markdown.
 
   return errors;
 }

@@ -362,7 +362,7 @@ async function testValidateEnrichView(model: DatabaseModel) {
   assertEq(validateMarkdownFormat('## Heading\n```math\nRevenue = PV \\times \\frac{EH}{PH}\n```').length, 0, 'valid ```math fence: no errors');
   assertEq(validateMarkdownFormat('## Heading\n\\begin{cases} 0 \\\\ 1 \\end{cases}').length, 0, '\\begin{cases}: accepted (KaTeX renders natively)');
   assertEq(validateMarkdownFormat('## Heading\n\\begin{align*} x \\\\ y \\end{align*}').length, 0, '\\begin{align*}: accepted (KaTeX renders natively)');
-  assert(validateMarkdownFormat('## Heading\n$$formula$$\n$$orphan').length > 0, 'unbalanced $$: rejected');
+  assertEq(validateMarkdownFormat('## Heading\n$$formula$$\n$$orphan').length, 0, 'unbalanced $$: no longer rejected ($$ converted to fences by fixLatex)');
   assert(validateMarkdownFormat('## Heading\n```math\nformula').length > 0, 'unclosed ```math fence: rejected');
   assertEq(validateMarkdownFormat('## Heading\n```sql\nSELECT 1\n```').length, 0, 'closed ```sql fence: no errors');
 

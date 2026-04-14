@@ -1,55 +1,40 @@
-import { memo, useMemo, useState } from 'react';
+import React, { memo, useState } from 'react';
 import Markdown from 'react-markdown';
+import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
-/** Convert ```math fenced blocks to $$ delimiters that remark-math understands.
- *  Resilient: nested opens get closed, unclosed blocks get closed at EOF,
- *  empty blocks are dropped. Broken LaTeX inside $$ is handled by
- *  rehype-katex throwOnError:false (renders as raw text). */
-function mathFenceToDelimiters(md: string): string {
-  const lines = md.split('\n');
-  const result: string[] = [];
-  let insideMath = false;
+/** Render a ```math code fence as a KaTeX display block.
+ *  If KaTeX fails, shows the raw formula as error text. */
+function MathBlock({ math }: { math: string }) {
+  const html = katex.renderToString(math, {
+    displayMode: true,
+    throwOnError: false,   // render error message, don't crash
+    errorColor: 'var(--vscode-errorForeground, #f44747)',
+  });
+  return <div className="math-display" dangerouslySetInnerHTML={{ __html: html }} />;
+}
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (!insideMath && trimmed === '```math') {
-      insideMath = true;
-      result.push('$$');
-    } else if (insideMath && trimmed === '```math') {
-      // Nested ```math — close current block first, open new one
-      result.push('$$');
-      result.push('');
-      result.push('$$');
-    } else if (insideMath && trimmed === '```') {
-      insideMath = false;
-      result.push('$$');
-    } else if (!insideMath && trimmed.startsWith('```') && trimmed !== '```math') {
-      // Non-math fence (```sql, ```text, plain ```) — pass through as-is
-      result.push(line);
-    } else {
-      result.push(line);
-    }
+/** Custom code component: intercepts ```math fences for KaTeX rendering.
+ *  All other code blocks pass through unchanged. */
+function CodeComponent({ className, children, ...props }: React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement> & ExtraProps) {
+  if (className === 'language-math') {
+    return <MathBlock math={String(children).trim()} />;
   }
+  return <code className={className} {...props}>{children}</code>;
+}
 
-  // Unclosed math block at EOF — close it so it doesn't eat remaining text
-  if (insideMath) {
-    result.push('$$');
+/** Custom pre component: unwrap <pre> wrapper for math blocks so they
+ *  render as display math, not inside a code block container. */
+function PreComponent({ children, ...props }: React.ClassAttributes<HTMLPreElement> & React.HTMLAttributes<HTMLPreElement> & ExtraProps) {
+  const child = React.Children.toArray(children)[0] as React.ReactElement<{ className?: string }> | undefined;
+  if (child && typeof child === 'object' && 'props' in child && child.props?.className === 'language-math') {
+    return <>{children}</>;
   }
-
-  // Safety net: odd $$ count means an unclosed display math block will cascade.
-  // Close it to prevent all subsequent content from being eaten.
-  // Defense-in-depth: also checked server-side in autoFixEnrichView() (tools.ts).
-  const dollarCount = result.filter(l => l.trim() === '$$').length;
-  if (dollarCount % 2 !== 0) {
-    result.push('$$');
-  }
-
-  return result.join('\n');
+  return <pre {...props}>{children}</pre>;
 }
 
 interface AiDescriptionOverlayProps {
@@ -67,7 +52,6 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [rawMode, setRawMode] = useState(false);
   const [copied, setCopied] = useState(false);
-  const sanitized = useMemo(() => mathFenceToDelimiters(description), [description]);
 
   function handleCopy() {
     navigator.clipboard.writeText(description).then(() => {
@@ -130,7 +114,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                 <Markdown
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                >{sanitized}</Markdown>
+                  components={{ code: CodeComponent, pre: PreComponent }}
+                >{description}</Markdown>
               </div>
             )}
           </div>
