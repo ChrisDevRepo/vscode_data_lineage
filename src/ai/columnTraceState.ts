@@ -14,7 +14,8 @@ import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './t
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
-import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type ShortMemory, type DetailSlot } from './smBase';
+import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type ShortMemory } from './smBase';
+import type { AiMemoryManager, DetailSlot } from './memoryManager';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ export interface OutOfScopeEntry {
 export interface ColumnTraceConfig {
   maxFrontierSize?: number;   // default 200
   activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
+  memory?: AiMemoryManager;
 }
 
 
@@ -92,6 +94,7 @@ export class ColumnTraceState extends HopStateMachine {
   ) {
     super(model, graph, log, {
       activeFilter: config?.activeFilter,
+      memory: config?.memory,
     }, store);
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
   }
@@ -959,12 +962,12 @@ export class ColumnTraceState extends HopStateMachine {
     const BADGE_NUM_RE = /^\d+[\.\s]+/;
     const stripBadgeNum = (s: string) => s.replace(BADGE_NUM_RE, '').trim();
     const suggested_labels = chainArr.map(e => {
-      const slot = this.detailSlots.get(e.nodeId);
+      const slot = this.memory.getSlot(e.nodeId);
       const label = slot?.badge_label ? stripBadgeNum(slot.badge_label) : e.name;
       return { node_id: e.nodeId, text: label };
     });
     const suggested_notes  = chainArr.map(e => {
-      const slot = this.detailSlots.get(e.nodeId);
+      const slot = this.memory.getSlot(e.nodeId);
       return { node_id: e.nodeId, text: slot?.note_caption ?? e.notes ?? e.summary };
     });
 
@@ -973,7 +976,7 @@ export class ColumnTraceState extends HopStateMachine {
     const sectionMap = new Map<string, string[]>();
     const sectionOrder: string[] = [];
     for (const sl of suggested_labels) {
-      const slot = this.detailSlots.get(sl.node_id);
+      const slot = this.memory.getSlot(sl.node_id);
       if (!slot?.badge_label) continue; // Only nodes with explicit badge_label form sections
       const label = stripBadgeNum(slot.badge_label);
       if (!sectionMap.has(label)) {

@@ -14,7 +14,8 @@ import type { SerializedFilterState } from '../engine/projectStore';
 import { buildHopFocusNode, SCRIPT_TYPES, getNodeDdl } from './tools';
 import { presentNode, strip, edgeApiType } from './aiPresenter';
 import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, bfsReachable, type LogFn } from './smGuards';
-import { HopStateMachine, type HopNeighbor, type SmResult, type DetailSlot } from './smBase';
+import { HopStateMachine, type HopNeighbor, type SmResult } from './smBase';
+import type { AiMemoryManager, DetailSlot } from './memoryManager';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ export interface BlackboardConfig {
   summaryHardLimit?: number;
   activeFilter?: SerializedFilterState | null;
   scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';
+  memory?: AiMemoryManager;
 }
 
 interface WorkingMemory {
@@ -89,7 +91,7 @@ export class BlackboardState extends HopStateMachine {
 
   // ── Public accessors ──
 
-  get noteCount(): number { return this.detailSlots.size; }
+  get noteCount(): number { return this.memory.slotCount; }
   get agendaRemaining(): number { return this.agenda.length; }
   get question(): string { return this.userQuestion; }
 
@@ -257,7 +259,7 @@ export class BlackboardState extends HopStateMachine {
     const workingMemory = this.buildWorkingMemory();
 
     this._status = 'awaiting_findings';
-    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.detailSlots.size} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
+    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.memory.slotCount} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
     if (this.agenda.length > 0) {
       this.log('trace', `BB Hop ${this.hopCount} remaining | [${this.agenda.map(e => this.nodeMap.get(e.nodeId)?.name ?? e.nodeId).join(', ')}]`);
     }
