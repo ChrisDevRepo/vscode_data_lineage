@@ -156,6 +156,11 @@ export class AiMemoryManager {
   public get slotCount(): number { return this.detailSlots.size; }
   public getNarrativeCount(): number { return this.shortMemory.narrative.length; }
 
+  /** Return all node IDs currently in detail memory. */
+  public get notedNodeIds(): string[] {
+    return Array.from(this.detailSlots.keys());
+  }
+
   public getSlot(nodeId: string): DetailSlot | undefined {
     return this.detailSlots.get(nodeId);
   }

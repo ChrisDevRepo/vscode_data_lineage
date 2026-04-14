@@ -1,14 +1,15 @@
 # Changelog
 
-## [0.9.9] - 2026-04-13
-
-### Added
-- **Dump SM State command** — serialize active state machine to JSON via Command Palette (`Data Lineage: Dump SM State`)
+## [0.9.9] - 2026-04-14
 
 ### Fixed
-- **`@lineage` sliding memory** — per-hop context cleaning keeps AI context flat, preventing token bloat that caused premature stops on large explorations; synthesis-only prompt replaces hop instructions at completion
-- **`@lineage` state machine persistence** — SM and graph results survive follow-up messages in the same chat session; partial results stored when session ends before completion
-- **LaTeX in graph descriptions** — fixed formulas corrupting surrounding text
+- **Clean slate for new chats** — Starting a new chat window now correctly resets the AI state, preventing buttons or findings from old conversations from appearing.
+- **Improved "Show in Graph" button** — The button now only appears when a full AI analysis is ready, and it is correctly hidden after simple table lookups.
+- **Smart schema filtering** — The AI can now analyze objects outside your active filters when asked, with better validation to ensure requested schemas exist in your model.
+- **Enriched state machine dumps** — Debugging information now includes unique session IDs and timestamps for easier troubleshooting.
+
+### Changed
+- **Internal architecture cleanup** — Refactored AI session management for better stability and more reliable state handling across different chat windows.
 
 ## [0.9.8] - 2026-04-12
 

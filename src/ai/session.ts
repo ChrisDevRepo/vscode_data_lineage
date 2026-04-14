@@ -13,7 +13,7 @@ import type { IHopStateMachine } from './smBase';
  * atomic session wipes and thread-safe exploration of complex lineages.
  */
 export class AiSession {
-  public readonly id: string;
+  public id: string;
   public readonly memory: AiMemoryManager;
   
   // ── Environment State ──
@@ -37,7 +37,7 @@ export class AiSession {
   public hopCount = 0;
 
   constructor(templates?: AiOutputTemplates) {
-    this.id = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    this.id = this.generateId();
     this.memory = new AiMemoryManager();
     this.columnStore = new ColumnStore();
     this.outputTemplates = templates ?? { 
@@ -46,12 +46,22 @@ export class AiSession {
     this.startTime = Date.now();
   }
 
+  private generateId(): string {
+    return `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  }
+
   /** Wipe memory and state machines for a fresh start within the same model/project. */
   public resetExploration(): void {
     this.memory.reset();
     this.stateMachine = null;
     this.resultGraph = null;
     this.hopCount = 0;
+  }
+
+  /** Generate a new session ID to distinguish independent chat sessions. */
+  public regenerateSessionId(): void {
+    this.id = this.generateId();
+    this.startTime = Date.now();
   }
 
   /** Store a result graph from Blackboard mode. */
@@ -130,4 +140,20 @@ export class AiSession {
       hopCount: this.hopCount,
     };
   }
+}
+
+// ─── Singleton Management ────────────────────────────────────────────────────
+
+let _session: AiSession | null = null;
+
+/**
+ * Get the global AI session singleton.
+ * Note: Only one model/panel is active at a time, so a global singleton is safe.
+ * Chat sessions are reset based on history age to prevent cross-window leaks.
+ */
+export function getSession(): AiSession {
+  if (!_session) {
+    _session = new AiSession();
+  }
+  return _session;
 }

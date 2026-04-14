@@ -207,7 +207,7 @@ export class BlackboardState extends HopStateMachine {
       if (!entry) {
         this._status = 'complete';
         const outsideScope = this.scopeNodeIds.size - this.visited.size - this.removedSet.size;
-        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.detailSlots.size} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
+        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.memory.slotCount} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
         return {
           done: true,
           ...(outsideScope > 0 && {
@@ -406,7 +406,7 @@ export class BlackboardState extends HopStateMachine {
         ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
       ]) : new Set();
 
-      const notedIdSet = new Set(this.detailSlots.keys());
+      const notedIdSet = new Set(this.memory.notedNodeIds);
       for (const pruneId of pruneIds) {
         if (pruneId === this.originNodeId) continue;
         if (this.visited.has(pruneId)) continue;
@@ -503,7 +503,7 @@ export class BlackboardState extends HopStateMachine {
         this.log('info', `BB COMPLETE REJECTED | unvisited direct neighbors: [${names.join(', ')}]`);
         return { ...base, complete_rejected: { nodes: unvisitedDirect, names, hint: `Visit or mark these direct neighbors before completing: ${names.join(', ')}` } };
       }
-      this.log('info', `BB EARLY COMPLETE | notes=${this.detailSlots.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
+      this.log('info', `BB EARLY COMPLETE | notes=${this.memory.slotCount} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
       return { ...base, early_complete: this.getResult() };
     }
 

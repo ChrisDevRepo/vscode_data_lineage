@@ -101,6 +101,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected readonly memory: AiMemoryManager;
 
   // ── Shared mutable state ──
+  public sessionId?: string;
+  public readonly createdAt: string;
   protected _status: SmStatus = 'created';
   protected _inlineMode = false;
   protected originNodeId: string | null = null;
@@ -136,6 +138,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
+    this.createdAt = new Date().toISOString();
     
     // Use injected memory manager or create a fresh one (fallback for tests)
     this.memory = config.memory ?? new AiMemoryManager();
@@ -535,6 +538,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
     const memory = this.memory.getResult();
     return {
       type: this.constructor.name,
+      sessionId: this.sessionId,
+      createdAt: this.createdAt,
       status: this._status,
       originNodeId: this.originNodeId,
       inlineMode: this._inlineMode,
