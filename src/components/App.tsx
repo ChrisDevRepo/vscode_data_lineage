@@ -1208,8 +1208,8 @@ export function App() {
     );
   }
 
-  const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
-  const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
+  const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : flowNodes);
+  const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : flowEdges);
 
   return (
     <ReactFlowProvider>
@@ -1288,8 +1288,10 @@ export function App() {
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
+          } else {
+            vscodeApi.postMessage({ type: 'show-detail' });
+            setIsDetailOpen(true);
           }
-          // else: no-op — user must select a node first
         }}
       />
 

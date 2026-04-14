@@ -40,9 +40,7 @@ export class AiSession {
     this.id = this.generateId();
     this.memory = new AiMemoryManager();
     this.columnStore = new ColumnStore();
-    this.outputTemplates = templates ?? { 
-      summary: '', description: '', sections: '', highlights: '', notes: '' 
-    };
+    this.outputTemplates = templates ?? { ...EMPTY_AI_TEMPLATES };
     this.startTime = Date.now();
   }
 

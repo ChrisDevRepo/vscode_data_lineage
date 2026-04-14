@@ -228,6 +228,7 @@ export function createMessageHandlers(
   let allObjectsCache: SimpleExecuteResult | undefined;
   let platformInfoCache: SimpleExecuteResult | undefined;
   let detailPanel: vscode.WebviewPanel | undefined;
+  let lastDetailNode: any = null;
 
   function setCurrentModel(m: DatabaseModel, project?: { id: string; name: string } | null): void {
     const sess = getSession();
@@ -260,7 +261,7 @@ export function createMessageHandlers(
         host.log('info', 'Bridge', 'No project store found, triggering migration');
         await migrateFromWorkspaceState(context);
       }
-      const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+      const config = await readExtensionConfig(host, outputChannel);
       const store = loadProjectStore(context);
       const sess = getSession();
       host.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
@@ -269,6 +270,77 @@ export function createMessageHandlers(
         if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
         host.log('info', 'Bridge', `Restoring session for project: ${sess.projectName}`);
         host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
+      }
+    },
+    'detail-ready': async (msg) => {
+      if (detailPanel && lastDetailNode) {
+        const config = await readExtensionConfig(host, outputChannel);
+        detailPanel.webview.postMessage({ 
+          type: 'detail-update', 
+          node: enrichNodeForDetail(lastDetailNode), 
+          findQuery: msg.findQuery,
+          config
+        });
+      }
+    },
+    'show-detail': async (msg) => {
+      host.log('debug', 'Bridge', `show-detail: ${msg.node?.id || '(no node)'}`);
+      if (msg.node) lastDetailNode = msg.node;
+
+      if (!detailPanel) {
+        const title = msg.node ? `Detail: ${msg.node.name}` : 'Detail';
+        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', title, vscode.ViewColumn.Beside, { enableScripts: true });
+        detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, host.getExtensionUri());
+        detailPanel.onDidDispose(() => { 
+          detailPanel = undefined; 
+          setDetailPanel(undefined); 
+          host.postMessage({ type: 'detail-closed' });
+        });
+        setDetailPanel(detailPanel);
+        
+        detailPanel.webview.onDidReceiveMessage(async (m) => {
+          if (m.type === 'detail-ready') {
+            if (lastDetailNode) {
+              const config = await readExtensionConfig(host, outputChannel);
+              detailPanel?.webview.postMessage({ 
+                type: 'detail-update', 
+                node: enrichNodeForDetail(lastDetailNode), 
+                findQuery: m.findQuery || msg.findQuery,
+                config
+              });
+            }
+          } else if (m.type === 'table-stats-request') {
+            await handleTableStatsRequestHost(host, lastConnectionInfo, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel, host.getExtensionUri());
+          } else if (m.type === 'close-detail') {
+            detailPanel?.dispose();
+          }
+        });
+      } else {
+        detailPanel.reveal(vscode.ViewColumn.Beside);
+        if (msg.node) {
+          detailPanel.title = `Detail: ${msg.node.name}`;
+          const config = await readExtensionConfig(host, outputChannel);
+          detailPanel.webview.postMessage({ 
+            type: 'detail-update', 
+            node: enrichNodeForDetail(msg.node), 
+            findQuery: msg.findQuery,
+            config
+          });
+        }
+      }
+    },
+    'update-detail': async (msg) => {
+      if (msg.node) lastDetailNode = msg.node;
+      if (detailPanel && msg.node) {
+        host.log('debug', 'Bridge', `update-detail: ${msg.node.id}`);
+        detailPanel.title = `Detail: ${msg.node.name}`;
+        const config = await readExtensionConfig(host, outputChannel);
+        detailPanel.webview.postMessage({ 
+          type: 'detail-update', 
+          node: enrichNodeForDetail(msg.node), 
+          findQuery: msg.findQuery,
+          config
+        });
       }
     },
     'open-dacpac': async () => {
@@ -282,7 +354,7 @@ export function createMessageHandlers(
         host.log('info', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
         const data = await host.readFile(uris[0]);
         if (isDacpacTooLarge(data.byteLength, host)) return;
-        const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+        const config = await readExtensionConfig(host, outputChannel);
         const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
         cachedElements = elements; cachedDspName = dspName;
         host.postMessage({ 
@@ -323,7 +395,7 @@ export function createMessageHandlers(
           await saveProjectStore(context, updatedStore);
           host.postMessage({ type: 'projects-list', projects: updatedStore.projects, lastOpenedId: updatedStore.lastOpenedId, lastWizardView: updatedStore.lastWizardView });
 
-          const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+          const config = await readExtensionConfig(host, outputChannel);
           const schemas = project.connection.schemas;
           
           if (schemas && schemas.length > 0) {
@@ -401,7 +473,7 @@ export function createMessageHandlers(
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
         return;
       }
-      const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+      const config = await readExtensionConfig(host, outputChannel);
       if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
       host.log('info', 'Bridge', 'Running extractDacpacFiltered');
       const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
@@ -447,29 +519,13 @@ export function createMessageHandlers(
         }
       });
     },
-    'show-detail': (msg) => {
-      host.log('debug', 'Bridge', `Showing detail for node: ${msg.node?.id}`);
-      if (!detailPanel) {
-        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', msg.node.name, vscode.ViewColumn.Beside, { enableScripts: true });
-        detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, host.getExtensionUri());
-        detailPanel.onDidDispose(() => { detailPanel = undefined; setDetailPanel(undefined); });
-        setDetailPanel(detailPanel);
-        detailPanel.webview.onDidReceiveMessage(async (m) => {
-          if (m.type === 'table-stats-request') {
-            await handleTableStatsRequestHost(host, lastConnectionInfo, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel, host.getExtensionUri());
-          } else if (m.type === 'close-detail') {
-            detailPanel?.dispose();
-          }
-        });
-      }
-      detailPanel.webview.postMessage({ type: 'detail-update', node: enrichNodeForDetail(msg.node) });
-    },
     'filter-changed': (msg) => {
       const sess = getSession();
       sess.filter = msg.filter;
       sess.views = msg.savedViews;
       if (msg.filteredCount !== undefined) _lastFilteredCount = msg.filteredCount;
       if (msg.renderLimitHit !== undefined) _lastRenderLimitHit = msg.renderLimitHit;
+      host.log('debug', 'Filter', `Active filter updated: ${msg.filter?.schemas?.length || 0} schemas, ${msg.filter?.types?.length || 0} types, ${msg.savedViews?.length || 0} views`);
     },
     'db-connect': () => {
       host.log('info', 'Bridge', 'Database connect requested');
@@ -503,7 +559,7 @@ export function createMessageHandlers(
     },
     'rebuild': async () => {
       host.log('info', 'Bridge', 'Rebuild requested');
-      const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+      const config = await readExtensionConfig(host, outputChannel);
       if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
       host.postMessage({ type: 'rebuild-config', config });
     },
@@ -551,7 +607,7 @@ export function createMessageHandlers(
 // ─── Helpers (Host-Aware) ───────────────────────────────────────────────────
 
 async function handleLoadDemo(host: BridgeHost, context: vscode.ExtensionContext, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, autoVisualize = false, onModelBuilt?: (model: DatabaseModel) => void) {
-  const config = await readExtensionConfig(outputChannel, host.getExtensionUri());
+  const config = await readExtensionConfig(host, outputChannel);
   try {
     const demoUri = vscode.Uri.joinPath(host.getExtensionUri(), 'assets', 'demo.dacpac');
     host.log('info', 'Dacpac', `Loading demo dacpac from: ${demoUri.fsPath}`);
@@ -577,7 +633,7 @@ async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connecti
   const result = resultMap.get('schema-preview');
   if (!result) throw new Error('No schema preview result');
   const preview = buildSchemaPreview(result);
-  const config = await readExtensionConfig(outputChannel, extensionUri);
+  const config = await readExtensionConfig(host, outputChannel);
   host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${connectionInfo.server} / ${connectionInfo.database}` });
 }
 
@@ -588,7 +644,7 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
     host.postMessage({ type: 'db-progress', step, total, label });
   });
   const dmvResults: DmvResults = { nodes: resultMap.get('nodes')!, columns: resultMap.get('columns')!, dependencies: resultMap.get('dependencies')!, allObjects, platformInfo };
-  const config = await readExtensionConfig(outputChannel, extensionUri);
+  const config = await readExtensionConfig(host, outputChannel);
   const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes);
   onModelBuilt?.(model);
   host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
@@ -723,8 +779,8 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   return lines.join('\n');
 }
 
-async function readExtensionConfig(outputChannel: vscode.LogOutputChannel, extensionUri: vscode.Uri): Promise<any> {
-  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+async function readExtensionConfig(host: BridgeHost, outputChannel: vscode.LogOutputChannel): Promise<any> {
+  const cfg = host.getConfiguration();
   return {
     excludePatterns: cfg.get<string[]>('excludePatterns', []),
     maxNodes: cfg.get<number>('maxNodes', 1000),
