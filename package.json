@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
