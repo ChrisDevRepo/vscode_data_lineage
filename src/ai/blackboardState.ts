@@ -119,6 +119,7 @@ export class BlackboardState extends HopStateMachine {
     question: string;
     origin: string;
     depth?: number;
+    initial_summary?: string;
   }): { ok: true; scopeSize: number; agendaSize: number; originNode: Record<string, unknown>; map: MapOverview }
      | { error: string; hint?: string; scope_size?: number; in_filter?: number; outside_filter?: number } {
 
@@ -130,7 +131,7 @@ export class BlackboardState extends HopStateMachine {
     this.userQuestion = '';
     this.invalidNodeIds.clear();
 
-    const { question, origin } = params;
+    const { question, origin, initial_summary } = params;
     this.userQuestion = question;
 
     // Resolve origin
@@ -146,6 +147,11 @@ export class BlackboardState extends HopStateMachine {
     // Compute scope (depth-limited BFS — AI controls scope via depth + expand_frontier)
     const scopeIds = this.bfsScope(originNode.id, this.scopeDirection, params.depth);
     this.scopeNodeIds = scopeIds;
+
+    // Inject initial summary if provided (discovery phase grounding)
+    if (initial_summary) {
+      this.updateShortMemory(`Discovery: ${initial_summary}`);
+    }
 
     // Hard gate: bidirectional on large scope
     if (scopeIds.size > SCOPE_DIRECTION_GATE && this.scopeDirection === 'bidirectional') {

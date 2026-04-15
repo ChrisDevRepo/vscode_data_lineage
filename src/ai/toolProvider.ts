@@ -11,6 +11,7 @@ import {
   validateToolInput,
   type EnrichViewInput,
 } from './tools';
+import { edgeApiType } from './aiPresenter';
 import { buildSynthesisReminder } from './smPrompts';
 import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
 import { type AIViewMetadata, type SerializedFilterState } from '../engine/projectStore';
@@ -206,10 +207,11 @@ export function registerAiTools(
         const sess = getSession();
         const source = sess.resultGraph ? sess.resultGraph.source : 'manual';
         const nodeCount = sess.resultGraph ? sess.resultGraph.nodeIds.length : 0;
+        const msg = input.is_update ? `Updating view "${input.name}"…` : `Enrich view "${input.name}" (${nodeCount} nodes from ${source})`;
         return {
-          invocationMessage: `Enrich view "${input.name}" (${nodeCount} nodes from ${source})`,
+          invocationMessage: msg,
           confirmationMessages: {
-            title: 'Create AI lineage view?',
+            title: input.is_update ? 'Update AI lineage view?' : 'Create AI lineage view?',
             message: new vscode.MarkdownString(
               `**${input.name ?? 'Unnamed'}** · ${nodeCount} nodes\n\nSaved to project and applied.`
             ),
@@ -221,6 +223,7 @@ export function registerAiTools(
           if (!isAiEnabled()) return disabled();
           const sess = getSession();
           const m = requireModel();
+          const g = requireGraph();
           const inputErr = validateToolInput(options.input, { name: 'string' });
           if (inputErr) return toolResult(inputErr);
           const rawInput = options.input as EnrichViewInput;
@@ -233,6 +236,24 @@ export function registerAiTools(
             resolvedNodeIds = [...sess.resultGraph.nodeIds];
             resolvedEdges = [...sess.resultGraph.edges];
             graphSource = sess.resultGraph.source;
+
+            if (rawInput.is_update) {
+              // Incremental add
+              if (rawInput.add_node_ids?.length) {
+                const currentSet = new Set(resolvedNodeIds);
+                const toAdd = rawInput.add_node_ids.filter(id => m.nodes.some(n => n.id === id) && !currentSet.has(id));
+                resolvedNodeIds.push(...toAdd);
+                // Discover edges between existing and new nodes
+                const newSet = new Set(resolvedNodeIds);
+                const allPossibleEdges: [string, string, string][] = [];
+                for (const e of m.edges) {
+                  if (newSet.has(e.source) && newSet.has(e.target)) {
+                    allPossibleEdges.push([e.source, e.target, edgeApiType(e.type)]);
+                  }
+                }
+                resolvedEdges = allPossibleEdges;
+              }
+            }
 
             if (rawInput.prune_node_ids?.length) {
               const pruneSet = new Set(rawInput.prune_node_ids);
@@ -306,6 +327,19 @@ export function registerAiTools(
             panel.webview.postMessage({ type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata });
             panel.reveal(vscode.ViewColumn.One);
           }
+
+          // Persist the updated state back to sess.resultGraph if it's an update
+          if (rawInput.is_update && sess.resultGraph) {
+            sess.resultGraph.nodeIds = resolvedNodeIds;
+            sess.resultGraph.edges = resolvedEdges;
+            // Merge notes
+            const existingNotes = new Map((sess.resultGraph.notes || []).map(n => [n.nodeId, n]));
+            for (const n of validation.notes) {
+              existingNotes.set(n.node_id, { nodeId: n.node_id, summary: n.text });
+            }
+            sess.resultGraph.notes = Array.from(existingNotes.values());
+          }
+
           return logAndReturn('enrich_view', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource });
         } catch (err) { return toolError('enrich_view', err); }
       },
@@ -331,6 +365,19 @@ export function registerAiTools(
 
     vscode.lm.registerTool('lineage_start_column_trace', {
       prepareInvocation(_options, _token) {
+        const sess = getSession();
+        // Condition: Show confirmation ONLY if there is an active session (not complete) AND it's not stale (< 2 hours)
+        if (sess.stateMachine && sess.stateMachine.status !== 'complete' && !sess.isStale()) {
+          return {
+            invocationMessage: 'Starting column-level trace…',
+            confirmationMessages: {
+              title: 'Wipe active exploration?',
+              message: new vscode.MarkdownString(
+                'There is an active exploration in another chat or previous context. Starting a new one will wipe the current progress. Continue?'
+              ),
+            },
+          };
+        }
         return { invocationMessage: 'Starting column-level trace…' };
       },
       invoke(options, _token) {
@@ -341,16 +388,17 @@ export function registerAiTools(
           const g = requireGraph();
           const inputErr = validateToolInput(options.input, { columns: 'array' });
           if (inputErr) return toolResult(inputErr);
-          const input = options.input as { columns?: string[]; direction?: string; origin?: string; depth?: number; schemas?: string[] };
+          const input = options.input as { columns?: string[]; direction?: string; origin?: string; depth?: number; schemas?: string[]; initial_summary?: string };
           const columns = input.columns ?? [];
           const direction = (input.direction ?? 'up') as 'up' | 'down' | 'both';
           const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
 
+          // Silently reset if stale or complete (user already confirmed or no confirmation needed)
+          sess.resetIfStale();
+
           // Validate and prepare schema override
           const schemaVal = validateSchemas(m, input.schemas);
           if (schemaVal.error) return toolResult({ error: 'invalid_schemas', message: schemaVal.error });
-
-          sess.resetExploration();
 
           const filter = sess.filter;
           if (!filter) throw new Error('No filter state available in session.');
@@ -376,7 +424,7 @@ export function registerAiTools(
           ct.sessionId = sess.id;
           sess.stateMachine = ct;
 
-          const initResult = ct.init({ targetColumns: columns, origin: input.origin, direction, depth });
+          const initResult = ct.init({ targetColumns: columns, origin: input.origin, direction, depth, initial_summary: input.initial_summary });
           if ('error' in initResult) return logAndReturn('start_column_trace', initResult);
 
           const scopeDdlChars = ct.estimateScopeDdlChars();
@@ -451,6 +499,19 @@ export function registerAiTools(
 
     vscode.lm.registerTool('lineage_start_exploration', {
       prepareInvocation(_options, _token) {
+        const sess = getSession();
+        // Condition: Show confirmation ONLY if there is an active session (not complete) AND it's not stale (< 2 hours)
+        if (sess.stateMachine && sess.stateMachine.status !== 'complete' && !sess.isStale()) {
+          return {
+            invocationMessage: 'Starting exploration…',
+            confirmationMessages: {
+              title: 'Wipe active exploration?',
+              message: new vscode.MarkdownString(
+                'There is an active exploration in another chat or previous context. Starting a new one will wipe the current progress. Continue?'
+              ),
+            },
+          };
+        }
         return { invocationMessage: 'Starting exploration…' };
       },
       invoke(options, _token) {
@@ -461,7 +522,7 @@ export function registerAiTools(
           const g = requireGraph();
           const inputErr = validateToolInput(options.input, { question: 'string', origin: 'string' });
           if (inputErr) return toolResult(inputErr);
-          const input = options.input as { question?: string; origin?: string; scope_direction?: string; depth?: number; schemas?: string[] };
+          const input = options.input as { question?: string; origin?: string; scope_direction?: string; depth?: number; schemas?: string[]; initial_summary?: string };
           const question = input.question ?? '';
           const origin = input.origin ?? '';
           const scopeDirection = (['upstream', 'downstream', 'bidirectional'].includes(input.scope_direction ?? '')
@@ -469,11 +530,12 @@ export function registerAiTools(
             : 'bidirectional');
           const depth = typeof input.depth === 'number' ? Math.max(1, Math.min(Math.round(input.depth), 20)) : 5;
 
+          // Silently reset if stale or complete (user already confirmed or no confirmation needed)
+          sess.resetIfStale();
+
           // Validate and prepare schema override
           const schemaVal = validateSchemas(m, input.schemas);
           if (schemaVal.error) return toolResult({ error: 'invalid_schemas', message: schemaVal.error });
-
-          sess.resetExploration();
 
           const filter = sess.filter;
           if (!filter) throw new Error('No filter state available in session.');
@@ -500,7 +562,7 @@ export function registerAiTools(
           bb.sessionId = sess.id;
           sess.stateMachine = bb;
 
-          const initResult = bb.init({ question, origin, depth });
+          const initResult = bb.init({ question, origin, depth, initial_summary: input.initial_summary });
           if ('error' in initResult) return logAndReturn('start_exploration', initResult);
 
           const scopeDdlChars = bb.estimateScopeDdlChars();

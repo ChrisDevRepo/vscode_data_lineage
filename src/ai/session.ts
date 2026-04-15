@@ -45,6 +45,20 @@ export class AiSession {
     this.startTime = Date.now();
   }
 
+  /** Check if the session is older than 2 hours (stale). */
+  public isStale(): boolean {
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+    return (Date.now() - this.startTime) > TWO_HOURS_MS;
+  }
+
+  /** Silently reset the session if it is stale or already complete. */
+  public resetIfStale(): void {
+    if (this.isStale() || this.stateMachine?.status === 'complete') {
+      this.resetExploration();
+      this.regenerateSessionId();
+    }
+  }
+
   private generateId(): string {
     return `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   }

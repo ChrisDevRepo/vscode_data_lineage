@@ -747,6 +747,8 @@ export type EnrichViewInput = {
   closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
   description?: string;
   prune_node_ids?: string[];
+  add_node_ids?: string[];    // NEW: incremental add
+  is_update?: boolean;        // NEW: incremental update flag
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.10] - 2026-04-15
+
+### Added
+- **Incremental AI view updates** — You can now ask the AI to add or remove specific tables and update descriptions in an existing graph without restarting the entire analysis.
+- **Smarter AI session protection** — Added automatic cleanup for old AI sessions (2-hour timeout) and a confirmation warning if you try to start a new analysis while one is already active.
+- **Improved AI "Memory"** — The AI now better remembers its initial findings from the start of a conversation, leading to more consistent results in complex, multi-step traces.
+
 ## [0.9.9] - 2026-04-14
 
 ### Fixed

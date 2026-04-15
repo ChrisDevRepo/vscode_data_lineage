@@ -168,6 +168,7 @@ export class ColumnTraceState extends HopStateMachine {
     origin?: string;
     direction?: ColumnTraceDirection;
     depth?: number;
+    initial_summary?: string;
   }): { ok: true; scopeSize: number; originNode: Record<string, unknown> }
      | { error: string; hint?: string; candidates?: Array<{ id: string; name: string; type: string }> } {
 
@@ -185,18 +186,9 @@ export class ColumnTraceState extends HopStateMachine {
     this.revisitCount = 0;
     this.rejectionHistory = [];
 
-    const { targetColumns: rawCols, origin, direction = 'up' } = params;
+    const { targetColumns: rawCols, origin, direction = 'up', initial_summary } = params;
 
-    // Runtime validation — LM API passes untyped JSON
-    const VALID_DIRECTIONS: ColumnTraceDirection[] = ['up', 'down', 'both'];
-    if (!VALID_DIRECTIONS.includes(direction)) {
-      this._status = 'error';
-      this.log('debug', `INIT ERROR: invalid direction "${direction}"`);
-      return { error: 'invalid_direction', hint: `direction must be 'up', 'down', or 'both'` };
-    }
-    this.direction = direction;
-    this.targetColumns = [...new Set((rawCols ?? []).map((c: string) => c.trim()).filter(Boolean))];
-
+    // ... resolution logic ...
     // Resolve origin
     let originNode: LineageNode | undefined;
     if (origin) {
@@ -212,9 +204,8 @@ export class ColumnTraceState extends HopStateMachine {
       this.log('debug', 'INIT ERROR: no origin and no columns');
       return { error: 'no_origin', hint: 'Provide origin object when tracing without columns.' };
     } else {
-      // Auto-discover: find tables/views with a matching column
+      // Auto-discover logic ...
       const colLower = new Set(this.targetColumns.map(c => c.toLowerCase()));
-      // Auto-discover: use ColumnStore reverse index (O(1)) or scan nodes (fallback for tests)
       let candidates: LineageNode[];
       if (this.store) {
         candidates = this.targetColumns.flatMap(col => this.store!.findByColumnName(col))
@@ -233,7 +224,6 @@ export class ColumnTraceState extends HopStateMachine {
         return { error: 'column_not_found', hint: `No object contains column(s): ${this.targetColumns.join(', ')}.` };
       }
       if (candidates.length > MAX_AUTODISCOVER_CANDIDATES) {
-        // Too many candidates — ask for clarification
         this._status = 'error';
         this.log('debug', `INIT ERROR: ${candidates.length} candidates for columns [${this.targetColumns}] — ambiguous`);
         return {
@@ -242,16 +232,13 @@ export class ColumnTraceState extends HopStateMachine {
           candidates: candidates.slice(0, CANDIDATE_DISPLAY_LIMIT).map((c: LineageNode) => ({ id: c.id, name: c.name, type: c.type })),
         };
       }
-      // 1-5 candidates: pick the one with highest degree (most connected = likely the fact/main table)
       originNode = candidates.sort((a: LineageNode, b: LineageNode) => {
         const degA = (this.model.neighborIndex[a.id]?.in.length ?? 0) + (this.model.neighborIndex[a.id]?.out.length ?? 0);
         const degB = (this.model.neighborIndex[b.id]?.in.length ?? 0) + (this.model.neighborIndex[b.id]?.out.length ?? 0);
         return degB - degA;
       })[0];
-      this.log('info', `Auto-discovered origin: ${originNode!.id} (${candidates.length} candidate(s), picked highest degree)`);
     }
 
-    // All error paths returned above — originNode is guaranteed defined here
     const origin_ = originNode!;
     this.originNodeId = origin_.id;
 
@@ -259,7 +246,12 @@ export class ColumnTraceState extends HopStateMachine {
     const scopeIds = this.bfsScopeViaIndex(origin_.id, params.depth);
     this.scopeNodeIds = scopeIds;
 
-    // Seed frontier with directional neighbors of origin
+    // Inject initial summary if provided (discovery phase grounding)
+    if (initial_summary) {
+      this.updateShortMemory(`Discovery: ${initial_summary}`);
+    }
+
+    // Seed frontier with directional neighbors of origin ...
     const neighbors = this.getDirectionalNeighbors(origin_.id);
     for (const nid of neighbors) {
       if (this.frontier.length >= this.maxFrontierSize) break;
