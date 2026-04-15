@@ -279,7 +279,11 @@ export function createMessageHandlers(
       host.postMessage({ type: 'projects-list', projects: store.projects, lastOpenedId: store.lastOpenedId, lastWizardView: store.lastWizardView });
       if (sess.model && store.lastOpenedId) {
         const project = store.projects.find((p: any) => p.id === store.lastOpenedId);
-        if (project) { sess.currentProjectId = project.id; sess.projectName = project.name; }
+        if (project) {
+          sess.currentProjectId = project.id;
+          sess.projectName = project.name;
+          sess.isDbSession = project.connection.type === 'database';
+        }
         host.log('info', 'Bridge', `Restoring session for project: ${sess.projectName}`);
         host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
       }
@@ -411,7 +415,7 @@ export function createMessageHandlers(
             if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
-            setCurrentModel(model, { id: project.id, name: project.connection.displayName });
+            setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
             host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
           } else {
@@ -439,7 +443,7 @@ export function createMessageHandlers(
             await runDbPhase1Host(host, dbResult.connectionUri, dbResult.connectionInfo, outputChannel, host.getExtensionUri(), (r) => { allObjectsCache = r; });
           } else {
             await runDbPhase2Host(host, dbResult.connectionUri, schemas, progress, token, outputChannel, host.getExtensionUri(), allObjectsCache, project.connection.connectionInfo.database, project.connection.sourceName, platformInfoCache, (m) => {
-              setCurrentModel(m, { id: project.id, name: project.name });
+              setCurrentModel(m, true, { id: project.id, name: project.name });
             });
             const refreshed = { ...project, updatedAt: new Date().toISOString() };
             const updatedStore = updateProject(store, refreshed);
@@ -470,7 +474,7 @@ export function createMessageHandlers(
     'load-demo': async () => {
       host.log('info', 'Bridge', 'Loading demo');
       await handleLoadDemo(host, context, getSession, outputChannel, true, (m) => {
-        setCurrentModel(m, null);
+        setCurrentModel(m, false, null);
         getSession().projectName = 'Demo';
       });
     },
@@ -488,7 +492,7 @@ export function createMessageHandlers(
       host.log('info', 'Bridge', `Extracted ${model.nodes.length} nodes and ${model.edges.length} edges`);
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
-      setCurrentModel(model, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
+      setCurrentModel(model, false, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
       if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
       host.postMessage({ type: 'dacpac-model', model, config, sourceName: projectName });
     },
@@ -512,9 +516,9 @@ export function createMessageHandlers(
 
         await runDbPhase2Host(host, conn.connectionUri, msg.schemas, progress, token, outputChannel, host.getExtensionUri(), allObjectsCache, conn.connectionInfo.database, sourceName, platformInfoCache, (m) => {
           if (pendingProject) {
-            setCurrentModel(m, { id: pendingProject.id, name: pendingProject.name });
+            setCurrentModel(m, true, { id: pendingProject.id, name: pendingProject.name });
           } else {
-            setCurrentModel(m);
+            setCurrentModel(m, true, null);
             getSession().projectName = sourceName;
           }
         });

@@ -437,7 +437,7 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
         logInfo(outputChannel, 'AI', `Summary — rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst}`);
         
         const smComplete = sess.stateMachine?.status === 'complete';
-        const hasBfs = toolCallRounds.some(r => r.toolCalls.some(tc => tc.name === 'lineage_run_bfs_trace'));
+        const hasBfs = toolCallRounds.some(r => r.toolCalls.some((tc: any) => tc.name === 'lineage_run_bfs_trace'));
         if (getActivePanel() && (hasBfs || smComplete)) {
           stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [request.prompt] });
         }
@@ -446,7 +446,7 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
         stream.markdown(`\n\n*Error: ${err instanceof Error ? err.message : String(err)}*`);
       }
 
-      return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults }, lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map(tc => tc.name) : [] } };
+      return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults }, lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [] } };
     }
   );
 
@@ -454,14 +454,14 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
     provideFollowups(result) {
       const lastTools = (result.metadata as any)?.lastTools ?? [];
       const followups: vscode.ChatFollowup[] = [];
-      if (lastTools.some(t => t.includes('bfs_trace'))) followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
-      if (lastTools.some(t => t.includes('search'))) followups.push({ prompt: 'Trace the lineage from the top result', label: 'Trace lineage' });
-      if (lastTools.some(t => t.includes('submit_hop') || t.includes('submit_findings'))) followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
+      if (lastTools.some((t: string) => t.includes('bfs_trace'))) followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
+      if (lastTools.some((t: string) => t.includes('search'))) followups.push({ prompt: 'Trace the lineage from the top result', label: 'Trace lineage' });
+      if (lastTools.some((t: string) => t.includes('submit_hop') || t.includes('submit_findings'))) followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
       return followups;
     }
   };
 
-  participant.onDidReceiveFeedback((feedback) => {
+  participant.onDidReceiveFeedback((feedback: vscode.ChatResultFeedback) => {
     const kind = feedback.kind === vscode.ChatResultFeedbackKind.Helpful ? 'helpful' : 'unhelpful';
     logInfo(outputChannel, 'AI', `Feedback: ${kind}`);
   });
@@ -470,7 +470,6 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
 
   return {
     getSession,
-    getActivePanel,
-    testLogCapture
+    getActivePanel
   };
-}
+  }
