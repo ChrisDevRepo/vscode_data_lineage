@@ -89,9 +89,12 @@ export function registerCommands(
     }),
 
     vscode.commands.registerCommand('dataLineageViz.toggleOverviewMode', () => {
-      // Logic handled via postMessage to activePanel, which we can't access here directly
-      // extension.ts will handle the activePanel reference.
-      vscode.commands.executeCommand('dataLineageViz.internal.toggleOverview');
+      const panel = getActivePanel();
+      if (!panel) {
+        vscode.window.showWarningMessage('Data Lineage: Open a graph first to toggle overview mode.');
+        return;
+      }
+      panel.webview.postMessage({ type: 'toggle-overview' });
     }),
 
     vscode.commands.registerCommand('dataLineageViz.searchObjects', async () => {
