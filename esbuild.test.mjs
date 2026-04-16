@@ -1,11 +1,14 @@
 import * as esbuild from 'esbuild';
 import { glob } from 'glob';
 
-const testFiles = await glob('src/test/**/*.test.ts');
+// Compile both existing src/test/ and new tests/e2e/ files
+const srcTestFiles = await glob('src/test/**/*.test.ts');
+const e2eTestFiles = await glob('tests/e2e/**/*.ts');
+const allTestFiles = [...srcTestFiles, ...e2eTestFiles];
 
 /** @type {import('esbuild').BuildOptions} */
 const config = {
-  entryPoints: testFiles,
+  entryPoints: allTestFiles,
   bundle: true,
   outdir: 'out/test',
   external: ['vscode'],
@@ -16,4 +19,4 @@ const config = {
 };
 
 await esbuild.build(config);
-console.log('Tests compiled to out/test');
+console.log(`Tests compiled to out/test (${allTestFiles.length} entry points)`);

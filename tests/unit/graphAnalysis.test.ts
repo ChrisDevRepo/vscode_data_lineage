@@ -11,8 +11,8 @@ import {
   analyzeLongestPath,
   analyzeCycles,
   analyzeExternalRefs,
-} from '../src/engine/graphAnalysis';
-import { assert, assertEq, makeGraph, printSummary } from './testUtils';
+} from '../../src/engine/graphAnalysis';
+import { assert, assertEq, makeGraph, printSummary } from './helpers/testUtils';
 
 // ─── analyzeIslands ──────────────────────────────────────────────────────────
 

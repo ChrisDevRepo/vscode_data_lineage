@@ -6,11 +6,11 @@
 import { readFileSync } from 'fs';
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
-import { extractDacpac } from '../src/engine/dacpacExtractor';
-import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics, buildSchemaEdges, buildSchemaGraph } from '../src/engine/graphBuilder';
-import { buildModel } from '../src/engine/modelBuilder';
-import type { DatabaseModel } from '../src/engine/types';
-import { assert, makeGraph, testPath, loadParseRules, printSummary, loadAdventureWorksModel } from './testUtils';
+import { extractDacpac } from '../../src/engine/dacpacExtractor';
+import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics, buildSchemaEdges, buildSchemaGraph } from '../../src/engine/graphBuilder';
+import { buildModel } from '../../src/engine/modelBuilder';
+import type { DatabaseModel } from '../../src/engine/types';
+import { assert, makeGraph, testPath, loadParseRules, printSummary, loadAdventureWorksModel } from './helpers/testUtils';
 
 // ─── Graph Builder ──────────────────────────────────────────────────────────
 

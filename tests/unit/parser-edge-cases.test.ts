@@ -3,8 +3,8 @@
  * Execute with: npx tsx test/parser-edge-cases.test.ts
  */
 
-import { parseSqlBody, extractExternalRefs } from '../src/engine/sqlBodyParser';
-import { assert, hasName, loadParseRules, printSummary } from './testUtils';
+import { parseSqlBody, extractExternalRefs } from '../../src/engine/sqlBodyParser';
+import { assert, hasName, loadParseRules, printSummary } from './helpers/testUtils';
 
 loadParseRules();
 

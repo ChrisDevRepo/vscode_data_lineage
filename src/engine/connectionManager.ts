@@ -4,7 +4,7 @@ import * as yaml from 'js-yaml';
 import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
-import { logInfo, logDebug, logWarn, logTrace } from '../utils/log';
+import { Logger } from '../utils/log';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
@@ -26,6 +26,7 @@ export async function loadDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
 ): Promise<DmvQuery[]> {
+  const logger = Logger.create(outputChannel, 'Config');
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
   const customPath = cfg.get<string>('dmvQueriesFile', '');
 
@@ -45,22 +46,22 @@ export async function loadDmvQueries(
             const loadedNames = new Set(valid.map(q => q.name));
             const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
             if (missingNames.length > 0) {
-              logWarn(outputChannel, 'Config', `Custom DMV queries missing: ${missingNames.join(', ')} — DB import may fail`);
+              logger.warn(`Custom DMV queries missing: ${missingNames.join(', ')} — DB import may fail`);
               vscode.window.showWarningMessage(`Custom DMV queries missing: ${missingNames.join(', ')}. DB import may fail.`);
             }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
-            logInfo(outputChannel, 'Config', `Loaded ${valid.length} custom DMV queries from ${path.basename(customPath)}`);
+            logger.info(`Loaded ${valid.length} custom DMV queries from ${path.basename(customPath)}`);
             return valid;
           }
         }
-        logWarn(outputChannel, 'Config', `Invalid custom DMV queries in ${customPath} — using built-in defaults`);
+        logger.warn(`Invalid custom DMV queries in ${customPath} — using built-in defaults`);
         vscode.window.showWarningMessage('Custom DMV queries invalid — using built-in defaults.');
       } catch (err) {
-        logWarn(outputChannel, 'Config', `Failed to load custom DMV queries: ${err instanceof Error ? err.message : String(err)} — using built-in defaults`);
+        logger.warn(`Failed to load custom DMV queries: ${err instanceof Error ? err.message : String(err)} — using built-in defaults`);
         vscode.window.showWarningMessage('Failed to load custom DMV queries — using built-in defaults. Check Output channel.');
       }
     } else {
-      logWarn(outputChannel, 'Config', `Cannot resolve DMV queries path "${customPath}" — using built-in defaults`);
+      logger.warn(`Cannot resolve DMV queries path "${customPath}" — using built-in defaults`);
       vscode.window.showWarningMessage(`Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`);
     }
   }
@@ -72,6 +73,7 @@ async function loadBuiltInDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
 ): Promise<DmvQuery[]> {
+  const logger = Logger.create(outputChannel, 'Config');
   const yamlUri = vscode.Uri.joinPath(extensionUri, 'assets', 'dmvQueries.yaml');
   const data = await vscode.workspace.fs.readFile(yamlUri);
   const content = new TextDecoder().decode(data);
@@ -81,7 +83,7 @@ async function loadBuiltInDmvQueries(
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
   }
 
-  logDebug(outputChannel, 'Config', `Using built-in DMV queries (${parsed.queries.length} queries)`);
+  logger.debug(`Using built-in DMV queries (${parsed.queries.length} queries)`);
   return parsed.queries;
 }
 
@@ -92,13 +94,14 @@ export function isMssqlAvailable(): boolean {
 }
 
 async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExtension> {
+  const logger = Logger.create(outputChannel, 'DB');
   const ext = vscode.extensions.getExtension<IExtension>(MSSQL_EXTENSION_ID);
   if (!ext) {
     throw new Error(`MSSQL extension (${MSSQL_EXTENSION_ID}) is not installed.`);
   }
 
   const api = ext.isActive ? ext.exports : await ext.activate();
-  logDebug(outputChannel, 'DB', `MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext.packageJSON?.version ?? '?'} found`);
+  logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext.packageJSON?.version ?? '?'} found`);
 
   return api;
 }
@@ -123,17 +126,18 @@ async function getConnectionSharingApi(
 export async function promptForConnection(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
+  const logger = Logger.create(outputChannel, 'DB');
   const api = await getMssqlApi(outputChannel);
 
   const connectionInfo = await api.promptForConnection(true);
   if (!connectionInfo) {
-    logInfo(outputChannel, 'DB', 'User cancelled connection picker');
+    logger.info('User cancelled connection picker');
     return undefined;
   }
 
-  logInfo(outputChannel, 'DB', `Connecting to ${connectionInfo.server}/${connectionInfo.database}`);
+  logger.info(`Connecting to ${connectionInfo.server}/${connectionInfo.database}`);
   const connectionUri = await api.connect(connectionInfo, false);
-  logInfo(outputChannel, 'DB', 'Connected');
+  logger.info('Connected');
 
   return { connectionUri, connectionInfo };
 }
@@ -152,15 +156,16 @@ export async function connectDirect(
   connectionInfo: IConnectionInfo,
   outputChannel: vscode.LogOutputChannel,
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
+  const logger = Logger.create(outputChannel, 'DB');
   const api = await getMssqlApi(outputChannel);
 
-  logDebug(outputChannel, 'DB', `>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
+  logger.debug(`>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
   try {
     const connectionUri = await api.connect(connectionInfo, false);
-    logDebug(outputChannel, 'DB', 'Reconnected');
+    logger.debug('Reconnected');
     return { connectionUri, connectionInfo };
   } catch (err) {
-    logWarn(outputChannel, 'DB', `Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
+    logger.warn(`Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
     return undefined;
   }
 }
@@ -185,6 +190,7 @@ export async function executeDmvQueries(
   onProgress?: (step: number, total: number, label: string) => void,
   queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
 
   const results = new Map<string, SimpleExecuteResult>();
@@ -195,8 +201,8 @@ export async function executeDmvQueries(
     const step = i + 1;
 
     onProgress?.(step, total, query.name);
-    logDebug(outputChannel, 'DB', `Executing query: ${query.name} (${step}/${total})...`);
-    logTrace(outputChannel, 'DB', `SQL for '${query.name}':\n${query.sql}`);
+    logger.debug(`Executing query: ${query.name} (${step}/${total})...`);
+    logger.trace(`SQL for '${query.name}':\n${query.sql}`);
 
     const start = Date.now();
     const queryPromise = sharing.executeSimpleQuery(connectionUri, query.sql);
@@ -205,7 +211,7 @@ export async function executeDmvQueries(
       : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -226,6 +232,7 @@ export async function executeDmvQueriesFiltered(
   onProgress?: (step: number, total: number, label: string) => void,
   queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
 
   const phase2Queries = queries.filter(q => (q.phase ?? 2) !== 1);
@@ -233,7 +240,7 @@ export async function executeDmvQueriesFiltered(
   // Validate: warn if any Phase 2 query is missing {{SCHEMAS}}
   for (const q of phase2Queries) {
     const warning = validateSchemaPlaceholder(q.name, q.sql, q.phase ?? 2);
-    if (warning) logWarn(outputChannel, 'DB', warning);
+    if (warning) logger.warn(warning);
   }
 
   const results = new Map<string, SimpleExecuteResult>();
@@ -245,8 +252,8 @@ export async function executeDmvQueriesFiltered(
     const sql = expandSchemaPlaceholder(query.sql, schemas);
 
     onProgress?.(step, total, query.name);
-    logDebug(outputChannel, 'DB', `Executing filtered query: ${query.name} (${step}/${total})...`);
-    logTrace(outputChannel, 'DB', `SQL for '${query.name}':\n${sql}`);
+    logger.debug(`Executing filtered query: ${query.name} (${step}/${total})...`);
+    logger.trace(`SQL for '${query.name}':\n${sql}`);
 
     const start = Date.now();
     const queryPromise = sharing.executeSimpleQuery(connectionUri, sql);
@@ -255,7 +262,7 @@ export async function executeDmvQueriesFiltered(
       : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -285,7 +292,8 @@ export async function disconnectDatabase(
   connectionUri: string,
   outputChannel: vscode.LogOutputChannel,
 ): Promise<void> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
   await sharing.disconnect(connectionUri);
-  logInfo(outputChannel, 'DB', 'Disconnected');
+  logger.info('Disconnected');
 }

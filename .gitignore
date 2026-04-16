@@ -12,6 +12,8 @@ build/
 # Testing
 test-internal/
 **/test-internal/**
+test-results/
+**/test-results/**
 customer-data/
 .vscode-test/
 coverage/

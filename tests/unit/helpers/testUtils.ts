@@ -1,6 +1,10 @@
 /**
- * Shared test utilities for all test files.
- * NOT a test file itself — imported by test/*.test.ts files.
+ * Shared test utilities for all unit test files.
+ * NOT a test file itself — imported by tests/unit/*.test.ts files.
+ *
+ * Location: tests/unit/helpers/testUtils.ts
+ * - testPath() resolves paths relative to tests/fixtures/
+ * - rootPath() resolves paths relative to project root
  */
 
 import { readFileSync } from 'fs';
@@ -8,35 +12,36 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import Graph from 'graphology';
-import { loadRules } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
-import { extractDacpac } from '../src/engine/dacpacExtractor';
-import type { DatabaseModel } from '../src/engine/types';
+import { loadRules } from '../../../src/engine/sqlBodyParser';
+import type { ParseRulesConfig } from '../../../src/engine/sqlBodyParser';
+import { extractDacpac } from '../../../src/engine/dacpacExtractor';
+import type { DatabaseModel } from '../../../src/engine/types';
 
-// ─── Test directory resolution ───────────────────────────────────────────────
+// ─── Directory resolution ────────────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(__dirname, '..', '..', '..');
+const FIXTURES = resolve(ROOT, 'tests', 'fixtures');
 
-/** Resolve a path relative to the test/ directory */
+/** Resolve a path relative to tests/fixtures/ (dacpacs, baselines, sql files) */
 export function testPath(...segments: string[]): string {
-  return resolve(__dirname, ...segments);
+  return resolve(FIXTURES, ...segments);
 }
 
 /** Resolve a path relative to the project root */
 export function rootPath(...segments: string[]): string {
-  return resolve(__dirname, '..', ...segments);
+  return resolve(ROOT, ...segments);
 }
 
 // ─── End-to-end dacpac helpers ────────────────────────────────────────────────
 
 /**
  * Full end-to-end: dacpac → DatabaseModel (Node.js, no VS Code needed).
- * Used as the foundation for integration-style tests (dacpacExtractor.test.ts,
- * future ai-tools.test.ts) without any webview mocking.
+ * Uses the AI dacpac (superset of AdventureWorks + [ai] schema).
  */
 export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   loadParseRules();
-  const buffer = readFileSync(testPath('AdventureWorks.dacpac'));
+  const buffer = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
   return extractDacpac(buffer.buffer as ArrayBuffer);
 }
 

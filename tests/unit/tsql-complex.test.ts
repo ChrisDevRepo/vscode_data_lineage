@@ -20,8 +20,8 @@
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { basename } from 'path';
-import { parseSqlBody } from '../src/engine/sqlBodyParser';
-import { assert, loadParseRules, testPath, printSummary } from './testUtils';
+import { parseSqlBody } from '../../src/engine/sqlBodyParser';
+import { assert, loadParseRules, testPath, printSummary } from './helpers/testUtils';
 
 loadParseRules();
 

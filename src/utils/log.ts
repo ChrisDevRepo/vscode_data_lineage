@@ -67,6 +67,10 @@ export class Logger {
     private readonly cat: LogCategory
   ) {}
 
+  static create(ch: LogOutputChannel, cat: LogCategory): Logger {
+    return new Logger(ch, cat);
+  }
+
   info(msg: string): void { logInfo(this.ch, this.cat, msg); }
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
   trace(msg: string): void { logTrace(this.ch, this.cat, msg); }

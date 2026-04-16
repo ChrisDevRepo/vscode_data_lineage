@@ -4,8 +4,14 @@ import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const tmpDir = path.resolve(__dirname, 'tmp-test-workspace');
-if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
+
+// VS Code test workspace dir (replaces old tmp-test-workspace)
+const workspaceDir = path.resolve(__dirname, 'test-results', 'workspace');
+if (!fs.existsSync(workspaceDir)) fs.mkdirSync(workspaceDir, { recursive: true });
+
+// Isolated user data dir — required to run alongside another VS Code instance
+const userDataDir = path.resolve(__dirname, '.vscode-test', 'user-data');
+if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
 
 export default defineConfig({
 	files: 'out/test/**/*.test.js',
@@ -13,7 +19,7 @@ export default defineConfig({
 		ui: 'tdd',
 		timeout: 20000
 	},
-	launchArgs: [tmpDir],
+	launchArgs: [workspaceDir, '--user-data-dir=' + userDataDir],
 	env: {
 		VSCODE_EX_TEST: 'true'
 	}

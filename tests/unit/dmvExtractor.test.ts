@@ -5,12 +5,12 @@
 
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';
-import { buildModelFromDmv, validateQueryResult } from '../src/engine/dmvExtractor';
-import { formatColumnType } from '../src/engine/types';
-import type { DmvResults } from '../src/engine/dmvExtractor';
-import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../src/types/mssql';
-import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../src/utils/sql';
-import { assert, assertEq, loadParseRules, rootPath, printSummary } from './testUtils';
+import { buildModelFromDmv, validateQueryResult } from '../../src/engine/dmvExtractor';
+import { formatColumnType } from '../../src/engine/types';
+import type { DmvResults } from '../../src/engine/dmvExtractor';
+import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../../src/types/mssql';
+import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../../src/utils/sql';
+import { assert, assertEq, loadParseRules, rootPath, printSummary } from './helpers/testUtils';
 
 loadParseRules();
 

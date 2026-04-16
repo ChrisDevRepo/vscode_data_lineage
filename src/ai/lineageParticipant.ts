@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AiSession } from './session';
-import { logInfo, logDebug, logWarn, logError, trunc } from '../utils/log';
+import { Logger, trunc } from '../utils/log';
 import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import { 
   buildPlatformContext, buildSchemaContext, buildSystemPromptBase, 
@@ -23,12 +23,16 @@ export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart | { c
 }
 
 export class LineageParticipant {
+  private readonly logger: Logger;
+
   constructor(
     private context: vscode.ExtensionContext,
     private getSession: () => AiSession,
-    private outputChannel: vscode.LogOutputChannel,
+    outputChannel: vscode.LogOutputChannel,
     private getActivePanel: () => vscode.WebviewPanel | undefined
-  ) {}
+  ) {
+    this.logger = Logger.create(outputChannel, 'AI');
+  }
 
   public register() {
     const participant = vscode.chat.createChatParticipant(
@@ -49,7 +53,7 @@ export class LineageParticipant {
 
     participant.onDidReceiveFeedback((feedback: vscode.ChatResultFeedback) => {
       const kind = feedback.kind === vscode.ChatResultFeedbackKind.Helpful ? 'helpful' : 'unhelpful';
-      logInfo(this.outputChannel, 'AI', `Feedback: ${kind}`);
+      this.logger.info(`Feedback: ${kind}`);
     });
 
     this.context.subscriptions.push(participant);
@@ -79,10 +83,10 @@ export class LineageParticipant {
     if (chatContext.history.length === 0) {
       sess.regenerateSessionId();
       sess.resetExploration();
-      logInfo(this.outputChannel, 'AI', `[${sess.id}] New chat session detected — state rotated`);
+      this.logger.info(`[${sess.id}] New chat session detected — state rotated`);
     }
 
-    logInfo(this.outputChannel, 'AI', `[${sess.id}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
+    this.logger.info(`[${sess.id}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
     let activePhase: 'discover' | 'ct_active' | 'ct_done' | 'bb_active' | 'bb_done' = 'discover';
     const smDoneTools = () => vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_run_bfs_trace');
@@ -199,7 +203,7 @@ export class LineageParticipant {
         messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt));
         if (modePromptMsg) messages.push(modePromptMsg);
         messages.push(lastAssistant, lastResult);
-        logDebug(this.outputChannel, 'AI', `[${label}] Clean hop context`);
+        this.logger.debug(`[${label}] Clean hop context`);
       };
 
       while (roundCount < MAX_ROUNDS) {
@@ -307,7 +311,7 @@ export class LineageParticipant {
     try {
       await runWithTools();
       const totalTokenEst = lastInputTokenEstimate + totalOutputTokens + Math.round(totalToolResultChars / 4);
-      logInfo(this.outputChannel, 'AI', `Summary — rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst}`);
+      this.logger.info(`Summary — rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst}`);
       
       const smComplete = sess.stateMachine?.status === 'complete';
       const hasBfs = toolCallRounds.some(r => r.toolCalls.some((tc: any) => tc.name === 'lineage_run_bfs_trace'));
@@ -315,7 +319,7 @@ export class LineageParticipant {
         stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [request.prompt] });
       }
     } catch (err) {
-      logError(this.outputChannel, 'AI', 'Chat handler', err);
+      this.logger.error('Chat handler', err);
       stream.markdown(`\n\n*Error: ${err instanceof Error ? err.message : String(err)}*`);
     }
 

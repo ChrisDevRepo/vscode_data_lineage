@@ -1,37 +1,34 @@
 /**
  * AdventureWorks parser baseline snapshot tool.
  *
- * Produces a deterministic TSV with one row per stored procedure across both
- * public AdventureWorks dacpacs. Used to detect regressions after parser changes.
+ * Produces a deterministic TSV with one row per stored procedure across the
+ * committed AdventureWorks dacpacs. Used to detect regressions after parser changes.
  *
  * Usage:
- *   npx tsx test/snapshot-aw-baseline.ts           # Check against committed baseline
- *   npx tsx test/snapshot-aw-baseline.ts --update  # Regenerate baseline file
+ *   npx tsx tests/unit/snapshot-aw-baseline.ts           # Check against committed baseline
+ *   npx tsx tests/unit/snapshot-aw-baseline.ts --update  # Regenerate baseline file
  *
- * The TSV is committed as test/aw-baseline.tsv. A diff → test failure (exit 1).
- *
- * Note: This mirrors test-internal/snapshot-deps.ts (which additionally covers the
- * customer dacpac). This version uses only public AdventureWorks dacpacs so it can
- * run in CI without any gitignored data.
+ * The TSV is committed as tests/fixtures/aw-baseline.tsv. A diff → test failure (exit 1).
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
-import { loadRules, parseSqlBody } from '../src/engine/sqlBodyParser';
-import type { ParseRulesConfig } from '../src/engine/sqlBodyParser';
-import { extractDacpac } from '../src/engine/dacpacExtractor';
+import { loadRules, parseSqlBody } from '../../src/engine/sqlBodyParser';
+import type { ParseRulesConfig } from '../../src/engine/sqlBodyParser';
+import { extractDacpac } from '../../src/engine/dacpacExtractor';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, '..');
+const ROOT = resolve(__dirname, '..', '..');
+const FIXTURES = resolve(ROOT, 'tests', 'fixtures');
 
 const DACPACS = [
-  { label: 'classic',   path: resolve(__dirname, 'AdventureWorks.dacpac') },
-  { label: 'sdk-style', path: resolve(__dirname, 'AdventureWorks_sdk-style.dacpac') },
+  { label: 'ai',        path: resolve(FIXTURES, 'AdventureWorks2025_AI.dacpac') },
+  { label: 'sdk-style', path: resolve(FIXTURES, 'AdventureWorks_sdk-style.dacpac') },
 ] as const;
 
-const BASELINE_PATH = resolve(__dirname, 'aw-baseline.tsv');
+const BASELINE_PATH = resolve(FIXTURES, 'aw-baseline.tsv');
 const HEADER = 'dacpac\tsp_name\tregex_sources\tregex_targets\tregex_exec\tedge_count';
 
 // ─── Generate snapshot rows ───────────────────────────────────────────────────

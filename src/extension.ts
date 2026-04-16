@@ -1,26 +1,36 @@
 import * as vscode from 'vscode';
 import * as yaml from 'js-yaml';
-import { AiSession, getSession } from './ai/session';
+import { getSession } from './ai/session';
 import { registerAiTools } from './ai/toolProvider';
 import { registerCommands } from './commands';
 import { openPanel, deactivatePanels, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
-import { logInfo, logDebug, logWarn, logError, trunc, testLogCapture } from './utils/log';
-import { migrateProjectStore, createProject, updateProject, generateProjectName } from './engine/projectStore';
-import { stripSensitiveFields } from './engine/connectionManager';
-import { IConnectionInfo } from './types/mssql';
+import { Logger, testLogCapture } from './utils/log';
+import { migrateProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
 import { LineageParticipant } from './ai/lineageParticipant';
+import { migrateFromWorkspaceState } from './utils/migration';
 
 declare const __BUILD_TIMESTAMP__: string;
 
 let outputChannel: vscode.LogOutputChannel;
 
+/**
+ * Extension Entry Point.
+ * 
+ * Orchestrates the lifecycle of the Data Lineage Viz extension.
+ * Adheres to a strict registration order mandated by stability requirements:
+ * 1. Sidebar/Quick Actions (Prevents "no provider" UI errors)
+ * 2. Commands & Project Store
+ * 3. AI Bridge & Language Model Tools
+ * 4. Chat Participant
+ */
 export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
+  const logger = Logger.create(outputChannel, 'Config');
 
   const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
-  logInfo(outputChannel, 'Config', `Extension activated — built ${buildStamp}`);
+  logger.info(`Extension activated — built ${buildStamp}`);
 
   // ─── CRITICAL: Register Tree Provider first to prevent "no data provider" error ───
   context.subscriptions.push(
@@ -40,7 +50,7 @@ export async function activate(context: vscode.ExtensionContext) {
     getSession, 
     outputChannel, 
     (ctx, title, demo) => {
-      logInfo(outputChannel, 'Bridge', `Command executed: openPanel (demo=${demo})`);
+      Logger.create(outputChannel, 'Bridge').info(`Command executed: openPanel (demo=${demo})`);
       return openPanel(
         ctx, 
         title, 
@@ -48,7 +58,7 @@ export async function activate(context: vscode.ExtensionContext) {
         outputChannel, 
         loadStore, 
         saveStore, 
-        async (c) => { await migrateFromWorkspaceState(c, loadStore, saveStore, outputChannel); }, 
+        async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel); }, 
         demo
       );
     },
@@ -80,14 +90,24 @@ export async function activate(context: vscode.ExtensionContext) {
   };
 }
 
+/**
+ * Extension Cleanup.
+ * 
+ * Ensures all webview panels are disposed and background processes are halted.
+ */
 export function deactivate() {
   deactivatePanels(outputChannel);
 }
 
+/**
+ * Loads AI Output Templates from built-in assets and optional user overrides.
+ * These templates define how the AI structures its summaries and descriptions.
+ */
 async function loadAiOutputTemplates(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
 ): Promise<AiOutputTemplates> {
+  const logger = Logger.create(outputChannel, 'Config');
   const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'sections', 'highlights', 'notes'];
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   
@@ -102,9 +122,9 @@ async function loadAiOutputTemplates(
         builtIn[key] = entry.instruction.trim();
       }
     }
-    logDebug(outputChannel, 'Config', 'AI output templates loaded from built-in defaults');
+    logger.debug('AI output templates loaded from built-in defaults');
   } catch (err) {
-    logError(outputChannel, 'Config', 'load built-in AI templates', err);
+    logger.error('load built-in AI templates', err);
   }
 
   const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
@@ -122,54 +142,10 @@ async function loadAiOutputTemplates(
         builtIn[key] = entry.instruction.trim();
       }
     }
-    logInfo(outputChannel, 'Config', `AI output templates overlaid from: ${customPath}`);
+    logger.info(`AI output templates overlaid from: ${customPath}`);
   } catch (err) {
-    logError(outputChannel, 'Config', `load custom AI templates from ${customPath}`, err);
+    logger.error(`load custom AI templates from ${customPath}`, err);
   }
 
   return builtIn;
 }
-
-async function migrateFromWorkspaceState(
-  context: vscode.ExtensionContext, 
-  loadProjectStore: (c: vscode.ExtensionContext) => any, 
-  saveProjectStore: (c: vscode.ExtensionContext, s: any) => Promise<void>,
-  outputChannel: vscode.LogOutputChannel
-): Promise<void> {
-  const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
-  if (!sourceType) return;
-
-  let connection: any;
-
-  if (sourceType === 'dacpac') {
-    const dacpacPath = context.workspaceState.get<string>('lastDacpacPath');
-    const dacpacName = context.workspaceState.get<string>('lastDacpacName');
-    if (dacpacPath && dacpacName) {
-      connection = { type: 'dacpac', path: dacpacPath, displayName: dacpacName, schemas: [] };
-    }
-  } else if (sourceType === 'database') {
-    const sourceName = context.workspaceState.get<string>('lastDbSourceName');
-    const connectionInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
-    if (sourceName && connectionInfo) {
-      connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };    
-    }
-  }
-
-  if (connection) {
-    const name = generateProjectName(connection);
-    const project = createProject(name, connection);
-    const store = loadProjectStore(context);
-    const updated = updateProject(store, project);
-    await saveProjectStore(context, updated);
-    logInfo(outputChannel, 'Project', `Migrated legacy connection to project "${name}"`);
-  }
-
-  // Clear old workspaceState keys regardless
-  await context.workspaceState.update('lastSourceType', undefined);
-  await context.workspaceState.update('lastDacpacPath', undefined);
-  await context.workspaceState.update('lastDacpacName', undefined);
-  await context.workspaceState.update('lastDeselectedSchemas', undefined);
-  await context.workspaceState.update('lastDbConnectionInfo', undefined);
-  await context.workspaceState.update('lastDbSourceName', undefined);
-}
-

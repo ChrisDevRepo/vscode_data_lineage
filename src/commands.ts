@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { type AiSession } from './ai/session';
 import { getActivePanel } from './panelProvider';
-import { logInfo, logDebug, logError, logWarn, trunc } from './utils/log';
+import { Logger, trunc } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 
 /**
@@ -16,6 +16,8 @@ export function registerCommands(
   openPanel: (context: vscode.ExtensionContext, title: string, loadDemo?: boolean) => void,
   buildDebugDump: (context: vscode.ExtensionContext) => string
 ): vscode.Disposable[] {
+  const configLogger = Logger.create(outputChannel, 'Config');
+  const aiLogger = Logger.create(outputChannel, 'AI');
 
   return [
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
@@ -36,7 +38,7 @@ export function registerCommands(
         await vscode.env.clipboard.writeText(dump);
         vscode.window.showInformationMessage('Data Lineage: Debug info copied to clipboard.');
       } catch (err) {
-        logError(outputChannel, 'Config', 'Copy debug info', err);
+        configLogger.error('Copy debug info', err);
         vscode.window.showErrorMessage('Data Lineage: Failed to copy debug info.');
       }
     }),
@@ -56,15 +58,15 @@ export function registerCommands(
           vscode.window.showWarningMessage('Data Lineage: No workspace folder open.');
           return;
         }
-        const dir = vscode.Uri.joinPath(wsFolder.uri, 'ai', 'sm-dumps');
+        const dir = vscode.Uri.joinPath(wsFolder.uri, 'test-results', 'sm-dumps');
         await vscode.workspace.fs.createDirectory(dir);
         const fileUri = vscode.Uri.joinPath(dir, `sm-${ts}.json`);
         await vscode.workspace.fs.writeFile(fileUri, Buffer.from(dump, 'utf-8'));
-        logDebug(outputChannel, 'AI', `SM state dumped to ${fileUri.fsPath}`);
+        aiLogger.debug(`SM state dumped to ${fileUri.fsPath}`);
         const doc = await vscode.workspace.openTextDocument(fileUri);
         await vscode.window.showTextDocument(doc);
       } catch (err) {
-        logError(outputChannel, 'AI', 'Dump SM state', err);
+        aiLogger.error('Dump SM state', err);
         vscode.window.showErrorMessage('Data Lineage: Failed to dump SM state.');
       }
     }),
@@ -118,20 +120,19 @@ export function registerCommands(
       qp.show();
     }),
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
-      logInfo(outputChannel, 'Config', `Forcing project load from: ${uri.fsPath}`);
+      configLogger.info(`Forcing project load from: ${uri.fsPath}`);
       const { extractDacpac } = await import('./engine/dacpacExtractor');
-      const { buildGraph } = await import('./engine/graphBuilder');
-      const { default: Graph } = await import('graphology');
-      
+      const { buildBareGraph } = await import('./ai/graphUtils');
+
       const buffer = await vscode.workspace.fs.readFile(uri);
       const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
       const sess = getSession();
-      
+
       sess.model = model;
       sess.projectName = path.basename(uri.fsPath, '.dacpac');
-      sess.graph = Graph.from(buildGraph(model) as any);
-      
-      logInfo(outputChannel, 'Config', `Model forced: ${model.nodes.length} nodes, project: ${sess.projectName}`);
+      sess.graph = buildBareGraph(model);
+
+      configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`);
     }),
   ];
 }

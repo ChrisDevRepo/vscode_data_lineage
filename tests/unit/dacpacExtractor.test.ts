@@ -4,8 +4,8 @@
  */
 
 import { readFileSync } from 'fs';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas, parseDspPlatform } from '../src/engine/dacpacExtractor';
-import { assert, assertEq, loadParseRules, testPath, printSummary, loadAdventureWorksModel } from './testUtils';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas, parseDspPlatform } from '../../src/engine/dacpacExtractor';
+import { assert, assertEq, loadParseRules, testPath, printSummary, loadAdventureWorksModel } from './helpers/testUtils';
 
 loadParseRules();
 
@@ -273,7 +273,7 @@ async function testConstraints() {
   // Phase 2 (extractDacpacFiltered): FK constraints must survive schema filtering.
   // Regression: FK elements (SqlForeignKeyConstraint) were excluded from TRACKED_ELEMENT_TYPES
   // so the filtered element list passed to extractObjects had no FK data → fkMap always empty.
-  const buffer2 = readFileSync(testPath('AdventureWorks.dacpac'));
+  const buffer2 = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
   const { elements } = await extractSchemaPreview(buffer2.buffer as ArrayBuffer);
   const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']));
   const empFiltered = filteredModel.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
@@ -363,7 +363,7 @@ async function testDbPlatformInModel() {
 
   // Azure SQL (classic AdventureWorks) → 'Azure SQL Database'
   const awModel = await loadAdventureWorksModel();
-  assertEq(awModel.dbPlatform, 'Azure SQL Database', 'AdventureWorks dacpac: dbPlatform = Azure SQL Database');
+  assertEq(awModel.dbPlatform, 'SQL Server 2025', 'AdventureWorks dacpac: dbPlatform = SQL Server 2025');
 
   // Fabric (SDK-style) → 'Fabric Data Warehouse'
   const fabricBuf = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));
@@ -371,11 +371,11 @@ async function testDbPlatformInModel() {
   assertEq(fabricModel.dbPlatform, 'Fabric Data Warehouse', 'SDK-style dacpac: dbPlatform = Fabric Data Warehouse');
 
   // Phase 2 (extractDacpacFiltered): dspName passed through → dbPlatform preserved
-  const awBuf = readFileSync(testPath('AdventureWorks.dacpac'));
+  const awBuf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
   const { elements, dspName } = await extractSchemaPreview(awBuf.buffer as ArrayBuffer);
-  assert(dspName.includes('SqlAzureV12'), `Phase 1 dspName contains SqlAzureV12 (got: "${dspName}")`);
+  assert(dspName.includes('Sql170'), `Phase 1 dspName contains Sql170 (got: "${dspName}")`);
   const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']), dspName);
-  assertEq(filteredModel.dbPlatform, 'Azure SQL Database', 'Phase 2 filtered model: dbPlatform preserved from dspName');
+  assertEq(filteredModel.dbPlatform, 'SQL Server 2025', 'Phase 2 filtered model: dbPlatform preserved from dspName');
 
   // Phase 2 without dspName → dbPlatform undefined (no platform info available)
   const filteredNoPlat = extractDacpacFiltered(elements, new Set(['HumanResources']));
@@ -434,7 +434,7 @@ async function testPhase1Phase2Bridge() {
   console.log('\n── Bridge: Phase 1 → Phase 2 data flow ──');
 
   // Phase 1 returns elements + dspName ready for bridge caching
-  const buf = readFileSync(testPath('AdventureWorks.dacpac'));
+  const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
   const { preview, elements, dspName } = await extractSchemaPreview(buf.buffer as ArrayBuffer);
 
   // preview is well-formed
@@ -463,7 +463,7 @@ async function testPhase1Phase2Bridge() {
     'Phase 2 schema subset: fewer nodes than full model');
   assert(hrOnly.nodes.every(n => n.schema === 'HumanResources' || n.externalType !== undefined),
     'Phase 2 schema subset: only HumanResources nodes (+ virtual externals)');
-  assertEq(hrOnly.dbPlatform, 'Azure SQL Database',
+  assertEq(hrOnly.dbPlatform, 'SQL Server 2025',
     'Phase 2 schema subset: dbPlatform still set from dspName');
 
   // Phase 2 with empty schema set produces empty model (no crash)

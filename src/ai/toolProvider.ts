@@ -3,7 +3,7 @@ import type Graph from 'graphology';
 import { ColumnTraceState } from './columnTraceState';
 import { BlackboardState } from './blackboardState';
 import type { AiSession } from './session';
-import { logDebug, logWarn, logError, logInfo, logTrace, trunc, sanitizeForLog } from '../utils/log';
+import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import {
   shouldSmInline,
   getContext, searchObjects, getObjectDetail,
@@ -27,6 +27,7 @@ export function registerAiTools(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined
 ): vscode.Disposable[] {
+  const logger = Logger.create(outputChannel, 'AI');
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -65,14 +66,14 @@ export function registerAiTools(
     });
 
     const isError = 'error' in data || ('success' in data && !(data as any).success);
-    if (isError) logWarn(outputChannel, 'AI', `${toolName}: ${preview}`);
-    logDebug(outputChannel, 'AI', `${toolName} → ${chars} chars: ${preview}`);
+    if (isError) logger.warn(`${toolName}: ${preview}`);
+    logger.debug(`${toolName} → ${chars} chars: ${preview}`);
     return toolResult(data);
   }
 
   function toolError(toolName: string, err: unknown): vscode.LanguageModelToolResult {
     const msg = err instanceof Error ? err.message : String(err);
-    logError(outputChannel, 'AI', `${toolName}: unhandled`, err instanceof Error ? err : new Error(msg));
+    logger.error(`${toolName}: unhandled`, err instanceof Error ? err : new Error(msg));
     return toolResult({ error: 'internal_error', tool: toolName, message: msg });
   }
 
@@ -318,9 +319,9 @@ export function registerAiTools(
           };
 
           const ct = new ColumnTraceState(m, g, (level, msg) => {
-            if (level === 'info') logInfo(outputChannel, 'AI', `[CT] ${msg}`);
-            else if (level === 'warn') logWarn(outputChannel, 'AI', `[CT] ${msg}`);
-            else logDebug(outputChannel, 'AI', `[CT] ${msg}`);
+            if (level === 'info') logger.info(`[CT] ${msg}`);
+            else if (level === 'warn') logger.warn(`[CT] ${msg}`);
+            else logger.debug(`[CT] ${msg}`);
           }, { activeFilter, memory: sess.memory }, sess.columnStore);
           
           ct.sessionId = sess.id;
@@ -455,10 +456,10 @@ export function registerAiTools(
           };
 
           const bb = new BlackboardState(m, g, (level, msg) => {
-            if (level === 'info') logInfo(outputChannel, 'AI', `[BB] ${msg}`);
-            else if (level === 'warn') logWarn(outputChannel, 'AI', `[BB] ${msg}`);
-            else if (level === 'trace') logTrace(outputChannel, 'AI', `[BB] ${msg}`);
-            else logDebug(outputChannel, 'AI', `[BB] ${msg}`);
+            if (level === 'info') logger.info(`[BB] ${msg}`);
+            else if (level === 'warn') logger.warn(`[BB] ${msg}`);
+            else if (level === 'trace') logger.trace(`[BB] ${msg}`);
+            else logger.debug(`[BB] ${msg}`);
           }, { activeFilter, scopeDirection, memory: sess.memory }, sess.columnStore);
           
           bb.sessionId = sess.id;

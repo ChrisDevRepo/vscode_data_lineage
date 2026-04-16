@@ -27,7 +27,7 @@ Scope: bug fixes, logging/notification improvements, GUI polish, code cleanup, t
 - Chat participant logic in `src/ai/lineageParticipant.ts`
 - Tool registrations in `src/ai/toolProvider.ts`
 
-Use `/prompt-change` skill. Results logged in `ai/prompt-changelog.md`.
+Use `/prompt-change` skill. Results logged in `test-results/archive/prompt-changelog.md`.
 
 ## Case Sensitivity (CI/CS)
 
@@ -76,9 +76,32 @@ Code: `src/ai/` — lineageParticipant.ts (chat handler), toolProvider.ts (13 to
 
 Rules: `.claude/rules/ai.md`. Full internals: `docs-internal/AI_IMPLEMENTATION.md`.
 
+## Testing Framework (Phase 1 — 2026-04-16)
+
+Three-tier structure — see `tests/README.md`:
+
+- **`tests/unit/`** — Node.js tests (tsx runner), no VS Code needed. Parser, BFS, graph analysis, SM lifecycle. CI-safe.
+- **`tests/integration/`** — Live SQL Server tests, skips without `.env`.
+- **`tests/e2e/`** — Runs in `@vscode/test-electron` extension host. Contains `suite/eval/toolProxy.ts` (the AI eval proxy).
+
+**Fixtures** (committed, `tests/fixtures/`):
+- `AdventureWorks2025_AI.dacpac` — primary, includes `[ai]` schema with synthetic pipeline
+- `AdventureWorks_sdk-style.dacpac` — SDK-style XML extraction path
+- `aw-baseline.tsv` — parser regression baseline
+
+**Results** (gitignored, `test-results/`): eval runs, SM dumps, workspace.
+
+### Eval-Loop (replaces old HTTP bridge)
+
+`tests/e2e/suite/eval/toolProxy.ts` runs **inside the VS Code extension host**. All tool calls route through `vscode.lm.invokeTool()` → real `toolProvider.ts` → real SM. **Zero tool routing duplication** (replaces the 355-line `dispatcher.ts` + 462-line `ai-test-server.ts` that were deleted).
+
+Test cases in `tests/cases/*.md` — each has `Classification` + `Expected Outcome` + `Fact Check` sections. The Fact Check section documents ground-truth measurements (scope, delivery mode, required nodes) verified against the actual AI dacpac. Use `/eval-loop` to run.
+
 ## Eval-Loop Model Policy
 
-**Eval tests use Sonnet** (`claude-sonnet-4-6`) — switched from Haiku 2026-04-12 (user approved). Sonnet better reflects real-world Copilot Chat behavior and produces richer evidence for quality evaluation. NEVER substitute a different model without explicit user approval. Model changes invalidate baseline comparisons. If an eval agent must run outside the eval-loop skill, it MUST use `model: "sonnet"` in the Agent tool call.
+**Eval tests use Haiku** via Claude Code `Agent(model: "haiku")` — no API key required, same infrastructure as other skill-spawned agents. NEVER substitute a different model without explicit user approval. Model changes invalidate baseline comparisons.
+
+_(Note: docs previously mentioned Sonnet; Haiku is the current operational model — switched during Phase 0 migration since Claude Code agents use the skill-configured model.)_
 
 ## Branch Flow
 

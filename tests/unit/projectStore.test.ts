@@ -3,20 +3,20 @@
  * Focus: Migration and Serialization (Core Data Integrity)
  */
 
-import { assert, assertEq, test, printSummary } from './testUtils';
+import { assert, assertEq, test, printSummary } from './helpers/testUtils';
 import {
   createProject,
   migrateProjectStore,
   serializeFilter,
   deserializeFilter,
-} from '../src/engine/projectStore';
+} from '../../src/engine/projectStore';
 import type {
   Project,
   DacpacConnection,
   DatabaseConnection,
   SerializedFilterState,
-} from '../src/engine/projectStore';
-import type { FilterState } from '../src/engine/types';
+} from '../../src/engine/projectStore';
+import type { FilterState } from '../../src/engine/types';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 

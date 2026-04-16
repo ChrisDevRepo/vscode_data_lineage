@@ -184,7 +184,7 @@ The `@lineage` AI assistant in GitHub Copilot Chat can go further by analyzing t
 - **Documentation** — summarizing data flows and schema purposes
 - **Bookmarked views** — creating filtered graph views you can save and explore interactively
 
-> **Note:** AI-enhanced analysis depends on the completeness of the loaded metadata. Column-level tracing reads DDL to infer mappings — results may be incomplete if DDL is unavailable or if the logic involves dynamic SQL. Always verify AI output against your actual database.
+> **Note:** AI-enhanced analysis depends on the completeness of the loaded metadata. Column-level tracing reads DDL to infer mappings — results may be incomplete if DDL is unavailable or if the logic involves dynamic SQL. Always verify AI output against your actual database. For deepInvestigations, the assistant utilizes the `ColumnTraceState` engine in a persistent "SM Mode" to track renames across many dependency stages.
 
 When the AI creates a view in the app (e.g., *"show me the lineage in the app"*), it generates a filtered graph with annotated nodes. This view is saved as a bookmark — you can reopen it any time, interact with the graph, trace further, or export it.
 
