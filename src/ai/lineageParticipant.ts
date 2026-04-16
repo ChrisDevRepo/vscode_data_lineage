@@ -4,7 +4,8 @@ import { Logger, trunc } from '../utils/log';
 import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import { 
   buildPlatformContext, buildSchemaContext, buildSystemPromptBase, 
-  buildTracePrompt, buildSearchPrompt 
+  buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
+  ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
 import { buildNavigationPrompt, buildSynthesisPrompt } from './smPrompts';
 import { compactNoiseResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './historyManager';
@@ -12,7 +13,7 @@ import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
 
 /** Helper to extract callId, name, and input from various tool call part types */
-export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart | { callId: string; name: string; input: any }): { callId: string; name: string; input: any } {
+export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { callId: string; name: string; input: any } {
   return {
     callId: tc.callId,
     name: tc.name,
@@ -131,7 +132,13 @@ export class LineageParticipant {
 
     const systemPrompt = buildPlatformContext(sess.model.dbPlatform || 'SQL Server') + 
       (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') + 
-      buildSystemPromptBase(MAX_ROUNDS);
+      buildSystemPromptBase(MAX_ROUNDS) +
+      `### AI OUTPUT TEMPLATES\n` +
+      `- summary: ${sess.outputTemplates.summary}\n` +
+      `- sections: ${sess.outputTemplates.sections}\n` +
+      `- notes: ${sess.outputTemplates.notes}\n` +
+      `- highlights: ${sess.outputTemplates.highlights}\n` +
+      `- description (fallback): ${sess.outputTemplates.description}`;
 
     const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
       const parts: string[] = [];
@@ -177,6 +184,9 @@ export class LineageParticipant {
     let lastRoundInputTokens = 0;
 
     const runWithTools = async () => {
+      let actionRequiredPending = false;
+      const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
+
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
         try { 
@@ -195,13 +205,22 @@ export class LineageParticipant {
         let responseText = '';
 
         for await (const part of response.stream) {
-          if (part instanceof vscode.LanguageModelTextPart) { assistantParts.push(part); responseText += part.value; stream.markdown(part.value); }
+          if (part instanceof vscode.ChatResponseMarkdownPart) {
+            assistantParts.push(new vscode.LanguageModelTextPart(part.value.value));
+            responseText += part.value.value;
+            stream.markdown(part.value.value);
+          } else if (part instanceof vscode.LanguageModelTextPart) { 
+            assistantParts.push(part); 
+            responseText += part.value; 
+            stream.markdown(part.value); 
+          }
           else if (part instanceof vscode.LanguageModelToolCallPart) { assistantParts.push(part); toolCalls.push(part); }
         }
 
         try { totalOutputTokens += await request.model.countTokens(responseText); } catch {}
         if (!toolCalls.length) return;
 
+        if (actionRequiredPending && responseText.length > 0) actionRequiredPending = false;
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
         const resultParts: vscode.LanguageModelToolResultPart[] = [];
 
@@ -210,6 +229,11 @@ export class LineageParticipant {
           const cacheKey = `${f.name}::${JSON.stringify(f.input)}`;
           if (toolCallCache.has(cacheKey)) {
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true }))]));
+            continue;
+          }
+
+          if (actionRequiredPending && !SEARCH_TOOLS.has(f.name)) {
+            resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'action_required_pending', hint: ACTION_REQUIRED_PENDING_HINT }))]));
             continue;
           }
 
@@ -229,6 +253,21 @@ export class LineageParticipant {
         }
 
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
+        
+        // Reasoning Gate (Action Required)
+        for (const call of toolCalls) {
+          const f = extractToolCallFields(call);
+          const res = accumulatedToolResults[f.callId];
+          if (res) {
+            for (const p of res.content) {
+              if (p instanceof vscode.LanguageModelTextPart) {
+                try { if (JSON.parse(p.value).action_required === 'analyze_and_respond') actionRequiredPending = true; } catch {}
+              }
+            }
+          }
+        }
+        if (actionRequiredPending) messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, buildActionRequiredGate(['analyze_and_respond'])));
+
         toolCallRounds.push({ response: responseText, toolCalls });
 
         // Phase transitions
