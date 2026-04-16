@@ -24,93 +24,70 @@ suite('AI Integration Suite (Real Copilot Tools)', () => {
 
         // Setup run directory
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        runDir = path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, 'tmp-test-workspace', 'ai', 'runs', `run-${timestamp}`);
+        const projectRoot = vscode.workspace.workspaceFolders![0].uri.fsPath;
+        runDir = path.join(projectRoot, 'ai', 'runs', `run-${timestamp}`);
         if (!fs.existsSync(runDir)) fs.mkdirSync(runDir, { recursive: true });
         if (!fs.existsSync(baselineDir)) fs.mkdirSync(baselineDir, { recursive: true });
     });
 
-    test('Quick AI: Blackboard Exploration (bb-q1-employee)', async function() {
-        this.timeout(60000);
+    test('Real Copilot: Column Trace (ct-q1-totalrevenue)', async function() {
+        this.timeout(180000); // 3 minutes for a real multi-hop trace
         const sess = extensionApi.getSession();
         assert.ok(sess.model, 'Model must be loaded');
 
-        // Phase 1: Start Exploration
-        const startResult = await vscode.lm.invokeTool('lineage_start_exploration', {
-            input: { 
-                question: 'List all objects that directly read or write the Employee table',
-                origin: '[humanresources].[employee]',
-                depth: 1
-            },
-            toolInvocationToken: undefined as any
-        }, new vscode.CancellationTokenSource().token);
+        // Clear session
+        sess.stateMachine = undefined;
+        sess.resultGraph = undefined;
 
-        const startParsed = JSON.parse((startResult.content[0] as vscode.LanguageModelTextPart).value);
-        assert.ok(startParsed.bb_mode === 'exploring', 'Should enter exploring mode');
+        // Send chat request
+        // Note: Using proposed API or workbench command if available. 
+        // Based on user feedback, it seems they have a way to trigger it.
+        await vscode.commands.executeCommand('workbench.action.chat.open', { 
+            query: '@lineage trace TotalRevenue column upstream from [humanresources].[employee]' 
+        });
 
-        // Phase 2: Submit Findings for the first hop
-        const focusNodeId = startParsed.focus_node.id;
-        assert.ok(focusNodeId, 'Should have a focus node');
+        // Poll for completion (SM status 'complete' or session having a resultGraph)
+        let retries = 120; // 2 minutes polling
+        while (retries > 0 && (!sess.stateMachine || sess.stateMachine.status !== 'complete')) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            retries--;
+            if (retries % 10 === 0) console.log(`Waiting for AI... (${retries}s left)`);
+        }
 
-        const submitResult = await vscode.lm.invokeTool('lineage_submit_findings', {
-            input: {
-                focus_node_id: focusNodeId,
-                verdict: 'relevant',
-                findings: `Analyzed ${focusNodeId}. It reads from HumanResources.Employee and performs an update.`,
-                summary: 'Core employee data flow',
-                badge_label: 'Processing',
-                note_caption: 'Data Processing Node',
-                complete: true 
-            },
-            toolInvocationToken: undefined as any
-        }, new vscode.CancellationTokenSource().token);
+        assert.ok(sess.stateMachine, 'State machine should have started');
+        assert.strictEqual(sess.stateMachine.status, 'complete', 'AI trace should have completed successfully');
+        assert.ok(sess.resultGraph, 'Result graph should be generated');
 
-        const submitParsed = JSON.parse((submitResult.content[0] as vscode.LanguageModelTextPart).value);
-        assert.ok(!submitParsed.error, `Submission failed: ${submitParsed.error}`);
+        // Quality Analysis of the result
+        const runId = `run-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        const caseRunDir = path.join(runDir, 'ct-q1-totalrevenue');
+        if (!fs.existsSync(caseRunDir)) fs.mkdirSync(caseRunDir, { recursive: true });
 
-        // Phase 3: Final Synthesis (Enrich View)
-        const enrichResult = await vscode.lm.invokeTool('lineage_enrich_view', {
-            input: {
-                name: 'Employee Lineage Report',
-                notes: [
-                    { node_id: '[humanresources].[employee]', text: 'Source table for HR data.' },
-                    { node_id: focusNodeId, text: 'Updates employee login information.' }
-                ],
-                sections: [
-                    { label: 'Source', node_ids: ['[humanresources].[employee]'] },
-                    { label: 'Processing', node_ids: [focusNodeId] }
-                ],
-                badges: [
-                    { node_id: '[humanresources].[employee]', text: 'Source' },
-                    { node_id: focusNodeId, text: 'Update' }
-                ]
-            },
-            toolInvocationToken: undefined as any
-        }, new vscode.CancellationTokenSource().token);
-
-        const enrichParsed = JSON.parse((enrichResult.content[0] as vscode.LanguageModelTextPart).value);
-        assert.ok(enrichParsed.ok, 'Enrich view should be successful');
-
-        // Phase 4: Save results for reporting
-        const dumpPath = path.join(runDir, 'bb-q1-employee.json');
-        const dumpContent = {
-            test_case: 'bb-q1-employee',
+        const dumpPath = path.join(caseRunDir, 'result.json');
+        fs.writeFileSync(dumpPath, JSON.stringify({
+            test_case: 'ct-q1-totalrevenue',
             timestamp: new Date().toISOString(),
             session: sess.getSummary(),
-            state_machine: sess.stateMachine?.toJSON(),
-            result_graph: sess.resultGraph,
-            last_enrich_payload: enrichParsed // Store the payload for diffing
-        };
-        fs.writeFileSync(dumpPath, JSON.stringify(dumpContent, null, 2));
+            state_machine: sess.stateMachine.toJSON(),
+            result_graph: sess.resultGraph
+        }, null, 2));
 
-        // Quality Assertions
-        assert.ok(sess.stateMachine!.toJSON().visited.includes(focusNodeId), 'Node should be marked visited');
-        assert.ok(sess.resultGraph.nodeIds.includes('[humanresources].[employee]'), 'Employee should be in result graph');
+        // DETAILED ENRICH VIEW CHECKS
+        const graph = sess.resultGraph;
         
-        // Detailed check of labels/notes
-        const employeeNote = sess.resultGraph.notes.find((n: any) => n.nodeId === '[humanresources].[employee]');
-        assert.ok(employeeNote, 'Should have a note for Employee');
-        
-        // If a baseline exists, we could diff it here programmatically, 
-        // but for now we focus on generating the artifact.
+        // 1. Math Formula Check
+        const hasMath = graph.notes.some((n: any) => n.text.includes('=') || n.text.includes('*'));
+        assert.ok(hasMath, 'Enrich view should contain mathematical formulas for revenue calculation');
+
+        // 2. Label Semantic Quality
+        const badges = graph.suggested_labels || [];
+        const hasSource = badges.some((b: any) => b.text.toLowerCase().includes('source'));
+        assert.ok(hasSource, 'Should identify source tables with a "Source" label');
+
+        // 3. Narrative Focus
+        const hasEmployeeNote = graph.notes.some((n: any) => n.nodeId.toLowerCase().includes('employee'));
+        assert.ok(hasEmployeeNote, 'Should have a specific note for the origin Employee node');
+
+        console.log(`Test ct-q1-totalrevenue completed with ${sess.hopCount} hops.`);
     });
 });
