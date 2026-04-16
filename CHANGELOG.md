@@ -26,6 +26,19 @@ Post-refactor hardening sprint closing the gaps from the unified NavigationEngin
 - **Navigation prompt now preserved across sliding-memory wipes** — previously the nav prompt (mode rules, MEMORY PROTOCOL, routing rules, classification) was pushed once at active-phase entry and silently dropped on the first sliding wipe. Every subsequent hop ran without mode guidance. Now captured into `navPrompt` and re-pushed inside every sliding wipe. Structural bug separate from the parallel-submit fix.
 - **Prompt architecture documented** — new `docs/AI_PROMPT_ARCHITECTURE.md` codifies what belongs in system prompt vs navigation prompt vs synthesis prompt, with citations to LangChain, Anthropic Claude docs, and MemGPT. Referenced by both `/prompt-change` and `/eval-loop` skills.
 
+### Eval runs captured this sprint (Haiku against AdventureWorks2025_AI)
+
+| Test | Phase | Result | Notes |
+|------|-------|--------|-------|
+| bb-q1-employee | pre-fix | PASS | 12 hops, 11/11 required nodes, 4 rich sections (450-600 chars each) |
+| disc-q1-schemas | pre-fix | PASS | Classic-only path (no SM), 8 schemas found |
+| bb-inline-q3-errorlog v1 | pre-fix, thin agent prompt | PASS-but-thin | 2 hops, 1 section @ 54 chars, missed uspPrintError |
+| bb-inline-q3-errorlog v2 | pre-fix, structured agent prompt | PASS | 6 hops, 2 sections @ 1200+1800 chars, 5 notes, cascade-pruned uspPrintError |
+
+The v1→v2 delta (~30× section text) came from agent-prompt structure, not extension code — demonstrating that the rubric's memory-quality pre-gate is the right leverage point.
+
+Structural code fixes landed after v2 (nav-prompt preservation, sliding-memory error preservation) not yet validated in eval — full regression baseline scheduled for next session.
+
 ## [0.9.9] - 2026-04-16
 
 ### Improved
