@@ -47,9 +47,12 @@ export const TABLE_REF_WITH_ALIAS = new RegExp(
 );
 
 /** Keywords that terminate a FROM clause */
-export const FROM_TERMINATORS = [
-  'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER',
-  'ON', 'ORDER', 'GROUP', 'HAVING', 'WITH', 'SET', ';', '\\)', '$'
-];
+const FROM_KEYWORDS = ['WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER',
+  'ON', 'ORDER', 'GROUP', 'HAVING', 'WITH', 'SET'];
+const FROM_PUNCTUATION = [';', '\\)', '$'];
 
-export const FROM_TERMINATOR_RE = new RegExp(`\\s*(?:${FROM_TERMINATORS.join('\\b|')})`, 'i');
+// Word-boundary \b only on keyword terminators; punctuation/anchors must not have \b
+// Expected: \s*(?:WHERE\b|JOIN\b|...|SET\b|;|\)|$)
+export const FROM_TERMINATOR_RE = new RegExp(
+  `\\s*(?:${FROM_KEYWORDS.map(k => k + '\\b').join('|')}|${FROM_PUNCTUATION.join('|')})`, 'i'
+);
