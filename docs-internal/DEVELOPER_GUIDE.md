@@ -12,11 +12,11 @@ This document is the definitive technical reference for the Data Lineage Viz ext
 - **Explicit Approval Required**: Any change to parser logic (`sqlBodyParser.ts`), AI state machines, or prompt surfaces (`extension.ts`, `aiOutputTemplates.yaml`) must be reviewed and approved.
 - **Zero Regression Policy**: Any change to SQL parsing rules must result in an identical output for the 301 stored procedures in the baseline set (10 classic, 21 SDK-style, 270 customer-anonymized).
 
-### 1.2 React Anti-Patterns (NEVER Introduce)
-- No `forEach` calling state setters in loops (crashes graph rendering).
-- No ref mutation inside `useMemo`.
-- No `React.memo` on components with 10+ object/array props (shallow compare will always fail).
-- No `useEffect` watching a state that was set in the same handler (logic will run with stale data).
+### 1.2 No Blackbox Policy (Auditable Logic)
+The extension must never be a "Blackbox" for DBAs.
+- **Metadata Driven**: SQL parsing is 100% driven by YAML metadata (`assets/defaultParseRules.yaml`). Code should only implement the engine that executes these rules.
+- **Action Logging**: Every significant action (SQL execution, file read, AI tool invocation) must be logged to the Output Channel with category tags.
+- **Transparency**: A DBA must be able to inspect the YAML rules and logs to understand exactly how a lineage edge was discovered.
 
 ---
 
@@ -38,12 +38,16 @@ Both strategies produce the same `DatabaseModel` structure.
 
 ## 3. SQL Parsing: The Regex Pipeline
 
-### 3.1 Cleansing Pipeline (`sqlBodyParser.ts`)
+### 3.1 Metadata-Driven Extraction
+- **Rules**: Extraction logic is stored in `assets/defaultParseRules.yaml`.
+- **Engine**: `sqlBodyParser.ts` is a generic rule-runner. It does not contain hardcoded "SELECT" or "INSERT" regexes for business logic; it only handles the pipeline (Cleansing → Rule Execution → Normalization).
+
+### 3.2 Cleansing Pipeline
 - **Comment Removal**: Stack-based removal of nested block comments.
 - **Literal Neutralization**: Replaces string content with `''''` to prevent false positive regex hits.
 - **Normalization**: All identifiers must be lowercased via `schemaKey()` for consistent hashing and Map keys.
 
-### 3.2 Metadata Suppression (`sqlMetadata.ts`)
+### 3.3 Metadata Suppression (`sqlMetadata.ts`)
 - **Mandate**: Never hardcode a system schema or CLR method. Centralize them in this file.
 - **Filtering**: Captures that match `CLR_TYPE_METHODS` (e.g., `.nodes()`, `.value()`) are rejected unless they are bracket-quoted, which signifies intent as a catalog object.
 
@@ -57,10 +61,12 @@ Both strategies produce the same `DatabaseModel` structure.
 
 ### 4.2 Logging Protocol (`src/utils/log.ts`)
 - **Standard Categories**: `[AI]`, `[Bridge]`, `[Config]`, `[DB]`, `[Dacpac]`, `[Detail]`, `[Parse]`, `[Project]`, `[Stats]`.
-- **Truncation Rules**:
+- **Truncation Rules (Human View)**:
     - AI Prompts/Reasoning: Max 200 chars.
     - JSON Payloads: Max 300 chars.
-- **Constraint**: Never call `outputChannel.*` directly. Use the `logInfo/Debug/Warn/Error` helpers.
+- **AI Truncation Rule (Semantic Integrity)**:
+    - **NEVER** truncate semantic content intended for the AI Brain (DDL, column lists, results).
+    - **Normalization**: Only remove noise (duplicate whitespace, repetitive boilerplate) to save tokens while keeping 100% of the meaning.
 
 ---
 
@@ -71,8 +77,9 @@ Both strategies produce the same `DatabaseModel` structure.
 - **System**: VS Code Tokens (`--vscode-*`) → Extension Aliases (`--ln-*`) in `src/index.css`.
 - **Testing**: Every UI change must be verified in **Light**, **Dark**, and **High Contrast** themes.
 
-### 5.2 Node Styling
-- **Fixed Palette**: Type colors (Table=Blue, View=Green, Proc=Yellow) are fixed in `src/utils/schemaColors.ts` to ensure the lineage is readable across all themes.
+### 5.2 Metadata-Driven AI Overlays
+- **Logic**: The presentation of AI findings (sections, badges, descriptions) is driven by `assets/aiOutputTemplates.yaml`.
+- **Customization**: This allows users to override how the AI "narrative" is structured without touching the core state-machine code.
 
 ---
 
