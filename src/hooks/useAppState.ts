@@ -1,8 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
-import type { 
-  DatabaseModel, ObjectType, FilterState, ExtensionConfig, 
-  AnalysisMode, LoadingPhase, AppView 
+import type {
+  DatabaseModel, ObjectType, FilterState, ExtensionConfig,
+  AnalysisMode
 } from '../engine/types';
+import type { LoadingPhase } from '../components/VisualizingScreen';
+
+type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 import { DEFAULT_CONFIG } from '../engine/types';
 import type { Project, FilterProfile, AIViewMetadata } from '../engine/projectStore';
 
