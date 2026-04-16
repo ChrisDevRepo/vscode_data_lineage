@@ -73,6 +73,58 @@ Verdicts: EQUIVALENT / CHANGED / MISSING / DEGRADED / UNVERIFIABLE
 - **Evidence**: New `BLOCK.graphAdjustments` appended to BB, CT, CT_DEP prompts. Instructs AI on add_ids/prune_ids for graph modifications.
 - **UAT Risk**: LOW — AI may attempt new operations it didn't before
 
+## Batch 4+5: Engine + Components
+
+### FINDING-009 — BUILD ERROR: Missing callbacks in App.tsx
+- **File**: `src/components/App.tsx` lines 1260, 1266
+- **Verdict**: ❌ MISSING
+- **Severity**: CRITICAL (blocks compilation)
+- **Evidence**: `handleRemoveFromView` and `handlePendingPositionsApplied` deleted but still referenced in JSX. `tsc --noEmit` confirms `TS2304`.
+- **UAT Risk**: YES — extension will not compile
+- **Validated**: YES (tsc confirms)
+
+### FINDING-010 — BUILD ERROR: Missing type exports in useAppState.ts
+- **File**: `src/hooks/useAppState.ts` line 4
+- **Verdict**: ❌ MISSING
+- **Severity**: CRITICAL (blocks compilation)
+- **Evidence**: Imports `LoadingPhase` and `AppView` from `../engine/types` but these types don't exist. `tsc --noEmit` confirms `TS2305`.
+- **UAT Risk**: YES — extension will not compile
+- **Validated**: YES (tsc confirms)
+
+### FINDING-011 — REGEX BUG: FROM_TERMINATOR_RE adds \b after non-word tokens
+- **File**: `src/engine/shared/sqlRegex.ts` line 55
+- **Old**: `(?=\\s*(?:WHERE\\b|JOIN\\b|...|SET\\b|;|\\)|$))` — no `\b` after `;`, `\)`, `$`
+- **New**: `FROM_TERMINATORS.join('\\b|')` → `WHERE\b|...|SET\b|;\b|\)\b|$\b` — `\b` after all tokens
+- **Verdict**: ⚠️ CHANGED (regression)
+- **Severity**: MEDIUM
+- **Evidence**: `\b` is a word boundary; `;` and `)` are non-word chars. `;\b` matches `;\w` but NOT `; ` (whitespace). Old code correctly matched `;` followed by whitespace. `$\b` is always false.
+- **UAT Risk**: YES — ANSI comma-join normalization in sqlBodyParser may fail to terminate at `;` or `)`, producing incorrect rewrites
+- **Validated**: YES (compared old regex in main:sqlBodyParser.ts vs new regex)
+
+### FINDING-012 — DDL viewer opens empty detail panel when no node selected
+- **File**: `src/components/App.tsx` ~line 1270
+- **Old**: No-op when no node highlighted
+- **New**: Opens detail panel without a node
+- **Verdict**: ⚠️ CHANGED
+- **Severity**: LOW
+- **Evidence**: `postMessage({ type: 'show-detail' })` + `setIsDetailOpen(true)` without node data
+- **UAT Risk**: LOW — additive behavior
+
+### FINDING-013 — NodeInfoBar hover delay changed
+- **File**: `src/components/NodeInfoBar.tsx`
+- **Old**: Instant CSS hover
+- **New**: Floating UI with 150ms open / 100ms close delay
+- **Verdict**: ⚠️ CHANGED
+- **Severity**: LOW
+- **Evidence**: `useHover({ delay: { open: 150, close: 100 } })`
+- **UAT Risk**: LOW — UX polish, not functional
+
+### FINDING-014 — 11 TypeScript compilation errors total
+- **Files**: App.tsx (2), extension.ts (4), useAppState.ts (2), runTest.ts (3)
+- **Severity**: CRITICAL (extension cannot build)
+- **Evidence**: `npx tsc --noEmit` returns 11 errors
+- **Validated**: YES
+
 ### FINDING-008 — Dead code: extension.ts:186-469
 - **Feature**: F-059 (registerChatParticipant)
 - **File**: `src/extension.ts`

@@ -35,3 +35,17 @@ Both are BLOCKING regressions (lines accidentally deleted during refactor).
 Additional findings: 6 more (FINDING-003 through FINDING-008) at MEDIUM/LOW/HIGH severity.
 Agent runs: 2 (OLD inventory + diff analysis)
 Next: Batch 4 — Engine modules
+
+## CHECKPOINT — Batch 4+5 Complete (Engine + Components)
+Engine: modelBuilder/sqlBodyParser constants moved to shared/ (structural). graphAnalysis has new getNeighborSchemas() (additive). connectionManager renamed dmvTimeout→withQueryTimeout (structural).
+Components: App.tsx persistFilterProfile DRY refactor. NodeInfoBar CSS→Floating UI. AiDescriptionOverlay math rendering changed.
+
+**NEW CRITICAL FINDINGS:**
+- FINDING-009: App.tsx has 2 deleted callbacks still referenced in JSX (BUILD BREAK)
+- FINDING-010: useAppState.ts imports non-existent types (BUILD BREAK)
+- FINDING-011: FROM_TERMINATOR_RE regex adds \b after non-word tokens (silent regression)
+- FINDING-014: 11 total tsc errors — extension cannot compile
+
+Total tsc errors: 11 (App.tsx:2, extension.ts:4, useAppState.ts:2, runTest.ts:3)
+Agent runs: 1 (combined engine + component diff)
+Next: Batch 6 — Tests + infrastructure; Batch 7 — Config + docs
