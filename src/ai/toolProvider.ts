@@ -216,5 +216,56 @@ export function registerAiTools(
         } catch (err) { return toolError('run_bfs_trace', err); }
       },
     }),
+
+    vscode.lm.registerTool('lineage_get_object_detail', {
+      prepareInvocation(options, _token) { return { invocationMessage: `Loading detail for ${(options.input as any).id}…` }; },
+      invoke(options, _token) {
+        try {
+          if (!isAiEnabled()) return disabled();
+          const inputErr = validateToolInput(options.input, { id: 'string' });
+          if (inputErr) return toolResult(inputErr);
+          const { id } = options.input as any;
+          return logAndReturn('get_object_detail', getObjectDetail(requireModel(), id, getSession().columnStore), options.input);
+        } catch (err) { return toolError('get_object_detail', err); }
+      },
+    }),
+
+    vscode.lm.registerTool('lineage_run_analysis', {
+      prepareInvocation(options, _token) { return { invocationMessage: `Running analysis: ${(options.input as any).type}…` }; },
+      invoke(options, _token) {
+        try {
+          if (!isAiEnabled()) return disabled();
+          const inputErr = validateToolInput(options.input, { type: 'string' });
+          if (inputErr) return toolResult(inputErr);
+          const { type, min_degree, max_size } = options.input as any;
+          return logAndReturn('run_analysis', runAnalysis(requireModel(), requireGraph(), type as AnalysisType, min_degree, max_size), options.input);
+        } catch (err) { return toolError('run_analysis', err); }
+      },
+    }),
+
+    vscode.lm.registerTool('lineage_search_ddl', {
+      prepareInvocation(options, _token) { return { invocationMessage: `Searching DDL for "${(options.input as any).query}"…` }; },
+      invoke(options, _token) {
+        try {
+          if (!isAiEnabled()) return disabled();
+          const inputErr = validateToolInput(options.input, { query: 'string' });
+          if (inputErr) return toolResult(inputErr);
+          const { query, types } = options.input as any;
+          return logAndReturn('search_ddl', searchDdl(requireModel(), query, types, getSession().columnStore), options.input);
+        } catch (err) { return toolError('search_ddl', err); }
+      },
+    }),
+
+    vscode.lm.registerTool('lineage_get_ddl_batch', {
+      prepareInvocation(options, _token) { return { invocationMessage: `Fetching DDL for ${(options.input as any).ids?.length ?? 0} objects…` }; },
+      invoke(options, _token) {
+        try {
+          if (!isAiEnabled()) return disabled();
+          const { ids } = options.input as any;
+          if (!Array.isArray(ids)) return toolResult({ error: 'invalid_input', message: 'ids must be an array' });
+          return logAndReturn('get_ddl_batch', getDdlBatch(requireModel(), ids, getSession().columnStore), options.input);
+        } catch (err) { return toolError('get_ddl_batch', err); }
+      },
+    }),
   ];
 }
