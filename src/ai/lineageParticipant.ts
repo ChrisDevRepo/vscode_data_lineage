@@ -319,21 +319,39 @@ export class LineageParticipant {
           }
         }
 
-        // Sliding memory: wipe history after every SUCCESSFUL finding submission
-        const submitPart = toolCalls.find(tc => tc.name === 'lineage_submit_findings');
-        if (submitPart && activePhase === 'active' && sess.stateMachine && !sess.stateMachine.inlineMode) {
-          const result = accumulatedToolResults[submitPart.callId];
-          const resultValue = (result?.content[0] as any)?.value;
-          const isError = resultValue && JSON.parse(resultValue).error;
+        // Sliding memory: wipe history only when EVERY submit_findings in this round succeeded.
+        // If any of N parallel submissions errored (focus_mismatch, invalid_status, orphan_rejection,
+        // cascade_too_wide, route_validation_failed), history must be preserved so the AI sees the
+        // error and can self-correct. Wiping on partial success destroys error feedback and the AI
+        // commonly gives up after the next round (empirically observed).
+        const submitParts = toolCalls.filter(tc => tc.name === 'lineage_submit_findings');
+        if (submitParts.length > 0 && activePhase === 'active' && sess.stateMachine && !sess.stateMachine.inlineMode) {
+          let anyError = false;
+          let errorSample = '';
+          for (const sp of submitParts) {
+            const result = accumulatedToolResults[sp.callId];
+            const resultValue = (result?.content[0] as any)?.value;
+            if (!resultValue) continue;
+            try {
+              const parsed = JSON.parse(resultValue);
+              if (parsed.error) {
+                anyError = true;
+                errorSample = parsed.error;
+                break;
+              }
+            } catch {
+              // non-JSON result — treat as success (rare, but safe default)
+            }
+          }
 
-          if (!isError) {
+          if (!anyError) {
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
             messages.length = 0;
             messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt), lastAssistant, lastResult);
-            this.logger.debug(`[Hop] Sliding memory wipe`);
+            this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
           } else {
-            this.logger.warn(`[Hop] Tool error detected: ${JSON.parse(resultValue).error} — history preserved`);
+            this.logger.warn(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
           }
         }
       }
