@@ -125,11 +125,71 @@ Verdicts: EQUIVALENT / CHANGED / MISSING / DEGRADED / UNVERIFIABLE
 - **Evidence**: `npx tsc --noEmit` returns 11 errors
 - **Validated**: YES
 
-### FINDING-008 — Dead code: extension.ts:186-469
-- **Feature**: F-059 (registerChatParticipant)
-- **File**: `src/extension.ts`
-- **Verdict**: ❌ MISSING (dead code — function exists but never called)
-- **Severity**: HIGH (maintenance risk, not runtime)
-- **Evidence**: grep confirms zero callers. References undefined `extractToolCallFields`.
-- **UAT Risk**: NO (never executed) — but confuses maintainers
+### FINDING-008 — FIXED: Dead code removed (extension.ts:186-469)
+- **Status**: RESOLVED in commit 00d34c3
+
+## Batch 6: Test Coverage Gap
+
+### FINDING-015 — 101 hook unit tests deleted, 8 integration tests added (net -93)
+- **Severity**: HIGH (regression safety net removed)
+- **Evidence**: 5 vitest hook test files deleted (1647 lines, 101 assertions). Replaced by 8 VS Code integration tests (433 lines). Net loss: 93 tests.
+- **Highest-risk gaps**:
+  - `useGraphology` filter pipeline (25 tests) — core rendering path
+  - `useInteractiveTrace` state machine (27 tests) — trace modes, pathfinding
+  - `useDacpacLoader` routing (30 tests) — message routing, known past regression guard
+  - `useOverviewMode` auto-trigger (16 tests) — threshold logic
+  - `save-project` RC1 regression guard (3 tests) — filePath serialization bug
+- **UAT Risk**: HIGH — subtle state machine bugs now unguarded
+
+### FINDING-016 — `npm test` silently drops vitest hook tests from CI gate
+- **File**: `package.json` scripts.test
+- **Severity**: MEDIUM
+- **Evidence**: vitest run was removed from `npm test` chain, but vitest is still a dependency and copilot-instructions.md still claims `npm test` runs vitest.
+- **UAT Risk**: Tests exist but never run — false sense of coverage
+
+## Batch 7: Config + Docs
+
+### FINDING-017 — start_exploration modelDescription truncated 73% (2327→620 chars)
+- **File**: `package.json` (contributes.languageModelTools)
+- **Severity**: HIGH (AI prompt surface — violates "one change per iteration" rule)
+- **Evidence**: Removed: scope_direction guidance, expand_frontier workflow, working memory explanation, prune_ids/add_ids docs, agenda workflow, question guidance. Only core usage and schemas[] param remain.
+- **UAT Risk**: HIGH — AI may misuse scope_direction (causing scope_too_broad errors), not understand prune_ids/add_ids, or fail to use expand_frontier correctly.
+- **Validated**: YES (char count confirmed: 2327→620)
+
+### FINDING-018 — start_column_trace modelDescription removes INPUT columns guidance
+- **File**: `package.json` (contributes.languageModelTools)
+- **Severity**: MEDIUM (AI prompt surface)
+- **Evidence**: Paragraph about "columns must be INPUT columns appearing in the origin" removed.
+- **UAT Risk**: MEDIUM — AI may specify output columns instead of input columns, causing validation failures.
+
+### FINDING-019 — esbuild minification unconditionally disabled
+- **File**: `esbuild.config.mjs`
+- **Old**: `minify: !watch` (minify in production, skip in dev)
+- **New**: `minify: false` (never minify)
+- **Severity**: MEDIUM (bundle size regression for marketplace release)
+- **Evidence**: git diff confirms single-line change
+- **UAT Risk**: NO (functional), but VSIX will be larger than necessary
+
+### FINDING-020 — CHANGELOG history deleted
+- **File**: `CHANGELOG.md`
+- **Severity**: MEDIUM
+- **Evidence**: All entries before 0.9.9 replaced. Version history from 0.5.0-0.9.8 lost from the file.
+- **UAT Risk**: NO (cosmetic), but public users lose change visibility
+
+### FINDING-021 — Stale cross-references in copilot-instructions.md
+- **File**: `.github/copilot-instructions.md`
+- **Severity**: LOW
+- **Evidence**: `test:coverage` script referenced but removed; `test:ai:detail` doesn't exist; `npm test` described as including vitest but it doesn't.
+
+### FINDING-022 — New runtime dependency: zod ^4.3.6
+- **File**: `package.json` dependencies
+- **Severity**: LOW (zod is well-maintained, MIT licensed)
+- **Evidence**: Used by `src/engine/shared/bridgeContract.ts` for IPC schema validation.
+- **UAT Risk**: LOW — adds ~50KB to bundle
+
+## Phase 2-B: Cross-File Dependency Check
+
+All 10 caller↔callee contract checks: **PASS**
+No parameter mismatches, no broken import chains, no wrong return types.
+One code quality note: `lineageParticipant.ts` uses `as any` to access `inlineMode` which is already on the `IHopStateMachine` interface — unnecessary cast.
 

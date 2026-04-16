@@ -82,3 +82,32 @@ Verification sweep:
 All CRITICAL and MEDIUM findings resolved. Remaining: LOW severity items (cosmetic) + UNVERIFIABLE (need manual UAT for math rendering and AI pacing).
 
 Next: Update instruction files (CLAUDE.md, .claude/rules/*)
+
+## CHECKPOINT — Batches 6+7 + Phase 2-B Complete
+Batch 6: Test gap inventory — 101 tests lost, 8 gained, net -93. 5 high-risk gaps identified.
+Batch 7: Config/docs — 3 HIGH findings (modelDescription truncation, npm test drops vitest, minify disabled).
+Phase 2-B: All 10 cross-file dependency checks PASS.
+New findings: FINDING-015 through FINDING-022 (8 additional)
+
+Agent runs: 3 (cross-file deps, test gap, config/docs)
+
+## CHECKPOINT — AUDIT COMPLETE
+Total findings: 22 (FINDING-001 through FINDING-022)
+- CRITICAL: 5 (all RESOLVED via commits 00d34c3..115b532)
+- HIGH: 4 (FINDING-008 RESOLVED; FINDING-015 test gap, FINDING-017 modelDescription truncation, FINDING-018 CT modelDescription)
+- MEDIUM: 5 (FINDING-003 RESOLVED; FINDING-016 npm test, FINDING-018 CT columns, FINDING-019 minify, FINDING-020 CHANGELOG)
+- LOW: 3 (FINDING-021 stale refs, FINDING-022 zod dep, FINDING-006 cosmetic)
+
+Resolved: 8 of 22 findings fixed and verified
+Open (not blocking but should address):
+- FINDING-015: Test coverage gap (HIGH) — restore vitest hook tests
+- FINDING-017: start_exploration modelDescription truncation (HIGH) — restore guidance
+- FINDING-018: start_column_trace INPUT columns guidance removed (MEDIUM)
+- FINDING-019: esbuild minify disabled (MEDIUM) — revert to `!watch`
+- FINDING-020: CHANGELOG history deleted (MEDIUM)
+- FINDING-016: npm test doesn't run vitest (MEDIUM)
+- FINDING-021: Stale copilot-instructions refs (LOW)
+
+**FINAL VERDICT: CONDITIONAL GO**
+All compilation/runtime regressions fixed. Remaining items are AI prompt surface, test coverage, and config hygiene.
+FINDING-017 (modelDescription truncation) should be addressed before merging to main — it's an AI prompt surface change that violates the one-change-per-iteration rule.

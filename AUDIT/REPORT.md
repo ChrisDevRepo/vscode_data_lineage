@@ -18,16 +18,16 @@ Branch old: `main` | Branch new: `refactor/inspection-findings-2026`
 | Features MISSING (not found in new) | 3 (2 critical CT init, 1 direction validation) |
 | UNVERIFIABLE (need runtime test) | 2 (math rendering, AI pacing) |
 | TypeScript compilation errors | **11** |
-| Findings total | **14** |
-| CRITICAL | **5** |
-| HIGH | **1** |
-| MEDIUM | **3** |
-| LOW | **5** |
-| Cross-file contract breaks | 1 (FROM_TERMINATOR_RE) |
+| Findings total | **22** |
+| CRITICAL (all resolved) | **5** |
+| HIGH (1 resolved, 3 open) | **4** |
+| MEDIUM (1 resolved, 4 open) | **5** |
+| LOW | **3** |
+| Cross-file contract checks | 10/10 PASS |
 
-**UAT GO/NO-GO: NO-GO**
+**UAT GO/NO-GO: CONDITIONAL GO (updated 2026-04-16)**
 
-The branch has 5 CRITICAL findings including 2 data-loss regressions in the column trace state machine and 3 build-breaking TypeScript errors. The extension **cannot compile** in its current state. These must be fixed and verified before UAT.
+All 5 CRITICAL findings resolved (tsc: 0 errors, 1270/1270 tests pass, build clean). 3 HIGH findings remain open: test coverage gap (-93 tests), start_exploration modelDescription truncated 73%, start_column_trace INPUT guidance removed. FINDING-017 (modelDescription) should be addressed before merging to main — it's an AI prompt surface change bundled with a structural refactoring.
 
 ---
 
