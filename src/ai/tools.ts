@@ -1,8 +1,8 @@
 /**
  * AI tool pure functions — zero VS Code imports.
  * 8 classic retrieval functions invoked by classic LanguageModelTools in extension.ts.
- * CT and BB tools (start_column_trace, submit_hop_analysis, start_exploration, submit_findings)
- * are handled directly by ColumnTraceState and BlackboardState in extension.ts.
+ * CT and BB tools (start_exploration, submit_findings)
+ * are handled directly by NavigationEngine in toolProvider.ts.
  *
  * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */

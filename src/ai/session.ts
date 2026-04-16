@@ -46,10 +46,10 @@ export class AiSession {
     this.startTime = Date.now();
   }
 
-  /** Check if the session is older than 2 hours (stale). */
+  /** Check if the session is older than 1 hour (stale). */
   public isStale(): boolean {
-    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
-    return (Date.now() - this.startTime) > TWO_HOURS_MS;
+    const ONE_HOUR_MS = 1 * 60 * 60 * 1000;
+    return (Date.now() - this.startTime) > ONE_HOUR_MS;
   }
 
   /** Silently reset the session if it is stale or already complete. */

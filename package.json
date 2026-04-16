@@ -585,7 +585,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only — never answer lineage questions directly from BFS results. To create an annotated view, you MUST follow with start_exploration (blackboard) or start_column_trace (column trace) — enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
+        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only — never answer lineage questions directly from BFS results. To create an annotated view, you MUST follow with start_exploration — enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -725,8 +725,8 @@
         "name": "lineage_enrich_view",
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
-        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, and text annotations. The graph comes from a completed state-machine exploration (column trace or blackboard) — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last column_trace or blackboard exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration or start_column_trace first. Provide name and summary (both required). Document model: sections[] is the core — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = the primary key AND the chip shown on all nodes in node_ids. The completion result includes suggested_sections — a pre-grouped, depth-ordered section skeleton built from your per-hop badge_labels. Use this as your starting structure: the grouping reflects your own role labels, the order reflects pipeline depth. Adjust labels, merge or split groups as needed, then add text from detail memory per section. Not every node needs a badge — only nodes you labeled during hops. System numbers labels in YOUR WRITTEN ORDER. Passthrough nodes: mention in section text only — omit from node_ids, no separate section. Reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered label ('1 Source'), node_ids with unknown IDs, description instead of sections. GOOD: { label: 'Source', node_ids: ['dbo.RawOrders', 'dbo.SupplierPrices'], text: 'Both tables are raw...' }",
+        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, and text annotations. The graph comes from a completed state-machine exploration — you provide the presentation layer.",
+        "modelDescription": "Enrich the stored result graph from your last exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration first. Provide name and summary (both required). Document model: sections[] is the core — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = the primary key AND the chip shown on all nodes in node_ids. Adjust labels, merge or split groups as needed, then add text from detail memory per section. Not every node needs a badge — only nodes you labeled during hops. System numbers labels in YOUR WRITTEN ORDER. Reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. BAD: numbered label ('1 Source'), node_ids with unknown IDs, description instead of sections. GOOD: { label: 'Source', node_ids: ['dbo.RawOrders', 'dbo.SupplierPrices'], text: 'Both tables are raw...' }",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -749,27 +749,23 @@
             "title": {
               "type": "string",
               "maxLength": 80,
-              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the analysis subject and its key finding: '[Subject] — [computation, pattern, or finding]'. GOOD: 'TotalRevenue — Qty × UnitPrice, 6-hop chain to FactSalesReport'. Omit if graph name is sufficient."
+              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the analysis subject and its key finding."
             },
             "intro": {
               "type": "string",
-              "description": "Optional. 2–4 sentence paragraph rendered BEFORE the numbered ## sections. Set context: what is computed, where data originates, key structural pre-conditions. No bullets, no headings. Do NOT repeat section content. Omit if sections are self-explanatory."
+              "description": "Optional. 2–4 sentence paragraph rendered BEFORE the numbered ## sections."
             },
             "closing": {
               "type": "string",
               "maxLength": 400,
-              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider. Use ONLY for a cross-cutting risk or design note that spans the whole graph. Prefix risks with ⚠️. GOOD: '⚠️ If vwPriceList returns NULL, TotalRevenue = Qty × 0.' Omit if nothing material to add."
-            },
-            "description": {
-              "type": "string",
-              "description": "Fallback only — used when sections[] is not provided. Structured markdown with ## headings."
+              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider."
             },
             "prune_node_ids": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Node IDs to remove from the stored result graph. Use to prune irrelevant nodes."
+              "description": "Node IDs to remove from the stored result graph."
             },
             "layout_direction": {
               "type": "string",
@@ -781,7 +777,7 @@
             },
             "highlight_groups": {
               "type": "array",
-              "description": "Glow on 2-3 critical nodes only. Pick ONE scheme: Lineage (source/transform/target) or Diagnostic (good/warn/fail).",
+              "description": "Glow on 2-3 critical nodes only.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -798,15 +794,14 @@
                       "good",
                       "warn",
                       "fail"
-                    ],
-                    "description": "Semantic role. Lineage: source (blue), transform (orange), target (green). Diagnostic: good (green), warn (yellow), fail (red)."
+                    ]
                   },
                   "node_ids": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "Node IDs in this group (must reference nodes in the stored result graph)"
+                    "description": "Node IDs in this group"
                   }
                 },
                 "required": [
@@ -818,24 +813,24 @@
             },
             "sections": {
               "type": "array",
-              "description": "Document sections — one entry per logical group. Each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label is the PRIMARY KEY and the badge chip text shown on every node in node_ids. System numbers sections in YOUR WRITTEN ORDER. Reference other groups by label name ('reads from **Source**'), never by number.",
+              "description": "Document sections — one entry per logical group.",
               "items": {
                 "type": "object",
                 "properties": {
                   "label": {
                     "type": "string",
-                    "description": "PRIMARY KEY for this section (unique per sections[]). Also the badge chip text shown on every node in node_ids. No leading number — system assigns step numbers."
+                    "description": "Section title and badge chip text."
                   },
                   "node_ids": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "Nodes that display this label as a badge chip (1..N). All nodes in this group share the same label chip. Omit for passthrough nodes mentioned in text only."
+                    "description": "Nodes associated with this section."
                   },
                   "text": {
                     "type": "string",
-                    "description": "Markdown description for this label group (1..1 per label). Explain what you found: formulas, column mappings, logic, risks. Supported: **bold**, `code`, tables, LaTeX math."
+                    "description": "Markdown description for this section. Detail findings go here."
                   }
                 },
                 "required": [
@@ -846,7 +841,7 @@
             },
             "notes": {
               "type": "array",
-              "description": "Annotations below nodes. First line = visible title; rest shown on hover (max 50). Use \\n for line breaks.",
+              "description": "Annotations below nodes.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -856,7 +851,7 @@
                   "text": {
                     "type": "string",
                     "maxLength": 400,
-                    "description": "First line = title below node. After \\n = detail on hover (max 400 chars)"
+                    "description": "First line = title. Rest = hover detail."
                   }
                 },
                 "required": [
@@ -864,6 +859,10 @@
                   "text"
                 ]
               }
+            },
+            "is_update": {
+              "type": "boolean",
+              "description": "Set true to patch an existing view instead of creating a new one."
             }
           },
           "required": [
@@ -877,7 +876,7 @@
         "toolReferenceName": "lineage_get_ddl_batch",
         "displayName": "Get DDL for Multiple Objects",
         "userDescription": "Get DDL body scripts for multiple objects in one call.",
-        "modelDescription": "Batch DDL fetch for known IDs. Use ONLY for objects not already in a BFS result — BFS includes DDL by default. Returns DDL for scriptable objects, type-only for tables.",
+        "modelDescription": "Batch DDL fetch for known IDs. Use ONLY for objects not already in a BFS result — BFS includes DDL by default.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -892,7 +891,7 @@
               "items": {
                 "type": "string"
               },
-              "description": "Exact object IDs to fetch DDL for (max 20). Use IDs from lineage_run_bfs_trace or lineage_search_objects."
+              "description": "Exact object IDs to fetch DDL for (max 20)."
             }
           },
           "required": [
@@ -901,144 +900,15 @@
         }
       },
       {
-        "name": "lineage_start_column_trace",
-        "toolReferenceName": "lineage_start_column_trace",
-        "displayName": "Start Column Trace",
-        "userDescription": "Start a column-level lineage trace through the dependency graph.",
-        "modelDescription": "Start a hop-by-hop lineage trace. Call as first action — origin is optional.\n\nReturns: scope preview + first hop context with focus node DDL + neighbor list.\n\nUse schemas[] parameter to explicitly target objects outside the active user filter (e.g. ['STAGING', 'DBO']). Provided schemas are validated against the model.\n\nAfter receiving: read DDL, verdict each neighbor:\n- trace: follow this path. Provide columns (INPUT columns) + question.\n- prune: cut branch and descendants. Explain why.\n- pass: data passes through unchanged, children queued automatically.\nThen call lineage_submit_hop_analysis. Repeat until all paths exhausted.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-ct"
-        ],
-        "icon": "$(search)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "columns": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Column names to trace, e.g. [\"SalesAmount\"]"
-            },
-            "direction": {
-              "type": "string",
-              "enum": [
-                "up",
-                "down",
-                "both"
-              ],
-              "description": "Trace direction: up=find sources, down=find consumers"
-            },
-            "origin": {
-              "type": "string",
-              "description": "Starting object ID. Optional — omit if unknown, the tool will auto-discover."
-            },
-            "depth": {
-              "type": "number",
-              "description": "BFS depth limit from origin (default 5). Controls scope for cascade prune and coverage tracking."
-            },
-            "schemas": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Optional: override active filter to search specific schemas. Must exist in the model."
-            }
-          }
-        }
-      },
-      {
-        "name": "lineage_submit_hop_analysis",
-        "toolReferenceName": "lineage_submit_hop_analysis",
-        "displayName": "Submit Hop Analysis",
-        "userDescription": "Submit column trace analysis for the current hop.",
-        "modelDescription": "Submit your analysis of the current hop and receive the next hop's data.\n\nInput:\n- focus_node_id: extract focus_node.id from the hop context (e.g. hop has focus_node: {id: \"[dbo].[X]\", ...} → send focus_node_id: \"[dbo].[X]\")\n- notes: free-form text — your findings for this focus node (what you observed in the DDL)\n- verdicts: array — per neighbor:\n  - neighbor_id: the id field from each neighbor in the neighbors list\n  - verdict: trace | prune | pass\n  - columns: for trace — the INPUT column names to track into this neighbor (not the output column name)\n  - summary: one-line description of what happens at this node\n  - question: for trace — what to look for at this neighbor (specific, not vague)\n\nVerdicts:\n- trace: follow this path — neighbor carries the traced column or is relevant to the analysis\n- prune: cut this branch — neighbor and all descendants removed from the graph\n- pass: data passes through unchanged (staging table, simple view) — children queued automatically\n- revisit: re-expand a previously pruned node (listed in revisitable field, max 3 per trace)\n\nIMPORTANT — columns must be INPUT columns:\n  BAD: SP computes ListPrice = CostPrice * (1+MarkupPct) → [ListPrice]\n  GOOD: → [CostPrice, MarkupPct]\n\nBAD question: \"check this node\"\nGOOD question: \"Does vwSalesData transform Amount or pass it through from staging?\"\n\nCOLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. When uncertain whether a column computes the value or routes rows: trace.\n\nReturns: next hop context OR complete result with full chain when all paths exhausted.\nIf you receive focus_mismatch error: re-read the hop context and extract focus_node.id correctly.\nIf you receive invalid_columns error: re-read the DDL and correct the column name, then resubmit.\n\nTable focus nodes (t: \"table\"): tables have no DDL — they store data, not transform it. When the focus node is a table, trace through ALL upstream neighbors (they INSERT INTO this table). Prune only downstream neighbors that SELECT FROM this table.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-ct"
-        ],
-        "icon": "$(check)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "focus_node_id": {
-              "type": "string",
-              "description": "ID of the focus node from the hop context"
-            },
-            "notes": {
-              "type": "string",
-              "description": "Draft section text — business meaning first (formulas in LaTeX, column renames as | From | To | tables, what each value represents), then SQL as supporting evidence. This content becomes the final document."
-            },
-            "verdicts": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "neighbor_id": {
-                    "type": "string",
-                    "description": "Exact neighbor ID from the hop context"
-                  },
-                  "verdict": {
-                    "type": "string",
-                    "enum": [
-                      "trace",
-                      "prune",
-                      "pass",
-                      "revisit"
-                    ]
-                  },
-                  "columns": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "description": "For trace: INPUT column names to track into this neighbor (not the output column)"
-                  },
-                  "summary": {
-                    "type": "string",
-                    "description": "One-line: what happens to the column at this node"
-                  },
-                  "question": {
-                    "type": "string",
-                    "description": "For trace: what to look for at this neighbor (specific question, not vague)"
-                  }
-                },
-                "required": [
-                  "neighbor_id",
-                  "verdict"
-                ]
-              }
-            },
-            "badge_label": {
-              "type": "string",
-              "description": "Short semantic role label for this focus node (2-4 words), e.g. 'Source', 'ETL', 'Staging'. Used to build suggested_sections in the completion result. Skip for passthrough nodes."
-            },
-            "note_caption": {
-              "type": "string",
-              "description": "One-line caption for this focus node — what it does in this flow, e.g. 'Computes TotalRevenue = Qty × UnitPrice at INSERT'."
-            }
-          },
-          "required": [
-            "focus_node_id",
-            "verdicts"
-          ]
-        }
-      },
-      {
         "name": "lineage_start_exploration",
         "toolReferenceName": "lineage_start_exploration",
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
-        "userDescription": "Start a broad exploration of database objects for business rules, documentation, or investigations.",
-        "modelDescription": "Start a broad exploration across multiple database objects. Use when the question spans many objects: business rules across a pipeline, documentation of a data flow, SQL pattern investigations. Requires a multi-object scope to be useful.\n\nProvide an origin node — the state machine runs depth-limited BFS to build the initial exploration scope and seeds the agenda.\n\nUse schemas[] parameter to explicitly target objects outside the active user filter (e.g. ['STAGING', 'DBO']). Provided schemas are validated against the model.\n\ndepth controls how many BFS hops from origin are included in the initial scope (default 5).",
+        "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
+        "modelDescription": "Start a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking. If targetColumns provided, the engine constrains navigation to relevant column paths. If question only, it runs free-form Blackboard exploration.\n\nReturns: first hop context with Topological Map, current Incremental Blackboard, Focus DDL, and Neighbor Metadata (Columns).\n\nUse Selection-Inference Routing: read metadata and generate a sub-question for each relevant neighbor.",
         "tags": [
           "lineage",
-          "lineage-bb"
+          "lineage-engine"
         ],
         "inputSchema": {
           "type": "object",
@@ -1049,27 +919,34 @@
             },
             "origin": {
               "type": "string",
-              "description": "Starting node ID. SM runs depth-limited BFS from here to seed the exploration agenda. Use search_objects to find."
+              "description": "Starting node ID. Engine runs depth-limited BFS from here to seed the exploration agenda."
             },
-            "scope_direction": {
+            "targetColumns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional. Specific column names to trace (activates Column Trace mode)."
+            },
+            "direction": {
               "type": "string",
               "enum": [
                 "upstream",
                 "downstream",
                 "bidirectional"
               ],
-              "description": "BFS direction. 'upstream': find all ancestors/sources (inbound edges — what feeds X). 'downstream': find all descendants/consumers (outbound edges — what X affects). 'bidirectional': full connected component (all edges, only for SPs or small graphs). Required for tables/views with high degree."
+              "description": "BFS direction for initial scope discovery."
             },
             "depth": {
               "type": "number",
-              "description": "BFS depth limit from origin (default 5). Controls initial scope size. Use expand_frontier to extend if you reach the boundary."
+              "description": "BFS depth limit from origin (default 5)."
             },
             "schemas": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Optional: override active filter to search specific schemas. Must exist in the model."
+              "description": "Optional: override active filter to search specific schemas."
             }
           },
           "required": [
@@ -1079,81 +956,34 @@
         }
       },
       {
-        "name": "lineage_expand_frontier",
-        "toolReferenceName": "lineage_expand_frontier",
-        "displayName": "Expand Frontier",
-        "userDescription": "Extend exploration scope by additional BFS hops from the current boundary.",
-        "modelDescription": "Extend exploration scope by N more BFS hops from the current scope boundary. Use when agenda is nearly empty but the question is not fully answered. Returns count of newly added nodes.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage",
-          "lineage-bb"
-        ],
-        "icon": "$(expand-all)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "extra_hops": {
-              "type": "number",
-              "description": "Additional BFS depth from boundary (default 2, max 5)"
-            }
-          }
-        }
-      },
-      {
         "name": "lineage_submit_findings",
         "toolReferenceName": "lineage_submit_findings",
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
-        "userDescription": "Submit analysis of the current node during exploration and receive the next node's data.",
-        "modelDescription": "Submit your analysis of the current exploration hop and receive the next node's data.\n\nProvide:\n- verdict (required): 'relevant' = node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns — always relevant even if indirect (full findings stored + badge_label), 'pass' (= data passthrough, NOT 'skip') = pure wire with ZERO transformation — SELECT *, identity view, synonym. If the node has ANY logic, use relevant (full findings stored, no badge), 'irrelevant' = utility function (logging, error handling) or zero data relationship to the pipeline (cascade prune)\n- findings: comprehensive analysis for relevant nodes — business meaning first, then SQL evidence. For passthrough/irrelevant: brief summary sufficient\n- summary: one-line digest (~100-200 chars) — shown in working memory for ALL future hops\n- questions: sub-questions for nodes to investigate next (boosts their agenda priority)\n- prune_ids: neighbor node IDs to remove from agenda. ONLY for neighbors with scope=in_scope — other scopes rejected. Each prune cascades — the node and all nodes only reachable through it are removed. Diamond-safe: fork nodes stay. NOTE: direct neighbors of origin cannot be cascade-pruned.\n- add_ids: neighbor node IDs to add to exploration agenda. For neighbors with scope=available that are relevant to your investigation. The node is auto-expanded into scope and queued at high priority.\n- complete: set true when you have enough findings to answer the user's question. The SM validates this before accepting: if any direct neighbor of the origin node is unvisited, complete is REJECTED and those nodes are reinjected as mandatory. Check working_memory.remaining_agenda to see what is still open — if it contains SPs or source tables directly connected to the origin, do NOT set complete:true.\n\nIf response contains complete_rejected.nodes — those direct neighbors MUST be visited or declared irrelevant before complete:true will be accepted. Do not repeat complete:true until you have processed all of them.\n\nThe cascade_if_irrelevant field in the hop context shows how many nodes would be pruned if you mark this node irrelevant. Check it before deciding.\n\nBAD findings: \"This SP does stuff with data\"\nGOOD findings: \"Joins Orders with OrderDetails on OrderID, applies WHERE Status='Active', computes TotalAmount = Qty * UnitPrice\"\nBAD summary: \"spBuildSalesReport\"\nGOOD summary: \"Aggregates active orders into revenue totals by region\"\n\nResponse includes: next hop context OR complete result when agenda is empty OR early_complete result when complete=true.\n\nWorking memory in each response shows:\n- user_question: your original investigation question (goal anchor — stay focused)\n- all_summaries: ALL your one-line summaries from every noted node (never truncated)\n- pending_questions: ALL open sub-questions (your checklist)\n- remaining_agenda: nodes still to visit — check this BEFORE setting complete:true. If SPs or source tables appear here, you are not done.\n- checklist: { noted, total, open, coveragePct }\n\ncurrent_task: your own question for the new focus node — answer it.",
+        "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
+        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nRequired Fields:\n- narrative_update: Update the Incremental Blackboard (Short Memory). Focus ONLY on dense business insights, formulas, and filter logic. INTEGRATE new findings into the existing story; DO NOT repeat topology (The Map already provides it).\n- detail_analysis: Your Evidence Archive (The Hard Drive). High-fidelity technical evidence for Phase 3. Use LaTeX for math and Tables for renames.\n- summary: One-line technical digest for the archive.\n- verdict: relevant | pass | irrelevant. 'relevant' stores findings; 'irrelevant' cascade-prunes neighbors.\n\nSelection-Inference Routing:\n- route_requests: Array of objects { nodeId, question, columns? }. NEVER route blindly. You MUST provide a specific technical hypothesis (the 'question') for every neighbor you want to visit. The SM validates your request against neighbor metadata before accepting.\n\nComplete: Set true ONLY when the user's question is answered and no critical neighbors remain on the agenda.",
         "tags": [
           "lineage",
-          "lineage-bb"
+          "lineage-engine"
         ],
         "inputSchema": {
           "type": "object",
           "properties": {
             "focus_node_id": {
               "type": "string",
-              "description": "ID of the focus node from the hop context"
+              "description": "ID of the current focus node."
             },
-            "findings": {
+            "narrative_update": {
               "type": "string",
-              "description": "Draft section text — business meaning first (formulas in LaTeX, column renames as | From | To | tables, what each value represents), then SQL as supporting evidence. This content becomes the final document."
+              "description": "Dense business logic synthesis (The Blackboard)."
+            },
+            "detail_analysis": {
+              "type": "string",
+              "description": "High-fidelity evidence archive (The Hard Drive)."
             },
             "summary": {
               "type": "string",
-              "description": "One-line digest of your findings, shown in working memory for all future hops (~100 chars)"
-            },
-            "tags": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Categorization: business-rule, transform, source, staging, pattern, join, filter, etc."
-            },
-            "questions": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "node_id": {
-                    "type": "string",
-                    "description": "Node to investigate"
-                  },
-                  "question": {
-                    "type": "string",
-                    "description": "What to investigate at this node"
-                  }
-                },
-                "required": [
-                  "node_id",
-                  "question"
-                ]
-              },
-              "description": "Sub-questions for nodes to investigate next (boosts their agenda priority)"
+              "description": "One-line digest of findings."
             },
             "verdict": {
               "type": "string",
@@ -1161,39 +991,53 @@
                 "relevant",
                 "pass",
                 "irrelevant"
-              ],
-              "description": "Your assessment: 'relevant' = node has business logic or transforms (full findings + badge_label), 'pass' = node is in the path but no transforms — SELECT *, staging, identity view (summary stored, no badge), 'irrelevant' = unrelated to the question (cascade prune of downstream nodes)"
+              ]
             },
-            "prune_ids": {
+            "route_requests": {
               "type": "array",
               "items": {
-                "type": "string"
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string",
+                    "description": "Exact neighbor ID to visit."
+                  },
+                  "question": {
+                    "type": "string",
+                    "description": "Specific sub-question for this neighbor."
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "For column tracking: specific input columns to follow."
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "question"
+                ]
               },
-              "description": "Neighbor node IDs to prune from exploration. Each pruned node + all nodes only reachable through it are cascade-removed from the agenda."
-            },
-            "add_ids": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Neighbor node IDs to add to exploration agenda. Use for scope=available neighbors that are relevant. Each node is auto-expanded into scope."
+              "description": "Grounded routing requests for next hops."
             },
             "complete": {
               "type": "boolean",
-              "description": "Set true when you have enough findings to answer the user's question. Triggers early completion — your current finding is processed, then the full result (notes, graph, stats) is returned."
+              "description": "Set true when exploration goal is reached."
             },
             "badge_label": {
               "type": "string",
-              "description": "Short step label for the enriched view badge (2-4 words), e.g. '4 INIT' or '7 Rate Impute'. The result includes suggested_badges built from these labels."
+              "description": "Short semantic role (2-4 words) for enriched view badge."
             },
             "note_caption": {
               "type": "string",
-              "description": "One-line caption for the enriched view note — what this node does in this flow. e.g. 'Entry point — TRUNCATEs and reloads from staging'. The result includes suggested_notes built from these captions."
+              "description": "One-line caption for enriched view note."
             }
           },
           "required": [
             "focus_node_id",
-            "findings",
+            "narrative_update",
+            "detail_analysis",
             "summary",
             "verdict"
           ]
@@ -1211,7 +1055,7 @@
     "watch:ext": "node esbuild.config.mjs --watch",
     "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts",
     "test:unit": "npm run test",
-    "test:unit:ai": "tsx tests/unit/ai-tools.test.ts && tsx tests/unit/column-trace-state.test.ts && tsx tests/unit/blackboard-state.test.ts",
+    "test:unit:ai": "tsx tests/unit/ai-tools.test.ts && tsx tests/unit/navigation-engine.test.ts",
     "test:dacpac": "tsx tests/unit/dacpacExtractor.test.ts",
     "test:graph": "tsx tests/unit/graphBuilder.test.ts",
     "test:parser": "tsx tests/unit/parser-edge-cases.test.ts",
