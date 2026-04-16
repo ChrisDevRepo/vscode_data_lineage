@@ -1,14 +1,19 @@
 /**
  * Unified System Prompts for the Navigation Engine.
- * 
+ *
  * Implements a "Universal Markdown" structure for consistent performance across
- * all major models (GPT-4o, Claude, Gemini). 
- * 
+ * all major models (GPT-4o, Claude, Gemini).
+ *
  * CONCEPTS:
  * - MAP: System-provided topological grounding and navigation path.
  * - BLACKBOARD: AI-maintained rolling executive synthesis.
  * - ARCHIVE: AI-written technical deep-dive evidence.
  * - HYPOTHESIS: Mandatory AI-generated grounded reason for every hop.
+ *
+ * Single source of truth for output shape: `assets/aiOutputTemplates.yaml`,
+ * injected into the system prompt as `### AI OUTPUT TEMPLATES`. This file
+ * references those templates rather than duplicating them — when the user
+ * edits the yaml, both hop-time capture and synthesis-time output honor it.
  */
 
 const BLOCK = {
@@ -28,7 +33,7 @@ const BLOCK = {
   memoryProtocol:
     '### MEMORY TIERING PROTOCOL\n' +
     '1. **THE BLACKBOARD** (Short Memory): A rolling executive synthesis of the cumulative logic found so far. It must tell the "Story of the Data" discovered across all hops. **Delegate all topological facts to the Map.**\n' +
-    '2. **THE ARCHIVE** (Long Memory): Your technical "Hard Drive". You must commit the full technical truth (formulas, column renames, SQL snippets) to this slot. This is your **ONLY source** for the final report; raw SQL access is revoked after every hop.\n' +
+    '2. **THE ARCHIVE** (Long Memory): Your technical "Hard Drive". This is the **ONLY source** for the final enrich_view — raw SQL access is revoked after every hop. Every `detail_analysis` entry MUST already carry the raw material every output field in the `### AI OUTPUT TEMPLATES` block of the system prompt will need: LaTeX formulas for computed columns, markdown tables for column renames, named columns (never "various"), named expressions (never "certain conditions"), and explicit upstream/downstream relationships. There is no "explain more" step at synthesis.\n' +
     '3. **THE MAP** (System State): Topological grounding. Provides your `navigation_path` (Origin -> ... -> Focus) and the list of open nodes.',
 
   routingRules:
@@ -43,8 +48,8 @@ const BLOCK = {
 } as const;
 
 export function buildNavigationPrompt(mode: 'blackboard' | 'column_trace'): string {
-  const modeHeader = mode === 'column_trace' 
-    ? '# ROLE: EXPERT DATA LINEAGE ANALYST (Column Focus)' 
+  const modeHeader = mode === 'column_trace'
+    ? '# ROLE: EXPERT DATA LINEAGE ANALYST (Column Focus)'
     : '# ROLE: EXPERT BUSINESS LOGIC ANALYST (Functional Focus)';
 
   return [

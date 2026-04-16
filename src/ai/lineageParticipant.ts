@@ -130,10 +130,16 @@ export class LineageParticipant {
       }
     }
 
-    const systemPrompt = buildPlatformContext(sess.model.dbPlatform || 'SQL Server') + 
-      (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') + 
+    // System prompt structure follows LangChain best-practice for agents:
+    // Role + Context + Instructions + Output Format — all stable, all phase-agnostic.
+    // Output templates stay here (not extracted to a separate message) because
+    // they are part of the agent's stable identity: "I produce X-shaped output."
+    // This also enables Anthropic prompt caching of the system message.
+    // Source: https://docs.langchain.com/oss/javascript/langchain/agents
+    const systemPrompt = buildPlatformContext(sess.model.dbPlatform || 'SQL Server') +
+      (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') +
       buildSystemPromptBase(MAX_ROUNDS) +
-      `### AI OUTPUT TEMPLATES\n` +
+      `### AI OUTPUT TEMPLATES (user-editable via assets/aiOutputTemplates.yaml)\n` +
       `- summary: ${sess.outputTemplates.summary}\n` +
       `- sections: ${sess.outputTemplates.sections}\n` +
       `- notes: ${sess.outputTemplates.notes}\n` +
@@ -184,6 +190,10 @@ export class LineageParticipant {
     let totalOutputTokens = 0;
     let totalToolResultChars = 0;
     let lastRoundInputTokens = 0;
+    // Nav prompt is built once on active-phase entry and preserved across sliding
+    // memory wipes — without this, mode-specific guidance (memory protocol, routing
+    // rules, classification) vanished after the first hop.
+    let navPrompt = '';
 
     const runWithTools = async () => {
       let actionRequiredPending = false;
@@ -289,8 +299,8 @@ export class LineageParticipant {
           
           const engine = sess.stateMachine;
           if (engine) {
-            const modePromptMsg = vscode.LanguageModelChatMessage.User(buildNavigationPrompt(engine.mode));
-            messages.push(modePromptMsg);
+            navPrompt = buildNavigationPrompt(engine.mode);
+            messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
           }
         }
 
@@ -348,8 +358,13 @@ export class LineageParticipant {
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
             messages.length = 0;
-            messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt), lastAssistant, lastResult);
-            this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
+            messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt));
+            // Preserve the navigation prompt across wipes — without this, the AI
+            // loses its mode guidance (memory protocol, routing rules, classification)
+            // after the very first hop and flies blind on subsequent hops.
+            if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
+            messages.push(lastAssistant, lastResult);
+            this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
           } else {
             this.logger.warn(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
           }
