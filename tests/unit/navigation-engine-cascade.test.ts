@@ -279,4 +279,44 @@ function newEngine() {
   }
 }
 
+// 5. Parallel submit_findings regression — engine rejects second call with focus_mismatch
+//    (Reproduces the bb-q1-employee-style regression where AI batched two submit_findings
+//    calls in one round. First submit advanced hop; second submit targeted a neighbor —
+//    must get focus_mismatch so the chat-loop can preserve history for AI self-correction.)
+{
+  console.log('\n── Parallel submit_findings: second call rejected ──');
+  const engine = newEngine();
+  const hop1 = engine.getHopContext() as any;
+  assertEq(hop1.focus_node?.id, '[dbo].[origin]', 'Hop 1 focus is origin');
+
+  // First submit: success, advances to hop 2
+  const first = engine.submitFindings({
+    focus_node_id: hop1.focus_node.id,
+    narrative_update: 'Origin.',
+    detail_analysis: 'Origin analysis.',
+    summary: 'Origin.',
+    verdict: 'relevant'
+  });
+  assert('ok' in first, 'First parallel submit succeeds');
+
+  // Simulate what happens when AI parallelizes: second submit targets a neighbor the
+  // engine has not advanced to yet. Engine must reject with focus_mismatch so the chat
+  // loop can preserve history.
+  const second = engine.submitFindings({
+    focus_node_id: '[dbo].[util_a]', // arbitrary non-focus node
+    narrative_update: 'Parallel attempt.',
+    detail_analysis: '.',
+    summary: '.',
+    verdict: 'relevant'
+  });
+  assert('error' in second, 'Second parallel submit rejected');
+  // After first success the status is 'exploring', so the second submit hits the status
+  // guard before focus_mismatch. Either error is acceptable — both preserve history.
+  const errCode = (second as any).error;
+  assert(
+    errCode === 'invalid_status' || errCode === 'focus_mismatch',
+    `Rejected with invalid_status or focus_mismatch (got ${errCode})`
+  );
+}
+
 printSummary('NavigationEngine Cascade-Prune Guard');
