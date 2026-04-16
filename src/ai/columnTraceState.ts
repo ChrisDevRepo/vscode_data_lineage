@@ -553,7 +553,7 @@ try {
     if (v.verdict === 'prune') pruneCount++;
   }
 } catch (err) {
-  this.log('error', `submitVerdicts CRASH: ${err}`);
+  this.log('warn', `submitVerdicts CRASH: ${err}`);
   return { error: 'internal_error', hint: String(err) };
 }
 

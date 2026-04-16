@@ -118,20 +118,20 @@ export function registerCommands(
       qp.show();
     }),
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
-      logInfo(outputChannel, 'Commands', `Forcing project load from: ${uri.fsPath}`);
+      logInfo(outputChannel, 'Config', `Forcing project load from: ${uri.fsPath}`);
       const { extractDacpac } = await import('./engine/dacpacExtractor');
       const { buildGraph } = await import('./engine/graphBuilder');
       const { default: Graph } = await import('graphology');
       
       const buffer = await vscode.workspace.fs.readFile(uri);
-      const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+      const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
       const sess = getSession();
       
       sess.model = model;
       sess.projectName = path.basename(uri.fsPath, '.dacpac');
       sess.graph = Graph.from(buildGraph(model) as any);
       
-      logInfo(outputChannel, 'Commands', `Model forced: ${model.nodes.length} nodes, project: ${sess.projectName}`);
+      logInfo(outputChannel, 'Config', `Model forced: ${model.nodes.length} nodes, project: ${sess.projectName}`);
     }),
   ];
 }
