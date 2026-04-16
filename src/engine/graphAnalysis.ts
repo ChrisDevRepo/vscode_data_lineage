@@ -1,6 +1,36 @@
 import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
-import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
+import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig, type DatabaseModel } from './types';
+
+// ─── Schema Neighbor Discovery ──────────────────────────────────────────────
+
+/**
+ * Compute all schemas that have at least one edge connecting to a node in the target schema.
+ * Uses the pre-built neighborIndex for O(NodesInSchema * Degree) performance.
+ */
+export function getNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
+  const neighborSchemas = new Set<string>([schema]);
+  
+  // 1. Find all nodes belonging to the target schema
+  const focusNodes = model.nodes.filter(n => n.schema === schema);
+  
+  // 2. For each node, look up its immediate neighbors in the index
+  for (const node of focusNodes) {
+    const neighbors = model.neighborIndex[node.id];
+    if (!neighbors) continue;
+    
+    // Combine inbound and outbound neighbors
+    const allNeighborIds = [...neighbors.in, ...neighbors.out];
+    for (const nid of allNeighborIds) {
+      const neighborMeta = model.catalog[nid];
+      if (neighborMeta && neighborMeta.schema) {
+        neighborSchemas.add(neighborMeta.schema);
+      }
+    }
+  }
+  
+  return neighborSchemas;
+}
 
 // ─── Islands (Connected Components) ─────────────────────────────────────────
 
