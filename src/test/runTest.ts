@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import { runTests } from '@vscode/test-electron';
 
 async function main() {
@@ -9,15 +10,15 @@ async function main() {
 
 		// The path to test runner
 		// Passed to --extensionTestsPath
-		const testRunnerPath = path.resolve(__dirname, './suite/index');
+		const extensionTestsPath = path.resolve(__dirname, './suite/index');
 
 		const tmpDir = path.resolve(__dirname, '../../tmp-test-workspace');
 		if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
 
 		// Download VS Code, unzip it and run the integration test
-		await runTests({ 
-			extensionDevelopmentPath, 
-			testRunnerPath,
+		await runTests({
+			extensionDevelopmentPath,
+			extensionTestsPath,
 			launchArgs: [tmpDir]
 		});
 	} catch (err) {
