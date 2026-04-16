@@ -10,11 +10,8 @@ build/
 *.vsix
 
 # Testing
-test-internal/
-**/test-internal/**
 test-results/
 **/test-results/**
-customer-data/
 .vscode-test/
 coverage/
 *.lcov
@@ -26,7 +23,6 @@ CLAUDE.md
 .claude/
 **/.claude/**
 tmp/
-/ai/
 PLAN*.md
 
 # Environment
@@ -45,6 +41,3 @@ GEMINI.md
 # Internal Developer Docs
 docs-internal/
 **/docs-internal/**
-docs-archive/
-tmp-test-workspace/
-src/test/suite/ai-real-model.test.ts
