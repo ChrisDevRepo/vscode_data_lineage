@@ -16,7 +16,7 @@ import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
+import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, countCascadeIfPruned, type LogFn } from './smGuards';
 import { AiMemoryManager, type DetailSlot, type ShortMemory, type WorkingMemory } from './memoryManager';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -200,7 +200,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   submitFindings(params: any): any {
     if (this._status !== 'awaiting_findings') return { error: 'invalid_status', current_status: this._status };
-    
+
     // Normalize and check focus
     const focusId = params.focus_node_id?.toLowerCase();
     if (focusId !== this.currentFocusNodeId) {
@@ -228,18 +228,48 @@ export class NavigationEngine implements IHopStateMachine {
       if (invalidRoutes.length > 0) return { error: 'route_validation_failed', detail: invalidRoutes };
     }
 
+    // Irrelevant-verdict cascade-prune guards (before any state mutation)
+    const isIrrelevant = params.verdict === 'irrelevant';
+    const prunable = isIrrelevant && this.currentFocusNodeId !== this.originNodeId;
+    if (prunable) {
+      const notedIds = new Set<string>(this.memory.notedNodeIds);
+      const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, this.currentFocusNodeId!);
+      if (orphan) {
+        return { error: 'orphan_rejection', detail: `Marking ${this.currentFocusNodeId} irrelevant would orphan noted node "${orphan}". Use verdict='pass' to skip without pruning.` };
+      }
+      const agendaNodeIdSet = new Set(this.agenda.map(a => a.nodeId));
+      const cascadeCount = countCascadeIfPruned(this.graph, this.originNodeId!, this.removedSet, this.scopeNodeIds, agendaNodeIdSet, this.currentFocusNodeId!);
+      if (this.agenda.length > 2 && cascadeCount * 2 > this.agenda.length) {
+        return { error: 'cascade_too_wide', detail: `Pruning ${this.currentFocusNodeId} would cascade-remove ${cascadeCount}/${this.agenda.length} agenda nodes. Use verdict='pass' to preserve scope.` };
+      }
+    }
+
     const synthesisErr = this.memory.updateSynthesis(params.narrative_update);
     if (synthesisErr) return { error: synthesisErr };
 
-    this.memory.storeDetail(this.nodeMap.get(this.currentFocusNodeId!)!, params.detail_analysis, params.summary, {
-      badge_label: params.badge_label,
-      note_caption: params.note_caption
-    }, this._inlineMode);
+    // Store detail for relevant/pass; irrelevant nodes keep only the narrative trace
+    if (!isIrrelevant) {
+      this.memory.storeDetail(this.nodeMap.get(this.currentFocusNodeId!)!, params.detail_analysis, params.summary, {
+        badge_label: params.badge_label,
+        note_caption: params.note_caption
+      }, this._inlineMode);
+    }
+
+    // Commit cascade prune for irrelevant (after guards passed)
+    let cascadedCount = 0;
+    if (prunable) {
+      this.removedSet.add(this.currentFocusNodeId!);
+      const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
+      const before = this.agenda.length;
+      this.agenda = this.agenda.filter(e => reachable.has(e.nodeId));
+      this.agendaIds = new Set(this.agenda.map(e => e.nodeId));
+      cascadedCount = before - this.agenda.length;
+    }
 
     if (params.route_requests) {
       for (const req of params.route_requests) {
         const nid = req.nodeId.toLowerCase();
-        if (!this.visited.has(nid) && !this.agendaIds.has(nid)) {
+        if (!this.visited.has(nid) && !this.agendaIds.has(nid) && !this.removedSet.has(nid)) {
           this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
           this.agendaIds.add(nid);
         }
@@ -248,7 +278,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     this._status = 'exploring';
     if (params.complete) { this._status = 'complete'; return { ok: true, early_complete: this.getResult() }; }
-    return { ok: true };
+    return cascadedCount > 0 ? { ok: true, cascaded_count: cascadedCount } : { ok: true };
   }
 
   public estimateScopeDdlChars(): number {
@@ -303,10 +333,11 @@ export class NavigationEngine implements IHopStateMachine {
     const mem = this.memory.getResult();
     const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
     
-    // Core edges between all nodes in the scope
+    // Core edges between all nodes in the scope (minus cascade-pruned)
     const edges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
-      if (this.scopeNodeIds.has(e.source) && this.scopeNodeIds.has(e.target)) {
+      if (this.scopeNodeIds.has(e.source) && this.scopeNodeIds.has(e.target)
+          && !this.removedSet.has(e.source) && !this.removedSet.has(e.target)) {
         edges.push([e.source, e.target, edgeApiType(e.type)]);
       }
     }
