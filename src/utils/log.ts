@@ -58,6 +58,28 @@ export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
   ch.warn(`[${cat}] ${msg}`);
 }
 
+/**
+ * OOP Logger — Encapsulates channel and category for cleaner usage.
+ */
+export class Logger {
+  constructor(
+    private readonly ch: LogOutputChannel,
+    private readonly cat: LogCategory
+  ) {}
+
+  info(msg: string): void { logInfo(this.ch, this.cat, msg); }
+  debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
+  trace(msg: string): void { logTrace(this.ch, this.cat, msg); }
+  warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
+  error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
+
+  /** Specialized bridge log: suppress noisy types, log others concisely. */
+  bridgeIncoming(type: string): void {
+    if (type === 'filter-changed') return;
+    this.debug(`Incoming: ${type}`);
+  }
+}
+
 /** Truncate a string for log previews: first `max` chars + `… [+N chars]` suffix if longer. */
 export function trunc(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}\u2026 [+${s.length - max} chars]`;

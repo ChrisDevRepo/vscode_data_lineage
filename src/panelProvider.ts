@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import * as os from 'os';
+import { z } from 'zod';
 import { type AiSession } from './ai/session';
-import { logInfo, logDebug, logWarn, logError, logTrace, trunc, type LogCategory } from './utils/log';
+import { logInfo, logDebug, logWarn, logError, logTrace, trunc, type LogCategory, Logger } from './utils/log';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -152,17 +153,29 @@ export function openPanel(
   activePanel = panel;
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, loadDemo);
 
+  const bridgeLogger = new Logger(outputChannel, 'Bridge');
+
   const host: BridgeHost = {
     postMessage: (msg) => {
-      const validated = ExtensionToWebviewMsgSchema.parse(msg);
-      return panel.webview.postMessage(validated);
+      try {
+        const validated = ExtensionToWebviewMsgSchema.parse(msg);
+        return panel.webview.postMessage(validated);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          bridgeLogger.error(`Outgoing validation failed for ${msg.type}`, summarizeZodError(err));
+          // Still try to send it, but we've logged the failure
+          return panel.webview.postMessage(msg);
+        }
+        throw err;
+      }
     },
     log: (level, cat, text, err) => {
-      if (level === 'info') logInfo(outputChannel, cat, text);
-      else if (level === 'warn') logWarn(outputChannel, cat, text);
-      else if (level === 'error') logError(outputChannel, cat, text, err);
-      else if (level === 'trace') logTrace(outputChannel, cat, text);
-      else logDebug(outputChannel, cat, text);
+      const logger = new Logger(outputChannel, cat);
+      if (level === 'info') logger.info(text);
+      else if (level === 'warn') logger.warn(text);
+      else if (level === 'error') logger.error(text, err);
+      else if (level === 'trace') logger.trace(text);
+      else logger.debug(text);
     },
     showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
     executeCommand: (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args),
@@ -182,7 +195,7 @@ export function openPanel(
   let panelDisposed = false;
 
   panel.onDidDispose(() => {
-    logInfo(outputChannel, 'Bridge', 'Panel disposed');
+    bridgeLogger.info('Panel disposed');
     panelDisposed = true;
     activePanel = undefined;
     detailPanel?.dispose();
@@ -203,22 +216,33 @@ export function openPanel(
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
     try {
       const msg = WebviewToExtensionMsgSchema.parse(rawMsg);
-      logDebug(outputChannel, 'Bridge', `Incoming: ${msg.type}`);
+      bridgeLogger.bridgeIncoming(msg.type);
       const handler = handlers[msg.type];
       if (handler) {
         await handler(msg);
       } else {
-        logWarn(outputChannel, 'Bridge', `No handler for message type: ${msg.type}`);
+        bridgeLogger.warn(`No handler for message type: ${msg.type}`);
       }
     } catch (err) {
-      logError(outputChannel, 'Bridge', 'Incoming message validation/handling', err);
+      if (err instanceof z.ZodError) {
+        bridgeLogger.error(`Incoming validation failed: ${rawMsg?.type}`, summarizeZodError(err));
+      } else {
+        bridgeLogger.error('Incoming message handling failed', err);
+      }
+
       const errorMsg: ExtensionToWebviewMsg = { 
         type: 'error', 
         error: err instanceof Error ? err.message : String(err) 
       };
-      panel.webview.postMessage(ExtensionToWebviewMsgSchema.parse(errorMsg));
+      panel.webview.postMessage(errorMsg);
     }
   }, undefined, context.subscriptions);
+}
+
+/** Summarize Zod errors to a single line to prevent log flooding. */
+function summarizeZodError(err: z.ZodError): string {
+  const issues = err.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`);
+  return `${issues.length} validation issues: ${issues.slice(0, 3).join(', ')}${issues.length > 3 ? '...' : ''}`;
 }
 
 // ─── Core Handler Logic ──────────────────────────────────────────────────────
@@ -565,11 +589,18 @@ export function createMessageHandlers(
       host.postMessage({ type: 'mssql-status', available });
     },
     'save-view': async (msg) => {
-      host.log('info', 'Bridge', `Saving filter view: ${msg.profile?.name}`);
-      const store = loadProjectStore(context);
-      const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
-      await saveProjectStore(context, updated);
-      host.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+      const logger = new Logger(outputChannel, 'Bridge');
+      logger.info(`Saving filter view: "${msg.profile?.name}" (projectId: ${msg.projectId})`);
+      try {
+        const store = loadProjectStore(context);
+        const updated = addFilterProfile(store, msg.projectId, msg.profile as FilterProfile);
+        await saveProjectStore(context, updated);
+        logger.info(`Successfully saved filter view: "${msg.profile?.name}"`);
+        host.postMessage({ type: 'projects-list', projects: updated.projects, lastOpenedId: updated.lastOpenedId, lastWizardView: updated.lastWizardView });
+      } catch (err) {
+        logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
+        throw err;
+      }
     },
     'save-wizard-view': async (msg) => {
       const store = loadProjectStore(context);

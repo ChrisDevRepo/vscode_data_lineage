@@ -993,6 +993,32 @@ export function App() {
     return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(serializeFilter(clean));
   }, [model, filter, activeViewId, isViewModified]);
 
+  const persistFilterProfile = useCallback((
+    profile: FilterProfile,
+    options?: { 
+      clearAiPreview?: boolean, 
+      activateProfile?: boolean 
+    }
+  ) => {
+    if (!activeProjectId) return;
+
+    // Optimistic update
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+
+    if (options?.clearAiPreview) setAiPreview(null);
+    if (options?.activateProfile) {
+      if ((profile.filter.allowlistNodeIds?.length ?? 0) > 0) {
+        setActiveAdvancedProfile(profile);
+      }
+      setActiveViewId(profile.id);
+    }
+  }, [activeProjectId, lastOpenedId, vscodeApi]);
+
   const handleSaveView = useCallback((name: string) => {
     if (!activeProjectId) {
       vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
@@ -1004,46 +1030,20 @@ export function App() {
       createdAt: new Date().toISOString(),
       filter: serializeFilter(filter),
     };
-    setActiveViewId(profile.id);
-    // Optimistic update
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { activateProfile: true });
+  }, [activeProjectId, filter, persistFilterProfile, vscodeApi]);
 
   const handleUpdateView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
     const existing = filterProfiles.find(p => p.id === profileId);
     if (!existing) return;
+
     const updated: FilterProfile = {
       ...existing,
       filter: serializeFilter(filter),
     };
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, updated).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: updated });
-  }, [activeProjectId, filter, filterProfiles, lastOpenedId, vscodeApi]);
-
-  const handlePendingPositionsApplied = useCallback(() => {
-    setPendingPositions(undefined);
-    setPendingViewport(undefined);
-  }, []);
-
-  const handleRemoveFromView = useCallback((nodeId: string) => {
-    setFilter(f => {
-      if (!f.allowlistNodeIds) return f;
-      const next: FilterState = {
-        ...f,
-        allowlistNodeIds: new Set([...f.allowlistNodeIds].filter(id => id !== nodeId)),
-      };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+    persistFilterProfile(updated);
+  }, [activeProjectId, filter, filterProfiles, persistFilterProfile]);
 
   const handleSaveTraceAsBookmark = useCallback((
     name: string,
@@ -1052,7 +1052,6 @@ export function App() {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
-    if (!activeProjectId) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1065,12 +1064,8 @@ export function App() {
       ...(positions ? { positions } : {}),
       ...(viewport ? { viewport } : {}),
     };
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { activateProfile: true });
+  }, [filter, persistFilterProfile]);
 
   const handleSaveAnalysisBookmark = useCallback((
     name: string,
@@ -1078,7 +1073,6 @@ export function App() {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
-    if (!activeProjectId) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1091,12 +1085,8 @@ export function App() {
       ...(positions ? { positions } : {}),
       ...(viewport ? { viewport } : {}),
     };
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { activateProfile: true });
+  }, [filter, persistFilterProfile]);
 
   const handleSaveAiBookmark = useCallback((
     name: string,
@@ -1104,7 +1094,7 @@ export function App() {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
-    if (!activeProjectId || !aiPreview) return;
+    if (!aiPreview) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1118,16 +1108,8 @@ export function App() {
       ...(withPositions && positions ? { positions } : {}),
       ...(withPositions && viewport ? { viewport } : {}),
     };
-    // Optimistic update + persist
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-    // Clear transient preview and switch to the saved profile
-    setAiPreview(null);
-    setActiveAdvancedProfile(profile);
-  }, [activeProjectId, filter, aiPreview, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
+  }, [filter, aiPreview, persistFilterProfile]);
 
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;

@@ -69,11 +69,56 @@ export const DatabaseModelSchema = z.object({
 
 export const ExtensionConfigSchema = z.record(z.string(), z.any());
 
+export const SerializedFilterStateSchema = z.object({
+  schemas: z.array(z.string()),
+  types: z.array(z.string()),
+  searchTerm: z.string().optional(),
+  hideIsolated: z.boolean(),
+  focusSchemas: z.array(z.string()),
+  showExternalRefs: z.boolean(),
+  externalRefTypes: z.array(z.string()),
+  exclusionPatterns: z.array(z.string()).optional(),
+  allowlistNodeIds: z.array(z.string()).optional(),
+});
+
+export const AIViewMetadataSchema = z.object({
+  summary: z.string().optional(),
+  description: z.string().optional(),
+  createdAt: z.string(),
+  modelName: z.string(),
+  highlightGroups: z.array(z.object({
+    label: z.string(),
+    color: z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']),
+    nodeIds: z.array(z.string()),
+  })),
+  badges: z.array(z.object({
+    nodeId: z.string(),
+    text: z.string(),
+  })),
+  notes: z.array(z.object({
+    nodeId: z.string(),
+    text: z.string(),
+  })).optional(),
+  layoutDirection: z.enum(['LR', 'TB']).optional(),
+});
+
+export const FilterProfileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.string(),
+  filter: SerializedFilterStateSchema,
+  source: z.enum(['user', 'trace', 'analysis', 'ai']).optional(),
+  positions: z.record(z.string(), z.object({ x: z.number(), y: z.number() })).optional(),
+  viewport: z.object({ x: z.number(), y: z.number(), zoom: z.number() }).optional(),
+  aiMetadata: AIViewMetadataSchema.optional(),
+});
+
 export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
   updatedAt: z.string(),
   connection: z.any(), // Keeping connection generic for now to avoid deep MS-SQL types
+  filterProfiles: z.array(FilterProfileSchema).optional(),
 });
 
 // ─── Incoming Messages (Extension -> Webview) ───────────────────────────────
