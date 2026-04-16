@@ -3,10 +3,6 @@ import { type AiSession } from './ai/session';
 import { Logger } from './utils/log';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
-import {
-  ExtensionToWebviewMsgSchema,
-} from './engine/shared/bridgeContract';
-import { type ExtensionToWebviewMsg } from './engine/shared/bridgeContract';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
 import { createMessageHandlers, PROJECT_STORE_KEY } from './bridge/messageHandlers';
 
@@ -46,9 +42,10 @@ export function openPanel(
     bridgeLogger.info('Revealing existing panel');
     activePanel.reveal();
     if (loadDemo) {
-      const msg: ExtensionToWebviewMsg = { type: 'auto-visualize-start' };
-      activePanel.webview.postMessage(ExtensionToWebviewMsgSchema.parse(msg));
-      // Re-trigger demo load via handler logic if needed
+      // When Open Demo is invoked on an already-open panel, we reveal it but
+      // do not reload demo data (the panel may be showing a different project).
+      // To reload the demo, close the panel first, then Open Demo.
+      bridgeLogger.info('Open Demo invoked on existing panel — reveal only; close the panel first to reload demo data.');
     }
     return;
   }
