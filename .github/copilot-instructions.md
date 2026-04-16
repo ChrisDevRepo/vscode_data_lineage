@@ -213,82 +213,71 @@ npm test                               # all suites must pass
 
 ## AI Chat Participant (`@lineage`)
 
-**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 13 language model tools (8 classic + 2 column-trace + 3 blackboard) via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
+**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and **10 language model tools** via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
 
-**Explore-first architecture** — no upfront mode routing. AI discovers intent via tools. Dynamic tool filtering by phase:
+**Architecture: Unified Navigation Engine.** One grounded state machine (`NavigationEngine` in `src/ai/smBase.ts`) with `mode: 'blackboard' | 'column_trace'`. Implements a "Map & Router" pattern: the engine owns topology + agenda, the AI owns the narrative (Blackboard) and evidence (Archive), and every hop requires a specific technical hypothesis per neighbor (Selection-Inference Routing).
 
-| Phase | Tag filter | Tools visible | Transition |
-|-------|-----------|---------------|------------|
-| **discover** | `lineage` | All 13 tools (free-form) or filtered (slash commands) | `/trace` filters to 6 tools (CT path, no BFS); `/search` prompt rewrite only |
-| **ct_active** | `lineage-ct` | 2 CT tools only | Entered when `start_column_trace` activates state machine |
-| **ct_done** | `lineage` | All 13 tools restored | Entered when CT state machine completes; AI can `enrich_view` |
-| **bb_active** | `lineage` minus `lineage-ct` | Classic 8 + BB 3 (CT excluded) | Entered when `start_exploration` activates state machine; CT mutual exclusion |
-| **bb_done** | `lineage` | All 13 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
+**Three chat phases:**
 
-**Key files:**
-- `src/ai/tokenBudget.ts` — Token budget: `ai.inlineTokenBudget` setting (default 10K tokens), `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`. Budget gates catalog/detail delivery; CT/BB always use state machine. Zero VS Code imports.
-- `src/ai/prompts.ts` — Central prompt dispatcher: `buildSystemPromptBase()`, `CT_MODE_PROMPT`, `CT_DEP_MODE_PROMPT`, `BB_MODE_PROMPT`. Zero VS Code imports.
-- `src/ai/tools.ts` — 8 pure tool functions (7 read-only queries + `validateEnrichView` write tool). Zero-truncation guarantee: DDL always returned in full. `shouldInline()` gates catalog/detail delivery. Soft errors `{ error: 'not_found' }` (no throw). Zero VS Code imports.
-- `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
-- `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
-- `src/ai/blackboardState.ts` — Type 1 Blackboard state machine: free-form exploration with two-tier memory (MemGPT pattern). Passive SM: AI drives traversal via sub-questions, SM stores findings, manages agenda priority. Zero VS Code imports.
-- `src/ai/toolProvider.ts` — 13 tool registrations (8 classic + 2 CT + 3 BB), dynamic tool filtering (5 phase transitions), `prepareInvocation` with `confirmationMessages` for write tool (`enrich_view`).
-- `src/extension.ts` — chat participant registration, `isAiEnabled()`, participant handler.
+| Phase | Tools visible | Transition |
+|-------|---------------|------------|
+| **discover** | All 8 classic tools + `start_exploration` | `start_exploration` called → `active` |
+| **active** | Engine tools only (`start_exploration`, `submit_findings`) | Engine `status === 'complete'` → `done` |
+| **done** | Classic tools restored (minus `submit_findings`) | End of request |
 
-**13 registered tools:**
+**10 registered tools:**
 
 | Tool | Tag | Kind | Purpose |
 |------|-----|------|---------|
-| `lineage_get_context` | lineage | read | Active project, filter, stats — call first. Inline catalog when `shouldInline()` passes |
-| `lineage_search_objects` | lineage | read | Name/body search, returns IDs for other tools |
+| `lineage_get_context` | lineage | read | Active project, filter, stats — call first |
+| `lineage_search_objects` | lineage | read | Name/column substring or regex search |
 | `lineage_get_object_detail` | lineage | read | Full metadata + DDL body for one object |
-| `lineage_run_bfs_trace` | lineage | read | BFS lineage trace. Level mode (depth) or path mode (start→end via `target` param) |
-| `lineage_run_analysis` | lineage | read | Structural analysis: hubs/islands/orphans/longest-path/cycles |
+| `lineage_run_bfs_trace` | lineage | read | BFS lineage trace. Level mode (depth) or path mode (start→end via `target`) |
+| `lineage_run_analysis` | lineage | read | Structural analysis: hubs / islands / orphans / longest-path / cycles / external-refs |
 | `lineage_search_ddl` | lineage | read | Regex search across SP/view/function DDL bodies |
-| `lineage_get_ddl_batch` | lineage | read | Batch DDL retrieval for multiple objects by ID array |
-| `lineage_enrich_view` | lineage | write | Create named AI bookmark with annotations |
-| `lineage_start_column_trace` | lineage, lineage-ct | read | Init hop-by-hop CT state machine trace |
-| `lineage_submit_hop_analysis` | lineage, lineage-ct | read | Submit verdicts, get next hop or final result |
-| `lineage_start_exploration` | lineage, lineage-bb | read | Init BB state machine: free-form exploration with two-tier memory |
-| `lineage_expand_frontier` | lineage, lineage-bb | read | Batch BFS expansion from boundary nodes (extra_hops param, default 2, max 5) |
-| `lineage_submit_findings` | lineage, lineage-bb | read | Submit findings + summary, get next hop or final result |
+| `lineage_get_ddl_batch` | lineage | read | Batch DDL retrieval for up to 20 IDs |
+| `lineage_enrich_view` | lineage | write | Create annotated AI graph view from completed engine result |
+| `lineage_start_exploration` | lineage, lineage-engine | read | Boot the NavigationEngine; `targetColumns` param → column_trace mode |
+| `lineage_submit_findings` | lineage, lineage-engine | read | Per-hop: narrative + detail + verdict + route requests |
 
-**Two guards** (`src/ai/tokenBudget.ts`):
-1. `ai.inlineTokenBudget` (VS Code setting, default 10K tokens) — catalog/detail delivery gate: inline vs on_demand hint. CT/BB always use state machine regardless.
-2. `ai.maxRounds` (VS Code setting, default 50) — hard stop on tool rounds
+**Guard test:** `tests/unit/ai-tool-registration.test.ts` parses the manifest and the provider source to assert registration count matches declaration count — prevents the class of regression where a tool is declared but never wired.
 
-**Zero-truncation guarantee:** No tool response is ever truncated, capped, or sliced. Fits budget → full data inline. Exceeds budget → state machine or on_demand hint. No per-tool caps exist.
+**Key files:**
+- `src/ai/smBase.ts` — `NavigationEngine` (unified state machine) + `IHopStateMachine` interface. `bfsFromNode` from `graphology-traversal` for scope discovery. Priority agenda (3=origin, 2=AI-requested, 0=BFS-seeded).
+- `src/ai/smTypes.ts` — concrete types: `HopContext`, `HopSubmission`, `RouteRequest`, `SubmitResult`, `SmResult`, `HopLogEntry`.
+- `src/ai/smGuards.ts` — pure graph primitives: `wouldOrphanNotedNode`, `countCascadeIfPruned`, `bfsReachable`, `findBridgeNodes`, `bfsDepthMap`, `validateNodeIds`.
+- `src/ai/memoryManager.ts` — two-tier memory (Blackboard short memory + Detail Archive long memory, MemGPT pattern).
+- `src/ai/tools.ts` — 10 pure tool functions, `shouldSmInline()` delivery gate, Zero-truncation guarantee. Zero VS Code imports.
+- `src/ai/aiPresenter.ts` — compact LLM presentation layer. Owns `strip()`, `edgeApiType()`, `presentNode/Column/Schema/Neighbor/Filter()`.
+- `src/ai/prompts.ts` — system prompt base, trace/search prompts, action-required gate.
+- `src/ai/smPrompts.ts` — `buildNavigationPrompt(mode)`, `buildSynthesisPrompt()`.
+- `src/ai/toolProvider.ts` — 10 tool registrations, `prepareInvocation` hooks.
+- `src/ai/lineageParticipant.ts` — chat request handler, 3-phase tool filtering, sliding-memory context wipe after successful hops, Phase 3 evidence injection.
+- `src/ai/session.ts` — `AiSession` singleton: model, graph, column store, NavigationEngine instance, memory, project context.
+- `src/extension.ts` — chat participant registration, `isAiEnabled()`.
 
-**Conversation memory:** `context.history` is read each turn and prepended to `messages[]` so the model remembers earlier questions in the same chat session. Under context pressure (>75% of `maxInputTokens`), oldest turns are evicted (drop+log, not summarize).
+**Guards:**
+1. `ai.maxRounds` (VS Code setting, default 50) — hard tool-round cap.
+2. `ai.inlineNodeCap` (10) AND `ai.inlineTokenBudget` (10K tokens) — `shouldSmInline()` delivery gate. Small scopes → inline (AI gets all DDL). Larger → hop-by-hop with sliding memory.
+3. Cascade-prune guards (`src/ai/smGuards.ts`): `wouldOrphanNotedNode` (rejects prune if it would disconnect a noted node) + 50% cascade threshold (rejects prunes that wipe most of the agenda). Origin exempt.
+4. Selection-Inference Validation: rejects route requests for unknown nodeIds / columns. AI self-corrects.
+5. `action_required` gate — blocks non-search tools until the AI produces a prose response. Search tools bypass.
+6. Context-pressure eviction: history > 75% `maxInputTokens` → oldest turns dropped with an eviction stub. Never summarized.
 
-**`ai.enabled` guard:** `isAiEnabled()` checked at both the chat participant level (returns disabled message) and in every tool `invoke()` handler (returns `{ error: 'disabled' }`).
+**Zero-truncation guarantee:** DDL is never truncated, capped, or sliced. The only boundary is the `shouldSmInline()` delivery mode choice.
 
-**Column-trace state machine** (`src/ai/columnTraceState.ts`):
-- Lifecycle: `init()` → `getHopContext()` ↔ `submitVerdicts()` → (frontier empty → full result)
-- Verdict actions: `trace` (follow + track columns), `pass` (skip node, queue children), `prune` (drop node + subtree), `revisit` (re-expand previously pruned node, max 3/trace)
-- Graph traversal uses NeighborIndex (O(1) neighbor lookup), NOT graphology — deliberate separation from classic BFS
-- Column tracking: `activeColumns` per frontier entry, `columnsOut` for rename tracking (INSERT→SELECT mapping)
-- Boundary detection: source/sink/external/cycle — deterministic, no AI input
-- Column validation: tables only (case-insensitive, max 2 rejections/hop). SPs/views: accept on trust
+**Verdict semantics (unified across modes):**
+- `relevant` — has logic/transforms → full findings stored, kept in result.
+- `pass` — pure passthrough (identity view, SELECT *) → full findings stored as context, no badge.
+- `irrelevant` — utility only (logging) → NOT stored, cascade-pruned from graph via `bfsReachable` on `removedSet`. Orphan + 50%-cascade guards reject unsafe prunes.
 
-**Blackboard state machine** (`src/ai/blackboardState.ts`):
-- Lifecycle: `init(origin, question)` → BFS scope → `getHopContext()` ↔ `submitFindings()` → (agenda empty → full result)
-- Two-tier memory (MemGPT pattern): `findings` (long-term, full detail per node) + `summary` (working memory, all summaries shown every hop)
-- Priority agenda: question-boosted nodes (priority 2) > neighbors of noted (1) > BFS default (0)
-- Self-Ask: AI generates sub-questions that boost target node priority and persist in `pending_questions`
-- Goal anchor: `working_memory.user_question` repeats the original question every hop to prevent drift
-- Hard limits: findings 5000 chars, summary 500 chars — rejected (not truncated)
+**Bridge-node reconnection:** `getResult()` calls `findBridgeNodes` to reconnect orphan noted nodes through intermediate paths. Diamond-safe. `bfsDepthMap` assigns data-flow depth → auto-generates `suggested_sections` (Origin, Stage 1, …) for `enrich_view`.
 
-**Goal anchoring** (anti-drift):
-- CT: `goal: { columns, direction, origin }` repeated in every hop context — prevents losing track of original columns after renames
-- BB: `working_memory.user_question` repeated every hop — prevents losing sight of original investigation question
+**Sliding memory:** After each successful `submit_findings`, message history is wiped to `systemPrompt + userPrompt + lastAssistantPart + lastToolResult`. On tool error (route_validation_failed, orphan_rejection, cascade_too_wide, invalid_status, focus_mismatch) history is preserved so the AI sees its own mistake.
 
-**AI tests (3 tiers, 432 tests):** run via `npm run test:internal` (gitignored, local-only)
-- `test-internal/ai-tools.test.ts` (255) — pure tool functions: getContext, search, detail, BFS (level + path), analysis, DDL, validate, autoFix
-- `test-internal/column-trace-state.test.ts` (113) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
-- `test-internal/blackboard-state.test.ts` (64) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
-
-- **AI Suite**: `npm run test:ai:quick` (PR gate) and `npm run test:ai:detail` (nightly). Uses `@vscode/test-electron` and real Copilot Chat tools.
-- **Internal Eval-Loop**: Replaced by the `vscode-test` suite. Semantic testing is now programmatic and resides in `src/test/suite/ai-integration.test.ts`.
-- **UAT Scenarios**: Transitioning to programmatic tests. Baseline reports are generated via `npm run test:baseline`.
+**AI tests:** run via `npm run test:unit:ai`
+- `tests/unit/ai-tools.test.ts` — pure tool functions
+- `tests/unit/navigation-engine.test.ts` (15 tests) — engine lifecycle, memory, Selection-Inference, unification modes
+- `tests/unit/navigation-engine-cascade.test.ts` (11 tests) — cascade-prune contract
+- `tests/unit/ai-tool-registration.test.ts` — manifest ↔ registration guard (runs under `npm test`)
 

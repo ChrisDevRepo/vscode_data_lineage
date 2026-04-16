@@ -4,9 +4,9 @@
 
 VS Code extension for visualizing SQL database object dependencies from .dacpac files or database import (via MSSQL extension API).
 
-## Stabilization Phase (Active)
+## Stabilization Phase (2026-04 → 2026-04-17, ended)
 
-Scope: bug fixes, logging/notification improvements, GUI polish, code cleanup, test coverage.
+Post-refactor hardening of the unified NavigationEngine architecture is complete (see CHANGELOG `[Unreleased]`). The stabilization discipline below is retained as the default going forward.
 
 **Requires explicit user approval:**
 - New features or new tools
@@ -72,9 +72,9 @@ All outputChannel calls use `logInfo/Debug/Warn/Error/Trace` from `src/utils/log
 
 ## AI Chat Participant (`@lineage`)
 
-Code: `src/ai/` — lineageParticipant.ts (chat handler), toolProvider.ts (13 tools), session.ts (state singleton), memoryManager.ts (two-tier memory), smBase.ts (SM base class), viewSynthesisService.ts (enrich_view synthesis).
+Code: `src/ai/` — `lineageParticipant.ts` (chat handler), `toolProvider.ts` (10 tools: 8 classic + start_exploration + submit_findings), `session.ts` (state singleton), `memoryManager.ts` (two-tier memory), `smBase.ts` (`NavigationEngine` — unified state machine), `smTypes.ts` (concrete contract types), `smGuards.ts` (cascade-prune + bridge primitives), `viewSynthesisService.ts` (enrich_view synthesis).
 
-Rules: `.claude/rules/ai.md`. Full internals: `docs-internal/AI_IMPLEMENTATION.md`.
+Rules: `.claude/rules/ai.md`. Full internals: `docs/AI_ARCHITECTURE.md`.
 
 ## Testing Framework (Phase 1 — 2026-04-16)
 

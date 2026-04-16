@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+Post-refactor hardening sprint closing the gaps from the unified NavigationEngine architecture (bf51fa9). Stabilization phase declared ended 2026-04-17.
+
+### Added
+- **Cascade-prune for `irrelevant` verdict** — `NavigationEngine.submitFindings` now honors `verdict: 'irrelevant'` with orphan-rejection + 50%-cascade guards. Prunes utility/logging nodes from the exploration agenda so the AI focuses on business-logic paths. Previously the verdict field was ignored.
+- **4 restored AI tools** — `lineage_get_object_detail`, `lineage_run_analysis`, `lineage_search_ddl`, `lineage_get_ddl_batch` were declared in `package.json` but never wired. Now registered via `vscode.lm.registerTool()` so the AI can actually invoke them.
+- **Guard tests** — `tests/unit/ai-tool-registration.test.ts` locks manifest ↔ registration in sync. `tests/unit/navigation-engine-cascade.test.ts` exercises the cascade-prune contract end-to-end.
+- **Concrete engine contract types** — New `src/ai/smTypes.ts` (`HopContext`, `HopSubmission`, `SmResult`, `RouteRequest`, `SubmitResult`, `HopLogEntry`) replaces `any` returns on `IHopStateMachine`. `mode` is now `public readonly` on the interface.
+
+### Fixed
+- **`toggleOverviewMode` command is no longer a no-op** — previously dispatched to unregistered `dataLineageViz.internal.toggleOverview`; now posts `toggle-overview` directly to the active panel.
+- **vitest hook glob + relative paths** — `vitest.config.ts` pointed at the old `test/hooks/**` directory; 5 hook test files used 2-level-up relative imports after being moved 3 levels deep. `npm run test:hooks` now runs 101/101.
+- **Silent catches in `lineageParticipant.ts` and `messageHandlers.ts`** — four `catch {}` / `.catch(() => {})` blocks replaced with debug log lines per CLAUDE.md "No Silent Failures" rule.
+- **Panel-scoped stats/platform caches** — `statsConnectionUri`, `allObjectsCache`, `platformInfoCache` were module-scope and leaked across panels. Moved into the `createMessageHandlers` factory closure; cleaned up on panel dispose.
+
+### Changed
+- **Hand-rolled BFS replaced with `bfsFromNode`** — `NavigationEngine.computeBfsScope` now uses `graphology-traversal` per the project rule in `.claude/rules/vscode.md`.
+- **Dead demo-reload branch removed** — `openPanel` no longer sends an orphan `auto-visualize-start` message on existing panels.
+- **Dead code swept** — unused imports in `smBase.ts`; unused methods in `memoryManager.ts` (`setPendingQuestions`, `getSlot`); legacy `storeCtResult` in `session.ts`; empty `deactivatePanels` shim.
+- **Docs aligned** — `.claude/rules/ai.md`, `.claude/rules/architecture.md`, CLAUDE.md rewritten for the unified NavigationEngine + 10-tool set. Stale BB/CT/Dep / 13-tool / Type 1-2-3 terminology removed.
+
 ## [0.9.9] - 2026-04-16
 
 ### Improved
