@@ -77,12 +77,11 @@ export class AiSession {
    * Maps NavigationEngine output to the ResultGraph format used by ViewSynthesisService.
    */
   public storeBbResult(fullResult: any): void {
-    // Determine source role based on engine mode
     const sourceMode = (this.stateMachine as any)?.mode ?? 'blackboard';
     const verdicts: Record<string, NodeRole> = {};
     
     for (const n of fullResult.fullNodes) {
-      verdicts[n.id] = (n.id === fullResult.originNodeId) ? 'origin' : 'noted';
+      verdicts[n.id] = (n.role as NodeRole) || 'noted';
     }
 
     this.resultGraph = {
@@ -101,7 +100,7 @@ export class AiSession {
       suggested_notes: (fullResult.detail_slots || [])
         .filter((s: any) => s.note_caption)
         .map((s: any) => ({ node_id: s.nodeId, text: s.note_caption })),
-      // NavigationEngine results are assemble-ready for Phase 3
+      suggested_sections: fullResult.suggested_sections,
     };
   }
 

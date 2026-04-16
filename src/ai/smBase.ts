@@ -28,7 +28,7 @@ export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 export interface AgendaEntry {
   nodeId: string;
   question: string;         // grounded reason for visiting
-  priority: number;         // 0=BFS, 2=AI-requested
+  priority: number;         // 0=BFS, 2=AI-requested, 3=Origin
   depth: number;
   activeColumns?: string[]; // for CT mode
 }
@@ -64,6 +64,7 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly store: ColumnStore | null;
   protected readonly log: LogFn;
   protected readonly nodeMap: Map<string, LineageNode>;
+  protected readonly edgeTypeMap: Map<string, string>;
   protected readonly memory: AiMemoryManager;
   protected readonly mode: SmMode;
 
@@ -96,6 +97,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.mode = mode;
     this.store = store ?? null;
     this.nodeMap = buildNodeMap(model);
+    this.edgeTypeMap = buildEdgeTypeMap(model);
     this.memory = config.memory ?? new AiMemoryManager();
   }
 
@@ -126,29 +128,47 @@ export class NavigationEngine implements IHopStateMachine {
     this.originNodeId = originNode.id;
     this.scopeNodeIds = this.computeBfsScope(originNode.id, params.direction || 'bidirectional', params.depth || 5);
     
-    if (params.initial_summary) this.memory.updateSynthesis(`Initial: ${params.initial_summary}`);
+    if (params.initial_summary) {
+      this.memory.updateSynthesis(`Background: ${params.initial_summary}`);
+    }
+
+    // MANDATORY: Push origin as the first task
+    this.agenda.push({ 
+      nodeId: originNode.id, 
+      question: `Root Question: ${params.question}`, 
+      priority: 3, 
+      depth: 0, 
+      activeColumns: params.targetColumns 
+    });
+    this.agendaIds.add(originNode.id);
 
     this.seedAgenda(originNode.id, params.direction || 'bidirectional', params.targetColumns);
-    this.visited.add(originNode.id);
     this._status = 'initialized';
 
     return {
       ok: true,
       scopeSize: this.scopeNodeIds.size,
       agendaSize: this.agenda.length,
-      originNode: buildHopFocusNode(originNode, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl'),
     };
   }
 
   getHopContext(): any {
     let entry: AgendaEntry | undefined;
     while (this.agenda.length > 0) {
-      const candidate = this.agenda.shift()!;
+      const nextIdx = this.agenda.reduce((best, curr, i, arr) => curr.priority > arr[best].priority ? i : best, 0);
+      const candidate = this.agenda.splice(nextIdx, 1)[0];
       this.agendaIds.delete(candidate.nodeId);
-      if (!this.visited.has(candidate.nodeId)) { entry = candidate; break; }
+
+      if (!this.visited.has(candidate.nodeId)) {
+        entry = candidate;
+        break;
+      }
     }
 
-    if (!entry) { this._status = 'complete'; return { done: true }; }
+    if (!entry) {
+      this._status = 'complete';
+      return { done: true };
+    }
 
     this.visited.add(entry.nodeId);
     this.hopCount++;
@@ -157,9 +177,8 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(entry.nodeId)!;
     const focusNode = buildHopFocusNode(node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
     
-    // Calculate path for grounding
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
-    const navPath = path ? path.map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
+    const navPath = path ? (path as string[]).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
     const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size) as NavigationWorkingMemory;
     workingMemory.topological_map = {
@@ -180,13 +199,20 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   submitFindings(params: any): any {
-    if (params.focusNodeId !== this.currentFocusNodeId) return { error: 'focus_mismatch' };
+    if (this._status !== 'awaiting_findings') return { error: 'invalid_status', current_status: this._status };
+    
+    // Normalize and check focus
+    const focusId = params.focus_node_id?.toLowerCase();
+    if (focusId !== this.currentFocusNodeId) {
+      return { error: 'focus_mismatch', expected: this.currentFocusNodeId, got: focusId };
+    }
 
-    // Selection Guard: Validate route requests against metadata
+    // Selection Guard
     if (params.route_requests) {
       const invalidRoutes = [];
       for (const req of params.route_requests) {
-        const nNode = this.nodeMap.get(req.nodeId.toLowerCase());
+        const nid = req.nodeId?.toLowerCase();
+        const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nNode) {
           invalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
           continue;
@@ -199,22 +225,23 @@ export class NavigationEngine implements IHopStateMachine {
           }
         }
       }
-      if (invalidRoutes.length > 0) {
-        return { error: 'route_validation_failed', detail: invalidRoutes };
-      }
+      if (invalidRoutes.length > 0) return { error: 'route_validation_failed', detail: invalidRoutes };
     }
 
-    this.memory.updateSynthesis(params.narrative_update);
-    this.memory.storeDetail(this.nodeMap.get(params.focusNodeId)!, params.detail_analysis, params.summary, {
+    const synthesisErr = this.memory.updateSynthesis(params.narrative_update);
+    if (synthesisErr) return { error: synthesisErr };
+
+    this.memory.storeDetail(this.nodeMap.get(this.currentFocusNodeId!)!, params.detail_analysis, params.summary, {
       badge_label: params.badge_label,
       note_caption: params.note_caption
     }, this._inlineMode);
 
     if (params.route_requests) {
       for (const req of params.route_requests) {
-        if (!this.visited.has(req.nodeId) && !this.agendaIds.has(req.nodeId)) {
-          this.agenda.push({ nodeId: req.nodeId, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
-          this.agendaIds.add(req.nodeId);
+        const nid = req.nodeId.toLowerCase();
+        if (!this.visited.has(nid) && !this.agendaIds.has(nid)) {
+          this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
+          this.agendaIds.add(nid);
         }
       }
     }
@@ -241,7 +268,7 @@ export class NavigationEngine implements IHopStateMachine {
       const { id, depth } = queue[idx++];
       if (depth >= maxDepth) continue;
       const neighbors = direction === 'upstream' ? this.graph.inNeighbors(id) : direction === 'downstream' ? this.graph.outNeighbors(id) : this.graph.neighbors(id);
-      for (const nid of neighbors) {
+      for (const nid of neighbors as string[]) {
         if (!seen.has(nid)) { seen.add(nid); queue.push({ id: nid, depth: depth + 1 }); }
       }
     }
@@ -250,8 +277,8 @@ export class NavigationEngine implements IHopStateMachine {
 
   private seedAgenda(originId: string, direction: string, targetCols?: string[]) {
     const neighbors = direction === 'upstream' ? this.graph.inNeighbors(originId) : direction === 'downstream' ? this.graph.outNeighbors(originId) : this.graph.neighbors(originId);
-    for (const nid of neighbors) {
-      if (this.scopeNodeIds.has(nid)) {
+    for (const nid of neighbors as string[]) {
+      if (this.scopeNodeIds.has(nid) && !this.agendaIds.has(nid)) {
         this.agenda.push({ nodeId: nid, question: `Analyze relationship to ${originId}`, priority: 0, depth: 1, activeColumns: targetCols });
         this.agendaIds.add(nid);
       }
@@ -259,31 +286,59 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   private buildNeighborList(focusId: string): HopNeighbor[] {
-    const ids = Array.from(new Set([...this.graph.inNeighbors(focusId), ...this.graph.outNeighbors(focusId)])) as string[];
+    const ids = Array.from(new Set([...(this.graph.inNeighbors(focusId) as string[]), ...(this.graph.outNeighbors(focusId) as string[])])) as string[];
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
+      const boundary = this.visited.has(nid) ? 'cycle' : 'none';
       const cols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name);
       return {
         id: nid, s: n.schema, n: n.name, t: n.type,
-        edge_direction: (this.graph.inNeighbors(focusId) as string[]).includes(nid) ? 'upstream' : 'downstream' as any,
-        edge_type: 'read', boundary: 'none', cols,
+        edge_direction: (this.graph.inNeighbors(focusId) as string[]).includes(nid) ? 'upstream' : 'downstream',
+        edge_type: 'read', boundary, cols,
       };
     });
   }
 
   public getResult(): any {
     const mem = this.memory.getResult();
-    const anchoredIds = new Set([...mem.detail_slots.map(s => s.nodeId), this.originNodeId!]);
-    const edges: any[] = [];
-    for (const e of this.model.edges) if (anchoredIds.has(e.source) && anchoredIds.has(e.target)) edges.push([e.source, e.target, edgeApiType(e.type)]);
+    const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
+    
+    // Core edges between all nodes in the scope
+    const edges: Array<[string, string, string]> = [];
+    for (const e of this.model.edges) {
+      if (this.scopeNodeIds.has(e.source) && this.scopeNodeIds.has(e.target)) {
+        edges.push([e.source, e.target, edgeApiType(e.type)]);
+      }
+    }
+
+    // Bridge Node Injection: Reconnect orphaned noted nodes
+    const bridge = findBridgeNodes(this.graph, notedIds, edges, this.edgeTypeMap);
+    const finalEdges = [...edges, ...bridge.bridgeEdges];
+    const finalNodeIds = new Set([...Array.from(notedIds), ...bridge.bridgeNodes.map(n => n.id), this.originNodeId!]);
+
+    // Data-flow sorting for sections
+    const depthMap = bfsDepthMap(finalEdges, this.originNodeId!);
+    const sortedIds = Array.from(finalNodeIds).sort((a, b) => (depthMap.get(a) ?? 999) - (depthMap.get(b) ?? 999));
+
+    // Suggested sections based on depth
+    const sections: Array<{ label: string; node_ids: string[] }> = [];
+    const maxDepth = Math.max(...Array.from(depthMap.values()), 0);
+    for (let i = 0; i <= maxDepth; i++) {
+      const idsAtDepth = sortedIds.filter(id => depthMap.get(id) === i);
+      if (idsAtDepth.length > 0) {
+        sections.push({ label: i === 0 ? 'Origin' : `Stage ${i}`, node_ids: idsAtDepth });
+      }
+    }
+
     return {
       status: 'complete',
       originNodeId: this.originNodeId!,
-      fullNodes: Array.from(anchoredIds).map(id => {
+      fullNodes: Array.from(finalNodeIds).map(id => {
         const n = this.nodeMap.get(id)!;
-        return { id: n.id, s: n.schema, n: n.name, t: n.type };
+        return { id: n.id, s: n.schema, n: n.name, t: n.type, role: id === this.originNodeId ? 'origin' : notedIds.has(id) ? 'noted' : 'bridge' };
       }),
-      edges,
+      edges: finalEdges,
+      suggested_sections: sections,
       short_memory: mem.short_memory,
       detail_slots: mem.detail_slots,
     };

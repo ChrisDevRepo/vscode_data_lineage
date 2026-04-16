@@ -25,7 +25,6 @@ function buildBareGraph(model: DatabaseModel): Graph {
 
 const logs: string[] = [];
 const log = (level: string, msg: string) => { logs.push(`[${level}] ${msg}`); };
-const clearLogs = () => { logs.length = 0; };
 
 // ─── Synthetic Model ────────────────────────────────────────────────────────
 
@@ -83,20 +82,20 @@ async function testLifecycle() {
 
   assertEq(engine.status, 'created', 'Initial status');
   
-  const init = engine.init({ question: 'Test', origin: '[dbo].[sptransform]' });
-  assert('ok' in init, 'Init ok');
+  engine.init({ question: 'Test', origin: '[dbo].[sptransform]' });
   assertEq(engine.status, 'initialized', 'Status after init');
 
   const hop = engine.getHopContext();
   assertEq(engine.status, 'awaiting_findings', 'Status in hop');
 
-  engine.submitFindings({
-    focusNodeId: (hop as any).focus_node.id,
+  const result = engine.submitFindings({
+    focus_node_id: hop.focus_node.id,
     narrative_update: 'Start.',
     detail_analysis: 'Detail.',
     summary: 'Sum.',
     verdict: 'relevant'
   });
+  assert('ok' in result, 'Submission success');
   assertEq(engine.status, 'exploring', 'Status after submission');
 }
 
@@ -108,10 +107,10 @@ async function testIncrementalBlackboard() {
   const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
   engine.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
-  // Hop 1
+  // Hop 1 (Origin)
   const hop1 = engine.getHopContext() as any;
   engine.submitFindings({
-    focusNodeId: hop1.focus_node.id,
+    focus_node_id: hop1.focus_node.id,
     narrative_update: 'Insight Alpha.',
     detail_analysis: 'Deep evidence.',
     summary: 'Sum 1',
@@ -123,7 +122,7 @@ async function testIncrementalBlackboard() {
   assertEq(hop2.working_memory.blackboard, 'Insight Alpha.', 'Hop 2 receives previous Blackboard');
   
   engine.submitFindings({
-    focusNodeId: hop2.focus_node.id,
+    focus_node_id: hop2.focus_node.id,
     narrative_update: 'Insight Alpha + Beta.',
     detail_analysis: 'Deep evidence.',
     summary: 'Sum 2',
@@ -147,7 +146,7 @@ async function testSelectionInferenceValidation() {
   
   // Submit with hallucinated column in neighbor
   const badResult = engine.submitFindings({
-    focusNodeId: hop.focus_node.id,
+    focus_node_id: hop.focus_node.id,
     narrative_update: 'Update.',
     detail_analysis: 'Detail.',
     summary: 'Sum.',
@@ -164,7 +163,7 @@ async function testSelectionInferenceValidation() {
 
   // Submit with valid column
   const goodResult = engine.submitFindings({
-    focusNodeId: hop.focus_node.id,
+    focus_node_id: hop.focus_node.id,
     narrative_update: 'Update.',
     detail_analysis: 'Detail.',
     summary: 'Sum.',
@@ -184,7 +183,7 @@ async function testTopologicalMap() {
   console.log('\n── Topological Map ──');
   const model = buildSyntheticModel();
   const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
-  // Use vwClean — has upstream neighbors (staging.RawData, spTransform)
+  // Use vwClean — has neighbors
   engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
 
   const hop1 = engine.getHopContext() as any;

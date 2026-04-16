@@ -261,7 +261,10 @@ export class LineageParticipant {
           if (res) {
             for (const p of res.content) {
               if (p instanceof vscode.LanguageModelTextPart) {
-                try { if (JSON.parse(p.value).action_required === 'analyze_and_respond') actionRequiredPending = true; } catch {}
+                try { 
+                  const data = JSON.parse(p.value);
+                  if (data.action_required === 'analyze_and_respond') actionRequiredPending = true; 
+                } catch {}
               }
             }
           }
@@ -291,7 +294,7 @@ export class LineageParticipant {
             // Deliver the Detail Archive evidence for Phase 3
             const archive = sess.memory.getResult();
             const evidenceHeader = '### DETAIL ARCHIVE (TECHNICAL EVIDENCE)\n' +
-              'The following evidence was captured during the investigation. assembly this into your final report.\n\n';
+              'The following evidence was captured during the investigation. Assembly this into your final report.\n\n';
             
             const evidenceItems = archive.detail_slots.map(s => 
               `#### ${s.nodeId}\n- **Summary**: ${s.summary}\n- **Technical Analysis**:\n${s.analysis}\n`
@@ -308,13 +311,22 @@ export class LineageParticipant {
           }
         }
 
-        // Sliding memory: wipe history after every successful finding submission
-        if (toolCalls.some(tc => tc.name === 'lineage_submit_findings') && activePhase === 'active' && !(sess.stateMachine as any).inlineMode) {
-          const lastAssistant = messages[messages.length - 2];
-          const lastResult = messages[messages.length - 1];
-          messages.length = 0;
-          messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt), lastAssistant, lastResult);
-          this.logger.debug(`[Hop] Sliding memory wipe`);
+        // Sliding memory: wipe history after every SUCCESSFUL finding submission
+        const submitPart = toolCalls.find(tc => tc.name === 'lineage_submit_findings');
+        if (submitPart && activePhase === 'active' && !(sess.stateMachine as any).inlineMode) {
+          const result = accumulatedToolResults[submitPart.callId];
+          const resultValue = (result?.content[0] as any)?.value;
+          const isError = resultValue && JSON.parse(resultValue).error;
+
+          if (!isError) {
+            const lastAssistant = messages[messages.length - 2];
+            const lastResult = messages[messages.length - 1];
+            messages.length = 0;
+            messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt), lastAssistant, lastResult);
+            this.logger.debug(`[Hop] Sliding memory wipe`);
+          } else {
+            this.logger.warn(`[Hop] Tool error detected: ${JSON.parse(resultValue).error} — history preserved`);
+          }
         }
       }
     };
@@ -324,7 +336,8 @@ export class LineageParticipant {
       const totalTokenEst = lastInputTokenEstimate + totalOutputTokens + Math.round(totalToolResultChars / 4);
       this.logger.info(`Summary — rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst}`);
       
-      if (this.getActivePanel() && (sess.stateMachine?.status === 'complete' || toolCallRounds.some(r => r.toolCalls.some((tc: any) => tc.name === 'lineage_run_bfs_trace')))) {
+      const smComplete = sess.stateMachine?.status === 'complete';
+      if (this.getActivePanel() && smComplete) {
         stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [request.prompt] });
       }
     } catch (err) {

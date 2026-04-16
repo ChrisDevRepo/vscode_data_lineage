@@ -2,7 +2,7 @@
  * Shared State Machine Guards — graph integrity functions for CT and BB.
  *
  * Pure graph algorithms: accept graph + sets as parameters, no SM-specific coupling.
- * Used by both columnTraceState and blackboardState for:
+ * Used by NavigationEngine for:
  * - Prune validation (orphan guard, cascade guard)
  * - Node reference validation (reject hallucinated names)
  * - Bridge node injection (reconnect orphan noted nodes in result graph)
@@ -206,7 +206,7 @@ export function findBridgeNodes(
 /**
  * Directed BFS from originNodeId over a result-graph edge list.
  * Returns the minimum distance (in hops) from origin to each reachable node.
- * Used by blackboardState.ts getResult() to sort badge groups in data-flow order.
+ * Used by NavigationEngine.getResult() to sort badge groups in data-flow order.
  *
  * @param edges  Flat edge list from ResultGraph — [source, target, type].
  * @param originNodeId  The root node; gets depth 0.
