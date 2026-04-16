@@ -13,3 +13,12 @@ Largest changes: extension.ts (3477→469), panelProvider.ts (0→929), toolProv
 6 deleted files: 5 hook test files + vitest.config.ts
 
 Next action: Begin PHASE-1, Batch 1 — Core decomposition (extension.ts, panelProvider.ts, commands.ts)
+
+## CHECKPOINT — Batch 1 Inventory Complete
+OLD: 3477 lines, 130 features inventoried (F-001 to F-130)
+NEW: 9 files totaling ~2939 lines + 284 lines dead code
+Mapping: 89 IDENTICAL, 40 REFACTORED, 1 CHANGED (F-052), 0 MISSING
+Net-new: 23 features (N-001 to N-023)
+Dead code: extension.ts:186-469 (registerChatParticipant, never called)
+Agent runs: 2 (OLD inventory + NEW inventory)
+Next: Batch 2 — AI modules (already covered in Batch 1 NEW inventory for extracted modules; focus on CHANGED files: smBase, blackboardState, columnTraceState, smPrompts, prompts, tools)
