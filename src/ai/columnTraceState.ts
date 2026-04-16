@@ -188,7 +188,16 @@ export class ColumnTraceState extends HopStateMachine {
 
     const { targetColumns: rawCols, origin, direction = 'up', initial_summary } = params;
 
-    // ... resolution logic ...
+    // Validate direction
+    if (!['up', 'down', 'both'].includes(direction)) {
+      this._status = 'error';
+      return { error: 'invalid_direction', hint: `Direction must be 'up', 'down', or 'both'. Got: '${direction}'.` };
+    }
+
+    // Assign instance fields from params
+    this.direction = direction;
+    this.targetColumns = [...new Set((rawCols ?? []).map((c: string) => c.trim()).filter(Boolean))];
+
     // Resolve origin
     let originNode: LineageNode | undefined;
     if (origin) {
