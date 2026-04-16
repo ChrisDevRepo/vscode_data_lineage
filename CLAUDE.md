@@ -21,10 +21,11 @@ Scope: bug fixes, logging/notification improvements, GUI polish, code cleanup, t
 **Parser files:** `assets/defaultParseRules.yaml`, `sqlBodyParser.ts`, `dacpacExtractor.ts` — use `/parser-change` skill.
 
 **AI prompt surfaces** (one change per iteration to isolate regressions):
-- System prompt text in `extension.ts`
+- System prompt text in `src/ai/prompts.ts` and `src/ai/smPrompts.ts`
 - Tool `modelDescription` fields in `package.json`
 - `assets/aiOutputTemplates.yaml` instruction fields
-- Slash command routing in `extension.ts`
+- Chat participant logic in `src/ai/lineageParticipant.ts`
+- Tool registrations in `src/ai/toolProvider.ts`
 
 Use `/prompt-change` skill. Results logged in `ai/prompt-changelog.md`.
 
@@ -71,7 +72,9 @@ All outputChannel calls use `logInfo/Debug/Warn/Error/Trace` from `src/utils/log
 
 ## AI Chat Participant (`@lineage`)
 
-Details: `.claude/rules/ai.md`. Canonical doc: `ai/dataflow.md`.
+Code: `src/ai/` — lineageParticipant.ts (chat handler), toolProvider.ts (13 tools), session.ts (state singleton), memoryManager.ts (two-tier memory), smBase.ts (SM base class), viewSynthesisService.ts (enrich_view synthesis).
+
+Rules: `.claude/rules/ai.md`. Full internals: `docs-internal/AI_IMPLEMENTATION.md`.
 
 ## Eval-Loop Model Policy
 
