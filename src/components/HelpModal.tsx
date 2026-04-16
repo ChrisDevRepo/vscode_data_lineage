@@ -1,3 +1,4 @@
+// MAINTENANCE: Content overlaps with docs/FEATURES.md — update both when features change
 import { memo, useState } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { CloseIcon } from './ui/CloseIcon';

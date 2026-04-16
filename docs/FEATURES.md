@@ -249,8 +249,9 @@ For broader investigations — business rules, documentation, or pattern discove
 ### Tips
 
 - **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Results depend on DDL completeness — always verify against your database.
-- **Start a new chat for each topic.** The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press `Ctrl+L` to start fresh.
-- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark. You can then explore the view interactively, trace further, or export it.
+- **Session isolation.** Starting a new chat window correctly resets the assistant's state. To start a fresh investigation without interference from previous questions, press `Ctrl+L` or open a new chat window.
+- **Overriding filters.** The assistant is aware of your active filters. If you need to analyze an object outside your current schema filter, simply ask — the AI can explicitly override your filters to find what you need.
+- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark.
 - **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"*.
 - **Be specific with object names.** Use `Sales.SalesOrderDetail` rather than *"the sales order table"*.
 - **Customize output.** Command Palette → *Create AI Output Templates* to tailor the AI response format. See [AI prompt templates guide](AI_PROMPTS.md).
@@ -303,13 +304,13 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 
 | Group | Key settings |
 |-------|-------------|
-| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
+| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `externalRefs.enabled`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
 | **Database Connection** | `dmvQueryTimeout`, `dmvQueriesFile` |
-| **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold` |
-| **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |
+| **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold`, `sampleSize`, `maxColumns`, `useApproxDistinct`, `excludeExternalTables` |
+| **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled`, `layout.edgeAnimation`, `layout.highlightAnimation`, `layout.rankSeparation`, `layout.nodeSeparation` |
 | **Trace** | `trace.defaultUpstreamLevels`, `trace.defaultDownstreamLevels` |
 | **Analysis** | `analysis.hubMinDegree`, `analysis.islandMaxSize`, `analysis.longestPathMinNodes` |
-| **AI Assistant** | `ai.enabled`, `ai.maxRounds`, `ai.outputTemplateFile` |
+| **AI Assistant** | `ai.enabled`, `ai.maxRounds`, `ai.inlineTokenBudget`, `ai.inlineNodeCap`, `ai.outputTemplateFile` |
 
 ### Customization guides
 
