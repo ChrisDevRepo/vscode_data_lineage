@@ -22,6 +22,7 @@ import {
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
 import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
 import { ColumnStore } from './columnStore';
+import { SYSTEM_SCHEMAS, XML_METHODS, CLR_TYPE_METHODS } from './shared/sqlMetadata';
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -187,44 +188,9 @@ function isSchemaQualified(name: string): boolean {
 /** Well-known system schemas whose objects must never appear as lineage nodes.
  *  msdb/tempdb/model/master are SQL Server system databases whose schemas (dbo, etc.)
  *  are commonly referenced in SPs but are never part of user lineage. */
-const SYSTEM_SCHEMAS = new Set(['sys', 'information_schema', 'msdb', 'tempdb', 'model', 'master']);
 
 /** SQL Server XML data type methods that look like schema.object to the parser.
  *  e.g. [ref].[value], [resume].[nodes] — never real catalog references. */
-const XML_METHODS = new Set(['nodes', 'value', 'exist', 'query', 'modify']);
-
-/**
- * SQL Server CLR built-in type methods that appear as the last part of a 3-part name
- * but are NOT database catalog objects. SQL Server's sys.sql_expression_dependencies
- * can report these as cross-DB refs when a table/CTE alias is mistaken for a DB name.
- *
- * Examples: EMP_cte.OrganizationNode.GetAncestor(1), jc.Resume.nodes(...)
- *
- * Sources: HierarchyID / XML / Geometry / Geography method references on MS Learn.
- */
-const CLR_TYPE_METHODS = new Set([
-  // HierarchyID
-  'getancestor', 'getdescendant', 'getlevel', 'getroot', 'getreparentedvalue',
-  'isdescendantof', 'reparent', 'tostring', 'parse',
-  // XML data type (superset of XML_METHODS — also filtered above for 2-part case)
-  'value', 'query', 'exist', 'modify', 'nodes',
-  // Geometry / Geography OGC instance methods (all prefixed 'st')
-  'starea', 'stasbinary', 'stastext', 'stboundary', 'stbuffer', 'stcentroid',
-  'stcontains', 'stconvexhull', 'stcrosses', 'stdifference', 'stdimension',
-  'stdisjoint', 'stdistance', 'stendpoint', 'stenvelope', 'stequals',
-  'stexteriorring', 'stgeometryn', 'stgeometrytype', 'stinteriorringn',
-  'stintersection', 'stintersects', 'stisclosed', 'stisempty', 'stisring',
-  'stissimple', 'stisvalid', 'stlength', 'stnumcurves', 'stnumgeometries',
-  'stnuminteriorring', 'stnumpoints', 'stoverlaps', 'stpointn', 'strelate',
-  'stsrid', 'ststartpoint', 'stsymdifference', 'sttouches', 'stunion',
-  'stwithin', 'stx', 'sty',
-  // Geometry/Geography static constructors
-  'stgeomfromtext', 'stgeomfromwkb', 'stpointfromtext', 'stpointfromwkb',
-  'stlinefromtext', 'stlinefromwkb', 'stpolyfromtext', 'stpolyfromwkb',
-  'stgeomcollfromtext', 'stgeomcollfromwkb',
-  // SQL Server-specific spatial helpers
-  'makevalid', 'reduce', 'bufferwithtolerance',
-]);
 
 /** True when the schema prefix of a schema-qualified name is a system schema. */
 function isSystemRef(name: string): boolean {

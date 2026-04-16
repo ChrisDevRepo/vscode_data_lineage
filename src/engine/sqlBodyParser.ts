@@ -1,6 +1,7 @@
 // Regex-based T-SQL dependency extraction; rules loaded from YAML at runtime.
 
 import { splitSqlName } from '../utils/sql';
+import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
 
 export interface ParsedDependencies {
   sources: string[];
@@ -360,41 +361,6 @@ export function parseSqlBody(sql: string): ParsedDependencies {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const MAX_MATCHES_PER_RULE = 10_000;
-
-/**
- * SQL Server CLR built-in type methods. When the regex parser captures a 3-part
- * name like `alias.column.Method`, it looks identical to a cross-DB reference
- * `db.schema.object`. This set contains all known built-in CLR type method names.
- *
- * Filter rule (in normalizeCrossDb): if the LAST part of a 3-part name is in this
- * set AND is NOT bracket-quoted, return null (reject as CLR method call, not a
- * catalog object). Bracket-quoted `[MethodName]` is accepted — CLR methods cannot
- * be bracket-quoted in T-SQL syntax, so bracketing is proof of intent as a catalog
- * reference.
- */
-const CLR_TYPE_METHODS = new Set([
-  // HierarchyID
-  'getancestor', 'getdescendant', 'getlevel', 'getroot', 'getreparentedvalue',
-  'isdescendantof', 'reparent', 'tostring', 'parse',
-  // XML data type
-  'value', 'query', 'exist', 'modify', 'nodes',
-  // Geometry / Geography OGC instance methods
-  'starea', 'stasbinary', 'stastext', 'stboundary', 'stbuffer', 'stcentroid',
-  'stcontains', 'stconvexhull', 'stcrosses', 'stdifference', 'stdimension',
-  'stdisjoint', 'stdistance', 'stendpoint', 'stenvelope', 'stequals',
-  'stexteriorring', 'stgeometryn', 'stgeometrytype', 'stinteriorringn',
-  'stintersection', 'stintersects', 'stisclosed', 'stisempty', 'stisring',
-  'stissimple', 'stisvalid', 'stlength', 'stnumcurves', 'stnumgeometries',
-  'stnuminteriorring', 'stnumpoints', 'stoverlaps', 'stpointn', 'strelate',
-  'stsrid', 'ststartpoint', 'stsymdifference', 'sttouches', 'stunion',
-  'stwithin', 'stx', 'sty',
-  // Geometry/Geography static constructors
-  'stgeomfromtext', 'stgeomfromwkb', 'stpointfromtext', 'stpointfromwkb',
-  'stlinefromtext', 'stlinefromwkb', 'stpolyfromtext', 'stpolyfromwkb',
-  'stgeomcollfromtext', 'stgeomcollfromwkb',
-  // SQL Server-specific spatial helpers
-  'makevalid', 'reduce', 'bufferwithtolerance',
-]);
 
 function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
   regex.lastIndex = 0;
