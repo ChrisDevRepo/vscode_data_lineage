@@ -50,10 +50,20 @@ export function registerAiTools(
     return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(JSON.stringify(data))]);
   }
 
-  function logAndReturn(toolName: string, data: object): vscode.LanguageModelToolResult {
+  function logAndReturn(toolName: string, data: object, input?: any): vscode.LanguageModelToolResult {
+    const sess = getSession();
     const json = JSON.stringify(data);
     const chars = json.length;
     const preview = trunc(sanitizeForLog(json), 300);
+    
+    // Capture in hop log for regression testing
+    sess.hopLog.push({
+      tool: toolName,
+      input: input,
+      output: data,
+      timestamp: new Date().toISOString()
+    });
+
     const isError = 'error' in data || ('success' in data && !(data as any).success);
     if (isError) logWarn(outputChannel, 'AI', `${toolName}: ${preview}`);
     logDebug(outputChannel, 'AI', `${toolName} → ${chars} chars: ${preview}`);
@@ -94,7 +104,7 @@ export function registerAiTools(
           const sess = getSession();
           const m = requireModel();
           const ctx = getContext(m, sess.filter, sess.projectName, sess.views, sess.columnStore);
-          return logAndReturn('get_context', ctx);
+          return logAndReturn('get_context', ctx, _options.input);
         } catch (err) { return toolError('get_context', err); }
       },
     }),
@@ -115,7 +125,7 @@ export function registerAiTools(
             query: string; types?: string[]; schemas?: string[];
             mode?: 'substring' | 'regex';
           };
-          return logAndReturn('search_objects', searchObjects(m, query, types as ObjectType[] | undefined, schemas, mode ?? 'substring', sess.filter));
+          return logAndReturn('search_objects', searchObjects(m, query, types as ObjectType[] | undefined, schemas, mode ?? 'substring', sess.filter), options.input);
         } catch (err) { return toolError('search_objects', err); }
       },
     }),
@@ -133,7 +143,7 @@ export function registerAiTools(
           const inputErr = validateToolInput(options.input, { id: 'string' });
           if (inputErr) return toolResult(inputErr);
           const { id } = options.input as { id: string };
-          return logAndReturn('get_object_detail', getObjectDetail(m, id, sess.columnStore));
+          return logAndReturn('get_object_detail', getObjectDetail(m, id, sess.columnStore), options.input);
         } catch (err) { return toolError('get_object_detail', err); }
       },
     }),
@@ -159,7 +169,7 @@ export function registerAiTools(
             };
           const bfsResult = runBfsTrace(m, g, id, upstream_hops ?? 3, downstream_hops ?? 3,
             types as ObjectType[] | undefined, schemas, include_ddl ?? true, sess.columnStore, target) as Record<string, unknown>;
-          return logAndReturn('run_bfs_trace', bfsResult);
+          return logAndReturn('run_bfs_trace', bfsResult, options.input);
         } catch (err) { return toolError('run_bfs_trace', err); }
       },
     }),
@@ -179,7 +189,7 @@ export function registerAiTools(
           const { type, min_degree, max_size } = options.input as {
             type: string; min_degree?: number; max_size?: number;
           };
-          return logAndReturn('run_analysis', runAnalysis(m, g, type as AnalysisType, min_degree, max_size));
+          return logAndReturn('run_analysis', runAnalysis(m, g, type as AnalysisType, min_degree, max_size), options.input);
         } catch (err) { return toolError('run_analysis', err); }
       },
     }),
@@ -197,7 +207,7 @@ export function registerAiTools(
           const inputErr = validateToolInput(options.input, { query: 'string' });
           if (inputErr) return toolResult(inputErr);
           const { query, types } = options.input as { query: string; types?: string[] };
-          return logAndReturn('search_ddl', searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, sess.columnStore));
+          return logAndReturn('search_ddl', searchDdl(m, query, types as ('view' | 'procedure' | 'function')[] | undefined, sess.columnStore), options.input);
         } catch (err) { return toolError('search_ddl', err); }
       },
     }),
@@ -232,7 +242,7 @@ export function registerAiTools(
           const service = new ViewSynthesisService(sess, getPanel);
           const result = service.synthesizeView(m, rawInput);
           
-          return logAndReturn('enrich_view', result);
+          return logAndReturn('enrich_view', result, options.input);
         } catch (err) { return toolError('enrich_view', err); }
       },
     }),
@@ -250,7 +260,7 @@ export function registerAiTools(
           const inputErr = validateToolInput(options.input, { ids: 'array' });
           if (inputErr) return toolResult(inputErr);
           const { ids } = options.input as { ids: string[] };
-          return logAndReturn('get_ddl_batch', getDdlBatch(m, ids, sess.columnStore));
+          return logAndReturn('get_ddl_batch', getDdlBatch(m, ids, sess.columnStore), options.input);
         } catch (err) { return toolError('get_ddl_batch', err); }
       },
     }),
@@ -317,20 +327,20 @@ export function registerAiTools(
           sess.stateMachine = ct;
 
           const initResult = ct.init({ targetColumns: columns, origin: input.origin, direction, depth, initial_summary: input.initial_summary });
-          if ('error' in initResult) return logAndReturn('start_column_trace', initResult);
+          if ('error' in initResult) return logAndReturn('start_column_trace', initResult, options.input);
 
           const scopeDdlChars = ct.estimateScopeDdlChars();
           const inline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
           if (inline) ct.setInlineMode(true);
           
           const hopResult = ct.getHopContext();
-          if ('error' in hopResult) return logAndReturn('start_column_trace', hopResult);
-          if ('done' in hopResult) return logAndReturn('start_column_trace', { ...initResult, status: 'complete', message: 'No neighbors to trace.' });
+          if ('error' in hopResult) return logAndReturn('start_column_trace', hopResult, options.input);
+          if ('done' in hopResult) return logAndReturn('start_column_trace', { ...initResult, status: 'complete', message: 'No neighbors to trace.' }, options.input);
 
           return logAndReturn('start_column_trace', {
             ...initResult, ...hopResult,
             ...(inline && { scope_nodes: ct.getAllScopeNodesWithDdl(), delivery: 'inline' }),
-          });
+          }, options.input);
         } catch (err) { return toolError('start_column_trace', err); }
       },
     }),
@@ -351,7 +361,7 @@ export function registerAiTools(
           const sess = getSession();
           const ct = sess.stateMachine as ColumnTraceState | null;
           if (!ct || !(ct instanceof ColumnTraceState)) {
-            return logAndReturn('submit_hop_analysis', { error: 'no_active_trace', hint: 'No active column trace.' });
+            return logAndReturn('submit_hop_analysis', { error: 'no_active_trace', hint: 'No active column trace.' }, options.input);
           }
 
           const inputErr = validateToolInput(options.input, { focus_node_id: 'string', verdicts: 'array' });
@@ -371,20 +381,20 @@ export function registerAiTools(
           }));
 
           const submitResult = ct.submitVerdicts({ focusNodeId, notes: input.notes, verdicts, badge_label: input.badge_label, note_caption: input.note_caption });
-          if ('error' in submitResult) return logAndReturn('submit_hop_analysis', submitResult);
+          if ('error' in submitResult) return logAndReturn('submit_hop_analysis', submitResult, options.input);
 
           const hopResult = ct.getHopContext();
-          if ('error' in hopResult) return logAndReturn('submit_hop_analysis', hopResult);
+          if ('error' in hopResult) return logAndReturn('submit_hop_analysis', hopResult, options.input);
           if ('done' in hopResult) {
             const fullResult = ct.getResult();
             if (!('error' in fullResult)) {
               sess.storeCtResult(fullResult);
               (fullResult as any).synthesis_reminder = buildSynthesisReminder('column trace — focus on data flow and column transformations');
             }
-            return logAndReturn('submit_hop_analysis', fullResult);
+            return logAndReturn('submit_hop_analysis', fullResult, options.input);
           }
 
-          return logAndReturn('submit_hop_analysis', hopResult);
+          return logAndReturn('submit_hop_analysis', hopResult, options.input);
         } catch (err) { return toolError('submit_hop_analysis', err); }
       },
     }),
@@ -455,15 +465,15 @@ export function registerAiTools(
           sess.stateMachine = bb;
 
           const initResult = bb.init({ question, origin, depth, initial_summary: input.initial_summary });
-          if ('error' in initResult) return logAndReturn('start_exploration', initResult);
+          if ('error' in initResult) return logAndReturn('start_exploration', initResult, options.input);
 
           const scopeDdlChars = bb.estimateScopeDdlChars();
           const inline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
           if (inline) bb.setInlineMode(true);
 
           const hopResult = bb.getHopContext();
-          if ('error' in hopResult) return logAndReturn('start_exploration', hopResult);
-          if ('done' in hopResult) return logAndReturn('start_exploration', { ...initResult, status: 'complete', message: 'No neighbors to explore.' });
+          if ('error' in hopResult) return logAndReturn('start_exploration', hopResult, options.input);
+          if ('done' in hopResult) return logAndReturn('start_exploration', { ...initResult, status: 'complete', message: 'No neighbors to explore.' }, options.input);
 
           const scopePreview = { total_scope_nodes: bb.filterBreakdown.total, in_user_filter: bb.filterBreakdown.in_filter, outside_filter: bb.filterBreakdown.outside_filter, schemas: bb.schemaBreakdown() };
 
@@ -472,7 +482,7 @@ export function registerAiTools(
             scope_preview: scopePreview,
             ...(inline && { scope_nodes: bb.getAllScopeNodesWithDdl(), delivery: 'inline' }),
             ai_hint: `Scope: ${scopePreview.total_scope_nodes} nodes. Proceed with exploration.`,
-          });
+          }, options.input);
         } catch (err) { return toolError('start_exploration', err); }
       },
     }),
@@ -487,12 +497,12 @@ export function registerAiTools(
           const sess = getSession();
           const bb = sess.stateMachine as BlackboardState | null;
           if (!bb || !(bb instanceof BlackboardState)) {
-            return logAndReturn('expand_frontier', { error: 'no_active_exploration', hint: 'No active exploration.' });
+            return logAndReturn('expand_frontier', { error: 'no_active_exploration', hint: 'No active exploration.' }, options.input);
           }
           const input = options.input as { extra_hops?: number };
           const extraHops = typeof input.extra_hops === 'number' ? Math.max(1, Math.min(Math.round(input.extra_hops), 5)) : 2;
           const result = bb.expandFrontier(extraHops);
-          return logAndReturn('expand_frontier', { ok: true, ...result });
+          return logAndReturn('expand_frontier', { ok: true, ...result }, options.input);
         } catch (err) { return toolError('expand_frontier', err); }
       },
     }),
@@ -513,7 +523,7 @@ export function registerAiTools(
           const sess = getSession();
           const bb = sess.stateMachine as BlackboardState | null;
           if (!bb || !(bb instanceof BlackboardState)) {
-            return logAndReturn('submit_findings', { error: 'no_active_exploration', hint: 'No active exploration.' });
+            return logAndReturn('submit_findings', { error: 'no_active_exploration', hint: 'No active exploration.' }, options.input);
           }
 
           const inputErr = validateToolInput(options.input, { focus_node_id: 'string', findings: 'string', summary: 'string' });
@@ -533,26 +543,26 @@ export function registerAiTools(
             pruneIds: input.prune_ids ?? [], addIds: input.add_ids ?? [], complete: !!input.complete,
             badge_label: input.badge_label, note_caption: input.note_caption,
           });
-          if ('error' in submitResult) return logAndReturn('submit_findings', submitResult);
+          if ('error' in submitResult) return logAndReturn('submit_findings', submitResult, options.input);
 
           const earlyResult = submitResult.early_complete ?? null;
           if (earlyResult && !('error' in earlyResult)) {
             sess.storeBbResult(earlyResult);
-            return logAndReturn('submit_findings', earlyResult);
+            return logAndReturn('submit_findings', earlyResult, options.input);
           }
 
           const hopResult = bb.getHopContext();
-          if ('error' in hopResult) return logAndReturn('submit_findings', hopResult);
+          if ('error' in hopResult) return logAndReturn('submit_findings', hopResult, options.input);
           if ('done' in hopResult) {
             const fullResult = bb.getResult();
             if (!('error' in fullResult)) {
               sess.storeBbResult(fullResult);
               (fullResult as any).synthesis_reminder = buildSynthesisReminder(bb.question);
             }
-            return logAndReturn('submit_findings', fullResult);
+            return logAndReturn('submit_findings', fullResult, options.input);
           }
 
-          return logAndReturn('submit_findings', hopResult);
+          return logAndReturn('submit_findings', hopResult, options.input);
         } catch (err) { return toolError('submit_findings', err); }
       },
     }),

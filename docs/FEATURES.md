@@ -304,13 +304,13 @@ All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Co
 
 | Group | Key settings |
 |-------|-------------|
-| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
+| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `externalRefs.enabled`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
 | **Database Connection** | `dmvQueryTimeout`, `dmvQueriesFile` |
-| **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold` |
-| **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |
+| **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold`, `sampleSize`, `maxColumns`, `useApproxDistinct`, `excludeExternalTables` |
+| **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled`, `layout.edgeAnimation`, `layout.highlightAnimation`, `layout.rankSeparation`, `layout.nodeSeparation` |
 | **Trace** | `trace.defaultUpstreamLevels`, `trace.defaultDownstreamLevels` |
 | **Analysis** | `analysis.hubMinDegree`, `analysis.islandMaxSize`, `analysis.longestPathMinNodes` |
-| **AI Assistant** | `ai.enabled`, `ai.maxRounds`, `ai.outputTemplateFile` |
+| **AI Assistant** | `ai.enabled`, `ai.maxRounds`, `ai.inlineTokenBudget`, `ai.inlineNodeCap`, `ai.outputTemplateFile` |
 
 ### Customization guides
 

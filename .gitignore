@@ -43,5 +43,6 @@ GEMINI.md
 
 # Internal Developer Docs
 docs-internal/
+docs-archive/
 tmp-test-workspace/
 src/test/suite/ai-real-model.test.ts

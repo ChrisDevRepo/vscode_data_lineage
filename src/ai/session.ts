@@ -32,6 +32,7 @@ export class AiSession {
   public outputTemplates: AiOutputTemplates;
   public maxInputTokens = 32000;
   public modelName = '';
+  public hopLog: any[] = [];
   
   // ── Telemetry / Log Correlation ──
   public startTime: number;
@@ -69,6 +70,7 @@ export class AiSession {
     this.stateMachine = null;
     this.resultGraph = null;
     this.hopCount = 0;
+    this.hopLog = [];
   }
 
   /** Generate a new session ID to distinguish independent chat sessions. */

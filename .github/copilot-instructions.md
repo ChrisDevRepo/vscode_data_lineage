@@ -213,17 +213,17 @@ npm test                               # all suites must pass
 
 ## AI Chat Participant (`@lineage`)
 
-**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 12 language model tools (8 classic + 2 column-trace + 2 blackboard) via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
+**Data provider for VS Code Copilot Chat.** Registers a chat participant (`@lineage`) and 13 language model tools (8 classic + 2 column-trace + 3 blackboard) via `vscode.lm.registerTool()`. VS Code + Copilot own all AI concerns (model selection, credentials, inference, streaming). The extension owns the tool server side — pure data queries against the loaded graph. The user selects the model in the Copilot chat dropdown.
 
 **Explore-first architecture** — no upfront mode routing. AI discovers intent via tools. Dynamic tool filtering by phase:
 
 | Phase | Tag filter | Tools visible | Transition |
 |-------|-----------|---------------|------------|
-| **discover** | `lineage` | All 12 tools (free-form) or filtered (slash commands) | `/trace` filters to 6 tools (CT path, no BFS); `/search` prompt rewrite only |
+| **discover** | `lineage` | All 13 tools (free-form) or filtered (slash commands) | `/trace` filters to 6 tools (CT path, no BFS); `/search` prompt rewrite only |
 | **ct_active** | `lineage-ct` | 2 CT tools only | Entered when `start_column_trace` activates state machine |
-| **ct_done** | `lineage` | All 12 tools restored | Entered when CT state machine completes; AI can `enrich_view` |
-| **bb_active** | `lineage` minus `lineage-ct` | Classic 8 + BB 2 (CT excluded) | Entered when `start_exploration` activates state machine; CT mutual exclusion |
-| **bb_done** | `lineage` | All 12 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
+| **ct_done** | `lineage` | All 13 tools restored | Entered when CT state machine completes; AI can `enrich_view` |
+| **bb_active** | `lineage` minus `lineage-ct` | Classic 8 + BB 3 (CT excluded) | Entered when `start_exploration` activates state machine; CT mutual exclusion |
+| **bb_done** | `lineage` | All 13 tools restored | Entered when BB state machine completes; AI can `enrich_view` |
 
 **Key files:**
 - `src/ai/tokenBudget.ts` — Token budget: `ai.inlineTokenBudget` setting (default 10K tokens), `shouldInline()`, `estimateTokens()`, `CONTEXT_PRESSURE_THRESHOLD`. Budget gates catalog/detail delivery; CT/BB always use state machine. Zero VS Code imports.
@@ -232,9 +232,10 @@ npm test                               # all suites must pass
 - `src/ai/aiPresenter.ts` — Compact LLM presentation layer. Owns: `strip()` (null/false/''/[] pruner), `edgeApiType()` (explicit type map with 'read' fallback), `presentNode/Column/Schema/Neighbor/Filter()`. Zero business logic, zero VS Code imports.
 - `src/ai/graphUtils.ts` — `buildBareGraph()`: connection-only graphology graph used for BFS in `runBfsTrace`.
 - `src/ai/blackboardState.ts` — Type 1 Blackboard state machine: free-form exploration with two-tier memory (MemGPT pattern). Passive SM: AI drives traversal via sub-questions, SM stores findings, manages agenda priority. Zero VS Code imports.
-- `src/extension.ts` — chat participant registration, 12 tool registrations (8 classic + 2 CT + 2 BB), `isAiEnabled()`, participant handler, dynamic tool filtering (5 phase transitions). Write tool (`enrich_view`) uses `confirmationMessages` in `prepareInvocation`.
+- `src/ai/toolProvider.ts` — 13 tool registrations (8 classic + 2 CT + 3 BB), dynamic tool filtering (5 phase transitions), `prepareInvocation` with `confirmationMessages` for write tool (`enrich_view`).
+- `src/extension.ts` — chat participant registration, `isAiEnabled()`, participant handler.
 
-**12 registered tools:**
+**13 registered tools:**
 
 | Tool | Tag | Kind | Purpose |
 |------|-----|------|---------|
@@ -249,6 +250,7 @@ npm test                               # all suites must pass
 | `lineage_start_column_trace` | lineage, lineage-ct | read | Init hop-by-hop CT state machine trace |
 | `lineage_submit_hop_analysis` | lineage, lineage-ct | read | Submit verdicts, get next hop or final result |
 | `lineage_start_exploration` | lineage, lineage-bb | read | Init BB state machine: free-form exploration with two-tier memory |
+| `lineage_expand_frontier` | lineage, lineage-bb | read | Batch BFS expansion from boundary nodes (extra_hops param, default 2, max 5) |
 | `lineage_submit_findings` | lineage, lineage-bb | read | Submit findings + summary, get next hop or final result |
 
 **Two guards** (`src/ai/tokenBudget.ts`):

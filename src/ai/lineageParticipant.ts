@@ -55,7 +55,7 @@ export class LineageParticipant {
     this.context.subscriptions.push(participant);
   }
 
-  private async handleChatRequest(
+  public async handleChatRequest(
     request: vscode.ChatRequest,
     chatContext: vscode.ChatContext,
     stream: vscode.ChatResponseStream,
