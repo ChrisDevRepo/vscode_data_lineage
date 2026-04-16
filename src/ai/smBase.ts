@@ -11,6 +11,7 @@
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
+import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
@@ -291,17 +292,12 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   private computeBfsScope(startId: string, direction: string, maxDepth: number): Set<string> {
-    const seen = new Set<string>([startId]);
-    const queue = [{ id: startId, depth: 0 }];
-    let idx = 0;
-    while (idx < queue.length) {
-      const { id, depth } = queue[idx++];
-      if (depth >= maxDepth) continue;
-      const neighbors = direction === 'upstream' ? this.graph.inNeighbors(id) : direction === 'downstream' ? this.graph.outNeighbors(id) : this.graph.neighbors(id);
-      for (const nid of neighbors as string[]) {
-        if (!seen.has(nid)) { seen.add(nid); queue.push({ id: nid, depth: depth + 1 }); }
-      }
-    }
+    const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
+    const seen = new Set<string>();
+    bfsFromNode(this.graph, startId, (key, _attr, depth) => {
+      seen.add(key);
+      return depth >= maxDepth; // stop traversing past this node
+    }, { mode });
     return seen;
   }
 
