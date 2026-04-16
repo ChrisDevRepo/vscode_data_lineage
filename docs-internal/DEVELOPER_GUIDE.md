@@ -1,110 +1,95 @@
 # Internal Developer Guide: Processes & Concepts
 
-This document is the definitive technical reference for the Data Lineage Viz extension. It covers every major architectural component and engineering process.
+This document is the definitive technical reference for the Data Lineage Viz extension. It covers every major architectural component, engineering process, and mandatory coding standard.
 
 ---
 
-## 1. Data Ingestion: Dual Import Strategies
+## 1. Core Engineering Mandates (The "Stability-First" Policy)
 
-The extension supports two primary ways to populate the `DatabaseModel`.
+**Priority: Stability > Performance > Features.**
 
-### 1.1 DACPAC Extraction (`dacpacExtractor.ts`)
-- **Source**: Static `.dacpac` files (SQL Server Data Tier Application Packages).
-- **Process**: 
-    1. Unzip using `jszip`.
-    2. Parse `model.xml` using `fast-xml-parser`.
-    3. Map XML elements (Table, View, Procedure) to `ExtractedObject`.
-    4. Extract dependencies directly from the XML's `Relationship` nodes (deterministic).
-- **Benefit**: Offline usage, high performance, zero database connection required.
+### 1.1 Critical Gates
+- **Explicit Approval Required**: Any change to parser logic (`sqlBodyParser.ts`), AI state machines, or prompt surfaces (`extension.ts`, `aiOutputTemplates.yaml`) must be reviewed and approved.
+- **Zero Regression Policy**: Any change to SQL parsing rules must result in an identical output for the 301 stored procedures in the baseline set (10 classic, 21 SDK-style, 270 customer-anonymized).
 
-### 1.2 SQL/DMV Extraction (`dmvExtractor.ts`)
-- **Source**: Live SQL Server / Azure SQL Database.
-- **Process**:
-    1. Execute specific DMV queries (found in `assets/dmvQueries.yaml`).
-    2. Phase 1: Retrieve schema lists and metadata preview.
-    3. Phase 2: Retrieve full node, edge, and constraint data.
-- **Logic**: Uses `sys.sql_expression_dependencies` for edges and `sys.columns` for metadata.
+### 1.2 React Anti-Patterns (NEVER Introduce)
+- No `forEach` calling state setters in loops (crashes graph rendering).
+- No ref mutation inside `useMemo`.
+- No `React.memo` on components with 10+ object/array props (shallow compare will always fail).
+- No `useEffect` watching a state that was set in the same handler (logic will run with stale data).
 
 ---
 
-## 2. SQL Parsing: The Regex Pipeline
+## 2. Data Ingestion: Dual Import Strategies
 
-For stored procedure bodies, we avoid heavy AST parsers in favor of a high-performance regex pipeline in `sqlBodyParser.ts`.
+Both strategies produce the same `DatabaseModel` structure.
 
-### 2.1 The Cleansing Passes
-- **Pass 0**: Stack-based block comment removal (handles nested `/* ... */`).
-- **Pass 1**: Identifies identifiers `[...]`, strings `'...'`, and line comments `--`. It replaces string content with dummy text to prevent false positives during extraction.
-- **Pass 1.5**: Normalizes "Comma Joins" (`FROM T1, T2`) into standard `JOIN` syntax so extraction rules remain simple.
+### 2.1 DACPAC Extraction (`dacpacExtractor.ts`)
+- **Mechanism**: Unzips `.dacpac` and parses `model.xml`.
+- **Constraint**: Only **AdventureWorks** sample dacpacs are allowed in the public `test/` folder. **NEVER** commit customer dacpacs.
 
-### 2.2 Rule-Based Extraction
-- Rules are defined in `assets/defaultParseRules.yaml`.
-- Each rule uses a `capture` group to identify potential dependencies.
-- **Normalization**: Every captured name is passed through `normalizeCaptured()`, which:
-    1. Strips brackets.
-    2. Splits 3-part names (`db.schema.obj`).
-    3. Filters out **CLR/XML Methods** (e.g., `.nodes()`) using the `sqlMetadata.ts` dictionary.
+### 2.2 SQL/DMV Extraction (`dmvExtractor.ts`)
+- **Process**: Two-phase load.
+    - **Phase 1**: Full catalog load (names only) for cross-schema resolution.
+    - **Phase 2**: Deep-dive load (columns/DDL) for selected schemas.
+- **SQL Injection**: Always use `escapeRegexLiteral` or parameterized patterns when expanding schema placeholders.
 
 ---
 
-## 3. The Bridge: IPC & Type Safety
+## 3. SQL Parsing: The Regex Pipeline
 
-### 3.1 BridgeHost Interface
-We decouple the extension logic from VS Code using the `BridgeHost` interface. This allows us to run the engine in pure Node.js environments (like unit tests) without a VS Code instance.
+### 3.1 Cleansing Pipeline (`sqlBodyParser.ts`)
+- **Comment Removal**: Stack-based removal of nested block comments.
+- **Literal Neutralization**: Replaces string content with `''''` to prevent false positive regex hits.
+- **Normalization**: All identifiers must be lowercased via `schemaKey()` for consistent hashing and Map keys.
 
-### 3.2 Zod Validation (`bridgeContract.ts`)
-All communication via `postMessage` is governed by a bidirectional Zod contract:
-- **`ExtensionToWebviewMsgSchema`**: Validates everything the Brain sends to the Screen.
-- **`WebviewToExtensionMsgSchema`**: Validates everything the Screen sends back.
-- **Mandate**: No "any" types allowed in IPC. If a message fails validation, it is caught at the boundary before it can cause a UI crash.
-
----
-
-## 4. Graph & UI Concepts
-
-### 4.1 Graphology Core
-`graphology` is the single source of truth for the lineage map.
-- **Logic Locality**: All graph mathematics (reachability, BFS, neighbor discovery) must live in `src/engine/graphAnalysis.ts`.
-- **Indexing**: The `neighborIndex` is built during model construction to allow O(1) lookups of connected nodes.
-
-### 4.2 React & Dagre
-- **Rendering**: React Flow (@xyflow/react) handles the canvas.
-- **Layout**: `dagre` is used to calculate X/Y coordinates. To keep the UI responsive, layout should ideally be non-blocking or triggered via `useTransition`.
-- **Custom Nodes**: `CustomNode.tsx` uses standard VS Code CSS variables (`--vscode-editor-foreground`, etc.) to ensure a native look and feel.
+### 3.2 Metadata Suppression (`sqlMetadata.ts`)
+- **Mandate**: Never hardcode a system schema or CLR method. Centralize them in this file.
+- **Filtering**: Captures that match `CLR_TYPE_METHODS` (e.g., `.nodes()`, `.value()`) are rejected unless they are bracket-quoted, which signifies intent as a catalog object.
 
 ---
 
-## 5. Storage: The Metadata Concept
+## 4. The Bridge: IPC & Zod Validation
 
-To keep the UI fast, we do NOT send full DDL or thousands of column definitions to the webview at once.
+### 4.1 Type Safety (`bridgeContract.ts`)
+- **Mandate**: 100% of messages sent via `postMessage` must be validated against a Zod schema.
+- **Error Handling**: Use the `Result<T, E>` pattern. Avoid throwing errors across the bridge; send an `{ type: 'error' }` message instead.
 
-### 5.1 ColumnStore (`columnStore.ts`)
-- **Concept**: A "Lazy Loader" for metadata.
-- **Extension Side**: Holds the full DDL and Column lists in memory.
-- **Webview Side**: Only holds the node IDs and types.
-- **Flow**: When a user clicks a node → Webview requests details → `ColumnStore` provides them via the Bridge.
-
----
-
-## 6. Testing Methodologies
-
-### 6.1 Internal: AI-Driven "Eval-Loop"
-- **Tool**: Gemini CLI / Custom Skills.
-- **Process**: We use automated agents to perform "Perspective-Based Inspections." 
-- **The Skill**: An internal set of prompts that force the AI to simulate edge-case SQL or malformed DACPACs to see if the engine survives.
-
-### 6.2 External: Copilot Participant Tests
-- **Tool**: VS Code Extension Tester (`vscode-test`).
-- **Mocking**: Since real LLM calls are hard to automate, we use **AI Mock Tests** in `extension.test.ts`. 
-- **Process**: We manually invoke the `LanguageModelTool` handlers to verify that the AI's "Tools" (like search) produce valid, readable JSON.
-
-### 6.3 The Testing Viewer Concept
-- We use `dumpSmState` to export the entire state of an AI conversation to a JSON file.
-- Developers can then drag this file into a "Viewer" (or inspect the JSON) to verify the logic without needing to re-run the entire 30-hop trace.
+### 4.2 Logging Protocol (`src/utils/log.ts`)
+- **Standard Categories**: `[AI]`, `[Bridge]`, `[Config]`, `[DB]`, `[Dacpac]`, `[Detail]`, `[Parse]`, `[Project]`, `[Stats]`.
+- **Truncation Rules**:
+    - AI Prompts/Reasoning: Max 200 chars.
+    - JSON Payloads: Max 300 chars.
+- **Constraint**: Never call `outputChannel.*` directly. Use the `logInfo/Debug/Warn/Error` helpers.
 
 ---
 
-## 7. Mandatory Constraints for Developers
+## 5. UI & Theming
 
-1.  **Shared Metadata**: Never hardcode a SQL keyword. Add it to `src/engine/shared/sqlMetadata.ts`.
-2.  **Logic Locality**: If a function calculates something about the graph, it belongs in `src/engine`. If it renders a button, it belongs in `src/components`.
-3.  **Stability First**: Always run `npx tsc -p tsconfig.extension.json --noEmit` after changing the bridge.
+### 5.1 CSS Variables
+- **Mandate**: Never hardcode hex/rgb colors in components.
+- **System**: VS Code Tokens (`--vscode-*`) → Extension Aliases (`--ln-*`) in `src/index.css`.
+- **Testing**: Every UI change must be verified in **Light**, **Dark**, and **High Contrast** themes.
+
+### 5.2 Node Styling
+- **Fixed Palette**: Type colors (Table=Blue, View=Green, Proc=Yellow) are fixed in `src/utils/schemaColors.ts` to ensure the lineage is readable across all themes.
+
+---
+
+## 6. Testing & AI Verification
+
+### 6.1 Internal "Eval-Loop"
+- **Model Policy**: Internal AI evaluations must use **Sonnet** (`claude-sonnet-4-6`) for high-fidelity reasoning.
+- **Verification**: Use `dumpSmState` to generate JSON snapshots of AI sessions for manual inspection without re-running 30-turn traces.
+
+### 6.2 External Integration Tests
+- **Tool**: `vscode-test` launches a clean VS Code instance.
+- **AI Mocking**: `src/test/suite/extension.test.ts` contains mock tests that manually invoke AI tools to verify they return readable JSON (e.g., the "search for employee" test).
+
+---
+
+## 7. Developer Hygiene
+
+- **File Size**: Decompose functions at >100 lines. Decompose components at >500 lines.
+- **Type Check**: Always run `npx tsc -p tsconfig.extension.json --noEmit` before committing to the `testing` branch.
+- **Versioning**: Follow the `feature/*` → `testing` → `main` branch flow.
