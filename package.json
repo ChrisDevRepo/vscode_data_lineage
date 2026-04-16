@@ -1210,7 +1210,6 @@
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
     "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/snapshot-aw-baseline.ts",
-    "test:internal": "tsx test-internal/ai-tools.test.ts && tsx test-internal/column-trace-state.test.ts && tsx test-internal/blackboard-state.test.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",
@@ -1220,11 +1219,9 @@
     "test:project": "tsx test/projectStore.test.ts",
     "test:ai:quick": "npm run build:ext && node esbuild.test.mjs && vscode-test --files out/test/suite/ai-real-model.test.js --files out/test/suite/ai-integration.test.js",
     "test:ai:real": "npm run build:ext && node esbuild.test.mjs && vscode-test --files out/test/suite/ai-real-model.test.js",
-    "test:baseline": "npx tsx test-internal/ai/report-gen.ts",
-    "test:ai": "npm run test:ai:quick && npm run test:baseline",
+    "test:ai": "npm run test:ai:quick",
     "test:snapshot": "tsx test/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx test/snapshot-aw-baseline.ts --update",
-    "test:db": "tsx test-internal/integration-db.test.ts",
     "package": "npx @vscode/vsce package"
   },
   "dependencies": {

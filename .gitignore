@@ -11,19 +11,18 @@ build/
 
 # Testing
 test-internal/
+**/test-internal/**
 customer-data/
 .vscode-test/
 coverage/
 *.lcov
-# Only AdventureWorks dacpacs allowed in test/ (no customer dacpacs)
-test/*.dacpac
-!test/AdventureWorks*.dacpac
 
 # IDE / local
 .vscode/settings.json
 .idea/
 CLAUDE.md
 .claude/
+**/.claude/**
 tmp/
 /ai/
 PLAN*.md
@@ -43,6 +42,7 @@ GEMINI.md
 
 # Internal Developer Docs
 docs-internal/
+**/docs-internal/**
 docs-archive/
 tmp-test-workspace/
 src/test/suite/ai-real-model.test.ts
