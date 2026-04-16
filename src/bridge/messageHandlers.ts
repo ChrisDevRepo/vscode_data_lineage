@@ -28,14 +28,16 @@ import { populateColumnStore } from '../engine/modelBuilder';
 
 export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
 
-// State shared between handlers but isolated from the panel lifecycle
-let statsConnectionUri: string | undefined;
-let allObjectsCache: SimpleExecuteResult | undefined;
-let platformInfoCache: SimpleExecuteResult | undefined;
+export interface MessageHandlerBundle {
+  handlers: Record<string, (msg: any) => Promise<void> | void>;
+  cleanup: () => Promise<void>;
+}
 
 /**
  * Factory for creating message handlers that process requests from the Webview.
  * This is the primary IPC (Inter-Process Communication) bridge.
+ * Returns both the handler map and a cleanup function that MUST be called on
+ * panel dispose so the stats-connection / caches die with the panel.
  */
 export function createMessageHandlers(
   host: BridgeHost,
@@ -47,13 +49,28 @@ export function createMessageHandlers(
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
   loadDemoFlag: boolean,
   setDetailPanel: (panel: vscode.WebviewPanel | undefined) => void
-): Record<string, (msg: any) => Promise<void> | void> {
+): MessageHandlerBundle {
 
   let cachedElements: XmlElement[] | null = null;
   let cachedDspName = '';
   let lastConnectionInfo: IConnectionInfo | undefined;
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: any = null;
+
+  // Panel-scoped caches — die with the factory (i.e. with the panel).
+  // Previously module-scoped which leaked across panels.
+  const statsConnState: { uri: string | undefined } = { uri: undefined };
+  let allObjectsCache: SimpleExecuteResult | undefined;
+  let platformInfoCache: SimpleExecuteResult | undefined;
+
+  async function cleanupStatsConnection(): Promise<void> {
+    if (statsConnState.uri) {
+      await disconnectDatabase(statsConnState.uri, outputChannel).catch(err =>
+        host.log('debug', 'DB', `Stats disconnect failed: ${err instanceof Error ? err.message : String(err)}`)
+      );
+      statsConnState.uri = undefined;
+    }
+  }
 
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     const sess = getSession();
@@ -84,7 +101,7 @@ export function createMessageHandlers(
     return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
   }
 
-  return {
+  const handlers: Record<string, (msg: any) => Promise<void> | void> = {
     'ready': async () => {
       host.log('info', 'Bridge', 'Webview ready');
       if (loadDemoFlag) {
@@ -149,7 +166,7 @@ export function createMessageHandlers(
               });
             }
           } else if (m.type === 'table-stats-request') {
-            await handleTableStatsRequestHost(host, lastConnectionInfo, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
+            await handleTableStatsRequestHost(host, lastConnectionInfo, statsConnState, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
           } else if (m.type === 'close-detail') {
             detailPanel?.dispose();
           }
@@ -208,7 +225,7 @@ export function createMessageHandlers(
     },
     'load-project': async (msg) => {
       host.log('info', 'Bridge', `Loading project: ${msg.id}`);
-      await cleanupStatsConnection(outputChannel);
+      await cleanupStatsConnection();
       
       const store = loadProjectStore(context);
       const project = store.projects.find((p: any) => p.id === msg.id);
@@ -436,6 +453,11 @@ export function createMessageHandlers(
       host.showErrorMessage(`Data Lineage Error: ${msg.error}`);
     }
   };
+
+  return {
+    handlers,
+    cleanup: cleanupStatsConnection,
+  };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -447,13 +469,6 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost): boolean {
   const mb = (bytes / 1024 / 1024).toFixed(1);
   host.showErrorMessage(`Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`);
   return true;
-}
-
-async function cleanupStatsConnection(outputChannel: vscode.LogOutputChannel) {
-  if (statsConnectionUri) {
-    await disconnectDatabase(statsConnectionUri, outputChannel).catch(() => {});
-    statsConnectionUri = undefined;
-  }
 }
 
 async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, onModelBuilt?: (model: DatabaseModel) => void) {
@@ -520,6 +535,7 @@ async function withDbProgressHost(host: BridgeHost, title: string, outputChannel
 async function handleTableStatsRequestHost(
   host: BridgeHost,
   storedConnectionInfo: IConnectionInfo | undefined,
+  statsConnState: { uri: string | undefined },
   panel: vscode.WebviewPanel,
   schema: string,
   objectName: string,
@@ -536,16 +552,16 @@ async function handleTableStatsRequestHost(
   const timeoutMs = timeoutSec * 1000;
 
   try {
-    if (!statsConnectionUri) {
+    if (!statsConnState.uri) {
       host.log('info', 'Stats', `Connecting for stats: ${schema}.${objectName}`);
       const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
       if (!result) {
         panel.webview.postMessage({ type: 'table-stats-error', message: 'Connection cancelled.' });
         return;
       }
-      statsConnectionUri = result.connectionUri;
+      statsConnState.uri = result.connectionUri;
     }
-    const connectionUri = statsConnectionUri!;
+    const connectionUri = statsConnState.uri!;
     const serverInfo = await getServerInfo(connectionUri, outputChannel);
     const engineEdition = serverInfo.engineEditionId;
 

@@ -83,17 +83,22 @@ export function openPanel(
     vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
-  const handlers = createMessageHandlers(
-    host, 
-    context, 
-    getSession, 
-    outputChannel, 
-    loadProjectStore, 
-    saveProjectStore, 
-    migrateFromWorkspaceState, 
-    loadDemo, 
+  const { handlers, cleanup } = createMessageHandlers(
+    host,
+    context,
+    getSession,
+    outputChannel,
+    loadProjectStore,
+    saveProjectStore,
+    migrateFromWorkspaceState,
+    loadDemo,
     (dp) => detailPanel = dp
   );
+
+  // Panel-scoped cleanup: stats connection dies with the panel
+  panel.onDidDispose(() => {
+    cleanup().catch(err => bridgeLogger.debug(`Cleanup failed: ${err}`));
+  });
 
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
     const handler = handlers[rawMsg.type];
