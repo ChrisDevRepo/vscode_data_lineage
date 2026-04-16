@@ -169,7 +169,9 @@ export class LineageParticipant {
           }
           historyMessages.unshift(vscode.LanguageModelChatMessage.User(buildEvictionStub(evicted)));
         }
-      } catch {}
+      } catch (err) {
+        this.logger.debug(`Context eviction countTokens failed: ${err instanceof Error ? err.message : err}`);
+      }
     }
 
     const messages = [vscode.LanguageModelChatMessage.User(systemPrompt), ...historyMessages, vscode.LanguageModelChatMessage.User(effectivePrompt)];
@@ -197,7 +199,9 @@ export class LineageParticipant {
           this.logger.info(`Round ${roundCount} [${phaseLabel}] — context: ${currentInputTokens}${delta} tokens (${pct}% of ${sess.maxInputTokens})`);
           lastInputTokenEstimate = currentInputTokens;
           lastRoundInputTokens = currentInputTokens;
-        } catch {}
+        } catch (err) {
+          this.logger.debug(`Per-round countTokens failed: ${err instanceof Error ? err.message : err}`);
+        }
         
         const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
         const assistantParts: any[] = [];
@@ -217,7 +221,11 @@ export class LineageParticipant {
           else if (part instanceof vscode.LanguageModelToolCallPart) { assistantParts.push(part); toolCalls.push(part); }
         }
 
-        try { totalOutputTokens += await request.model.countTokens(responseText); } catch {}
+        try {
+          totalOutputTokens += await request.model.countTokens(responseText);
+        } catch (err) {
+          this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
+        }
         if (!toolCalls.length) return;
 
         if (actionRequiredPending && responseText.length > 0) actionRequiredPending = false;
