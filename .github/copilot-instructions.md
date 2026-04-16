@@ -286,4 +286,7 @@ npm test                               # all suites must pass
 - `test-internal/column-trace-state.test.ts` (113) — CT state machine: lifecycle, verdicts, boundaries, goal anchoring, golden scenarios (multi-branch CT, hop mode, impact downstream)
 - `test-internal/blackboard-state.test.ts` (64) — BB state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, goal anchoring, edge cases
 
-**UAT scenarios:** `ai/test-all-modes.md` — all modes (classic C1-C5, hop H1-H7, routing R1-R6, edge cases E1-E4). Column-trace UAT: `ai/test-column-trace.md` (Q1-Q3).
+- **AI Suite**: `npm run test:ai:quick` (PR gate) and `npm run test:ai:detail` (nightly). Uses `@vscode/test-electron` and real Copilot Chat tools.
+- **Internal Eval-Loop**: Replaced by the `vscode-test` suite. Semantic testing is now programmatic and resides in `src/test/suite/ai-integration.test.ts`.
+- **UAT Scenarios**: Transitioning to programmatic tests. Baseline reports are generated via `npm run test:baseline`.
+

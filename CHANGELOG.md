@@ -1,18 +1,10 @@
 # Changelog
 
-## [0.9.11] - 2026-04-16
+## [0.9.9] - 2026-04-16
 
 ### Improved
-- **Rock-Solid Stability** — Implemented a new type-safe communication layer (Zod) between the extension and the UI, eliminating "mystery crashes" and ensuring 100% reliable data flow.
-- **Enhanced Performance** — Moved complex graph calculations from the UI to the core engine. The "Star" filter and schema-level views are now up to 50% faster on large databases.
-- **Deep Security** — SQL parsing is now protected against "Regex Denial of Service" (ReDoS) by using a new compositional building system for search patterns.
-- **Better Documentation** — Created a comprehensive internal developer guide and cleaned up public documentation to be more user-focused and professional.
-
-### Changed
-- **Internal Cleanup** — Successfully removed over 1,000 lines of redundant code by centralizing SQL metadata and AI orchestration logic.
-- **Verified AI** — Added a functional AI Mock test suite to verify that the assistant's search and trace logic is robust even without a live internet connection.
-
-## [0.9.9] - 2026-04-15
+- **Enhanced Stability & Performance** — Significant internal updates to the communication layer and graph engine. The app is now more reliable, faster when filtering large databases, and protected against unusually complex SQL patterns.
+- **Documentation Overhaul** — Cleaned up public guides to be more user-friendly while moving deep technical details to a private developer resource.
 
 ### Added
 - **Incremental AI view updates** — You can now ask the AI to add or remove specific tables and update descriptions in an existing graph without restarting the entire analysis.
