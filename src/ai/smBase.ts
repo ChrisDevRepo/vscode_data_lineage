@@ -18,13 +18,14 @@ import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, countCascadeIfPruned, type LogFn } from './smGuards';
-import { AiMemoryManager, type DetailSlot, type ShortMemory, type WorkingMemory } from './memoryManager';
+import { AiMemoryManager, type WorkingMemory } from './memoryManager';
+import type { HopContext, HopNeighbor, HopSubmission, SmMode, SmResult, SmStatus, SubmitResult } from './smTypes';
+
+// Re-export scalar types for callers that still import them from smBase
+export type { SmMode, SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
+export type { BoundaryFlag } from './smTypes';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-
-export type SmMode = 'blackboard' | 'column_trace';
-export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
-export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 
 export interface AgendaEntry {
   nodeId: string;
@@ -32,19 +33,6 @@ export interface AgendaEntry {
   priority: number;         // 0=BFS, 2=AI-requested, 3=Origin
   depth: number;
   activeColumns?: string[]; // for CT mode
-}
-
-export interface HopNeighbor {
-  id: string;
-  s: string;   // schema
-  n: string;   // name
-  t: string;   // type
-  edge_direction: 'upstream' | 'downstream';
-  edge_type: string;
-  boundary: BoundaryFlag;
-  boundary_reason?: string;
-  scope?: 'visited' | 'agenda' | 'pruned' | 'available' | 'external';
-  cols?: string[];
 }
 
 export interface NavigationWorkingMemory extends WorkingMemory {
@@ -67,7 +55,7 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly nodeMap: Map<string, LineageNode>;
   protected readonly edgeTypeMap: Map<string, string>;
   protected readonly memory: AiMemoryManager;
-  protected readonly mode: SmMode;
+  public readonly mode: SmMode;
 
   public sessionId?: string;
   protected _status: SmStatus = 'created';
@@ -153,7 +141,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  getHopContext(): any {
+  getHopContext(): HopContext {
     let entry: AgendaEntry | undefined;
     while (this.agenda.length > 0) {
       const nextIdx = this.agenda.reduce((best, curr, i, arr) => curr.priority > arr[best].priority ? i : best, 0);
@@ -199,13 +187,13 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  submitFindings(params: any): any {
+  submitFindings(params: HopSubmission): SubmitResult {
     if (this._status !== 'awaiting_findings') return { error: 'invalid_status', current_status: this._status };
 
     // Normalize and check focus
     const focusId = params.focus_node_id?.toLowerCase();
     if (focusId !== this.currentFocusNodeId) {
-      return { error: 'focus_mismatch', expected: this.currentFocusNodeId, got: focusId };
+      return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
     }
 
     // Selection Guard
@@ -325,7 +313,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  public getResult(): any {
+  public getResult(): SmResult {
     const mem = this.memory.getResult();
     const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
     
@@ -379,9 +367,10 @@ export interface IHopStateMachine {
   readonly scopeSize: number;
   readonly coveragePct: number;
   readonly inlineMode: boolean;
+  readonly mode: SmMode;
   setInlineMode(val: boolean): void;
-  getHopContext(): any;
-  submitFindings(params: any): any;
-  getResult(): any;
-  toJSON(): any;
+  getHopContext(): HopContext;
+  submitFindings(params: HopSubmission): SubmitResult;
+  getResult(): SmResult;
+  toJSON(): unknown;
 }

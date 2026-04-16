@@ -5,6 +5,7 @@ import { ColumnStore } from '../engine/columnStore';
 import { AiMemoryManager } from './memoryManager';
 import { type ResultGraph, type AiOutputTemplates, EMPTY_AI_TEMPLATES, type SessionSummary, type NodeRole } from './types';
 import type { IHopStateMachine } from './smBase';
+import type { HopLogEntry } from './smTypes';
 
 /**
  * AI Session Container — The "Clean Slate" for @lineage investigations.
@@ -29,7 +30,7 @@ export class AiSession {
   public outputTemplates: AiOutputTemplates;
   public maxInputTokens = 32000;
   public modelName = '';
-  public hopLog: any[] = [];
+  public hopLog: HopLogEntry[] = [];
   
   // ── Telemetry / Log Correlation ──
   public startTime: number;
@@ -77,7 +78,7 @@ export class AiSession {
    * Maps NavigationEngine output to the ResultGraph format used by ViewSynthesisService.
    */
   public storeBbResult(fullResult: any): void {
-    const sourceMode = (this.stateMachine as any)?.mode ?? 'blackboard';
+    const sourceMode = this.stateMachine?.mode ?? 'blackboard';
     const verdicts: Record<string, NodeRole> = {};
     
     for (const n of fullResult.fullNodes) {

@@ -287,18 +287,18 @@ export class LineageParticipant {
           activePhase = 'active';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-engine'));
           
-          const engine = sess.stateMachine as NavigationEngine;
+          const engine = sess.stateMachine;
           if (engine) {
-            const modePromptMsg = vscode.LanguageModelChatMessage.User(buildNavigationPrompt((engine as any).mode));
+            const modePromptMsg = vscode.LanguageModelChatMessage.User(buildNavigationPrompt(engine.mode));
             messages.push(modePromptMsg);
           }
         }
-        
+
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
           activePhase = 'done';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_submit_findings');
-          
-          if (!(sess.stateMachine as any).inlineMode) {
+
+          if (!sess.stateMachine.inlineMode) {
             // Deliver the Detail Archive evidence for Phase 3
             const archive = sess.memory.getResult();
             const evidenceHeader = '### DETAIL ARCHIVE (TECHNICAL EVIDENCE)\n' +
@@ -321,7 +321,7 @@ export class LineageParticipant {
 
         // Sliding memory: wipe history after every SUCCESSFUL finding submission
         const submitPart = toolCalls.find(tc => tc.name === 'lineage_submit_findings');
-        if (submitPart && activePhase === 'active' && !(sess.stateMachine as any).inlineMode) {
+        if (submitPart && activePhase === 'active' && sess.stateMachine && !sess.stateMachine.inlineMode) {
           const result = accumulatedToolResults[submitPart.callId];
           const resultValue = (result?.content[0] as any)?.value;
           const isError = resultValue && JSON.parse(resultValue).error;
