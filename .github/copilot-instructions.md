@@ -43,49 +43,31 @@ source format into the shared intermediate types and nothing more.
 
 ## Testing Mandates
 
-- **Deterministic Focus**: Only write tests for the **deterministic core** (SQL parsing, graph topology, BFS).
-- **No UI/Hook Tests**: Do NOT write unit tests for React components, hooks, or UI routing. These are low-value and brittle.
-- **Snapshot Baselines**: When changing `sqlBodyParser.ts` or `defaultParseRules.yaml`, you MUST run `npm run test:snapshot` and commit an updated `test/aw-baseline.tsv` if the changes are intended.
-- **Internal Eval-Loop**: Deep AI/semantic testing is handled internally via a private `eval-loop` and is not part of the public PR process.
+- **Deterministic Focus**: Only write tests for the **deterministic core** (SQL parsing, graph topology, BFS, state machine contracts). Hook tests live in `tests/unit/hooks/`.
+- **Snapshot Baselines**: When changing `sqlBodyParser.ts` or `defaultParseRules.yaml`, you MUST run `npm run test:snapshot` and commit an updated `tests/fixtures/aw-baseline.tsv` if the changes are intended.
 
 Press F5 to launch Extension Development Host.
 
 ## Test Suite
 
-| File | Tests | Purpose |
-|------|-------|---------|
-| `test/dacpacExtractor.test.ts` | 89 | Dacpac extraction, filtering, edge integrity, Fabric SDK, security, constraints, `parseDspPlatform`, `dbPlatform`, `pkOrdinal`, Phase 1→2 bridge flow |
-| `test/graphBuilder.test.ts` | 127 | Graph construction, layout, BFS trace, directional edge filtering, cycle filtering, bidirectional correctness, determinism, virtual external nodes, CLR method suppression, buildSchemaEdges, buildSchemaGraph |
-| `test/parser-edge-cases.test.ts` | 204 | Syntactic parser tests: all 17 rules + edge cases + cleansing pipeline + regression guards |
-| `test/graphAnalysis.test.ts` | 74 | Graph analysis: islands, hubs, orphans, longest path, cycles, external refs |
-| `test/dmvExtractor.test.ts` | 146 | DMV extractor: synthetic data, column validation, type formatting, fallback body direction, constraints, external tables, schema placeholder expansion, `dbPlatform` via `mapEnginePlatform`, `pkOrdinal` from columns query |
-| `test/tsql-complex.test.ts` | 5 | SQL pattern tests: targeted SQL files covering each parser pattern; expected results in `-- EXPECT` comments |
-| `test/projectStore.test.ts` | 41 | Project store: createProject, updateProject, deleteProject, migrateProjectStore, generateProjectName, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter |
-| `test-internal/ai-tools.test.ts` | 255 | AI tool pure functions: getContext, searchObjects, getObjectDetail, runBfsTrace (level + path mode), runAnalysis, searchDdl, getDdlBatch, validateEnrichView, autoFixEnrichView, validateQuery, safeRegex, validateMarkdownFormat |
-| `test-internal/column-trace-state.test.ts` | 113 | Column-trace state machine: lifecycle, init, verdict processing (trace/pass/prune), rejection/retry, column validation, frontier cap, boundary detection (source/sink/external/cycle), synthetic model tests, bug regression (diamond merge, passthrough visited, depth, focus boundary) |
-| `test-internal/blackboard-state.test.ts` | 64 | Blackboard state machine: lifecycle, findings, two-tier memory, Self-Ask questions, agenda priority, prune cascade, coverage tracking, boundary detection, edge cases |
-| `test/hooks/useInteractiveTrace.test.ts` | 31 | Trace state machine: mode transitions, depth limits, direction filtering, startTraceConfig/Immediate/applyTrace/startPathFinding/applyPath/applyAnalysisSubset/endTrace, tracedNodes memoization |
-| `test/hooks/useGraphology.test.ts` | 27 | Graph filter pipeline: schema filter, type filter, isolation filter (hideIsolated), exclusion patterns, focus schema, allowlist, external ref filter, graph/metrics state, rebuild behavior |
-| `test/hooks/useOverviewMode.test.ts` | 18 | Overview mode state machine: auto-trigger, manual toggle, threshold guards, resetUserChoice |
-| `test/hooks/useDacpacLoader.routing.test.tsx` | 30 | useDacpacLoader state machine: message routing (dacpac vs DB path), state transitions, callbacks, isDemo flag |
-| `test/hooks/CreateFlow.save.test.tsx` | 3 | CreateFlow: save-project passes DacpacConnection to onVisualize |
-| `test/hooks/App.save.test.tsx` | 3 | App-level save-project routing |
-| `test/snapshot-aw-baseline.ts` | — | Parser regression baseline: diffs all 31 AW SPs against committed `test/aw-baseline.tsv` — run via `npm run test:snapshot` |
-| `test/AdventureWorks.dacpac` | — | Classic style test dacpac |
-| `test/AdventureWorks_sdk-style.dacpac` | — | SDK-style test dacpac |
+Full layout and per-file purpose: [tests/README.md](../tests/README.md). Three tiers:
+
+- `tests/unit/` — plain Node.js tests via `tsx` (CI-safe, no VS Code). Covers parser, dacpac, graph, DMV, project store, NavigationEngine lifecycle, cascade-prune guard, tool-registration guard.
+- `tests/unit/hooks/` — React hook tests via vitest (`npm run test:hooks`).
+- `tests/integration/` — live SQL Server tests (require `.env`; skip gracefully otherwise).
+- `tests/e2e/` — extension-host tests via `@vscode/test-electron`, including the AI eval proxy.
 
 ```bash
-npm test                            # All unit tests (1118 tsx + 115 vitest + snapshot)
-npm run test:snapshot               # Parser baseline check only
-npm run test:snapshot:update        # Regenerate test/aw-baseline.tsv after parser changes
-npm run test:coverage               # Vitest with v8 coverage (requires @vitest/coverage-v8)
+npm test                  # full unit suite (tsx)
+npm run test:hooks        # React hooks (vitest)
+npm run test:unit:ai      # AI tools + NavigationEngine + cascade-prune
+npm run test:snapshot     # parser baseline regression check
+npm run test:integration  # live DB (needs .env)
+npm run test:e2e          # extension-host smoke tests
+npm run test:eval         # starts tool proxy on :3271 for AI evaluation agents
 ```
 
-**tsx tests** (1118 total): run via `npx tsx test/<file>.test.ts`. Use `assert`, `assertEq`, `test`, `printSummary` from `./testUtils`.
-
-**Vitest tests** (115 total): run via `npx vitest run --config vitest.config.ts`. Use `describe`, `it`, `expect`, `renderHook`, `act` (standard vitest + React Testing Library). Located in `test/hooks/`.
-
-Only `AdventureWorks*.dacpac` allowed in `test/`. Customer data and identifiers must never appear in public source code, test files, or comments. Customer data goes in `customer-data/` (gitignored). Internal tests (live DB, baseline snapshots) in `test-internal/` (gitignored).
+Only `AdventureWorks*.dacpac` variants allowed under `tests/fixtures/`. Customer data must never appear in public source, test files, or comments — customer dacpacs go in `customer-data/` (gitignored). Deep AI/semantic evaluation runs against the proxy (see `tests/README.md`, section "Connecting your own AI agent"). Specific evaluation orchestration is internal and not part of the public PR process.
 
 
 ## Code Rules
