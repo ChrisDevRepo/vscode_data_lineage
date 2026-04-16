@@ -276,21 +276,35 @@ export class LineageParticipant {
           activePhase = 'active';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-engine'));
           
-          // Inject mode prompt after initialization
           const engine = sess.stateMachine as NavigationEngine;
           if (engine) {
             const modePromptMsg = vscode.LanguageModelChatMessage.User(buildNavigationPrompt((engine as any).mode));
             messages.push(modePromptMsg);
           }
         }
+        
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
           activePhase = 'done';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_submit_findings');
+          
           if (!(sess.stateMachine as any).inlineMode) {
-            const synthesisMsg = vscode.LanguageModelChatMessage.User(buildSynthesisPrompt());
+            // Deliver the Detail Archive evidence for Phase 3
+            const archive = sess.memory.getResult();
+            const evidenceHeader = '### DETAIL ARCHIVE (TECHNICAL EVIDENCE)\n' +
+              'The following evidence was captured during the investigation. assembly this into your final report.\n\n';
+            
+            const evidenceItems = archive.detail_slots.map(s => 
+              `#### ${s.nodeId}\n- **Summary**: ${s.summary}\n- **Technical Analysis**:\n${s.analysis}\n`
+            ).join('\n---\n');
+
             messages.length = 0;
-            messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt), synthesisMsg);
-            this.logger.debug(`[Synthesis] Wiping history for Phase 3`);
+            messages.push(
+              vscode.LanguageModelChatMessage.User(systemPrompt),
+              vscode.LanguageModelChatMessage.User(effectivePrompt),
+              vscode.LanguageModelChatMessage.User(buildSynthesisPrompt()),
+              vscode.LanguageModelChatMessage.User(evidenceHeader + evidenceItems)
+            );
+            this.logger.debug(`[Synthesis] Wiping history and injecting ${archive.detail_slots.length} archive slots`);
           }
         }
 
