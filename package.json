@@ -1219,7 +1219,8 @@
     "test:project": "tsx test/projectStore.test.ts",
     "test:ai:quick": "npm run build:ext && node esbuild.test.mjs && vscode-test --files out/test/suite/ai-real-model.test.js --files out/test/suite/ai-integration.test.js",
     "test:ai:real": "npm run build:ext && node esbuild.test.mjs && vscode-test --files out/test/suite/ai-real-model.test.js",
-    "test:ai": "npm run test:ai:quick",
+    "test:baseline": "npx tsx test-internal/ai/report-gen.ts",
+    "test:ai": "npm run test:ai:quick && npm run test:baseline",
     "test:snapshot": "tsx test/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx test/snapshot-aw-baseline.ts --update",
     "package": "npx @vscode/vsce package"
