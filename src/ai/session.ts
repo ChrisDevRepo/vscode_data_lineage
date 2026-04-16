@@ -105,11 +105,6 @@ export class AiSession {
     };
   }
 
-  /** Legacy CT mapping — now redirects to unified storeBbResult. */
-  public storeCtResult(fullResult: any): void {
-    this.storeBbResult(fullResult);
-  }
-
   public getSummary(): SessionSummary {
     return {
       id: this.id,

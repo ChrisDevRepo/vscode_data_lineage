@@ -3,7 +3,7 @@ import * as yaml from 'js-yaml';
 import { getSession } from './ai/session';
 import { registerAiTools } from './ai/toolProvider';
 import { registerCommands } from './commands';
-import { openPanel, deactivatePanels, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
+import { openPanel, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { Logger, testLogCapture } from './utils/log';
 import { migrateProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
@@ -92,11 +92,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
 /**
  * Extension Cleanup.
- * 
- * Ensures all webview panels are disposed and background processes are halted.
+ *
+ * Panel-scoped state (stats connection, caches) is cleaned up via
+ * panel.onDidDispose in panelProvider.ts. VS Code disposes the output channel
+ * and command registrations automatically via context.subscriptions.
  */
 export function deactivate() {
-  deactivatePanels(outputChannel);
+  // no-op
 }
 
 /**

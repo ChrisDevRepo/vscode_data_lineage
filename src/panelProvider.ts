@@ -14,15 +14,6 @@ export { PROJECT_STORE_KEY };
 export function getActivePanel() { return activePanel; }
 
 /**
- * Ensures clean disconnection from background DB processes when the extension is deactivated
- * or all panels are closed.
- */
-export function deactivatePanels(outputChannel: vscode.LogOutputChannel) {
-  // Logic now handled via cleanup calls in messageHandlers.ts state, 
-  // but we can add a global hook here if needed for extension deactivation.
-}
-
-/**
  * Main entry point for the Webview UI.
  * Orchestrates the creation, reveal, and lifecycle management of the React-based lineage graph.
  */

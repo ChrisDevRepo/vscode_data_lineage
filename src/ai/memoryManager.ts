@@ -103,11 +103,6 @@ export class AiMemoryManager {
     return null;
   }
 
-  /** Set the list of questions the AI still needs to answer (The Agenda). */
-  public setPendingQuestions(questions: Array<{ nodeId: string; question: string }>): void {
-    this.pendingQuestions = questions;
-  }
-
   /** Build a snapshot of memory for the current hop. */
   public getWorkingMemory(hopCount: number, scopeSize: number): WorkingMemory {
     const coveragePct = scopeSize > 0 ? Math.round((this.detailSlots.size / scopeSize) * 100) : 0;
@@ -126,9 +121,8 @@ export class AiMemoryManager {
 
   /** Get the final results for Phase 3 synthesis. */
   public getResult(): { short_memory: ShortMemory; detail_slots: DetailSlot[] } {
-    const total = this.detailSlots.size; // this is usually just noted count
     return {
-      short_memory: { 
+      short_memory: {
         synthesis_narrative: this.synthesisNarrative,
         coverage: { noted: this.slotCount, total: 0, pct: 0 } // total/pct filled by SM
       },
@@ -139,12 +133,8 @@ export class AiMemoryManager {
   /** Accessors */
   public get slotCount(): number { return this.detailSlots.size; }
 
-  /** Return all node IDs currently in detail memory. */
+  /** Return all node IDs currently in detail memory. Used by cascade-prune guards. */
   public get notedNodeIds(): string[] {
     return Array.from(this.detailSlots.keys());
-  }
-
-  public getSlot(nodeId: string): DetailSlot | undefined {
-    return this.detailSlots.get(nodeId);
   }
 }
