@@ -2,6 +2,20 @@
 
 Each case is a markdown file following a fixed structure. The `scorer.ts` parses these files and compares agent behavior against the `Expected Outcome` table.
 
+## Success criteria — read `EVAL-RUBRIC.md` before authoring new tests
+
+Grading is **output-quality-first**, not process-metric-first. A run with rich `enrich_view` content + correct nodes + type-appropriate detail beats a run with fewer hops or fewer errors.
+
+Rubric dimensions (0-3 each, 12 total):
+1. **Correctness** — right nodes with right verdicts
+2. **Completeness** — scope drained, structure present
+3. **Question-Answering** — the enrich_view actually answers the user's question
+4. **Type-Appropriate Detail** — category-matched content (formulas for business, column tables for CT, hints for perf, etc.)
+
+**Memory-quality pre-gate:** if `detail_analysis` averages < 400 chars/node, or `narrative_update` averages < 150 chars/hop, the enrich_view score is capped at 6/12 because the memory is too thin to produce rich output.
+
+Full rubric + mechanical checks + terminology convention: `EVAL-RUBRIC.md`.
+
 ## File naming
 
 `{category}-{sequence}-{slug}.md`

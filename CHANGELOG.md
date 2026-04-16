@@ -21,6 +21,8 @@ Post-refactor hardening sprint closing the gaps from the unified NavigationEngin
 - **Dead demo-reload branch removed** — `openPanel` no longer sends an orphan `auto-visualize-start` message on existing panels.
 - **Dead code swept** — unused imports in `smBase.ts`; unused methods in `memoryManager.ts` (`setPendingQuestions`, `getSlot`); legacy `storeCtResult` in `session.ts`; empty `deactivatePanels` shim.
 - **Docs aligned** — `.claude/rules/ai.md`, `.claude/rules/architecture.md`, CLAUDE.md rewritten for the unified NavigationEngine + 10-tool set. Stale BB/CT/Dep / 13-tool / Type 1-2-3 terminology removed.
+- **Eval grading is now output-quality-first** — new `tests/cases/EVAL-RUBRIC.md` replaces hop-count / error-count metrics with a 4-dimension 12-point rubric (Correctness / Completeness / Question-Answering / Type-Appropriate Detail) + memory-quality pre-gate. Anti-overfitting discipline: 13-case training / 8-case validation split, multi-category validation gate, multi-dacpac gate before committing prompt changes.
+- **Sliding-memory wipe now checks ALL submit_findings in a round** — previously `.find()` picked only the first; parallel partial failures lost error feedback and the AI gave up. Now `.filter()` — any error in the round preserves history so the AI can self-correct. (Regression fix from bb-q1-employee parallel-submit scenario.)
 
 ## [0.9.9] - 2026-04-16
 
