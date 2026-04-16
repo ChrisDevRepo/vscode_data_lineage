@@ -20,19 +20,11 @@ import { CONTEXT_PRESSURE_THRESHOLD } from './ai/tokenBudget';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
 import { ColumnTraceState } from './ai/columnTraceState';
 import { BlackboardState } from './ai/blackboardState';
+import { LineageParticipant } from './ai/lineageParticipant';
 
 declare const __BUILD_TIMESTAMP__: string;
 
 let outputChannel: vscode.LogOutputChannel;
-
-/** Helper to extract callId, name, and input from various tool call part types */
-function extractToolCallFields(tc: vscode.LanguageModelToolCallPart | { callId: string; name: string; input: any }): { callId: string; name: string; input: any } {
-  return {
-    callId: tc.callId,
-    name: tc.name,
-    input: tc.input,
-  };
-}
 
 export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
@@ -78,7 +70,8 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(...registerAiTools(getSession, outputChannel, getActivePanel));
 
   // ─── @lineage Chat Participant ─────────────────────────────────────────────
-  registerChatParticipant(context, getSession, outputChannel);
+  const participant = new LineageParticipant(context, getSession, outputChannel, getActivePanel);
+  participant.register();
 
   // ─── AI Config Watcher ─────────────────────────────────────────────────────
   context.subscriptions.push(

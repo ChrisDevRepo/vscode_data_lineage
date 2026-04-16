@@ -1,0 +1,8 @@
+{
+  "test_run": true,
+  "nodes": [
+    "table_a",
+    "table_b"
+  ],
+  "timestamp": "2026-04-16T05:25:27.418Z"
+}

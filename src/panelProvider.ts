@@ -815,7 +815,33 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add('  Model loaded: Yes');
     add(`  Project:      ${sess.projectName ?? 'N/A'}`);
     add(`  Platform:     ${sess.model.dbPlatform ?? 'N/A'}`);
+    add(`  Nodes:        ${sess.model.nodes.length}`);
+    add(`  Edges:        ${sess.model.edges.length}`);
   }
+  add('');
+  add('AI SESSION');
+  add(`  Session ID:   ${sess.id}`);
+  add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
+  add(`  Hops:         ${sess.hopCount}`);
+  if (sess.stateMachine) {
+    add('');
+    add('STATE MACHINE DUMP (JSON)');
+    try {
+      add(JSON.stringify(sess.stateMachine.toJSON(), null, 2));
+    } catch (err) {
+      add(`  Error dumping SM: ${err}`);
+    }
+  }
+  if (sess.resultGraph) {
+    add('');
+    add('RESULT GRAPH (JSON)');
+    try {
+      add(JSON.stringify(sess.resultGraph, null, 2));
+    } catch (err) {
+      add(`  Error dumping result graph: ${err}`);
+    }
+  }
+
   return lines.join('\n');
 }
 

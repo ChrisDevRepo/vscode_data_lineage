@@ -7,10 +7,11 @@ import { logDebug, logWarn, logError, logInfo, logTrace, trunc, sanitizeForLog }
 import {
   shouldSmInline,
   getContext, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView, orderAndAssemble,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
   validateToolInput,
   type EnrichViewInput,
 } from './tools';
+import { ViewSynthesisService } from './viewSynthesisService';
 import { edgeApiType } from './aiPresenter';
 import { buildSynthesisReminder } from './smPrompts';
 import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
@@ -223,124 +224,15 @@ export function registerAiTools(
           if (!isAiEnabled()) return disabled();
           const sess = getSession();
           const m = requireModel();
-          const g = requireGraph();
+          requireGraph();
           const inputErr = validateToolInput(options.input, { name: 'string' });
           if (inputErr) return toolResult(inputErr);
           const rawInput = options.input as EnrichViewInput;
 
-          let resolvedNodeIds: string[];
-          let resolvedEdges: [string, string, string][];
-          let graphSource: string;
-
-          if (sess.resultGraph) {
-            resolvedNodeIds = [...sess.resultGraph.nodeIds];
-            resolvedEdges = [...sess.resultGraph.edges];
-            graphSource = sess.resultGraph.source;
-
-            if (rawInput.is_update) {
-              // Incremental add
-              if (rawInput.add_node_ids?.length) {
-                const currentSet = new Set(resolvedNodeIds);
-                const toAdd = rawInput.add_node_ids.filter(id => m.nodes.some(n => n.id === id) && !currentSet.has(id));
-                resolvedNodeIds.push(...toAdd);
-                // Discover edges between existing and new nodes
-                const newSet = new Set(resolvedNodeIds);
-                const allPossibleEdges: [string, string, string][] = [];
-                for (const e of m.edges) {
-                  if (newSet.has(e.source) && newSet.has(e.target)) {
-                    allPossibleEdges.push([e.source, e.target, edgeApiType(e.type)]);
-                  }
-                }
-                resolvedEdges = allPossibleEdges;
-              }
-            }
-
-            if (rawInput.prune_node_ids?.length) {
-              const pruneSet = new Set(rawInput.prune_node_ids);
-              resolvedNodeIds = resolvedNodeIds.filter(id => !pruneSet.has(id));
-              resolvedEdges = resolvedEdges.filter(([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt));
-            }
-          } else {
-            return logAndReturn('enrich_view', {
-              success: false,
-              errors: ['No state-machine result available — enrich_view requires a completed column_trace or blackboard exploration.'],
-            });
-          }
-
-          if (sess.resultGraph?.notes?.length) {
-            const userNoteIds = new Set((rawInput.notes ?? []).map(n => (n as any).node_id as string));
-            const autoNotes: Array<{ node_id: string; text: string }> = [];
-            const resolvedSet = new Set(resolvedNodeIds);
-            for (const { nodeId, summary } of sess.resultGraph.notes) {
-              if (resolvedSet.has(nodeId) && !userNoteIds.has(nodeId) && summary) {
-                autoNotes.push({ node_id: nodeId, text: summary });
-              }
-            }
-            if (autoNotes.length > 0) rawInput.notes = [...(rawInput.notes ?? []), ...autoNotes];
-          }
-
-          if (sess.resultGraph?.suggested_labels?.length && rawInput.sections?.length) {
-            const hasNodeIds = rawInput.sections.some(s => s.node_ids && s.node_ids.length > 0);
-            if (!hasNodeIds) {
-              const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
-              const labelToNodeIds = new Map<string, string[]>();
-              for (const sl of sess.resultGraph.suggested_labels) {
-                if (!sl.text) continue;
-                const label = stripNum(sl.text);
-                if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, []);
-                labelToNodeIds.get(label)!.push(sl.node_id);
-              }
-              rawInput.sections = rawInput.sections.map(sec => {
-                const norm = stripNum(sec.label);
-                const ids = labelToNodeIds.get(norm);
-                if (ids?.length) return { ...sec, node_ids: ids };
-                return sec;
-              });
-            }
-          }
-
-          let assembledBadges: Array<{ node_id: string; text: string }> = [];
-          if (rawInput.sections?.length) {
-            const assembled = orderAndAssemble(rawInput.sections, { title: rawInput.title, intro: rawInput.intro, closing: rawInput.closing });
-            assembledBadges = assembled.badges;
-            if (!rawInput.description) rawInput.description = assembled.description;
-            rawInput.sections = undefined;
-          }
-
-          const { input, fixes } = autoFixEnrichView(m, rawInput, resolvedNodeIds);
-          const validation = validateEnrichView(input, resolvedNodeIds, assembledBadges);
-          if (!validation.success) return logAndReturn('enrich_view', validation);
-
-          const aiMetadata: AIViewMetadata = {
-            summary: validation.summary,
-            description: validation.description,
-            createdAt: new Date().toISOString(),
-            modelName: sess.modelName,
-            highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
-            badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
-            notes: validation.notes.map(n => ({ nodeId: n.node_id, text: n.text })),
-            layoutDirection: validation.layout_direction,
-          };
+          const service = new ViewSynthesisService(sess, getPanel);
+          const result = service.synthesizeView(m, rawInput);
           
-          const panel = getPanel();
-          if (panel) {
-            panel.webview.postMessage({ type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata });
-            panel.reveal(vscode.ViewColumn.One);
-          }
-
-          // Persist the updated state back to sess.resultGraph if it's an update
-          if (rawInput.is_update && sess.resultGraph) {
-            sess.resultGraph.nodeIds = resolvedNodeIds;
-            sess.resultGraph.edges = resolvedEdges;
-            // Merge notes
-            const existingNotes = new Map((sess.resultGraph.notes || []).map(n => [n.nodeId, n]));
-            for (const n of validation.notes) {
-              existingNotes.set(n.node_id, { nodeId: n.node_id, summary: n.text });
-            }
-            sess.resultGraph.notes = Array.from(existingNotes.values());
-          }
-
-          return logAndReturn('enrich_view', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource });
+          return logAndReturn('enrich_view', result);
         } catch (err) { return toolError('enrich_view', err); }
       },
     }),
