@@ -4,7 +4,7 @@ import { AiSession, getSession } from './ai/session';
 import { registerAiTools } from './ai/toolProvider';
 import { registerCommands } from './commands';
 import { openPanel, deactivatePanels, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
-import { logInfo, logDebug, logWarn, logError, trunc } from './utils/log';
+import { logInfo, logDebug, logWarn, logError, trunc, testLogCapture } from './utils/log';
 import { migrateProjectStore, createProject, updateProject, generateProjectName } from './engine/projectStore';
 import { stripSensitiveFields } from './engine/connectionManager';
 import { IConnectionInfo } from './types/mssql';
@@ -89,6 +89,12 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  return {
+    getSession,
+    getActivePanel,
+    testLogCapture
+  };
 }
 
 export function deactivate() {
@@ -467,9 +473,4 @@ function registerChatParticipant(context: vscode.ExtensionContext, getSession: (
   });
 
   context.subscriptions.push(participant);
-
-  return {
-    getSession,
-    getActivePanel
-  };
-  }
+}

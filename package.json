@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.10",
+  "version": "0.9.9",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -1245,7 +1245,8 @@
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

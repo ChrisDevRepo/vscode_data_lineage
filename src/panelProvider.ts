@@ -16,7 +16,7 @@ import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from './en
 import {
   isMssqlAvailable, promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
-  executeSimpleQuery, getServerInfo,
+  executeSimpleQuery, getServerInfo, withQueryTimeout,
 } from './engine/connectionManager';
 import type { IConnectionInfo, SimpleExecuteResult } from './types/mssql';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent } from './engine/profilingEngine';
@@ -31,6 +31,7 @@ import {
 } from './engine/projectStore';
 import { buildBareGraph } from './ai/graphUtils';
 import { populateColumnStore } from './engine/modelBuilder';
+import { ExtensionToWebviewMsgSchema, WebviewToExtensionMsgSchema, type ExtensionToWebviewMsg } from './engine/shared/bridgeContract';
 
 // ─── Types & Interfaces ──────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ import { populateColumnStore } from './engine/modelBuilder';
  * allowing the logic to be unit tested in a pure Node.js environment.
  */
 export interface BridgeHost {
-  postMessage(msg: any): Thenable<boolean>;
+  postMessage(msg: ExtensionToWebviewMsg): Thenable<boolean>;
   log(level: 'info' | 'debug' | 'warn' | 'error' | 'trace', cat: LogCategory, text: string, err?: any): void;
   showErrorMessage(msg: string): void;
   executeCommand(command: string, ...args: any[]): Thenable<any>;
@@ -105,10 +106,14 @@ export function openPanel(
     logInfo(outputChannel, 'Bridge', 'Revealing existing panel');
     activePanel.reveal();
     if (loadDemo) {
-      activePanel.webview.postMessage({ type: 'auto-visualize-start' });
+      const msg: ExtensionToWebviewMsg = { type: 'auto-visualize-start' };
+      activePanel.webview.postMessage(ExtensionToWebviewMsgSchema.parse(msg));
       // Wrapped in a dummy host for handleLoadDemo compatibility
       const dummyHost: BridgeHost = {
-        postMessage: (msg) => activePanel!.webview.postMessage(msg),
+        postMessage: (msg) => {
+          const validated = ExtensionToWebviewMsgSchema.parse(msg);
+          return activePanel!.webview.postMessage(validated);
+        },
         log: (level, cat, text, err) => {
           if (level === 'info') logInfo(outputChannel, cat, text);
           else if (level === 'warn') logWarn(outputChannel, cat, text);
@@ -148,7 +153,10 @@ export function openPanel(
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri, loadDemo);
 
   const host: BridgeHost = {
-    postMessage: (msg) => panel.webview.postMessage(msg),
+    postMessage: (msg) => {
+      const validated = ExtensionToWebviewMsgSchema.parse(msg);
+      return panel.webview.postMessage(validated);
+    },
     log: (level, cat, text, err) => {
       if (level === 'info') logInfo(outputChannel, cat, text);
       else if (level === 'warn') logWarn(outputChannel, cat, text);
@@ -192,18 +200,23 @@ export function openPanel(
 
   const handlers = createMessageHandlers(host, context, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState, loadDemo, (dp) => detailPanel = dp);
 
-  panel.webview.onDidReceiveMessage(async (msg) => {
-    logDebug(outputChannel, 'Bridge', `Incoming: ${msg.type}`);
-    const handler = handlers[msg.type];
-    if (handler) {
-      try {
+  panel.webview.onDidReceiveMessage(async (rawMsg) => {
+    try {
+      const msg = WebviewToExtensionMsgSchema.parse(rawMsg);
+      logDebug(outputChannel, 'Bridge', `Incoming: ${msg.type}`);
+      const handler = handlers[msg.type];
+      if (handler) {
         await handler(msg);
-      } catch (err) {
-        logError(outputChannel, 'Bridge', `Handler ${msg.type}`, err);
-        panel.webview.postMessage({ type: 'error', error: err instanceof Error ? err.message : String(err) });
+      } else {
+        logWarn(outputChannel, 'Bridge', `No handler for message type: ${msg.type}`);
       }
-    } else {
-      logWarn(outputChannel, 'Bridge', `No handler for message type: ${msg.type}`);
+    } catch (err) {
+      logError(outputChannel, 'Bridge', 'Incoming message validation/handling', err);
+      const errorMsg: ExtensionToWebviewMsg = { 
+        type: 'error', 
+        error: err instanceof Error ? err.message : String(err) 
+      };
+      panel.webview.postMessage(ExtensionToWebviewMsgSchema.parse(errorMsg));
     }
   }, undefined, context.subscriptions);
 }
@@ -706,13 +719,15 @@ async function handleTableStatsRequestHost(
   const sampleSize = cfg.get('tableStatistics.sampleSize', 1000);
   const useApprox = cfg.get('tableStatistics.useApproxDistinct', true);
   const maxColumns = cfg.get('tableStatistics.maxColumns', 100);
+  const timeoutSec = cfg.get('tableStatistics.queryTimeout', 60);
+  const timeoutMs = timeoutSec * 1000;
 
   try {
     if (!statsConnectionUri) {
       host.log('info', 'Stats', `Connecting for stats: ${schema}.${objectName}`);
       const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
       if (!result) {
-        host.postMessage({ type: 'table-stats-error', message: 'Connection cancelled.' });
+        panel.webview.postMessage({ type: 'table-stats-error', message: 'Connection cancelled.' });
         return;
       }
       statsConnectionUri = result.connectionUri;
@@ -722,14 +737,16 @@ async function handleTableStatsRequestHost(
     const engineEdition = serverInfo.engineEditionId;
 
     const rowCountSql = buildRowCountQuery(schema, objectName);
-    const rowCountResult = await executeSimpleQuery(connectionUri, rowCountSql, outputChannel);
+    const rowCountPromise = executeSimpleQuery(connectionUri, rowCountSql, outputChannel);
+    const rowCountResult = await withQueryTimeout(rowCountPromise, timeoutMs, `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
     const rowCount = rowCountResult.rowCount > 0 ? parseInt(rowCountResult.rows[0][0].displayValue, 10) || 0 : 0;
 
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
     const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
     if (!profilingSql) return;
 
-    const profilingResult = await executeSimpleQuery(connectionUri, profilingSql, outputChannel);
+    const profilingPromise = executeSimpleQuery(connectionUri, profilingSql, outputChannel);
+    const profilingResult = await withQueryTimeout(profilingPromise, timeoutMs, `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
     const resultRow: Record<string, string> = {};
     for (let i = 0; i < profilingResult.columnInfo.length; i++) {
       resultRow[profilingResult.columnInfo[i].columnName] = profilingResult.rows[0][i].displayValue;
@@ -738,10 +755,10 @@ async function handleTableStatsRequestHost(
     const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
     const samplePercent = needsSampling ? computeSamplePercent(engineEdition, sampleSize, rowCount) : undefined;
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
-    host.postMessage({ type: 'table-stats-result', stats, mode });
+    panel.webview.postMessage({ type: 'table-stats-result', stats, mode });
   } catch (err) {
     host.log('error', 'Stats', 'Profiling', err);
-    host.postMessage({ type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) });
+    panel.webview.postMessage({ type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) });
   }
 }
 
