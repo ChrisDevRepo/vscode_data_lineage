@@ -63,3 +63,22 @@ Blocking issues:
 5. 11 total tsc --noEmit errors
 
 Next: Fix blocking issues, then update instruction files
+
+## CHECKPOINT — ALL FIXES APPLIED
+Stage 1a: Dead code removed (extension.ts 469→174 lines) — commit 00d34c3
+Stage 1b: App.tsx callbacks restored — commit 350923e
+Stage 1c: useAppState.ts type imports fixed — commit f8ebc90
+Stage 1d: runTest.ts fs import + property name fixed — commit 301279e
+Stage 2: CT init direction + targetColumns + validation restored — commit 0a0d7ff
+Stage 3: FROM_TERMINATOR_RE regex fixed — commit 115b532
+
+Verification sweep:
+- tsc --noEmit: 0 errors
+- npm test: 792/792 passed, snapshot baseline matches
+- npm run test:internal: 478/478 passed (AI Tools 316, CT 96, BB 66)
+- npm run build: clean
+
+**REVISED VERDICT: CONDITIONAL GO**
+All CRITICAL and MEDIUM findings resolved. Remaining: LOW severity items (cosmetic) + UNVERIFIABLE (need manual UAT for math rendering and AI pacing).
+
+Next: Update instruction files (CLAUDE.md, .claude/rules/*)
