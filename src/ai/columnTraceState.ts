@@ -542,19 +542,22 @@ export class ColumnTraceState extends HopStateMachine {
 
     // 1. Store detail memory (before verdicts — doesn't depend on summary)
     this.storeFocusNodeDetail(params);
+// 2. Apply verdicts (populates chain summaries via applyTrace)
+let advanced = 0;
+let pruneCount = 0;
+try {
+  for (const v of params.verdicts) {
+    const result = this.applyVerdict(v);
+    if ('error' in result) return result;
+    advanced += result.advanced;
+    if (v.verdict === 'prune') pruneCount++;
+  }
+} catch (err) {
+  this.log('error', `submitVerdicts CRASH: ${err}`);
+  return { error: 'internal_error', hint: String(err) };
+}
 
-    // 2. Apply verdicts (populates chain summaries via applyTrace)
-    let advanced = 0;
-    let pruneCount = 0;
-    for (const v of params.verdicts) {
-      const result = this.applyVerdict(v);
-      if ('error' in result) return result;
-      advanced += result.advanced;
-      if (v.verdict === 'prune') pruneCount++;
-    }
-
-    // 3. Update short memory (after verdicts — captures both chain and passthrough nodes)
-    //    Two parts: SM-generated metadata (traced/pruned) + AI-generated insight (notes)
+// 3. Update short memory (after verdicts — captures both chain and passthrough nodes)    //    Two parts: SM-generated metadata (traced/pruned) + AI-generated insight (notes)
     //    SM adds the mechanical facts automatically. AI writes only the insight (FOUND/OPEN).
     const focusChain = this.chain.get(this.currentFocusNodeId!);
     const focusName = focusChain?.name ?? this.nodeMap.get(this.currentFocusNodeId!)?.name ?? '';
