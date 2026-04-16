@@ -20,7 +20,7 @@ import * as vscode from 'vscode';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import type { AiSession } from '../../../../src/ai/session';
 import { buildSystemPromptBase } from '../../../../src/ai/prompts';
-import { buildCtPrompt, buildCtDepPrompt, buildBbPrompt } from '../../../../src/ai/smPrompts';
+import { buildNavigationPrompt } from '../../../../src/ai/smPrompts';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -126,11 +126,15 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
           }
         }
 
+        // Post-unification: one NavigationEngine handles both modes. The
+        // old ct_mode_columns / ct_mode_deps / bb_mode split is replaced by
+        // buildNavigationPrompt(mode). Expose all three keys for backward
+        // compatibility with existing eval-loop agent templates.
         return respond(res, 200, {
           system,
-          ct_mode_columns: buildCtPrompt(),
-          ct_mode_deps: buildCtDepPrompt(),
-          bb_mode: buildBbPrompt(),
+          ct_mode_columns: buildNavigationPrompt('column_trace'),
+          ct_mode_deps: buildNavigationPrompt('column_trace'),
+          bb_mode: buildNavigationPrompt('blackboard'),
           tool_descriptions: toolDescs,
         });
       }

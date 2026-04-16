@@ -1,10 +1,8 @@
 import * as esbuild from 'esbuild';
 import { glob } from 'glob';
 
-// Compile both existing src/test/ and new tests/e2e/ files
-const srcTestFiles = await glob('src/test/**/*.test.ts');
-const e2eTestFiles = await glob('tests/e2e/**/*.ts');
-const allTestFiles = [...srcTestFiles, ...e2eTestFiles];
+// All extension-host tests live under tests/e2e/ (src/test/ was legacy).
+const allTestFiles = await glob('tests/e2e/**/*.ts');
 
 /** @type {import('esbuild').BuildOptions} */
 const config = {

@@ -59,7 +59,7 @@ suite('Extension Functional Integration Suite', () => {
 		assert.ok(neighbors && neighbors.out.length > 0, 'Person.Person should have downstream neighbors');
 		
 		// Search Check
-		const { searchCatalog } = await import('../../utils/modelSearch');
+		const { searchCatalog } = await import('../../../src/utils/modelSearch');
 		const results = searchCatalog(sess.model!.nodes, 'SalesOrder');
 		assert.ok(results.length > 0, 'Should find SalesOrder nodes');
 	});
