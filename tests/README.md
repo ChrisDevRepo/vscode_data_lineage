@@ -78,6 +78,31 @@ npm run test:e2e            # Extension activation + command smoke tests
 npm run test:eval           # Starts tool proxy for AI eval agents
 ```
 
+## Connecting your own AI agent for evaluation
+
+`npm run test:eval` starts a local HTTP proxy on port 3271 that exposes the extension's registered language-model tools via REST. Any AI agent — OpenAI, Anthropic, local model via Ollama, a custom Python script — can POST tool calls and receive real results from the running extension.
+
+**Minimal integration:**
+
+```bash
+# Start the proxy (leaves VS Code extension host running)
+npm run test:eval &
+
+# Your agent POSTs tool calls:
+curl -X POST http://127.0.0.1:3271/tool \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "lineage_search_objects", "input": {"query": "Employee"}, "sessionId": "my-agent-001"}'
+
+# Your agent reads the resulting SM state:
+curl http://127.0.0.1:3271/session/my-agent-001/state
+```
+
+Each `/tool` POST flows through `vscode.lm.invokeTool` — hitting the real tool provider, state machine, and session. The proxy is a thin pass-through with no logic of its own, so extension changes apply automatically.
+
+**Health & introspection endpoints:** `GET /health`, `GET /tools`, `GET /prompts?sessionId=...`. See `tests/e2e/suite/eval/toolProxy.ts` for the full request / response shapes.
+
+**Grading:** agent outputs can be scored against the rubric in [cases/EVAL-RUBRIC.md](./cases/EVAL-RUBRIC.md) — output-quality-first (Correctness / Completeness / Question-Answering / Type-Appropriate Detail), 12 points total.
+
 ## Test case format
 
 Each file under `tests/cases/*.md` follows a fixed structure. See [cases/README.md](./cases/README.md) for the spec and [cases/EVAL-RUBRIC.md](./cases/EVAL-RUBRIC.md) for the grading rubric.
