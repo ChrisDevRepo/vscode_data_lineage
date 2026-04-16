@@ -807,6 +807,23 @@ export function App() {
     endTrace();
   }, [analysisMode, endTrace]);
 
+  const handlePendingPositionsApplied = useCallback(() => {
+    setPendingPositions(undefined);
+    setPendingViewport(undefined);
+  }, []);
+
+  const handleRemoveFromView = useCallback((nodeId: string) => {
+    setFilter(f => {
+      if (!f.allowlistNodeIds) return f;
+      const next: FilterState = {
+        ...f,
+        allowlistNodeIds: new Set([...f.allowlistNodeIds].filter(id => id !== nodeId)),
+      };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
   const handleDiscardAiPreview = useCallback(() => {
     setAiPreview(null);
     // Mode-lock restore triggers automatically via isModeLocked → false
