@@ -13,9 +13,9 @@
  */
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { useGraphology } from '../../src/hooks/useGraphology';
-import type { DatabaseModel, FilterState, LineageNode, LineageEdge } from '../../src/engine/types';
-import { DEFAULT_CONFIG } from '../../src/engine/types';
+import { useGraphology } from '../../../src/hooks/useGraphology';
+import type { DatabaseModel, FilterState, LineageNode, LineageEdge } from '../../../src/engine/types';
+import { DEFAULT_CONFIG } from '../../../src/engine/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

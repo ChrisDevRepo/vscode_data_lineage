@@ -13,11 +13,11 @@
 import { render, act, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { VsCodeProvider, useVsCode } from '../../src/contexts/VsCodeContext';
-import { useDacpacLoader } from '../../src/hooks/useDacpacLoader';
-import { CreateFlow } from '../../src/components/CreateFlow';
-import { createProject } from '../../src/engine/projectStore';
-import type { DacpacConnection, DatabaseConnection } from '../../src/engine/projectStore';
+import { VsCodeProvider, useVsCode } from '../../../src/contexts/VsCodeContext';
+import { useDacpacLoader } from '../../../src/hooks/useDacpacLoader';
+import { CreateFlow } from '../../../src/components/CreateFlow';
+import { createProject } from '../../../src/engine/projectStore';
+import type { DacpacConnection, DatabaseConnection } from '../../../src/engine/projectStore';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

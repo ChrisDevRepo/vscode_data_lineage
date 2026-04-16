@@ -9,9 +9,9 @@
  */
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { useOverviewMode } from '../../src/hooks/useOverviewMode';
-import type { DatabaseModel } from '../../src/engine/types';
-import { DEFAULT_CONFIG } from '../../src/engine/types';
+import { useOverviewMode } from '../../../src/hooks/useOverviewMode';
+import type { DatabaseModel } from '../../../src/engine/types';
+import { DEFAULT_CONFIG } from '../../../src/engine/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

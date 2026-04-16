@@ -15,10 +15,10 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import Graph from 'graphology';
 import type { Node as FlowNode } from '@xyflow/react';
-import { useInteractiveTrace } from '../../src/hooks/useInteractiveTrace';
-import type { CustomNodeData } from '../../src/components/CustomNode';
-import { DEFAULT_CONFIG } from '../../src/engine/types';
-import type { DatabaseModel, LineageNode, LineageEdge } from '../../src/engine/types';
+import { useInteractiveTrace } from '../../../src/hooks/useInteractiveTrace';
+import type { CustomNodeData } from '../../../src/components/CustomNode';
+import { DEFAULT_CONFIG } from '../../../src/engine/types';
+import type { DatabaseModel, LineageNode, LineageEdge } from '../../../src/engine/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
