@@ -1,6 +1,8 @@
 # Source files (bundled into out/ and dist/)
 src/**
 test/**
+tests/**
+test-results/**
 customer-data/**
 temp-old-design/**
 tmp/**
