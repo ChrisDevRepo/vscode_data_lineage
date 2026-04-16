@@ -23,6 +23,8 @@ Post-refactor hardening sprint closing the gaps from the unified NavigationEngin
 - **Docs aligned** — `.claude/rules/ai.md`, `.claude/rules/architecture.md`, CLAUDE.md rewritten for the unified NavigationEngine + 10-tool set. Stale BB/CT/Dep / 13-tool / Type 1-2-3 terminology removed.
 - **Eval grading is now output-quality-first** — new `tests/cases/EVAL-RUBRIC.md` replaces hop-count / error-count metrics with a 4-dimension 12-point rubric (Correctness / Completeness / Question-Answering / Type-Appropriate Detail) + memory-quality pre-gate. Anti-overfitting discipline: 13-case training / 8-case validation split, multi-category validation gate, multi-dacpac gate before committing prompt changes.
 - **Sliding-memory wipe now checks ALL submit_findings in a round** — previously `.find()` picked only the first; parallel partial failures lost error feedback and the AI gave up. Now `.filter()` — any error in the round preserves history so the AI can self-correct. (Regression fix from bb-q1-employee parallel-submit scenario.)
+- **Navigation prompt now preserved across sliding-memory wipes** — previously the nav prompt (mode rules, MEMORY PROTOCOL, routing rules, classification) was pushed once at active-phase entry and silently dropped on the first sliding wipe. Every subsequent hop ran without mode guidance. Now captured into `navPrompt` and re-pushed inside every sliding wipe. Structural bug separate from the parallel-submit fix.
+- **Prompt architecture documented** — new `docs/AI_PROMPT_ARCHITECTURE.md` codifies what belongs in system prompt vs navigation prompt vs synthesis prompt, with citations to LangChain, Anthropic Claude docs, and MemGPT. Referenced by both `/prompt-change` and `/eval-loop` skills.
 
 ## [0.9.9] - 2026-04-16
 
