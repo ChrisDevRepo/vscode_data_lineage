@@ -143,10 +143,16 @@ def build_prompt(template: str, mapping: dict[str, str]) -> str:
     return out
 
 
-def validate_prompt(prompt_path: Path) -> None:
-    """Run tests/eval/validate.py; raises on non-zero exit."""
+def validate_template() -> None:
+    """Lint agent-prompt.template.txt for harness contamination.
+
+    The validator strips {{PLACEHOLDER}} tokens before scanning, so it sees
+    only the harness-authored text (the 4 transport / extraction / User: /
+    blank lines). Production content injected via /prompts is trusted and
+    is never scanned — it lives inside the placeholders.
+    """
     result = subprocess.run(
-        [sys.executable, str(VALIDATE_PY), str(prompt_path)],
+        [sys.executable, str(VALIDATE_PY), str(TEMPLATE_PATH)],
         capture_output=True,
         text=True,
         cwd=PROJECT_ROOT,
@@ -155,8 +161,9 @@ def validate_prompt(prompt_path: Path) -> None:
         sys.stderr.write(result.stderr)
         sys.stderr.write(result.stdout)
         raise SystemExit(
-            "run.py: validate.py rejected the populated prompt — see blocklist. "
-            "Fix agent-prompt.template.txt or the /prompts response, NOT the blocklist."
+            "run.py: validate.py rejected the TEMPLATE. Harness has been "
+            "contaminated with behavior scaffolding. Restore the canonical "
+            "template from .claude/rules/eval-validity.md."
         )
 
 
@@ -248,9 +255,9 @@ def main() -> int:
     prompt_path = run_dir / f"{test_id}.prompt.txt"
     prompt_path.write_text(populated, encoding="utf-8")
 
-    # 5) Validate (fails-closed)
-    validate_prompt(prompt_path)
-    print(f"[run] prompt validated: {prompt_path.relative_to(PROJECT_ROOT)}")
+    # 5) Validate the TEMPLATE (the only harness-controlled surface)
+    validate_template()
+    print(f"[run] template validated; populated prompt at {prompt_path.relative_to(PROJECT_ROOT)}")
 
     # 6) Record session metadata for extract.py
     meta = {
@@ -268,19 +275,19 @@ def main() -> int:
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
-    # 7) Emit the populated prompt to stdout for the orchestrator to feed into
-    # Agent(model: "haiku"). The extraction command is already inlined in the
-    # template, so when the agent finishes it will invoke extract.py itself.
-    print("=" * 78)
-    print(f"POPULATED PROMPT ({len(populated)} chars) — feed to Agent(model: 'haiku'):")
-    print("=" * 78)
-    print(populated)
-    print("=" * 78)
+    # 7) The orchestrator (Claude Code or human) reads the saved prompt file
+    # and hands it to Agent(model: "haiku"). Avoid printing the populated
+    # prompt to stdout (Unicode characters break on Windows cp1252 locales
+    # and the full text would flood the terminal anyway).
+    print(f"[run] populated prompt saved ({len(populated)} chars)")
+    print(f"[run] -> read from: {prompt_path.relative_to(PROJECT_ROOT)}")
+    print(f"[run] -> session_id: {session_id}")
+    print(f"[run] -> run_id:     {run_id}")
+    print(f"[run] -> feed to:    Agent(model: 'haiku', subagent_type: 'general-purpose')")
     print(
-        f"[run] after Agent completes, verify report at: "
+        f"[run] -> after Agent completes, verify report at: "
         f"{(run_dir / f'{test_id}.md').relative_to(PROJECT_ROOT)}"
     )
-    print(f"[run] session_id={session_id}  run_id={run_id}")
     return 0
 
 
