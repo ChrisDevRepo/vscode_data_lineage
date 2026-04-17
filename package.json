@@ -444,6 +444,11 @@
             "type": "string",
             "default": "",
             "markdownDescription": "Path to custom AI output templates YAML. Controls how `@lineage` formats summary, description, badges, highlights, and notes. Leave empty for built-in defaults. Use Command Palette → *Create AI Output Templates* to scaffold. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)"
+          },
+          "dataLineageViz.ai.showToolInvocations": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Show each `@lineage` tool call as an expandable chat part (with input JSON). When off (default), the copy button captures only the AI prose; tool progress is shown ephemerally via status text and full tool I/O is available in the **Data Lineage Viz** output channel. Turn on for developer debugging — note that VS Code's built-in chat copy will then include tool-call details."
           }
         }
       }

@@ -51,6 +51,13 @@ const BLOCK = {
     '### CRITICAL GROUNDING CONTRACT\n' +
     '- **TRUTH**: If the Blackboard contradicts the current DDL, the DDL is correct. Update the Blackboard immediately.\n' +
     '- **OBJECTIVE**: Every sub-question for a neighbor must be goal-oriented (e.g., "Check if this proc applies the 10% VAT rate").',
+
+  continuationContract:
+    '### CONTINUATION CONTRACT\n' +
+    '- While in active exploration, your ONLY valid action is `lineage_submit_findings`. Do NOT emit a final prose answer.\n' +
+    '- Keep calling `lineage_submit_findings` hop after hop until the engine reports the agenda empty OR you explicitly set `complete: true` in a `submit_findings` call.\n' +
+    '- The agenda (in `working_memory.topological_map.agenda`) is the ground truth for remaining work. If it has items, you are NOT done — even if the answer feels "good enough".\n' +
+    '- A short chat answer while the agenda still has items is a protocol violation: the user will see an incomplete picture and no annotated graph view.',
 } as const;
 
 /**
@@ -85,6 +92,8 @@ export function buildNavigationPrompt(mode: 'blackboard' | 'column_trace'): stri
     BLOCK.routingRules,
     '',
     BLOCK.groundingContract,
+    '',
+    BLOCK.continuationContract,
   ].join('\n');
 }
 

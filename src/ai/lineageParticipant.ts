@@ -126,6 +126,11 @@ export class LineageParticipant {
     const MAX_ROUNDS = aiConfig.get<number>('ai.maxRounds', 50);
     setInlineTokenBudget(aiConfig.get<number>('ai.inlineTokenBudget', 10_000));
     setSmInlineNodeCap(aiConfig.get<number>('ai.inlineNodeCap', 10));
+    // Copy-friendliness: when false, we skip passing toolInvocationToken to vscode.lm.invokeTool().
+    // Without the token VS Code does not render each tool call as a chat part (which would otherwise
+    // include the expanded input JSON), so the built-in chat copy button captures only AI prose.
+    // Full tool I/O is still logged to the output channel; flip the setting on for developer debug.
+    const showToolInvocations = aiConfig.get<boolean>('ai.showToolInvocations', false);
 
     if (!sess.model) {
       stream.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first.');
@@ -292,6 +297,27 @@ export class LineageParticipant {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
         if (!toolCalls.length) {
+          // Premature-termination guard: the engine is waiting for more findings but the AI
+          // emitted prose (or nothing) instead of calling lineage_submit_findings. Inject a
+          // corrective message and let the loop re-prompt; MAX_ROUNDS caps any retry.
+          // Symmetric counterpart to the `action_required: 'analyze_and_respond'` gate.
+          if (activePhase === 'active' && sess.stateMachine?.status === 'awaiting_findings') {
+            const smDump = sess.stateMachine.toJSON() as { agendaSize?: number; currentFocusNodeId?: string | null };
+            const agendaRemaining = smDump.agendaSize ?? 0;
+            if (agendaRemaining > 0) {
+              const focus = smDump.currentFocusNodeId ?? '(unknown)';
+              this.logger.warn(`Round ${roundCount} [ACTIVE] — premature final answer rejected; ${agendaRemaining} agenda items remain, re-prompting`);
+              messages.push(vscode.LanguageModelChatMessage.User(
+                `STOP. You emitted a final answer but the exploration is NOT complete. ` +
+                `Engine status: awaiting_findings. Agenda: ${agendaRemaining} items remain. ` +
+                `Current focus: ${focus}. ` +
+                `Your ONLY valid next action is lineage_submit_findings for the current focus node. ` +
+                `If you truly believe the user's question is fully answered and no more hops are needed, call lineage_submit_findings with complete=true — do NOT emit prose while in active phase.`
+              ));
+              continue;
+            }
+          }
+
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
@@ -318,7 +344,14 @@ export class LineageParticipant {
           stream.progress(`Invoking ${f.name.replace('lineage_', '')}...`);
           totalToolCallsMade++;
           try {
-            const result = await vscode.lm.invokeTool(f.name, { input: f.input, toolInvocationToken: request.toolInvocationToken }, token);
+            const result = await vscode.lm.invokeTool(
+              f.name,
+              {
+                input: f.input,
+                toolInvocationToken: showToolInvocations ? request.toolInvocationToken : undefined,
+              },
+              token
+            );
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, result.content));
             accumulatedToolResults[f.callId] = result;
             toolCallCache.set(cacheKey, result);
