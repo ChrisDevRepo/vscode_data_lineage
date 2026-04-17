@@ -26,8 +26,7 @@ export function registerAiTools(
 ): vscode.Disposable[] {
   const logger = Logger.create(outputChannel, 'AI');
 
-  // ─── Helpers ───────────────────────────────────────────────────────────────
-
+  
   function isAiEnabled(): boolean {
     return vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled') ?? true;
   }
@@ -53,7 +52,12 @@ export function registerAiTools(
     const json = JSON.stringify(data);
     const chars = json.length;
     const preview = trunc(sanitizeForLog(json), 300);
-    
+
+    if (input !== undefined) {
+      const inputJson = trunc(sanitizeForLog(JSON.stringify(input)), 300);
+      logger.debug(`Invoking ${toolName} — input: ${inputJson}`);
+    }
+
     sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
 
     const isError = 'error' in data || ('success' in data && !(data as any).success);
@@ -70,8 +74,7 @@ export function registerAiTools(
 
   const disabled = () => toolResult({ error: 'disabled', hint: 'Enable via dataLineageViz.ai.enabled setting.' });
 
-  // ─── Registrations ─────────────────────────────────────────────────────────
-
+  
   return [
     vscode.lm.registerTool('lineage_get_context', {
       prepareInvocation(_options, _token) { return { invocationMessage: 'Loading lineage context…' }; },
@@ -131,7 +134,13 @@ export function registerAiTools(
           };
 
           const mode = input.targetColumns ? 'column_trace' : 'blackboard';
-          const engine = new NavigationEngine(m, g, (l, msg) => logger.info(`[Engine] ${msg}`), mode, { activeFilter, memory: sess.memory }, sess.columnStore);
+          const engineLog = (l: 'info' | 'debug' | 'warn' | 'trace', msg: string) => {
+            const line = `[Engine] ${msg}`;
+            if (l === 'debug' || l === 'trace') logger.debug(line);
+            else if (l === 'warn') logger.warn(line);
+            else logger.info(line);
+          };
+          const engine = new NavigationEngine(m, g, engineLog, mode, { activeFilter, memory: sess.memory }, sess.columnStore);
           
           engine.sessionId = sess.id;
           sess.stateMachine = engine;
@@ -198,7 +207,7 @@ export function registerAiTools(
         try {
           if (!isAiEnabled()) return disabled();
           const sess = getSession();
-          const service = new ViewSynthesisService(sess, getPanel);
+          const service = new ViewSynthesisService(sess, getPanel, logger);
           const result = service.synthesizeView(requireModel(), options.input as any);
           return logAndReturn('enrich_view', result, options.input);
         } catch (err) { return toolError('enrich_view', err); }
@@ -238,7 +247,11 @@ export function registerAiTools(
           const inputErr = validateToolInput(options.input, { type: 'string' });
           if (inputErr) return toolResult(inputErr);
           const { type, min_degree, max_size } = options.input as any;
-          return logAndReturn('run_analysis', runAnalysis(requireModel(), requireGraph(), type as AnalysisType, min_degree, max_size), options.input);
+          const anaCfg = vscode.workspace.getConfiguration('dataLineageViz');
+          const resolvedMinDegree = min_degree ?? anaCfg.get<number>('analysis.hubMinDegree');
+          const resolvedMaxSize   = max_size   ?? anaCfg.get<number>('analysis.islandMaxSize');
+          const resolvedLongestPath = anaCfg.get<number>('analysis.longestPathMinNodes');
+          return logAndReturn('run_analysis', runAnalysis(requireModel(), requireGraph(), type as AnalysisType, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), options.input);
         } catch (err) { return toolError('run_analysis', err); }
       },
     }),

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { type AiSession } from '../ai/session';
-import { Logger } from '../utils/log';
+import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { type BridgeHost } from './host';
 import {
   type DatabaseModel, type XmlElement, type LineageNode, type ColumnDef
@@ -16,7 +16,6 @@ import { type IConnectionInfo, type SimpleExecuteResult } from '../types/mssql';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent } from '../engine/profilingEngine';
 import { type StatsMode } from '../engine/profilingEngine';
 import { buildModelFromDmv, buildSchemaPreview } from '../engine/dmvExtractor';
-import { loadRules, type ParseRulesConfig } from '../engine/sqlBodyParser';
 import { type DmvResults } from '../engine/dmvExtractor';
 import {
   createProject, updateProject, deleteProject, isValidProject,
@@ -187,11 +186,11 @@ export function createMessageHandlers(
     'update-detail': async (msg) => {
       if (msg.node) lastDetailNode = msg.node;
       if (detailPanel && msg.node) {
-        host.log('debug', 'Bridge', `update-detail: ${msg.node.id}`);
+        // No log: fires on every node click and duplicates `show-detail`.
         detailPanel.title = `Detail: ${msg.node.name}`;
-        detailPanel.webview.postMessage({ 
-          type: 'detail-update', 
-          node: enrichNodeForDetail(msg.node), 
+        detailPanel.webview.postMessage({
+          type: 'detail-update',
+          node: enrichNodeForDetail(msg.node),
           findQuery: msg.findQuery,
           config: await getDetailConfig()
         });
@@ -252,7 +251,6 @@ export function createMessageHandlers(
           
           if (schemas && schemas.length > 0) {
             host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${schemas.join(', ')}`);
-            if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
@@ -326,7 +324,6 @@ export function createMessageHandlers(
         return;
       }
       const config = await readExtensionConfig(host);
-      if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
       host.log('info', 'Bridge', 'Running extractDacpacFiltered');
       const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
       host.log('info', 'Bridge', `Extracted ${model.nodes.length} nodes and ${model.edges.length} edges`);
@@ -372,10 +369,11 @@ export function createMessageHandlers(
       });
     },
     'filter-changed': (msg) => {
+      // Bookkeeping only — fires on every filter toggle. No log; the webview's
+      // [Filter] logs (Schema / Layout / user actions) carry the story.
       const sess = getSession();
       sess.filter = msg.filter;
       sess.views = msg.savedViews;
-      host.log('debug', 'Filter', `Active filter updated: ${msg.filter?.schemas?.length || 0} schemas, ${msg.filter?.types?.length || 0} types, ${msg.savedViews?.length || 0} views`);
     },
     'db-connect': () => {
       host.log('info', 'Bridge', 'Database connect requested');
@@ -415,7 +413,6 @@ export function createMessageHandlers(
     'rebuild': async () => {
       host.log('info', 'Bridge', 'Rebuild requested');
       const config = await readExtensionConfig(host);
-      if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
       host.postMessage({ type: 'rebuild-config', config });
     },
     'reload': () => {
@@ -446,12 +443,32 @@ export function createMessageHandlers(
       }
     },
     'log': (msg) => {
-      host.log(msg.level ?? 'debug', 'Bridge', msg.text);
+      // Webview logs typically embed their own "[Prefix]" in the text
+      // (e.g. "[Filter] Layout: ..."). If so, write directly to the output
+      // channel so the line appears once ("[Filter] Layout: ...") instead of
+      // being wrapped into "[Bridge] [Filter] Layout: ...".
+      const text = msg.text ?? '';
+      const level = msg.level ?? 'debug';
+      const hasPrefix = /^\s*\[[A-Za-z][A-Za-z0-9]*\]/.test(text);
+      if (hasPrefix) {
+        if (level === 'info') outputChannel.info(text);
+        else if (level === 'warn') outputChannel.warn(text);
+        else if (level === 'error') outputChannel.error(text);
+        else if (level === 'trace') outputChannel.trace(text);
+        else outputChannel.debug(text);
+      } else {
+        host.log(level, 'Bridge', text);
+      }
     },
     'error': (msg) => {
       host.log('error', 'Bridge', 'Webview error', new Error(msg.error));
       host.showErrorMessage(`Data Lineage Error: ${msg.error}`);
-    }
+    },
+    'show-warning': (msg) => {
+      const text = typeof msg.text === 'string' ? msg.text : '';
+      host.log('debug', 'Bridge', `show-warning: ${text}`);
+      vscode.window.showWarningMessage(`Data Lineage: ${text}`);
+    },
   };
 
   return {
@@ -460,7 +477,6 @@ export function createMessageHandlers(
   };
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 
@@ -478,7 +494,6 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     host.log('info', 'Dacpac', `Loading demo dacpac from: ${demoUri.fsPath}`);
     const data = await host.readFile(demoUri);
     if (isDacpacTooLarge(data.byteLength, host)) return;
-    if (config.parseRules) handleParseRulesResult(loadRules(config.parseRules as ParseRulesConfig), outputChannel);
     const model = await extractDacpac(data.buffer as ArrayBuffer);
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, model.nodes.length, model.edges.length, model.schemas.length);
@@ -486,6 +501,8 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     host.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
   } catch (err) {
     host.log('error', 'Dacpac', 'Load demo', err);
+    const msg = err instanceof Error ? err.message : String(err);
+    host.showErrorMessage(`Data Lineage: Failed to load demo — ${msg}`);
   }
 }
 
@@ -494,7 +511,8 @@ async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connecti
   const previewQuery = queries.find(q => q.name === 'schema-preview');
   if (!previewQuery) throw new Error('Missing schema-preview query');
   host.log('info', 'DB', 'Running schema preview query');
-  const resultMap = await executeDmvQueries(connectionUri, [previewQuery], outputChannel);
+  const timeoutMs = (host.getConfiguration().get<number>('dmvQueryTimeout') ?? 120) * 1000;
+  const resultMap = await executeDmvQueries(connectionUri, [previewQuery], outputChannel, undefined, timeoutMs);
   const result = resultMap.get('schema-preview');
   if (!result) throw new Error('No schema preview result');
   const preview = buildSchemaPreview(result);
@@ -505,9 +523,10 @@ async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connecti
 async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas: string[], progress: vscode.Progress<any>, token: vscode.CancellationToken, outputChannel: vscode.LogOutputChannel, allObjects?: SimpleExecuteResult, currentDatabase?: string, sourceName?: string, platformInfo?: SimpleExecuteResult, onModelBuilt?: (model: DatabaseModel) => void) {
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
+  const timeoutMs = (host.getConfiguration().get<number>('dmvQueryTimeout') ?? 120) * 1000;
   const resultMap = await executeDmvQueriesFiltered(connectionUri, queries, schemas, outputChannel, (step, total, label) => {
     host.postMessage({ type: 'db-progress', step, total, label });
-  });
+  }, timeoutMs);
   const dmvResults: DmvResults = { nodes: resultMap.get('nodes')!, columns: resultMap.get('columns')!, dependencies: resultMap.get('dependencies')!, allObjects, platformInfo };
   const config = await readExtensionConfig(host);
   const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes);
@@ -543,6 +562,7 @@ async function handleTableStatsRequestHost(
   cols: ColumnDef[],
   outputChannel: vscode.LogOutputChannel
 ): Promise<void> {
+  const logger = Logger.create(outputChannel, 'Stats');
   const cfg = host.getConfiguration();
   const sampleThreshold = cfg.get('tableStatistics.sampleThreshold', 500000);
   const sampleSize = cfg.get('tableStatistics.sampleSize', 1000);
@@ -550,10 +570,11 @@ async function handleTableStatsRequestHost(
   const maxColumns = cfg.get('tableStatistics.maxColumns', 100);
   const timeoutSec = cfg.get('tableStatistics.queryTimeout', 60);
   const timeoutMs = timeoutSec * 1000;
+  const t0 = Date.now();
 
   try {
     if (!statsConnState.uri) {
-      host.log('info', 'Stats', `Connecting for stats: ${schema}.${objectName}`);
+      logger.info(`Connecting for stats: ${schema}.${objectName}`);
       const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
       if (!result) {
         panel.webview.postMessage({ type: 'table-stats-error', message: 'Connection cancelled.' });
@@ -564,18 +585,36 @@ async function handleTableStatsRequestHost(
     const connectionUri = statsConnState.uri!;
     const serverInfo = await getServerInfo(connectionUri, outputChannel);
     const engineEdition = serverInfo.engineEditionId;
+    logger.debug(`Profiling [${schema}].[${objectName}] (mode=${mode}, cols=${cols.length}, engine=${engineEdition}, server=${serverInfo.serverVersion ?? '?'}, timeout=${timeoutSec}s)`);
 
     const rowCountSql = buildRowCountQuery(schema, objectName);
+    logger.debug(`Row count SQL: ${trunc(sanitizeForLog(rowCountSql), 200)}`);
     const rowCountPromise = executeSimpleQuery(connectionUri, rowCountSql, outputChannel);
     const rowCountResult = await withQueryTimeout(rowCountPromise, timeoutMs, `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
     const rowCount = rowCountResult.rowCount > 0 ? parseInt(rowCountResult.rows[0][0].displayValue, 10) || 0 : 0;
+    logger.debug(`Row count: ${rowCount.toLocaleString()}`);
 
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
     const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
     if (!profilingSql) return;
+    logger.debug(`Profiling SQL (${mode}): ${trunc(sanitizeForLog(profilingSql), 300)}`);
 
-    const profilingPromise = executeSimpleQuery(connectionUri, profilingSql, outputChannel);
-    const profilingResult = await withQueryTimeout(profilingPromise, timeoutMs, `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
+    let profilingResult;
+    try {
+      const profilingPromise = executeSimpleQuery(connectionUri, profilingSql, outputChannel);
+      profilingResult = await withQueryTimeout(profilingPromise, timeoutMs, `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
+    } catch (sampleErr) {
+      const needsSampling0 = rowCount > sampleThreshold && sampleThreshold >= 0;
+      if (needsSampling0 && /TABLESAMPLE/i.test(sampleErr instanceof Error ? sampleErr.message : String(sampleErr))) {
+        logger.warn('TABLESAMPLE failed, retrying without sampling…');
+        const retrySql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, -1, sampleSize);
+        if (!retrySql) throw sampleErr;
+        const retryPromise = executeSimpleQuery(connectionUri, retrySql, outputChannel);
+        profilingResult = await withQueryTimeout(retryPromise, timeoutMs, `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
+      } else {
+        throw sampleErr;
+      }
+    }
     const resultRow: Record<string, string> = {};
     for (let i = 0; i < profilingResult.columnInfo.length; i++) {
       resultRow[profilingResult.columnInfo[i].columnName] = profilingResult.rows[0][i].displayValue;
@@ -584,21 +623,13 @@ async function handleTableStatsRequestHost(
     const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
     const samplePercent = needsSampling ? computeSamplePercent(engineEdition, sampleSize, rowCount) : undefined;
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
+    logger.info(`Table statistics ready (${elapsed}s)`);
     panel.webview.postMessage({ type: 'table-stats-result', stats, mode });
   } catch (err) {
     host.log('error', 'Stats', 'Profiling', err);
     panel.webview.postMessage({ type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) });
   }
-}
-
-function handleParseRulesResult(message: {
-  loaded: number; skipped: string[]; errors: string[]; usedDefaults: boolean;
-}, outputChannel: vscode.LogOutputChannel) {
-  const logger = Logger.create(outputChannel, 'Config');
-  for (const err of message.errors) logger.debug(err);
-  if (message.usedDefaults) logger.warn('YAML invalid — using built-in defaults');
-  else if (message.skipped.length > 0) logger.warn(`${message.loaded} loaded, ${message.skipped.length} skipped: ${message.skipped.join(', ')}`);
-  else logger.info(`${message.loaded} rules loaded`);
 }
 
 function handleParseStats(stats: {
@@ -614,20 +645,25 @@ function handleParseStats(stats: {
 async function readExtensionConfig(host: BridgeHost): Promise<any> {
   const cfg = host.getConfiguration();
   return {
-    excludePatterns: cfg.get<string[]>('excludePatterns', []),
-    maxNodes: cfg.get<number>('maxNodes', 1000),
+    excludePatterns: cfg.get<string[]>('excludePatterns'),
+    maxNodes: cfg.get<number>('maxNodes'),
     layout: {
-      direction: cfg.get<string>('layout.direction', 'TB'),
-      rankSeparation: cfg.get<number>('layout.rankSeparation', 50),
-      nodeSeparation: cfg.get<number>('layout.nodeSeparation', 50),
-      edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', true),
-      minimapEnabled: cfg.get<boolean>('layout.minimapEnabled', true),
-      edgeStyle: cfg.get<string>('layout.edgeStyle', 'step'),
+      direction: cfg.get<string>('layout.direction'),
+      rankSeparation: cfg.get<number>('layout.rankSeparation'),
+      nodeSeparation: cfg.get<number>('layout.nodeSeparation'),
+      edgeAnimation: cfg.get<boolean>('layout.edgeAnimation'),
+      highlightAnimation: cfg.get<boolean>('layout.highlightAnimation'),
+      minimapEnabled: cfg.get<boolean>('layout.minimapEnabled'),
+      edgeStyle: cfg.get<string>('layout.edgeStyle'),
     },
-    externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled', true) },
-    overview: { enabled: cfg.get<boolean>('overview.enabled', true), threshold: cfg.get<number>('overview.threshold', 50) },
-    renderLimit: cfg.get<number>('renderLimit', 1000),
-    parseRules: cfg.get<string>('parseRulesFile', ''),
+    externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled') },
+    overview: { enabled: cfg.get<boolean>('overview.enabled'), threshold: cfg.get<number>('overview.threshold') },
+    renderLimit: cfg.get<number>('renderLimit'),
+    analysis: {
+      hubMinDegree: cfg.get<number>('analysis.hubMinDegree'),
+      islandMaxSize: cfg.get<number>('analysis.islandMaxSize'),
+      longestPathMinNodes: cfg.get<number>('analysis.longestPathMinNodes'),
+    },
   };
 }
 

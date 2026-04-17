@@ -26,7 +26,6 @@ import {
   presentSchema, presentNeighbor, presentFilter,
 } from './aiPresenter';
 
-// ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
 
 import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
 export { shouldInline, shouldSmInline, estimateTokens, getEffectiveBudget, setInlineTokenBudget, setSmInlineNodeCap } from './tokenBudget';
@@ -36,7 +35,6 @@ const BFS_INLINE_NODE_CAP = 200;
 /** Max results returned in fallback (cross-schema) search. */
 const FALLBACK_RESULT_LIMIT = 10;
 
-// ─── Input validation ────────────────────────────────────────────────────────
 
 type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
 
@@ -69,7 +67,6 @@ export function validateToolInput(
   return null;
 }
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
@@ -105,7 +102,6 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   return m;
 }
 
-// ─── Shared SM helpers (used by CT, BB, and classical tools) ─────────────────
 
 /** Shared column access — used by classical tools, CT, and BB. */
 export function getNodeColumns(
@@ -151,7 +147,6 @@ export function buildHopFocusNode(
   return strip(focusNode) as Record<string, unknown>;
 }
 
-// ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
 
 export function getContext(
   model: DatabaseModel,
@@ -215,7 +210,6 @@ export function getContext(
   };
 }
 
-// ─── Query validation ───────────────────────────────────────────────────────
 
 /** Reject garbage queries (empty, single char, pure wildcards). */
 export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
@@ -229,7 +223,6 @@ export function validateQuery(query: string): { ok: true } | { ok: false; error:
   return { ok: true };
 }
 
-// ─── Tool 2: lineage_search_objects ──────────────────────────────────────────
 
 export function searchObjects(
   model: DatabaseModel,
@@ -359,7 +352,6 @@ export function searchObjects(
   return base;
 }
 
-// ─── Tool 3: lineage_get_object_detail ───────────────────────────────────────
 
 const NEIGHBOR_CAP = 25;
 
@@ -421,7 +413,6 @@ export function getObjectDetail(
   return { ...base, ddl, unresolved_refs };
 }
 
-// ─── Tool 4: lineage_run_bfs_trace ────────────────────────────────────────────
 // Two modes:
 //   Level BFS:  origin + upstream_hops + downstream_hops → explore by depth
 //   Path BFS:   origin + target → all nodes on paths between start and end
@@ -663,7 +654,6 @@ export function runBfsTrace(
     ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
 }
 
-// ─── Tool 5: lineage_run_analysis ─────────────────────────────────────────────
 
 export function runAnalysis(
   model: DatabaseModel,
@@ -671,11 +661,12 @@ export function runAnalysis(
   type: AnalysisType,
   minDegree?: number,
   maxSize?: number,
+  longestPathMinNodes?: number,
 ): object {
   const analysisConfig = {
-    hubMinDegree:         minDegree ?? DEFAULT_CONFIG.analysis.hubMinDegree,
-    islandMaxSize:        maxSize   ?? DEFAULT_CONFIG.analysis.islandMaxSize,
-    longestPathMinNodes:  DEFAULT_CONFIG.analysis.longestPathMinNodes,
+    hubMinDegree:         minDegree           ?? DEFAULT_CONFIG.analysis.hubMinDegree,
+    islandMaxSize:        maxSize             ?? DEFAULT_CONFIG.analysis.islandMaxSize,
+    longestPathMinNodes:  longestPathMinNodes ?? DEFAULT_CONFIG.analysis.longestPathMinNodes,
   };
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
@@ -687,7 +678,6 @@ export function runAnalysis(
   };
 }
 
-// ─── Tool 6: lineage_search_ddl ──────────────────────────────────────────────
 
 export function searchDdl(
   model: DatabaseModel,
@@ -735,7 +725,6 @@ export function searchDdl(
   return { results, total: results.length };
 }
 
-// ─── Tool 7: lineage_enrich_view ─────────────────────────────────────────────
 
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
@@ -1214,7 +1203,6 @@ export function validateEnrichView(
   };
 }
 
-// ─── Tool 8: lineage_get_ddl_batch ───────────────────────────────────────────
 
 export function getDdlBatch(
   model: DatabaseModel,

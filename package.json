@@ -398,7 +398,7 @@
             "default": 500,
             "minimum": 2,
             "maximum": 1000,
-            "markdownDescription": "Max connected component size to qualify as an island. Default (500) matches `maxNodes` — shows all disconnected subgraphs. Set lower (e.g. 5) to focus on small isolated pairs/groups only.",
+            "markdownDescription": "Max connected component size to qualify as an island. Higher values include larger disconnected subgraphs; set lower (e.g. 5) to focus on small isolated pairs/groups only.",
             "scope": "resource"
           },
           "dataLineageViz.analysis.longestPathMinNodes": {
