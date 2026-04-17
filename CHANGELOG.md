@@ -11,6 +11,7 @@ Post-refactor hardening sprint closing the gaps from the unified NavigationEngin
 - **Concrete engine contract types** — New `src/ai/smTypes.ts` (`HopContext`, `HopSubmission`, `SmResult`, `RouteRequest`, `SubmitResult`, `HopLogEntry`) replaces `any` returns on `IHopStateMachine`. `mode` is now `public readonly` on the interface.
 
 ### Fixed
+- **Security: closed 3 Dependabot alerts** — bumped `dompurify` override to `^3.4.0` and added `serialize-javascript` override to `^7.0.5` (closes RCE + DoS in transitive dev deps). `npm audit` now reports 0 vulnerabilities.
 - **`toggleOverviewMode` command is no longer a no-op** — previously dispatched to unregistered `dataLineageViz.internal.toggleOverview`; now posts `toggle-overview` directly to the active panel.
 - **vitest hook glob + relative paths** — `vitest.config.ts` pointed at the old `test/hooks/**` directory; 5 hook test files used 2-level-up relative imports after being moved 3 levels deep. `npm run test:hooks` now runs 101/101.
 - **Silent catches in `lineageParticipant.ts` and `messageHandlers.ts`** — four `catch {}` / `.catch(() => {})` blocks replaced with debug log lines per CLAUDE.md "No Silent Failures" rule.

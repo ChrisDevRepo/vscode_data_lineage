@@ -1122,7 +1122,8 @@
     "vitest": "^3.2.4"
   },
   "overrides": {
-    "dompurify": "3.3.3",
+    "dompurify": "^3.4.0",
+    "serialize-javascript": "^7.0.5",
     "picomatch": "4.0.4"
   }
 }
