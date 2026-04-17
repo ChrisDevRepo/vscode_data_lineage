@@ -138,73 +138,43 @@ async function testIncrementalBlackboard() {
 
 async function testSelectionInferenceValidation() {
   console.log('\n── Selection-Inference Validation ──');
+  const model = buildSyntheticModel();
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
+  engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
 
-  // column_trace mode: columns ARE validated.
-  {
-    const model = buildSyntheticModel();
-    const engine = new NavigationEngine(model, buildBareGraph(model), log, 'column_trace', { qualityGuards: false });
-    engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
-    const hop = engine.getHopContext() as any;
+  const hop = engine.getHopContext() as any;
+  
+  // Submit with hallucinated column in neighbor
+  const badResult = engine.submitFindings({
+    focus_node_id: hop.focus_node.id,
+    narrative_update: 'Update.',
+    detail_analysis: 'Detail.',
+    summary: 'Sum.',
+    verdict: 'relevant',
+    route_requests: [{
+      nodeId: '[staging].[rawdata]',
+      question: 'Check bad col',
+      columns: ['NON_EXISTENT_COL']
+    }]
+  });
 
-    const badResult = engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      narrative_update: 'Update.',
-      detail_analysis: 'Detail.',
-      summary: 'Sum.',
-      verdict: 'relevant',
-      route_requests: [{ nodeId: '[staging].[rawdata]', question: 'Check bad col', columns: ['NON_EXISTENT_COL'] }]
-    });
-    assert('error' in badResult && badResult.error === 'route_validation_failed', 'ct-mode: hallucinated column rejected');
-    assertEq(engine.status, 'awaiting_findings', 'ct-mode: engine stays awaiting findings after rejection');
+  assert('error' in badResult && badResult.error === 'route_validation_failed', 'Hallucinated column rejected');
+  assertEq(engine.status, 'awaiting_findings', 'Engine stays awaiting findings after rejection');
 
-    const goodResult = engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      narrative_update: 'Update.',
-      detail_analysis: 'Detail.',
-      summary: 'Sum.',
-      verdict: 'relevant',
-      route_requests: [{ nodeId: '[staging].[rawdata]', question: 'Check valid col', columns: ['Amount'] }]
-    });
-    assert('ok' in goodResult, 'ct-mode: valid column routing accepted');
-  }
-
-  // blackboard mode: columns are IGNORED — hallucinated names do not raise route_validation_failed.
-  {
-    const model = buildSyntheticModel();
-    const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
-    engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
-    const hop = engine.getHopContext() as any;
-
-    const result = engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      narrative_update: 'Update.',
-      detail_analysis: 'Detail.',
-      summary: 'Sum.',
-      verdict: 'relevant',
-      route_requests: [{ nodeId: '[staging].[rawdata]', question: 'Check col', columns: ['NON_EXISTENT_COL'] }]
-    });
-    assert(!('error' in result) || (result as any).error !== 'route_validation_failed', 'bb-mode: hallucinated columns ignored (not validated)');
-  }
-
-  // Node-not-found returns substring suggestions (mode-independent).
-  {
-    const model = buildSyntheticModel();
-    const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
-    engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
-    const hop = engine.getHopContext() as any;
-
-    const missing = engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      narrative_update: 'Update.',
-      detail_analysis: 'Detail.',
-      summary: 'Sum.',
-      verdict: 'relevant',
-      route_requests: [{ nodeId: '[staging].[rawdata_typo]', question: 'Check missing node' }]
-    });
-    const detail = (missing as any).detail?.[0];
-    assert(detail?.reason === 'Node not found.', 'node-not-found error reason correct');
-    assert(Array.isArray(detail?.suggestions), 'node-not-found returns suggestions array');
-  }
+  // Submit with valid column
+  const goodResult = engine.submitFindings({
+    focus_node_id: hop.focus_node.id,
+    narrative_update: 'Update.',
+    detail_analysis: 'Detail.',
+    summary: 'Sum.',
+    verdict: 'relevant',
+    route_requests: [{
+      nodeId: '[staging].[rawdata]',
+      question: 'Check valid col',
+      columns: ['Amount']
+    }]
+  });
+  assert('ok' in goodResult, 'Valid column routing accepted');
 }
 
 // ─── Map & Topology Tests ───────────────────────────────────────────────────

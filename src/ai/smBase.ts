@@ -267,15 +267,10 @@ export class NavigationEngine implements IHopStateMachine {
         const nid = req.nodeId?.toLowerCase();
         const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nNode) {
-          const fragment = nid?.split('.').pop()?.replace(/[\[\]]/g, '') ?? '';
-          const suggestions = fragment
-            ? [...this.nodeMap.keys()].filter(k => k.includes(fragment)).slice(0, 3)
-            : [];
-          invalidRoutes.push({ id: req.nodeId, reason: 'Node not found.', suggestions });
+          invalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
           continue;
         }
-        // `columns` is a column_trace-mode concept — ignored in blackboard/dependency modes.
-        if (this.mode === 'column_trace' && req.columns) {
+        if (req.columns) {
           const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
           const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
           if (invalidCols.length > 0) {
