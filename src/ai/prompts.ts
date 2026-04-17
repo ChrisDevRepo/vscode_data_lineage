@@ -34,7 +34,7 @@ export function buildSystemPromptBase(maxRounds: number): string {
     '   Chat text for: pure explanations, SQL generation, list/compare requests (no graph needed).\n' +
     '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
     '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow.\n' +
-    '6. MATH: In ALL output — chat text AND enrich_view section text — use LaTeX math syntax for formulas.\n'
+    '6. MATH: In ALL output — chat text, descriptions, and enrich_view sections — heavily use LaTeX math syntax for formulas and logic.\n'
   );
 }
 

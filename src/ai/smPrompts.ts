@@ -16,6 +16,8 @@
  * edits the yaml, both hop-time capture and synthesis-time output honor it.
  */
 
+import type { SmMode } from './smTypes';
+
 const BLOCK = {
   classification:
     '### NODE CLASSIFICATION\n' +
@@ -71,12 +73,14 @@ const BLOCK = {
  * It tailors the persona based on whether the focus is on functional business logic
  * (Blackboard mode) or specific column-level data flow (Column Trace mode).
  *
- * @param mode - The exploration mode ('blackboard' or 'column_trace').
+ * @param mode - The exploration mode ('blackboard', 'column_trace', or 'dependency').
  * @returns A structured markdown string containing the role, workflow, and grounding protocols.
  */
-export function buildNavigationPrompt(mode: 'blackboard' | 'column_trace'): string {
+export function buildNavigationPrompt(mode: SmMode): string {
   const modeHeader = mode === 'column_trace'
     ? '# ROLE: EXPERT DATA LINEAGE ANALYST (Column Focus)'
+    : mode === 'dependency'
+    ? '# ROLE: EXPERT STRUCTURAL ANALYST (Dependency Focus)'
     : '# ROLE: EXPERT BUSINESS LOGIC ANALYST (Functional Focus)';
 
   return [

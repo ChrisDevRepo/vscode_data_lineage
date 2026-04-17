@@ -16,7 +16,22 @@ The system automatically chooses the delivery strategy based on the complexity o
 | Mode | Threshold | Context Strategy | Short Memory | Reasoning Capability |
 | :--- | :--- | :--- | :--- | :--- |
 | **Inline Mode** | Fits budget (< 10 nodes) | **One-Shot**: Full DDL and columns for all nodes are provided simultaneously. | **None**: The AI sees the "full picture" immediately. | **Holistic**: Turn-zero reasoning and logical grouping. |
-| **SM Mode** | Exceeds budget | **Hop-and-Distill**: Only the focus node's DDL is provided per round. | **Incremental Blackboard**: A single, dense narrative synthesis. | **Segmented**: Requires a final Phase 3 for holistic reasoning. |
+| **SM Mode** | Exceeds budget | **Local-Neighborhood (GraphRAG)**: Only the focus node's DDL + the detailed analysis of its immediate (1-hop) neighbors are provided per round. | **Incremental Blackboard**: A single, dense narrative synthesis. | **Segmented**: High-fidelity local edge reasoning, requires a final Phase 3 for holistic reasoning. |
+
+### Memory Tiering (SM Mode)
+To solve the token explosion problem inherent in large graphs while preserving the high-fidelity reasoning required for data lineage, the SM Mode utilizes a **Two-Tier Memory Model**:
+1. **Short Memory (Blackboard)**: A length-capped, incrementally updated global narrative of the business logic.
+2. **Detail Memory (Local Context)**: The AI's full technical analysis (SQL transforms, math formulas) for every node. Instead of loading the entire history, the engine uses **Local Neighborhood Retrieval** to inject only the detail slots of nodes directly connected to the current focus node.
+   - **Hub Protection**: To prevent context overflow when analyzing "hub" nodes (e.g., a central dimension table joined to 50 facts), local detail retrieval is capped at 5 neighbors per hop.
+
+### Exploration Modes (`SmMode`)
+The same `NavigationEngine` serves three personas, selected by the mode of the active session:
+- **`blackboard`** — Business Logic Analyst (Functional Focus). The default for "explain / summarize" style questions.
+- **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when the user asks about specific column flow.
+- **`dependency`** — Structural Analyst (Dependency Focus). Structural topology questions ("what depends on X"). Uses the same hop workflow and memory tiering as `blackboard`; only the role framing of the system prompt differs.
+
+### View Refinement: Prune
+`enrich_view` supports pruning nodes from the delivered result graph. Pruning **removes the listed nodes and every edge that touches them** — it does not reconnect edges across pruned nodes. Passthrough-style reconnection was deliberately removed because, for a shared hub `P` in `A→P→B, C→P→D`, it fabricated phantom edges (`A→D`, `C→B`) between otherwise-unrelated lineage siblings.
 
 ### The Three Lifecycle Phases
 1. **Discovery (Initiation)**: The AI maps the starting point and scope. The engine seeds the initial Agenda.

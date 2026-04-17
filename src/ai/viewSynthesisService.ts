@@ -5,10 +5,11 @@ import { autoFixEnrichView, validateEnrichView, orderAndAssemble, EnrichViewInpu
 import { edgeApiType } from './aiPresenter';
 import { AIViewMetadata } from '../engine/projectStore';
 import { Logger } from '../utils/log';
+import { prunePreserveOnly } from './viewPrune';
 
 /**
  * Orchestrates the creation and refinement of AI-authored interactive lineage views.
- * 
+ *
  * @remarks
  * This service acts as the bridge between the AI's semantic findings (from the State Machine)
  * and the VS Code Webview. It handles node resolution, edge discovery, automatic note
@@ -83,15 +84,15 @@ export class ViewSynthesisService {
 
       if (input.prune_node_ids?.length) {
         const before = resolvedNodeIds.length;
-        const pruneSet = new Set(input.prune_node_ids);
-        resolvedNodeIds = resolvedNodeIds.filter(id => !pruneSet.has(id));
-        resolvedEdges = resolvedEdges.filter(([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt));
+        const pruned = this.prune(resolvedNodeIds, resolvedEdges, input.prune_node_ids);
+        resolvedNodeIds = pruned.nodeIds;
+        resolvedEdges = pruned.edges;
         log?.debug(`enrich_view: pruned ${before - resolvedNodeIds.length} node(s), ${resolvedNodeIds.length} remaining`);
       }
     } else {
       return {
         success: false,
-        errors: ['No state-machine result available — enrich_view requires a completed column_trace or blackboard exploration.'],
+        errors: ['No state-machine result available — enrich_view requires a completed blackboard, column_trace, or dependency exploration.'],
       };
     }
 
@@ -177,5 +178,14 @@ export class ViewSynthesisService {
 
     log?.info(`AI view "${validation.name}" displayed (${validation.node_ids.length} objects)`);
     return { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource };
+  }
+
+  /** Delegate to the pure {@link prunePreserveOnly} helper. Kept as a method for OOP clarity. */
+  private prune(
+    nodeIds: ReadonlyArray<string>,
+    edges: ReadonlyArray<[string, string, string]>,
+    pruneIds: ReadonlyArray<string>,
+  ): { nodeIds: string[]; edges: [string, string, string][] } {
+    return prunePreserveOnly(nodeIds, edges, pruneIds);
   }
 }

@@ -230,7 +230,8 @@ export class NavigationEngine implements IHopStateMachine {
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
     const navPath = path ? (path as string[]).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
-    const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size) as NavigationWorkingMemory;
+    const neighborIds = Array.from(new Set([...(this.graph.inNeighbors(entry.nodeId) as string[]), ...(this.graph.outNeighbors(entry.nodeId) as string[])]));
+    const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size, neighborIds) as NavigationWorkingMemory;
     workingMemory.topological_map = {
       navigation_path: navPath,
       visited_nodes: Array.from(this.visited),

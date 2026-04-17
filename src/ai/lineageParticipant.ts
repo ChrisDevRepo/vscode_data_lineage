@@ -8,7 +8,7 @@ import {
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
 import { buildNavigationPrompt, buildSynthesisPrompt } from './smPrompts';
-import { compactNoiseResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './historyManager';
+import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
 
@@ -177,7 +177,11 @@ export class LineageParticipant {
               const r = meta.toolCallResults[f.callId];
               if (r) {
                 let contentStr = (r.content as any[]).map(c => typeof c.value === 'string' ? c.value : JSON.stringify(c)).join('');
-                const compact = compactNoiseResult(f.name, contentStr);
+                const complete = sess.stateMachine?.status === 'complete';
+                const bbComplete = complete && sess.stateMachine?.mode === 'blackboard';
+                const ctComplete = complete && sess.stateMachine?.mode === 'column_trace';
+                const stale = compactStaleHopResult(f.name, contentStr, bbComplete, ctComplete);
+                const compact = stale ?? compactNoiseResult(f.name, contentStr);
                 resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(compact || contentStr)]));
               }
             }

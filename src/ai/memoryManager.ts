@@ -11,6 +11,13 @@
 
 import type { LineageNode } from '../engine/types';
 
+/**
+ * Hub Protection cap — max DetailSlot neighbors injected per hop into working memory.
+ * Prevents token explosion when the focus node is a central hub (e.g., a dim table
+ * joined by many facts). See `docs/AI_ARCHITECTURE.md` → Memory Tiering → Hub Protection.
+ */
+export const MAX_LOCAL_NEIGHBORS = 5;
+
 
 /** 
  * Represents a high-fidelity memory slot for a single node's analysis.
@@ -67,6 +74,8 @@ export interface WorkingMemory {
   blackboard: string;
   /** List of nodes that have been requested but not yet visited. */
   pending_questions: Array<{ nodeId: string; question: string }>;
+  /** Full technical analysis of immediately adjacent (1-hop) neighbors that have already been processed. */
+  local_detail_context?: DetailSlot[];
   /** Progress tracking metadata. */
   checklist: { 
     /** Current hop index. */
@@ -174,14 +183,25 @@ export class AiMemoryManager {
    * 
    * @param hopCount - The index of the current navigation hop.
    * @param scopeSize - The total number of nodes in the exploration scope.
+   * @param neighborNodeIds - Optional array of adjacent node IDs to fetch local detail context for.
    * @returns A `WorkingMemory` object containing state and progress metrics.
    */
-  public getWorkingMemory(hopCount: number, scopeSize: number): WorkingMemory {
+  public getWorkingMemory(hopCount: number, scopeSize: number, neighborNodeIds?: string[]): WorkingMemory {
     const coveragePct = scopeSize > 0 ? Math.round((this.detailSlots.size / scopeSize) * 100) : 0;
+    
+    let local_detail_context: DetailSlot[] | undefined;
+    if (neighborNodeIds && neighborNodeIds.length > 0) {
+      local_detail_context = [];
+      for (let i = 0; i < neighborNodeIds.length && local_detail_context.length < MAX_LOCAL_NEIGHBORS; i++) {
+        const slot = this.detailSlots.get(neighborNodeIds[i]);
+        if (slot) local_detail_context.push(slot);
+      }
+    }
     
     return {
       blackboard: this.synthesisNarrative,
       pending_questions: this.pendingQuestions,
+      local_detail_context,
       checklist: {
         current_hop: hopCount,
         noted: this.detailSlots.size,

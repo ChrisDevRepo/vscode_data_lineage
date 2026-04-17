@@ -34,7 +34,7 @@ export interface ResultGraph {
   /** Maps node IDs to their semantic roles in the result set. */
   verdicts: Record<string, NodeRole>;
   /** The exploration mode that generated this graph. */
-  source: 'column_trace' | 'blackboard';
+  source: 'column_trace' | 'blackboard' | 'dependency';
   /** The starting node ID of the exploration; used for topological sorting. */
   originNodeId?: string;
   /** Summary notes linked to specific nodes for auto-populating reports. */
