@@ -177,37 +177,114 @@ Type `@lineage` in GitHub Copilot Chat to explore your loaded lineage graph with
 
 The extension provides **object-level lineage** as its core feature — tracing dependencies between tables, views, stored procedures, and functions. This works deterministically from your data model.
 
-The `@lineage` AI assistant in GitHub Copilot Chat can go further by analyzing the available metadata (DDL, column definitions, constraints). It implements a state-of-the-art **Grounded Router** architecture for autonomous exploration.
+The `@lineage` AI assistant in GitHub Copilot Chat can go further by analyzing the available metadata (DDL, column definitions, constraints). It can attempt:
 
-### How @lineage analyzes your database
+- **Column-level dependency tracing** — mapping how specific columns flow between objects
+- **SQL logic explanation** — breaking down view and procedure bodies
+- **Documentation** — summarizing data flows and schema purposes
+- **Bookmarked views** — creating filtered graph views you can save and explore interactively
 
-When you ask `@lineage` a question, it chooses between two analysis modes based on scope size:
+> **Note:** AI-enhanced analysis depends on the completeness of the loaded metadata. Column-level tracing reads DDL to infer mappings — results may be incomplete if DDL is unavailable or if the logic involves dynamic SQL. Always verify AI output against your actual database.
 
-#### 1. Quick analysis (Inline Mode)
-For small scopes (≤10 objects and under token budget). 
-- **One-Shot**: The AI receives all SQL at once and reasons about everything in a single pass.
-- **Holistic**: Best for straightforward questions like *"what reads from the Employee table?"*.
-- **Integrated**: Uses the same Map and Verification logic as deep exploration, but without the round-trip overhead of sliding memory.
+When the AI creates a view in the app (e.g., *"show me the lineage in the app"*), it generates a filtered graph with annotated nodes. This view is saved as a bookmark — you can reopen it any time, interact with the graph, trace further, or export it.
 
-#### 2. Deep exploration (SM Mode)
-For larger scopes (>10 objects or exceeding token budget). 
-- **Map & Router Architecture**: The extension manages a **Topological Map** of the trace, while the AI acts as a **Router** that analyzes one object at a time.
-- **Incremental Blackboard**: Instead of growing its memory indefinitely, the AI maintains a single, dense narrative synthesis (The Blackboard) that it refines and appends to in every hop.
-- **Selection-Inference Routing**: Every hop is driven by a specific, AI-generated sub-question. The engine provides neighbor metadata (columns) and validates AI routing requests *before* the visit to prevent hallucinations ("Fail Early").
+### Example queries
 
-### Why this matters?
-In complex ETL pipelines, a column often changes names multiple times. Deep exploration keeps this context across the entire pipeline using **Asymmetric Memory**:
-- **Short Memory (In-Context)**: A dense synthesis of business logic.
-- **Detail Memory (Archive)**: Full technical evidence stored on "disk" and only delivered in the final synthesis phase.
+**Trace & explore lineage**
+
+```
+@lineage trace from Sales.SalesOrderDetail upstream to the source tables
+@lineage show me all dependencies of HumanResources.Employee in the app
+@lineage what downstream objects depend on Sales.SalesTerritory?
+@lineage find the shortest path from Purchasing.Vendor to Sales.SalesOrderHeader
+```
+
+**Column-level lineage (AI-enhanced)**
+
+```
+@lineage how is sales calculated — show me the lineage up to source in the app
+@lineage what columns from SalesOrderHeader end up in Sales.vSalesPerson?
+```
+
+When DDL is loaded, the AI assistant can attempt column-level dependency tracing — returning column mappings, join paths, and formula breakdowns. Results depend on the completeness of available metadata. The AI can create an annotated graph view you can save as a bookmark for further interactive exploration.
+
+For broader investigations — business rules, documentation, or pattern discovery across many objects — the assistant uses an exploration mode with persistent two-tier memory: detailed findings stored per node plus one-line summaries visible in every subsequent step. This keeps the assistant focused on your original question even across large scopes.
+
+**SQL understanding**
+
+```
+@lineage explain the SQL of Sales.vSalesPerson — any performance or logic issues?
+@lineage what joins does HumanResources.vEmployee use?
+```
+
+**Documentation**
+
+```
+@lineage document the data flow from Purchasing tables to the reporting views
+@lineage summarize what the Production schema does
+```
+
+**Analysis**
+
+```
+@lineage which objects are hubs with the most connections?
+@lineage find orphan tables that nothing depends on
+@lineage are there any circular dependencies?
+```
+
+**Discovery**
+
+```
+@lineage what schemas are loaded?
+@lineage find tables with Employee in the name
+```
+
+### How it works
+
+- Built-in tools: search objects, trace dependencies, explore business rules, get DDL, run analysis, and more
+- Works with any model in your Copilot chat dropdown
+- Auto-scales context limits based on the model's context window
+- Tools are only active when a lineage graph is loaded
 
 ### Tips
 
-- **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Always verify against your database.
-- **Session isolation.** Starting a new chat window correctly resets the assistant's state. To start a fresh investigation, press `Ctrl+L`.
-- **Incremental Updates.** You can ask the AI to add or remove specific nodes from an existing graph view without restarting the entire analysis.
-- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark.
-- **The assistant is context-aware.** It knows what filters are active and which schemas are visible. Ask *"what's filtered out?"*.
-- **Customize output.** Command Palette → *Create AI Output Templates* to tailor the AI response format.
+- **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Results depend on DDL completeness — always verify against your database.
+- **Start a new chat for each topic.** The assistant remembers only the last few exchanges — switching topics mid-session leads to stale context. Press `Ctrl+L` to start fresh.
+- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark. You can then explore the view interactively, trace further, or export it.
+- **The assistant is context-aware.** It knows what filters are active, which schemas are visible, and what your current graph shows. Ask *"what am I looking at?"* or *"what's filtered out?"*.
+- **Be specific with object names.** Use `Sales.SalesOrderDetail` rather than *"the sales order table"*.
+- **Customize output.** Command Palette → *Create AI Output Templates* to tailor the AI response format. See [AI prompt templates guide](AI_PROMPTS.md).
+- **Narrow BFS scope on large graphs.** Ask for 1–2 levels first, then expand if you need more depth.
+- **Try a bigger model for large databases.** Models with 128K+ context auto-scale to show more results and larger DDL.
+
+### How @lineage analyzes your database
+
+When you ask `@lineage` a question, it goes through four steps:
+
+1. **Search** — finds the relevant objects in your loaded model
+2. **Scope** — determines how many objects are involved (the "scope")
+3. **Analyze** — reads the SQL of each object and traces column flows
+4. **Annotate** — creates labeled graph views with section descriptions
+
+For step 3, the assistant automatically chooses between two analysis modes based on scope size:
+
+**Quick analysis** — for small scopes (≤10 objects and under token budget). The AI receives all SQL at once, reasons about everything in a single pass, and submits all decisions in one batch. This is fast and works well for straightforward questions like *"what reads from the Employee table?"* or *"trace BusinessEntityID upstream."*
+
+**Deep exploration** — for larger scopes (>10 objects or exceeding token budget). The AI examines one object at a time, building persistent memory as it goes. Each step records what was found — column renames, formulas, join conditions — so that information from early steps remains available 15 or 20 steps later.
+
+**Why does this matter?** In complex ETL pipelines, a column often changes names multiple times. For example, `ItemCount` in Oracle becomes `Quantity`, then `RawQty`, then `OrderQty`, then finally `Qty`. Without persistent memory, the AI loses track of earlier renames and produces incomplete traces. Deep exploration keeps this context across the entire pipeline.
+
+**Settings** — the defaults work well for most databases:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `ai.inlineTokenBudget` | `10000` | Token threshold — how much SQL data fits in quick mode |
+| `ai.inlineNodeCap` | `10` | Node threshold — how many objects fit in quick mode |
+
+Both thresholds must be within limits for quick mode. If either is exceeded, deep exploration is used.
+
+- **Increase `inlineNodeCap`** if your stored procedures are small and you prefer faster responses
+- **Decrease it** if you want more thorough analysis on every trace
 
 ### Requirements
 
@@ -217,3 +294,37 @@ In complex ETL pipelines, a column often changes names multiple times. Deep expl
 ### Disable
 
 Set `ai.enabled` to `false` in VS Code Settings to remove the `@lineage` participant and all AI tools.
+
+---
+
+## Settings Reference
+
+All settings use the `dataLineageViz.*` prefix. Search `dataLineageViz` in VS Code Settings (`Ctrl+,`) to browse all options.
+
+| Group | Key settings |
+|-------|-------------|
+| **Import** | `maxNodes`, `renderLimit`, `excludePatterns`, `overview.enabled`, `overview.threshold`, `parseRulesFile` |
+| **Database Connection** | `dmvQueryTimeout`, `dmvQueriesFile` |
+| **Table Statistics** | `tableStatistics.enabled`, `standardModeEnabled`, `queryTimeout`, `sampleThreshold` |
+| **Layout** | `layout.direction`, `layout.edgeStyle`, `layout.minimapEnabled` |
+| **Trace** | `trace.defaultUpstreamLevels`, `trace.defaultDownstreamLevels` |
+| **Analysis** | `analysis.hubMinDegree`, `analysis.islandMaxSize`, `analysis.longestPathMinNodes` |
+| **AI Assistant** | `ai.enabled`, `ai.maxRounds`, `ai.outputTemplateFile` |
+
+### Customization guides
+
+| Guide | What you can customize |
+|-------|----------------------|
+| [Custom Parse Rules](PARSE_RULES.md) | Regex rules for stored procedure dependency extraction |
+| [Custom DMV Queries](DMV_QUERIES.md) | SQL queries used during database import |
+| [Profiling Patterns](PROFILING_PATTERNS.md) | Table statistics SQL reference |
+
+---
+
+## FAQ
+
+**Do I need a .dacpac file?**
+No — connect directly to a database. If you prefer a `.dacpac`, extract one from Visual Studio, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications).
+
+**Why are some dependencies missing?**
+Dynamic SQL cannot be analyzed statically. Only compile-time dependencies are detected.

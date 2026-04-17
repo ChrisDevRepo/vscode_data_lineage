@@ -28,10 +28,8 @@ CONTRIBUTING.md
 # Integration test infrastructure (internal only — never in VSIX)
 scripts/**
 
-# Internal test and documentation infrastructure (must not leak into VSIX)
+# Internal test infrastructure (gitignored, must not leak into VSIX)
 test-internal/**
-docs-internal/**
-**/*internal*/**
 
 # Environment files (must never be packaged)
 .env
@@ -62,3 +60,4 @@ debug.log
 .editorconfig
 .eslintrc*
 .prettierrc*
+claude.md

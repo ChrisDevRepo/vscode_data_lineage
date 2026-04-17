@@ -1,11 +1,6 @@
 // Regex-based T-SQL dependency extraction; rules loaded from YAML at runtime.
 
 import { splitSqlName } from '../utils/sql';
-import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
-import { 
-  QUALIFIED_NAME, ANY_IDENT, KEYWORDS_RE, 
-  PASS1_CLEANSE_RE, TABLE_REF_WITH_ALIAS, FROM_TERMINATOR_RE 
-} from './shared/sqlRegex';
 
 export interface ParsedDependencies {
   sources: string[];
@@ -59,7 +54,7 @@ export interface ParseRulesConfig {
  * @param keywords   Regex to reject SQL keywords as CTE names
  * @returns Schema-qualified table, unqualified CTE name (for chaining), or null
  */
-function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
+function resolveCteFromTarget(sql: string, bodyStart: number, keywords: RegExp): string | null {
   // Find CTE body end — paren balancing on cleaned SQL
   let depth = 1;
   let bodyEnd = -1;
@@ -73,12 +68,12 @@ function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
   const body = sql.slice(bodyStart, bodyEnd);
 
   // Schema-qualified FROM first (e.g. FROM [schema].[table])
-  const qual = body.match(new RegExp(`\\bFROM\\s+(${QUALIFIED_NAME.source})(?![\\w\\.])`, 'i'));
+  const qual = body.match(/\bFROM\s+((?:(?:\[[^\]]+\]|\w+)\.)+(?:\[[^\]]+\]|\w+))(?![\w\.])/i);
   if (qual) return qual[1];
 
   // Fallback: unqualified FROM — another CTE in chain
-  const unqual = body.match(new RegExp(`\\bFROM\\s+(${ANY_IDENT.source})(?!\\s*\\.)(?!\\s*\\()`, 'i'));
-  if (unqual && !KEYWORDS_RE.test(unqual[1])) return unqual[1];
+  const unqual = body.match(/\bFROM\s+(\w+)(?!\s*\.)(?!\s*\()/i);
+  if (unqual && !keywords.test(unqual[1])) return unqual[1];
 
   return null;
 }
@@ -99,14 +94,15 @@ function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
 function substituteCteUpdateAliases(sql: string): string {
   // Find CTE definitions: WITH name AS ( and , name AS ( (multi-CTE syntax)
   const cteMap = new Map<string, string>(); // cteName (lowercase) → base table or CTE ref
-  const ctePattern = new RegExp(`(?:\\bWITH\\b|,)\\s*(${ANY_IDENT.source})\\s+AS\\s*\\(`, 'gi');
+  const ctePattern = /(?:\bWITH\b|,)\s*(\w+)\s+AS\s*\(/gi;
+  const KEYWORDS = /^(?:select|insert|update|delete|from|join|where|set|begin|end|values|exec|execute|top|distinct|all|as|on|and|or|not|in|is|null|by|order|group|having|into|case|when|then|else|return|declare|table|index|view|proc|procedure)$/i;
 
   let m: RegExpExecArray | null;
   while ((m = ctePattern.exec(sql)) !== null) {
     const cteName = m[1];
-    if (KEYWORDS_RE.test(cteName)) continue;
+    if (KEYWORDS.test(cteName)) continue;
     const bodyStart = m.index + m[0].length;
-    const ref = resolveCteFromTarget(sql, bodyStart);
+    const ref = resolveCteFromTarget(sql, bodyStart, KEYWORDS);
     if (ref) cteMap.set(cteName.toLowerCase(), ref);
   }
 
@@ -129,12 +125,14 @@ function substituteCteUpdateAliases(sql: string): string {
   if (cteMap.size === 0) return sql;
 
   // Rewrite UPDATE CTE_NAME SET → UPDATE [schema].[table] SET
-  let result = sql.replace(new RegExp(`\\bUPDATE\\s+(${ANY_IDENT.source})\\s+SET\\b`, 'gi'), (match, alias) => {
+  let result = sql.replace(/\bUPDATE\s+(\w+)\s+SET\b/gi, (match, alias) => {
     const baseTable = cteMap.get(alias.toLowerCase());
     return baseTable ? `UPDATE ${baseTable} SET` : match;
   });
 
   // Rewrite FROM CTE_NAME → FROM [schema].[table] for alias UPDATE patterns.
+  // Safe globally: CTE names are unqualified → always rejected by normalizeCaptured.
+  // Replacing them only adds correct matches. Set deduplication handles redundancy.
   for (const [cteName, baseTable] of cteMap) {
     result = result.replace(new RegExp(`\\bFROM\\s+${cteName}\\b`, 'gi'), `FROM ${baseTable}`);
   }
@@ -152,10 +150,11 @@ function substituteCteUpdateAliases(sql: string): string {
  * Function-argument commas are never affected — they lack the FROM...terminator context.
  */
 function normalizeAnsiCommaJoins(sql: string): string {
+  const tableRef = '(?:\\[[^\\]]+\\]|\\w+)\\.(?:\\[[^\\]]+\\]|\\w+)(?:\\s+(?:AS\\s+)?\\w+)?';
   return sql.replace(
     new RegExp(
-      `\\bFROM\\s+((?:${TABLE_REF_WITH_ALIAS.source}\\s*,\\s*)+${TABLE_REF_WITH_ALIAS.source})` +
-      `(?=${FROM_TERMINATOR_RE.source})`,
+      `\\bFROM\\s+((?:${tableRef}\\s*,\\s*)+${tableRef})` +
+      '(?=\\s*(?:WHERE\\b|JOIN\\b|INNER\\b|LEFT\\b|RIGHT\\b|FULL\\b|CROSS\\b|OUTER\\b|ON\\b|ORDER\\b|GROUP\\b|HAVING\\b|WITH\\b|SET\\b|;|\\)|$))',
       'gi'
     ),
     (_, tables: string) => 'FROM ' + tables.replace(/\s*,\s*/g, ' JOIN ')
@@ -286,7 +285,7 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   // "The Best Regex Trick": leftmost match wins, so strings protect -- inside them.
   // Double-quoted identifiers ("dbo"."Table") are normalized to bracket notation ([dbo].[Table])
   // so YAML rules only need to handle one quoting style.
-  clean = clean.replace(PASS1_CLEANSE_RE, (match) => {
+  clean = clean.replace(/\[[^\]]+\]|"[^"]*"|'(?:''|[^'])*'|--[^\r\n]*/g, (match) => {
     if (match.startsWith('[')) return match;                         // preserve [bracket identifiers]
     if (match.startsWith('"')) return `[${match.slice(1, -1)}]`;   // "double-quote" → [bracket]
     if (match.startsWith("'")) return "''";                         // neutralize 'string literals'
@@ -361,6 +360,41 @@ export function parseSqlBody(sql: string): ParsedDependencies {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const MAX_MATCHES_PER_RULE = 10_000;
+
+/**
+ * SQL Server CLR built-in type methods. When the regex parser captures a 3-part
+ * name like `alias.column.Method`, it looks identical to a cross-DB reference
+ * `db.schema.object`. This set contains all known built-in CLR type method names.
+ *
+ * Filter rule (in normalizeCrossDb): if the LAST part of a 3-part name is in this
+ * set AND is NOT bracket-quoted, return null (reject as CLR method call, not a
+ * catalog object). Bracket-quoted `[MethodName]` is accepted — CLR methods cannot
+ * be bracket-quoted in T-SQL syntax, so bracketing is proof of intent as a catalog
+ * reference.
+ */
+const CLR_TYPE_METHODS = new Set([
+  // HierarchyID
+  'getancestor', 'getdescendant', 'getlevel', 'getroot', 'getreparentedvalue',
+  'isdescendantof', 'reparent', 'tostring', 'parse',
+  // XML data type
+  'value', 'query', 'exist', 'modify', 'nodes',
+  // Geometry / Geography OGC instance methods
+  'starea', 'stasbinary', 'stastext', 'stboundary', 'stbuffer', 'stcentroid',
+  'stcontains', 'stconvexhull', 'stcrosses', 'stdifference', 'stdimension',
+  'stdisjoint', 'stdistance', 'stendpoint', 'stenvelope', 'stequals',
+  'stexteriorring', 'stgeometryn', 'stgeometrytype', 'stinteriorringn',
+  'stintersection', 'stintersects', 'stisclosed', 'stisempty', 'stisring',
+  'stissimple', 'stisvalid', 'stlength', 'stnumcurves', 'stnumgeometries',
+  'stnuminteriorring', 'stnumpoints', 'stoverlaps', 'stpointn', 'strelate',
+  'stsrid', 'ststartpoint', 'stsymdifference', 'sttouches', 'stunion',
+  'stwithin', 'stx', 'sty',
+  // Geometry/Geography static constructors
+  'stgeomfromtext', 'stgeomfromwkb', 'stpointfromtext', 'stpointfromwkb',
+  'stlinefromtext', 'stlinefromwkb', 'stpolyfromtext', 'stpolyfromwkb',
+  'stgeomcollfromtext', 'stgeomcollfromwkb',
+  // SQL Server-specific spatial helpers
+  'makevalid', 'reduce', 'bufferwithtolerance',
+]);
 
 function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
   regex.lastIndex = 0;

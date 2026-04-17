@@ -102,8 +102,6 @@ When regex misses a dependency but XML BodyDependencies has it, the extension in
 | `view` | view -> SP (READ) | Views are read-only |
 | `table` | table -> SP (READ) | Safest default; regex catches writes via INSERT/UPDATE/MERGE |
 
-**Technical Note**: This logic is implemented in the `extractDacpac` method of `src/engine/dacpacExtractor.ts` (for initial edge identification) and finalized during graph assembly in `src/engine/modelBuilder.ts`.
-
 This is validated by the `testTypeAwareDirection` test which confirms 100% accuracy on both test dacpacs.
 
 ## Known Limitations

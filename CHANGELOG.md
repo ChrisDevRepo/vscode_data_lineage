@@ -1,30 +1,5 @@
 # Changelog
 
-## [0.9.9] - 2026-04-16
-
-### Improved
-- **Modernized Logging Engine** — Refactored the internal logging system to use a state-of-the-art OOP architecture. This improves maintenance and consistency while preserving all existing debug and diagnostic outputs.
-- **Modular Extension Bridge** — Decomposed the complex UI-bridge logic into specialized modules, improving structural clarity and maintainability.
-- **Enhanced Stability & Performance** — Significant internal updates to the communication layer and graph engine. The app is now more reliable, faster when filtering large databases, and protected against unusually complex SQL patterns.
-- **Documentation Overhaul** — Updated project blueprints and developer contexts to align with the new multi-tier testing framework.
-
-### Added
-- **Incremental AI view updates** — You can now ask the AI to add or remove specific tables and update descriptions in an existing graph without restarting the entire analysis.
-- **Smarter AI session protection** — Added automatic cleanup for old AI sessions (2-hour timeout) and a confirmation warning if you try to start a new analysis while one is already active.
-- **Improved AI "Memory"** — The AI now better remembers its initial findings from the start of a conversation, leading to more consistent results in complex, multi-step traces.
-
-### Fixed
-- **Test Suite Fixtures** — Resolved regressions in the unit test suite caused by stale fixture references, ensuring 100% test coverage against current dacpac models.
-- **Table Statistics Routing & Timeout** — Corrected message routing between the extension host and detail panel to ensure Quick/Standard stats results are displayed. Added a robust timeout mechanism using the `tableStatistics.queryTimeout` setting to prevent hangs on slow connections.
-- **Clean slate for new chats** — Starting a new chat window now correctly resets the AI state, preventing buttons or findings from old conversations from appearing.
-- **Improved "Show in Graph" button** — The button now only appears when a full AI analysis is ready, and it is correctly hidden after simple table lookups.
-- **Smart schema filtering** — The AI can now analyze objects outside your active filters when asked, with better validation to ensure requested schemas exist in your model.
-- **Enriched state machine dumps** — Debugging information now includes unique session IDs and timestamps for easier troubleshooting.
-
-### Changed
-- **Internal architecture cleanup** — Refactored AI session management for better stability and more reliable state handling across different chat windows.
-- **Legacy Migration extraction** — Moved obsolete workspace state migration logic out of the extension critical path.
-
 ## [0.9.8] - 2026-04-12
 
 ### Added
@@ -89,6 +64,7 @@
 - **Loading screen** — Progress view for all data paths with elapsed timer and 60 s timeout.
 - **Exclusion Rules** — ⊘ toolbar filter to hide nodes by pattern in real-time. Supports `%` wildcards and regex. Add via dropdown, right-click → "Exclude from view", or `Delete` key.
 
+
 ## [0.9.4] - 2026-03-12
 
 ### Fixed
@@ -98,6 +74,10 @@
 
 ### Fixed
 - False-positive external cross-DB nodes from SQL Server CLR type method calls.
+  HierarchyID methods (`GetAncestor`, `GetDescendant`, `GetLevel`, `ToString`, `Parse`, etc.),
+  XML data type methods (`.nodes()`, `.value()`, `.query()`, `.exist()`, `.modify()`), and
+  Geometry/Geography spatial methods (`STDistance`, `STArea`, `STIntersects`, etc.) no longer
+  appear as virtual external nodes in the lineage graph.
 
 ## [0.9.2] - 2026-03-07
 
@@ -106,13 +86,14 @@
 
 ### Added
 - **Table design viewer** — Tables and external tables open in a styled HTML view with column details, constraints, and foreign keys.
-- **Table statistics** — Quick Stats and Detail Stats for database-imported tables, with platform-aware sampling.
+- **Table statistics** — Quick Stats (distinct counts, null%) and Detail Stats (+ min/max, string lengths) for database-imported tables, with platform-aware sampling.
+- **Table constraint info** — Table design view shows UQ/CK columns and FK section.
 - **External Table nodes** — External tables support
 - **Virtual external references** — OPENROWSET file paths, cross-database 3-part names
-- **External Refs analysis** — New analysis mode listing all file sources and cross-database references
-- **Analysis quick-switch** — Icon strip at the top of the analysis sidebar
+- **External Refs analysis** — New analysis mode listing all file sources and cross-database references grouped by kind and database, with direct neighbors shown per entry
+- **Analysis quick-switch** — Icon strip at the top of the analysis sidebar lets you jump between all analysis modes without closing and reopening
 - **View/function parser supplement** — body parser runs as fallback for views and functions
-- **Schema-grouped neighbor details** — In/Out neighbor list groups by schema
+- **Schema-grouped neighbor details** — In/Out neighbor list groups by schema; ⊘ marks objects not visible in the current view.
 
 ### Changed
 - **Catalog-original casing** — Schema and object names displayed exactly as defined in the database.
@@ -126,15 +107,25 @@
 
 ### Added
 - **Database Import** — Import schema and dependencies from SQL Server, Azure SQL, Fabric DW, or Synapse
-- **Quick Reconnect** — Wizard remembers your last data source
+- **Quick Reconnect** — Wizard remembers your last data source and offers one-click reopen or reconnect
 - **Find Path** — Right-click any node to discover the shortest path to another node
 - **Graph Analysis** — Structural insights: islands, hubs, orphans, longest paths, and cycles
 - **MiniMap** — Draggable overview map with schema-colored nodes
 - **Sidebar** — Quick access to the wizard, demo, and settings
-- **COPY INTO / BULK INSERT** — Recognize bulk-load targets
+- **Sibling Filter** — Optionally hide unrelated procedures that write to the same table during trace
+- **COPY INTO / BULK INSERT** — Recognize bulk-load targets in Fabric, Synapse, and SQL Server
+
+### Changed
+- Settings apply automatically when changed — no manual reload needed
+- Settings reorganized into Import, Layout, Trace, and Analysis sections
 
 ### Fixed
-- Four parsing patterns that previously produced incomplete lineage graphs
+- **More dependencies detected** — Four patterns that previously produced incomplete lineage graphs are now handled correctly:
+  - Old-style comma joins (`FROM Orders, Customers`) — all tables now appear as sources, not just the first
+  - `DELETE` statements — the deleted table now shows as a write target, giving it the same bidirectional edge as INSERT/UPDATE
+  - `OUTPUT INTO` clauses — the audit or staging table receiving OUTPUT rows is now captured as a second write target
+  - CTE-based UPDATE (`WITH cte AS (…) UPDATE cte SET …`) — the underlying real table is resolved and recorded as the write target
+- **Parser** — SQL cleansing hardened: nested block comments, double-quoted identifiers, and bracket-quoted names with dots (e.g. `[sp.v4.5]`) all handled correctly
 
 ## [0.8.2] - 2026-02-14
 
@@ -144,26 +135,55 @@
 ## [0.8.1] - 2026-02-08
 
 ### Added
-- **Export to Draw.io** — Export the lineage graph as a `.drawio` file
-- **Copy Qualified Name** — Right-click any node to copy `[schema].[name]` to clipboard
+- **Export to Draw.io** — Export the lineage graph as a `.drawio` file with schema-colored left bands, orthogonal curved edges, bidirectional markers, and a schema legend
+- **Copy Qualified Name** — Right-click any node to copy `[schema].[name]` to clipboard for quick use in SQL editors
+
+### Fixed
+- **Trace Banner** — Immediate trace from search autocomplete now shows the banner so users can exit the trace
 
 ## [0.8.0] - 2026-02-08
 
 ### Added
-- **UDF Detection** — Inline scalar function calls now appear as dependencies
+- **UDF Detection** — Inline scalar function calls now appear as dependencies in the graph
 - **EXEC Return Values** — Procedures called with `@result = proc` are now captured
-- **Smarter Edge Directions** — Dependencies now have correct read/write arrows
+- **Smarter Edge Directions** — Dependencies that previously showed as undirected now have correct read/write arrows
 
 ### Fixed
-- Security upgrade (CVE-2026-25128), quoted identifiers, theming, trace edge cases
+- **Security** — Upgraded XML parser dependency (CVE-2026-25128)
+- **Quoted Identifiers** — Bracket-quoted names with special characters now parsed correctly
+- **Short Names** — Short schema or table names (e.g. `hr`, `dim`, `api`) no longer silently dropped
+- **DDL Viewer** — Multiple panels now show correct DDL content independently
+- **Theming** — Full support for Light+, Dark+, High Contrast Dark, and High Contrast Light
+- **Exclude Patterns** — Invalid patterns now logged to the Output window instead of silently ignored
+- **Trace** — Fixed edge case when tracing a node not present in the graph
 
-## [0.7.x] - 2026-02
+## [0.7.3] - 2026-02-03
 
-- Detail Search, Node Info Bar, Demo Data, custom `dacpac-sql` language
+### Fixed
+- **Animation Settings** — Edge animations now respond correctly to `highlightAnimation` and `edgeAnimation` settings (fixed missing useMemo dependencies)
+- **Default Values** — Fallback defaults now match package.json: maxNodes=500, rankSeparation=120, direction=LR
+
+## [0.7.1] - 2026-02-03
+
+- **Demo Data** — Load Demo now uses real AdventureWorks dacpac with DDL viewing
+- **Test Data** — Public test folder with AdventureWorks dacpacs (classic + SDK-style)
+
+## [0.7.0] - 2026-02-02
+
+- **Detail Search** — Full-text search panel for SQL bodies of views, procedures, and functions; results grouped by type with code snippets and match highlighting; click a result to zoom to the node in the graph
+- **No Red Squiggles** — DDL viewer uses custom `dacpac-sql` language: full SQL syntax coloring without language server diagnostics
+- **Node Info Bar** — Right-click → "Show Details" for In/Out/Unresolved/Excluded counts with hover tooltips
 
 ## [0.6.x] - 2026-01
 
-- Fabric + SSDT support, Interactive Trace, Schema Focus, Smart Search, DDL Viewer, Custom Parse Rules
+- **Fabric + SSDT Support** — Both traditional SSDT and Microsoft.Build.Sql (SDK-style) dacpacs fully supported
+- **Interactive Trace** — Click any object to trace upstream/downstream dependencies with configurable depth
+- **Schema Focus** — Star a schema to focus on it and its neighbors; filter by schema and object type
+- **Smart Search** — Autocomplete with schema/type info and keyboard navigation
+- **DDL Viewer** — Stable single-URI viewer with in-place content updates across monitors
+- **Custom Parse Rules** — YAML-based SQL extraction rules with regression test suite
+- **Case-Insensitive Schemas** — Schema names normalized to uppercase, eliminating duplicates
+- **Layout Controls** — Horizontal/vertical toggle, rebuild button, configurable trace defaults
 
 ## [0.5.0]
 

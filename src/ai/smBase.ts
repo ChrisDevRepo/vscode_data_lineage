@@ -1,37 +1,33 @@
 /**
- * Unified Navigation Engine — The core state machine for all exploration modes.
- * 
- * Consolidates Blackboard, Dependency, and Column Trace into a single grounded engine.
- * Implements a "Map & Router" architecture with:
- * - Topological Map: Managed by the engine (Visited, Current, Agenda).
- * - Navigation Path: Origin -> ... -> Current Focus for grounding.
- * - Incremental Blackboard: A dense narrative of insights updated by the AI.
- * - Selection-Inference Validation: Rejects hallucinations before the next hop.
+ * Abstract base class for hop-by-hop state machines (BB, CT).
+ *
+ * Owns all shared state: scope, visited, removed, node/edge maps, two-tier memory.
+ * Subclasses provide queue management (agenda vs frontier) and submission logic.
+ *
+ * Two-tier memory model (MemGPT-inspired):
+ *   - Short memory: incremental index — grows each hop, tracks what was loaded/found.
+ *   - Detail memory: per-node analysis slots — grounded evidence, always delivered
+ *     at full fidelity. SM is a data provider, never evicts or degrades evidence.
+ *
+ * Zero VS Code imports — pure logic for testability.
  */
 
 import type Graph from 'graphology';
-import { bidirectional } from 'graphology-shortest-path/unweighted';
 import type { DatabaseModel, LineageNode, ObjectType } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
-import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
-import { AiMemoryManager, type DetailSlot, type ShortMemory, type WorkingMemory } from './memoryManager';
+import { findBridgeNodes, bfsDepthMap, type LogFn } from './smGuards';
+
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type SmMode = 'blackboard' | 'column_trace';
-export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
-export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
+export type SmStatus = 'created' | 'initialized' | 'active' | 'awaiting' | 'complete' | 'error'
+                      | 'exploring' | 'awaiting_findings'    // BB-specific
+                      | 'hopping' | 'awaiting_verdicts';     // CT-specific
 
-export interface AgendaEntry {
-  nodeId: string;
-  question: string;         // grounded reason for visiting
-  priority: number;         // 0=BFS, 2=AI-requested, 3=Origin
-  depth: number;
-  activeColumns?: string[]; // for CT mode
-}
+export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 
 export interface HopNeighbor {
   id: string;
@@ -42,319 +38,582 @@ export interface HopNeighbor {
   edge_type: string;
   boundary: BoundaryFlag;
   boundary_reason?: string;
-  scope?: 'visited' | 'agenda' | 'pruned' | 'available' | 'external';
+  scope?: 'in_scope' | 'available' | 'pruned' | 'external' | 'visited';
+  in_filter?: boolean;
   cols?: string[];
+  fks?: string[];
+  hasDdl: boolean;
 }
 
-export interface NavigationWorkingMemory extends WorkingMemory {
-  topological_map: {
-    navigation_path: string;       // Origin -> ... -> Focus
-    visited_nodes: string[];
-    current_focus: string;
-    agenda: Array<{ id: string; name: string; question: string }>;
-  };
+/** Detail memory slot — per-node analysis stored during hops. */
+export interface DetailSlot {
+  nodeId: string;
+  schema: string;
+  name: string;
+  type: string;
+  analysis: string;       // AI's DDL findings (full text — never truncated)
+  summary: string;        // one-line digest (AI's own compression)
+  tags?: string[];
+  badge_label?: string;   // semantic label for enrich_view badge
+  note_caption?: string;  // 1-line caption for enrich_view note
 }
 
-// ─── Engine ──────────────────────────────────────────────────────────────────
+/** Short memory — compressed narrative, always available. */
+export interface ShortMemory {
+  narrative: string[];                                     // key findings per hop
+  coverage: { noted: number; total: number; pct: number };
+  pending_questions: Array<{ nodeId: string; question: string }>;
+}
 
-export class NavigationEngine implements IHopStateMachine {
+/** Base working memory — shared by BB and CT during hops. Subclasses extend with SM-specific fields. */
+export interface BaseWorkingMemory {
+  all_summaries: Array<{ nodeId: string; summary: string }>;
+  pending_questions: Array<{ nodeId: string; question: string }>;
+  checklist: { current_hop: number; noted: number; total: number; coveragePct: number };
+}
 
+/** Shared result shape returned by getResult(). Subclasses extend with SM-specific fields. */
+export interface SmResult {
+  status: 'complete';
+  progress_line: string;
+  originNodeId: string;
+  fullNodes: Array<Record<string, unknown>>;
+  edges: Array<[string, string, string]>;
+  suggested_labels: Array<{ node_id: string; text: string }>;
+  suggested_notes: Array<{ node_id: string; text: string }>;
+  suggested_sections: Array<{ label: string; node_ids: string[] }>;
+  short_memory: ShortMemory;
+  detail_slots: DetailSlot[];
+  stats: Record<string, number>;
+}
+
+/**
+ * Public caller contract for hop-by-hop state machines.
+ *
+ * Both ColumnTraceState (CT) and BlackboardState (BB) satisfy this interface.
+ * Callers that only need lifecycle checks (extension.ts phase logic) should
+ * type against IHopStateMachine rather than the concrete subclass.
+ *
+ * Note: init(), getHopContext(), and the submission methods (submitVerdicts / submitFindings)
+ * have SM-specific signatures and are NOT part of this shared interface.
+ * Use the concrete subclass type for handlers that call those methods.
+ */
+export interface IHopStateMachine {
+  readonly status: SmStatus;
+  readonly slotCount: number;
+  readonly coveragePct: number;
+  readonly inlineMode: boolean;
+}
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const BFS_SCOPE_CAP = 10_000;
+const DEFAULT_FINDINGS_LIMIT = 8000;
+const DEFAULT_SUMMARY_LIMIT = 500;
+
+/** Short memory soft limit — AI target for per-hop narrative entries (chars). */
+const DEFAULT_SHORT_MEMORY_SOFT_LIMIT = 500;
+/** Short memory hard limit — rejection threshold (chars). ~300 tokens; attention degrades above this. */
+const DEFAULT_SHORT_MEMORY_HARD_LIMIT = 1200;
+
+// ─── Abstract Base ──────────────────────────────────────────────────────────
+
+export abstract class HopStateMachine implements IHopStateMachine {
+
+  // ── Shared readonly state ──
   protected readonly model: DatabaseModel;
   protected readonly graph: Graph;
   protected readonly store: ColumnStore | null;
   protected readonly log: LogFn;
   protected readonly nodeMap: Map<string, LineageNode>;
   protected readonly edgeTypeMap: Map<string, string>;
-  protected readonly memory: AiMemoryManager;
-  protected readonly mode: SmMode;
+  protected readonly unrelatedMap: Map<string, string[]>;
+  protected readonly activeFilter: SerializedFilterState | null;
+  protected readonly filterSchemas: Set<string> | null;
+  protected readonly findingsHardLimit: number;
+  protected readonly summaryHardLimit: number;
+  protected readonly shortMemorySoftLimit: number;
+  protected readonly shortMemoryHardLimit: number;
 
-  public sessionId?: string;
+  // ── Shared mutable state ──
   protected _status: SmStatus = 'created';
   protected _inlineMode = false;
   protected originNodeId: string | null = null;
   protected scopeNodeIds = new Set<string>();
   protected visited = new Set<string>();
   protected removedSet = new Set<string>();
-  protected agenda: AgendaEntry[] = [];
-  protected agendaIds = new Set<string>();
   protected currentFocusNodeId: string | null = null;
   protected hopCount = 0;
+  protected lastProgressLine = '';
+
+  // ── Two-tier memory ──
+  protected shortMemory: ShortMemory = {
+    narrative: [],
+    coverage: { noted: 0, total: 0, pct: 0 },
+    pending_questions: [],
+  };
+  protected detailSlots = new Map<string, DetailSlot>();
 
   constructor(
     model: DatabaseModel,
     graph: Graph,
     log: LogFn,
-    mode: SmMode,
     config: {
       activeFilter?: SerializedFilterState | null;
-      memory?: AiMemoryManager;
+      findingsHardLimit?: number;
+      summaryHardLimit?: number;
+      shortMemorySoftLimit?: number;
+      shortMemoryHardLimit?: number;
     },
     store?: ColumnStore | null,
   ) {
     this.model = model;
     this.graph = graph;
-    this.log = log;
-    this.mode = mode;
     this.store = store ?? null;
+    this.log = log;
+    this.activeFilter = config.activeFilter ?? null;
+    this.filterSchemas = this.activeFilter?.schemas?.length
+      ? new Set(this.activeFilter.schemas.map(s => s.toLowerCase()))
+      : null;
+    this.findingsHardLimit = config.findingsHardLimit ?? DEFAULT_FINDINGS_LIMIT;
+    this.summaryHardLimit = config.summaryHardLimit ?? DEFAULT_SUMMARY_LIMIT;
+    this.shortMemorySoftLimit = config.shortMemorySoftLimit ?? DEFAULT_SHORT_MEMORY_SOFT_LIMIT;
+    this.shortMemoryHardLimit = config.shortMemoryHardLimit ?? DEFAULT_SHORT_MEMORY_HARD_LIMIT;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
-    this.memory = config.memory ?? new AiMemoryManager();
+    this.unrelatedMap = buildUnrelatedMap(model);
   }
+
+  // ── Public accessors ──
 
   get status(): SmStatus { return this._status; }
-  get scopeSize(): number { return this.scopeNodeIds.size; }
-  get coveragePct(): number {
-    return this.scopeNodeIds.size > 0 ? Math.round((this.memory.slotCount / this.scopeNodeIds.size) * 100) : 0;
-  }
+  get slotCount(): number { return this.detailSlots.size; }
   get inlineMode(): boolean { return this._inlineMode; }
-  setInlineMode(val: boolean) { this._inlineMode = val; }
 
-  init(params: {
-    question: string;
-    origin: string;
-    targetColumns?: string[];
-    direction?: 'upstream' | 'downstream' | 'bidirectional';
-    depth?: number;
-    initial_summary?: string;
-  }): any {
-    this.visited.clear();
-    this.agenda = [];
-    this.agendaIds.clear();
-    this.memory.reset();
+  get hopNumber(): number { return this.hopCount; }
+  get visitedCount(): number { return this.visited.size; }
+  get scopeSize(): number { return this.scopeNodeIds.size; }
 
-    const originNode = this.nodeMap.get(params.origin.toLowerCase());
-    if (!originNode) return { error: 'origin_not_found' };
-    
-    this.originNodeId = originNode.id;
-    this.scopeNodeIds = this.computeBfsScope(originNode.id, params.direction || 'bidirectional', params.depth || 5);
-    
-    if (params.initial_summary) {
-      this.memory.updateSynthesis(`Background: ${params.initial_summary}`);
+  get coveragePct(): number {
+    return this.scopeNodeIds.size > 0
+      ? Math.round((this.detailSlots.size / this.scopeNodeIds.size) * 100)
+      : 0;
+  }
+
+  /** Enable inline mode — AI gets all DDL upfront, memory overhead skipped. */
+  setInlineMode(value: boolean): void {
+    this._inlineMode = value;
+    if (value) this.log('info', 'Inline mode enabled — memory storage skipped');
+  }
+
+  /** Return all scope nodes with DDL for inline delivery. */
+  getAllScopeNodesWithDdl(): Array<Record<string, unknown>> {
+    const result: Array<Record<string, unknown>> = [];
+    for (const id of this.scopeNodeIds) {
+      const node = this.nodeMap.get(id);
+      if (!node) continue;
+      const ddl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
+      result.push({
+        id: node.id, s: node.schema, n: node.name, t: node.type,
+        ...(ddl && { ddl }),
+        ...(node.columns && { columns: node.columns }),
+      });
     }
+    return result;
+  }
 
-    // MANDATORY: Push origin as the first task
-    this.agenda.push({ 
-      nodeId: originNode.id, 
-      question: `Root Question: ${params.question}`, 
-      priority: 3, 
-      depth: 0, 
-      activeColumns: params.targetColumns 
+  // ── Two-tier memory management ──
+
+  /**
+   * Store a detail memory slot for a node.
+   * Called by subclass submission handlers after the AI provides findings.
+   */
+  storeDetail(
+    nodeId: string,
+    analysis: string,
+    summary: string,
+    meta?: { tags?: string[]; badge_label?: string; note_caption?: string },
+  ): void {
+    const node = this.nodeMap.get(nodeId);
+    if (!node) return;
+    // Inline mode: store only labels/captions for getResult() suggested_sections — skip analysis/summary
+    this.detailSlots.set(nodeId, {
+      nodeId,
+      schema: node.schema,
+      name: node.name,
+      type: node.type,
+      analysis: this._inlineMode ? '' : analysis,
+      summary: this._inlineMode ? '' : summary,
+      tags: meta?.tags,
+      badge_label: meta?.badge_label,
+      note_caption: meta?.note_caption,
     });
-    this.agendaIds.add(originNode.id);
+  }
 
-    this.seedAgenda(originNode.id, params.direction || 'bidirectional', params.targetColumns);
-    this._status = 'initialized';
+  /**
+   * Append a finding to short memory narrative.
+   * Central gate — validates soft/hard character limits. Never truncates.
+   * Returns error string if rejected (> hard limit), null if accepted.
+   * Skipped in inline mode — AI has all DDL in context.
+   */
+  updateShortMemory(hopSummary: string): string | null {
+    if (this._inlineMode) return null;
+    if (hopSummary.length > this.shortMemoryHardLimit) {
+      this.log('debug', `short memory rejected: ${hopSummary.length} chars (limit ${this.shortMemoryHardLimit}, aim for ~${this.shortMemorySoftLimit})`);
+      return `short_memory_too_long: ${hopSummary.length} chars exceeds ${this.shortMemoryHardLimit} (aim for ~${this.shortMemorySoftLimit})`;
+    }
+    if (hopSummary.length > this.shortMemorySoftLimit) {
+      this.log('debug', `short memory long: ${hopSummary.length} chars (soft limit ${this.shortMemorySoftLimit})`);
+    }
+    this.shortMemory.narrative.push(hopSummary);
+    this.shortMemory.coverage = {
+      noted: this.detailSlots.size,
+      total: this.scopeNodeIds.size,
+      pct: this.coveragePct,
+    };
+    return null;
+  }
 
+  /**
+   * Build a one-line progress summary after each successful submission.
+   * Included in tool response (progress_line) and shown via stream.progress().
+   */
+  protected buildProgressLine(
+    nodeName: string,
+    verdict: string,
+    prunedCount: number,
+    addedCount: number,
+  ): void {
+    let scopeChange = '';
+    if (prunedCount > 0) scopeChange = ` · pruned ${prunedCount}`;
+    if (addedCount > 0) scopeChange = ` · added ${addedCount}`;
+    this.lastProgressLine = `Hop ${this.hopCount} · ${nodeName} → ${verdict}${scopeChange}`;
+  }
+
+  /** Build completion progress line. */
+  protected buildCompletionLine(): void {
+    this.lastProgressLine = `Complete · ${this.visited.size} nodes analyzed · ${this.coveragePct}% coverage`;
+  }
+
+  /**
+   * Get both memory tiers for the final result tool response.
+   *
+   * SM is a data provider — delivers ALL detail slots at full fidelity.
+   * No eviction, no budget pressure. Context window management is the
+   * AI platform's job (VS Code Copilot Chat handles turn eviction).
+   */
+  getMemoryForSynthesis(): { short_memory: ShortMemory; detail_slots: DetailSlot[] } {
+    this.shortMemory.coverage = {
+      noted: this.detailSlots.size,
+      total: this.scopeNodeIds.size,
+      pct: this.coveragePct,
+    };
     return {
-      ok: true,
-      scopeSize: this.scopeNodeIds.size,
-      agendaSize: this.agenda.length,
+      short_memory: { ...this.shortMemory },
+      detail_slots: [...this.detailSlots.values()],
     };
   }
 
-  getHopContext(): any {
-    let entry: AgendaEntry | undefined;
-    while (this.agenda.length > 0) {
-      const nextIdx = this.agenda.reduce((best, curr, i, arr) => curr.priority > arr[best].priority ? i : best, 0);
-      const candidate = this.agenda.splice(nextIdx, 1)[0];
-      this.agendaIds.delete(candidate.nodeId);
-
-      if (!this.visited.has(candidate.nodeId)) {
-        entry = candidate;
-        break;
-      }
-    }
-
-    if (!entry) {
-      this._status = 'complete';
-      return { done: true };
-    }
-
-    this.visited.add(entry.nodeId);
-    this.hopCount++;
-    this.currentFocusNodeId = entry.nodeId;
-
-    const node = this.nodeMap.get(entry.nodeId)!;
-    const focusNode = buildHopFocusNode(node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
-    
-    const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
-    const navPath = path ? (path as string[]).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
-
-    const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size) as NavigationWorkingMemory;
-    workingMemory.topological_map = {
-      navigation_path: navPath,
-      visited_nodes: Array.from(this.visited),
-      current_focus: entry.nodeId,
-      agenda: this.agenda.map(a => ({ id: a.nodeId, name: this.nodeMap.get(a.nodeId)?.name ?? a.nodeId, question: a.question })),
-    };
-
-    this._status = 'awaiting_findings';
+  /**
+   * Build base working memory — shared core fields for both BB and CT during hops.
+   * Subclasses call this and extend with SM-specific fields (agenda, frontier, etc.).
+   */
+  protected buildBaseWorkingMemory(): BaseWorkingMemory {
     return {
-      hop: this.hopCount,
-      focus_node: focusNode,
-      neighbors: this.buildNeighborList(entry.nodeId),
-      current_question: entry.question,
-      working_memory: workingMemory,
+      all_summaries: [...this.detailSlots.values()].map(s => ({ nodeId: s.nodeId, summary: s.summary })),
+      pending_questions: this.shortMemory.pending_questions,
+      checklist: {
+        current_hop: this.hopCount,
+        noted: this.detailSlots.size,
+        total: this.scopeNodeIds.size,
+        coveragePct: this.coveragePct,
+      },
     };
   }
 
-  submitFindings(params: any): any {
-    if (this._status !== 'awaiting_findings') return { error: 'invalid_status', current_status: this._status };
-    
-    // Normalize and check focus
-    const focusId = params.focus_node_id?.toLowerCase();
-    if (focusId !== this.currentFocusNodeId) {
-      return { error: 'focus_mismatch', expected: this.currentFocusNodeId, got: focusId };
-    }
+  // ── Shared helpers (extracted from BB+CT duplication) ──
 
-    // Selection Guard
-    if (params.route_requests) {
-      const invalidRoutes = [];
-      for (const req of params.route_requests) {
-        const nid = req.nodeId?.toLowerCase();
-        const nNode = nid ? this.nodeMap.get(nid) : null;
-        if (!nNode) {
-          invalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
-          continue;
-        }
-        if (req.columns) {
-          const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-          const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
-          if (invalidCols.length > 0) {
-            invalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
-          }
-        }
-      }
-      if (invalidRoutes.length > 0) return { error: 'route_validation_failed', detail: invalidRoutes };
-    }
-
-    const synthesisErr = this.memory.updateSynthesis(params.narrative_update);
-    if (synthesisErr) return { error: synthesisErr };
-
-    this.memory.storeDetail(this.nodeMap.get(this.currentFocusNodeId!)!, params.detail_analysis, params.summary, {
-      badge_label: params.badge_label,
-      note_caption: params.note_caption
-    }, this._inlineMode);
-
-    if (params.route_requests) {
-      for (const req of params.route_requests) {
-        const nid = req.nodeId.toLowerCase();
-        if (!this.visited.has(nid) && !this.agendaIds.has(nid)) {
-          this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
-          this.agendaIds.add(nid);
-        }
-      }
-    }
-
-    this._status = 'exploring';
-    if (params.complete) { this._status = 'complete'; return { ok: true, early_complete: this.getResult() }; }
-    return { ok: true };
-  }
-
-  public estimateScopeDdlChars(): number {
-    let total = 0;
-    for (const nid of this.scopeNodeIds) {
-      const ddl = getNodeDdl(nid, this.nodeMap, this.store ?? undefined);
-      if (ddl) total += ddl.length;
-    }
-    return total;
-  }
-
-  private computeBfsScope(startId: string, direction: string, maxDepth: number): Set<string> {
+  /**
+   * BFS scope computation — direction-aware, filter-respecting, depth-limited.
+   * @param direction 'upstream' | 'downstream' | 'bidirectional'
+   * @param maxDepth Maximum BFS depth from startId (undefined = unlimited)
+   */
+  protected bfsScope(startId: string, direction: 'upstream' | 'downstream' | 'bidirectional', maxDepth?: number): Set<string> {
+    if (!this.graph.hasNode(startId)) return new Set([startId]);
     const seen = new Set<string>([startId]);
-    const queue = [{ id: startId, depth: 0 }];
+    const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
     let idx = 0;
     while (idx < queue.length) {
       const { id, depth } = queue[idx++];
-      if (depth >= maxDepth) continue;
-      const neighbors = direction === 'upstream' ? this.graph.inNeighbors(id) : direction === 'downstream' ? this.graph.outNeighbors(id) : this.graph.neighbors(id);
-      for (const nid of neighbors as string[]) {
-        if (!seen.has(nid)) { seen.add(nid); queue.push({ id: nid, depth: depth + 1 }); }
+      if (maxDepth !== undefined && depth >= maxDepth) continue;
+      const neighbors =
+        direction === 'upstream'   ? this.graph.inNeighbors(id) :
+        direction === 'downstream' ? this.graph.outNeighbors(id) :
+                                     this.graph.neighbors(id);
+      for (const nid of neighbors) {
+        if (seen.has(nid)) continue;
+        if (this.filterSchemas) {
+          const schema = (this.nodeMap.get(nid)?.schema ?? '').toLowerCase();
+          if (!this.filterSchemas.has(schema)) continue;
+        }
+        seen.add(nid);
+        queue.push({ id: nid, depth: depth + 1 });
+        if (seen.size >= BFS_SCOPE_CAP) return seen;
       }
     }
     return seen;
   }
 
-  private seedAgenda(originId: string, direction: string, targetCols?: string[]) {
-    const neighbors = direction === 'upstream' ? this.graph.inNeighbors(originId) : direction === 'downstream' ? this.graph.outNeighbors(originId) : this.graph.neighbors(originId);
-    for (const nid of neighbors as string[]) {
-      if (this.scopeNodeIds.has(nid) && !this.agendaIds.has(nid)) {
-        this.agenda.push({ nodeId: nid, question: `Analyze relationship to ${originId}`, priority: 0, depth: 1, activeColumns: targetCols });
-        this.agendaIds.add(nid);
-      }
+  /** Detect boundary condition for a node. */
+  protected detectBoundary(nodeId: string, direction: 'upstream' | 'downstream' | 'bidirectional' = 'bidirectional'): BoundaryFlag {
+    const node = this.nodeMap.get(nodeId);
+    if (!node) return 'external';
+    if (node.type === 'external') return 'external';
+    if (this.visited.has(nodeId)) return 'cycle';
+    if (!this.graph.hasNode(nodeId)) return 'external';
+    // Direction-aware source/sink detection
+    if (direction !== 'downstream' && this.graph.inDegree(nodeId) === 0) return 'source';
+    if (direction !== 'upstream' && this.graph.outDegree(nodeId) === 0) return 'sink';
+    return 'none';
+  }
+
+  /** Human-readable boundary reason. */
+  protected boundaryReason(flag: BoundaryFlag, node: LineageNode): string {
+    switch (flag) {
+      case 'source': return 'No upstream dependencies — source boundary';
+      case 'sink': return 'No downstream consumers — sink boundary';
+      case 'external': return `External reference (${node.externalType ?? 'unknown'}) — no DDL available`;
+      case 'cycle': return 'Already visited — cycle detected';
+      default: return '';
     }
   }
 
-  private buildNeighborList(focusId: string): HopNeighbor[] {
-    const ids = Array.from(new Set([...(this.graph.inNeighbors(focusId) as string[]), ...(this.graph.outNeighbors(focusId) as string[])])) as string[];
-    return ids.map(nid => {
-      const n = this.nodeMap.get(nid)!;
-      const boundary = this.visited.has(nid) ? 'cycle' : 'none';
-      const cols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name);
-      return {
-        id: nid, s: n.schema, n: n.name, t: n.type,
-        edge_direction: (this.graph.inNeighbors(focusId) as string[]).includes(nid) ? 'upstream' : 'downstream',
-        edge_type: 'read', boundary, cols,
+  /**
+   * Build enriched neighbor list for a focus node.
+   * Subclasses can override to add scope/filter info (BB) or direction filtering (CT).
+   */
+  protected buildNeighborList(focusId: string, neighborIds: string[], inSet: Set<string>): HopNeighbor[] {
+    const neighbors: HopNeighbor[] = [];
+
+    for (const nid of neighborIds) {
+      const nNode = this.nodeMap.get(nid);
+      if (!nNode) continue;
+
+      const isUpstream = inSet.has(nid);
+      const primaryKey = isUpstream ? `${nid}→${focusId}` : `${focusId}→${nid}`;
+      const reverseKey = isUpstream ? `${focusId}→${nid}` : `${nid}→${focusId}`;
+      const edgeType = this.edgeTypeMap.get(primaryKey) ?? this.edgeTypeMap.get(reverseKey) ?? 'read';
+
+      const boundary = this.detectBoundary(nid, this.getScopeDirection());
+
+      const neighbor: HopNeighbor = {
+        id: nid,
+        s: nNode.schema,
+        n: nNode.name,
+        t: nNode.type,
+        edge_direction: isUpstream ? 'upstream' : 'downstream',
+        edge_type: edgeType,
+        boundary,
+        hasDdl: SCRIPT_TYPES.has(nNode.type) && !!getNodeDdl(nid, this.nodeMap, this.store ?? undefined),
       };
-    });
+
+      if (boundary !== 'none') {
+        neighbor.boundary_reason = this.boundaryReason(boundary, nNode);
+      }
+
+      const nCols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined);
+      if (nCols?.length) {
+        neighbor.cols = nCols.map(c => presentColumnCompact(c));
+      }
+      if (nNode.fks?.length) {
+        neighbor.fks = nNode.fks.map(fk => presentFkCompact(fk));
+      }
+
+      neighbors.push(neighbor);
+    }
+
+    return neighbors;
   }
 
-  public getResult(): any {
-    const mem = this.memory.getResult();
-    const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
-    
-    // Core edges between all nodes in the scope
+  /**
+   * Build a fullNode record for result assembly.
+   * Inline mode: includes columns (and DDL for script types) — AI has no detail memory.
+   * Hop-by-hop mode: metadata only {id, s, n, t, role} — detail_slots are the primary evidence.
+   */
+  protected buildFullNode(nodeId: string, role?: string): Record<string, unknown> {
+    const node = this.nodeMap.get(nodeId);
+    if (!node) return { id: nodeId };
+    const base: Record<string, unknown> = {
+      id: node.id, s: node.schema, n: node.name, t: node.type,
+    };
+    if (role) base.role = role;
+    if (this._inlineMode) {
+      const ddl = getNodeDdl(nodeId, this.nodeMap, this.store ?? undefined);
+      if (SCRIPT_TYPES.has(node.type) && ddl) {
+        base.ddl = ddl;
+      }
+      const cols = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined);
+      if (cols?.length) {
+        base.cols = cols.map(c => presentColumnCompact(c));
+      }
+    }
+    return strip(base) as Record<string, unknown>;
+  }
+
+  /**
+   * Build shared result: fullNodes + edges + bridge injection + badges/notes + memory.
+   * Subclasses call this and extend with SM-specific fields.
+   */
+  protected buildSharedResult(): SmResult {
+    this._status = 'complete';
+
+    const slots = [...this.detailSlots.values()];
+    const slotIds = new Set(this.detailSlots.keys());
+
+    // Anchored IDs = detail slots + origin (ensures hub/star edges include SP→origin)
+    const anchoredIds = new Set([...slotIds, this.originNodeId!]);
+
+    // Build fullNodes: origin first, then detail slot nodes
+    const fullNodes: Array<Record<string, unknown>> = [];
+    if (this.originNodeId && !slotIds.has(this.originNodeId)) {
+      fullNodes.push(this.buildFullNode(this.originNodeId, 'origin'));
+    }
+    for (const slot of slots) {
+      fullNodes.push(this.buildFullNode(slot.nodeId));
+    }
+
+    // Edges between anchored nodes
     const edges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
-      if (this.scopeNodeIds.has(e.source) && this.scopeNodeIds.has(e.target)) {
+      if (anchoredIds.has(e.source) && anchoredIds.has(e.target)) {
         edges.push([e.source, e.target, edgeApiType(e.type)]);
       }
     }
 
-    // Bridge Node Injection: Reconnect orphaned noted nodes
-    const bridge = findBridgeNodes(this.graph, notedIds, edges, this.edgeTypeMap);
-    const finalEdges = [...edges, ...bridge.bridgeEdges];
-    const finalNodeIds = new Set([...Array.from(notedIds), ...bridge.bridgeNodes.map(n => n.id), this.originNodeId!]);
-
-    // Data-flow sorting for sections
-    const depthMap = bfsDepthMap(finalEdges, this.originNodeId!);
-    const sortedIds = Array.from(finalNodeIds).sort((a, b) => (depthMap.get(a) ?? 999) - (depthMap.get(b) ?? 999));
-
-    // Suggested sections based on depth
-    const sections: Array<{ label: string; node_ids: string[] }> = [];
-    const maxDepth = Math.max(...Array.from(depthMap.values()), 0);
-    for (let i = 0; i <= maxDepth; i++) {
-      const idsAtDepth = sortedIds.filter(id => depthMap.get(id) === i);
-      if (idsAtDepth.length > 0) {
-        sections.push({ label: i === 0 ? 'Origin' : `Stage ${i}`, node_ids: idsAtDepth });
+    // Bridge injection: reconnect orphan nodes via shortest path
+    const bridgeResult = findBridgeNodes(this.graph, anchoredIds, edges, this.edgeTypeMap);
+    if (bridgeResult.bridgeNodes.length > 0) {
+      for (const bn of bridgeResult.bridgeNodes) {
+        fullNodes.push(strip({ id: bn.id, s: bn.schema, n: bn.name, t: bn.type, role: 'bridge' }) as Record<string, unknown>);
       }
+      edges.push(...bridgeResult.bridgeEdges);
+      this.log('info', `[Bridge] orphans=${bridgeResult.orphanCount} | reconnected=${bridgeResult.reconnectedCount} | bridges=${bridgeResult.bridgeNodes.length} nodes, ${bridgeResult.bridgeEdges.length} edges`);
     }
+
+    // Order slots by BFS depth from origin for suggested labels/notes
+    const depthMap = bfsDepthMap(edges, this.originNodeId!);
+    const orderedSlots = [...slots].sort(
+      (a, b) => (depthMap.get(a.nodeId) ?? Infinity) - (depthMap.get(b.nodeId) ?? Infinity),
+    );
+
+    // Strip leading numbers from badge_label — system assigns via orderAndAssemble()
+    const BADGE_NUMBER_PREFIX_RE = /^\d+[\.\s]+/;
+    const stripNum = (s: string) => s.replace(BADGE_NUMBER_PREFIX_RE, '').trim();
+    const suggested_labels = orderedSlots.map(s => ({
+      node_id: s.nodeId,
+      text: s.badge_label ? stripNum(s.badge_label) : s.name,
+    }));
+    const suggested_notes = orderedSlots.map(s => ({
+      node_id: s.nodeId,
+      text: s.note_caption ?? s.summary,
+    }));
+
+    // Group per-node labels into sections by shared badge_label, depth-ordered.
+    // Nodes without badge_label are passthrough — excluded from sections.
+    const sectionMap = new Map<string, string[]>();
+    const sectionOrder: string[] = [];
+    for (const slot of orderedSlots) {
+      const label = slot.badge_label ? stripNum(slot.badge_label) : undefined;
+      if (!label) continue;
+      if (!sectionMap.has(label)) {
+        sectionMap.set(label, []);
+        sectionOrder.push(label);
+      }
+      sectionMap.get(label)!.push(slot.nodeId);
+    }
+    const suggested_sections = sectionOrder.map(label => ({
+      label,
+      node_ids: sectionMap.get(label)!,
+    }));
+
+    // Attach both memory tiers
+    const memory = this.getMemoryForSynthesis();
+
+    this.log('info', `[Result] notes=${slots.length} | edges=${edges.length} | scope=${this.scopeNodeIds.size} | coverage=${this.coveragePct}% | hops=${this.hopCount}`);
+    this.log('debug', `[Result] detail | fullNodes=${fullNodes.length} | bridges=${bridgeResult.bridgeNodes.length} | model_edges=${this.model.edges.length} | pruned=${this.removedSet.size} | visited=${this.visited.size}`);
+    if (edges.length > 0) {
+      this.log('trace', `[Result] EDGES | ${edges.map(([s, t, tp]) => `${s}→${t}(${tp})`).join(', ')}`);
+    }
+
+    this.buildCompletionLine();
 
     return {
       status: 'complete',
+      progress_line: this.lastProgressLine,
       originNodeId: this.originNodeId!,
-      fullNodes: Array.from(finalNodeIds).map(id => {
-        const n = this.nodeMap.get(id)!;
-        return { id: n.id, s: n.schema, n: n.name, t: n.type, role: id === this.originNodeId ? 'origin' : notedIds.has(id) ? 'noted' : 'bridge' };
-      }),
-      edges: finalEdges,
-      suggested_sections: sections,
-      short_memory: mem.short_memory,
-      detail_slots: mem.detail_slots,
+      fullNodes,
+      edges,
+      suggested_labels,
+      suggested_notes,
+      suggested_sections,
+      short_memory: memory.short_memory,
+      detail_slots: memory.detail_slots,
+      stats: {
+        hops: this.hopCount,
+        noted: slots.length,
+        scopeSize: this.scopeNodeIds.size,
+        coveragePct: this.coveragePct,
+      },
     };
   }
 
-  public toJSON() { return { mode: this.mode, hopCount: this.hopCount, visited: Array.from(this.visited) }; }
+  /** Check if a node is within the active filter. */
+  isInFilter(nodeId: string): boolean {
+    if (!this.filterSchemas) return true;
+    const node = this.nodeMap.get(nodeId);
+    if (!node) return false;
+    return this.filterSchemas.has(node.schema.toLowerCase());
+  }
+
+  /** Estimate total DDL chars across scope (for token budget decisions). */
+  estimateScopeDdlChars(): number {
+    let total = 0;
+    for (const id of this.scopeNodeIds) {
+      const ddl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
+      if (ddl) total += ddl.length;
+    }
+    return total;
+  }
+
+  /** Validate findings/summary length against hard limits. Returns error string or null. */
+  protected validateSubmissionSize(findings: string, summary: string): string | null {
+    if (findings.length > this.findingsHardLimit) {
+      return `findings_too_long: ${findings.length} > ${this.findingsHardLimit}`;
+    }
+    if (summary.length > this.summaryHardLimit) {
+      return `summary_too_long: ${summary.length} > ${this.summaryHardLimit}`;
+    }
+    return null;
+  }
+
+  /** Reset shared mutable state — called by subclass init(). */
+  protected resetSharedState(): void {
+    this._status = 'created';
+    this.originNodeId = null;
+    this.scopeNodeIds.clear();
+    this.visited.clear();
+    this.removedSet.clear();
+    this.currentFocusNodeId = null;
+    this.hopCount = 0;
+    this.shortMemory = { narrative: [], coverage: { noted: 0, total: 0, pct: 0 }, pending_questions: [] };
+    this.detailSlots.clear();
+  }
+
+  // ── Abstract methods — subclass-specific ──
+
+  /** Return the scope direction for boundary detection. */
+  protected abstract getScopeDirection(): 'upstream' | 'downstream' | 'bidirectional';
 }
 
-export interface IHopStateMachine {
-  readonly status: SmStatus;
-  readonly scopeSize: number;
-  readonly coveragePct: number;
-  readonly inlineMode: boolean;
-  setInlineMode(val: boolean): void;
-  getHopContext(): any;
-  submitFindings(params: any): any;
-  getResult(): any;
-  toJSON(): any;
-}
+// Re-export types used by extension.ts
+export type { LogFn } from './smGuards';

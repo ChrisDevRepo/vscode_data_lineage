@@ -1,8 +1,8 @@
 /**
  * AI tool pure functions — zero VS Code imports.
  * 8 classic retrieval functions invoked by classic LanguageModelTools in extension.ts.
- * CT and BB tools (start_exploration, submit_findings)
- * are handled directly by NavigationEngine in toolProvider.ts.
+ * CT and BB tools (start_column_trace, submit_hop_analysis, start_exploration, submit_findings)
+ * are handled directly by ColumnTraceState and BlackboardState in extension.ts.
  *
  * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */
@@ -747,8 +747,6 @@ export type EnrichViewInput = {
   closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
   description?: string;
   prune_node_ids?: string[];
-  add_node_ids?: string[];    // NEW: incremental add
-  is_update?: boolean;        // NEW: incremental update flag
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;
@@ -894,118 +892,32 @@ export function autoFixEnrichView(
     fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Convert $$ block math to ```math code fences.
-  //    Code fences are CommonMark structural elements — they can't break markdown.
-  //    Block math: rendered via components.code override in AiDescriptionOverlay.
-  //    Inline math ($...$): handled by remark-math + rehype-katex (span-level, safe).
-
-  /** Detect lines that are clearly markdown, not math.
-   *  If found inside a math block, the block is force-closed before this line. */
-  const IS_MARKDOWN = /^#{1,6}\s|^```|^[-*+]\s|^>\s|`|\*\*\w/;
-
-  /** Convert $$ block math to ```math code fences.
-   *  Single-pass: normalize $$ to own lines, then convert to fences.
-   *  If markdown appears inside a math block, force-close the fence.
-   *  Auto-close unclosed \begin{env} before fence end.
-   *  Strip orphan \end{env} and trailing \\ outside fences. */
+  // 4. Convert LaTeX environments to $$-delimited math (remark-math handles $$ natively).
+  //    ```math fences are handled at render time by mathFenceToDelimiters().
+  //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
   const fixLatex = (text: string): { text: string; changed: boolean } => {
-    // Step 1: normalize $$ to own lines
-    const rawLines = text.split('\n');
-    const normalized: string[] = [];
-    for (const line of rawLines) {
-      const trimmed = line.trim();
-      if (trimmed === '$$') {
-        normalized.push('$$');
-      } else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
-        normalized.push('$$');
-        normalized.push(trimmed.slice(2, -2).trim());
-        normalized.push('$$');
-      } else if (trimmed.startsWith('$$')) {
-        normalized.push('$$');
-        normalized.push(trimmed.slice(2).trim());
-      } else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) {
-        normalized.push(trimmed.slice(0, -2).trim());
-        normalized.push('$$');
-      } else {
-        normalized.push(line);
-      }
-    }
-
-    // Step 2: convert $$ open/close to ```math / ```
     let changed = false;
-    const out: string[] = [];
-    let insideMath = false;
-    const openEnvs: string[] = []; // stack of unclosed \begin{env}
+    let result = text;
 
-    const closeFence = () => {
-      // Auto-close unclosed \begin{env} before fence end
-      while (openEnvs.length > 0) {
-        out.push('\\end{' + openEnvs.pop() + '}');
-        changed = true;
-      }
-      out.push('```');
-      insideMath = false;
-    };
-
-    for (const line of normalized) {
-      const trimmed = line.trim();
-
-      // $$ delimiter
-      if (trimmed === '$$') {
-        changed = true;
-        if (!insideMath) {
-          out.push('```math');
-          insideMath = true;
-        } else {
-          closeFence();
-        }
-        continue;
-      }
-
-      // Inside math: check for markdown lines that shouldn't be here
-      if (insideMath && IS_MARKDOWN.test(trimmed)) {
-        changed = true;
-        closeFence();
-        // Emit the markdown line (strip trailing \\ which is a LaTeX artifact)
-        out.push(line.replace(/\s*\\\\$/, ''));
-        continue;
-      }
-
-      // Inside math: track \begin/\end for auto-close
-      if (insideMath) {
-        const beginMatch = trimmed.match(/\\begin\{(\w+)\}/);
-        if (beginMatch) openEnvs.push(beginMatch[1]);
-        const endMatch = trimmed.match(/\\end\{(\w+)\}/);
-        if (endMatch && openEnvs.length > 0 && openEnvs[openEnvs.length - 1] === endMatch[1]) {
-          openEnvs.pop();
-        }
-        out.push(line);
-        continue;
-      }
-
-      // Outside math: strip orphan \end{env} on its own line
-      if (/^\\end\{\w+\}\s*$/.test(trimmed)) {
-        changed = true;
-        continue;
-      }
-
-      // Outside math: strip trailing \\ (LaTeX row separator artifact)
-      if (/\\\\\s*$/.test(trimmed)) {
-        changed = true;
-        out.push(line.replace(/\s*\\\\$/, ''));
-        continue;
-      }
-
-      out.push(line);
-    }
-
-    // EOF inside math: close fence
-    if (insideMath) {
+    // 4a. \begin{cases}...\end{cases} → $$ block
+    result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
       changed = true;
-      closeFence();
-    }
+      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
+      return '\n$$\n' + lines.join('\n') + '\n$$\n';
+    });
+    // 4b. \begin{aligned}...\end{aligned} → $$ block
+    result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
+      changed = true;
+      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
+      return '\n$$\n' + lines.join('\n') + '\n$$\n';
+    });
+    // 4c. Generic \begin{env}...\end{env} → $$ block
+    result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
+      changed = true;
+      return '\n$$\n' + (body as string).trim() + '\n$$\n';
+    });
 
-    return { text: out.join('\n'), changed };
+    return { text: result, changed };
   };
 
   // Apply LaTeX fix to description, section text, and notes
@@ -1082,9 +994,6 @@ export function validateMarkdownFormat(md: string): string[] {
       'description has an unclosed fenced block — ensure closing ``` is present',
     );
   }
-
-  // $$ balance check removed — fixLatex converts all $$ to ```math fences.
-  // Code fences are structurally safe (CommonMark) and can't break markdown.
 
   return errors;
 }

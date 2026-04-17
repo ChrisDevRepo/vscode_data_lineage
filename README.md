@@ -49,7 +49,7 @@ For configuration, settings reference, and advanced customization (parse rules, 
 
 ## Limitations
 
-- Column-level lineage via `@lineage /trace` (AI-assisted, requires GitHub Copilot)
+- Column-level lineage via `@lineage /column-trace` (AI-assisted, requires GitHub Copilot)
 - Static analysis — dynamic SQL (`EXEC(@sql)`) not detected
 - Fully-qualified names only — unqualified references are excluded
 
