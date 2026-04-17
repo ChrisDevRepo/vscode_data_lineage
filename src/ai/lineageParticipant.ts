@@ -251,10 +251,9 @@ export class LineageParticipant {
     const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
     let roundCount = 0;
     let totalToolCallsMade = 0;
-    let lastInputTokenEstimate = 0;
     let totalOutputTokens = 0;
-    let totalToolResultChars = 0;
-    let lastRoundInputTokens = 0;
+    let peakRoundInputTokens = 0;
+    let totalRoundInputTokens = 0;
     // Nav prompt is built once on active-phase entry and preserved across sliding
     // memory wipes — without this, mode-specific guidance (memory protocol, routing
     // rules, classification) vanished after the first hop.
@@ -271,8 +270,8 @@ export class LineageParticipant {
         let roundInputTokens = 0;
         try {
           roundInputTokens = await request.model.countTokens(serializeMessages(messages));
-          lastInputTokenEstimate = roundInputTokens;
-          lastRoundInputTokens = roundInputTokens;
+          totalRoundInputTokens += roundInputTokens;
+          if (roundInputTokens > peakRoundInputTokens) peakRoundInputTokens = roundInputTokens;
         } catch (err) {
           this.logger.debug(`Per-round countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
@@ -376,7 +375,6 @@ export class LineageParticipant {
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, result.content));
             accumulatedToolResults[f.callId] = result;
             toolCallCache.set(cacheKey, result);
-            totalToolResultChars += JSON.stringify(result.content).length;
           } catch (err) {
             const errContent = [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: String(err) }))];
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, errContent));
@@ -466,9 +464,11 @@ export class LineageParticipant {
             const evidenceHeader = '### DETAIL ARCHIVE (TECHNICAL EVIDENCE)\n' +
               'The following evidence was captured during the investigation. Assembly this into your final report.\n\n';
             
-            const evidenceItems = archive.detail_slots.map(s => 
-              `#### ${s.nodeId}\n- **Summary**: ${s.summary}\n- **Technical Analysis**:\n${s.analysis}\n`
-            ).join('\n---\n');
+            const evidenceItems = archive.detail_slots.map(s => {
+              const badge = s.badge_label ? `- **Badge**: ${s.badge_label}\n` : '';
+              const note = s.note_caption ? `- **Note caption**: ${s.note_caption}\n` : '';
+              return `#### ${s.nodeId}\n${badge}${note}- **Summary**: ${s.summary}\n- **Technical Analysis**:\n${s.analysis}\n`;
+            }).join('\n---\n');
 
             messages.length = 0;
             messages.push(
@@ -477,7 +477,9 @@ export class LineageParticipant {
               vscode.LanguageModelChatMessage.User(buildSynthesisPrompt()),
               vscode.LanguageModelChatMessage.User(evidenceHeader + evidenceItems)
             );
-            this.logger.debug(`[Synthesis] Wiping history and injecting ${archive.detail_slots.length} archive slots`);
+            const archiveChars = evidenceItems.length;
+            const archiveTokensEst = Math.round(archiveChars / 4);
+            this.logger.info(`[Synthesis] Detail archive: ${archive.detail_slots.length} slot(s), ${archiveChars} chars, ~${archiveTokensEst} tokens — injected as evidence for final synthesis`);
           }
         }
 
@@ -526,10 +528,9 @@ export class LineageParticipant {
 
     try {
       await runWithTools();
-      const totalTokenEst = lastInputTokenEstimate + totalOutputTokens + Math.round(totalToolResultChars / 4);
       const smMode = sess.stateMachine?.mode ?? '—';
-      const pctFinal = ((totalTokenEst / sess.maxInputTokens) * 100).toFixed(0);
-      this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst} (${pctFinal}% of ${sess.maxInputTokens})`);
+      const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
+      this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
       
       const smComplete = sess.stateMachine?.status === 'complete';
       if (this.getActivePanel() && smComplete) {
