@@ -117,9 +117,9 @@ Six analysis modes are available from the toolbar dropdown:
 | **Cycles** | Circular dependencies that block incremental deployment |
 | **External Refs** | Virtual nodes for file sources (OPENROWSET) and cross-database references |
 
-### Algorithmic Verification
+### Algorithmic Accuracy
 
-To ensure reliability, all structural graph algorithms are verified against a **NetworkX (Python)** ground truth on the full `AdventureWorks` model. This guarantees that complex features like cycle detection and longest-path analysis are logically accurate even on massive lineages.
+To ensure reliability, all structural graph algorithms (Cycles, Hubs, Pathfinding) are verified against a high-fidelity reference model. This guarantees that complex lineage visualizations remain logically accurate even on massive, enterprise-scale databases.
 
 Click any group in the analysis sidebar to zoom into that subset. Thresholds are configurable:
 

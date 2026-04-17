@@ -72,7 +72,7 @@ Inspired by MemGPT, the memory is split into two tiers to prevent the $O(N)$ tok
 The Map is provided by the system in every hop. It provides the **Context of Location** so the AI doesn't have to repeat topological facts in the Blackboard, saving significant tokens.
 
 ### Algorithmic Integrity
-To maintain the stability of the Navigation Engine, all core graph algorithms (BFS, SCC, pathfinding) are verified against a **Snapshot Baseline** derived from NetworkX. This ensures that semantic reasoning is grounded in a deterministic, verified topological foundation.
+To maintain the stability of the Navigation Engine, all core graph algorithms (BFS, SCC, pathfinding) are verified against a high-fidelity reference model. This ensures that semantic reasoning is grounded in a deterministic, verified topological foundation.
 
 ---
 
