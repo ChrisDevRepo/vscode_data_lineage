@@ -71,15 +71,17 @@ export interface WorkingMemory {
   /** Full technical analysis of immediately adjacent (1-hop) neighbors that have already been processed. */
   local_detail_context?: DetailSlot[];
   /** Progress tracking metadata. */
-  checklist: { 
+  checklist: {
     /** Current hop index. */
-    current_hop: number; 
+    current_hop: number;
     /** Number of nodes currently in detail memory. */
-    noted: number; 
+    noted: number;
     /** Total number of nodes in the exploration scope. */
-    total: number; 
+    total: number;
+    /** Nodes still open for analysis (= total - noted). */
+    open: number;
     /** Exploration progress as a percentage. */
-    coveragePct: number 
+    coveragePct: number
   };
 }
 
@@ -195,6 +197,7 @@ export class AiMemoryManager {
 
     const local_detail_context = ctx ? selectWorkingSet(ctx, this.detailSlots) : undefined;
 
+    const open = Math.max(0, scopeSize - this.detailSlots.size);
     return {
       blackboard: this.synthesisNarrative,
       pending_questions: this.pendingQuestions,
@@ -203,6 +206,7 @@ export class AiMemoryManager {
         current_hop: hopCount,
         noted: this.detailSlots.size,
         total: scopeSize,
+        open,
         coveragePct,
       },
     };

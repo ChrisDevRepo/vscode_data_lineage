@@ -45,9 +45,15 @@ export interface ResultGraph {
   suggested_notes?: Array<{ node_id: string; text: string }>;
   /** AI-suggested grouping of nodes into narrative sections. */
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
-  /** True if the result was persisted without the SM reaching `complete` — e.g. MAX_ROUNDS cap hit. */
+  /**
+   * Indicates the result was persisted without the state machine reaching `complete`.
+   * Set when the participant loop hits `MAX_ROUNDS` before the agenda drains.
+   */
   partial?: boolean;
-  /** Count of nodes analyzed vs planned when `partial` is true (for user-facing messaging). */
+  /**
+   * Coverage snapshot captured when {@link partial} is true.
+   * `analyzed` is the number of detail slots committed; `total` is the scope size.
+   */
   partialCoverage?: { analyzed: number; total: number };
 }
 

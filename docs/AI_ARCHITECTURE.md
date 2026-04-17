@@ -84,15 +84,19 @@ Every hop, `NavigationEngine.getHopContext()` returns a single JSON object deliv
 
 | Section | Field | Purpose |
 | :--- | :--- | :--- |
+| **Engine status** | `sm_status` | `'awaiting_findings'` while the loop is draining — the explicit "you are mid-loop" signal that survives sliding-memory wipes |
 | **Index** | `hop` | Integer hop number (1-based) |
+| **Drain signal** | `agenda_remaining` | Count of nodes still on the agenda — tells the AI how much work is left this session |
 | **Focus DDL** | `focus_node` | `{id, schema, name, type, ddl, columns, fks}` for the current node |
 | **Local metadata** | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, fks, hasDdl}` — enables grounded routing decisions without fetching |
-| **Sub-question** | `current_question` | The grounded question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
+| **Sub-goal** | `current_task` | The grounded task driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
 | **Short Memory** | `working_memory.blackboard` | Full cumulative narrative; AI overwrites it each hop via `narrative_update` |
 | **Pending** | `working_memory.pending_questions` | Neighbors the AI deferred for later hops |
-| **Progress** | `working_memory.checklist` | `{current_hop, noted, total, coveragePct}` — feeds the premature-complete guard |
+| **Progress** | `working_memory.checklist` | `{current_hop, noted, total, open, coveragePct}` — `open = total − noted`, the per-hop count of un-analyzed nodes in scope |
 | **Detail Memory (slice)** | `working_memory.local_detail_context` | DetailSlots per the inside-mode policy (see Memory Tiering) |
 | **The Map** | `working_memory.topological_map` | `{navigation_path, visited_nodes, current_focus, agenda}` — the deterministic structural grounding |
+
+The hop payload is designed to survive sliding-memory wipes: `sm_status`, `agenda_remaining`, and `checklist.open` give the AI the situational awareness it needs to keep draining even when the conversation history has been trimmed to the last turn. Omitting these signals — as earlier iterations did — forces the AI to fall back on acknowledge-the-data prose after each hop, which shows up as a "premature final answer" pattern. The fix is data, not more prose rules.
 
 The user's original natural-language question is **not** re-injected into `current_question` after hop 1. It reaches the model via two paths: (1) the VS Code chat-history messages on every LM call, and (2) verbatim inside the hop-1 `current_question` as `"Root Question: <user text>"` (set at `init`). Long traces that survive sliding-history eviction rely on path (2) + the Blackboard for anti-drift grounding; promoting the root question into `topological_map.root_question` is a cheap future reinforcement.
 

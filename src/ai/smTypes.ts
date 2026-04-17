@@ -65,20 +65,20 @@ export interface HopNeighbor {
 export interface HopContext {
   /** Set to `true` if there are no more nodes to visit in the agenda. */
   done?: boolean;
+  /** Explicit engine status, delivered every hop. */
+  sm_status?: SmStatus;
   /** The current hop index. */
   hop?: number;
+  /** Count of nodes still on the agenda. */
+  agenda_remaining?: number;
   /** The node currently being analyzed (type varies by implementation). */
   focus_node?: unknown;
   /** List of immediate neighbors available for further exploration. */
   neighbors?: HopNeighbor[];
-  /** The specific question or sub-goal guiding this hop. */
-  current_question?: string;
+  /** The specific sub-goal guiding this hop. */
+  current_task?: string;
   /** Implementation-specific state carried across hops. */
   working_memory?: unknown;
-  /** Directive embedded in the result telling the model its only valid next action.
-   *  Some models (notably GPT-4o) emit prose acknowledgements between tool calls;
-   *  placing the directive inside the tool payload keeps it adjacent to the data. */
-  next_action?: string;
 }
 
 /** 

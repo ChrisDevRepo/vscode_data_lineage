@@ -50,7 +50,9 @@ Focuses on the "Analyst" workflow:
 4.  Archive technical evidence to Detail Memory.
 5.  Propose next routes with validated questions.
 
-The navigation-mode prompt that persists across the sliding-memory wipe contains **no references to completion, final answers, `done: true`, or `enrich_view`**. The engine owns completion. Any language about synthesis would invite the AI to self-finalize early and waste rounds on rejected prose.
+The navigation-mode prompt persists across sliding-memory wipes and contains no language about completion, final answers, or `enrich_view` — the engine owns those. Situational awareness ("you are mid-loop, N items remain") is delivered as data in every hop payload (`sm_status`, `agenda_remaining`, `checklist.open`), not as prose the model has to re-learn each turn.
+
+The BB nav prompt never mentions `route_requests[].columns`; the CT nav prompt owns all column-level routing guidance. The validator reinforces this by silently dropping `columns` outside column-trace sessions.
 
 ### 3.2 Synthesis Mode (Phase 3)
 Focuses on the "Documentarian" workflow:

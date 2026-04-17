@@ -127,10 +127,7 @@ export class LineageParticipant {
     const MAX_ROUNDS = aiConfig.get<number>('ai.maxRounds', 50);
     setInlineTokenBudget(aiConfig.get<number>('ai.inlineTokenBudget', 10_000));
     setSmInlineNodeCap(aiConfig.get<number>('ai.inlineNodeCap', 10));
-    // Copy-friendliness: when false, we skip passing toolInvocationToken to vscode.lm.invokeTool().
-    // Without the token VS Code does not render each tool call as a chat part (which would otherwise
-    // include the expanded input JSON), so the built-in chat copy button captures only AI prose.
-    // Full tool I/O is still logged to the output channel; flip the setting on for developer debug.
+    // Off by default so the built-in chat copy button captures only AI prose, not expanded tool JSON.
     const showToolInvocations = aiConfig.get<boolean>('ai.showToolInvocations', false);
 
     if (!sess.model) {
@@ -139,10 +136,6 @@ export class LineageParticipant {
     }
 
     if (chatContext.history.length === 0) {
-      // Preserve resultGraph for recent follow-ups: users commonly ask "Show the trace
-      // result in the graph" in a new chat thread after a completed exploration. VS Code
-      // delivers that as empty-history, which would otherwise wipe the only thing the
-      // follow-up needs. Window = 5 min (matches typical user context-switch latency).
       const RESULT_GRAFT_WINDOW_MS = 5 * 60 * 1000;
       const preservedResult = sess.resultGraph;
       const recent = preservedResult && (Date.now() - sess.startTime) < RESULT_GRAFT_WINDOW_MS;
@@ -207,12 +200,7 @@ export class LineageParticipant {
       }
     }
 
-    // System prompt structure follows LangChain best-practice for agents:
-    // Role + Context + Instructions + Output Format — all stable, all phase-agnostic.
-    // Output templates stay here (not extracted to a separate message) because
-    // they are part of the agent's stable identity: "I produce X-shaped output."
-    // This also enables Anthropic prompt caching of the system message.
-    // Source: https://docs.langchain.com/oss/javascript/langchain/agents
+    // Keep the system prompt stable across the session so it remains cache-eligible.
     const systemPrompt = buildPlatformContext(sess.model.dbPlatform || 'SQL Server') +
       (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') +
       buildSystemPromptBase(MAX_ROUNDS) +
@@ -266,9 +254,7 @@ export class LineageParticipant {
     let totalOutputTokens = 0;
     let peakRoundInputTokens = 0;
     let totalRoundInputTokens = 0;
-    // Nav prompt is built once on active-phase entry and preserved across sliding
-    // memory wipes — without this, mode-specific guidance (memory protocol, routing
-    // rules, classification) vanished after the first hop.
+    // Built on active-phase entry and re-injected after every sliding-memory wipe.
     let navPrompt = '';
 
     const runWithTools = async () => {
@@ -276,8 +262,6 @@ export class LineageParticipant {
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
       let lastProgressLine = '';
-      let consecutivePrematureFinalize = 0;
-      const PREMATURE_FINALIZE_CAP = 3;
 
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
@@ -296,10 +280,7 @@ export class LineageParticipant {
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
 
-        // During active exploration the AI often emits running narrative prose alongside its
-        // tool calls (its blackboard/reasoning). Streaming that to the chat produces a noisy
-        // "chatty" experience — users see duplicate, partial narratives hop after hop. Only
-        // surface prose in discover + done phases, where the AI's text IS the user-facing answer.
+        // Suppress active-phase prose so hop narratives don't surface as duplicate chat output.
         const surfaceProse = activePhase !== 'active';
         for await (const part of response.stream) {
           if (part instanceof vscode.ChatResponseMarkdownPart) {
@@ -322,37 +303,6 @@ export class LineageParticipant {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
         if (!toolCalls.length) {
-          // Premature-termination guard: the engine is waiting for more findings but the AI
-          // emitted prose (or nothing) instead of calling lineage_submit_findings. Inject a
-          // corrective message and let the loop re-prompt; MAX_ROUNDS caps any retry.
-          // Symmetric counterpart to the `action_required: 'analyze_and_respond'` gate.
-          if (activePhase === 'active' && sess.stateMachine?.status === 'awaiting_findings') {
-            const smDump = sess.stateMachine.toJSON() as { agendaSize?: number; currentFocusNodeId?: string | null };
-            const agendaRemaining = smDump.agendaSize ?? 0;
-            if (agendaRemaining > 0) {
-              consecutivePrematureFinalize++;
-              const focus = smDump.currentFocusNodeId ?? '(unknown)';
-              if (consecutivePrematureFinalize >= PREMATURE_FINALIZE_CAP) {
-                this.logger.warn(`Round ${roundCount} [ACTIVE] — premature-finalize cap (${PREMATURE_FINALIZE_CAP}) reached; aborting to preserve remaining round budget`);
-                stream.markdown(`\n\n⚠ Session aborted: the model attempted to emit a final answer ${consecutivePrematureFinalize} times while ${agendaRemaining} agenda items remain. The exploration is partial — any completed nodes are available via the graph.`);
-                return;
-              }
-              this.logger.warn(`Round ${roundCount} [ACTIVE] — premature final answer rejected (${consecutivePrematureFinalize}/${PREMATURE_FINALIZE_CAP}); ${agendaRemaining} agenda items remain, re-prompting`);
-              // Only push a re-prompt on the last pending assistant message; avoid
-              // accumulating STOP messages when the AI repeats the pattern.
-              const lastMsg = messages[messages.length - 1];
-              const lastText = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
-              if (!lastText.startsWith('STOP.')) {
-                messages.push(vscode.LanguageModelChatMessage.User(
-                  `STOP. The engine is awaiting findings and ${agendaRemaining} agenda items remain. ` +
-                  `Your ONLY valid action is lineage_submit_findings for focus ${focus}. ` +
-                  `Do not emit prose, summaries, or complete:true — the engine owns completion.`
-                ));
-              }
-              continue;
-            }
-          }
-
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
@@ -376,9 +326,7 @@ export class LineageParticipant {
             continue;
           }
 
-          // Concise per-tool progress line. For submit_findings, show the current hop number +
-          // scope size + node short name so users see "Hop 7 / 24 — analyzing spCadenceRule_Alloc1b…"
-          // rather than a generic "Invoking submit_findings…" repeated 24 times.
+          // Per-tool progress line; submit_findings gets a hop-aware format.
           let progressLine = `Invoking ${f.name.replace('lineage_', '')}…`;
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
             const st = sess.stateMachine.toJSON() as { hopCount?: number; scopeSize?: number; currentFocusNodeId?: string | null };
@@ -386,8 +334,6 @@ export class LineageParticipant {
             const denom = st.scopeSize ?? '?';
             progressLine = `Hop ${st.hopCount ?? 1} / ${denom} — analyzing ${shortName}…`;
           }
-          // Dedup: failed submits (route_validation_failed, missing_field) don't advance
-          // hopCount, so the retry would emit the identical line. Skip when unchanged.
           if (progressLine !== lastProgressLine) {
             stream.progress(progressLine);
             lastProgressLine = progressLine;
@@ -414,9 +360,7 @@ export class LineageParticipant {
 
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
 
-        // Repeat-rejection belt: if the AI just sent the same tool call for the third
-        // consecutive time and it failed every time, terminate the session cleanly.
-        // Observing every tool call keeps the counter tight; any successful call resets it.
+        // Abort on 3 consecutive identical failures to avoid wasting the round budget on loops.
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
           const res = accumulatedToolResults[f.callId];
@@ -513,11 +457,7 @@ export class LineageParticipant {
           }
         }
 
-        // Sliding memory: wipe history only when EVERY submit_findings in this round succeeded.
-        // If any of N parallel submissions errored (focus_mismatch, invalid_status, prune_would_orphan_noted,
-        // prune_cascade_too_wide, route_validation_failed, validation_error), history must be preserved
-        // so the AI sees the error and can self-correct. Wiping on partial success destroys error
-        // feedback and the AI commonly gives up after the next round (empirically observed).
+        // Wipe history only when every submit in this round succeeded; preserve on error so the AI can self-correct.
         const submitParts = toolCalls.filter(tc => tc.name === 'lineage_submit_findings');
         if (submitParts.length > 0 && activePhase === 'active' && sess.stateMachine && !sess.stateMachine.inlineMode) {
           let anyError = false;
@@ -541,27 +481,11 @@ export class LineageParticipant {
           if (!anyError) {
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
-            // Pull the new focus_node_id out of the fresh hop result so we can
-            // inject a precise next-action directive after the wipe. Redundant
-            // with the `next_action` field embedded in the tool result itself,
-            // but GPT-4o-class models respond more consistently to an explicit
-            // user-role message than to an in-result hint.
-            let nextFocus = '(unknown)';
-            const smDump = sess.stateMachine.toJSON() as { currentFocusNodeId?: string | null; status?: string };
-            if (smDump.currentFocusNodeId) nextFocus = smDump.currentFocusNodeId;
-            const smDone = smDump.status === 'complete';
             messages.length = 0;
             messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt));
-            // Preserve the navigation prompt across wipes — without this, the AI
-            // loses its mode guidance (memory protocol, routing rules, classification)
-            // after the very first hop and flies blind on subsequent hops.
+            // Nav prompt must survive the wipe so mode guidance persists past hop 1.
             if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
             messages.push(lastAssistant, lastResult);
-            if (!smDone) {
-              messages.push(vscode.LanguageModelChatMessage.User(
-                `Next focus: ${nextFocus}. Call lineage_submit_findings now. Do not emit any prose in this turn.`
-              ));
-            }
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
           } else {
             this.logger.warn(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
@@ -577,10 +501,6 @@ export class LineageParticipant {
       this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
 
       const smComplete = sess.stateMachine?.status === 'complete';
-      // Partial-result preservation: when the loop exits without SM completion
-      // (MAX_ROUNDS cap hit or premature-finalize abort), persist a partial
-      // resultGraph from analyzed detail slots so follow-up `Show in Graph`
-      // and `enrich_view` still have something to render.
       if (sess.stateMachine && !smComplete && sess.resultGraph == null && sess.memory.slotCount > 0) {
         sess.storeBbResultPartial();
       }

@@ -243,15 +243,13 @@ export class NavigationEngine implements IHopStateMachine {
 
     this._status = 'awaiting_findings';
     return {
+      sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
+      agenda_remaining: this.agenda.length,
       focus_node: focusNode,
       neighbors: this.buildNeighborList(entry.nodeId),
-      current_question: entry.question,
+      current_task: entry.question,
       working_memory: workingMemory,
-      // Directive embedded in the tool result. Models (notably GPT-4o) tend to emit
-      // prose acknowledgements between tool calls; placing the next-action cue inside
-      // the tool result keeps it adjacent to the data the model is processing.
-      next_action: `lineage_submit_findings for focus_node_id="${entry.nodeId}". Do not emit prose in this turn.`,
     };
   }
 
@@ -264,10 +262,6 @@ export class NavigationEngine implements IHopStateMachine {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
     }
 
-    // Selection Guard. Columns are only meaningful in column_trace mode; for BB/dependency
-    // the AI sometimes copies source-node column names onto the target, which would trip
-    // the column validator with a confusing "Columns not found" error. Drop columns
-    // silently in non-CT modes so the node-level routing still succeeds.
     if (params.route_requests) {
       const invalidRoutes = [];
       for (const req of params.route_requests) {
@@ -342,12 +336,6 @@ export class NavigationEngine implements IHopStateMachine {
 
     this._status = 'exploring';
 
-    // Inline mode honors the explicit `complete=true` shortcut: scope is small,
-    // the model has the whole picture, and a one-shot completion signal is appropriate.
-    // SM sliding-memory mode rejects `complete=true` with an explicit error — the engine
-    // owns completion (drains the agenda, auto-completes). Silent-ignore trained the AI
-    // to believe its complete signal was accepted; explicit rejection forces the AI to
-    // keep submitting until the agenda drains.
     if (params.complete && this._inlineMode) {
       this._status = 'complete';
       return { ok: true, done: true, result: this.getResult() };

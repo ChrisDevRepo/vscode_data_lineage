@@ -65,9 +65,8 @@ const BLOCK = {
     '- **TRUTH**: If the Blackboard contradicts the current DDL, the DDL is correct. Update the Blackboard immediately.\n' +
     '- **OBJECTIVE**: Every sub-question for a neighbor must be goal-oriented (e.g., "Check if this proc applies the 10% VAT rate").',
 
-  continuationContract:
-    '### CONTINUATION CONTRACT\n' +
-    '- Your ONLY valid action each round is `lineage_submit_findings` for the current focus node. Do not emit prose, summaries, status updates, or `complete: true`. The engine owns completion — it will deliver a synthesis instruction when the time is right; until then, only submit findings.\n' +
+  verdictContract:
+    '### VERDICTS\n' +
     '- Every agenda item must receive one verdict: `relevant` (analyze), `pass` (visited, no analysis — use for variant siblings of an already-analyzed archetype), or `irrelevant` (cascade-prune). `pass` is always accepted; `irrelevant` may be rejected by orphan / cascade guards (then fall back to `pass`).',
 } as const;
 
@@ -92,9 +91,6 @@ export function buildNavigationPrompt(mode: SmMode): string {
     ? '# ROLE: EXPERT STRUCTURAL ANALYST (Dependency Focus)'
     : '# ROLE: EXPERT BUSINESS LOGIC ANALYST (Functional Focus)';
 
-  // Mode-specific routing block: column-trace owns all column-level guidance;
-  // blackboard / dependency explicitly state `columns` is not part of the session,
-  // so the field cannot be populated as a side-effect of shared prompt text.
   const modeRouting = mode === 'column_trace' ? BLOCK.routingRulesCT : BLOCK.routingRulesBB;
 
   return [
@@ -113,7 +109,7 @@ export function buildNavigationPrompt(mode: SmMode): string {
     '',
     BLOCK.groundingContract,
     '',
-    BLOCK.continuationContract,
+    BLOCK.verdictContract,
   ].join('\n');
 }
 

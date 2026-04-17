@@ -96,9 +96,6 @@ export class ViewSynthesisService {
       };
     }
 
-    // Partial-result notice: when the loop hit MAX_ROUNDS before the SM completed,
-    // let the AI know its rendered graph covers only part of the intended scope so it
-    // can surface that in the view summary rather than presenting it as complete.
     if (this.session.resultGraph?.partial) {
       const cov = this.session.resultGraph.partialCoverage;
       const covText = cov ? ` (${cov.analyzed} of ${cov.total} nodes)` : '';
