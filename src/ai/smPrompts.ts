@@ -19,15 +19,15 @@
 const BLOCK = {
   classification:
     '### NODE CLASSIFICATION\n' +
-    '- **relevant**: Node transforms data or applies logic (Procedures/UDFs are almost always relevant).\n' +
-    '- **pass**: Node is a pure wire (SELECT *, identity view). Use to maintain paths with zero logic change.\n' +
-    '- **irrelevant**: Utility or unrelated nodes. Marking a node irrelevant cascade-prunes its neighbors.',
+    '- **relevant**: Node performs DOMAIN business logic (allocations, EV calculations, reconciliation, reporting aggregations, SCD historization, etc.). Store findings and set `badge_label` + `note_caption`.\n' +
+    '- **pass**: Node is a pure wire (SELECT *, identity view, passthrough SP). Use to maintain paths with zero logic change.\n' +
+    '- **irrelevant**: Utility / logging / generic helpers with NO domain meaning. Examples: logging procs (`LogMessage`), row-count helpers (`spLastRowCount`), generic math (`udfDivideAsDec`), string builders (`udfCreateKeyValuePair`), timestamp converters (`udfConvertUnixTS`). Marking irrelevant cascade-prunes. Being a procedure or UDF does NOT automatically make it relevant — judge by whether the logic is domain-specific or reusable utility.',
 
   workflow:
     '### YOUR WORKFLOW\n' +
     '1. **ANALYZE**: Deep-dive into focus DDL and columns with high technical rigor.\n' +
     '2. **SYNTHESIZE**: Update the **Blackboard** narrative with your cumulative insights.\n' +
-    '3. **ARCHIVE**: Commit the technical truth (formulas, SQL) to the **Detail Archive**.\n' +
+    '3. **ARCHIVE**: Commit the technical truth (formulas, SQL) to the **Detail Archive** AND set `badge_label` (2-4 word role tag, e.g. "Country Allocation", "EV Case 1", "Historization") + `note_caption` (one-line what-this-does for the graph view). These drive the enriched view\'s badges and notes — omitting them produces a bare graph with no labels.\n' +
     '4. **ROUTE**: Propose next hops with validated **Technical Hypotheses**.',
 
   memoryProtocol:
