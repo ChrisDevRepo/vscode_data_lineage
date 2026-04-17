@@ -359,7 +359,26 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  public toJSON() { return { mode: this.mode, hopCount: this.hopCount, visited: Array.from(this.visited) }; }
+  public toJSON() {
+    return {
+      mode: this.mode,
+      status: this._status,
+      hopCount: this.hopCount,
+      scopeSize: this.scopeNodeIds.size,
+      scopeNodeIds: Array.from(this.scopeNodeIds),
+      inlineMode: this._inlineMode,
+      visited: Array.from(this.visited),
+      removedSet: Array.from(this.removedSet),
+      agendaSize: this.agenda.length,
+      agenda: this.agenda.map(a => ({
+        nodeId: a.nodeId,
+        priority: a.priority,
+        question: a.question,
+      })),
+      currentFocusNodeId: this.currentFocusNodeId,
+      memory: this.memory.toJSON(),
+    };
+  }
 }
 
 export interface IHopStateMachine {

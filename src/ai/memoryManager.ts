@@ -130,6 +130,21 @@ export class AiMemoryManager {
     };
   }
 
+  /** State-dump shape for toJSON — supports eval debug, /dumpSmState, and memory-quality pre-gate. */
+  public toJSON() {
+    const slots: Record<string, DetailSlot> = {};
+    for (const [id, slot] of this.detailSlots) slots[id] = slot;
+    return {
+      detailSlots: slots,
+      slotCount: this.detailSlots.size,
+      shortMemory: {
+        synthesisNarrative: this.synthesisNarrative,
+        synthesisLength: this.synthesisNarrative.length,
+        pendingQuestions: this.pendingQuestions,
+      },
+    };
+  }
+
   /** Accessors */
   public get slotCount(): number { return this.detailSlots.size; }
 
