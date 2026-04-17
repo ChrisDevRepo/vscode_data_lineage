@@ -81,14 +81,13 @@ export class LineageParticipant {
     participant.followupProvider = {
       provideFollowups(result) {
         const lastTools = (result.metadata as any)?.lastTools ?? [];
+        const resultReady = (result.metadata as any)?.resultReady === true;
         const followups: vscode.ChatFollowup[] = [];
-        if (lastTools.some((t: string) => t.includes('bfs_trace'))) followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
-        if (lastTools.some((t: string) => t.includes('enrich_view'))) {
-          followups.push({ prompt: 'Explain the lineage in more detail', label: 'Detailed explanation' });
+        if (lastTools.some((t: string) => t.includes('bfs_trace'))) {
+          followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
         }
-        if (lastTools.some((t: string) => t.includes('submit_findings'))) {
-          followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
-          followups.push({ prompt: 'Explain the full lineage path in detail', label: 'Detailed explanation' });
+        if (resultReady) {
+          followups.push({ prompt: 'Explain the lineage in more detail', label: 'Detailed explanation' });
         }
         return followups;
       }
@@ -538,8 +537,7 @@ export class LineageParticipant {
       const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
       this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
       
-      const smComplete = sess.stateMachine?.status === 'complete';
-      if (this.getActivePanel() && smComplete) {
+      if (this.getActivePanel() && sess.resultGraph !== null) {
         stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [request.prompt] });
       }
     } catch (err) {
@@ -547,6 +545,6 @@ export class LineageParticipant {
       stream.markdown(`\n\n*Error: ${err instanceof Error ? err.message : String(err)}*`);
     }
 
-    return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults }, lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [] } };
+    return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults }, lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [], resultReady: sess.resultGraph !== null } };
   }
 }

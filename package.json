@@ -1016,7 +1016,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "For column tracking: specific input columns to follow."
+                    "description": "Column names that must exist on the target neighbor. Narrows the sub-investigation to those columns."
                   }
                 },
                 "required": [
