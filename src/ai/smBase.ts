@@ -248,6 +248,10 @@ export class NavigationEngine implements IHopStateMachine {
       neighbors: this.buildNeighborList(entry.nodeId),
       current_question: entry.question,
       working_memory: workingMemory,
+      // Directive embedded in the tool result. Models (notably GPT-4o) tend to emit
+      // prose acknowledgements between tool calls; placing the next-action cue inside
+      // the tool result keeps it adjacent to the data the model is processing.
+      next_action: `lineage_submit_findings for focus_node_id="${entry.nodeId}". Do not emit prose in this turn.`,
     };
   }
 

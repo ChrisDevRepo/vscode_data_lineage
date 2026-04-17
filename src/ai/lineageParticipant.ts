@@ -541,6 +541,15 @@ export class LineageParticipant {
           if (!anyError) {
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
+            // Pull the new focus_node_id out of the fresh hop result so we can
+            // inject a precise next-action directive after the wipe. Redundant
+            // with the `next_action` field embedded in the tool result itself,
+            // but GPT-4o-class models respond more consistently to an explicit
+            // user-role message than to an in-result hint.
+            let nextFocus = '(unknown)';
+            const smDump = sess.stateMachine.toJSON() as { currentFocusNodeId?: string | null; status?: string };
+            if (smDump.currentFocusNodeId) nextFocus = smDump.currentFocusNodeId;
+            const smDone = smDump.status === 'complete';
             messages.length = 0;
             messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt));
             // Preserve the navigation prompt across wipes — without this, the AI
@@ -548,6 +557,11 @@ export class LineageParticipant {
             // after the very first hop and flies blind on subsequent hops.
             if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
             messages.push(lastAssistant, lastResult);
+            if (!smDone) {
+              messages.push(vscode.LanguageModelChatMessage.User(
+                `Next focus: ${nextFocus}. Call lineage_submit_findings now. Do not emit any prose in this turn.`
+              ));
+            }
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
           } else {
             this.logger.warn(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);

@@ -59,8 +59,8 @@ export interface HopNeighbor {
   cols?: string[];
 }
 
-/** 
- * Encapsulates all information delivered to the AI for a single navigation hop. 
+/**
+ * Encapsulates all information delivered to the AI for a single navigation hop.
  */
 export interface HopContext {
   /** Set to `true` if there are no more nodes to visit in the agenda. */
@@ -75,6 +75,10 @@ export interface HopContext {
   current_question?: string;
   /** Implementation-specific state carried across hops. */
   working_memory?: unknown;
+  /** Directive embedded in the result telling the model its only valid next action.
+   *  Some models (notably GPT-4o) emit prose acknowledgements between tool calls;
+   *  placing the directive inside the tool payload keeps it adjacent to the data. */
+  next_action?: string;
 }
 
 /** 
