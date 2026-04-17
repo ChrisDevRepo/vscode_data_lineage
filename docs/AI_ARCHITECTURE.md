@@ -1,5 +1,7 @@
 # AI Assistant Architecture — "Grounded Router"
 
+*This guide is for Super Power Users who want to understand the conceptual framework behind the `@lineage` participant. For low-level implementation details, see `docs-internal/`.*
+
 The `@lineage` AI participant bridges deterministic graph traversal with semantic reasoning. It implements an autonomous **"Map & Router"** architecture where the extension host manages the topological state (The Map) and the AI performs the semantic analysis (The Router).
 
 ---

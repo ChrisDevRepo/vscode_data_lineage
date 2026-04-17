@@ -1,5 +1,7 @@
 # Testing Framework
 
+*This guide is for Developers maintaining the extension. For user-facing feature documentation, see `docs/`.*
+
 Multi-tier test infrastructure for the Data Lineage VS Code extension. Tests are organized by environment requirement and verification method.
 
 | Tier | Location | Runner | Purpose | When |
