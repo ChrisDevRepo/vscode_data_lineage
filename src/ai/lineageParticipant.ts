@@ -276,15 +276,20 @@ export class LineageParticipant {
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
 
+        // During active exploration the AI often emits running narrative prose alongside its
+        // tool calls (its blackboard/reasoning). Streaming that to the chat produces a noisy
+        // "chatty" experience — users see duplicate, partial narratives hop after hop. Only
+        // surface prose in discover + done phases, where the AI's text IS the user-facing answer.
+        const surfaceProse = activePhase !== 'active';
         for await (const part of response.stream) {
           if (part instanceof vscode.ChatResponseMarkdownPart) {
             assistantParts.push(new vscode.LanguageModelTextPart(part.value.value));
             responseText += part.value.value;
-            stream.markdown(part.value.value);
-          } else if (part instanceof vscode.LanguageModelTextPart) { 
-            assistantParts.push(part); 
-            responseText += part.value; 
-            stream.markdown(part.value); 
+            if (surfaceProse) stream.markdown(part.value.value);
+          } else if (part instanceof vscode.LanguageModelTextPart) {
+            assistantParts.push(part);
+            responseText += part.value;
+            if (surfaceProse) stream.markdown(part.value);
           }
           else if (part instanceof vscode.LanguageModelToolCallPart) { assistantParts.push(part); toolCalls.push(part); }
         }
@@ -341,7 +346,17 @@ export class LineageParticipant {
             continue;
           }
 
-          stream.progress(`Invoking ${f.name.replace('lineage_', '')}...`);
+          // Concise per-tool progress line. For submit_findings, show the current hop number +
+          // scope size + node short name so users see "Hop 7 / 24 — analyzing spCadenceRule_Alloc1b…"
+          // rather than a generic "Invoking submit_findings…" repeated 24 times.
+          let progressLine = `Invoking ${f.name.replace('lineage_', '')}…`;
+          if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
+            const st = sess.stateMachine.toJSON() as { hopCount?: number; scopeSize?: number; currentFocusNodeId?: string | null };
+            const shortName = st.currentFocusNodeId?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
+            const denom = st.scopeSize ?? '?';
+            progressLine = `Hop ${st.hopCount ?? 1} / ${denom} — analyzing ${shortName}…`;
+          }
+          stream.progress(progressLine);
           totalToolCallsMade++;
           try {
             const result = await vscode.lm.invokeTool(
