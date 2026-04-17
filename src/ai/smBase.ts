@@ -124,6 +124,8 @@ export class NavigationEngine implements IHopStateMachine {
    * @param config - Configuration including optional filters and an existing memory manager.
    * @param store - Optional column store for deep column-level metadata.
    */
+  protected qualityGuards = true;
+
   constructor(
     model: DatabaseModel,
     graph: Graph,
@@ -132,6 +134,9 @@ export class NavigationEngine implements IHopStateMachine {
     config: {
       activeFilter?: SerializedFilterState | null;
       memory?: AiMemoryManager;
+      /** When false, skip the detail-length and premature-complete quality guards. Tests set this
+       *  to false so short fixture strings don't trigger production guards. Default: true. */
+      qualityGuards?: boolean;
     },
     store?: ColumnStore | null,
   ) {
@@ -143,6 +148,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.memory = config.memory ?? new AiMemoryManager();
+    if (config.qualityGuards === false) this.qualityGuards = false;
   }
 
   get status(): SmStatus { return this._status; }
@@ -288,6 +294,25 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    // Detail-length floor for relevant/pass: minimum proportional to focus DDL size.
+    // Rationale: synthesis is lossy when analysis is thin. Force the AI to actually
+    // USE the DDL it just read, scaling the minimum with node complexity. No max cap.
+    // Skipped when the focus has no DDL body (pure tables without columns, test fixtures).
+    if (!isIrrelevant && !this._inlineMode && this.qualityGuards) {
+      const focusDdl = getNodeDdl(this.currentFocusNodeId!, this.nodeMap, this.store ?? undefined) ?? '';
+      if (focusDdl.length > 0) {
+        const detailLen = (params.detail_analysis ?? '').length;
+        // floor = max(400, 25% of DDL) — gives a 4000-char SP a 1000-char minimum detail
+        const minDetail = Math.max(400, Math.floor(focusDdl.length * 0.25));
+        if (detailLen < minDetail) {
+          return {
+            error: 'detail_too_thin',
+            detail: `detail_analysis is ${detailLen} chars; focus node has ${focusDdl.length} chars of DDL so minimum is ${minDetail}. Expand with the 5-block structure (Business Purpose · Transforms with SQL evidence · Column I/O markdown table · Relationships · Risks/Notes) and preserve LaTeX formulas. Maximum length is unbounded — thicker is better.`,
+          };
+        }
+      }
+    }
+
     const synthesisErr = this.memory.updateSynthesis(params.narrative_update);
     if (synthesisErr) return { error: synthesisErr };
 
@@ -321,7 +346,27 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     this._status = 'exploring';
-    if (params.complete) { this._status = 'complete'; return { ok: true, early_complete: this.getResult() }; }
+    if (params.complete) {
+      // Premature-complete guard: refuse if the AI tries to close with substantial
+      // scope unexamined. Gives the AI two valid exits — keep processing, or explicitly
+      // prune unwanted items with verdict='irrelevant' (cascade-prunes them out of the agenda).
+      const remaining = this.agenda.length;
+      const scopeSize = this.scopeNodeIds.size;
+      const coverage = scopeSize > 0 ? this.visited.size / scopeSize : 1;
+      if (this.qualityGuards && remaining > 3 && coverage < 0.8) {
+        this._status = 'awaiting_findings';
+        return {
+          error: 'premature_complete',
+          detail: {
+            message: `Cannot set complete=true: ${remaining} agenda items remain, scope coverage is ${(coverage * 100).toFixed(0)}% (need ≥80% or ≤3 items remaining). Either continue processing, or mark items you consider out-of-scope with verdict='irrelevant' so they cascade-prune out of the agenda.`,
+            agenda_remaining: this.agenda.map(a => a.nodeId),
+            coverage_pct: Math.round(coverage * 100),
+          },
+        };
+      }
+      this._status = 'complete';
+      return { ok: true, early_complete: this.getResult() };
+    }
     return cascadedCount > 0 ? { ok: true, cascaded_count: cascadedCount } : { ok: true };
   }
 

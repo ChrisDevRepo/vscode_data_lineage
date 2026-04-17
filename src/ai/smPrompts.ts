@@ -31,16 +31,16 @@ const BLOCK = {
     '4. **ROUTE**: Propose next hops with validated **Technical Hypotheses**.',
 
   memoryProtocol:
-    '### MEMORY TIERING PROTOCOL\n' +
-    '1. **THE BLACKBOARD** (Short Memory). Write via `narrative_update` each hop. Rolling executive synthesis of cumulative business logic. Target 200-400 chars per hop; dense business insights only. Delegate topological facts to the Map — do not restate "I visited X then Y".\n' +
-    '2. **THE ARCHIVE** (Long Memory). Write to `detail_analysis` for every `relevant`/`pass` verdict. This is the ONLY source at synthesis — raw SQL access is revoked after each hop. Target >=400 chars per `relevant` node using this 5-block structure:\n' +
+    '### MEMORY TIERING PROTOCOL (MemGPT-style: Short / Long / Map)\n' +
+    '1. **THE BLACKBOARD** (Short Memory, CUMULATIVE). Write via `narrative_update` each hop. This field OVERWRITES the stored blackboard — so you must submit the FULL integrated narrative every hop, not just the new hop\'s contribution. Read `working_memory.blackboard` (the current state), INTEGRATE the new hop\'s insights, and submit the expanded version. Growth pattern: hop 1 ≈ 300 chars, hop 5 ≈ 1500 chars, hop 10 ≈ 3000 chars (hard cap 8000). If your `narrative_update` is the same length across hops you are ERASING prior work — protocol violation. Style: dense business logic only, no topology ("I visited X") — the Map already has that.\n' +
+    '2. **THE ARCHIVE** (Long Memory, per-node hard drive). Write to `detail_analysis` for every `relevant`/`pass` verdict. This is the ONLY source at synthesis — raw SQL access is revoked after each hop. MINIMUM length is enforced proportionally to the focus DDL (floor = max(400, 25% of DDL)), so a 4000-char SP needs ≥1000 chars of analysis. MAXIMUM is unbounded — thicker is better. 5-block structure required:\n' +
     '   - **Business Purpose**: one sentence\n' +
-    '   - **Transforms**: SQL evidence (INSERT/SELECT/UPDATE/JOIN/CASE/ISNULL/COALESCE expressions)\n' +
+    '   - **Transforms**: SQL evidence — copy actual INSERT/SELECT/UPDATE/JOIN/CASE/ISNULL/COALESCE expressions; do NOT paraphrase them away\n' +
     '   - **Column I/O**: input columns -> output columns (markdown table for renames)\n' +
     '   - **Relationships**: upstream / downstream in this flow\n' +
     '   - **Risks/Notes**: nullability, precision, edge cases\n' +
     '   Use LaTeX formulas ($expr = ...$) for computed columns, named columns (not "various"), named expressions (not "certain conditions"). Thin archive = thin final answer. An under-documented hop is a wasted hop.\n' +
-    '3. **THE MAP** (System State): Topological grounding. Provides `navigation_path` (Origin -> ... -> Focus) and the agenda.',
+    '3. **THE MAP** (System State): Topological grounding. Provides `navigation_path` (Origin -> ... -> Focus) and the agenda. Don\'t restate — reference only when needed.',
 
   routingRules:
     '### GROUNDED ROUTING (Selection-Inference)\n' +
@@ -136,10 +136,25 @@ export function buildSynthesisReminder(question: string): string {
 export function buildSynthesisPrompt(): string {
   return [
     '# SYNTHESIS MODE: Navigation Complete',
-    'The exploration agenda is empty. All relevant nodes have been committed to the Archive.',
     '',
-    '### TASK\n' +
-    'Assemble your archived technical evidence into a high-fidelity documentation view using `lineage_enrich_view`.\n' +
-    '**Do not hallucinate** facts or connections not captured in your archive.',
+    'Pattern: **Chain-of-Note + MemGPT archival-recall**. Raw DDL is gone. The `DETAIL ARCHIVE (TECHNICAL EVIDENCE)` block below is your AUTHORITATIVE long-term memory. It is the ONLY source of truth. Treat it like a hard drive: every archived slot must be read, expanded, and represented in the final output. Summarization loses information — EXPAND each slot into its own section instead of collapsing multiple slots into one paragraph.',
+    '',
+    '### HARD RULES (non-negotiable)',
+    '1. **ONE SECTION PER ARCHIVED SLOT.** If the archive has N detail_slots, the `sections[]` you emit must have at least N entries. Do NOT merge slots. Do NOT skip slots. Every `relevant`/`pass` node earned its archive entry — it must appear in the output.',
+    '2. **PRESERVE THE 5-BLOCK STRUCTURE.** Each archive slot was written as: Business Purpose · Transforms (with SQL evidence) · Column I/O (markdown table) · Relationships · Risks/Notes. The section text must retain ALL FIVE blocks. Do not reduce to a single paragraph.',
+    '3. **FORMULAS STAY LaTeX.** Every `$formula = ...$` in the archive must appear verbatim in the section. Every markdown table must appear verbatim. Summarizing `$EV_{Direct} = EV_{Budget} \\times 25\\%$` to "25% allocation" is a protocol violation — the math IS the answer for a data engineer.',
+    '4. **SECTION LENGTH FLOOR.** Each section\'s `text` must be at least as long as the source slot\'s `analysis` field. If the slot\'s analysis is 1500 chars, the section must be ≥1500 chars. Maximum is unbounded — expansion is good, compression is not.',
+    '5. **NO NEW FACTS.** If it is not in the archive, it does not exist. Do not infer, extrapolate, or add "context" the archive does not contain.',
+    '',
+    '### EXTRACTION PROTOCOL (Chain-of-Note)',
+    'Before emitting `lineage_enrich_view`, internally walk the archive slot-by-slot:',
+    '  - slot[i].nodeId → section.label (use `badge_label` if present, else schema.name)',
+    '  - slot[i].analysis → section.text (verbatim, preserving all 5 blocks + LaTeX + tables)',
+    '  - slot[i].note_caption → section caption / highlights entry',
+    '  - slot[i].badge_label → badges entry for the graph node',
+    'This is not a style request — it is the extraction algorithm.',
+    '',
+    '### TASK',
+    'Call `lineage_enrich_view` now with the per-slot expansion described above. Target a single high-fidelity analytical report, not a three-paragraph executive summary.',
   ].join('\n');
 }

@@ -82,7 +82,7 @@ resetCounters();
 
 function newEngine() {
   const model = buildCascadeModel();
-  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
   engine.init({ question: 'Trace origin', origin: '[dbo].[origin]', direction: 'downstream', depth: 3 });
   return engine;
 }

@@ -78,7 +78,7 @@ function buildSyntheticModel(): DatabaseModel {
 async function testLifecycle() {
   console.log('\n── Lifecycle & Status ──');
   const model = buildSyntheticModel();
-  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
 
   assertEq(engine.status, 'created', 'Initial status');
   
@@ -104,7 +104,7 @@ async function testLifecycle() {
 async function testIncrementalBlackboard() {
   console.log('\n── Incremental Blackboard ──');
   const model = buildSyntheticModel();
-  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
   engine.init({ question: 'Test', origin: '[dbo].[sptransform]' });
 
   // Hop 1 (Origin)
@@ -139,7 +139,7 @@ async function testIncrementalBlackboard() {
 async function testSelectionInferenceValidation() {
   console.log('\n── Selection-Inference Validation ──');
   const model = buildSyntheticModel();
-  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
   engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
 
   const hop = engine.getHopContext() as any;
@@ -182,7 +182,7 @@ async function testSelectionInferenceValidation() {
 async function testTopologicalMap() {
   console.log('\n── Topological Map ──');
   const model = buildSyntheticModel();
-  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
   // Use vwClean — has neighbors
   engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
 
@@ -199,12 +199,12 @@ async function testModes() {
   const model = buildSyntheticModel();
   
   // Blackboard mode
-  const bb = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', {});
+  const bb = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
   bb.init({ question: 'BB Test', origin: '[dbo].[factsales]' });
   assertEq((bb as any).mode, 'blackboard', 'Engine in blackboard mode');
 
   // Column Trace mode
-  const ct = new NavigationEngine(model, buildBareGraph(model), log, 'column_trace', {});
+  const ct = new NavigationEngine(model, buildBareGraph(model), log, 'column_trace', { qualityGuards: false });
   ct.init({ question: 'CT Test', origin: '[dbo].[factsales]', targetColumns: ['Revenue'] });
   assertEq((ct as any).mode, 'column_trace', 'Engine in column_trace mode');
 }
