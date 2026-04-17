@@ -11,6 +11,10 @@ Post-refactor hardening sprint closing the gaps from the unified NavigationEngin
 
 ### Changed
 - **SM sliding-memory completion is drain-only.** `submit_findings` returns `{ ok: true, done: true, result }` in the same call that drains the last agenda item. The participant no longer needs a separate `complete=true` path for SM; the signal is carried in-band. Inline mode continues to honor `complete=true` for one-shot sessions.
+- **Error-code rename** — SM rejection codes aligned to a categorical shape: `blackboard_too_long` → `validation_error` (with `field: 'narrative_update'`); `orphan_rejection` → `prune_would_orphan_noted`; `cascade_too_wide` → `prune_cascade_too_wide`. Rationale: group prune-guard failures under a `prune_*` prefix and move length-limit failures under a generic `validation_error` with structured `field` + `detail`, matching standard REST error shape.
+
+### Added
+- **`RepeatRejectGuard`** (`src/ai/repeatRejectGuard.ts`) — session-level idempotency belt. Tracks `stableHash({toolName, input})` and a consecutive-error counter; any success resets. When the same tool call fails three times in a row, the participant emits a typed `session_aborted_repeat_reject` envelope (`src/ai/smErrors.ts → RepeatRejectAbort`) and terminates the round loop cleanly. User sees a chat-visible reason. The existing `dataLineageViz.ai.maxRounds` setting (default 50) remains the absolute round-cap. Unit tests in `tests/unit/repeat-reject-guard.test.ts` (5 pins).
 
 ### Added
 - **Cascade-prune for `irrelevant` verdict** — `NavigationEngine.submitFindings` now honors `verdict: 'irrelevant'` with orphan-rejection + 50%-cascade guards. Prunes utility/logging nodes from the exploration agenda so the AI focuses on business-logic paths. Previously the verdict field was ignored.

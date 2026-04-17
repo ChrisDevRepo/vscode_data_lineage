@@ -164,9 +164,13 @@ export class AiMemoryManager {
    * @param newNarrative - The new narrative string to commit.
    * @returns An error message if the limit is exceeded, otherwise `null`.
    */
-  public updateSynthesis(newNarrative: string): string | null {
+  public updateSynthesis(newNarrative: string): { error: 'validation_error'; field: 'narrative_update'; detail: string } | null {
     if (newNarrative.length > this.hardLimit) {
-      return `blackboard_too_long: ${newNarrative.length} chars exceeds ${this.hardLimit}. Refine your synthesis to be more dense.`;
+      return {
+        error: 'validation_error',
+        field: 'narrative_update',
+        detail: `length ${newNarrative.length} exceeds hard limit ${this.hardLimit}. Tighten the narrative.`,
+      };
     }
     this.synthesisNarrative = newNarrative;
     return null;

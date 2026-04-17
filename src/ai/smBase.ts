@@ -288,17 +288,17 @@ export class NavigationEngine implements IHopStateMachine {
       const notedIds = new Set<string>(this.memory.notedNodeIds);
       const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, this.currentFocusNodeId!);
       if (orphan) {
-        return { error: 'orphan_rejection', detail: `Marking ${this.currentFocusNodeId} irrelevant would orphan noted node "${orphan}". Use verdict='pass' to skip without pruning.` };
+        return { error: 'prune_would_orphan_noted', detail: `Marking ${this.currentFocusNodeId} irrelevant would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
       }
       const agendaNodeIdSet = new Set(this.agenda.map(a => a.nodeId));
       const cascadeCount = countCascadeIfPruned(this.graph, this.originNodeId!, this.removedSet, this.scopeNodeIds, agendaNodeIdSet, this.currentFocusNodeId!);
       if (this.agenda.length > 2 && cascadeCount * 2 > this.agenda.length) {
-        return { error: 'cascade_too_wide', detail: `Pruning ${this.currentFocusNodeId} would cascade-remove ${cascadeCount}/${this.agenda.length} agenda nodes. Use verdict='pass' to preserve scope.` };
+        return { error: 'prune_cascade_too_wide', detail: `Pruning ${this.currentFocusNodeId} would cascade-remove ${cascadeCount}/${this.agenda.length} agenda nodes. Use verdict='pass' to preserve scope.` };
       }
     }
 
     const synthesisErr = this.memory.updateSynthesis(params.narrative_update);
-    if (synthesisErr) return { error: synthesisErr };
+    if (synthesisErr) return synthesisErr;
 
     // Store detail for relevant/pass; irrelevant nodes keep only the narrative trace
     if (!isIrrelevant) {

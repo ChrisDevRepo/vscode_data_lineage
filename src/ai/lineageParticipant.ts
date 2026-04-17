@@ -11,6 +11,7 @@ import { buildNavigationPrompt, buildSynthesisPrompt } from './smPrompts';
 import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
+import { RepeatRejectGuard } from './repeatRejectGuard';
 
 /**
  * Extracts key fields from a VS Code language model tool call part.
@@ -262,6 +263,7 @@ export class LineageParticipant {
     const runWithTools = async () => {
       let actionRequiredPending = false;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
+      const repeatGuard = new RepeatRejectGuard();
 
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
@@ -383,7 +385,35 @@ export class LineageParticipant {
         }
 
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
-        
+
+        // Repeat-rejection belt: if the AI just sent the same tool call for the third
+        // consecutive time and it failed every time, terminate the session cleanly.
+        // Observing every tool call keeps the counter tight; any successful call resets it.
+        for (const call of toolCalls) {
+          const f = extractToolCallFields(call);
+          const res = accumulatedToolResults[f.callId];
+          let isError = false;
+          if (res) {
+            for (const p of res.content) {
+              if (p instanceof vscode.LanguageModelTextPart) {
+                try { if (JSON.parse(p.value).error) { isError = true; break; } } catch { /* non-JSON result: treat as success */ }
+              }
+            }
+          }
+          const obs = repeatGuard.observe(f.name, f.input, isError);
+          if (obs.abort) {
+            const lastErrorText = (() => {
+              const p = res?.content.find(c => c instanceof vscode.LanguageModelTextPart) as vscode.LanguageModelTextPart | undefined;
+              try { return p ? (JSON.parse(p.value).error ?? 'unknown') : 'unknown'; } catch { return 'unknown'; }
+            })();
+            const abortPayload = { error: 'session_aborted_repeat_reject', tool: f.name, last_error: lastErrorText, repeat_count: obs.count };
+            this.logger.warn(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
+            stream.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
+            messages.push(vscode.LanguageModelChatMessage.User(JSON.stringify(abortPayload)));
+            return;
+          }
+        }
+
         // Reasoning Gate (Action Required)
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
@@ -452,10 +482,10 @@ export class LineageParticipant {
         }
 
         // Sliding memory: wipe history only when EVERY submit_findings in this round succeeded.
-        // If any of N parallel submissions errored (focus_mismatch, invalid_status, orphan_rejection,
-        // cascade_too_wide, route_validation_failed), history must be preserved so the AI sees the
-        // error and can self-correct. Wiping on partial success destroys error feedback and the AI
-        // commonly gives up after the next round (empirically observed).
+        // If any of N parallel submissions errored (focus_mismatch, invalid_status, prune_would_orphan_noted,
+        // prune_cascade_too_wide, route_validation_failed, validation_error), history must be preserved
+        // so the AI sees the error and can self-correct. Wiping on partial success destroys error
+        // feedback and the AI commonly gives up after the next round (empirically observed).
         const submitParts = toolCalls.filter(tc => tc.name === 'lineage_submit_findings');
         if (submitParts.length > 0 && activePhase === 'active' && sess.stateMachine && !sess.stateMachine.inlineMode) {
           let anyError = false;
