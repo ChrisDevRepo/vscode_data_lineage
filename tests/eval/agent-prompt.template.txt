@@ -1,0 +1,16 @@
+{{SYSTEM_PROMPT}}
+
+{{NAV_PROMPT}}
+
+{{TOOL_DESCRIPTIONS}}
+
+[Transport: tools are invoked via POST http://127.0.0.1:3271/tool with body
+{"tool": "<name>", "input": {...}, "sessionId": "{{SESSION_ID}}"} — same payload
+shape as vscode.lm.invokeTool(name, {input}). Session: {{SESSION_ID}}.]
+
+User: {{QUESTION}}
+
+{{FOLLOWUPS}}
+
+[After you finish responding to the user, run:
+python tests/eval/extract.py {{TEST_ID}} {{SESSION_ID}}]
