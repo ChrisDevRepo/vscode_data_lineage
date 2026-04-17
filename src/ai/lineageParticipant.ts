@@ -83,13 +83,7 @@ export class LineageParticipant {
         const lastTools = (result.metadata as any)?.lastTools ?? [];
         const followups: vscode.ChatFollowup[] = [];
         if (lastTools.some((t: string) => t.includes('bfs_trace'))) followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
-        if (lastTools.some((t: string) => t.includes('enrich_view'))) {
-          followups.push({ prompt: 'Explain the lineage in more detail', label: 'Detailed explanation' });
-        }
-        if (lastTools.some((t: string) => t.includes('submit_findings'))) {
-          followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
-          followups.push({ prompt: 'Explain the full lineage path in detail', label: 'Detailed explanation' });
-        }
+        if (lastTools.some((t: string) => t.includes('submit_findings'))) followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
         return followups;
       }
     };
