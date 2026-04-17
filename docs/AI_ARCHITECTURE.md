@@ -57,6 +57,21 @@ The same `NavigationEngine` serves three personas, selected by the mode of the a
 - **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when the user asks about specific column flow.
 - **`dependency`** — Structural Analyst (Dependency Focus). Structural topology questions ("what depends on X"). Uses the same hop workflow and memory tiering as `blackboard`; only the role framing of the system prompt differs.
 
+### Completion Contract (when SM says "done")
+Completion semantics depend on the execution mode:
+
+| Mode | Trigger | AI action |
+| :--- | :--- | :--- |
+| **Inline mode** (scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`) | AI sets `complete: true` on `submit_findings`. No coverage gate — the AI has the full picture one-shot and decides when the question is answered. | On acceptance, the tool returns `{ ok: true, done: true, result }` and the AI produces the chat answer + `enrich_view`. |
+| **SM sliding-memory mode** (scope exceeds either threshold) | **AI does not decide.** The engine drains the agenda: every item must receive one of the three verdicts — `relevant`, `pass`, `irrelevant`. When the last verdict is dispatched, `submit_findings` returns `{ ok: true, done: true, result }`. The `complete: true` field is silently ignored here. | Produce the chat answer + `enrich_view` when the `done: true` response arrives. |
+
+Three verdicts (SM mode):
+- `relevant` — full 5-block analysis stored; drives badges/notes.
+- `pass` — visited, no analysis stored, always accepted. Intended for variant siblings of an already-analyzed archetype (reference the archetype in the blackboard).
+- `irrelevant` — cascade-prune the node + unreachable downstream. May be rejected by orphan / cascade-width guards; fall back to `pass`.
+
+This replaces the earlier `premature_complete` coverage-floor guard. That guard (removed) refused `complete=true` in SM mode until coverage ≥ 80%, which was unreachable on variant-heavy neighborhoods and created rejection loops. The drain-only contract is always satisfiable (each verdict is a legal move) and the SM — not the AI — decides when the session is over.
+
 ### View Refinement: Prune
 `enrich_view` supports pruning nodes from the delivered result graph. Pruning **removes the listed nodes and every edge that touches them** — it does not reconnect edges across pruned nodes. Passthrough-style reconnection was deliberately removed because, for a shared hub `P` in `A→P→B, C→P→D`, it fabricated phantom edges (`A→D`, `C→B`) between otherwise-unrelated lineage siblings.
 

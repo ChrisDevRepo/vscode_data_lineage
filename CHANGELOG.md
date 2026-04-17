@@ -4,6 +4,14 @@
 
 Post-refactor hardening sprint closing the gaps from the unified NavigationEngine architecture (bf51fa9). Stabilization phase declared ended 2026-04-17.
 
+### Removed
+- **`premature_complete` coverage-floor guard** — rejected `complete=true` in SM mode unless `visited/scope ≥ 80%`. On variant-heavy neighborhoods (e.g. a `CadenceWorker` origin with 20 `spCadenceRule_*` siblings) the threshold was unreachable, the AI retried the shortcut up to ~20 times, and sessions wedged. Replaced by the drain contract: in SM sliding-memory mode the engine auto-completes when the agenda empties via verdicts; the AI never sets `complete=true`.
+- **`detail_too_thin` length-floor guard** — required `detail_analysis ≥ max(400, 25% × ddl_chars)` per hop. Was paired with `premature_complete` to "force effective memory use"; without a shortcut to guard against, this is redundant and blocked legitimate short notes on variant siblings. Removed.
+- **`submit_findings.complete` field in SM mode** — the tool schema now documents `complete: true` as inline-only. In SM sliding-memory mode the parameter is silently ignored; the agenda drains via `relevant` / `pass` / `irrelevant` verdicts and the engine auto-completes.
+
+### Changed
+- **SM sliding-memory completion is drain-only.** `submit_findings` returns `{ ok: true, done: true, result }` in the same call that drains the last agenda item. The participant no longer needs a separate `complete=true` path for SM; the signal is carried in-band. Inline mode continues to honor `complete=true` for one-shot sessions.
+
 ### Added
 - **Cascade-prune for `irrelevant` verdict** — `NavigationEngine.submitFindings` now honors `verdict: 'irrelevant'` with orphan-rejection + 50%-cascade guards. Prunes utility/logging nodes from the exploration agenda so the AI focuses on business-logic paths. Previously the verdict field was ignored.
 - **4 restored AI tools** — `lineage_get_object_detail`, `lineage_run_analysis`, `lineage_search_ddl`, `lineage_get_ddl_batch` were declared in `package.json` but never wired. Now registered via `vscode.lm.registerTool()` so the AI can actually invoke them.

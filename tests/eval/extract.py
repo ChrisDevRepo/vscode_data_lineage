@@ -549,8 +549,6 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
             "orphan_rejection",
             "cascade_too_wide",
             "blackboard_too_long",
-            "detail_too_thin",
-            "premature_complete",
         }
         for e in errs:
             et = e.get("_meta", {}).get("errorType", "?")

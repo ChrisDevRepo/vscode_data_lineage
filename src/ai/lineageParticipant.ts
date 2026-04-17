@@ -321,7 +321,7 @@ export class LineageParticipant {
                 `Engine status: awaiting_findings. Agenda: ${agendaRemaining} items remain. ` +
                 `Current focus: ${focus}. ` +
                 `Your ONLY valid next action is lineage_submit_findings for the current focus node. ` +
-                `If you truly believe the user's question is fully answered and no more hops are needed, call lineage_submit_findings with complete=true — do NOT emit prose while in active phase.`
+                `Every agenda item must receive a verdict (relevant, pass, or irrelevant) — the engine auto-completes when the last one is dispatched. Do NOT emit prose while in active phase.`
               ));
               continue;
             }

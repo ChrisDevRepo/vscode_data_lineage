@@ -54,6 +54,55 @@ suite('State Machine Robustness', () => {
   // cannot produce a non-zero `cascaded_count` because `seedAgenda` only admits direct
   // neighbors of the origin — C and D never reach the agenda before B is popped.
 
+  test('SM sliding-memory mode: complete=true is ignored (drain-only)', () => {
+    const { model, graph } = createMockModelAndGraph();
+    const log = () => {};
+    log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
+
+    const engine = new NavigationEngine(model as any, graph, log as any, 'blackboard', { qualityGuards: false });
+    // Leave _inlineMode at its default (false) → sliding-memory mode.
+    engine.init({ question: 'trace A', origin: 'a', direction: 'downstream', depth: 3 });
+
+    // First hop is the origin (priority 3).
+    engine.getHopContext();
+    const res = engine.submitFindings({
+      focus_node_id: 'a',
+      narrative_update: 'ok',
+      detail_analysis: 'ok',
+      summary: 'ok',
+      verdict: 'relevant',
+      complete: true,   // ← must be ignored in SM mode
+    } as any);
+
+    // No error, not done — `complete` was a no-op in SM mode.
+    assert.ok('ok' in res && res.ok === true, 'submit accepted');
+    assert.strictEqual((res as any).done, undefined, 'complete=true must be ignored in SM mode');
+  });
+
+  test('Inline mode: complete=true returns { done: true, result }', () => {
+    const { model, graph } = createMockModelAndGraph();
+    const log = () => {};
+    log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
+
+    const engine = new NavigationEngine(model as any, graph, log as any, 'blackboard', { qualityGuards: false });
+    engine.init({ question: 'trace A', origin: 'a', direction: 'downstream', depth: 3 });
+    engine.setInlineMode(true);
+
+    engine.getHopContext();
+    const res = engine.submitFindings({
+      focus_node_id: 'a',
+      narrative_update: 'ok',
+      detail_analysis: 'ok',
+      summary: 'ok',
+      verdict: 'relevant',
+      complete: true,   // ← honored in inline mode
+    } as any);
+
+    assert.ok('ok' in res && res.ok === true, 'submit accepted');
+    assert.strictEqual((res as any).done, true, 'inline mode honors complete=true');
+    assert.ok((res as any).result, 'result payload present when done');
+  });
+
   suite('prunePreserveOnly (enrich_view prune)', () => {
     test('simple leaf prune drops node and incident edges only', () => {
       const nodeIds = ['A', 'B', 'C'];

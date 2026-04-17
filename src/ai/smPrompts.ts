@@ -57,8 +57,9 @@ const BLOCK = {
   continuationContract:
     '### CONTINUATION CONTRACT\n' +
     '- While in active exploration, your ONLY valid action is `lineage_submit_findings`. Do NOT emit a final prose answer.\n' +
-    '- Keep calling `lineage_submit_findings` hop after hop until the engine reports the agenda empty OR you explicitly set `complete: true` in a `submit_findings` call.\n' +
-    '- The agenda (in `working_memory.topological_map.agenda`) is the ground truth for remaining work. If it has items, you are NOT done — even if the answer feels "good enough".\n' +
+    '- Keep calling `lineage_submit_findings` hop after hop. The engine drains the agenda and auto-completes when the last item has a verdict — you do NOT decide when to stop.\n' +
+    '- Every agenda item must receive one verdict: `relevant` (analyze), `pass` (visited, no analysis — use for variant siblings of an already-analyzed archetype), or `irrelevant` (cascade-prune). `pass` is always accepted; `irrelevant` may be rejected by orphan / cascade guards (then fall back to `pass`).\n' +
+    '- When `submit_findings` returns `{ done: true, result: ... }`, the engine has auto-completed. Produce the chat answer and call `lineage_enrich_view` with your synthesized sections.\n' +
     '- A short chat answer while the agenda still has items is a protocol violation: the user will see an incomplete picture and no annotated graph view.',
 } as const;
 

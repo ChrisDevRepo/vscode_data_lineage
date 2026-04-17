@@ -121,25 +121,31 @@ export interface RouteRequest {
  * that the AI should attempt to self-correct.
  */
 export type SubmitResult =
-  | { 
+  | {
       /** Indicates the submission was accepted. */
-      ok: true; 
-      /** Number of nodes automatically cascaded into the agenda. */
-      cascaded_count?: number; 
-      /** Final exploration result if the session completed. */
-      early_complete?: SmResult 
+      ok: true;
+      /** Number of agenda items cascade-removed because the focus was marked irrelevant. */
+      cascaded_count?: number;
+      /**
+       * Signals the engine has auto-completed. Present when:
+       * (a) the session is in inline mode and `complete=true` was submitted, or
+       * (b) the session is in SM sliding-memory mode and this verdict just drained the agenda.
+       */
+      done?: true;
+      /** Final synthesized result. Present iff `done: true`. */
+      result?: SmResult;
     }
-  | { 
-      /** Human-readable error message for AI feedback. */
-      error: string; 
+  | {
+      /** Human-readable error code for AI feedback. */
+      error: string;
       /** Optional technical details about the error. */
-      detail?: unknown; 
+      detail?: unknown;
       /** The value that was expected by the validator. */
-      expected?: string; 
+      expected?: string;
       /** The value that was actually received. */
-      got?: string; 
+      got?: string;
       /** Current state of the state machine. */
-      current_status?: SmStatus 
+      current_status?: SmStatus
     };
 
 

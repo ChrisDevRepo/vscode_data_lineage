@@ -196,16 +196,19 @@ export function registerAiTools(
           const result = engine.submitFindings(options.input as any);
           if ('error' in result) return logAndReturn('submit_findings', result, options.input);
 
-          if (result.early_complete) {
-            sess.storeBbResult(result.early_complete);
-            return logAndReturn('submit_findings', result.early_complete, options.input);
+          // Inline-mode `complete=true` shortcut: engine has already set done + result.
+          if ('done' in result && result.done && result.result) {
+            sess.storeBbResult(result.result);
+            return logAndReturn('submit_findings', result, options.input);
           }
 
           const nextHop = engine.getHopContext();
           if (nextHop.done) {
+            // SM sliding-memory: the last verdict drained the agenda. Deliver the final result
+            // in the same call so the model can synthesize + call enrich_view without another round.
             const finalResult = engine.getResult();
             sess.storeBbResult(finalResult);
-            return logAndReturn('submit_findings', finalResult, options.input);
+            return logAndReturn('submit_findings', { ok: true, done: true, result: finalResult }, options.input);
           }
 
           return logAndReturn('submit_findings', nextHop, options.input);
