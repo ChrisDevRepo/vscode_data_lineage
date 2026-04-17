@@ -2,7 +2,7 @@
 
 ## Question
 
-> Show me the SQL of uspUpdateEmployeeHireInfo and explain what it does step by step
+> Show the full SQL DDL of [HumanResources].[uspUpdateEmployeeHireInfo] and explain it step by step. After the DDL code block, provide exactly three bullet lists labelled: 'Tables updated:', 'Tables inserted into:', 'Error-handling calls:'. Do not start an exploration or build a lineage graph — this is a single-object explanation only.
 
 ## Classification
 
@@ -28,36 +28,35 @@
 | Scope | 0 |
 | Max hops | 0 |
 | Filter expected | No |
-| Required tools | lineage_get_object_detail (for SP + direct neighbors) |
-| Optional tools | lineage_get_ddl_batch, lineage_run_bfs_trace (1 hop) |
-| Forbidden tools | lineage_start_exploration, lineage_start_column_trace, lineage_enrich_view |
+| Required tools | lineage_get_object_detail |
+| Optional tools | lineage_get_ddl_batch |
+| Forbidden tools | lineage_start_exploration, lineage_submit_findings, lineage_enrich_view |
 | Max total runtime (ms) | 45000 |
 | Max hop-avg tokens | _n/a_ |
 
 ## Fact Check (verified 2026-04-16)
 
-- Origin: [humanresources].[uspupdateemployeehireinfo] ✓ (exists in model)
-- DDL contains: UPDATE Employee (JobTitle, HireDate, CurrentFlag), INSERT EmployeePayHistory, TRY/CATCH with EXECUTE uspLogError
-- Direct neighbors confirmed: Employee, EmployeePayHistory, uspLogError
-- No SM expected — `get_object_detail` + `get_ddl_batch` return all needed info
+- Origin: [humanresources].[uspupdateemployeehireinfo] ✓
+- DDL contains:
+  - `UPDATE [HumanResources].[Employee]` — updates `JobTitle`, `HireDate`, `CurrentFlag`
+  - `INSERT INTO [HumanResources].[EmployeePayHistory]`
+  - `BEGIN TRY ... END TRY BEGIN CATCH ... EXECUTE [dbo].[uspLogError]`
+- Direct neighbors (refs): Employee, EmployeePayHistory, uspLogError.
 
 ## Required Response Content
 
-Response must:
-- Include or reference the actual SQL DDL
-- Explain step-by-step: UPDATE Employee (JobTitle, HireDate, CurrentFlag) + INSERT EmployeePayHistory
-- Mention TRY/CATCH error handling + call to uspLogError
-- **Reference the direct neighbors the SP touches:**
-  - Employee (updated table)
-  - EmployeePayHistory (insert target)
-  - uspLogError (error-handling call)
+Response must contain (in order):
+
+1. The full DDL quoted in a ```sql ... ``` code block.
+2. A paragraph or bullet list explaining the step-by-step behavior.
+3. Exactly these three bullet-list headings (verbatim):
+   - `Tables updated:` followed by a bullet list containing `[HumanResources].[Employee]`
+   - `Tables inserted into:` followed by a bullet list containing `[HumanResources].[EmployeePayHistory]`
+   - `Error-handling calls:` followed by a bullet list containing `[dbo].[uspLogError]`
 
 ## Required Nodes
 
-_None required in resultGraph — but the response text must mention these direct neighbors:_
-- Employee
-- EmployeePayHistory
-- uspLogError
+_None in resultGraph — text-only answer. The three neighbor IDs above must appear somewhere in the response text._
 
 ## Forbidden Nodes
 
@@ -65,14 +64,26 @@ _None._
 
 ## Optimal Path
 
-1. Search for uspUpdateEmployeeHireInfo → get exact ID
-2. get_object_detail → DDL + list of refs (what it reads/writes) + refers (what calls it)
-3. Parse refs to identify direct neighbors: Employee, EmployeePayHistory, uspLogError
-4. (Optional) get_object_detail on each neighbor for richer context
-5. Write step-by-step explanation in chat text, including the "touches" context
-6. No enrich_view — single-object explanation
+1. `lineage_search_objects` query="uspUpdateEmployeeHireInfo" → resolve exact id.
+2. `lineage_get_object_detail` id=[HumanResources].[uspUpdateEmployeeHireInfo] → returns DDL + neighbors.
+3. Extract the three neighbor IDs from the `neighbors` or `refs` field.
+4. Format the response: code block + explanation + three required bullet-list headings.
+5. Return chat text. No exploration, no enrich_view.
+
+## Deliverable shape
+
+- Chat prose only.
+- `sql` code block containing the DDL verbatim.
+- Three labelled bullet lists with the three neighbor IDs.
+
+## Why this question is focused
+
+- "Show the full SQL DDL" → get_object_detail.
+- "explain it step by step" → prose explanation.
+- Explicit three bullet-list headings with verbatim labels → stable output structure across models.
+- "Do not start an exploration or build a lineage graph" → explicit anti-exploration guard.
+- "single-object explanation only" → no BFS into neighbors.
 
 ## Known Limitations
 
-_Prevents overfitting — AI should NOT start a column trace for "explain this SP" questions.
-But AI should still provide neighbor context (what tables/SPs this SP touches) without doing a full trace._
+_Prevents overfitting — AI must NOT start a column trace or exploration for "explain this SP" questions. Neighbor context comes from get_object_detail's `neighbors`/`refs` field, not from BFS._
