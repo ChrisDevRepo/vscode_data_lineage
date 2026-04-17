@@ -32,6 +32,7 @@ tests/
 │   ├── navigation-engine.test.ts          # NavigationEngine lifecycle + memory
 │   ├── navigation-engine-cascade.test.ts  # Cascade-prune guard logic
 │   ├── sm-robustness.test.ts              # SM scope robustness + enrich_view prune regression
+│   ├── working-set.test.ts                # PathFrame + BranchLocal selection per hop
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
 │   └── hooks/                             # React hook unit tests (vitest)
 │

@@ -230,8 +230,10 @@ export class NavigationEngine implements IHopStateMachine {
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
     const navPath = path ? (path as string[]).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
-    const neighborIds = Array.from(new Set([...(this.graph.inNeighbors(entry.nodeId) as string[]), ...(this.graph.outNeighbors(entry.nodeId) as string[])]));
-    const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size, neighborIds) as NavigationWorkingMemory;
+    // Working-set selection applies only in SM mode. Inline mode delivers the full detail
+    // archive via AiMemoryManager.getResult() at synthesis, so per-hop selection is a no-op.
+    const wsCtx = this._inlineMode ? undefined : { focusId: entry.nodeId, originId: this.originNodeId!, graph: this.graph };
+    const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size, wsCtx) as NavigationWorkingMemory;
     workingMemory.topological_map = {
       navigation_path: navPath,
       visited_nodes: Array.from(this.visited),

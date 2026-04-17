@@ -20,9 +20,36 @@ The system automatically chooses the delivery strategy based on the complexity o
 
 ### Memory Tiering (SM Mode)
 To solve the token explosion problem inherent in large graphs while preserving the high-fidelity reasoning required for data lineage, the SM Mode utilizes a **Two-Tier Memory Model**:
-1. **Short Memory (Blackboard)**: A length-capped, incrementally updated global narrative of the business logic.
-2. **Detail Memory (Local Context)**: The AI's full technical analysis (SQL transforms, math formulas) for every node. Instead of loading the entire history, the engine uses **Local Neighborhood Retrieval** to inject only the detail slots of nodes directly connected to the current focus node.
-   - **Hub Protection**: To prevent context overflow when analyzing "hub" nodes (e.g., a central dimension table joined to 50 facts), local detail retrieval is capped at 5 neighbors per hop.
+1. **Short Memory (Blackboard)**: A length-capped, incrementally updated global narrative of the business logic. Injected in full every hop.
+2. **Detail Memory (Archive)**: The AI's full technical analysis (SQL transforms, math formulas) for every analyzed node. Stored in `AiMemoryManager.detailSlots` as the single source of truth. Exposed in two modes:
+   - **Inside mode (per hop)**: a budget-bounded slice — "local detail context" — is injected alongside the focus DDL. See [Working-Set Selection](#working-set-selection-sm-mode) below.
+   - **Outside mode (Phase 3 synthesis)**: the full detail archive is delivered for holistic reasoning and correction. See `AiMemoryManager.getResult()`.
+
+#### Working-Set Selection (SM Mode)
+Per-hop DetailSlot delivery is driven by a single policy, independent of `SmMode`, implemented in `src/ai/workingSet.ts → selectWorkingSet()`.
+
+**Inputs**: `{ focusId, originId, graph }`, the full DetailSlot map, and a token budget (default `WORKING_SET_TOKEN_BUDGET = 4000`, ≈ 25% of a 16 K context).
+
+**Selection tiers**:
+1. **PathFrame** — slots on the shortest `origin → focus` path (excluding focus). Always included; may overspend the budget. Preserves structural continuity on the current branch.
+2. **BranchLocal (near)** — 1-hop neighbors of focus (bidirectional), minus path and focus.
+3. **BranchLocal (far)** — 2-hop neighbors of focus, minus path, focus, and near.
+
+**Budget pack**: path slots are unconditional; near then far fill the remaining budget, each skipped if adding would cross it. Within each tier, nodes are sorted by id for determinism.
+
+**Emission order**: `[path → near → far]` — breadcrumbs first, then nearest evidence.
+
+**Three failure modes fixed** (versus the previous static 1-hop × 5-cap policy):
+
+| Topology | Old behavior | New behavior |
+|---|---|---|
+| Daisy chain `A→B→C→D→E`, focus `C` | Only `{B, D}` delivered (1-hop). Path context lost. | `[A, B, D, E]` — path prefix + 2-hop tail. |
+| Hub (focus has 50 fat neighbors) | Arbitrary 5 kept, 45 evicted. | Budget caps output at ~3–15 depending on slot size; path always retained. |
+| Branch-jump (focus moves to different subtree) | Last 5 visited followed focus — leaked abandoned-branch context. | PathFrame recomputes from new focus; abandoned branch falls out of the window. |
+
+**Grounding**: Working Set Theory (Denning, 1968); MemGPT two-tier memory (Packer et al., 2023); GraphRAG local-mode retrieval (Edge et al., Microsoft 2024).
+
+**Applies only in SM mode.** Inline mode delivers the full detail archive at synthesis, so no per-hop selection is performed (`NavigationEngine.getHopContext` passes `undefined` to `getWorkingMemory`).
 
 ### Exploration Modes (`SmMode`)
 The same `NavigationEngine` serves three personas, selected by the mode of the active session:
@@ -32,6 +59,23 @@ The same `NavigationEngine` serves three personas, selected by the mode of the a
 
 ### View Refinement: Prune
 `enrich_view` supports pruning nodes from the delivered result graph. Pruning **removes the listed nodes and every edge that touches them** — it does not reconnect edges across pruned nodes. Passthrough-style reconnection was deliberately removed because, for a shared hub `P` in `A→P→B, C→P→D`, it fabricated phantom edges (`A→D`, `C→B`) between otherwise-unrelated lineage siblings.
+
+### The Hop Payload
+Every hop, `NavigationEngine.getHopContext()` returns a single JSON object delivered to the model as the tool result. It is self-contained — the agent does not need conversation history to reason about the current hop.
+
+| Section | Field | Purpose |
+| :--- | :--- | :--- |
+| **Index** | `hop` | Integer hop number (1-based) |
+| **Focus DDL** | `focus_node` | `{id, schema, name, type, ddl, columns, fks}` for the current node |
+| **Local metadata** | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, fks, hasDdl}` — enables grounded routing decisions without fetching |
+| **Sub-question** | `current_question` | The grounded question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
+| **Short Memory** | `working_memory.blackboard` | Full cumulative narrative; AI overwrites it each hop via `narrative_update` |
+| **Pending** | `working_memory.pending_questions` | Neighbors the AI deferred for later hops |
+| **Progress** | `working_memory.checklist` | `{current_hop, noted, total, coveragePct}` — feeds the premature-complete guard |
+| **Detail Memory (slice)** | `working_memory.local_detail_context` | DetailSlots per the inside-mode policy (see Memory Tiering) |
+| **The Map** | `working_memory.topological_map` | `{navigation_path, visited_nodes, current_focus, agenda}` — the deterministic structural grounding |
+
+The user's original natural-language question is **not** re-injected into `current_question` after hop 1. It reaches the model via two paths: (1) the VS Code chat-history messages on every LM call, and (2) verbatim inside the hop-1 `current_question` as `"Root Question: <user text>"` (set at `init`). Long traces that survive sliding-history eviction rely on path (2) + the Blackboard for anti-drift grounding; promoting the root question into `topological_map.root_question` is a cheap future reinforcement.
 
 ### The Three Lifecycle Phases
 1. **Discovery (Initiation)**: The AI maps the starting point and scope. The engine seeds the initial Agenda.

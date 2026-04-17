@@ -10,13 +10,7 @@
  */
 
 import type { LineageNode } from '../engine/types';
-
-/**
- * Hub Protection cap — max DetailSlot neighbors injected per hop into working memory.
- * Prevents token explosion when the focus node is a central hub (e.g., a dim table
- * joined by many facts). See `docs/AI_ARCHITECTURE.md` → Memory Tiering → Hub Protection.
- */
-export const MAX_LOCAL_NEIGHBORS = 5;
+import { selectWorkingSet, type WorkingSetContext } from './workingSet';
 
 
 /** 
@@ -178,30 +172,29 @@ export class AiMemoryManager {
     return null;
   }
 
-  /** 
-   * Constructs a working memory snapshot for the AI's current hop. 
-   * 
+  /**
+   * Constructs a working memory snapshot for the AI's current hop.
+   *
+   * @remarks
+   * When `ctx` is provided (SM mode), `local_detail_context` is populated via
+   * {@link selectWorkingSet} — a budget-bounded, path-prioritized slice.
+   * When `ctx` is omitted (inline mode), `local_detail_context` is undefined —
+   * inline callers receive the full detail archive via {@link getResult} instead.
+   *
    * @param hopCount - The index of the current navigation hop.
    * @param scopeSize - The total number of nodes in the exploration scope.
-   * @param neighborNodeIds - Optional array of adjacent node IDs to fetch local detail context for.
+   * @param ctx - Optional working-set context (focus + origin + graph). Omit in inline mode.
    * @returns A `WorkingMemory` object containing state and progress metrics.
    */
-  public getWorkingMemory(hopCount: number, scopeSize: number, neighborNodeIds?: string[]): WorkingMemory {
+  public getWorkingMemory(hopCount: number, scopeSize: number, ctx?: WorkingSetContext): WorkingMemory {
     const coveragePct = scopeSize > 0 ? Math.round((this.detailSlots.size / scopeSize) * 100) : 0;
-    
-    let local_detail_context: DetailSlot[] | undefined;
-    if (neighborNodeIds && neighborNodeIds.length > 0) {
-      local_detail_context = [];
-      for (let i = 0; i < neighborNodeIds.length && local_detail_context.length < MAX_LOCAL_NEIGHBORS; i++) {
-        const slot = this.detailSlots.get(neighborNodeIds[i]);
-        if (slot) local_detail_context.push(slot);
-      }
-    }
-    
+
+    const local_detail_context = ctx ? selectWorkingSet(ctx, this.detailSlots) : undefined;
+
     return {
       blackboard: this.synthesisNarrative,
       pending_questions: this.pendingQuestions,
-      local_detail_context,
+      local_detail_context: local_detail_context && local_detail_context.length > 0 ? local_detail_context : undefined,
       checklist: {
         current_hop: hopCount,
         noted: this.detailSlots.size,
