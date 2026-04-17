@@ -18,14 +18,17 @@ declare const __BUILD_TIMESTAMP__: string;
 let outputChannel: vscode.LogOutputChannel;
 
 /**
- * Extension Entry Point.
+ * Extension Activation Lifecycle.
  * 
- * Orchestrates the lifecycle of the Data Lineage Viz extension.
+ * Orchestrates the bootstrapping of the Data Lineage Viz extension.
  * Adheres to a strict registration order mandated by stability requirements:
- * 1. Sidebar/Quick Actions (Prevents "no provider" UI errors)
- * 2. Commands & Project Store
- * 3. AI Bridge & Language Model Tools
- * 4. Chat Participant
+ * 1.  **Sidebar/Quick Actions**: Registered first to prevent "no provider" UI errors during early activation.
+ * 2.  **Commands & Project Store**: Core functionality and state management.
+ * 3.  **AI Bridge & Language Model Tools**: Integration with VS Code's AI ecosystem.
+ * 4.  **Chat Participant**: The autonomous lineage explorer.
+ * 
+ * @param context - The extension context provided by VS Code.
+ * @returns An API object for testing and internal integration.
  */
 export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
@@ -35,10 +38,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
   logger.info(`Extension activated — built ${buildStamp}`);
 
-    context.subscriptions.push(
+  // Register the sidebar provider for quick actions.
+  context.subscriptions.push(
     vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', new SidebarProvider())
   );
 
+  // Load AI output templates for summary and narrative generation.
   const templates = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
     logger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
     return { ...EMPTY_AI_TEMPLATES };
@@ -46,6 +51,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const sess = getSession();
   sess.outputTemplates = templates;
 
+  // Load SQL parsing rules for DDL extraction.
   await loadParseRules(outputChannel, context.extensionUri).catch(err => {
     logger.error('load parse rules at activation', err);
   });
@@ -53,7 +59,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const loadStore = (c: vscode.ExtensionContext) => migrateProjectStore(c.globalState.get(PROJECT_STORE_KEY));
   const saveStore = async (c: vscode.ExtensionContext, s: any) => { await c.globalState.update(PROJECT_STORE_KEY, s); };
 
-    context.subscriptions.push(...registerCommands(
+  // Register all user-facing commands.
+  context.subscriptions.push(...registerCommands(
     context, 
     getSession, 
     outputChannel, 
@@ -73,20 +80,23 @@ export async function activate(context: vscode.ExtensionContext) {
     (ctx) => buildDebugDump(ctx, getSession, outputChannel)
   ));
 
-    context.subscriptions.push(...registerAiTools(getSession, outputChannel, getActivePanel));
+  // Register AI tools for Copilot Chat integration.
+  context.subscriptions.push(...registerAiTools(getSession, outputChannel, getActivePanel));
 
-    const participant = new LineageParticipant(context, getSession, outputChannel, getActivePanel);
+  // Register the Chat Participant.
+  const participant = new LineageParticipant(context, getSession, outputChannel, getActivePanel);
   participant.register();
 
-    const configLogger = Logger.create(outputChannel, 'Config');
-    const RELOAD_KEYS: Array<{ key: string; label: string }> = [
-      { key: 'dataLineageViz.parseRulesFile', label: 'Parse rules file' },
-      { key: 'dataLineageViz.dmvQueriesFile', label: 'DMV queries file' },
-      { key: 'dataLineageViz.maxNodes', label: 'Max nodes' },
-      { key: 'dataLineageViz.renderLimit', label: 'Render limit' },
-    ];
+  // Watch for configuration changes and trigger reloads where necessary.
+  const configLogger = Logger.create(outputChannel, 'Config');
+  const RELOAD_KEYS: Array<{ key: string; label: string }> = [
+    { key: 'dataLineageViz.parseRulesFile', label: 'Parse rules file' },
+    { key: 'dataLineageViz.dmvQueriesFile', label: 'DMV queries file' },
+    { key: 'dataLineageViz.maxNodes', label: 'Max nodes' },
+    { key: 'dataLineageViz.renderLimit', label: 'Render limit' },
+  ];
 
-    context.subscriptions.push(
+  context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
       if (!e.affectsConfiguration('dataLineageViz')) return;
       configLogger.debug('Settings changed — dataLineageViz.*');
@@ -124,11 +134,10 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 /**
- * Extension Cleanup.
- *
- * Panel-scoped state (stats connection, caches) is cleaned up via
- * panel.onDidDispose in panelProvider.ts. VS Code disposes the output channel
- * and command registrations automatically via context.subscriptions.
+ * Extension Deactivation Lifecycle.
+ * 
+ * Cleans up global resources. Panel-specific resources (like database connections) 
+ * are handled independently by their respective `onDidDispose` handlers.
  */
 export function deactivate() {
   // no-op
@@ -136,7 +145,13 @@ export function deactivate() {
 
 /**
  * Loads AI Output Templates from built-in assets and optional user overrides.
- * These templates define how the AI structures its summaries and descriptions.
+ * 
+ * These templates provide the structural instructions used by the AI to generate
+ * summaries, section titles, and highlighted badges in the UI.
+ * 
+ * @param outputChannel - The log channel for reporting load status.
+ * @param extensionUri - The root URI of the extension.
+ * @returns A promise resolving to the compiled `AiOutputTemplates`.
  */
 async function loadAiOutputTemplates(
   outputChannel: vscode.LogOutputChannel,
@@ -204,9 +219,14 @@ async function loadAiOutputTemplates(
 }
 
 /**
- * Loads parse rules from built-in defaults, overlays a custom YAML if the
- * `dataLineageViz.parseRulesFile` setting is set, then installs them via
- * `loadRules()` so `parseSqlBody()` can reach them.
+ * Loads and installs SQL parsing rules for DDL analysis.
+ * 
+ * Rules are loaded from the built-in `defaultParseRules.yaml` and can be
+ * overridden by a custom file specified in settings.
+ * 
+ * @param outputChannel - The log channel.
+ * @param extensionUri - The root URI of the extension.
+ * @returns A promise that resolves when the rules are loaded and applied to the engine.
  */
 async function loadParseRules(
   outputChannel: vscode.LogOutputChannel,

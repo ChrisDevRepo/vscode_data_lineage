@@ -7,9 +7,18 @@
  * Navigation Mode prompts are in smPrompts.ts (Universal Markdown blocks).
  */
 
-// ─── System Prompt Base ──────────────────────────────────────────────────────
 
-/** Build the base system prompt (rules 1-5). Caller appends template fields. */
+/**
+ * Constructs the base system prompt used to govern AI behavior across all exploration modes.
+ * 
+ * @remarks
+ * This prompt establishes the "Ground Rules" for the AI, including validation logic,
+ * tool usage priorities (e.g., `start_exploration` vs `run_bfs_trace`), and output
+ * formatting requirements (LaTeX, Section/Badge contracts).
+ * 
+ * @param maxRounds - The maximum number of tool execution rounds allowed before a hard stop.
+ * @returns A string containing the foundational system rules for the SQL lineage assistant.
+ */
 export function buildSystemPromptBase(maxRounds: number): string {
   return (
     'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n\n' +
@@ -29,14 +38,27 @@ export function buildSystemPromptBase(maxRounds: number): string {
   );
 }
 
-// ─── Runtime Context Injections ──────────────────────────────────────────────
 
-/** Prepended to the system prompt when the loaded model has a known DB platform. */
+/** 
+ * Generates platform-specific context for the AI system prompt.
+ * 
+ * @param dbPlatform - The database engine identifier (e.g., 'SQL Server', 'Snowflake').
+ * @returns A prompt fragment instructing the AI to use appropriate SQL dialects.
+ */
 export function buildPlatformContext(dbPlatform: string): string {
   return `Database platform: ${dbPlatform}. Use platform-appropriate SQL syntax and capabilities in analysis.\n`;
 }
 
-/** Prepended to the system prompt when the user has an active schema filter. */
+/** 
+ * Generates schema-filtering context for the AI system prompt.
+ * 
+ * @remarks
+ * Encourages the AI to prioritize the user's active schema selection during searches
+ * and lineage investigations to reduce noise.
+ * 
+ * @param schemas - Array of schema names currently selected in the UI.
+ * @returns A prompt fragment defining the current working schema context.
+ */
 export function buildSchemaContext(schemas: string[]): string {
   return (
     `Working context: user has schema(s) [${schemas.join(', ')}] selected.\n` +
@@ -45,25 +67,44 @@ export function buildSchemaContext(schemas: string[]): string {
   );
 }
 
-// ─── Slash Command Prompt Rewrites ────────────────────────────────────────────
 
-/** Rewrites the user prompt for the /trace slash command. */
+/** 
+ * Transforms raw user input into a structured lineage tracing request.
+ * 
+ * @param userInput - The entity or relationship the user wants to trace.
+ * @returns A formatted prompt for the `/trace` command.
+ */
 export function buildTracePrompt(userInput: string): string {
   return `Trace the data lineage for: ${userInput}.`;
 }
 
-/** Rewrites the user prompt for the /search slash command. */
+/** 
+ * Transforms raw user input into a structured model search request.
+ * 
+ * @param userInput - The search term or regex provided by the user.
+ * @returns A formatted prompt for the `/search` command.
+ */
 export function buildSearchPrompt(userInput: string): string {
   return `Search for database objects matching: ${userInput}.`;
 }
 
-// ─── Action-Required Gate ─────────────────────────────────────────────────────
 
-/** Injected as a User message after a tool returns action_required — blocks further tool calls. */
+/** 
+ * Constructs a "Stop Gate" message when an AI action requires explicit user confirmation.
+ * 
+ * @remarks
+ * Injected as a User message to pause the autonomous tool loop when a `action_required` 
+ * state is detected by the extension host.
+ * 
+ * @param gates - List of reasons/conditions that blocked the execution.
+ * @returns A strict instruction string for the AI to cease tool calls.
+ */
 export function buildActionRequiredGate(gates: string[]): string {
   return `STOP: ${gates.join(' | ')} — You MUST address this with the user before calling any more tools.`;
 }
 
-/** hint value returned in the gate-rejection tool result while action_required is pending. */
+/** 
+ * Error hint provided to the AI if it attempts to call tools while a gate is pending.
+ */
 export const ACTION_REQUIRED_PENDING_HINT =
   'You must present the previous action_required message to the user and wait for their response before calling tools.';

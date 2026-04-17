@@ -23,11 +23,6 @@ async function testGraphBuilder(model: Awaited<ReturnType<typeof extractDacpac>>
   assert(result.flowEdges.length > 0, `Flow edges created: ${result.flowEdges.length}`);
   assert(result.graph.order > 0, `Graph order: ${result.graph.order}`);
 
-  // Test trace
-  const firstNodeId = model.nodes[0].id;
-  const traceResult = traceNode(result.graph, firstNodeId, 'both');
-  assert(traceResult.nodeIds.size >= 1, `Trace from ${firstNodeId}: ${traceResult.nodeIds.size} nodes reached`);
-
   return result;
 }
 

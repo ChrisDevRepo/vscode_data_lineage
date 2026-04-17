@@ -8,13 +8,37 @@ import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
 import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
 import { generateProjectName } from '../engine/projectStore';
 
+/**
+ * Props for the `CreateFlow` component.
+ */
 interface CreateFlowProps {
+  /** The state object from the `useDacpacLoader` hook, managing the connection lifecycle. */
   loader: DacpacLoaderState;
+  /** The global maximum node limit, used for displaying warnings in the schema selector. */
   maxNodes: number;
+  /** Callback triggered to return to the previous screen (StartScreen). */
   onBack: () => void;
-  onVisualize: (projectName: string, project: DacpacConnection | DatabaseConnection | null) => void;
+  /** 
+   * Callback triggered to finalize project creation and start the visualization.
+   * @param projectName - The user-defined or auto-generated name for the project.
+   * @param connection - The connection metadata (Dacpac or Database).
+   */
+  onVisualize: (projectName: string, connection: DacpacConnection | DatabaseConnection | null) => void;
 }
 
+/**
+ * A wizard-style component that guides the user through creating a new lineage visualization.
+ * 
+ * @remarks
+ * The flow consists of two logical phases:
+ * 1. **Source Selection**: The user chooses between opening a .dacpac file or connecting to a live database.
+ * 2. **Configuration**: Once a source is partially loaded (Phase 1), the user can:
+ *    - Define a project name (auto-generated if left blank).
+ *    - Select specific schemas to include in the visualization.
+ *    - View warnings if the selected scope exceeds the recommended node limit.
+ * 
+ * @param props - The component props.
+ */
 export const CreateFlow = memo(function CreateFlow({
   loader,
   maxNodes,
@@ -28,7 +52,9 @@ export const CreateFlow = memo(function CreateFlow({
   const hasSource = !!schemaOrModel;
   const isPhase1Loading = loader.isLoading && !loader.schemaPreview && !loader.model;
 
-  // Build auto-name when source first appears
+  /**
+   * Generates a default project name based on the current connection metadata.
+   */
   const autoName = useCallback(() => {
     if (!loader.fileName) return '';
     if (loader.filePath) {
@@ -53,6 +79,9 @@ export const CreateFlow = memo(function CreateFlow({
   // Fill name when source becomes available
   const displayName = projectName || autoName();
 
+  /**
+   * Handles the final 'Visualize' action.
+   */
   const handleVisualize = useCallback(() => {
     const name = displayName.trim() || autoName().trim() || loader.fileName || 'Project';
     if (loader.filePath) {
@@ -210,6 +239,9 @@ export const CreateFlow = memo(function CreateFlow({
   );
 });
 
+/**
+ * A simple inline spinning SVG used to indicate loading progress within wizard buttons.
+ */
 function InlineSpinner() {
   return (
     <svg className="animate-spin w-4 h-4 ml-auto flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

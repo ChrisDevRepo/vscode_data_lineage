@@ -1,0 +1,35 @@
+{
+  "model": "AdventureWorks2025_AI.dacpac",
+  "stats": {
+    "nodes": 148,
+    "edges": 170
+  },
+  "analysis": {
+    "cycles": {
+      "groupCount": 4,
+      "totalNodes": 10
+    },
+    "islands": {
+      "groupCount": 6,
+      "totalNodes": 103
+    },
+    "hubs": {
+      "topId": "hub-[person].[person]",
+      "topDegree": 13
+    },
+    "longestPath": {
+      "maxDepth": 12
+    }
+  },
+  "reachability": {
+    "origin": "[person].[person]",
+    "undirectedCount": 46,
+    "upstreamCount": 1,
+    "downstreamCount": 14
+  },
+  "pathfinding": {
+    "start": "[ai].[raworderimport]",
+    "target": "[ai].[cleanedorders]",
+    "minPathLength": 3
+  }
+}

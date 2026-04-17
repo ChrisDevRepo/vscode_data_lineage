@@ -8,8 +8,12 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 
-/** Render a ```math code fence as a KaTeX display block.
- *  If KaTeX fails, shows the raw formula as error text. */
+/** 
+ * Renders a ```math code fence as a KaTeX display block.
+ * 
+ * @param props - Component props containing the raw math string.
+ * @returns A div containing the rendered KaTeX HTML.
+ */
 function MathBlock({ math }: { math: string }) {
   const html = katex.renderToString(math, {
     displayMode: true,
@@ -19,8 +23,13 @@ function MathBlock({ math }: { math: string }) {
   return <div className="math-display" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/** Custom code component: intercepts ```math fences for KaTeX rendering.
- *  All other code blocks pass through unchanged. */
+/** 
+ * Custom code component for `react-markdown`.
+ * Intercepts ```math fences for KaTeX rendering, while passing other code blocks through.
+ * 
+ * @param props - Standard markdown component props.
+ * @returns Either a MathBlock or a standard code element.
+ */
 function CodeComponent({ className, children, ...props }: React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement> & ExtraProps) {
   if (className === 'language-math') {
     return <MathBlock math={String(children).trim()} />;
@@ -28,8 +37,14 @@ function CodeComponent({ className, children, ...props }: React.ClassAttributes<
   return <code className={className} {...props}>{children}</code>;
 }
 
-/** Custom pre component: unwrap <pre> wrapper for math blocks so they
- *  render as display math, not inside a code block container. */
+/** 
+ * Custom pre component for `react-markdown`.
+ * Unwraps the `<pre>` wrapper for math blocks to ensure they render as display math
+ * without the standard code block container styling.
+ * 
+ * @param props - Standard markdown component props.
+ * @returns Either the raw children (for math) or a standard pre element.
+ */
 function PreComponent({ children, ...props }: React.ClassAttributes<HTMLPreElement> & React.HTMLAttributes<HTMLPreElement> & ExtraProps) {
   const child = React.Children.toArray(children)[0] as React.ReactElement<{ className?: string }> | undefined;
   if (child && typeof child === 'object' && 'props' in child && child.props?.className === 'language-math') {
@@ -38,13 +53,30 @@ function PreComponent({ children, ...props }: React.ClassAttributes<HTMLPreEleme
   return <pre {...props}>{children}</pre>;
 }
 
+/**
+ * Props for the `AiDescriptionOverlay` component.
+ */
 interface AiDescriptionOverlayProps {
+  /** The name of the AI-generated view or analysis. */
   viewName: string;
+  /** The markdown-formatted description text to display. */
   description: string;
-  /** Start expanded (e.g. text-only AI response with no graph nodes). */
+  /** Whether the overlay should be expanded by default on initial render. */
   defaultExpanded?: boolean;
 }
 
+/**
+ * A floating overlay component that displays AI-generated descriptions and logic summaries.
+ * 
+ * @remarks
+ * This component supports rich markdown rendering including:
+ * - GitHub Flavored Markdown (GFM) via `remark-gfm`.
+ * - Mathematical formulas via KaTeX (`remark-math` and `rehype-katex`).
+ * - Raw markdown source viewing mode.
+ * - One-click clipboard copying of the source text.
+ * 
+ * @param props - The component props.
+ */
 export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   viewName,
   description,
@@ -54,6 +86,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const [rawMode, setRawMode] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  /**
+   * Copies the raw markdown description to the system clipboard.
+   */
   function handleCopy() {
     navigator.clipboard.writeText(description).then(() => {
       setCopied(true);

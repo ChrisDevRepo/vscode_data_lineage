@@ -31,17 +31,24 @@ import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } fr
 export { shouldInline, shouldSmInline, estimateTokens, getEffectiveBudget, setInlineTokenBudget, setSmInlineNodeCap } from './tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
-const BFS_INLINE_NODE_CAP = 200;
+export const BFS_INLINE_NODE_CAP = 200;
 /** Max results returned in fallback (cross-schema) search. */
-const FALLBACK_RESULT_LIMIT = 10;
+export const FALLBACK_RESULT_LIMIT = 10;
 
 
 type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
 
 /**
- * Lightweight runtime validation for LLM tool inputs. Returns null if valid,
- * or a structured error if any required field is missing or has the wrong type.
- * No external dependencies (not Zod) — keeps the extension lean.
+ * Lightweight runtime validation for LLM tool inputs.
+ *
+ * @remarks
+ * This function ensures that tool inputs provided by the language model match the
+ * expected schema. It returns a structured error if any required field is missing
+ * or has the wrong type, allowing the AI to self-correct.
+ *
+ * @param input - The raw input object provided by the language model.
+ * @param required - A map of required field names to their expected TypeScript types.
+ * @returns An error object if validation fails, otherwise `null`.
  */
 export function validateToolInput(
   input: unknown,
@@ -74,7 +81,12 @@ const COLUMN_SEARCH_LIMIT = 50;
 const ENRICH_VIEW_NAME_MAX_LENGTH = 60;
 const ENRICH_VIEW_SUMMARY_HARD_LIMIT = 300;
 
-/** Build source→target edge type lookup for the entire model (cheap one-pass). */
+/**
+ * Builds a lookup map for edges between nodes.
+ *
+ * @param model - The full database model.
+ * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge type.
+ */
 export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const m = new Map<string, string>();
   for (const e of model.edges) {
@@ -83,14 +95,29 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   return m;
 }
 
-/** Build id→node lookup. */
+/**
+ * Builds a lookup map for nodes by their ID.
+ *
+ * @param model - The full database model.
+ * @returns A map of node IDs to their respective LineageNode objects.
+ */
 export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   const m = new Map<string, LineageNode>();
   for (const n of model.nodes) m.set(n.id, n);
   return m;
 }
 
-/** Build lowercase "Schema.Name" → unrelated refs lookup from parse stats. */
+/**
+ * Builds a map of lowercase "Schema.Name" to lists of unresolved (unrelated) references.
+ *
+ * @remarks
+ * Unresolved references are identifiers found in the DDL during parsing that do not
+ * exist in the current model. This metadata helps the AI understand potential
+ * external dependencies or missing objects.
+ *
+ * @param model - The full database model.
+ * @returns A map of object names to their unresolved reference strings.
+ */
 export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   const m = new Map<string, string[]>();
   if (!model.parseStats?.spDetails) return m;
@@ -103,7 +130,14 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
 }
 
 
-/** Shared column access — used by classical tools, CT, and BB. */
+/**
+ * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
+ *
+ * @param nodeId - The unique identifier of the node.
+ * @param nodeMap - The ground-truth map of all nodes.
+ * @param store - Optional column store for high-fidelity metadata.
+ * @returns An array of column definitions, or `undefined` if the node is not found.
+ */
 export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: import('../engine/columnStore').ColumnStore,
@@ -111,7 +145,14 @@ export function getNodeColumns(
   return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
 }
 
-/** Shared DDL access — normalized. Used by classical tools, CT, and BB. */
+/**
+ * Retrieves the normalized DDL for a specific node.
+ *
+ * @param nodeId - The unique identifier of the node.
+ * @param nodeMap - The ground-truth map of all nodes.
+ * @param store - Optional column store for high-fidelity DDL.
+ * @returns The normalized DDL string, or `undefined` if not available.
+ */
 export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: import('../engine/columnStore').ColumnStore,
@@ -120,7 +161,20 @@ export function getNodeDdl(
   return raw ? normalizeBodyScript(raw) : undefined;
 }
 
-/** Build focus node detail for hop context — shared by CT and BB. */
+/**
+ * Constructs a detailed "Focus Node" object for use in exploration hop contexts.
+ *
+ * @remarks
+ * This function packages all relevant metadata for a node (DDL, columns, foreign keys,
+ * and unresolved references) into a shape suitable for the AI agent to analyze during a hop.
+ *
+ * @param node - The node currently in focus.
+ * @param nodeMap - The map of all nodes.
+ * @param unrelatedMap - The map of unresolved references.
+ * @param store - Optional high-fidelity column store.
+ * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
+ * @returns A record containing the focus node's metadata.
+ */
 export function buildHopFocusNode(
   node: LineageNode,
   nodeMap: Map<string, LineageNode>,
@@ -148,6 +202,22 @@ export function buildHopFocusNode(
 }
 
 
+/**
+ * Retrieves the high-level context of the current project for the AI.
+ *
+ * @remarks
+ * This function builds a summary of the loaded model, including schema lists,
+ * visible node counts, and token budget estimates. If the catalog is small enough,
+ * it inlines the full object list and edges; otherwise, it provides a summary
+ * and instructs the AI to use on-demand retrieval.
+ *
+ * @param model - The database model.
+ * @param activeFilter - The current UI filter state.
+ * @param projectName - The name of the active project.
+ * @param savedViews - The list of user-saved bookmarks/views.
+ * @param store - Optional column store.
+ * @returns An object containing project metadata and potentially the full catalog.
+ */
 export function getContext(
   model: DatabaseModel,
   activeFilter: SerializedFilterState | null,
@@ -211,7 +281,12 @@ export function getContext(
 }
 
 
-/** Reject garbage queries (empty, single char, pure wildcards). */
+/**
+ * Validates a search query for sanity.
+ *
+ * @param query - The user-provided search string.
+ * @returns Success status or an error with a hint.
+ */
 export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
@@ -224,6 +299,22 @@ export function validateQuery(query: string): { ok: true } | { ok: false; error:
 }
 
 
+/**
+ * Searches for objects in the model by name or column name.
+ *
+ * @remarks
+ * This function performs a fuzzy or regex search across object names and column names.
+ * It automatically handles schema mismatches by searching globally if a schema-restricted
+ * search yields no results.
+ *
+ * @param model - The database model.
+ * @param query - The search query.
+ * @param types - Optional filter for object types.
+ * @param schemas - Optional filter for schemas.
+ * @param mode - Search mode ('substring' or 'regex').
+ * @param activeFilter - Current UI filter state to tag results.
+ * @returns A list of matches with metadata and AI hints.
+ */
 export function searchObjects(
   model: DatabaseModel,
   query: string,
@@ -355,6 +446,19 @@ export function searchObjects(
 
 const NEIGHBOR_CAP = 25;
 
+/**
+ * Retrieves full metadata for a specific database object, including DDL, columns, and neighbors.
+ *
+ * @remarks
+ * This is the primary "drill-down" tool for the AI. It provides a high-fidelity view of a single node,
+ * including its schema, name, type, and relationships. Upstream and downstream neighbors are capped
+ * to prevent token overflow, but DDL and column lists are always delivered in full.
+ *
+ * @param model - The full database model.
+ * @param id - The unique identifier of the object (e.g., "schema.name").
+ * @param store - Optional column store for high-fidelity metadata.
+ * @returns A detailed object representation or a "not_found" error.
+ */
 export function getObjectDetail(
   model: DatabaseModel,
   id: string,
@@ -510,6 +614,30 @@ function attachDdl(
   return result;
 }
 
+/**
+ * Performs a Breadth-First Search (BFS) trace to explore data lineage.
+ *
+ * @remarks
+ * This function supports two distinct modes:
+ * 1. **Level Mode**: Explores upstream and downstream from a focal node up to a specified depth.
+ * 2. **Path Mode**: Finds all nodes on all paths between an origin and a target node.
+ *
+ * It automatically manages token usage by checking if the resulting payload (including DDL)
+ * fits within the effective budget. If it exceeds the budget, it returns a structural summary
+ * and recommends the "state machine" (SM) mode for incremental exploration.
+ *
+ * @param model - The database model.
+ * @param graph - The graphology instance representing the lineage.
+ * @param id - The focal node identifier.
+ * @param upstreamHops - Maximum depth to traverse upstream (Level Mode).
+ * @param downstreamHops - Maximum depth to traverse downstream (Level Mode).
+ * @param types - Optional object type filter.
+ * @param schemas - Optional schema filter.
+ * @param includeDdl - Whether to include full DDL/column definitions in the output.
+ * @param store - Optional column store for high-fidelity data.
+ * @param target - The destination node identifier (triggers Path Mode).
+ * @returns A structured result containing nodes, edges, and delivery metadata.
+ */
 export function runBfsTrace(
   model: DatabaseModel,
   graph: Graph,
@@ -655,6 +783,22 @@ export function runBfsTrace(
 }
 
 
+/**
+ * Executes a structural graph analysis to identify hubs, islands, or longest paths.
+ *
+ * @remarks
+ * This tool allows the AI to perform higher-level reasoning about the entire graph topology
+ * without retrieving every node's metadata. It uses deterministic engine logic to find
+ * architectural hotspots and change-risk areas.
+ *
+ * @param model - The database model.
+ * @param graph - The graphology instance.
+ * @param type - The type of analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
+ * @param minDegree - Minimum degree for a node to be considered a hub.
+ * @param maxSize - Maximum size for a connected component to be considered an island.
+ * @param longestPathMinNodes - Minimum number of nodes for a path to be considered "long".
+ * @returns A summary of the analysis results including grouped node IDs.
+ */
 export function runAnalysis(
   model: DatabaseModel,
   graph: Graph,
@@ -678,7 +822,20 @@ export function runAnalysis(
   };
 }
 
-
+/**
+ * Searches for substrings or patterns within the DDL/source code of scriptable objects.
+ *
+ * @remarks
+ * This tool is essential for finding logic-level dependencies (e.g., specific business logic,
+ * hardcoded strings, or column mappings) that are not captured as formal graph edges.
+ * It searches through views, stored procedures, and functions.
+ *
+ * @param model - The database model.
+ * @param query - The search string or regex pattern.
+ * @param types - Optional filter for scriptable object types.
+ * @param store - Optional column store for high-fidelity DDL.
+ * @returns A list of matches with snippets and object metadata.
+ */
 export function searchDdl(
   model: DatabaseModel,
   query: string,
@@ -773,16 +930,18 @@ export type EnrichViewError = { success: false; errors: string[]; hint: string }
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
- * Assign sequential numbers to sections in the AI's written order, derive badge chips
- * from sections[].node_ids, and assemble the description markdown.
+ * Assigns sequential numbers to sections and assembles the final markdown description.
  *
- * Guarantees badge numbers on the graph are identical to ## heading numbers in the description.
- * Sort key: AI-provided sections[] array index (narrative order).
- * Strips leading numbers from AI-supplied labels ("3 Source" → "Source") — system is the
- * single source of numbers.
+ * @remarks
+ * This function is the "finisher" for the AI's lineage report. It ensures that the
+ * numbered badges displayed on the visual graph (via `badges[]`) perfectly align with the
+ * `## Heading` numbers in the sidebar description. It also handles stripping any leading
+ * numbers the AI might have accidentally included in labels to maintain a deterministic,
+ * system-managed numbering scheme.
  *
- * @param sections  AI-provided sections: each is a (label KEY, node_ids[] 1..N, text 1..1) tuple.
- * @param opts      Optional title/intro/closing doc wrapper blocks.
+ * @param sections - AI-authored sections containing labels, node associations, and text.
+ * @param opts - Optional wrapper blocks for the final document (title, intro, closing).
+ * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
  */
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text: string }>,
@@ -839,10 +998,19 @@ export function orderAndAssemble(
 }
 
 /**
- * Auto-fix common issues in enrich_view input.
- * @param model — database model (only used for fallback catalog validation)
- * @param input — raw AI input
- * @param resolvedNodeIds — canonical node set from stored result graph (if available)
+ * Normalizes and "auto-fixes" common AI output artifacts in the enrichment view input.
+ *
+ * @remarks
+ * LLMs often produce slightly malformed outputs such as double-escaped newlines,
+ * excessive title lengths, or improper LaTeX formatting. This function applies
+ * surgical corrections (e.g., converting `$$` math blocks to markdown fences)
+ * to ensure the final UI renders perfectly without rejecting the AI's work for
+ * minor stylistic issues.
+ *
+ * @param model - The database model.
+ * @param input - The raw input from the AI.
+ * @param resolvedNodeIds - The canonical set of node IDs in the current session.
+ * @returns The fixed input object and a list of applied fixes for logging.
  */
 export function autoFixEnrichView(
   model: DatabaseModel,
@@ -1050,9 +1218,17 @@ export function autoFixEnrichView(
   return { input: fixed, fixes };
 }
 
-/** Validate markdown format — returns error strings (empty = valid).
- *  LaTeX issues are handled by autofix (fixLatex) — never rejected here.
- *  Only structural breaks that corrupt all subsequent rendering are rejected. */
+/**
+ * Validates markdown structural integrity.
+ *
+ * @remarks
+ * This function performs a pass to ensure that markdown elements (specifically code fences)
+ * are properly closed. It prevents the UI from crashing or entering a broken state due to
+ * malformed markdown generated by the AI.
+ *
+ * @param md - The markdown string to validate.
+ * @returns A list of error strings, or an empty array if valid.
+ */
 export function validateMarkdownFormat(md: string): string[] {
   const errors: string[] = [];
 
@@ -1079,9 +1255,19 @@ export function validateMarkdownFormat(md: string): string[] {
 }
 
 /**
- * Validate enrich_view input.
- * @param input — auto-fixed AI input
- * @param resolvedNodeIds — canonical node set (from stored graph or fallback)
+ * Validates the full `enrich_view` input against strict architectural and aesthetic requirements.
+ *
+ * @remarks
+ * This function enforces naming conventions, summary length, and structural quality
+ * of the AI's final report. It ensures that the description uses proper headings,
+ * doesn't simply re-describe the graph structure ("walkthrough"), and that all
+ * node references are valid. If validation fails, it provides a "hint" to the AI
+ * to help it self-correct.
+ *
+ * @param input - The (possibly auto-fixed) AI input.
+ * @param resolvedNodeIds - The canonical set of node IDs.
+ * @param assembledBadges - Pre-assembled numbered badges for consistency.
+ * @returns A successful request object or a structured error with correction hints.
  */
 export function validateEnrichView(
   input: EnrichViewInput,
@@ -1203,7 +1389,19 @@ export function validateEnrichView(
   };
 }
 
-
+/**
+ * Retrieves DDL for a batch of object IDs.
+ *
+ * @remarks
+ * This is a high-performance batch retrieval tool. It ensures the AI can retrieve
+ * multiple DDL scripts in a single turn without hitting the per-message token cap
+ * (if individual scripts are small) or requiring multiple tool calls.
+ *
+ * @param model - The database model.
+ * @param ids - The list of object IDs.
+ * @param store - Optional column store for high-fidelity DDL.
+ * @returns A list of DDL results, including object types.
+ */
 export function getDdlBatch(
   model: DatabaseModel,
   ids: string[],

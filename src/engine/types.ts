@@ -1,4 +1,3 @@
-// ─── Core Types ──────────────────────────────────────────────────────────────
 
 export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
 
@@ -83,7 +82,6 @@ export interface SchemaPreview {
   warnings?: string[];
 }
 
-// ─── XML Parsing Types (fast-xml-parser output) ─────────────────────────────
 
 export interface XmlElement {
   '@_Type': string;
@@ -122,7 +120,6 @@ export interface XmlReference {
   '@_ExternalSource'?: string;
 }
 
-// ─── Element type mapping ───────────────────────────────────────────────────
 
 export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
   SqlTable: 'table',
@@ -137,7 +134,6 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
 
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
 
-// ─── Intermediate extraction format (shared by dacpac + DMV extractors) ──────
 
 export interface ColumnDef {
   name: string;
@@ -159,7 +155,6 @@ export interface ForeignKeyInfo {
   onDelete: string;      // referential action: NO ACTION | CASCADE | SET NULL | SET DEFAULT
 }
 
-// ─── Shared Column Helpers (used by both dacpac + DMV extractors) ────────────
 
 /**
  * Format a SQL type name with length/precision/scale modifiers.
@@ -218,7 +213,6 @@ export function buildColumnDef(
   };
 }
 
-// ─── Constraint Maps (shared by dacpac + DMV extractors) ─────────────────────
 
 export interface ConstraintMaps {
   /** Key: "schema.table.column" (lowercase) → UQ constraint name */
@@ -245,7 +239,12 @@ export function enrichColumnsWithConstraints(
   return maps.fkMap.get(tableKey) ?? [];
 }
 
-/** Factory for empty SchemaInfo — single source of truth for the zero-count init. */
+/**
+ * Factory for empty SchemaInfo — single source of truth for the zero-count init.
+ *
+ * @param name - The schema name.
+ * @returns A pristine SchemaInfo object initialized to zero.
+ */
 export function createEmptySchemaInfo(name: string): SchemaInfo {
   return { name, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
 }
@@ -270,7 +269,6 @@ export interface ExternalRef {
   kind: string;
 }
 
-// ─── DMV type mapping (sys.objects.type codes → ObjectType) ─────────────────
 
 export const DMV_TYPE_MAP: Record<string, ObjectType> = {
   'U':  'table',
@@ -282,7 +280,6 @@ export const DMV_TYPE_MAP: Record<string, ObjectType> = {
   'ET': 'external',  // External Table (PolyBase / data virtualization)
 };
 
-// ─── Extension Config (from VS Code settings) ──────────────────────────────
 
 export interface LayoutConfig {
   direction: 'TB' | 'LR';
@@ -361,7 +358,6 @@ export const DEFAULT_CONFIG = {
   renderLimit: 750,
 } satisfies ExtensionConfig;
 
-// ─── UI Types ───────────────────────────────────────────────────────────────
 
 export type GraphMode = 'full' | 'overview';
 
@@ -402,7 +398,6 @@ export interface TraceState {
   autoPromoted?: boolean;
 }
 
-// ─── Graph Analysis Types ────────────────────────────────────────────────────
 
 export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles' | 'external-refs';
 
@@ -425,7 +420,6 @@ export interface AnalysisMode {
   activeGroupId: string | null;
 }
 
-// ─── Extension → Webview Messages ───────────────────────────────────────────
 
 export type ExtensionMessage =
   | { type: 'config-only'; config: ExtensionConfig }

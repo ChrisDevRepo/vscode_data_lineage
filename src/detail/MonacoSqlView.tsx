@@ -11,10 +11,18 @@ import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution';
 import type * as Monaco from 'monaco-editor';
 import type { LineageNode } from '../engine/types';
 
+/** 
+ * Configure the @monaco-editor/react loader to use our lightweight ESM bundle.
+ * This prevents the extension from bundling massive language workers (TS/HTML/JSON)
+ * while still providing robust SQL syntax highlighting.
+ */
 loader.config({ monaco: monacoEditor });
 
-// ─── Theme mapping ────────────────────────────────────────────────────────────
-
+/**
+ * Maps the current VS Code theme kind to a corresponding Monaco Editor theme.
+ * 
+ * @returns 'vs', 'vs-dark', 'hc-black', or 'hc-light'.
+ */
 function getMonacoTheme(): string {
   const kind = document.body.getAttribute('data-vscode-theme-kind');
   if (kind === 'vscode-high-contrast') return 'hc-black';
@@ -23,27 +31,47 @@ function getMonacoTheme(): string {
   return 'vs';
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
+/**
+ * Props for the `MonacoSqlView` component.
+ */
 interface MonacoSqlViewProps {
+  /** The SQL lineage node containing the DDL script to display. */
   node: LineageNode;
+  /** An optional search query for highlighting specific terms within the script. */
   findQuery?: string;
 }
 
+/**
+ * A read-only SQL editor component powered by Monaco.
+ * 
+ * This component provides:
+ * - High-fidelity SQL syntax highlighting.
+ * - Dynamic theme synchronization with VS Code.
+ * - Automatic search term highlighting using the Monaco Decorations API.
+ * - Automatic scrolling to the first match when a search query is provided.
+ * 
+ * @param props - Component properties.
+ * @returns A containerized Monaco editor for SQL DDL viewing.
+ */
 export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const contentListenerRef = useRef<Monaco.IDisposable | null>(null);
   const [monacoTheme, setMonacoTheme] = useState(getMonacoTheme);
 
-  // Sync Monaco theme when VS Code theme changes
+  // Synchronize Monaco theme whenever the VS Code environment triggers a theme change.
   useEffect(() => {
     const observer = new MutationObserver(() => setMonacoTheme(getMonacoTheme()));
     observer.observe(document.body, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
     return () => observer.disconnect();
   }, []);
 
-  // Apply inline search highlights using decorations API
+  /**
+   * Applies inline highlights to the editor based on the provided search query.
+   * 
+   * @param ed - The active Monaco editor instance.
+   * @param query - The search term to highlight.
+   */
   function applyHighlights(ed: Monaco.editor.IStandaloneCodeEditor, query: string | undefined) {
     if (!decorationsRef.current) {
       decorationsRef.current = ed.createDecorationsCollection([]);
@@ -62,13 +90,13 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
         options: { inlineClassName: 'monaco-search-highlight' },
       }))
     );
-    // Scroll to first match
+    // Automatically scroll the first match into the center of the viewport.
     if (matches.length > 0) {
       ed.revealRangeInCenterIfOutsideViewport(matches[0].range);
     }
   }
 
-  // When findQuery changes, apply highlights immediately if editor is ready
+  // Reactive effect to re-apply highlights whenever the findQuery prop changes.
   useEffect(() => {
     if (editorRef.current) {
       applyHighlights(editorRef.current, findQuery);
@@ -76,7 +104,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findQuery]);
 
-  // Dispose decorations and content listener on unmount
+  // Ensure decorations and listeners are correctly disposed of when the component unmounts.
   useEffect(() => {
     return () => {
       decorationsRef.current?.clear();
@@ -86,14 +114,17 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     };
   }, []);
 
+  /** 
+   * Callback invoked when the Monaco editor instance has mounted successfully.
+   */
   function handleEditorMount(ed: Monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = ed;
-    // After model content settles (e.g. new node), re-apply highlights.
+    // Monitor model content changes to ensure highlights are persistent.
     contentListenerRef.current?.dispose();
     contentListenerRef.current = ed.onDidChangeModelContent(() => {
       applyHighlights(ed, findQuery);
     });
-    // Apply immediately if query is already set
+    // Apply initial highlights immediately if a query is already provided.
     applyHighlights(ed, findQuery);
   }
 
@@ -101,7 +132,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--ln-bg)' }}>
-      {/* Header */}
+      {/* Detail Header showing qualified name and object type */}
       <div
         style={{
           padding: '6px 12px',
@@ -122,7 +153,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
         </span>
       </div>
 
-      {/* Monaco Editor */}
+      {/* Primary Editor Surface */}
       <div style={{ flex: 1, minHeight: 0 }}>
         <Editor
           language="sql"

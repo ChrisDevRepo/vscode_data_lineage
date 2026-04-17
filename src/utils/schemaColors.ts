@@ -1,6 +1,10 @@
 import type { ObjectType } from '../engine/types';
 import { schemaKey } from './sql';
 
+/**
+ * Visual markers (icons) associated with different SQL object types.
+ * Used for consistent identification in UI lists and labels.
+ */
 export const TYPE_COLORS: Record<ObjectType, { icon: string }> = {
   table:     { icon: '■' },
   view:      { icon: '●' },
@@ -9,6 +13,9 @@ export const TYPE_COLORS: Record<ObjectType, { icon: string }> = {
   external:  { icon: '⬡' },
 };
 
+/**
+ * Human-readable display labels for SQL object types.
+ */
 export const TYPE_LABELS: Record<ObjectType, string> = {
   table: 'Table',
   view: 'View',
@@ -17,10 +24,10 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
   external: 'External Table',
 };
 
-// ─── Tableau 10 color palette (official colors) ─────────────────────────────
-// Light theme: Use original Tableau 10 colors (vibrant, high contrast)
-// Dark theme: Use lightened variants for better visibility on dark backgrounds
-
+/**
+ * Primary color palette for light themes, based on Tableau 10.
+ * Provides high-contrast, vibrant colors for distinct schema identification.
+ */
 export const SCHEMA_COLORS_LIGHT = [
   '#4E79A7', // Tableau Blue
   '#F28E2B', // Tableau Orange
@@ -34,9 +41,13 @@ export const SCHEMA_COLORS_LIGHT = [
   '#BAB0AC', // Tableau Gray
 ];
 
-// Dark theme: Lightened and desaturated for better contrast on dark backgrounds
+/**
+ * Primary color palette for dark themes.
+ * Uses lightened and desaturated variants of the Tableau 10 palette
+ * to maintain visibility and accessibility on dark backgrounds.
+ */
 const SCHEMA_COLORS_DARK = [
-  '#8AB8E6', // Lighter Blue (more visible on dark)
+  '#8AB8E6', // Lighter Blue
   '#FFAD5C', // Lighter Orange
   '#FF8A8C', // Lighter Red
   '#A1D6D1', // Lighter Teal
@@ -48,7 +59,13 @@ const SCHEMA_COLORS_DARK = [
   '#D9D2CE', // Lighter Gray
 ];
 
-/** Deterministic hash so the same schema always gets the same color */
+/**
+ * Generates a deterministic 32-bit integer hash for a given string.
+ * This ensures that the same schema name always resolves to the same color index.
+ * 
+ * @param str - The input string to hash.
+ * @returns A deterministic hash value.
+ */
 export function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -59,27 +76,38 @@ export function hashString(str: string): number {
   return hash;
 }
 
+/**
+ * Retrieves a deterministic theme-aware color for a given SQL schema.
+ * 
+ * @param schema - The schema name.
+ * @param forceLight - If true, ignores the current theme and returns the light variant.
+ * @returns A CSS hex color string.
+ */
 export function getSchemaColor(schema: string, forceLight?: boolean): string {
   const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
   const idx = Math.abs(hashString(schemaKey(schema))) % colors.length;
   return colors[idx];
 }
 
-// ─── Virtual External Node Colors ────────────────────────────────────────────
-// Fixed colors for virtual nodes (file, cross-DB) — deliberately NOT from Tableau 10.
-// Steel gray signals "external, unverified" and is visually distinct from all 10 schema colors.
-
+/** Fixed color for virtual external nodes in light theme (e.g., files, cross-DB refs). */
 export const VIRTUAL_EXT_COLOR_LIGHT = '#6B7A8D';
+/** Fixed color for virtual external nodes in dark theme (e.g., files, cross-DB refs). */
 export const VIRTUAL_EXT_COLOR_DARK  = '#94A3B8';
 
-/** Get the fixed color for virtual external nodes (file/cross-DB), theme-aware. */
+/** 
+ * Returns the theme-aware fixed color for virtual external nodes.
+ * Virtual nodes use a distinct steel-gray palette to differentiate them from verified schemas.
+ * 
+ * @returns A CSS hex color string.
+ */
 export function getVirtualExtColor(): string {
   return isDarkTheme() ? VIRTUAL_EXT_COLOR_DARK : VIRTUAL_EXT_COLOR_LIGHT;
 }
 
-// ─── AI Highlight / Badge Colors ─────────────────────────────────────────────
-// Two-letter codes (BU=blue GN=green RD=red YE=yellow OR=orange GY=grey).
-// Values are CSS variable references — themed automatically via --vscode-charts-* tokens.
+/**
+ * Mapping of two-letter AI color codes to CSS variables.
+ * These variables are themed automatically via --vscode-charts-* tokens.
+ */
 export const AI_COLOR_HEX: Record<string, string> = {
   bu: 'var(--ln-ai-bu)',
   gn: 'var(--ln-ai-gn)',
@@ -89,20 +117,29 @@ export const AI_COLOR_HEX: Record<string, string> = {
   gy: 'var(--ln-ai-gy)',
 };
 
-// ─── Semantic Role → Color Code Mapping ─────────────────────────────────────
-// AI uses semantic roles; the app maps them to existing two-letter color codes.
+/**
+ * Maps semantic AI roles to their corresponding two-letter color codes.
+ */
 export const AI_ROLE_TO_COLOR: Record<string, string> = {
   source: 'bu', transform: 'or', target: 'gn',
   good: 'gn', warn: 'ye', fail: 'rd',
   gy: 'gy',
 };
 
-/** Resolve a semantic role (or legacy color code) to a two-letter color code. */
+/** 
+ * Resolves a semantic AI role or a raw color code to a standard two-letter color code.
+ * 
+ * @param role - The semantic role (e.g., 'source', 'target') or a color code.
+ * @returns A valid two-letter color code, defaulting to 'gy' (gray).
+ */
 export function resolveAiColor(role: string): string {
   return AI_ROLE_TO_COLOR[role] ?? 'gy';
 }
 
-// AI glow/shadow for boxShadow — CSS vars with alpha baked in (theme-aware).
+/**
+ * Mapping of AI color codes to theme-aware glow and shadow CSS variables.
+ * Used for highlighting nodes in the graph canvas.
+ */
 export const AI_COLOR_GLOW: Record<string, { glow: string; shadow: string }> = {
   bu: { glow: 'var(--ln-ai-bu-glow)', shadow: 'var(--ln-ai-bu-shadow)' },
   gn: { glow: 'var(--ln-ai-gn-glow)', shadow: 'var(--ln-ai-gn-shadow)' },
@@ -112,7 +149,12 @@ export const AI_COLOR_GLOW: Record<string, { glow: string; shadow: string }> = {
   gy: { glow: 'var(--ln-ai-gy-glow)', shadow: 'var(--ln-ai-gy-shadow)' },
 };
 
-/** Detect if VS Code is running a dark theme */
+/** 
+ * Detects if the VS Code environment is currently using a dark or high-contrast theme.
+ * This is determined by inspecting the `data-vscode-theme-kind` attribute on the document body.
+ * 
+ * @returns `true` if a dark theme is active; otherwise `false`.
+ */
 export function isDarkTheme(): boolean {
   if (typeof document === 'undefined') return false;
   const kind = document.body?.dataset?.vscodeThemeKind;

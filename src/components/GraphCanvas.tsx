@@ -42,77 +42,147 @@ import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolv
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 import { notifyUser } from '../utils/notify';
 
-// IMPORTANT: nodeTypes must be defined at module level — not inside the component.
-// If defined inside, React Flow remounts all nodes on every render.
+/**
+ * Mapping of custom node types for React Flow.
+ * 
+ * IMPORTANT: nodeTypes must be defined at module level — not inside the component.
+ * If defined inside, React Flow remounts all nodes on every render, causing
+ * severe performance degradation and loss of state.
+ */
 const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode } satisfies NodeTypes;
 
+/** Padding factor applied when fitting the graph view. */
 const FIT_VIEW_PADDING = 0.15;
+
+/** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
-/** Max time to wait for a pending zoom target to appear in flowNodes before giving up. */
+
+/** 
+ * Max time (ms) to wait for a pending zoom target to appear in flowNodes before 
+ * giving up and showing a warning. 
+ */
 const PENDING_ZOOM_TIMEOUT_MS = 5000;
 
+/**
+ * Props for the {@link GraphCanvas} component.
+ */
 interface GraphCanvasProps {
+  /** Array of nodes formatted for React Flow. */
   flowNodes: FlowNode[];
+  /** Array of edges formatted for React Flow. */
   flowEdges: FlowEdge[];
+  /** Current state of the lineage trace or pathfinding operation. */
   trace: TraceState;
+  /** Current filter settings (schemas, types, search term, etc.). */
   filter: FilterState;
+  /** High-level metrics about the current graph subset. */
   metrics: { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } | null;
+  /** ID of the node currently highlighted/selected by the user. */
   highlightedNodeId?: string | null;
+  /** The underlying graphology instance for structural analysis. */
   graph?: Graph | null;
+  /** Extension configuration settings. */
   config: ExtensionConfig;
+  /** Callback fired when a node is clicked. */
   onNodeClick: (nodeId: string, findQuery?: string) => void;
+  /** Callback fired when a node is right-clicked. */
   onNodeContextMenu: (nodeId: string, x: number, y: number) => void;
+  /** Callback to start a trace immediately from a node. */
   onStartTraceImmediate: (nodeId: string) => void;
+  /** Callback to apply a trace configuration (upstream/downstream levels). */
   onTraceApply: (config: { upstreamLevels: number; downstreamLevels: number }) => void;
+  /** Callback to end the current trace/path mode. */
   onTraceEnd: (onComplete?: () => void) => void;
+  /** Callback to reset all filters and traces. */
   onResetAll: () => void;
+  /** Callback to toggle visibility of a specific object type. */
   onToggleType: (type: ObjectType) => void;
-  // searchTerm is local to SearchWithAutocomplete — no longer passed through props
+  /** Callback to toggle 'Isolated Nodes' filter. */
   onToggleIsolated: () => void;
+  /** Callback to toggle focus on a specific schema. */
   onToggleFocusSchema: (schema: string) => void;
+  /** Callback to toggle visibility of a specific schema. */
   onToggleSchema?: (schema: string) => void;
+  /** Callback to select all schemas in the filter. */
   onSelectAllSchemas?: (schemas: string[]) => void;
+  /** Callback to deselect all schemas in the filter. */
   onSelectNoneSchemas?: (schemas: string[]) => void;
+  /** Callback to toggle visibility of external references. */
   onToggleExternalRefs?: () => void;
+  /** Callback to toggle a specific external reference sub-type. */
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
+  /** Array of active exclusion patterns. */
   exclusionPatterns?: string[];
+  /** Callback to add a new exclusion pattern. */
   onAddExclusionPattern?: (pattern: string) => void;
+  /** Callback to remove an existing exclusion pattern. */
   onRemoveExclusionPattern?: (pattern: string) => void;
+  /** List of all schemas available in the model. */
   availableSchemas?: string[];
   /** Schemas with at least one node after all filters — for legend display. */
   renderedSchemas?: string[];
+  /** Callback to refresh the current project data. */
   onRefresh: () => void;
+  /** Callback to trigger a full graph rebuild (e.g. after filter change). */
   onRebuild?: () => void;
+  /** Callback to navigate back to the previous screen. */
   onBack: () => void;
+  /** Callback to open the DDL viewer for the selected object. */
   onOpenDdlViewer?: () => void;
+  /** Whether the detailed search sidebar is currently open. */
   isDetailSearchOpen?: boolean;
+  /** Callback to toggle the detailed search sidebar. */
   onToggleDetailSearch?: () => void;
+  /** The full database model (catalog and graph). */
   model?: DatabaseModel | null;
+  /** ID of the node currently shown in the info bar. */
   infoBarNodeId?: string | null;
+  /** Callback to close the info bar. */
   onCloseInfoBar?: () => void;
+  /** Current state of the graph analysis (SCC, Hubs, etc.). */
   analysisMode?: AnalysisMode | null;
+  /** Callback to start a specific analysis. */
   onOpenAnalysis?: (type: AnalysisType) => void;
+  /** Callback to exit analysis mode. */
   onCloseAnalysis?: () => void;
+  /** Callback to focus a specific group within the analysis results. */
   onSelectAnalysisGroup?: (groupId: string) => void;
+  /** Callback to clear the active analysis group focus. */
   onClearAnalysisGroup?: () => void;
+  /** Callback to find and apply a path between two nodes. */
   onApplyPath?: (targetNodeId: string) => boolean;
+  /** Whether the graph is currently being rebuilt. */
   isRebuilding?: boolean;
+  /** Display name of the active source (e.g. dacpac filename). */
   sourceName?: string;
+  /** List of saved filter profiles (bookmarks). */
   filterProfiles?: FilterProfile[];
+  /** ID of the active project. */
   activeProjectId?: string | null;
+  /** ID of the active saved view. */
   activeViewId?: string | null;
+  /** Whether the current view has unsaved changes. */
   isViewModified?: boolean;
+  /** Callback to save the current view. */
   onSaveView?: (name: string) => void;
+  /** Callback to apply a saved filter profile. */
   onApplyView?: (profile: FilterProfile) => void;
+  /** Callback to delete a saved view. */
   onDeleteView?: (profileId: string) => void;
+  /** Callback to update an existing saved view. */
   onUpdateView?: (profileId: string) => void;
+  /** Whether any filters have changed relative to the default or last saved state. */
   isFilterDirty?: boolean;
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
+  /** The current graph abstraction level (full object graph or overview schema graph). */
   graphMode?: GraphMode;
-  /** Object-level node IDs that passed all filters (from useGraphology flowNodes).
-   *  In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth. */
+  /** 
+   * Object-level node IDs that passed all filters (from useGraphology flowNodes).
+   * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth. 
+   */
   filteredObjectIds?: Set<string>;
+  /** Callback for double-clicking a schema node (triggers drill-down). */
   onSchemaNodeDoubleClick?: (schemaName: string) => void;
   /** Called when user saves a trace/path result as an advanced bookmark. */
   onSaveTraceBookmark?: (
@@ -162,6 +232,23 @@ interface GraphCanvasProps {
   filteredOutCount?: number;
 }
 
+/**
+ * The primary canvas component for the lineage visualization.
+ * 
+ * This component orchestrates the graph display (via React Flow), the various
+ * floating control panels (Toolbar, Search, Legend), and the specialized 
+ * interaction modes (Trace, Path, Analysis).
+ * 
+ * It manages:
+ * - Graph layout and viewport control (fit view, zoom to node).
+ * - Multi-layered filtering (types, schemas, exclusions).
+ * - Selection and highlighting logic.
+ * - Drill-down transitions between Overview (schema) and Full (object) modes.
+ * - State management for advanced bookmarks and AI-generated views.
+ * 
+ * @param props - The component props.
+ * @returns A complex functional component.
+ */
 export function GraphCanvas({
   flowNodes,
   flowEdges,
@@ -333,12 +420,11 @@ export function GraphCanvas({
   );
 
   // Zoom and center on a specific node
-  const log = useCallback((text: string, level: 'info' | 'debug' | 'trace' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level }), []);
+  const log = useCallback((text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level }), []);
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
-        log(`[Filter] zoomToNode: centering on "${nodeId}" at (${targetNode.position.x},${targetNode.position.y})`);
         setCenter(
           targetNode.position.x + NODE_WIDTH / 2,
           targetNode.position.y + NODE_HEIGHT / 2,
@@ -354,13 +440,12 @@ export function GraphCanvas({
   // Execute search: find node and zoom to it (drills down from overview if needed)
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const label = schema ? `[${schema}].[${name}]` : name;
-    log(`[Filter] Quick Jump: search="${label}", graphMode=${graphMode}, flowNodes=${flowNodes.length}`);
     const foundNode = schema
       ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
       : flowNodes.find(n => n.data.label === name);
 
     if (foundNode) {
-      log(`[Filter] Quick Jump: "${label}" → found ${foundNode.id}, zooming`);
+      log(`[Filter] Quick Jump: "${label}" → found ${foundNode.id}`);
       onNodeClick(foundNode.id);
       zoomToNode(foundNode.id);
       return;
@@ -442,11 +527,9 @@ export function GraphCanvas({
           if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
           // Fall through to fitView
         } else {
-          log(`[Filter] pendingZoom: "${zoomTarget}" not yet in flowNodes (len=${flowNodes.length}, elapsed=${elapsed}ms), deferring`);
-          return; // Don't consume — wait for the next flowNodes update
+          return; // Don't consume — wait for the next flowNodes update (silent; fires every render)
         }
       } else {
-        log(`[Filter] pendingZoom: "${zoomTarget}" found in flowNodes, zooming+clicking`);
         pendingZoomRef.current = null;
         pendingClickRef.current = null;
         if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }

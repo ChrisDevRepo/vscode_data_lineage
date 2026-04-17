@@ -32,9 +32,15 @@ const BLOCK = {
 
   memoryProtocol:
     '### MEMORY TIERING PROTOCOL\n' +
-    '1. **THE BLACKBOARD** (Short Memory): A rolling executive synthesis of the cumulative logic found so far. It must tell the "Story of the Data" discovered across all hops. **Delegate all topological facts to the Map.**\n' +
-    '2. **THE ARCHIVE** (Long Memory): Your technical "Hard Drive". This is the **ONLY source** for the final enrich_view — raw SQL access is revoked after every hop. Every `detail_analysis` entry MUST already carry the raw material every output field in the `### AI OUTPUT TEMPLATES` block of the system prompt will need: LaTeX formulas for computed columns, markdown tables for column renames, named columns (never "various"), named expressions (never "certain conditions"), and explicit upstream/downstream relationships. There is no "explain more" step at synthesis.\n' +
-    '3. **THE MAP** (System State): Topological grounding. Provides your `navigation_path` (Origin -> ... -> Focus) and the list of open nodes.',
+    '1. **THE BLACKBOARD** (Short Memory). Write via `narrative_update` each hop. Rolling executive synthesis of cumulative business logic. Target 200-400 chars per hop; dense business insights only. Delegate topological facts to the Map — do not restate "I visited X then Y".\n' +
+    '2. **THE ARCHIVE** (Long Memory). Write to `detail_analysis` for every `relevant`/`pass` verdict. This is the ONLY source at synthesis — raw SQL access is revoked after each hop. Target >=400 chars per `relevant` node using this 5-block structure:\n' +
+    '   - **Business Purpose**: one sentence\n' +
+    '   - **Transforms**: SQL evidence (INSERT/SELECT/UPDATE/JOIN/CASE/ISNULL/COALESCE expressions)\n' +
+    '   - **Column I/O**: input columns -> output columns (markdown table for renames)\n' +
+    '   - **Relationships**: upstream / downstream in this flow\n' +
+    '   - **Risks/Notes**: nullability, precision, edge cases\n' +
+    '   Use LaTeX formulas ($expr = ...$) for computed columns, named columns (not "various"), named expressions (not "certain conditions"). Thin archive = thin final answer. An under-documented hop is a wasted hop.\n' +
+    '3. **THE MAP** (System State): Topological grounding. Provides `navigation_path` (Origin -> ... -> Focus) and the agenda.',
 
   routingRules:
     '### GROUNDED ROUTING (Selection-Inference)\n' +
@@ -47,6 +53,20 @@ const BLOCK = {
     '- **OBJECTIVE**: Every sub-question for a neighbor must be goal-oriented (e.g., "Check if this proc applies the 10% VAT rate").',
 } as const;
 
+/**
+ * Constructs the primary navigation prompt for the autonomous agent.
+ *
+ * @remarks
+ * This prompt establishes the "Map & Router" pattern, defining how the AI should
+ * interact with the topological map, manage its internal memory (Blackboard and Archive),
+ * and validate its routing decisions through technical hypotheses.
+ *
+ * It tailors the persona based on whether the focus is on functional business logic
+ * (Blackboard mode) or specific column-level data flow (Column Trace mode).
+ *
+ * @param mode - The exploration mode ('blackboard' or 'column_trace').
+ * @returns A structured markdown string containing the role, workflow, and grounding protocols.
+ */
 export function buildNavigationPrompt(mode: 'blackboard' | 'column_trace'): string {
   const modeHeader = mode === 'column_trace'
     ? '# ROLE: EXPERT DATA LINEAGE ANALYST (Column Focus)'
@@ -68,6 +88,18 @@ export function buildNavigationPrompt(mode: 'blackboard' | 'column_trace'): stri
   ].join('\n');
 }
 
+/**
+ * Constructs a reminder prompt for the final synthesis phase.
+ *
+ * @remarks
+ * This prompt transitions the AI from "Exploration" to "Documentation" mode,
+ * reminding it that its evidence is now strictly limited to the `Detail Archive`
+ * it built during the previous hops. It enforces structural and formatting
+ * requirements for the final report.
+ *
+ * @param question - The original root question or intent provided by the user.
+ * @returns A markdown string defining the synthesis requirements and constraints.
+ */
 export function buildSynthesisReminder(question: string): string {
   return (
     '# PHASE 3: HOLISTIC SYNTHESIS\n' +
@@ -82,6 +114,16 @@ export function buildSynthesisReminder(question: string): string {
   );
 }
 
+/**
+ * Constructs the final synthesis trigger prompt.
+ *
+ * @remarks
+ * This is delivered to the AI once the navigation agenda is empty and all relevant
+ * nodes have been visited. it instructs the AI to use the `lineage_enrich_view` tool
+ * to submit its final consolidated findings.
+ *
+ * @returns A markdown string signifying the end of navigation and the start of synthesis.
+ */
 export function buildSynthesisPrompt(): string {
   return [
     '# SYNTHESIS MODE: Navigation Complete',

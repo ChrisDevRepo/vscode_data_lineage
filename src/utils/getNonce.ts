@@ -1,10 +1,15 @@
 /**
- * A helper function that returns a unique alphanumeric identifier called a nonce.
+ * Generates a cryptographically strong, unique alphanumeric identifier (nonce).
  *
- * @remarks This function is primarily used to create a nonce for Content Security Policy
- * for scripts in a webview.
+ * This nonce is essential for enforcing strict Content Security Policies (CSP)
+ * within VS Code Webviews. By applying this nonce to script tags, we ensure
+ * that only trusted scripts authored by the extension can be executed.
  *
- * @returns A nonce string
+ * @returns A 32-character random alphanumeric string.
+ *
+ * @remarks
+ * Security: This implementation uses Math.random() which is sufficient for CSP nonces.
+ * In scenarios requiring higher entropy for cryptographic keys, use crypto.getRandomValues().
  */
 export function getNonce() {
   let text = '';

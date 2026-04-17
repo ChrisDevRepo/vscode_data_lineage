@@ -24,8 +24,19 @@ import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
 import { ColumnStore } from './columnStore';
 import { SYSTEM_SCHEMAS, XML_METHODS, CLR_TYPE_METHODS } from './shared/sqlMetadata';
 
-// ─── Public API ─────────────────────────────────────────────────────────────
 
+/**
+ * Builds a complete DatabaseModel from extracted objects and dependencies.
+ * Performs schema normalization, catalog construction, and neighbor indexing.
+ *
+ * @param objects - Objects in the selected schemas.
+ * @param deps - Extracted dependencies (XML or regex-based).
+ * @param allObjects - Full catalog of objects for cross-schema resolution.
+ * @param currentDatabase - Name of the active database (for 3-part name resolution).
+ * @param externalRefsEnabled - Whether to create virtual nodes for external files/DBs.
+ * @param maxNodes - Budget for virtual node creation.
+ * @returns A fully assembled DatabaseModel.
+ */
 export function buildModel(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
@@ -79,6 +90,9 @@ export function buildModel(
  * Index columns and DDL from LineageNode into ColumnStore for fast lookup.
  * ColumnStore provides O(1) indexed access for AI tools + column-trace auto-discover.
  * Inline data on nodes is preserved until detail search is migrated to extension host.
+ *
+ * @param model - The database model to index.
+ * @param store - The ColumnStore instance to populate.
  */
 export function populateColumnStore(model: DatabaseModel, store: ColumnStore): void {
   for (const node of model.nodes) {
@@ -93,7 +107,6 @@ export function populateColumnStore(model: DatabaseModel, store: ColumnStore): v
   }
 }
 
-// ─── Catalog Builder ────────────────────────────────────────────────────────
 
 /**
  * Build a display catalog keyed by normalized node ID.
@@ -116,7 +129,6 @@ function buildCatalog(
   return catalog;
 }
 
-// ─── NeighborIndex Builder ───────────────────────────────────────────────────
 
 /** Build an O(1) neighbor lookup from edges plus optional cross-schema neighbor pairs. */
 function buildNeighborIndex(
@@ -145,7 +157,6 @@ function buildNeighborIndex(
   return index;
 }
 
-// ─── Name Parsing ───────────────────────────────────────────────────────────
 
 /** Parse "[schema].[object]" — returns catalog-original casing for schema and name.
  *  Uses bracket-aware splitting so dots inside [bracket identifiers] are not treated as
@@ -185,12 +196,6 @@ function isSchemaQualified(name: string): boolean {
   return stripBrackets(name).includes('.');
 }
 
-/** Well-known system schemas whose objects must never appear as lineage nodes.
- *  msdb/tempdb/model/master are SQL Server system databases whose schemas (dbo, etc.)
- *  are commonly referenced in SPs but are never part of user lineage. */
-
-/** SQL Server XML data type methods that look like schema.object to the parser.
- *  e.g. [ref].[value], [resume].[nodes] — never real catalog references. */
 
 /** True when the schema prefix of a schema-qualified name is a system schema. */
 function isSystemRef(name: string): boolean {
@@ -198,6 +203,10 @@ function isSystemRef(name: string): boolean {
   return SYSTEM_SCHEMAS.has(schema);
 }
 
+/**
+ * Infers whether a body script writes to a specific object or merely reads from it.
+ * Uses a heuristic regex matching DML keywords followed by the object name.
+ */
 function inferBodyDirection(body: string, schema: string, name: string): 'write' | 'read' {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(
@@ -223,8 +232,17 @@ function addEdge(
   }
 }
 
-// ─── Schema Computation ────────────────────────────────────────────────────
 
+/**
+ * Aggregates schema-level metrics (e.g., node count, types distribution) from a list of resolved `LineageNode`s.
+ *
+ * This function groups nodes by their canonical schema name, computing statistics used to populate
+ * schema-based filtering controls and architectural overviews. Virtual nodes (e.g., files or DBs)
+ * are excluded from the aggregation.
+ *
+ * @param nodes - The array of structurally resolved `LineageNode`s to aggregate.
+ * @returns An array of `SchemaInfo` aggregations, sorted descending by total node count.
+ */
 export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
   const map = new Map<string, SchemaInfo>();
   for (const node of nodes) {
@@ -241,7 +259,6 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
   return Array.from(map.values()).sort((a, b) => b.nodeCount - a.nodeCount);
 }
 
-// ─── Core Pipeline ──────────────────────────────────────────────────────────
 
 /** Convert ExtractedObjects to LineageNodes, deduplicating by normalized ID. */
 function buildNodeList(objects: ExtractedObject[]): { nodes: LineageNode[]; nodeIds: Set<string> } {
@@ -600,7 +617,6 @@ function buildNodesAndEdges(
   return { nodes, edges, stats, neighborPairs };
 }
 
-// ─── Virtual Node Helpers ───────────────────────────────────────────────────
 
 /** Deterministic hash of a URL string → 8-char hex for stable virtual node IDs. */
 function hashUrl(url: string): string {
@@ -623,10 +639,6 @@ function lastUrlSegment(url: string, maxLen = 40): string {
 /**
  * Create virtual external nodes for file refs (OPENROWSET, COPY FROM, BULK FROM)
  * and cross-database 3-part name references.
- *
- * Context-aware 3-part resolution:
- * - DMV path: if db === currentDatabase → treat as local (same-DB self-reference)
- * - Dacpac path: if 2-part [schema].[object] exists in nodeIds → treat as local
  */
 function createVirtualNodes(
   nodes: LineageNode[],
@@ -689,8 +701,6 @@ function createVirtualNodes(
   };
 
   // B1. From regex parser (dot-separated "db.schema.object" strings, already lowercase).
-  // CLR method false positives are filtered upstream in normalizeCrossDb() before
-  // reaching this set — no additional filter needed here.
   for (const [nodeId, { sources, targets }] of crossDbRegexRefs) {
     for (const ref of sources) {
       const parts = ref.split('.');
@@ -715,10 +725,6 @@ function createVirtualNodes(
   }
 
   // B2. From DMV metadata (bracketed 3-part "[db].[schema].[object]" strings)
-  // sys.sql_expression_dependencies can report CLR type method calls (HierarchyID,
-  // XML, geometry/geography) as cross-DB refs when a table/CTE alias is mistaken for
-  // a database name (e.g. EMP_cte.OrganizationNode.GetAncestor, jc.Resume.nodes).
-  // Filter: if the object part (3rd) is a known CLR built-in method → skip.
   for (const [sourceId, rawTargets] of crossDbMetaDeps) {
     for (const rawTarget of rawTargets) {
       const parts = splitSqlName(rawTarget).map(p => stripBrackets(p));
@@ -729,7 +735,6 @@ function createVirtualNodes(
       const localId = `[${schema}].[${object}]`.toLowerCase();
       const crossDbId = `[${db}].[${schema}].[${object}]`.toLowerCase();
       if (isLocalRef(db, localId)) {
-        // Same-DB ref → add as local edge if node exists
         if (nodeIds.has(localId)) {
           addEdge(edges, edgeKeys, sourceId, localId, 'body');
         }

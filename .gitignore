@@ -41,3 +41,7 @@ GEMINI.md
 # Internal Developer Docs
 docs-internal/
 **/docs-internal/**
+
+# Verification scripts and artifacts
+scripts/
+adventure_works_graph.json

@@ -5,22 +5,52 @@ import type { CustomNodeData } from '../components/CustomNode';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
 import { buildGraph, buildGraphNoLayout, getGraphMetrics } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
-import { compileExclusionPattern } from '../utils/sql';
+import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
 
+/**
+ * Return type for the useGraphology hook, encapsulating graph data and builders.
+ */
 interface UseGraphologyReturn {
+  /** The list of nodes formatted for React Flow rendering. */
   flowNodes: FlowNode<CustomNodeData>[];
+  /** The list of edges formatted for React Flow rendering. */
   flowEdges: FlowEdge[];
+  /** The underlying graphology instance for structural analysis. */
   graph: Graph | null;
+  /** High-level metrics derived from the current graph (degree, depth, etc.). */
   metrics: ReturnType<typeof getGraphMetrics> | null;
-  /** When > 0, the render limit was hit — value is the actual node count that exceeded the limit. */
+  /** When > 0, indicates the render limit was exceeded; contains the actual node count. */
   renderLimitHit: number;
-  /** Node count after all filters — available before dagre, used by useOverviewMode for threshold decisions. */
+  /** Total number of nodes remaining after all filters are applied. */
   filteredCount: number;
-  /** Unique schema names from nodes that survived all filters — for legend display. */
+  /** Unique schema names found in the filtered node set, used for the legend. */
   renderedSchemas: string[];
+  /**
+   * Rebuilds the graph from the database model based on the current filter and configuration.
+   * 
+   * @param model - The database model to filter and build from.
+   * @param filter - The current UI filter state.
+   * @param config - Optional configuration overrides.
+   * @param forceLayout - Whether to force a full Dagre layout even if the overview threshold is hit.
+   * @returns The total number of nodes in the resulting graph.
+   */
   buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => number;
 }
 
+/**
+ * Primary hook for managing graph state, filtering, and layout orchestration.
+ * 
+ * @remarks
+ * This hook implements a high-performance filtering pipeline that runs on every
+ * state change. It supports multiple rendering modes:
+ * 1. **Full Mode**: Executes the Dagre layout engine for precise positioning.
+ * 2. **Overview Mode**: Skips layout and renders nodes at origin to support massive graphs.
+ * 3. **Pruned Mode**: Rejects rendering entirely if hard limits are exceeded.
+ * 
+ * The pipeline follows this order: Schema → Type → Exclusion → Isolation → Allowlist.
+ * 
+ * @returns An object containing the current graph state and the build function.
+ */
 export function useGraphology(): UseGraphologyReturn {
   const [flowNodes, setFlowNodes] = useState<FlowNode<CustomNodeData>[]>([]);
   const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([]);
@@ -31,9 +61,12 @@ export function useGraphology(): UseGraphologyReturn {
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false): number => {
-    const log = (text: string, level: 'info' | 'debug' | 'trace' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
+    const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
-    log(`[Filter] Schema: ${model.nodes.length} → ${filtered.nodes.length} nodes (${model.nodes.length - filtered.nodes.length} removed, maxNodes=${config.maxNodes})`);
+    const removed = model.nodes.length - filtered.nodes.length;
+    if (removed > 0) {
+      log(`[Filter] Schema: ${model.nodes.length} → ${filtered.nodes.length} nodes (${removed} removed, maxNodes=${config.maxNodes})`);
+    }
 
     // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
@@ -76,7 +109,6 @@ export function useGraphology(): UseGraphologyReturn {
     // Guard 2: overview threshold — build graph for traces/metrics, skip expensive dagre layout.
     // Bypassed when forceLayout=true (user manually toggled overview→full or drilled down).
     if (!forceLayout && count > config.overview.threshold) {
-      log(`[Filter] Guard: overview threshold (${count} > threshold=${config.overview.threshold}, forceLayout=false) — skipping dagre`);
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
       setFlowEdges(result.flowEdges);
@@ -85,11 +117,13 @@ export function useGraphology(): UseGraphologyReturn {
       return count;
     }
 
-    // Full mode — dagre runs
+    // Full mode — dagre runs. Log only when layout is slow enough to matter.
     const t0 = performance.now();
     const result = buildGraph(allowlistFiltered, config);
-    const ms = (performance.now() - t0).toFixed(1);
-    log(`[Filter] Layout: dagre complete — ${result.flowNodes.length} nodes, ${result.flowEdges.length} edges (${ms}ms)`);
+    const ms = performance.now() - t0;
+    if (ms > 100) {
+      log(`[Filter] Layout: dagre complete — ${result.flowNodes.length} nodes, ${result.flowEdges.length} edges (${ms.toFixed(0)}ms)`);
+    }
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
@@ -99,59 +133,3 @@ export function useGraphology(): UseGraphologyReturn {
 
   return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel };
 }
-
-// ─── Exclusion Filter (interactive / render-time) ────────────────────────────
-// Separate from dacpacExtractor.applyExclusionPatterns, which is load-time only
-// (applied once when the data source is loaded, driven by config.excludePatterns).
-// This filter is applied on every graph rebuild driven by filter.exclusionPatterns
-// from the UI ExclusionDropdown — instant effect, no data reload required.
-
-function applyExclusionFilter(model: DatabaseModel, patterns: string[]): DatabaseModel {
-  if (!patterns || patterns.length === 0) return model;
-
-  const regexes: RegExp[] = [];
-  for (const p of patterns) {
-    try { regexes.push(compileExclusionPattern(p)); } catch { console.debug(`[Exclusion] Skipping invalid pattern: ${p}`); }
-  }
-  if (regexes.length === 0) return model;
-
-  const nodes = model.nodes.filter((n) => {
-    const name = `${n.schema}.${n.name}`;
-    return !regexes.some((r) => r.test(name) || r.test(n.fullName));
-  });
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-  return { ...model, nodes, edges };
-}
-
-// ─── Isolation Filter ────────────────────────────────────────────────────────
-
-function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean): DatabaseModel {
-  if (!hideIsolated) return model;
-
-  const connectedIds = new Set<string>();
-  for (const e of model.edges) {
-    connectedIds.add(e.source);
-    connectedIds.add(e.target);
-  }
-
-  const nodes = model.nodes.filter((n) => connectedIds.has(n.id));
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-
-  return { ...model, nodes, edges };
-}
-
-// ─── Allowlist Filter ────────────────────────────────────────────────────────
-// Applied last in the pipeline — only nodes in the allowlist survive.
-// Edges are preserved only when both endpoints are in the allowlist.
-// Empty/absent allowlist = no-op (full graph passes through).
-
-function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
-  if (!allowlist || allowlist.size === 0) return model;
-  const nodes = model.nodes.filter((n) => allowlist.has(n.id));
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-  return { ...model, nodes, edges };
-}
-

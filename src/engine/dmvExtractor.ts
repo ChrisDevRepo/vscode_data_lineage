@@ -17,24 +17,48 @@ import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue } from '../types/mssql';
 import { schemaKey } from '../utils/sql';
 
-// ─── Public API ─────────────────────────────────────────────────────────────
-
+/**
+ * Represents the collection of raw query results from SQL Server Dynamic Management Views (DMVs)
+ * and system catalog tables.
+ * 
+ * Used as the primary input for the extraction engine to build the database model
+ * and resolve schema dependencies.
+ */
 export interface DmvResults {
+  /**
+   * Result set containing core object definitions (tables, views, procedures) and their body scripts.
+   */
   nodes: SimpleExecuteResult;
+  /**
+   * Result set containing column metadata (types, lengths, nullability) for tables, views, and table-valued functions.
+   */
   columns: SimpleExecuteResult;
+  /**
+   * Result set containing raw cross-object dependency edges extracted from `sys.sql_expression_dependencies`.
+   */
   dependencies: SimpleExecuteResult;
-  /** Phase 1 all-objects result: full cross-schema catalog for dependency resolution. */
+  /**
+   * Phase 1 all-objects result: Full cross-schema catalog used for dependency resolution and classification.
+   */
   allObjects?: SimpleExecuteResult;
-  /** Phase 2 constraints result: FK, UQ, CK metadata for table design view. */
+  /**
+   * Phase 2 constraints result: Foreign Key (FK), Unique (UQ), and Check (CK) constraints metadata.
+   */
   constraints?: SimpleExecuteResult;
-  /** Optional Phase 1 platform-info result: EngineEdition + ProductMajorVersion for dbPlatform. */
+  /**
+   * Optional Phase 1 platform-info result: `EngineEdition` and `ProductMajorVersion` to determine the database platform.
+   */
   platformInfo?: SimpleExecuteResult;
 }
 
 /**
- * Phase 1: Build SchemaPreview from the schema-preview query result.
- * Maps (schema_name, type_code, object_count) rows → SchemaInfo[].
+ * Processes the raw schema-preview query results to build a lightweight summary of the database schema.
+ *
+ * This function maps `(schema_name, type_code, object_count)` rows into a structured array of `SchemaInfo` objects.
  * Schema names are preserved in their catalog-original casing.
+ *
+ * @param result - The raw query execution result containing schema object aggregates.
+ * @returns A structured `SchemaPreview` summarizing the schemas, total object count, and potential warnings.
  */
 export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   const colIdx = buildColumnIndex(result);
@@ -67,7 +91,24 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-export function buildModelFromDmv(results: DmvResults, currentDatabase?: string, externalRefsEnabled = true, maxNodes = DEFAULT_CONFIG.maxNodes): DatabaseModel {
+/**
+ * Constructs a comprehensive `DatabaseModel` from raw DMV query results.
+ *
+ * This function orchestrates the extraction of objects, dependencies, and constraints,
+ * and passes them to the `buildModel` engine to resolve edges and infer external references.
+ *
+ * @param results - The aggregate raw DMV results, including nodes, columns, and dependencies.
+ * @param currentDatabase - Optional context of the current database name to resolve local 3-part names.
+ * @param externalRefsEnabled - Determines whether unresolved dependencies should be modeled as external nodes. Defaults to `true`.
+ * @param maxNodes - The safety limit for maximum allowable nodes in the graph. Defaults to `DEFAULT_CONFIG.maxNodes`.
+ * @returns A fully resolved `DatabaseModel` containing the graph structure and structural metadata.
+ */
+export function buildModelFromDmv(
+  results: DmvResults,
+  currentDatabase?: string,
+  externalRefsEnabled = true,
+  maxNodes = DEFAULT_CONFIG.maxNodes
+): DatabaseModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
   const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
@@ -82,7 +123,13 @@ export function buildModelFromDmv(results: DmvResults, currentDatabase?: string,
   return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform };
 }
 
-/** Map SERVERPROPERTY('EngineEdition') + ProductMajorVersion to a human-readable platform string. */
+/**
+ * Maps the SQL Server `SERVERPROPERTY('EngineEdition')` and `ProductMajorVersion`
+ * to a human-readable platform string (e.g., "Azure SQL Database" or "SQL Server 2022").
+ *
+ * @param result - The raw query execution result containing platform information.
+ * @returns A string representing the database platform, or `undefined` if parsing fails.
+ */
 function mapEnginePlatform(result: SimpleExecuteResult): string | undefined {
   if (!result.rows.length) return undefined;
   const colIdx = buildColumnIndex(result);
@@ -109,21 +156,33 @@ function mapEnginePlatform(result: SimpleExecuteResult): string | undefined {
   }
 }
 
-// ─── Column Contract Validation ─────────────────────────────────────────────
-
+/**
+ * Expected columns for each specific DMV query to ensure structural integrity
+ * before processing the results.
+ */
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   'schema-preview': ['schema_name', 'type_code', 'object_count'],
   'all-objects': ['schema_name', 'object_name', 'type_code'],
   nodes: ['schema_name', 'object_name', 'type_code', 'body_script'],
-  columns: ['schema_name', 'table_name', 'ordinal', 'column_name',
+  columns: [
+    'schema_name', 'table_name', 'ordinal', 'column_name',
     'type_name', 'max_length', 'precision', 'scale',
-    'is_nullable', 'is_identity', 'is_computed'],
-  constraints: ['schema_name', 'table_name', 'constraint_type', 'constraint_name',
-    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete'],
-  dependencies: ['referencing_schema', 'referencing_name',
-    'referenced_schema', 'referenced_name'],
+    'is_nullable', 'is_identity', 'is_computed'
+  ],
+  constraints: [
+    'schema_name', 'table_name', 'constraint_type', 'constraint_name',
+    'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete'
+  ],
+  dependencies: ['referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'],
 };
 
+/**
+ * Validates the structure of a given query result against its expected required columns.
+ *
+ * @param name - The identifier of the query (e.g., 'nodes', 'columns', 'constraints').
+ * @param result - The raw query result to validate.
+ * @returns An array of missing column names. An empty array indicates successful validation.
+ */
 export function validateQueryResult(name: string, result: SimpleExecuteResult): string[] {
   const required = REQUIRED_COLUMNS[name];
   if (!required) return [];
@@ -131,8 +190,14 @@ export function validateQueryResult(name: string, result: SimpleExecuteResult): 
   return required.filter(c => !actual.has(c));
 }
 
-// ─── Internal Helpers ───────────────────────────────────────────────────────
-
+/**
+ * Safely extracts a string value from a database cell using a pre-computed column index map.
+ *
+ * @param row - The raw database row.
+ * @param colIndex - A map correlating lowercase column names to their array indices.
+ * @param name - The lowercase name of the target column.
+ * @returns The string representation of the cell value, or an empty string if null/undefined.
+ */
 function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: string): string {
   const idx = colIndex.get(name);
   if (idx === undefined) return '';
@@ -140,6 +205,13 @@ function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: stri
   return cell && !cell.isNull ? cell.displayValue : '';
 }
 
+/**
+ * Builds a fast-lookup map for column names to their array index in the query result.
+ * Column names are normalized to lowercase to ensure case-insensitive mapping.
+ *
+ * @param result - The raw query execution result.
+ * @returns A Map linking lowercase column names to their 0-based index.
+ */
 function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   const map = new Map<string, number>();
   for (let i = 0; i < result.columnInfo.length; i++) {
@@ -148,20 +220,21 @@ function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   return map;
 }
 
-// ─── Constraint Maps ────────────────────────────────────────────────────────
-
 /**
- * Parse the combined constraints result set into three lookup maps.
- * Rows are discriminated by constraint_type ('FK' | 'UQ' | 'CK').
- * FK rows accumulate per-column entries then get merged into ForeignKeyInfo objects.
+ * Parses the combined constraints result set into dedicated lookup maps for
+ * Foreign Keys (FK), Unique constraints (UQ), and Check constraints (CK).
+ *
+ * Rows are discriminated by `constraint_type`. FK rows accumulate per-column entries
+ * before being merged into comprehensive `ForeignKeyInfo` objects.
+ *
+ * @param result - The raw constraints query result.
+ * @returns A structured `ConstraintMaps` containing maps for FKs, UQs, and CKs.
  */
 function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
   const colIdx = buildColumnIndex(result);
   const uqColMap = new Map<string, string>();
   const ckColMap = new Map<string, string>();
 
-  // Accumulate FK column pairs keyed by "schema.table.constraint" (lowercase)
-  // Each entry holds the in-progress ForeignKeyInfo being built
   const fkPartial = new Map<string, ForeignKeyInfo>();
   const fkMap = new Map<string, ForeignKeyInfo[]>();
 
@@ -176,12 +249,9 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
     const colKey   = `${tableKey}.${colName}`.toLowerCase();
 
     if (ctype === 'UQ') {
-      // First UQ entry for a column wins (multiple UQ constraints on same column is unusual)
       if (!uqColMap.has(colKey)) uqColMap.set(colKey, cname);
-
     } else if (ctype === 'CK') {
       if (!ckColMap.has(colKey)) ckColMap.set(colKey, cname);
-
     } else if (ctype === 'FK') {
       const refSchema = cellValue(row, colIdx, 'ref_schema');
       const refTable  = cellValue(row, colIdx, 'ref_table');
@@ -193,7 +263,6 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
       if (!fk) {
         fk = { name: cname, columns: [], refSchema, refTable, refColumns: [], onDelete };
         fkPartial.set(fkKey, fk);
-        // Register in fkMap in order of first appearance
         if (!fkMap.has(tableKey)) fkMap.set(tableKey, []);
         fkMap.get(tableKey)!.push(fk);
       }
@@ -202,36 +271,40 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
     }
   }
 
-  // Defensive: drop FKs with mismatched column counts (malformed result set)
+  // Defensive filtering: drop FKs with mismatched column counts
   for (const [tableKey, fks] of fkMap) {
     const valid = fks.filter(fk => fk.columns.length === fk.refColumns.length);
     if (valid.length !== fks.length) fkMap.set(tableKey, valid);
   }
 
-  // pkOrdinalMap is intentionally empty: PK ordinals come from the columns query (pk_ordinal column),
-  // not the constraints result set. col.pkOrdinal is set directly in the columns loop in extractObjects.
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap: new Map() };
 }
 
-// ─── Extract: DMV Rows → Intermediate Format ────────────────────────────────
-
+/**
+ * Extracts normalized database objects (e.g., tables, views, procedures) and their associated
+ * columns from raw DMV node and column result sets.
+ *
+ * @param results - The comprehensive `DmvResults` containing node, column, and constraint data.
+ * @returns An array of structurally normalized `ExtractedObject` entities.
+ */
 function extractObjects(results: DmvResults): ExtractedObject[] {
   const nodeColIdx = buildColumnIndex(results.nodes);
   const colColIdx = buildColumnIndex(results.columns);
 
-  // Build constraint maps if the constraints query was executed
   const constraintMaps = results.constraints
     ? buildConstraintMaps(results.constraints)
     : null;
 
-  // Pre-build column data for all column-bearing objects (grouped by schema.name, lowercase key)
   const isTruthy = (v: string) => v === '1' || v.toLowerCase() === 'true';
   const objectColumns = new Map<string, ColumnDef[]>();
+  
   for (const row of results.columns.rows) {
     const schema = cellValue(row, colColIdx, 'schema_name');
     const table = cellValue(row, colColIdx, 'table_name');
     const key = `${schema}.${table}`.toLowerCase();
+    
     if (!objectColumns.has(key)) objectColumns.set(key, []);
+    
     const col = buildColumnDef(
       cellValue(row, colColIdx, 'column_name'),
       cellValue(row, colColIdx, 'type_name'),
@@ -242,6 +315,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       cellValue(row, colColIdx, 'precision'),
       cellValue(row, colColIdx, 'scale'),
     );
+    
     const pkOrdinalRaw = cellValue(row, colColIdx, 'pk_ordinal');
     if (pkOrdinalRaw) {
       const pk = parseInt(pkOrdinalRaw, 10);
@@ -267,14 +341,13 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     if (seen.has(id)) continue;
     seen.add(id);
 
-    // Attach column metadata for column-bearing types (tables, views, TVFs)
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
     const objectKey = `${schemaName}.${objectName}`.toLowerCase();
     const cols = objectColumns.get(objectKey);
+    
     if (cols) {
       columns = cols;
-      // FK enrichment applies to tables/externals only (views/functions have no FK constraints)
       if (constraintMaps && (objType === 'table' || objType === 'external')) {
         fks = enrichColumnsWithConstraints(columns, objectKey, constraintMaps);
       }
@@ -293,6 +366,16 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
   return objects;
 }
 
+/**
+ * Extracts topological dependencies between schema objects based on SQL Server's
+ * `sys.sql_expression_dependencies`.
+ *
+ * Unqualified references (lacking a schema name) are rejected to ensure strict
+ * dependency resolution.
+ *
+ * @param results - The comprehensive `DmvResults` containing dependency rows.
+ * @returns An array of `ExtractedDependency` representing directional edges.
+ */
 function extractDependencies(results: DmvResults): ExtractedDependency[] {
   const depColIdx = buildColumnIndex(results.dependencies);
   const deps: ExtractedDependency[] = [];
@@ -304,12 +387,8 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
     const depName = cellValue(row, depColIdx, 'referenced_name');
     const depDatabase = cellValue(row, depColIdx, 'referenced_database');
 
-    // Only schema-qualified references are supported (schema.object minimum).
-    // Unqualified references (referenced_schema_name IS NULL in DMV) are rejected —
-    // SQL Server's default-schema resolution is caller-dependent and not reliable.
     if (!depSchema) continue;
 
-    // Cross-database reference: emit 3-part target [db].[schema].[name]
     const targetName = depDatabase
       ? `[${depDatabase}].[${depSchema}].[${depName}]`
       : `[${depSchema}].[${depName}]`;
@@ -324,9 +403,11 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
 }
 
 /**
- * Extract lightweight stubs from the all-objects query result.
- * Used to build the full cross-schema catalog for reference classification.
- * Schema names are preserved in catalog-original casing (no uppercasing).
+ * Extracts lightweight structural stubs from the all-objects query result.
+ * This forms the foundational cross-schema catalog for reference classification.
+ *
+ * @param result - The raw all-objects query execution result.
+ * @returns An array of strictly identified `ExtractedObject` entities without detailed metadata.
  */
 function extractAllObjects(result: SimpleExecuteResult): ExtractedObject[] {
   const colIdx = buildColumnIndex(result);

@@ -11,14 +11,23 @@ import {
   type Placement,
 } from '@floating-ui/react';
 
+/** Internal event name for dropdown orchestration. */
 const DROPDOWN_OPEN_EVENT = 'ln:dropdown:open';
 
 /**
- * Shared dropdown behaviour: toggle, Escape-to-close, click-outside-to-close,
- * mutual exclusion (opening one closes all others), and Floating UI positioning.
+ * Shared hook for standard dropdown behavior including positioning and orchestration.
  *
- * @param placement Floating UI placement — default 'bottom-start' (left-aligned below trigger).
- *                  Use 'bottom-end' for right-aligned dropdowns.
+ * @remarks
+ * This hook provides a comprehensive set of features for UI dropdowns:
+ * 1. **Floating UI Integration**: Precise positioning with flip and shift middleware.
+ * 2. **Auto-Close**: Closes on Escape key or clicks outside the menu.
+ * 3. **Mutual Exclusion**: Ensures that opening one dropdown automatically closes 
+ *    all other active dropdowns using a custom event bridge.
+ * 4. **Interaction Mapping**: Provides ARIA-compliant props for trigger and content.
+ *
+ * @param placement - Floating UI placement — default 'bottom-start' (left-aligned below trigger).
+ *                    Use 'bottom-end' for right-aligned dropdowns.
+ * @returns An object containing visibility state, toggles, positioning styles, and prop getters.
  */
 export function useDropdown(placement: Placement = 'bottom-start') {
   const [isOpen, setIsOpen] = useState(false);

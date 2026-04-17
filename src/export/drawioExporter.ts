@@ -4,8 +4,10 @@ import type { CustomNodeData } from '../components/CustomNode';
 import { TYPE_COLORS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
-// ─── Draw.io Cell Types ─────────────────────────────────────────────────────
-
+/**
+ * Geometry data for an mxGraph cell.
+ * @internal
+ */
 interface MxGeometry {
   '@_x'?: string;
   '@_y'?: string;
@@ -15,6 +17,10 @@ interface MxGeometry {
   '@_relative'?: string;
 }
 
+/**
+ * Represents a standard cell in an mxGraph XML structure.
+ * @internal
+ */
 interface MxCell {
   '@_id': string;
   '@_value'?: string;
@@ -27,6 +33,11 @@ interface MxCell {
   mxGeometry?: MxGeometry;
 }
 
+/**
+ * Represents an object cell (vertex with metadata) in an mxGraph XML structure.
+ * Used for storing additional attributes like tooltips and full names.
+ * @internal
+ */
 interface MxObject {
   '@_id': string;
   '@_label': string;
@@ -42,18 +53,17 @@ interface MxObject {
   };
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-
 const GRAPH_OFFSET_X = 300;
 const NODE_W = 180;
 const NODE_H = 70;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// ─── Node HTML label ────────────────────────────────────────────────────────
-
 const COLOR_BAND_W = 6;
 
+/**
+ * Constructs a rich HTML label for a node in the Draw.io diagram.
+ * 
+ * @param d - The custom data associated with the lineage node.
+ * @returns A string containing HTML for the node label.
+ */
 function buildLabel(d: CustomNodeData): string {
   const icon = TYPE_COLORS[d.objectType]?.icon || '■';
   const schemaLabel = d.externalType === 'file' ? 'FILE SOURCE'
@@ -67,8 +77,13 @@ function buildLabel(d: CustomNodeData): string {
   );
 }
 
-// ─── Legend builder ──────────────────────────────────────────────────────────
-
+/**
+ * Generates the legend section of the Draw.io diagram, mapping schema names to their assigned colors.
+ * 
+ * @param schemas - List of unique schema names in the graph.
+ * @param startId - The starting ID for XML elements in this section.
+ * @returns An object containing the generated cells and the next available ID.
+ */
 function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nextId: number } {
   const cells: MxCell[] = [];
   let id = startId;
@@ -79,7 +94,6 @@ function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nex
   const padX = 12;
   const padY = 10;
   const headerH = 28;
-  // Auto-size: ~6.5px per char at fontSize 11, plus padding for icon + margins
   const maxSchemaLen = Math.max(...schemas.map(s => s.length));
   const boxW = Math.max(180, Math.round(maxSchemaLen * 6.5) + padX + 50);
   const boxH = headerH + schemas.length * rowH + padY;
@@ -104,12 +118,10 @@ function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nex
     mxGeometry: { '@_x': String(padX + 10), '@_y': String(padY + 10), '@_width': String(boxW - 2 * padX), '@_height': String(headerH), '@_as': 'geometry' },
   });
 
-  // One row per schema: colored square + label
   for (let i = 0; i < schemas.length; i++) {
     const y = padY + headerH + i * rowH + 10;
     const color = getSchemaColor(schemas[i], true);
 
-    // Colored square
     cells.push({
       '@_id': String(id++),
       '@_value': '',
@@ -119,7 +131,6 @@ function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nex
       mxGeometry: { '@_x': String(padX + 10), '@_y': String(y), '@_width': '16', '@_height': '16', '@_as': 'geometry' },
     });
 
-    // Schema name text
     cells.push({
       '@_id': String(id++),
       '@_value': escHtml(schemas[i]),
@@ -133,8 +144,15 @@ function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nex
   return { cells, nextId: id };
 }
 
-// ─── Edge builder ────────────────────────────────────────────────────────────
-
+/**
+ * Constructs an mxGraph edge cell.
+ * 
+ * @param edge - The React Flow edge data.
+ * @param cellId - Unique ID for the XML cell.
+ * @param sourceId - ID of the source node.
+ * @param targetId - ID of the target node.
+ * @returns A compiled `MxCell` representing the edge.
+ */
 function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: string): MxCell {
   const isBidi = edge.id.includes('↔');
 
@@ -161,8 +179,20 @@ function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: s
   };
 }
 
-// ─── Main export ─────────────────────────────────────────────────────────────
-
+/**
+ * Converts a set of React Flow nodes and edges into a Draw.io compatible XML (mxfile) format.
+ * 
+ * The output includes:
+ * - A persistent schema legend.
+ * - Styled vertices with custom HTML labels and color bands.
+ * - Orthogonal edges with bidirectional support.
+ * - Embedded metadata (tooltips, full names) using `<object>` containers.
+ * 
+ * @param nodes - Array of nodes from the graph state.
+ * @param edges - Array of edges from the graph state.
+ * @param schemas - List of schema names for the legend.
+ * @returns A full XML string ready for import into Draw.io.
+ */
 export function exportToDrawio(
   nodes: FlowNode<CustomNodeData>[],
   edges: FlowEdge[],
@@ -173,17 +203,14 @@ export function exportToDrawio(
   const idMap = new Map<string, string>();
   let nextId = 2; // 0 and 1 are reserved base cells
 
-  // Normalize positions so all coordinates are positive
   const minX = Math.min(...nodes.map(n => n.position.x));
   const minY = Math.min(...nodes.map(n => n.position.y));
   const offsetX = GRAPH_OFFSET_X - Math.min(0, minX);
   const offsetY = 20 - Math.min(0, minY);
 
-  // 1. Legend
   const legend = buildLegend(schemas, nextId);
   nextId = legend.nextId;
 
-  // 2. Nodes (as <object> elements for metadata) + color band child cells
   const nodeObjects: MxObject[] = [];
   const colorBandCells: MxCell[] = [];
   for (const node of nodes) {
@@ -219,7 +246,6 @@ export function exportToDrawio(
       },
     });
 
-    // Native Draw.io child cell for the left color band (reliable rendering)
     colorBandCells.push({
       '@_id': String(nextId++),
       '@_value': '',
@@ -238,7 +264,6 @@ export function exportToDrawio(
     });
   }
 
-  // 3. Edges
   const edgeCells: MxCell[] = [];
   for (const edge of edges) {
     const src = idMap.get(edge.source);
@@ -247,7 +272,6 @@ export function exportToDrawio(
     edgeCells.push(buildEdge(edge, String(nextId++), src, tgt));
   }
 
-  // 4. Assemble XML
   const baseCells = [
     { '@_id': '0' },
     { '@_id': '1', '@_parent': '0' },

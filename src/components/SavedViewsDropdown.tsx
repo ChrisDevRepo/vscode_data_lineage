@@ -5,17 +5,52 @@ import { Tooltip } from './ui/Tooltip';
 import type { FilterProfile } from '../engine/projectStore';
 import { useDropdown } from '../hooks/useDropdown';
 
+/**
+ * Props for the {@link SavedViewsDropdown} component.
+ */
 interface SavedViewsDropdownProps {
+  /** List of saved filter profiles (bookmarks) for the current project. */
   filterProfiles: FilterProfile[];
+  /** Whether the bookmarks feature is enabled (requires an active project). */
   isEnabled: boolean;
+  /** The ID of the currently active view profile, if any. */
   activeViewId?: string | null;
+  /** Whether the current filter state differs from the saved profile. */
   isViewModified?: boolean;
+  /** 
+   * Callback to save the current filter state as a new bookmark.
+   * @param name The display name for the new bookmark.
+   */
   onSaveView: (name: string) => void;
+  /** 
+   * Callback to apply a saved bookmark's filter state.
+   * @param profile The bookmark profile to apply.
+   */
   onApplyView: (profile: FilterProfile) => void;
+  /** 
+   * Callback to delete a saved bookmark.
+   * @param profileId The ID of the bookmark to remove.
+   */
   onDeleteView: (profileId: string) => void;
+  /** 
+   * Optional callback to update an existing bookmark with the current filter state.
+   * @param profileId The ID of the bookmark to update.
+   */
   onUpdateView?: (profileId: string) => void;
 }
 
+/**
+ * A dropdown menu for managing and applying saved graph views (bookmarks).
+ * 
+ * Capabilities:
+ * - **Create**: Save the current filter/search/exclusion state as a named bookmark.
+ * - **Switch**: Rapidly apply different filter profiles.
+ * - **Sync**: Update existing bookmarks with modified filter states.
+ * - **Advanced**: Highlights "Advanced Bookmarks" (views with explicit node selections).
+ * 
+ * Architectural Remark: This component uses the `useDropdown` hook for positioning 
+ * and handles its own confirmation state for deletion to prevent accidental data loss.
+ */
 export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   filterProfiles,
   isEnabled,

@@ -4,26 +4,51 @@ import { SidePanel } from './SidePanel';
 import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
 import { highlightText } from './highlight';
 
+/**
+ * A specialized node representation used for high-performance detail searching.
+ */
 export interface DetailSearchNode {
+  /** The unique ID of the object. */
   id: string;
+  /** The human-readable name of the object. */
   name: string;
+  /** The schema the object belongs to. */
   schema: string;
+  /** The classification of the object. */
   type: ObjectType;
+  /** The raw SQL body script (stored procedure definition, view definition, etc.). */
   bodyScript?: string;
+  /** The array of column definitions for the object. */
   columns?: ColumnDef[];
 }
 
+/**
+ * Props for the `DetailSearchSidebar` component.
+ */
 interface DetailSearchSidebarProps {
+  /** Callback triggered to close the sidebar. */
   onClose: () => void;
+  /** The complete set of searchable nodes. */
   allNodes: DetailSearchNode[];
+  /** 
+   * Callback triggered when a search result is clicked.
+   * @param nodeId - The ID of the target node.
+   * @param searchTerm - The term that was searched for.
+   */
   onResultClick: (nodeId: string, searchTerm: string) => void;
 }
 
+/**
+ * Internal representation of a search match.
+ */
 interface SearchResult {
+  /** The node that matched the query. */
   node: DetailSearchNode;
+  /** A textual snippet containing the match. */
   snippet: string;
 }
 
+/** Display labels for grouped search results. */
 const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   procedure: 'Procedures',
   view: 'Views',
@@ -31,8 +56,26 @@ const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   external: 'External Tables',
 };
 
+/** Set of object types that typically contain a SQL body script. */
 const BODY_TYPES = new Set<ObjectType>(['procedure', 'view']);
 
+/**
+ * A specialized sidebar component for performing full-text searches across object definitions
+ * and column metadata.
+ * 
+ * @remarks
+ * This component implements a high-performance "Detail Search" that goes beyond simple node titles.
+ * It searches within:
+ * - Stored Procedure and View body scripts.
+ * - Column names and types.
+ * 
+ * Performance features:
+ * - Uses `useDeferredValue` to prevent the UI from locking during heavy search operations.
+ * - Implements result grouping by object type.
+ * - Provides snippet-based highlighting of the search term.
+ * 
+ * @param props - The component props.
+ */
 export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   onClose,
   allNodes,
@@ -41,6 +84,10 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   const [input, setInput] = useState('');
   const deferredInput = useDeferredValue(input);
 
+  /**
+   * Calculates search results based on the current input.
+   * Searches both body scripts and column metadata.
+   */
   const results = useMemo<SearchResult[]>(() => {
     const q = deferredInput.trim();
     const bodyResults = searchBodyScripts(allNodes, q, BODY_TYPES);
@@ -48,7 +95,9 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
     return [...bodyResults, ...colResults];
   }, [deferredInput, allNodes]);
 
-  // Group by display label
+  /**
+   * Groups search results by their object type for better readability.
+   */
   const grouped = useMemo(() => {
     const map = new Map<string, SearchResult[]>();
     for (const r of results) {
@@ -62,6 +111,12 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
 
   const term = deferredInput.trim();
 
+  /**
+   * Wraps matching substrings within a snippet with `<mark>` tags for highlighting.
+   * 
+   * @param snippet - The text snippet to process.
+   * @returns An array of strings and React nodes.
+   */
   function highlightSnippet(snippet: string): React.ReactNode[] {
     if (!term) return [snippet];
     const parts: React.ReactNode[] = [];

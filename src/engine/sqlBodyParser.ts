@@ -1,4 +1,18 @@
-// Regex-based T-SQL dependency extraction; rules loaded from YAML at runtime.
+/**
+ * ─── SQL Body Parser ────────────────────────────────────────────────────────
+ *
+ * Regex-based T-SQL dependency extraction engine. 
+ * 
+ * @remarks
+ * This parser uses a high-performance, multi-pass cleansing pipeline to 
+ * neutralize comments, strings, and complex SQL structures (like CTEs and 
+ * comma-joins) before applying rule-based extraction for lineage analysis.
+ * 
+ * Extraction rules are loaded from YAML at runtime to allow for extensibility 
+ * without modifying the core engine logic.
+ * 
+ * @packageDocumentation
+ */
 
 import { splitSqlName } from '../utils/sql';
 import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
@@ -6,58 +20,248 @@ import {
   QUALIFIED_NAME, ANY_IDENT, KEYWORDS_RE, 
   PASS1_CLEANSE_RE, TABLE_REF_WITH_ALIAS, FROM_TERMINATOR_RE 
 } from './shared/sqlRegex';
+import type { ExternalRef } from './types';
 
+/**
+ * Represents the extracted SQL dependencies from a parsed SQL body.
+ * 
+ * @remarks
+ * Categorizes discovered database objects into read/write operations and 
+ * execution calls.
+ */
 export interface ParsedDependencies {
+  /** 
+   * Schema-qualified names of objects read from (e.g., `[dbo].[Table]`). 
+   * Captured from SELECT and JOIN clauses.
+   */
   sources: string[];
+  /** 
+   * Schema-qualified names of objects written to (e.g., `[dbo].[Table]`). 
+   * Captured from INSERT, UPDATE, DELETE, and MERGE statements.
+   */
   targets: string[];
+  /** 
+   * Schema-qualified names of stored procedures executed (e.g., `[dbo].[Proc]`). 
+   * Captured from EXEC/EXECUTE calls.
+   */
   execCalls: string[];
-  crossDbSources: string[];  // full 3-part "db.schema.object" (lowercase, brackets stripped)
+  /** 
+   * Full 3-part names of cross-database sources (e.g., `db.schema.object`). 
+   * These are tracked separately from local references.
+   */
+  crossDbSources: string[];
+  /** 
+   * Full 3-part names of cross-database targets (e.g., `db.schema.object`). 
+   * Tracked for cross-DB lineage analysis.
+   */
   crossDbTargets: string[];
 }
 
+/**
+ * Defines a single regex-based extraction rule for SQL parsing.
+ * 
+ * @remarks
+ * Rules are the atomic unit of extraction in the engine. They use named capture 
+ * groups to identify relevant identifiers in the SQL text.
+ */
 export interface ParseRule {
+  /** 
+   * Unique identifier for the rule. 
+   * Used for debugging and configuration overrides.
+   */
   name: string;
+  /** 
+   * Whether the rule is actively applied during parsing. 
+   */
   enabled: boolean;
+  /** 
+   * Execution order (lower priority runs earlier). 
+   * Crucial for rules that depend on previous preprocessing passes.
+   */
   priority: number;
+  /** 
+   * Categorizes how the rule's matches are classified in {@link ParsedDependencies}.
+   */
   category: 'preprocessing' | 'source' | 'target' | 'exec' | 'external_ref';
+  /** 
+   * The regular expression string to evaluate against the SQL body. 
+   * Must contain at least one capture group for the identifier.
+   */
   pattern: string;
+  /** 
+   * Regex flags (e.g., 'gi') applied to the pattern. 
+   */
   flags: string;
+  /** 
+   * Replacement string for 'preprocessing' category rules. 
+   * Allows transforming SQL text before extraction.
+   */
   replacement?: string;
-  kind?: string;         // required for external_ref category (maps to ExternalRef.kind)
+  /** 
+   * Defines the type of external reference. 
+   * Required if category is 'external_ref'.
+   */
+  kind?: string;
+  /** 
+   * Human-readable explanation of the rule's purpose. 
+   */
   description: string;
 }
 
+/**
+ * Configuration wrapper for loading multiple parse rules.
+ */
 export interface ParseRulesConfig {
+  /** An array of parse rules to load into the engine. */
   rules: ParseRule[];
 }
 
-// ─── SQL Cleansing — runs BEFORE all YAML rules ─────────────────────────────
-//
-// Rule authors do NOT need to think about comment removal or string literals.
-// The cleansing pipeline neutralizes all of that before any regex rule sees the SQL.
-//
-// Pass 0 — removeBlockComments(): counter-based O(n) scan
-//   Handles nested block comments: /* outer /* inner */ still outer */
-//   Regex cannot solve this (finite automaton, no stack) — TypeScript scanner required.
-//
-// Pass 1 — leftmost-match regex (applied inside parseSqlBody):
-//   /\[[^\]]+\]|'(?:''|[^'])*'|--[^\r\n]*/g
-//   • [bracket identifiers] → preserved as-is (YAML rules can still match them)
-//   • 'string literals'    → neutralized to ''  (content can't trigger false matches)
-//   • -- line comments     → replaced with space (already removed by pass 0 for block)
-//   Block comments (/* */) are NOT in this regex — pass 0 has already removed them.
+/**
+ * Result of attempting to load and validate a set of parse rules.
+ * 
+ * @remarks
+ * Provides telemetry on how many rules were successfully loaded and 
+ * details on any validation failures.
+ */
+export interface LoadRulesResult {
+  /** The number of rules successfully validated and loaded. */
+  loaded: number;
+  /** Names of rules that failed validation and were skipped. */
+  skipped: string[];
+  /** Detailed error messages for the rules that failed validation. */
+  errors: string[];
+  /** True if the engine fell back to default rules due to critical errors. */
+  usedDefaults: boolean;
+  /** Counts of loaded rules grouped by their category for monitoring. */
+  categoryCounts: Record<string, number>;
+}
+
+/** 
+ * Internal store for the active parsing ruleset. 
+ * @internal 
+ */
+let activeRules: ParseRule[] = [];
+
+/** 
+ * Set of allowed rule categories for validation. 
+ * @internal 
+ */
+const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec', 'external_ref']);
+
+/**
+ * Validates a single parse rule for structural and regex correctness.
+ * 
+ * @remarks
+ * Checks for required fields, valid categories, and ensures the regex 
+ * pattern doesn't cause infinite loops by matching empty strings.
+ * 
+ * @param rule - The raw rule object to validate.
+ * @param index - The index of the rule in the configuration array.
+ * @returns A validation result indicating success or failure with an error message.
+ * @internal
+ */
+function validateRule(rule: unknown, index: number): { valid: true; name: string } | { valid: false; name: string; error: string } {
+  const r = rule as Record<string, unknown>;
+  const name = typeof r?.name === 'string' ? r.name : `rule[${index}]`;
+
+  if (!r || typeof r !== 'object') return { valid: false, name, error: `${name}: not an object` };
+  if (typeof r.name !== 'string' || !r.name) return { valid: false, name, error: `${name}: missing 'name'` };
+  if (typeof r.pattern !== 'string' || !r.pattern) return { valid: false, name, error: `${name}: missing 'pattern'` };
+  if (typeof r.category !== 'string' || !VALID_CATEGORIES.has(r.category)) {
+    return { valid: false, name, error: `${name}: invalid category '${r.category}' (must be: preprocessing, source, target, exec, external_ref)` };
+  }
+  if (r.category === 'external_ref' && (typeof r.kind !== 'string' || !r.kind)) {
+    return { valid: false, name, error: `${name}: external_ref rules require a non-empty 'kind' field` };
+  }
+  if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
+  if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
+
+  // Test-compile the regex and check for empty-match patterns
+  try {
+    const testRegex = new RegExp(r.pattern as string, r.flags as string);
+    if (testRegex.test('')) {
+      return { valid: false, name, error: `${name}: regex matches empty string — this would cause infinite loops` };
+    }
+  } catch (e) {
+    return { valid: false, name, error: `${name}: invalid regex — ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  return { valid: true, name };
+}
+
+/**
+ * Loads rules from a parsed configuration (built-in or custom) with validation.
+ *
+ * @remarks
+ * This function is the primary entry point for configuring the parsing engine.
+ * It sorts rules by priority to ensure correct execution order.
+ * 
+ * @param config - The configuration object containing the rules to load.
+ * @returns A summary of the load operation, including success counts and any validation errors.
+ */
+export function loadRules(config: ParseRulesConfig): LoadRulesResult {
+  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false, categoryCounts: {} };
+
+  if (!config?.rules || !Array.isArray(config.rules)) {
+    result.errors.push('YAML missing "rules" array');
+    result.usedDefaults = true;
+    resetRules();
+    return result;
+  }
+
+  const validRules: ParseRule[] = [];
+  for (let i = 0; i < config.rules.length; i++) {
+    const raw = config.rules[i];
+
+    if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
+
+    const check = validateRule(raw, i);
+    if (check.valid) {
+      validRules.push(raw as ParseRule);
+    } else {
+      result.skipped.push(check.name);
+      result.errors.push(check.error);
+    }
+  }
+
+  if (validRules.length === 0) {
+    result.errors.push('No valid rules found');
+    result.usedDefaults = true;
+    resetRules();
+    return result;
+  }
+
+  activeRules = validRules.sort((a, b) => a.priority - b.priority);
+  result.loaded = validRules.length;
+  for (const r of validRules) {
+    result.categoryCounts[r.category] = (result.categoryCounts[r.category] || 0) + 1;
+  }
+  return result;
+}
+
+/**
+ * Clears all active parsing rules from memory.
+ * 
+ * @remarks
+ * Used during teardown or when switching project configurations. 
+ * The extension host is responsible for providing a new configuration after resetting.
+ */
+export function resetRules(): void {
+  activeRules = [];
+}
 
 /**
  * Find the base table a CTE references via paren-balanced body detection.
+ * 
+ * @remarks
  * Works on cleaned SQL (Pass 0+1 removed comments/strings before this runs).
- *
  * SQL Server enforces that updatable CTEs are simple (no aggregates, no DISTINCT,
  * no GROUP BY) — the first FROM is always the base table or another simple CTE.
- *
- * @param sql     Cleaned SQL text
- * @param bodyStart  Position right after the opening `(` of `AS (`
- * @param keywords   Regex to reject SQL keywords as CTE names
- * @returns Schema-qualified table, unqualified CTE name (for chaining), or null
+ * 
+ * @param sql - Cleaned SQL text to search within.
+ * @param bodyStart - Position in the string right after the opening `(` of `AS (`.
+ * @returns The schema-qualified table name, unqualified CTE name, or `null` if not found.
+ * @internal
  */
 function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
   // Find CTE body end — paren balancing on cleaned SQL
@@ -84,17 +288,16 @@ function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
 }
 
 /**
- * Preprocessing: Replace CTE aliases in UPDATE statements with the CTE's base table.
+ * Preprocessing pass to replace CTE aliases in UPDATE statements with the base table.
+ * 
+ * @remarks
+ * Resolves CTE chains (e.g., `WITH c1 AS (...FROM T), c2 AS (...FROM c1)`) 
+ * collapsing them down to the ultimate base table. This allows the simple 
+ * extraction rules to correctly identify the target of an UPDATE statement.
  *
- * Handles two patterns:
- *   1. UPDATE CTE_NAME SET ...          → UPDATE [schema].[table] SET ...
- *   2. UPDATE alias SET ... FROM CTE_NAME → UPDATE alias SET ... FROM [schema].[table]
- *
- * Also resolves CTE chains: WITH c1 AS (...FROM [s].[T]), c2 AS (...FROM c1)
- * collapses c2 → [s].[T] so both patterns above work through any chain depth.
- *
- * This allows extract_targets_dml and extract_update_alias_target to capture the
- * actual write target instead of rejecting the unqualified CTE alias.
+ * @param sql - Cleaned SQL text.
+ * @returns SQL text with CTE aliases substituted for base tables in UPDATE contexts.
+ * @internal
  */
 function substituteCteUpdateAliases(sql: string): string {
   // Find CTE definitions: WITH name AS ( and , name AS ( (multi-CTE syntax)
@@ -143,13 +346,16 @@ function substituteCteUpdateAliases(sql: string): string {
 }
 
 /**
- * Normalize ANSI comma-join FROM clauses to modern JOIN syntax before extraction rules run.
- * FROM t1 a1, t2 a2, t3 a3 WHERE  →  FROM t1 a1 JOIN t2 a2 JOIN t3 a3 WHERE
+ * Normalizes ANSI comma-join FROM clauses to modern JOIN syntax.
+ * 
+ * @remarks
+ * Transforms `FROM t1, t2, t3 WHERE` into `FROM t1 JOIN t2 JOIN t3 WHERE`.
+ * This allows standard extraction rules to identify all tables without 
+ * complex lookahead logic.
  *
- * Only rewrites when the FROM clause contains comma-separated schema.table references
- * followed by a FROM-terminating keyword (WHERE, JOIN, ORDER, etc.).
- * SELECT-list commas are never affected — they appear before FROM, not after.
- * Function-argument commas are never affected — they lack the FROM...terminator context.
+ * @param sql - Cleaned SQL text.
+ * @returns SQL with normalized JOIN syntax.
+ * @internal
  */
 function normalizeAnsiCommaJoins(sql: string): string {
   return sql.replace(
@@ -162,7 +368,17 @@ function normalizeAnsiCommaJoins(sql: string): string {
   );
 }
 
-/** Pass 0: counter-scan removes block comments including nested ones correctly. O(n), no regex. */
+/** 
+ * Removes block comments from SQL text using a nested-aware counter scan.
+ * 
+ * @remarks
+ * Regex cannot easily handle nested comments (e.g., `/* ... /* ... *\/ ... *\/`). 
+ * This O(n) scan ensures perfect removal regardless of nesting depth.
+ *
+ * @param sql - Raw SQL text.
+ * @returns SQL with all block comments removed.
+ * @internal
+ */
 function removeBlockComments(sql: string): string {
   const parts: string[] = [];
   let i = 0;
@@ -184,108 +400,26 @@ function removeBlockComments(sql: string): string {
   return parts.join('');
 }
 
-// ─── Active config ──────────────────────────────────────────────────────────
-// Initialized empty — populated by loadRules() when config arrives from extension host.
-
-let activeRules: ParseRule[] = [];
-
-export interface LoadRulesResult {
-  loaded: number;
-  skipped: string[];       // rule names that failed validation
-  errors: string[];        // human-readable error messages
-  usedDefaults: boolean;   // true if fell back to defaults entirely
-  categoryCounts: Record<string, number>;  // e.g. { preprocessing: 1, source: 4, target: 3, exec: 1 }
-}
-
-const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec', 'external_ref']);
-
-function validateRule(rule: unknown, index: number): { valid: true; name: string } | { valid: false; name: string; error: string } {
-  const r = rule as Record<string, unknown>;
-  const name = typeof r?.name === 'string' ? r.name : `rule[${index}]`;
-
-  if (!r || typeof r !== 'object') return { valid: false, name, error: `${name}: not an object` };
-  if (typeof r.name !== 'string' || !r.name) return { valid: false, name, error: `${name}: missing 'name'` };
-  if (typeof r.pattern !== 'string' || !r.pattern) return { valid: false, name, error: `${name}: missing 'pattern'` };
-  if (typeof r.category !== 'string' || !VALID_CATEGORIES.has(r.category)) {
-    return { valid: false, name, error: `${name}: invalid category '${r.category}' (must be: preprocessing, source, target, exec, external_ref)` };
-  }
-  if (r.category === 'external_ref' && (typeof r.kind !== 'string' || !r.kind)) {
-    return { valid: false, name, error: `${name}: external_ref rules require a non-empty 'kind' field` };
-  }
-  if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
-  if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
-
-  // Test-compile the regex and check for empty-match patterns
-  try {
-    const testRegex = new RegExp(r.pattern as string, r.flags as string);
-    if (testRegex.test('')) {
-      return { valid: false, name, error: `${name}: regex matches empty string — this would cause infinite loops` };
-    }
-  } catch (e) {
-    return { valid: false, name, error: `${name}: invalid regex — ${e instanceof Error ? e.message : String(e)}` };
-  }
-
-  return { valid: true, name };
-}
-
-/** Load rules from parsed YAML config (built-in or custom) with validation */
-export function loadRules(config: ParseRulesConfig): LoadRulesResult {
-  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false, categoryCounts: {} };
-
-  if (!config?.rules || !Array.isArray(config.rules)) {
-    result.errors.push('YAML missing "rules" array');
-    result.usedDefaults = true;
-    resetRules();
-    return result;
-  }
-
-  const validRules: ParseRule[] = [];
-  for (let i = 0; i < config.rules.length; i++) {
-    const raw = config.rules[i];
-
-    if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
-
-    const check = validateRule(raw, i);
-    if (check.valid) {
-      validRules.push(raw as ParseRule);
-    } else {
-      result.skipped.push(check.name);
-      result.errors.push(check.error);
-    }
-  }
-
-  if (validRules.length === 0) {
-    result.errors.push('No valid rules found');
-    result.usedDefaults = true;
-    resetRules();
-    return result;
-  }
-
-  activeRules = validRules.sort((a, b) => a.priority - b.priority);
-  result.loaded = validRules.length;
-  for (const r of validRules) {
-    result.categoryCounts[r.category] = (result.categoryCounts[r.category] || 0) + 1;
-  }
-  return result;
-}
-
-/** Clear active rules (extension host is responsible for providing config) */
-export function resetRules() {
-  activeRules = [];
-}
-
-// ─── Public API ─────────────────────────────────────────────────────────────
-
+/**
+ * Parses a raw T-SQL string to extract dependencies using the active ruleset.
+ *
+ * @remarks
+ * The parsing process follows these passes:
+ * 1.  **Pass 0**: Nested-aware block comment removal.
+ * 2.  **Pass 1**: Neutralization of string literals and line comments using the 
+ *     "Best Regex Trick" (leftmost match).
+ * 3.  **Pass 1.5**: ANSI-92 comma-join normalization.
+ * 4.  **Pass 1.6**: CTE alias substitution for UPDATE targets.
+ * 5.  **Extraction**: Rule-based matching against the cleaned SQL.
+ *
+ * @param sql - The raw SQL statement or script body to parse.
+ * @returns A categorization of all discovered dependencies.
+ */
 export function parseSqlBody(sql: string): ParsedDependencies {
   // Pass 0: Remove block comments (including nested) before the regex sees the SQL.
-  // This must run first — the leftmost-match regex below does NOT handle block comments.
   let clean = removeBlockComments(sql);
 
   // Pass 1: Leftmost-match regex — brackets, strings, and line comments.
-  // Block comments already gone (Pass 0), so the pattern is shorter and faster.
-  // "The Best Regex Trick": leftmost match wins, so strings protect -- inside them.
-  // Double-quoted identifiers ("dbo"."Table") are normalized to bracket notation ([dbo].[Table])
-  // so YAML rules only need to handle one quoting style.
   clean = clean.replace(PASS1_CLEANSE_RE, (match) => {
     if (match.startsWith('[')) return match;                         // preserve [bracket identifiers]
     if (match.startsWith('"')) return `[${match.slice(1, -1)}]`;   // "double-quote" → [bracket]
@@ -294,17 +428,12 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   });
 
   // Pass 1.5: Normalize ANSI comma-join FROM clauses to modern JOIN syntax.
-  // Runs on clean SQL (after strings/comments removed) so it doesn't produce false matches.
-  // Only affects: FROM t1, t2, t3 WHERE  →  FROM t1 JOIN t2 JOIN t3 WHERE
   clean = normalizeAnsiCommaJoins(clean);
 
   // Pass 1.6: Substitute CTE aliases in UPDATE statements with the CTE's base table.
-  // WITH Alias AS (... FROM [schema].[table] ...) UPDATE Alias SET
-  // → ... UPDATE [schema].[table] SET
-  // Allows extract_targets_dml to find the actual write target for CTE-based UPDATEs.
   clean = substituteCteUpdateAliases(clean);
 
-  // Step 1b: Additional user-defined preprocessing rules (skip built-in clean_sql)
+  // Step 1b: Additional user-defined preprocessing rules
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing' && rule.name !== 'clean_sql' && rule.replacement !== undefined) {
       clean = clean.replace(new RegExp(rule.pattern, rule.flags), rule.replacement);
@@ -318,7 +447,6 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   const crossDbTargets = new Set<string>();
 
   // Step 2: Extraction rules
-  // UDF matches collected separately to filter false positives from INSERT INTO table(cols).
   const udfSources = new Set<string>();
 
   for (const rule of activeRules) {
@@ -334,8 +462,7 @@ export function parseSqlBody(sql: string): ParsedDependencies {
 
     collectMatches(clean, regex, dest);
 
-    // Also collect 3-part+ names (cross-DB refs) that normalizeCaptured rejects.
-    // exec calls are not cross-DB targets — they reference SPs in the same DB.
+    // Also collect 3-part+ names (cross-DB refs)
     if (rule.category === 'source' || rule.name === 'extract_udf_calls') {
       collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbSources);
     } else if (rule.category === 'target') {
@@ -343,8 +470,7 @@ export function parseSqlBody(sql: string): ParsedDependencies {
     }
   }
 
-  // Add UDF sources that aren't already targets (a function can't be an INSERT/UPDATE target).
-  // This avoids false positives from INSERT INTO schema.table(col1, col2) where ( starts column list.
+  // Add UDF sources that aren't already targets
   for (const u of udfSources) {
     if (!targets.has(u)) sources.add(u);
   }
@@ -358,24 +484,32 @@ export function parseSqlBody(sql: string): ParsedDependencies {
   };
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
+/** 
+ * Maximum number of matches allowed per rule to prevent runaway execution. 
+ * @internal 
+ */
 const MAX_MATCHES_PER_RULE = 10_000;
 
-function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
+/**
+ * Collects all matches for a regex and adds them to the provided set.
+ *
+ * @param sql - Cleaned SQL text to search within.
+ * @param regex - Regular expression to execute.
+ * @param out - Set to store the normalized matches.
+ * @internal
+ */
+function collectMatches(sql: string, regex: RegExp, out: Set<string>): void {
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
   let iterations = 0;
 
   while ((match = regex.exec(sql)) !== null) {
-    // Guard against zero-length matches causing infinite loops (user-provided regex)
     if (match[0].length === 0) {
       regex.lastIndex++;
       continue;
     }
-    // Safety limit: abort runaway regex (ReDoS or overly broad user patterns)
     if (++iterations > MAX_MATCHES_PER_RULE) {
-      console.warn(`[Parser] Regex iteration limit (${MAX_MATCHES_PER_RULE}) exceeded — possible ReDoS or overly broad pattern`);
+      console.warn(`[Parser] Regex iteration limit (${MAX_MATCHES_PER_RULE}) exceeded`);
       break;
     }
 
@@ -390,54 +524,44 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>) {
 }
 
 /**
- * Normalize a raw regex capture to [schema].[object] for catalog lookup.
- * Returns null to signal "skip this capture".
+ * Normalizes a raw regex capture to `[schema].[object]` for catalog lookup.
+ * 
+ * @remarks
+ * Removes brackets and quotes, splits the identifier parts, and ensures 
+ * local variables or temporary tables are excluded.
  *
- * This function is the single normalization gate for all rule captures.
- * Rule authors do NOT need to handle any of these cases in their YAML patterns:
- *
- * - Bracket delimiters [schema].[object] → stripped
- * - Double-quote identifiers "schema"."object" → stripped
- * - @tableVariable / #TempTable → rejected (never in catalog)
- * - Unqualified names (no dot) → rejected (require schema.object minimum)
- * - CTE aliases → also rejected here (CTEs are unqualified, caught by the line above)
- * - 3-part+ names (db.schema.object, server.db.schema.object) → rejected for local lookup
- *   (handled separately by collectCrossDbMatches for cross-DB virtual nodes)
- * - Lowercased for case-insensitive catalog lookup
+ * @param raw - The raw string captured by a regex.
+ * @returns A normalized `[schema].[object]` string or `null` if invalid.
+ * @internal
  */
 function normalizeCaptured(raw: string): string | null {
-  // Split bracket-aware: dots INSIDE [bracket identifiers] are part of the name, not separators.
-  // Example: [MySchema].[spWithDots_v1.0] → 2 parts, not 3.
   const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
   const first = parts[0] ?? '';
-  if (first.startsWith('@') || first.startsWith('#')) return null;  // vars, temp tables
-  if (parts.length < 2) return null;                  // require schema.object minimum
-  if (parts.length >= 3) return null;                 // cross-DB / linked-server → collectCrossDbMatches
+  if (first.startsWith('@') || first.startsWith('#')) return null;
+  if (parts.length < 2) return null;
+  if (parts.length >= 3) return null;
   const schema = parts[0];
-  const obj    = parts[1];
+  const obj = parts[1];
   if (!schema || !obj) return null;
   return `[${schema}].[${obj}]`.toLowerCase();
 }
 
 /**
- * Normalize a 3+ part name to cross-DB format: "db.schema.object" (lowercase).
- * 4-part server.db.schema.object → strips server, keeps last 3 parts.
- * Returns null for 1-2 part names, @vars, #temp tables, or CLR type method calls.
+ * Normalizes a 3+ part name to cross-database format: `db.schema.object`.
+ * 
+ * @remarks
+ * Filters out CLR/XML methods that look like 3-part names but are actually 
+ * method calls.
  *
- * CLR filter: HierarchyID/XML/Geometry/Geography methods appear as
- * `alias.column.Method(` to the regex — identical to `db.schema.object`.
- * If the last (object) part matches CLR_TYPE_METHODS, reject the capture.
- *
- * Limitation: a real cross-DB table/view with a name that collides with a CLR
- * method name (e.g. OtherDB.dbo.nodes) will not create a virtual node. This is
- * an acceptable trade-off — CLR method false positives are far more common.
+ * @param raw - The raw string captured by a regex.
+ * @returns A normalized `db.schema.object` string or `null` if invalid.
+ * @internal
  */
 function normalizeCrossDb(raw: string): string | null {
   const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
   if (parts.length < 3) return null;
-  // 4-part: strip server, take last 3
   const relevant = parts.length >= 4 ? parts.slice(-3) : parts;
   const object = relevant[relevant.length - 1];
   if (CLR_TYPE_METHODS.has(object.toLowerCase())) return null;
@@ -445,10 +569,14 @@ function normalizeCrossDb(raw: string): string | null {
 }
 
 /**
- * Run the same YAML rules but collect 3+ part names (cross-DB references).
- * These are separated from local refs because normalizeCaptured rejects them.
+ * Runs extraction rules specifically to collect 3+ part names (cross-DB references).
+ *
+ * @param sql - Cleaned SQL text.
+ * @param regex - Regular expression to execute.
+ * @param out - Set to store the normalized cross-DB matches.
+ * @internal
  */
-function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>) {
+function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>): void {
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
   let iterations = 0;
@@ -463,17 +591,16 @@ function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>) {
   }
 }
 
-// ─── External file/URL reference extraction (pre-cleansing pass) ────────────
-// Rules come from YAML (category: external_ref) — runs on RAW SQL before the
-// cleansing pipeline neutralizes string literals. Each rule needs a 'kind' field
-// that maps to ExternalRef.kind (e.g. 'openrowset', 'copy_from', 'bulk_from').
-
-import type { ExternalRef } from './types';
-
 /**
- * Extract external file/URL references from RAW SQL (before cleansing).
- * Uses external_ref rules from activeRules (loaded from YAML).
- * Deduplicates by URL — same URL returns only once.
+ * Extracts external file or URL references from raw SQL.
+ *
+ * @remarks
+ * This function runs *before* the cleansing pipeline neutralizes string 
+ * literals, as external references (like BULK INSERT paths) are often 
+ * contained within single quotes.
+ *
+ * @param rawSql - The raw SQL text before any preprocessing or cleansing.
+ * @returns A deduplicated array of discovered external references.
  */
 export function extractExternalRefs(rawSql: string): ExternalRef[] {
   const seen = new Set<string>();

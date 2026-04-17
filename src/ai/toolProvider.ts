@@ -16,8 +16,20 @@ import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engin
 import { type SerializedFilterState } from '../engine/projectStore';
 
 /**
- * Registers all @lineage AI Language Model tools.
- * Consolidates exploration into a single Navigation Engine.
+ * Registers all language model tools associated with the `@lineage` chat participant.
+ *
+ * @remarks
+ * This function is the central registration point for the AI toolset. It consolidates
+ * various lineage operations (searching, tracing, exploring) into a set of VS Code
+ * language model tools.
+ *
+ * It manages the lifecycle of the `NavigationEngine` for multi-hop exploration and
+ * provides a unified logging and error-handling wrapper around tool invocations.
+ *
+ * @param getSession - A factory function to retrieve the current active AI session.
+ * @param outputChannel - The log output channel for tracing tool activity.
+ * @param getPanel - A function to retrieve the currently active webview panel.
+ * @returns An array of disposables representing the registered tools.
  */
 export function registerAiTools(
   getSession: () => AiSession,

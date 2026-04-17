@@ -12,25 +12,56 @@ import type { ObjectType } from '../engine/types';
 import { escapeRegexLiteral } from '../utils/sql';
 import { Tooltip } from './ui/Tooltip';
 
+/**
+ * Props for the {@link NodeContextMenu} component.
+ */
 interface NodeContextMenuProps {
+  /** X-coordinate for the menu origin. */
   x: number;
+  /** Y-coordinate for the menu origin. */
   y: number;
+  /** ID of the node the menu was opened for. */
   nodeId: string;
+  /** Name of the database object. */
   nodeName: string;
+  /** Schema of the database object. */
   schema: string;
+  /** The specific type of database object (e.g. table, view, proc). */
   objectType: ObjectType;
+  /** Optional subtype for external references. */
   externalType?: 'et' | 'file' | 'db';
+  /** URL or path for file-based external references. */
   externalUrl?: string;
+  /** Full qualified name for cross-database references. */
   fullName?: string;
+  /** Whether a trace/path mode is currently active. */
   isTracing: boolean;
+  /** Callback fired when the menu is closed. */
   onClose: () => void;
+  /** Callback to initiate a level-based trace from this node. */
   onTrace: (nodeId: string) => void;
+  /** Callback to initiate pathfinding from this node. */
   onFindPath: (nodeId: string) => void;
+  /** Callback to open the DDL viewer for this node. */
   onViewDdl: (nodeId: string) => void;
+  /** Callback to show the detailed info bar for this node. */
   onShowDetails: (nodeId: string) => void;
+  /** Callback to add a new exclusion rule based on this node's name. */
   onExcludeNode?: (pattern: string) => void;
 }
 
+/**
+ * A context menu for graph nodes, providing quick access to lineage and inspection tools.
+ * 
+ * It uses Floating UI to position itself at the cursor coordinates and handles:
+ * - Initiating Trace and Pathfinding modes.
+ * - Opening DDL and Table Detail views.
+ * - Copying qualified names to the clipboard.
+ * - Adding ad-hoc exclusion rules.
+ * 
+ * @param props - The component props.
+ * @returns A portal-rendered React component.
+ */
 export const NodeContextMenu = memo(function NodeContextMenu({
   x,
   y,

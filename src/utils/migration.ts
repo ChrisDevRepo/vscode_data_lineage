@@ -5,10 +5,21 @@ import { migrateProjectStore, createProject, updateProject, generateProjectName 
 import { Logger } from './log';
 
 /**
- * Migrates legacy workspaceState keys (from pre-ProjectStore versions) into the new Project Store.
- * 
- * This logic is preserved for backward compatibility to ensure users don't lose their 
- * last-opened connections when upgrading. It should be considered for removal in v1.0.0.
+ * Orchestrates the migration of legacy workspaceState keys into the new unified Project Store.
+ *
+ * This function preserves backward compatibility for users upgrading from versions
+ * pre-dating the `ProjectStore` architecture. it recovers the "last-opened"
+ * connection metadata and encapsulates it into a persistent project entity.
+ *
+ * @param context - The VS Code extension context for state access.
+ * @param PROJECT_STORE_KEY - The unique key used for the global state project store.
+ * @param outputChannel - The log channel for reporting migration progress.
+ *
+ * @remarks
+ * Architectural Remark:
+ * This logic handles both 'dacpac' and 'database' source types. Once migrated,
+ * the legacy keys are purged to prevent redundant migrations on subsequent activations.
+ * This should be deprecated and removed in a future major version (v1.0.0).
  */
 export async function migrateFromWorkspaceState(
   context: vscode.ExtensionContext, 

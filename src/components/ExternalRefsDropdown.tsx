@@ -4,14 +4,31 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 
+/**
+ * Props for the {@link ExternalRefsDropdown} component.
+ */
 interface ExternalRefsDropdownProps {
+  /** Whether any external references are shown at all (Master toggle). */
   showExternalRefs: boolean;
+  /** Set of active external reference sub-types. */
   externalRefTypes: Set<'file' | 'db'>;
+  /** Callback to toggle the master 'showExternalRefs' state. */
   onToggleMaster: () => void;
+  /** Callback to toggle a specific external reference sub-type. */
   onToggleSubType: (subType: 'file' | 'db') => void;
+  /** Optional visual flag indicating if the view is already narrowed by other filters. */
   isNarrowed?: boolean;
 }
 
+/**
+ * A dropdown component for filtering external references in the lineage graph.
+ * 
+ * It provides a master toggle to show/hide all external references and 
+ * granular checkboxes for specific types like file sources or cross-database links.
+ * 
+ * @param props - The component props.
+ * @returns A memoized React component.
+ */
 export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   showExternalRefs,
   externalRefTypes,

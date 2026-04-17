@@ -117,6 +117,10 @@ Six analysis modes are available from the toolbar dropdown:
 | **Cycles** | Circular dependencies that block incremental deployment |
 | **External Refs** | Virtual nodes for file sources (OPENROWSET) and cross-database references |
 
+### Algorithmic Verification
+
+To ensure reliability, all structural graph algorithms are verified against a **NetworkX (Python)** ground truth on the full `AdventureWorks` model. This guarantees that complex features like cycle detection and longest-path analysis are logically accurate even on massive lineages.
+
 Click any group in the analysis sidebar to zoom into that subset. Thresholds are configurable:
 
 - `analysis.hubMinDegree` — minimum connections to qualify as a hub

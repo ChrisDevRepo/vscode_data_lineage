@@ -25,18 +25,39 @@ import {
 import { buildBareGraph } from '../ai/graphUtils';
 import { populateColumnStore } from '../engine/modelBuilder';
 
+/** 
+ * Storage key for the project store in VS Code's global state.
+ */
 export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
 
+/**
+ * Represents a bundle of message handlers and their associated cleanup logic.
+ */
 export interface MessageHandlerBundle {
+  /** Map of message types to their asynchronous handler functions. */
   handlers: Record<string, (msg: any) => Promise<void> | void>;
+  /** Cleanup function to release resources (e.g., database connections) when the panel is disposed. */
   cleanup: () => Promise<void>;
 }
 
 /**
- * Factory for creating message handlers that process requests from the Webview.
- * This is the primary IPC (Inter-Process Communication) bridge.
- * Returns both the handler map and a cleanup function that MUST be called on
- * panel dispose so the stats-connection / caches die with the panel.
+ * Factory for creating the IPC (Inter-Process Communication) bridge between the Extension Host and the Webview.
+ * 
+ * This function encapsulates all message handling logic, panel-scoped state, and resource management.
+ * It ensures that database connections and caches associated with a specific panel are correctly
+ * disposed of when the panel is closed.
+ * 
+ * @param host - The bridge host provides abstract access to VS Code UI and FS APIs.
+ * @param context - The extension context for accessing global and workspace state.
+ * @param getSession - Factory to retrieve the active AI session.
+ * @param outputChannel - Log channel for developer-level tracing.
+ * @param loadProjectStore - Function to load the current project configuration.
+ * @param saveProjectStore - Function to persist project configuration changes.
+ * @param migrateFromWorkspaceState - Helper for legacy state migration.
+ * @param loadDemoFlag - If true, triggers immediate loading of the AdventureWorks demo.
+ * @param setDetailPanel - Callback to notify the extension when a detail panel is created/removed.
+ * 
+ * @returns A `MessageHandlerBundle` containing the handlers and a cleanup function.
  */
 export function createMessageHandlers(
   host: BridgeHost,
@@ -56,12 +77,13 @@ export function createMessageHandlers(
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: any = null;
 
-  // Panel-scoped caches — die with the factory (i.e. with the panel).
-  // Previously module-scoped which leaked across panels.
   const statsConnState: { uri: string | undefined } = { uri: undefined };
   let allObjectsCache: SimpleExecuteResult | undefined;
   let platformInfoCache: SimpleExecuteResult | undefined;
 
+  /** 
+   * Disconnects the active database connection used for table statistics.
+   */
   async function cleanupStatsConnection(): Promise<void> {
     if (statsConnState.uri) {
       await disconnectDatabase(statsConnState.uri, outputChannel).catch(err =>
@@ -71,6 +93,9 @@ export function createMessageHandlers(
     }
   }
 
+  /**
+   * Updates the global AI session with a new database model and metadata.
+   */
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     const sess = getSession();
     sess.columnStore.clear();
@@ -82,6 +107,9 @@ export function createMessageHandlers(
     host.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
   }
 
+  /**
+   * Retrieves the current configuration relevant to the detail view.
+   */
   async function getDetailConfig() {
     const cfg = host.getConfiguration();
     const sess = getSession();
@@ -93,6 +121,9 @@ export function createMessageHandlers(
     };
   }
 
+  /**
+   * Enriches a basic lineage node with DDL and column metadata from the session store.
+   */
   function enrichNodeForDetail(node: LineageNode): LineageNode {
     const sess = getSession();
     const cols = sess.columnStore.getColumns(node.id);
@@ -186,7 +217,6 @@ export function createMessageHandlers(
     'update-detail': async (msg) => {
       if (msg.node) lastDetailNode = msg.node;
       if (detailPanel && msg.node) {
-        // No log: fires on every node click and duplicates `show-detail`.
         detailPanel.title = `Detail: ${msg.node.name}`;
         detailPanel.webview.postMessage({
           type: 'detail-update',
@@ -369,8 +399,6 @@ export function createMessageHandlers(
       });
     },
     'filter-changed': (msg) => {
-      // Bookkeeping only — fires on every filter toggle. No log; the webview's
-      // [Filter] logs (Schema / Layout / user actions) carry the story.
       const sess = getSession();
       sess.filter = msg.filter;
       sess.views = msg.savedViews;
@@ -443,10 +471,6 @@ export function createMessageHandlers(
       }
     },
     'log': (msg) => {
-      // Webview logs typically embed their own "[Prefix]" in the text
-      // (e.g. "[Filter] Layout: ..."). If so, write directly to the output
-      // channel so the line appears once ("[Filter] Layout: ...") instead of
-      // being wrapped into "[Bridge] [Filter] Layout: ...".
       const text = msg.text ?? '';
       const level = msg.level ?? 'debug';
       const hasPrefix = /^\s*\[[A-Za-z][A-Za-z0-9]*\]/.test(text);
@@ -480,6 +504,9 @@ export function createMessageHandlers(
 
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 
+/** 
+ * Checks if a dacpac file size exceeds the supported threshold.
+ */
 function isDacpacTooLarge(bytes: number, host: BridgeHost): boolean {
   if (bytes <= MAX_DACPAC_BYTES) return false;
   const mb = (bytes / 1024 / 1024).toFixed(1);
@@ -487,6 +514,9 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost): boolean {
   return true;
 }
 
+/** 
+ * Handles the loading of the built-in AdventureWorks demo dacpac.
+ */
 async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, onModelBuilt?: (model: DatabaseModel) => void) {
   const config = await readExtensionConfig(host);
   try {
@@ -506,6 +536,9 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
   }
 }
 
+/** 
+ * Executes Phase 1 of the database discovery process: fetching the schema list.
+ */
 async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connectionInfo: IConnectionInfo, outputChannel: vscode.LogOutputChannel, onCacheAllObjects: (result: SimpleExecuteResult) => void) {
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   const previewQuery = queries.find(q => q.name === 'schema-preview');
@@ -520,6 +553,9 @@ async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connecti
   host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${connectionInfo.server} / ${connectionInfo.database}` });
 }
 
+/** 
+ * Executes Phase 2 of the database discovery process: extracting full lineage for selected schemas.
+ */
 async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas: string[], progress: vscode.Progress<any>, token: vscode.CancellationToken, outputChannel: vscode.LogOutputChannel, allObjects?: SimpleExecuteResult, currentDatabase?: string, sourceName?: string, platformInfo?: SimpleExecuteResult, onModelBuilt?: (model: DatabaseModel) => void) {
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
@@ -534,6 +570,9 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
 }
 
+/** 
+ * Wrapper for database operations that requires a visual progress indicator.
+ */
 async function withDbProgressHost(host: BridgeHost, title: string, outputChannel: vscode.LogOutputChannel, connectFn: () => Promise<any>, phaseFn: (res: any, progress: any, token: any) => Promise<void>) {
   await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
     try {
@@ -551,6 +590,9 @@ async function withDbProgressHost(host: BridgeHost, title: string, outputChannel
   });
 }
 
+/** 
+ * Handles profiling requests for table/view statistics.
+ */
 async function handleTableStatsRequestHost(
   host: BridgeHost,
   storedConnectionInfo: IConnectionInfo | undefined,
@@ -632,6 +674,9 @@ async function handleTableStatsRequestHost(
   }
 }
 
+/** 
+ * Logs a summary of the SQL parsing results.
+ */
 function handleParseStats(stats: {
   resolvedEdges: number; spDetails?: { name: string }[];
 }, outputChannel: vscode.LogOutputChannel, objectCount?: number, edgeCount?: number, schemaCount?: number) {
@@ -642,6 +687,9 @@ function handleParseStats(stats: {
   }
 }
 
+/** 
+ * Retrieves extension settings from VS Code configuration and formats them for the Webview.
+ */
 async function readExtensionConfig(host: BridgeHost): Promise<any> {
   const cfg = host.getConfiguration();
   return {
@@ -667,12 +715,23 @@ async function readExtensionConfig(host: BridgeHost): Promise<any> {
   };
 }
 
+/** 
+ * Generates the HTML content for the detail panel webview.
+ */
 function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><link rel="stylesheet" type="text/css" href="${stylesUri}"><title>Detail</title></head><body class="vscode-body"><div id="root"></div><script>window.__DETAIL_MODE__ = true;</script><script type="module" src="${scriptUri}"></script></body></html>`;
 }
 
+/**
+ * Generates a diagnostic debug dump of the current extension and AI session state.
+ * 
+ * @param context - The extension context.
+ * @param getSession - Function to retrieve the current AI session.
+ * @param outputChannel - Log output channel.
+ * @returns A formatted string containing system and session diagnostics.
+ */
 export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel): string {
   const sess = getSession();
   const lines: string[] = [];

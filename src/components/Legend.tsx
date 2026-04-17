@@ -1,18 +1,39 @@
-import { memo, useState, useEffect } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import { getSchemaColor } from '../utils/schemaColors';
 
+/**
+ * Props for the {@link Legend} component.
+ */
 interface LegendProps {
+  /** A list of database schema names to display in the legend. */
   schemas: string[];
+  /** Optional flag indicating if the main sidebar is open, used for dynamic positioning. */
   isSidebarOpen?: boolean;
 }
 
+/** The maximum number of schemas to display before showing an "expand" button. */
 const SCHEMA_DISPLAY_LIMIT = 10;
 
+/**
+ * A floating legend component that maps database schema names to their assigned colors.
+ *
+ * @remarks
+ * This component is memoized to prevent unnecessary re-renders during graph manipulation.
+ * It features a collapsible body and an expandable list of schemas if the count exceeds {@link SCHEMA_DISPLAY_LIMIT}.
+ * The component also listens for VS Code theme changes to ensure color contrast remains optimal.
+ *
+ * @param props - The component properties.
+ * @returns A {@link React.JSX.Element} representing the schema legend.
+ */
 export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
 
+  /**
+   * Effect to monitor VS Code theme changes.
+   * Updates internal state to trigger re-renders when the theme kind attribute on document.body changes.
+   */
   useEffect(() => {
     const observer = new MutationObserver(() => {
       setThemeKind(document.body.getAttribute('data-vscode-theme-kind') ?? '');

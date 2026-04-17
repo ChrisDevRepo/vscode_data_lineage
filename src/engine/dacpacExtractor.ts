@@ -25,8 +25,13 @@ import {
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql';
 
-// ─── Public API ─────────────────────────────────────────────────────────────
-
+/**
+ * Extracts a complete DatabaseModel from a .dacpac file buffer.
+ *
+ * @param buffer - The raw ArrayBuffer of the .dacpac file.
+ * @returns A Promise resolving to the extracted DatabaseModel, including objects and dependencies.
+ * @throws {Error} If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
+ */
 export async function extractDacpac(buffer: ArrayBuffer): Promise<DatabaseModel> {
   const xml = await extractModelXml(buffer);
   const { elements, dspName } = parseElements(xml);
@@ -53,8 +58,13 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DatabaseModel>
 }
 
 /**
- * Phase 1: Lightweight schema preview — counts schemas + types without extracting
- * body scripts, columns, or dependencies. Returns parsed elements for Phase 2 reuse.
+ * Extracts a lightweight preview of the database schemas from a .dacpac file buffer.
+ * This Phase 1 extraction counts schemas and object types without parsing body scripts,
+ * columns, or deep dependencies, and returns the parsed XML elements for reuse in Phase 2.
+ *
+ * @param buffer - The raw ArrayBuffer of the .dacpac file.
+ * @returns A Promise resolving to an object containing the schema preview, pre-parsed XML elements, and the Data Schema Provider (DSP) name.
+ * @throws {Error} If the buffer is not a valid ZIP archive or `model.xml` cannot be parsed.
  */
 export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
   preview: SchemaPreview;
@@ -68,9 +78,14 @@ export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
 }
 
 /**
- * Phase 2: Full extraction filtered to selected schemas only.
- * Uses pre-parsed elements from Phase 1 to avoid re-unzipping and re-parsing XML.
- * Skips body script extraction and regex parsing for unselected schemas.
+ * Performs a Phase 2 full extraction filtered to a specific set of schemas.
+ * Uses pre-parsed XML elements from Phase 1 to avoid re-unzipping and re-parsing.
+ * Skips regex parsing and body script extraction for unselected schemas, significantly improving performance.
+ *
+ * @param elements - The array of pre-parsed XML elements from Phase 1.
+ * @param selectedSchemas - A Set of schema names to include in the full extraction (case-insensitive).
+ * @param dspName - Optional Data Schema Provider (DSP) name used to determine the database platform.
+ * @returns The resulting DatabaseModel containing only the objects and dependencies for the selected schemas.
  */
 export function extractDacpacFiltered(
   elements: XmlElement[],
@@ -145,6 +160,16 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
+/**
+ * Filters an existing DatabaseModel in memory to include only objects from the specified schemas.
+ * Includes virtual nodes (external files/databases) if they are connected to nodes within the selected schemas.
+ * Retains the original catalog and neighborIndex for cross-schema resolution.
+ *
+ * @param model - The fully extracted DatabaseModel to filter.
+ * @param selectedSchemas - A Set of schema names to retain (case-insensitive).
+ * @param maxNodes - The maximum number of nodes to return (defaults to DEFAULT_CONFIG.maxNodes).
+ * @returns A new DatabaseModel containing only the filtered nodes and relevant edges.
+ */
 export function filterBySchemas(
   model: DatabaseModel,
   selectedSchemas: Set<string>,
@@ -186,8 +211,6 @@ export function filterBySchemas(
   };
 }
 
-// ─── Lightweight Object Extractor (for catalog / allObjects) ────────────────
-
 /**
  * Extract all tracked objects as lightweight stubs (no body scripts, no columns).
  * Used to build the full cross-schema catalog for neighbor display and reference
@@ -208,7 +231,6 @@ function extractObjectsLightweight(elements: XmlElement[]): ExtractedObject[] {
   return objects;
 }
 
-// ─── ZIP + XML ──────────────────────────────────────────────────────────────
 
 async function extractModelXml(buffer: ArrayBuffer): Promise<string> {
   let zip: JSZip;
@@ -249,7 +271,12 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string }
   return { elements: asArray(model.Element), dspName: doc.DataSchemaModel?.['@_DspName'] ?? '' };
 }
 
-/** Map the DspName attribute from a dacpac's DataSchemaModel element to a human-readable platform string. */
+/**
+ * Maps the DspName attribute from a dacpac's DataSchemaModel element to a human-readable platform string.
+ *
+ * @param dsp - The Data Schema Provider name string (e.g., 'Sql160DatabaseSchemaProvider').
+ * @returns A user-friendly database platform name (e.g., 'SQL Server 2022'), or the raw provider string if unrecognized.
+ */
 export function parseDspPlatform(dsp: string): string {
   if (!dsp) return '';
   if (dsp.includes('SqlDwUnified'))       return 'Fabric Data Warehouse';
@@ -272,7 +299,6 @@ export function parseDspPlatform(dsp: string): string {
   return m ? m[1] : dsp;
 }
 
-// ─── Extract: XML → Intermediate Format ─────────────────────────────────────
 
 function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[]): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
@@ -337,7 +363,6 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   return deps;
 }
 
-// ─── XML Column Extraction ──────────────────────────────────────────────────
 
 function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
   const cols: ColumnDef[] = [];
@@ -389,7 +414,6 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
   return cols;
 }
 
-// ─── XML Constraint Extraction ──────────────────────────────────────────────
 
 /** Get all @_Name values from a named Relationship's Entry.References. */
 function getRelRefs(el: XmlElement, relName: string): string[] {
@@ -484,7 +508,6 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap };
 }
 
-// ─── XML Body Dependencies ──────────────────────────────────────────────────
 
 // Relationship names that carry object-level dependencies.
 // ExpressionDependencies: computed column expressions in SqlTable (nested inside SqlComputedColumn).
@@ -531,7 +554,6 @@ function collectDeps(el: XmlElement, deps: string[]): void {
   }
 }
 
-// ─── XML Body Script Extraction ─────────────────────────────────────────────
 
 function getBodyScript(el: XmlElement, type: string, schema: string, objectName: string): string | undefined {
   // Check for HeaderContents in SysCommentsObjectAnnotation (complete CREATE statement)
@@ -624,7 +646,6 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
   return val;
 }
 
-// ─── Utilities ──────────────────────────────────────────────────────────────
 
 /** Check if ref is object-level (2 parts) not column-level (3+ parts) */
 function isObjectLevelRef(name: string): boolean {
@@ -637,8 +658,15 @@ function asArray<T>(val: T | T[] | undefined | null): T[] {
   return Array.isArray(val) ? val : [val];
 }
 
-// ─── Exclusion Patterns ─────────────────────────────────────────────────────
-
+/**
+ * Removes nodes from a DatabaseModel whose schema and name match any of the provided regular expression patterns.
+ * Updates the model's stored procedure stats to indicate which neighbors were excluded.
+ *
+ * @param model - The DatabaseModel to filter.
+ * @param patterns - An array of regular expression pattern strings to exclude.
+ * @param onWarning - Optional callback invoked if an invalid regex pattern is encountered.
+ * @returns A new DatabaseModel with the matching nodes and their associated edges removed.
+ */
 export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
   if (!patterns || patterns.length === 0) return model;
 

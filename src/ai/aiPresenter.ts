@@ -8,9 +8,18 @@
 import type { LineageNode, ColumnDef, SchemaInfo, NeighborIndex } from '../engine/types';
 import type { SerializedFilterState } from '../engine/projectStore';
 
-// ─── Core helpers ─────────────────────────────────────────────────────────────
 
-/** Strip null / undefined / false / '' / [] from a plain object before sending to the LLM. */
+/** 
+ * Prunes null, undefined, false, empty strings, and empty arrays from a record.
+ * 
+ * @remarks
+ * This is a critical token-optimization utility. By removing "zero-signal" fields
+ * before serialization, we significantly reduce the context window pressure
+ * for large database models without losing semantic information.
+ * 
+ * @param obj - The plain object to be stripped.
+ * @returns A partial version of the input object containing only truthy/non-empty values.
+ */
 export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(obj).filter(([, v]) =>
@@ -23,20 +32,35 @@ export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
 const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', write: 'write', exec: 'exec', read: 'read' };
 const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
-/** Map internal edge types to the AI-facing API name. */
+/** 
+ * Standardizes internal edge types into an AI-consumable API nomenclature.
+ * 
+ * @param type - The raw edge type from the graph engine.
+ * @returns A simplified string representing the data flow direction (e.g., 'read', 'write', 'exec').
+ */
 export function edgeApiType(type: string): string {
   return EDGE_TYPE_MAP[type] ?? 'read';
 }
 
-// ─── Compact shape presenters ─────────────────────────────────────────────────
 
-/** Minimal node shape accepted by presentNode — satisfied by both LineageNode and SearchableNode. */
-export type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & { externalType?: string };
+/** 
+ * A minimal representation of a database node, used for cross-layer presentation.
+ */
+export type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & { 
+  /** Optional metadata for external/linked resources. */
+  externalType?: string 
+};
 
 /**
- * Compact node shape used in search results and BFS nodes.
- * `deg` = total connection count (in + out). Only included when neighborIndex is provided.
- * `ext` = externalType — only when present.
+ * Transforms a database node into a compact, token-optimized JSON representation.
+ * 
+ * @remarks
+ * Keys are intentionally abbreviated (`s`=schema, `n`=name, `t`=type, `deg`=degree) 
+ * to minimize the footprint in search results and BFS discovery payloads.
+ *
+ * @param node - The node to transform.
+ * @param neighborIndex - Optional index to calculate connection density (degree).
+ * @returns A stripped record suitable for AI consumption.
  */
 export function presentNode(
   node: PresentableNode,
@@ -57,8 +81,14 @@ export function presentNode(
 }
 
 /**
- * Compact column shape used in getObjectDetail.
- * `nl` = nullable, `pk` = primary key ordinal, `uq` = unique, `ck` = check constraint.
+ * Transforms a column definition into a compact, token-optimized JSON representation.
+ * 
+ * @remarks
+ * Optimized for `getObjectDetail` responses. Abbreviates constraints 
+ * (`nl`=nullable, `pk`=primary key, `uq`=unique, `ck`=check).
+ *
+ * @param col - The column metadata to transform.
+ * @returns A stripped record containing the column's semantic properties.
  */
 export function presentColumn(col: ColumnDef): Record<string, unknown> {
   return strip({
@@ -72,8 +102,15 @@ export function presentColumn(col: ColumnDef): Record<string, unknown> {
 }
 
 /**
- * One-line compact column string for hop context (AI parses naturally).
- * E.g. "CustomerKey int, not null, PK" or "CalcTotal COMPUTED"
+ * Generates a human-readable, single-line summary of a column's properties.
+ * 
+ * @remarks
+ * Designed for "Hop Context" where the AI reads natural language lists more 
+ * effectively than dense JSON arrays. 
+ * Format: `[Name] [Type], [Nullable], [Constraints]`
+ *
+ * @param col - The column metadata to summarize.
+ * @returns A comma-delimited string of column attributes.
  */
 export function presentColumnCompact(col: ColumnDef): string {
   const parts = [col.name];
@@ -90,15 +127,23 @@ export function presentColumnCompact(col: ColumnDef): string {
 }
 
 /**
- * Compact FK string for hop context. E.g. "CustomerKey → dbo.DimCustomer"
+ * Summarizes a Foreign Key relationship in a compact "pointer" format.
+ * 
+ * @param fk - The foreign key metadata.
+ * @returns A string in the format `ColumnA, ColumnB → Schema.Table`.
  */
 export function presentFkCompact(fk: { columns: string[]; refSchema: string; refTable: string }): string {
   return `${fk.columns.join(', ')} → ${fk.refSchema}.${fk.refTable}`;
 }
 
 /**
- * Compact schema shape used in getContext.
- * Type counts stripped when zero.
+ * Transforms schema-level statistics into a compact JSON representation.
+ * 
+ * @remarks
+ * Used in `getContext` to provide a bird's-eye view of the database structure.
+ *
+ * @param schema - The schema summary to transform.
+ * @returns A stripped record containing node and type counts.
  */
 export function presentSchema(schema: SchemaInfo): Record<string, unknown> {
   return strip({
@@ -113,8 +158,18 @@ export function presentSchema(schema: SchemaInfo): Record<string, unknown> {
 }
 
 /**
- * Compact neighbor shape used in inline up/dn arrays in getObjectDetail.
- * `e` = edge type ('read' | 'exec').
+ * Presents a neighboring node and its relationship to the focus object.
+ * 
+ * @remarks
+ * Used to build `upstream` and `downstream` arrays in `getObjectDetail`.
+ * Includes the specific edge type to distinguish between data flow and execution flow.
+ *
+ * @param nid - The unique ID of the neighbor.
+ * @param originId - The unique ID of the object currently being inspected.
+ * @param nodeMap - Global lookup for node metadata.
+ * @param edgeMap - Global lookup for edge metadata.
+ * @param isUpstream - Directionality of the relationship.
+ * @returns A compact representation of the neighbor and the connecting edge.
  */
 export function presentNeighbor(
   nid: string,
@@ -135,9 +190,14 @@ export function presentNeighbor(
 }
 
 /**
- * Compact filter shape used in getContext.
- * Replaces `allowlistNodeIds` (up to ~1,250 tokens) with `bookmark_nodes: N` (count only).
- * Strips empty arrays and falsy values.
+ * Compresses the current UI filter state for AI consumption.
+ * 
+ * @remarks
+ * Replaces large ID allow-lists with simple counts to save significant token space
+ * while still informing the AI about the user's focus.
+ *
+ * @param filter - The raw filter state from the project store.
+ * @returns A compact representation of active search, schema, and type filters.
  */
 export function presentFilter(filter: SerializedFilterState): Record<string, unknown> {
   const bookmarkCount = filter.allowlistNodeIds?.length;

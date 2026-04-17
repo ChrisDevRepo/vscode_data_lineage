@@ -28,6 +28,13 @@ We no longer use fragmented state machine classes. A single `NavigationEngine` h
 2.  **Fail Early**: If the AI asks a question about a non-existent column or node, the tool call is rejected immediately, forcing self-correction.
 3.  **Grounded Routing**: Every hop is driven by a specific AI-generated sub-question attached to the node on the agenda.
 
+### Singleton Session Model
+One `AiSession` per extension instance. The whole extension holds one active exploration at a time.
+
+- **User-facing safety**: `lineage_start_exploration.prepareInvocation` shows a VS Code confirmation dialog ("Wipe active exploration?") when an in-progress SM exists. The user explicitly acknowledges progress loss before a new exploration wipes the old one.
+- **Auto-reset**: `AiSession.isStale()` returns true after 1 hour of inactivity (`src/ai/session.ts:81`). `resetIfStale()` fires on the next `start_exploration` call if stale OR if the prior SM reached `complete`.
+- **Eval implication**: `toolProxy` bypasses `prepareInvocation` (invokes tools directly), so `POST /session` silently resets. Eval runs therefore execute strictly sequentially — parallel agents against one extension host race on the shared session and corrupt state. See `.claude/skills/eval-loop/SKILL.md` § "Execution Model — Sequential Only".
+
 ---
 
 ## 3. The Three Lifecycle Phases
@@ -63,6 +70,9 @@ Inspired by MemGPT, the memory is split into two tiers to prevent the $O(N)$ tok
 
 ### Topological Map (Grounding)
 The Map is provided by the system in every hop. It provides the **Context of Location** so the AI doesn't have to repeat topological facts in the Blackboard, saving significant tokens.
+
+### Algorithmic Integrity
+To maintain the stability of the Navigation Engine, all core graph algorithms (BFS, SCC, pathfinding) are verified against a **Snapshot Baseline** derived from NetworkX. This ensures that semantic reasoning is grounded in a deterministic, verified topological foundation.
 
 ---
 

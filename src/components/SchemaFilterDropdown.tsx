@@ -4,17 +4,52 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 
+/**
+ * Props for the {@link SchemaFilterDropdown} component.
+ */
 interface SchemaFilterDropdownProps {
+  /** All unique schema names available in the current project. */
   schemas: string[];
+  /** Set of schema names currently selected for rendering. */
   selectedSchemas: Set<string>;
+  /** Set of schema names currently "focused" (highlighted/prioritized) in the view. */
   focusSchemas: Set<string>;
+  /** 
+   * Optional callback to toggle a schema's visibility.
+   * @param schema The name of the schema to toggle.
+   */
   onToggleSchema?: (schema: string) => void;
+  /** 
+   * Optional callback to select multiple schemas at once (e.g., "Select All").
+   * @param schemas The list of schemas to select.
+   */
   onSelectAll?: (schemas: string[]) => void;
+  /** 
+   * Optional callback to deselect multiple schemas at once.
+   * @param schemas The list of schemas to deselect.
+   */
   onSelectNone?: (schemas: string[]) => void;
+  /** 
+   * Callback to toggle a schema's focus state.
+   * @param schema The name of the schema to focus/unfocus.
+   */
   onToggleFocusSchema: (schema: string) => void;
+  /** Whether the current filter state is "narrowed" (affects visual indicators). */
   isNarrowed?: boolean;
 }
 
+/**
+ * A dropdown menu for filtering the graph by schema.
+ * 
+ * Features:
+ * - **Search**: Real-time filtering of the schema list.
+ * - **Selection**: Toggle individual schemas or use bulk actions (All/None).
+ * - **Focus**: Toggle "Focus" mode for specific schemas (visual prioritization).
+ * 
+ * Architectural Note: This component uses a virtualized-friendly scrollable list 
+ * for performance on projects with hundreds of schemas. It uses the `useDropdown` 
+ * hook for positioning and outside-click management.
+ */
 export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   schemas,
   selectedSchemas,

@@ -26,13 +26,25 @@ npm install
 npm run build
 ```
 
-Press **F5** in VS Code to launch the Extension Development Host.
+Press **F5** in VS Code to launch the **Extension Development Host**. For detailed architectural context, see the [Architecture Overview](docs/AI_ARCHITECTURE.md) and [Internal Developer Guide](docs-internal/DEVELOPER_GUIDE.md).
+
+### Build Commands
 
 | Command | Description |
 |---------|-------------|
-| `npm run build` | Build extension + webview |
-| `npm run watch` | Watch mode (extension only) |
-| `npm test` | Run engine tests |
+| `npm run build` | Full build (extension + webview) |
+| `npm run build:ext` | Fast build (extension host only) |
+| `npm run build:webview` | Fast build (Vite webview only) |
+| `npm run watch` | Continuous watch mode (extension only) |
+
+### Testing Tiers
+
+| Tier | Folder | Command | Description |
+| :--- | :--- | :--- | :--- |
+| **Logic** | `tests/unit/` | `npm run test:unit` | Fast Node.js unit tests for parsing, graph, and stores. |
+| **Hooks** | `tests/unit/hooks/` | `npm run test:hooks` | React hook behavior tests via Vitest. |
+| **Sanity** | `tests/` | `npm run test:sanity` | Verifies the bundled `out/extension.js` can be loaded. |
+| **E2E** | `tests/e2e/` | `npm run test:vscode` | Full VS Code integration tests (launches host). |
 
 ## License
 

@@ -13,16 +13,24 @@ import type { CatalogEntry, NeighborIndex, ParseStats } from '../engine/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
 
+/**
+ * Props for the {@link NodeInfoBar} component.
+ */
 interface NodeInfoBarProps {
+  /** ID of the node currently under inspection. */
   nodeId: string;
+  /** Full catalog of all objects in the model. */
   catalog: Record<string, CatalogEntry>;
+  /** Index of all input/output edges in the graph. */
   neighborIndex: NeighborIndex;
+  /** Set of node IDs currently visible in the graph view. */
   visibleNodeIds: Set<string>;
+  /** Optional parsing statistics for SP dependency analysis. */
   parseStats?: ParseStats;
+  /** Callback fired when the user closes the info bar. */
   onClose: () => void;
 }
 
-// ─── Neighbor Hover List ──────────────────────────────────────────────────────
 
 /**
  * Hoverable badge showing In or Out count.
@@ -122,7 +130,6 @@ function NeighborHoverList({
   );
 }
 
-// ─── Simple Plain-text Hover List ─────────────────────────────────────────────
 
 function SimpleHoverList({ label, count, items }: { label: string; count: number; items: string[] }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -172,8 +179,20 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
   );
 }
 
-// ─── NodeInfoBar ──────────────────────────────────────────────────────────────
 
+/**
+ * A horizontal bar that displays detailed technical metadata for a selected node.
+ * 
+ * The bar provides:
+ * - **Identity**: Icon and qualified name (schema.object) of the node.
+ * - **Connectivity**: Interactive counts for 'In' and 'Out' neighbors with schema-grouped hover lists.
+ * - **Analysis**: Hoverable lists for unresolved references (e.g., missing tables) and excluded 
+ *   references (filtered by user patterns).
+ * 
+ * Architectural Remark: This component is designed to be highly responsive, updating 
+ * immediately as the user clicks different nodes in the graph. It uses `@floating-ui` 
+ * for the hover popovers to ensure they remain visible regardless of the bar's position.
+ */
 export const NodeInfoBar = memo(function NodeInfoBar({
   nodeId, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,
 }: NodeInfoBarProps) {

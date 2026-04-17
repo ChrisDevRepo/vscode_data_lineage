@@ -1,36 +1,54 @@
-// ─── Case Sensitivity Mode ───────────────────────────────────────────────────
-
-/** Internal flag for case-sensitivity mode.
- *  'CI' = case-insensitive (SQL Server default — current mode).
- *  'CS' = case-sensitive (future: requires full regression on CS-collation databases).
- *  NOT user-facing. This is the single toggle point for a future CS release. */
+/** 
+ * Internal configuration flag for case-sensitivity mode across the engine.
+ * 
+ * - 'CI': Case-Insensitive (SQL Server default). Schema keys are lowercased for comparison.
+ * - 'CS': Case-Sensitive. Exact casing is used for all object and schema identification.
+ * 
+ * @internal This is not a user-facing setting. It serves as the single source of truth 
+ * for future case-sensitivity support.
+ */
 export const CASE_MODE: 'CI' | 'CS' = 'CI';
 
-/** Comparison key for schema names.
- *  CI: lowercase so 'dbo' === 'DBO' (SQL Server default behavior).
- *  CS: unchanged — displayName and key are the same; exact casing is authoritative. */
+/** 
+ * Computes a canonical comparison key for a SQL schema or object name.
+ * 
+ * When `CASE_MODE` is 'CI', the name is lowercased to ensure that 'dbo', 'DBO', 
+ * and '[dbo]' (after bracket stripping) are treated as identical.
+ * 
+ * @param name - The raw SQL identifier name.
+ * @returns The normalized key for use in Maps and sets.
+ */
 export function schemaKey(name: string): string {
   return CASE_MODE === 'CI' ? name.toLowerCase() : name;
 }
 
-// ─── SQL Name Utilities ──────────────────────────────────────────────────────
 
-/** Remove SQL bracket and double-quote delimiters from a name: [dbo].[Table] → dbo.Table */
+/** 
+ * Removes SQL-standard delimiters (brackets `[]` and double-quotes `""`) from an identifier.
+ * 
+ * Example: `[dbo].[Table]` becomes `dbo.Table`.
+ * 
+ * @param name - The delimited SQL identifier.
+ * @returns The raw, unquoted identifier name.
+ */
 export function stripBrackets(name: string): string {
   return name.replace(/[\[\]"]/g, '');
 }
 
 /**
- * Split a SQL name on dots that are OUTSIDE bracket-quoted identifiers.
- * Dots inside brackets (e.g., [obj.name.with.dots]) are part of the identifier, not separators.
- * Double-quoted identifiers are treated the same as brackets.
+ * Splits a qualified SQL name into its constituent parts (Database, Schema, Object).
+ * 
+ * This function correctly handles dots contained within bracketed `[]` or 
+ * double-quoted `""` identifiers, ensuring they are not treated as part separators.
  *
- * Examples:
- *   [schema].[obj]                → ['[schema]', '[obj]']
- *   [schema].[obj.with.dot]       → ['[schema]', '[obj.with.dot]']     ← dot inside name
- *   schema.obj                    → ['schema', 'obj']
- *   db.schema.obj                 → ['db', 'schema', 'obj']
- *   "schema"."obj"                → ['"schema"', '"obj"']
+ * @example
+ * ```typescript
+ * splitSqlName("[schema].[obj.with.dot]") // returns ["[schema]", "[obj.with.dot]"]
+ * splitSqlName("db.schema.obj")           // returns ["db", "schema", "obj"]
+ * ```
+ * 
+ * @param name - The fully qualified SQL name to split.
+ * @returns An array of identifier parts.
  */
 export function splitSqlName(name: string): string[] {
   const parts: string[] = [];
@@ -50,19 +68,29 @@ export function splitSqlName(name: string): string[] {
   return parts;
 }
 
-/** Escape a string for safe HTML interpolation. */
+/** 
+ * Escapes special characters in a string for safe interpolation into HTML.
+ * 
+ * @param s - The raw string to escape.
+ * @returns The HTML-safe escaped string.
+ */
 export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ─── Schema Placeholder Expansion ───────────────────────────────────────────
 
 const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
 
 /**
- * Expand `{{SCHEMAS}}` placeholders in a YAML-defined SQL query.
- * Replaces every occurrence with a SQL-safe quoted list: `'dbo', 'Sales'`.
- * If the query has no placeholder, returns it unchanged.
+ * Expands a `{{SCHEMAS}}` placeholder within a SQL template with a comma-separated list 
+ * of single-quoted schema names.
+ * 
+ * Example: `SELECT * FROM sys.tables WHERE schema_name IN ({{SCHEMAS}})` 
+ * becomes `SELECT * FROM sys.tables WHERE schema_name IN ('dbo', 'Sales')`.
+ * 
+ * @param sql - The SQL template string containing the placeholder.
+ * @param schemas - The list of schema names to inject.
+ * @returns The expanded SQL query.
  */
 export function expandSchemaPlaceholder(sql: string, schemas: string[]): string {
   if (!sql.includes(SCHEMA_PLACEHOLDER)) return sql;
@@ -70,7 +98,14 @@ export function expandSchemaPlaceholder(sql: string, schemas: string[]): string 
   return sql.replace(/\{\{SCHEMAS\}\}/g, list);
 }
 
-/** Warn if a Phase 2 query is missing the `{{SCHEMAS}}` placeholder. */
+/** 
+ * Validates that a SQL template contains the required schema placeholder for its execution phase.
+ * 
+ * @param name - The name of the query being validated.
+ * @param sql - The SQL template content.
+ * @param phase - The execution phase (Phase 2 requires the placeholder for filtering).
+ * @returns A warning message if validation fails, otherwise `undefined`.
+ */
 export function validateSchemaPlaceholder(name: string, sql: string, phase: number): string | undefined {
   if (phase === 2 && !sql.includes(SCHEMA_PLACEHOLDER)) {
     return `Phase 2 query '${name}' is missing ${SCHEMA_PLACEHOLDER} placeholder — results will be unfiltered`;
@@ -78,29 +113,29 @@ export function validateSchemaPlaceholder(name: string, sql: string, phase: numb
   return undefined;
 }
 
-// ─── Exclusion Pattern Compilation ──────────────────────────────────────────
 
 /**
- * Compile an exclusion pattern to a case-insensitive RegExp.
- * Supports % wildcard syntax alongside standard regex:
- *   %tmp%   → .*tmp.*  (matches any name containing "tmp")
- *   dbo.%   → dbo..*  (matches any object in the dbo schema)
- * % characters are converted to .* before regex compilation.
- * All other characters are treated as literal regex syntax.
+ * Compiles a simple exclusion pattern into a case-insensitive regular expression.
+ * Supports the `%` wildcard character, which is converted to `.*`.
+ * 
+ * @example `%tmp%` matches any string containing "tmp".
+ * 
+ * @param pattern - The pattern string to compile.
+ * @returns A compiled `RegExp` object.
  */
 export function compileExclusionPattern(pattern: string): RegExp {
   return new RegExp(pattern.replace(/%/g, '.*'), 'i');
 }
 
 /**
- * Compile a SQL-style pattern to a case-insensitive RegExp.
- * Only % is a wildcard (matches any sequence of characters).
- * All other characters, including _, are treated as literals.
- *   test%      → anchored prefix match: "test", "test_data", "testing"
- *   %test%     → substring match: any name containing "test"
- *   test       → exact match (no wildcards)
- *   test_abc   → exact match for "test_abc" only (no false positives)
- * Use where predictable SQL LIKE behavior is required.
+ * Compiles a SQL-style `LIKE` pattern into a case-insensitive regular expression.
+ * Only the `%` character acts as a wildcard (matching zero or more characters).
+ * All other special regex characters are escaped to ensure literal matching.
+ * 
+ * @example `test%` matches "test", "testing", but not "mytest".
+ * 
+ * @param pattern - The SQL LIKE pattern string.
+ * @returns A compiled `RegExp` object anchored to the start and end of the string.
  */
 export function compileSqlLikePattern(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
@@ -109,8 +144,10 @@ export function compileSqlLikePattern(pattern: string): RegExp {
 }
 
 /**
- * Compile an array of SQL LIKE patterns. Returns null when the array is empty or undefined.
- * Use matchesAnySqlLike() to test a value against the compiled matchers.
+ * Compiles an array of SQL-style `LIKE` patterns into an array of regular expressions.
+ * 
+ * @param patterns - The list of patterns to compile.
+ * @returns An array of `RegExp` objects, or `null` if the input is empty or undefined.
  */
 export function compileSqlLikePatterns(patterns: string[] | undefined): RegExp[] | null {
   if (!patterns || patterns.length === 0) return null;
@@ -118,21 +155,34 @@ export function compileSqlLikePatterns(patterns: string[] | undefined): RegExp[]
 }
 
 /**
- * Test a value against an array of compiled SQL LIKE matchers.
- * Returns true if any matcher matches.
+ * Checks if a value matches any of the provided regular expression matchers.
+ * 
+ * @param value - The string value to test.
+ * @param matchers - The array of compiled `RegExp` objects to test against.
+ * @returns `true` if at least one matcher matches the value; otherwise `false`.
  */
 export function matchesAnySqlLike(value: string, matchers: RegExp[]): boolean {
   return matchers.some(r => r.test(value));
 }
 
-/** Escape a literal string so it is safe to embed in a RegExp. */
+/** 
+ * Escapes a string so it can be safely used as a literal part of a regular expression.
+ * 
+ * @param s - The string to escape.
+ * @returns The escaped string.
+ */
 export function escapeRegexLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * Normalize a DDL body script for display: strips blank lines, trims trailing whitespace,
- * and converts tabs to 2-space indentation.
+ * Normalizes a raw DDL script for display in the UI.
+ * - Removes blank lines.
+ * - Trims trailing whitespace.
+ * - Converts tabs to two-space indentation.
+ * 
+ * @param raw - The raw DDL script content.
+ * @returns The normalized, clean script string.
  */
 export function normalizeBodyScript(raw: string): string {
   return raw

@@ -8,34 +8,63 @@ import type { IHopStateMachine } from './smBase';
 import type { HopLogEntry } from './smTypes';
 
 /**
- * AI Session Container — The "Clean Slate" for @lineage investigations.
+ * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
+ * 
+ * @remarks
+ * The `AiSession` acts as a "Clean Slate" for `@lineage` participant interactions. 
+ * It maintains the grounded database model, the active exploration state machine, 
+ * and the two-tier memory manager. Sessions are strictly isolated to prevent 
+ * cross-project or cross-user context leakage.
  */
 export class AiSession {
+  /** Unique session identifier for log correlation and telemetry. */
   public id: string;
+  /** Orchestrates short-term narrative and long-term technical memory. */
   public readonly memory: AiMemoryManager;
   
   // ── Environment State ──
+  /** The current database model (nodes/edges) extracted from DDL. */
   public model: DatabaseModel | null = null;
+  /** Topology-only graph used for AI navigation. */
   public graph: Graph | null = null;
+  /** Active schema/object filters applied by the user. */
   public filter: SerializedFilterState | null = null;
+  /** List of saved filter profiles (views) for the current project. */
   public views: FilterProfile[] = [];
+  /** Human-readable name of the active project. */
   public projectName: string | null = null;
+  /** Persistent identifier for the current project. */
   public currentProjectId: string | null = null;
+  /** Indicates if the session is connected to a live database (enables Stats). */
   public isDbSession = false;
+  /** Cache for column-level metadata and profiling results. */
   public columnStore: ColumnStore;
 
   // ── AI reasoning State ──
+  /** The active state machine controlling the hop-by-hop exploration loop. */
   public stateMachine: IHopStateMachine | null = null;
+  /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
+  /** YAML-loaded instructions for report generation. */
   public outputTemplates: AiOutputTemplates;
+  /** Hard limit on input tokens for the underlying LLM. */
   public maxInputTokens = 32000;
+  /** Name of the AI model performing the investigation. */
   public modelName = '';
+  /** Sequential log of tool calls and results for the current exploration. */
   public hopLog: HopLogEntry[] = [];
   
   // ── Telemetry / Log Correlation ──
+  /** Unix timestamp of session creation. */
   public startTime: number;
+  /** Total number of tool execution rounds performed. */
   public hopCount = 0;
 
+  /**
+   * Creates a new AiSession.
+   * 
+   * @param templates - Optional report generation templates.
+   */
   constructor(templates?: AiOutputTemplates) {
     this.id = this.generateId();
     this.memory = new AiMemoryManager();
@@ -44,11 +73,19 @@ export class AiSession {
     this.startTime = Date.now();
   }
 
+  /**
+   * Determines if the session has exceeded its maximum operational lifetime.
+   * 
+   * @returns `true` if the session is older than 1 hour.
+   */
   public isStale(): boolean {
     const ONE_HOUR_MS = 1 * 60 * 60 * 1000;
     return (Date.now() - this.startTime) > ONE_HOUR_MS;
   }
 
+  /**
+   * Resets the session state if it is stale or if a previous exploration is complete.
+   */
   public resetIfStale(): void {
     if (this.isStale() || this.stateMachine?.status === 'complete') {
       this.resetExploration();
@@ -60,6 +97,9 @@ export class AiSession {
     return `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   }
 
+  /**
+   * Clears all exploration-specific state while preserving environment metadata.
+   */
   public resetExploration(): void {
     this.memory.reset();
     this.stateMachine = null;
@@ -68,14 +108,22 @@ export class AiSession {
     this.hopLog = [];
   }
 
+  /**
+   * Rotates the session identifier and resets the start timer.
+   */
   public regenerateSessionId(): void {
     this.id = this.generateId();
     this.startTime = Date.now();
   }
 
   /** 
-   * Unified result storage.
-   * Maps NavigationEngine output to the ResultGraph format used by ViewSynthesisService.
+   * Transmutes State Machine findings into the visual ResultGraph format.
+   * 
+   * @remarks
+   * Maps navigation engine output (nodes, edges, detail slots) to the 
+   * standard contract consumed by `ViewSynthesisService` and the React webview.
+   * 
+   * @param fullResult - The raw completion result from the State Machine.
    */
   public storeBbResult(fullResult: any): void {
     const sourceMode = this.stateMachine?.mode ?? 'blackboard';
@@ -105,6 +153,11 @@ export class AiSession {
     };
   }
 
+  /**
+   * Generates a high-level summary of the session's current status.
+   * 
+   * @returns A `SessionSummary` object for logging and UI updates.
+   */
   public getSummary(): SessionSummary {
     return {
       id: this.id,
@@ -119,6 +172,15 @@ export class AiSession {
 
 const GLOBAL_SESSION_KEY = '__VSCODE_DL_AI_SESSION__';
 
+/**
+ * Retrieves the global singleton instance of the `AiSession`.
+ * 
+ * @remarks
+ * Uses `globalThis` to ensure state persistence across different entry points
+ * (Extension Host vs. Integration Tests).
+ * 
+ * @returns The active `AiSession` instance.
+ */
 export function getSession(): AiSession {
   if (!(globalThis as any)[GLOBAL_SESSION_KEY]) {
     (globalThis as any)[GLOBAL_SESSION_KEY] = new AiSession();

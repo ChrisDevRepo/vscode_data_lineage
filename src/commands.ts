@@ -6,8 +6,22 @@ import { Logger, trunc } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 
 /**
- * Registers all extension commands.
- * Returns an array of disposables to be added to context.subscriptions.
+ * Registers all user-facing and internal commands for the Data Lineage Viz extension.
+ * 
+ * This includes commands for:
+ * - Opening the primary lineage panel (wizard or demo).
+ * - Project management (loading, saving, deleting).
+ * - Configuration scaffolding (creating YAML templates).
+ * - AI integration (view creation, state dumping).
+ * - UI controls (overview mode toggle, object search).
+ * 
+ * @param context - The extension context.
+ * @param getSession - Factory to retrieve the active AI session.
+ * @param outputChannel - Log channel for reporting command execution and errors.
+ * @param openPanel - Function to open the primary lineage webview.
+ * @param buildDebugDump - Function to generate diagnostic information.
+ * 
+ * @returns An array of disposables representing the registered commands.
  */
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -20,8 +34,14 @@ export function registerCommands(
   const aiLogger = Logger.create(outputChannel, 'AI');
 
   return [
+    // --- Primary Entry Points ---
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
+    
+    /** 
+     * Programmatic entry point for automated testing or deep-linking.
+     * Loads a specific project by its ID.
+     */
     vscode.commands.registerCommand('dataLineageViz.openProject', (projectId: string) => {
       openPanel(context, 'Data Lineage Viz');
       const panel = getActivePanel();
@@ -29,9 +49,13 @@ export function registerCommands(
         panel.webview.postMessage({ type: 'load-project', id: projectId });
       }
     }),
+
+    // --- Configuration & Settings ---
     vscode.commands.registerCommand('dataLineageViz.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz')
     ),
+
+    // --- Diagnostics & Debugging ---
     vscode.commands.registerCommand('dataLineageViz.copyDebugInfo', async () => {
       try {
         const dump = buildDebugDump(context);
@@ -43,6 +67,10 @@ export function registerCommands(
       }
     }),
 
+    /** 
+     * Dumps the current AI State Machine (SM) state to a JSON file in the workspace.
+     * Used for debugging deep-trace behavior and non-deterministic AI failures.
+     */
     vscode.commands.registerCommand('dataLineageViz.dumpSmState', async () => {
       const sess = getSession();
       const sm = sess.stateMachine;
@@ -71,6 +99,7 @@ export function registerCommands(
       }
     }),
 
+    // --- Configuration Scaffolding ---
     vscode.commands.registerCommand('dataLineageViz.createParseRules', () =>
       createYamlScaffold(context, 'parseRules.yaml', 'defaultParseRules.yaml', 'parseRulesFile')
     ),
@@ -81,6 +110,10 @@ export function registerCommands(
       createYamlScaffold(context, 'aiOutputTemplates.yaml', 'aiOutputTemplates.yaml', 'ai.outputTemplateFile')
     ),
 
+    // --- AI Integration ---
+    /** 
+     * Internal command used by the AI to trigger view synthesis in the chat UI.
+     */
     vscode.commands.registerCommand('dataLineageViz.aiCreateView', (originalPrompt: string) => {
       const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${trunc(originalPrompt || '', 60)}"`;
       vscode.commands.executeCommand('workbench.action.chat.open', {
@@ -88,6 +121,7 @@ export function registerCommands(
       });
     }),
 
+    // --- UI Controls ---
     vscode.commands.registerCommand('dataLineageViz.toggleOverviewMode', () => {
       const panel = getActivePanel();
       if (!panel) {
@@ -97,6 +131,9 @@ export function registerCommands(
       panel.webview.postMessage({ type: 'toggle-overview' });
     }),
 
+    /** 
+     * Launches a Quick Pick search interface for all SQL objects in the current model.
+     */
     vscode.commands.registerCommand('dataLineageViz.searchObjects', async () => {
       const sess = getSession();
       if (!sess.model) {
@@ -122,24 +159,42 @@ export function registerCommands(
       qp.onDidHide(() => qp.dispose());
       qp.show();
     }),
+
+    /** 
+     * Command intended for testing/integration that forces a .dacpac file load into the active session.
+     */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
       configLogger.info(`Forcing project load from: ${uri.fsPath}`);
-      const { extractDacpac } = await import('./engine/dacpacExtractor');
-      const { buildBareGraph } = await import('./ai/graphUtils');
+      try {
+        const { extractDacpac } = await import('./engine/dacpacExtractor');
+        const { buildBareGraph } = await import('./ai/graphUtils');
 
-      const buffer = await vscode.workspace.fs.readFile(uri);
-      const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
-      const sess = getSession();
+        const buffer = await vscode.workspace.fs.readFile(uri);
+        const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
+        const sess = getSession();
 
-      sess.model = model;
-      sess.projectName = path.basename(uri.fsPath, '.dacpac');
-      sess.graph = buildBareGraph(model);
+        sess.model = model;
+        sess.projectName = path.basename(uri.fsPath, '.dacpac');
+        sess.graph = buildBareGraph(model);
 
-      configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`);
+        configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`);
+      } catch (err) {
+        configLogger.error(`openExternalProject(${uri.fsPath})`, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(`Data Lineage: Failed to read file — ${msg}`);
+      }
     }),
   ];
 }
 
+/**
+ * Creates a YAML configuration file in the workspace root by copying a template from the extension assets.
+ * 
+ * @param context - The extension context.
+ * @param fileName - The name of the file to create in the workspace.
+ * @param sourceAsset - The name of the template file in the extension's `assets/` folder.
+ * @param settingName - The name of the extension setting associated with this file.
+ */
 async function createYamlScaffold(
   context: vscode.ExtensionContext, fileName: string, sourceAsset: string, settingName: string
 ): Promise<void> {
@@ -152,6 +207,7 @@ async function createYamlScaffold(
   const targetUri = vscode.Uri.joinPath(folder.uri, fileName);
 
   try {
+    // If the file already exists, just open it for the user.
     await vscode.workspace.fs.stat(targetUri);
     const doc = await vscode.workspace.openTextDocument(targetUri);
     await vscode.window.showTextDocument(doc);
@@ -160,6 +216,7 @@ async function createYamlScaffold(
     if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
   }
 
+  // Copy from assets to workspace.
   const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', sourceAsset);
   const sourceData = await vscode.workspace.fs.readFile(sourceUri);
   await vscode.workspace.fs.writeFile(targetUri, sourceData);

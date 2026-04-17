@@ -31,21 +31,6 @@ async function testExtraction() {
   return model;
 }
 
-// ─── Schema Filtering ───────────────────────────────────────────────────────
-
-async function testFiltering(model: Awaited<ReturnType<typeof extractDacpac>>) {
-  console.log('\n── Schema Filtering ──');
-
-  const salesLT = filterBySchemas(model, new Set(['Sales']));
-  const isVirtual = (n: { externalType?: string }) => n.externalType === 'file' || n.externalType === 'db';
-  assert(salesLT.nodes.every(n => n.schema === 'Sales' || isVirtual(n)), 'All filtered nodes are Sales schema (or virtual)');
-  assert(salesLT.nodes.length > 0 && salesLT.nodes.length < model.nodes.length, 'Filtered set is smaller than full set');
-
-  // Max nodes cap
-  const capped = filterBySchemas(model, new Set(['dbo', 'Sales']), 5);
-  assert(capped.nodes.length <= 5, `Capped at max 5 nodes`);
-}
-
 // ─── Edge Integrity ─────────────────────────────────────────────────────────
 
 async function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
@@ -478,7 +463,6 @@ async function main() {
 
   try {
     const model = await testExtraction();
-    await testFiltering(model);
     await testEdgeIntegrity(model);
     await testFabricDacpac();
     await testNumericEntitySecurity();

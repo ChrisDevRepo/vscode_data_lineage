@@ -12,7 +12,16 @@ import { compactNoiseResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './h
 import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
 
-/** Helper to extract callId, name, and input from various tool call part types */
+/**
+ * Extracts key fields from a VS Code language model tool call part.
+ *
+ * @remarks
+ * This helper utility normalizes the extraction of `callId`, `name`, and `input` from various
+ * versions or shapes of the tool call part, providing a stable interface for the participant loop.
+ *
+ * @param tc - The tool call part received from the language model response.
+ * @returns An object containing the call identifier, tool name, and input arguments.
+ */
 export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { callId: string; name: string; input: any } {
   return {
     callId: tc.callId,
@@ -21,9 +30,31 @@ export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { c
   };
 }
 
+/**
+ * The primary chat participant for the Data Lineage Viz extension.
+ *
+ * @remarks
+ * This class orchestrates the interaction between the VS Code Copilot Chat interface and the
+ * underlying lineage engine. It manages the chat request lifecycle, handles tool invocation rounds,
+ * performs context eviction to fit token budgets, and implements the "Sliding Memory" protocol
+ * for deep lineage exploration.
+ *
+ * The participant operates in three distinct phases:
+ * 1. **Discovery**: Identifying user intent and mapping the initial scope.
+ * 2. **Active**: Executing a state machine (Blackboard or Column Trace) to traverse the graph.
+ * 3. **Done**: Synthesizing findings into a final technical report for the user.
+ */
 export class LineageParticipant {
   private readonly logger: Logger;
 
+  /**
+   * Initializes a new instance of the LineageParticipant.
+   *
+   * @param context - The extension context for managing subscriptions and state.
+   * @param getSession - A factory function to retrieve the current active AI session.
+   * @param outputChannel - The log output channel for tracing participant activity.
+   * @param getActivePanel - A function to retrieve the currently active webview panel, if any.
+   */
   constructor(
     private context: vscode.ExtensionContext,
     private getSession: () => AiSession,
@@ -33,6 +64,13 @@ export class LineageParticipant {
     this.logger = Logger.create(outputChannel, 'AI');
   }
 
+  /**
+   * Registers the participant and its associated providers with VS Code.
+   *
+   * @remarks
+   * This method sets up the chat participant, its feedback handler, and its followup provider
+   * which suggests context-sensitive actions (like "Show in Graph") based on tool activity.
+   */
   public register() {
     const participant = vscode.chat.createChatParticipant(
       'dataLineageViz.lineage',
@@ -57,6 +95,23 @@ export class LineageParticipant {
     this.context.subscriptions.push(participant);
   }
 
+  /**
+   * Main entry point for handling chat requests from the user.
+   *
+   * @remarks
+   * This method implements the core agent loop, which includes:
+   * - Session rotation on new chat starts.
+   * - History reconstruction and context eviction.
+   * - Multi-round tool execution (Agentic Loop).
+   * - Phase transitions based on tool output and state machine status.
+   * - Final synthesis of technical evidence into a user-facing response.
+   *
+   * @param request - The user's chat request containing the prompt and model selection.
+   * @param chatContext - The conversation history provided by VS Code.
+   * @param stream - The response stream for delivering markdown and progress updates.
+   * @param token - A cancellation token to stop processing if the user cancels.
+   * @returns A promise that resolves to the chat result metadata.
+   */
   public async handleChatRequest(
     request: vscode.ChatRequest,
     chatContext: vscode.ChatContext,
@@ -201,18 +256,16 @@ export class LineageParticipant {
 
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
-        try { 
-          const currentInputTokens = await request.model.countTokens(serializeMessages(messages)); 
-          const pct = ((currentInputTokens / sess.maxInputTokens) * 100).toFixed(1);
-          const delta = lastRoundInputTokens > 0 ? ` (+${currentInputTokens - lastRoundInputTokens})` : '';
-          const phaseLabel = activePhase.toUpperCase();
-          this.logger.info(`Round ${roundCount} [${phaseLabel}] — context: ${currentInputTokens}${delta} tokens (${pct}% of ${sess.maxInputTokens})`);
-          lastInputTokenEstimate = currentInputTokens;
-          lastRoundInputTokens = currentInputTokens;
+        const tRoundStart = Date.now();
+        let roundInputTokens = 0;
+        try {
+          roundInputTokens = await request.model.countTokens(serializeMessages(messages));
+          lastInputTokenEstimate = roundInputTokens;
+          lastRoundInputTokens = roundInputTokens;
         } catch (err) {
           this.logger.debug(`Per-round countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
-        
+
         const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
@@ -231,12 +284,19 @@ export class LineageParticipant {
           else if (part instanceof vscode.LanguageModelToolCallPart) { assistantParts.push(part); toolCalls.push(part); }
         }
 
+        let roundOutputTokens = 0;
         try {
-          totalOutputTokens += await request.model.countTokens(responseText);
+          roundOutputTokens = await request.model.countTokens(responseText);
+          totalOutputTokens += roundOutputTokens;
         } catch (err) {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
-        if (!toolCalls.length) return;
+        if (!toolCalls.length) {
+          const msFinal = Date.now() - tRoundStart;
+          const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
+          this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
+          return;
+        }
 
         if (actionRequiredPending && responseText.length > 0) actionRequiredPending = false;
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
@@ -291,12 +351,21 @@ export class LineageParticipant {
 
         toolCallRounds.push({ response: responseText, toolCalls });
 
+        const roundMs = Date.now() - tRoundStart;
+        const toolNames = toolCalls.map(tc => tc.name.replace('lineage_', ''));
+        const roundResultChars = resultParts.reduce((acc, p) => {
+          try { return acc + JSON.stringify((p as any).content).length; } catch { return acc; }
+        }, 0);
+        const pct = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
+        this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — ${toolCalls.length} tool(s): ${toolNames.join(', ')} (${roundMs}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pct}%, ${roundResultChars} result chars)`);
+
         // Phase transitions
         const hasStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
         if (hasStart && activePhase === 'discover') {
           activePhase = 'active';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-engine'));
-          
+          this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
+
           const engine = sess.stateMachine;
           if (engine) {
             navPrompt = buildNavigationPrompt(engine.mode);
@@ -307,6 +376,7 @@ export class LineageParticipant {
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
           activePhase = 'done';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_submit_findings');
+          this.logger.info(`[Phase] active → done — SM complete, restored ${lineageTools.length} classic tools`);
 
           if (!sess.stateMachine.inlineMode) {
             // Deliver the Detail Archive evidence for Phase 3
@@ -375,7 +445,9 @@ export class LineageParticipant {
     try {
       await runWithTools();
       const totalTokenEst = lastInputTokenEstimate + totalOutputTokens + Math.round(totalToolResultChars / 4);
-      this.logger.info(`Summary — rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst}`);
+      const smMode = sess.stateMachine?.mode ?? '—';
+      const pctFinal = ((totalTokenEst / sess.maxInputTokens) * 100).toFixed(0);
+      this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, tokens: ~${totalTokenEst} (${pctFinal}% of ${sess.maxInputTokens})`);
       
       const smComplete = sess.stateMachine?.status === 'complete';
       if (this.getActivePanel() && smComplete) {

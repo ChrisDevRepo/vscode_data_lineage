@@ -1,30 +1,52 @@
 import type { ObjectType, ColumnDef } from '../engine/types';
 
+/**
+ * Represents a node structure optimized for search and filtering operations.
+ */
 export interface SearchableNode {
+  /** Unique identifier of the node (schema.object). */
   id: string;
+  /** Name of the database object. */
   name: string;
+  /** Schema name the object belongs to. */
   schema: string;
+  /** The type of database object (e.g., Table, View). */
   type: ObjectType;
+  /** Optional secondary type for external references. */
   externalType?: string;
+  /** The raw SQL definition or body script of the object. */
   bodyScript?: string;
+  /** The collection of columns belonging to the object. */
   columns?: ColumnDef[];
 }
 
+/**
+ * Represents a match found within a DDL body script or column list.
+ */
 export interface DdlMatch {
+  /** The node that contains the match. */
   node: SearchableNode;
+  /** A formatted snippet showing the context of the match. */
   snippet: string;
 }
 
 /**
- * Compile a search pattern to a RegExp with case-insensitive flag.
- * Returns null if the pattern is invalid or triggers catastrophic backtracking.
+ * Compiles a search pattern into a safe, case-insensitive Regular Expression.
+ *
+ * @param pattern - The raw regex string to compile.
+ * @returns A compiled `RegExp` object, or `null` if the pattern is invalid or risky.
+ *
+ * @remarks
+ * Architectural Remark:
+ * Includes a heuristic ReDoS (Regular Expression Denial of Service) guard.
+ * If execution on a 200-character sample string exceeds 5ms, the pattern
+ * is rejected as potentially catastrophic.
  */
 export function safeRegex(pattern: string): RegExp | null {
   try {
     const r = new RegExp(pattern, 'i');
     // Heuristic ReDoS guard: reject patterns that take >5ms on a 200-char string.
     // Uses performance.now() (sub-ms precision) instead of Date.now() (1ms / 15ms on Windows).
-    // Not a complete defense — structural analysis would be needed for full coverage.
     const sample = 'a'.repeat(200);
     const start = performance.now();
     r.test(sample);
@@ -36,8 +58,20 @@ export function safeRegex(pattern: string): RegExp | null {
 }
 
 /**
- * Search a flat list of nodes by name (starts-with ranked first), with optional
- * type and schema filters. Returns at most `limit` matches.
+ * Searches the flat node catalog by object name with ranking and filtering.
+ *
+ * @param nodes - The catalog of nodes to search.
+ * @param query - The search query string.
+ * @param types - Optional set of allowed object types.
+ * @param schemas - Optional set of allowed schema names.
+ * @param limit - Maximum number of results to return (default: 20).
+ * @param mode - Search mode: 'substring' (default) or 'regex'.
+ *
+ * @returns A ranked and filtered array of matching nodes.
+ *
+ * @remarks
+ * In substring mode, results are ranked such that objects whose names
+ * START with the query appear before objects that merely contain the query.
  */
 export function searchCatalog(
   nodes: SearchableNode[],
@@ -79,8 +113,15 @@ export function searchCatalog(
 }
 
 /**
- * Search DDL body scripts of nodes for a term (case-insensitive substring).
- * Returns at most `limit` matches with a context snippet showing `contextLines` around the match.
+ * Searches the SQL DDL body scripts for a specific term.
+ *
+ * @param nodes - The catalog of nodes to search.
+ * @param query - The term to search for (minimum 2 chars).
+ * @param types - Optional set of allowed object types.
+ * @param contextLines - Number of context lines to include in the snippet (default: 2).
+ * @param limit - Maximum number of results to return (default: 100).
+ *
+ * @returns An array of matches, each containing a node and a context snippet.
  */
 export function searchBodyScripts(
   nodes: SearchableNode[],
@@ -105,8 +146,13 @@ export function searchBodyScripts(
 }
 
 /**
- * Search table/external nodes by column name (case-insensitive substring).
- * Returns at most `limit` matches with a snippet of matching column names and types.
+ * Searches for nodes by matching column names.
+ *
+ * @param nodes - The catalog of nodes to search.
+ * @param query - The column name term to search for.
+ * @param limit - Maximum number of results to return.
+ *
+ * @returns An array of matches containing the node and a list of matching columns.
  */
 export function searchColumns(
   nodes: SearchableNode[],
@@ -128,6 +174,14 @@ export function searchColumns(
   return matches;
 }
 
+/**
+ * Builds a formatted context snippet for a match found in a body script.
+ *
+ * @param body - The full SQL text.
+ * @param term - The matched term.
+ * @param contextLines - The number of lines around the match to include.
+ * @returns A multi-line string containing the match context.
+ */
 function buildSnippet(body: string, term: string, contextLines: number): string {
   const lower = body.toLowerCase();
   const idx = lower.indexOf(term.toLowerCase());

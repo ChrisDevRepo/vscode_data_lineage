@@ -34,6 +34,12 @@ SQL body
   → Stage 4: Catalog validation (only real objects become edges)
 ```
 
+Stage 1 (Internal Pipeline):
+1. **Pass 0 (Block Comments)**: O(n) counter-scan to remove nested `/* ... */` comments.
+2. **Pass 1 (The Best Regex Trick)**: Leftmost-match pass to preserve brackets `[...]`, neutralize strings `'...'` to `''`, and remove line comments `--`.
+3. **Pass 1.5 (Comma Joins)**: Normalizes ANSI-92 `FROM t1, t2` into `FROM t1 JOIN t2`.
+4. **Pass 1.6 (CTE Alias Substitution)**: Tracks CTE names and resolves `UPDATE cte_alias SET ...` back to the real base table for correct edge direction.
+
 Stage 4 runs in `modelBuilder.ts`:
 - **Catalog validation**: schema-qualified refs are checked against the catalog of known objects (dacpac XML or DB DMVs). Only matching refs create graph edges. Unqualified and system-schema refs (`sys.*`, `information_schema.*`) are rejected earlier in Stage 3 by `normalizeCaptured()`.
 

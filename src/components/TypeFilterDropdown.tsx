@@ -6,14 +6,28 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 
+/**
+ * Props for the {@link TypeFilterDropdown} component.
+ */
 interface TypeFilterDropdownProps {
+  /** The set of object types (table, view, etc.) currently active in the filter. */
   types: Set<ObjectType>;
+  /** Callback to toggle a specific object type in the filter. */
   onToggleType: (type: ObjectType) => void;
+  /** Whether the filter is currently active (narrowing the results). */
   isNarrowed?: boolean;
 }
 
 const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function', 'external'];
 
+/**
+ * A dropdown menu for filtering database objects by their type.
+ *
+ * This component allows users to selectively show or hide tables, views,
+ * stored procedures, functions, and external tables in the lineage graph.
+ *
+ * @param props - Component properties.
+ */
 export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,
   onToggleType,

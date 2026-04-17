@@ -25,27 +25,70 @@ import type { HopContext, HopNeighbor, HopSubmission, SmMode, SmResult, SmStatus
 export type { SmMode, SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
 export type { BoundaryFlag } from './smTypes';
 
-// ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * Represents an entry in the navigation agenda.
+ *
+ * @remarks
+ * The agenda tracks nodes that are scheduled for investigation. Each entry is grounded
+ * with a specific question or reason for the visit, ensuring that the AI's traversal
+ * remains focused on the user's original query.
+ */
 export interface AgendaEntry {
+  /** The unique identifier of the node to visit. */
   nodeId: string;
-  question: string;         // grounded reason for visiting
-  priority: number;         // 0=BFS, 2=AI-requested, 3=Origin
+  /** The grounded reason or sub-question driving this visit. */
+  question: string;
+  /**
+   * The priority of this visit.
+   * - 0: Default BFS discovery.
+   * - 2: AI-requested detour.
+   * - 3: Origin/Root node (highest).
+   */
+  priority: number;
+  /** The topological depth relative to the origin node. */
   depth: number;
-  activeColumns?: string[]; // for CT mode
+  /** Specific columns of interest for this node (primarily used in Column Trace mode). */
+  activeColumns?: string[];
 }
 
+/**
+ * Extends the base working memory with topological map data.
+ *
+ * @remarks
+ * This interface provides the AI with a snapshot of the current navigation state,
+ * including where it has been, where it is now, and what remains on the agenda.
+ * This "map" is essential for grounding the AI's routing decisions.
+ */
 export interface NavigationWorkingMemory extends WorkingMemory {
+  /** The current topological state of the exploration. */
   topological_map: {
-    navigation_path: string;       // Origin -> ... -> Focus
+    /** A human-readable path string showing the traversal (e.g., "Origin -> ... -> Focus"). */
+    navigation_path: string;
+    /** List of node IDs that have already been visited and analyzed. */
     visited_nodes: string[];
+    /** The node ID currently under investigation. */
     current_focus: string;
+    /** The current queue of nodes scheduled for future hops. */
     agenda: Array<{ id: string; name: string; question: string }>;
   };
 }
 
-// ─── Engine ──────────────────────────────────────────────────────────────────
 
+/**
+ * Unified Navigation Engine — The core state machine for all exploration modes.
+ *
+ * @remarks
+ * This engine consolidates Blackboard, Dependency, and Column Trace modes into a single
+ * grounded traversal logic. It implements a "Map & Router" architecture where the engine
+ * maintains the topological map and the AI acts as the router.
+ *
+ * Key features:
+ * - **Topological Map**: Tracks visited nodes, the current focus, and the agenda.
+ * - **Navigation Path**: Maintains grounding by showing the path from the origin.
+ * - **Selection-Inference Validation**: Rejects hallucinations by verifying AI route requests against the actual graph.
+ * - **Cascade Pruning**: Automatically removes unreachable branches if a node is marked as irrelevant.
+ */
 export class NavigationEngine implements IHopStateMachine {
 
   protected readonly model: DatabaseModel;
@@ -55,8 +98,10 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly nodeMap: Map<string, LineageNode>;
   protected readonly edgeTypeMap: Map<string, string>;
   protected readonly memory: AiMemoryManager;
+  /** The active exploration mode (e.g., 'blackboard', 'column_trace'). */
   public readonly mode: SmMode;
 
+  /** Optional session identifier for tracking logs across rounds. */
   public sessionId?: string;
   protected _status: SmStatus = 'created';
   protected _inlineMode = false;
@@ -69,6 +114,16 @@ export class NavigationEngine implements IHopStateMachine {
   protected currentFocusNodeId: string | null = null;
   protected hopCount = 0;
 
+  /**
+   * Initializes a new NavigationEngine.
+   *
+   * @param model - The database model containing nodes and edges.
+   * @param graph - The graphology instance for topological operations.
+   * @param log - A logging function for tracing engine activity.
+   * @param mode - The exploration mode to use.
+   * @param config - Configuration including optional filters and an existing memory manager.
+   * @param store - Optional column store for deep column-level metadata.
+   */
   constructor(
     model: DatabaseModel,
     graph: Graph,

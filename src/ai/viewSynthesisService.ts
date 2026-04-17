@@ -4,17 +4,56 @@ import { AiSession } from './session';
 import { autoFixEnrichView, validateEnrichView, orderAndAssemble, EnrichViewInput } from './tools';
 import { edgeApiType } from './aiPresenter';
 import { AIViewMetadata } from '../engine/projectStore';
+import { Logger } from '../utils/log';
 
+/**
+ * Orchestrates the creation and refinement of AI-authored interactive lineage views.
+ * 
+ * @remarks
+ * This service acts as the bridge between the AI's semantic findings (from the State Machine)
+ * and the VS Code Webview. It handles node resolution, edge discovery, automatic note
+ * population, and metadata synthesis for the `ai-view-preview` visualization.
+ */
 export class ViewSynthesisService {
+  /**
+   * Initializes the ViewSynthesisService.
+   * 
+   * @param session - The active AI session containing the exploration findings.
+   * @param getPanel - Functional provider for the active VS Code Webview panel.
+   * @param logger - Optional logger for technical diagnostics.
+   */
   constructor(
     private session: AiSession,
-    private getPanel: () => vscode.WebviewPanel | undefined
+    private getPanel: () => vscode.WebviewPanel | undefined,
+    private logger?: Logger
   ) {}
 
+  /**
+   * Transforms raw AI input and session findings into a structured, visual lineage report.
+   * 
+   * @remarks
+   * Performs several critical lifecycle steps:
+   * 1. **Graph Resolution**: Merges session-grounded nodes with incremental AI requests.
+   * 2. **Auto-Population**: Injects technical summaries from SM Detail Memory as view notes.
+   * 3. **Narrative Assembly**: Orders AI-authored sections into a coherent Markdown report.
+   * 4. **Validation & Repair**: Ensures all referenced IDs exist and follow visual schemas.
+   * 5. **IPC Delivery**: dispatches the `ai-view-preview` message to the React frontend.
+   *
+   * @param model - The complete database model for ID validation and edge discovery.
+   * @param input - The raw parameters provided by the `enrich_view` tool.
+   * @returns An execution status object containing success state, view metadata, or error details.
+   */
   public synthesizeView(
     model: DatabaseModel,
     input: EnrichViewInput
   ): { success: boolean; view_name?: string; node_count?: number; graph_source?: string; errors?: string[] } {
+    const log = this.logger;
+    if (log) {
+      const summaryLen = (input.summary ?? '').length;
+      const descLen = (input.description ?? '').length;
+      log.debug(`enrich_view: entry — name="${input.name ?? '?'}", summary len=${summaryLen}, desc len=${descLen}, stored_graph=${!!this.session.resultGraph}`);
+    }
+
     let resolvedNodeIds: string[];
     let resolvedEdges: [string, string, string][];
     let graphSource: string;
@@ -43,9 +82,11 @@ export class ViewSynthesisService {
       }
 
       if (input.prune_node_ids?.length) {
+        const before = resolvedNodeIds.length;
         const pruneSet = new Set(input.prune_node_ids);
         resolvedNodeIds = resolvedNodeIds.filter(id => !pruneSet.has(id));
         resolvedEdges = resolvedEdges.filter(([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt));
+        log?.debug(`enrich_view: pruned ${before - resolvedNodeIds.length} node(s), ${resolvedNodeIds.length} remaining`);
       }
     } else {
       return {
@@ -63,7 +104,10 @@ export class ViewSynthesisService {
           autoNotes.push({ node_id: nodeId, text: summary });
         }
       }
-      if (autoNotes.length > 0) input.notes = [...(input.notes ?? []), ...autoNotes];
+      if (autoNotes.length > 0) {
+        input.notes = [...(input.notes ?? []), ...autoNotes];
+        log?.debug(`enrich_view: auto-populated ${autoNotes.length} note(s) from SM`);
+      }
     }
 
     if (this.session.resultGraph?.suggested_labels?.length && input.sections?.length) {
@@ -131,6 +175,7 @@ export class ViewSynthesisService {
       this.session.resultGraph.notes = Array.from(existingNotes.values());
     }
 
+    log?.info(`AI view "${validation.name}" displayed (${validation.node_ids.length} objects)`);
     return { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource };
   }
 }

@@ -8,11 +8,18 @@
  * Zero VS Code imports — pure functions for testability.
  */
 
-// ─── DROP: remove noise results ─────────────────────────────────────────────
 
 /**
- * If a tool result is an error or empty, return a compact 1-line summary.
- * Returns null if the result should be kept as-is.
+ * Compacts tool results that represent errors, validation rejections, or empty result sets.
+ *
+ * @remarks
+ * This function identifies "noisy" tool outputs that don't contribute meaningful logic to the
+ * model's next turn (e.g., a search with zero matches or a syntax error) and replaces them
+ * with a single-line JSON summary to save context tokens.
+ *
+ * @param toolName - The name of the tool that generated the result.
+ * @param resultJson - The raw JSON string returned by the tool.
+ * @returns A compacted JSON string if the result is considered "noise", otherwise `null`.
  */
 export function compactNoiseResult(toolName: string, resultJson: string): string | null {
   try {
@@ -37,17 +44,25 @@ export function compactNoiseResult(toolName: string, resultJson: string): string
   return null;
 }
 
-// ─── COMPACT: shrink stale SM hop results after completion ──────────────────
 
 /** Tool names whose results should be compacted once the owning SM is complete. */
 const BB_HOP_TOOLS = new Set(['lineage_submit_findings', 'lineage_start_exploration']);
 const CT_HOP_TOOLS = new Set(['lineage_submit_hop_analysis', 'lineage_start_column_trace']);
 
 /**
- * If a tool result is from a completed SM's hop phase, return a compact 1-line summary.
- * During active hops (smComplete=false), returns null — full results preserved.
- * After SM completion, hop results are stale: the synthesis result already contains
- * all accumulated evidence via detail_slots + short_memory.
+ * Compacts high-volume hop analysis results once a state machine execution is complete.
+ *
+ * @remarks
+ * During active exploration (Blackboard or Column Trace), full DDL and analysis results are
+ * preserved to allow the model to reason across hops. Once the process completes, these
+ * detailed results become "stale" as their essential findings are already captured in the
+ * final synthesis. Compacting them significantly reduces the token footprint for subsequent turns.
+ *
+ * @param toolName - The name of the tool that generated the result.
+ * @param resultJson - The raw JSON string returned by the tool.
+ * @param bbComplete - Whether the Blackboard (exploration) state machine has finished.
+ * @param ctComplete - Whether the Column Trace state machine has finished.
+ * @returns A compacted JSON string representing the hop metadata, or `null` if the hop is still active or the tool is not a hop tool.
  */
 export function compactStaleHopResult(
   toolName: string,
@@ -77,19 +92,26 @@ export function compactStaleHopResult(
   }
 }
 
-// ─── EVICT: constants for context-pressure eviction ─────────────────────────
 
 /**
- * Minimum history messages to preserve during eviction.
- * Each "turn" is typically 2-3 messages (user + assistant + tool results).
- * Preserving 6 messages ≈ 2 turns minimum — enough for the model to
- * understand current context.
+ * The minimum number of history messages to preserve during context eviction.
+ *
+ * @remarks
+ * This threshold ensures that at least 2-3 full conversation turns (User -> Assistant -> Tool)
+ * remain in the window, providing the model with enough immediate context to remain coherent.
  */
 export const MIN_HISTORY_MESSAGES = 6;
 
 /**
- * Build the stub message content inserted after eviction so the model
- * knows earlier conversation existed.
+ * Constructs a stub message to replace evicted conversation history.
+ *
+ * @remarks
+ * When messages are dropped from the context window to fit token budgets, this stub is
+ * inserted as a system-like notification. It informs the model that earlier context has
+ * been removed, preventing it from hallucinating or making assumptions about missing turns.
+ *
+ * @param evictedCount - The number of messages that were removed from the history.
+ * @returns A JSON string representing the eviction metadata.
  */
 export function buildEvictionStub(evictedCount: number): string {
   return JSON.stringify({

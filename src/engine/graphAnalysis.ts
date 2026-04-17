@@ -2,11 +2,13 @@ import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
 import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig, type DatabaseModel } from './types';
 
-// ─── Schema Neighbor Discovery ──────────────────────────────────────────────
-
 /**
- * Compute all schemas that have at least one edge connecting to a node in the target schema.
- * Uses the pre-built neighborIndex for O(NodesInSchema * Degree) performance.
+ * Computes all schemas that have at least one edge connecting to a node in the target schema.
+ * Uses the pre-built `neighborIndex` for optimized O(NodesInSchema * Degree) performance.
+ *
+ * @param model - The complete database model containing nodes, catalog, and neighbor indices.
+ * @param schema - The target schema name to find neighbors for.
+ * @returns A set of schema names that are connected to the target schema, including the target schema itself.
  */
 export function getNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
   const neighborSchemas = new Set<string>([schema]);
@@ -32,8 +34,14 @@ export function getNeighborSchemas(model: DatabaseModel, schema: string): Set<st
   return neighborSchemas;
 }
 
-// ─── Islands (Connected Components) ─────────────────────────────────────────
-
+/**
+ * Analyzes the graph to find isolated subgraphs (islands) that have no connections to the main graph.
+ * Discards isolated single nodes, considering an island to require at least 2 nodes up to `maxSize`.
+ *
+ * @param graph - The graphology instance representing the database schema.
+ * @param maxSize - The maximum number of nodes an island can have to be included in the results.
+ * @returns An `AnalysisResult` containing groups of nodes representing each island and a descriptive summary.
+ */
 export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'islands', groups: [], summary: 'No nodes in graph' };
@@ -70,8 +78,14 @@ export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   };
 }
 
-// ─── Hubs (High-Degree Nodes) ───────────────────────────────────────────────
-
+/**
+ * Identifies highly connected nodes (hubs) in the graph based on a minimum degree threshold.
+ * Hubs often represent critical tables or views with high structural importance.
+ *
+ * @param graph - The graphology instance to analyze.
+ * @param minDegree - The minimum total degree (in-degree + out-degree) required for a node to be considered a hub.
+ * @returns An `AnalysisResult` detailing the identified hubs, sorted by degree descending.
+ */
 export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'hubs', groups: [], summary: 'No nodes in graph' };
@@ -118,8 +132,13 @@ export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   };
 }
 
-// ─── Orphans (Isolated Nodes with degree 0) ─────────────────────────────────
-
+/**
+ * Detects orphan nodes in the graph, which are nodes completely disconnected from any other node (degree of 0).
+ * Orphans are grouped by their schema and node type for easier review.
+ *
+ * @param graph - The graphology instance to analyze.
+ * @returns An `AnalysisResult` grouping orphan nodes by schema and type, along with a summary.
+ */
 export function analyzeOrphans(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'orphans', groups: [], summary: 'No nodes in graph' };
@@ -170,8 +189,15 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
   };
 }
 
-// ─── Longest Path (Deepest Dependency Chain) ────────────────────────────────
-
+/**
+ * Computes the longest dependency chains in the graph using a memoized Depth-First Search (DFS).
+ * It guards against cycles and returns chains that meet the minimum node count requirement.
+ *
+ * @param graph - The graphology instance representing dependencies.
+ * @param minNodes - The minimum length of a path to be included in the results (default: 5).
+ * @param maxChains - The maximum number of chains to return to bound performance/output size (default: `DEFAULT_CONFIG.maxNodes`).
+ * @returns An `AnalysisResult` containing the longest non-cyclic dependency paths.
+ */
 export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
@@ -272,8 +298,13 @@ export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains
   };
 }
 
-// ─── Cycles (Circular Dependencies via DFS 3-color) ─────────────────────────
-
+/**
+ * Detects Strongly Connected Components (SCCs) of size 2 or greater, representing cycles in the graph.
+ * Cycles typically indicate bidirectional dependencies or recursive reference patterns.
+ *
+ * @param graph - The graphology instance to analyze.
+ * @returns An `AnalysisResult` outlining all detected cycles, sorted by the number of nodes involved.
+ */
 export function analyzeCycles(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'cycles', groups: [], summary: 'No nodes in graph' };
@@ -311,8 +342,13 @@ export function analyzeCycles(graph: Graph): AnalysisResult {
   };
 }
 
-// ─── External Refs (File Sources + Cross-DB References) ─────────────────────
-
+/**
+ * Analyzes the graph to find nodes representing external references, such as linked databases or files.
+ * Groups external references into file-based and database-based categories.
+ *
+ * @param graph - The graphology instance to analyze.
+ * @returns An `AnalysisResult` detailing groups of external file and database references.
+ */
 export function analyzeExternalRefs(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'external-refs', groups: [], summary: 'No nodes in graph' };
@@ -369,8 +405,15 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
   return { type: 'external-refs', groups, summary };
 }
 
-// ─── Dispatch ───────────────────────────────────────────────────────────────
-
+/**
+ * Serves as a unified dispatcher to run a specific structural analysis on the graph.
+ *
+ * @param graph - The graphology instance to analyze.
+ * @param type - The type of analysis to execute (e.g., 'islands', 'hubs', 'orphans').
+ * @param analysisConfig - The configuration parameters dictating thresholds for the analyses.
+ * @param maxNodes - An optional upper bound for graph traversal or output limits (default: `DEFAULT_CONFIG.maxNodes`).
+ * @returns The `AnalysisResult` generated by the corresponding specific analysis function.
+ */
 export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   switch (type) {
     case 'islands': return analyzeIslands(graph, Math.min(analysisConfig.islandMaxSize, maxNodes));

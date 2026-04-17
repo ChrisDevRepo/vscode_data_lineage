@@ -14,20 +14,32 @@
 
 import type Graph from 'graphology';
 
-// ─── Shared types ─────────────────────────────────────────────────────────────
-
-/** Logging callback injected into state machines — 'trace' is the most verbose level. */
-export type LogFn = (level: 'info' | 'debug' | 'warn' | 'trace', msg: string) => void;
-
-// ─── BFS Reachability ────────────────────────────────────────────────────────
 
 /**
- * BFS reachability from startId — undirected (graph.neighbors) to match bfsScope/seedAgenda.
- * The scope is built with undirected traversal so reachability checks must use the same strategy:
- * upstream source tables are connected via inbound edges only and would be falsely unreachable
- * if we used directed (outbound-only) traversal.
- * Cycle-safe: reachable set guards against revisits.
- * Exported so cascadePrune can reuse — single BFS implementation for the entire SM layer.
+ * Logging callback injected into state machines for operational tracing.
+ *
+ * @remarks
+ * Use 'trace' for the most verbose graph-level operations (e.g., individual BFS steps),
+ * 'debug' for round-level state changes, and 'info' for phase transitions.
+ */
+export type LogFn = (level: 'info' | 'debug' | 'warn' | 'trace', msg: string) => void;
+
+
+/**
+ * Performs a BFS reachability check from a starting node, respecting a set of removed (pruned) nodes.
+ *
+ * @remarks
+ * This function uses undirected traversal (graph.neighbors) to ensure that both upstream
+ * and downstream nodes are correctly identified within the lineage scope. This is essential
+ * because a node's relevance is often determined by its connection to source tables (inbound)
+ * as well as target views (outbound).
+ *
+ * @param graph - The graphology instance to traverse.
+ * @param startId - The ID of the node to start the BFS from.
+ * @param removedSet - A set of node IDs that have been pruned and should be treated as non-existent.
+ * @param candidateId - An optional candidate node ID to exclude from reachability (used for "what-if" analysis).
+ * @param scope - An optional set of allowed node IDs to restrict the search.
+ * @returns A set of all node IDs reachable from the start node.
  */
 export function bfsReachable(
   graph: Graph,
@@ -53,12 +65,20 @@ export function bfsReachable(
   return reachable;
 }
 
-// ─── Prune Guards ────────────────────────────────────────────────────────────
 
 /**
- * Would pruning candidateId disconnect any noted node from origin?
- * BFS from origin excluding removedSet + candidate (no Set copy — candidateId checked inline).
- * @returns first orphaned noteId, or null if all noted nodes remain reachable.
+ * Determines if pruning a candidate node would orphan any previously noted nodes from the origin.
+ *
+ * @remarks
+ * This guard prevents the AI from accidentally cutting off access to nodes it has already
+ * flagged as important ("noted") during an exploration.
+ *
+ * @param graph - The graphology instance to check.
+ * @param originId - The ID of the exploration's origin node.
+ * @param removedSet - The current set of pruned nodes.
+ * @param notedIds - The set of nodes previously noted by the AI.
+ * @param candidateId - The ID of the node being considered for pruning.
+ * @returns The ID of the first orphaned noted node found, or `null` if no orphaning occurs.
  */
 export function wouldOrphanNotedNode(
   graph: Graph,
@@ -76,9 +96,19 @@ export function wouldOrphanNotedNode(
 }
 
 /**
- * How many agenda/frontier nodes would be cascade-removed if candidateId is pruned?
- * BFS from origin excluding removedSet + candidate, scoped to scopeNodeIds.
- * Counts agenda entries that become unreachable.
+ * Calculates how many nodes in the current agenda would be cascade-removed if a candidate is pruned.
+ *
+ * @remarks
+ * This utility helps the state machine avoid "cascade-too-wide" scenarios where marking a single
+ * intermediate node as irrelevant would inadvertently prune a large portion of the pending agenda.
+ *
+ * @param graph - The graphology instance.
+ * @param originId - The exploration origin node.
+ * @param removedSet - The current set of pruned nodes.
+ * @param scopeNodeIds - The total scope of the investigation.
+ * @param agendaNodeIds - The set of node IDs currently on the exploration agenda.
+ * @param candidateId - The node being evaluated for pruning.
+ * @returns The count of agenda nodes that would become unreachable.
  */
 export function countCascadeIfPruned(
   graph: Graph,
@@ -96,12 +126,17 @@ export function countCascadeIfPruned(
   return count;
 }
 
-// ─── Node Validation ─────────────────────────────────────────────────────────
 
 /**
- * Validate node IDs against the model's nodeMap.
- * SM owns the model — every AI reference must be validated. Silent drops are bugs.
- * @returns valid + invalid arrays. Invalid entries include reason string.
+ * Validates a list of node-related objects against a known node map.
+ *
+ * @remarks
+ * Every node reference generated by the AI must be validated against the deterministic model
+ * to prevent "hallucinated" node names from causing engine crashes or inconsistent state.
+ *
+ * @param nodeMap - The ground-truth map of all nodes in the current model.
+ * @param entries - The list of objects containing node IDs to validate.
+ * @returns An object containing arrays of valid and invalid entries, with reasons for the latter.
  */
 export function validateNodeIds<T extends { nodeId: string }>(
   nodeMap: ReadonlyMap<string, unknown>,
@@ -119,28 +154,49 @@ export function validateNodeIds<T extends { nodeId: string }>(
   return { valid, invalid };
 }
 
-// ─── Bridge Node Injection ───────────────────────────────────────────────────
 
+/**
+ * Represents a node injected into the result graph to bridge gaps between disconnected components.
+ */
 export interface BridgeNode {
+  /** The unique identifier of the bridge node. */
   id: string;
+  /** The SQL schema name. */
   schema: string;
+  /** The short object name. */
   name: string;
+  /** The object type (e.g., 'table', 'view'). */
   type: string;
 }
 
+/**
+ * Contains the results of a bridge node injection operation.
+ */
 export interface BridgeResult {
+  /** The list of intermediate nodes found to reconnect orphans. */
   bridgeNodes: BridgeNode[];
+  /** The list of directed edges required to form the bridge paths. */
   bridgeEdges: Array<[string, string, string]>;
+  /** The total number of noted nodes that were initially disconnected. */
   orphanCount: number;
+  /** The number of noted nodes successfully reconnected. */
   reconnectedCount: number;
 }
 
 /**
- * Find orphan noted nodes (zero edges in result) and bridge paths to reconnect them.
- * BFS from each orphan to the nearest connected noted node through the full graph.
- * Returns intermediate bridge nodes + edges to inject into the result.
- * Diamond-safe: bridge paths respect existing graph topology.
- * Edge direction: uses edgeTypeMap to emit edges in actual directed order, not BFS traversal order.
+ * Identifies orphan noted nodes and calculates the shortest paths required to reconnect them to the origin.
+ *
+ * @remarks
+ * During exploration, the AI might mark intermediate nodes as "irrelevant," which can break
+ * the connectivity of the final result graph. This function performs "Bridge Injection"
+ * by finding the shortest path through the full graph to reconnect these important orphans,
+ * ensuring the final visualization remains structurally sound.
+ *
+ * @param graph - The full graphology instance.
+ * @param notedIds - The set of node IDs that must appear in the final result.
+ * @param resultEdges - The current list of edges already included in the result.
+ * @param edgeTypeMap - A map of edge keys to their respective types for directed reconstruction.
+ * @returns A `BridgeResult` containing the necessary nodes and edges to restore connectivity.
  */
 export function findBridgeNodes(
   graph: Graph,
@@ -201,16 +257,18 @@ export function findBridgeNodes(
   return { bridgeNodes, bridgeEdges, orphanCount: orphans.length, reconnectedCount: reconnected };
 }
 
-// ─── BFS Depth Map ───────────────────────────────────────────────────────────
 
 /**
- * Directed BFS from originNodeId over a result-graph edge list.
- * Returns the minimum distance (in hops) from origin to each reachable node.
- * Used by NavigationEngine.getResult() to sort badge groups in data-flow order.
+ * Generates a depth map for a directed graph starting from an origin node.
  *
- * @param edges  Flat edge list from ResultGraph — [source, target, type].
- * @param originNodeId  The root node; gets depth 0.
- * @returns Map<nodeId, depth>. Nodes unreachable from origin are absent (treated as Infinity).
+ * @remarks
+ * This function calculates the minimum hop distance from the origin to all reachable nodes
+ * in a result subgraph. It is primarily used to sort nodes into "stages" or "tiers" for
+ * structured report generation and visualization layout.
+ *
+ * @param edges - A flat list of directed edges [source, target, type].
+ * @param originNodeId - The root node from which to calculate depths (depth 0).
+ * @returns A map of node IDs to their respective depth. Unreachable nodes are excluded.
  */
 export function bfsDepthMap(
   edges: ReadonlyArray<readonly [string, string, string]>,
@@ -240,7 +298,6 @@ export function bfsDepthMap(
   return depth;
 }
 
-// ─── Private BFS Utilities ───────────────────────────────────────────────────
 
 /**
  * BFS shortest path from startId to any node in targetSet.

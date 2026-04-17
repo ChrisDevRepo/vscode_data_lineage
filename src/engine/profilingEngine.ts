@@ -8,45 +8,81 @@
  * Generated SQL is logged to the outputChannel for DBA review.
  *
  * Target platforms: SQL Server 2022+, Azure SQL, Synapse Dedicated SQL Pool, Fabric DWH.
+ *
+ * @module profilingEngine
  */
 
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-
+/**
+ * Represents the statistical profile of a single column.
+ */
 export interface ColumnStats {
+  /** The name of the column. */
   name: string;
+  /** The SQL data type of the column. */
   type: string;
+  /** The estimated or exact number of distinct values in the column. */
   distinctCount: number;
-  nullCount: number | null;    // null = NOT NULL column, skipped
+  /** The number of null values, or null if the column is strictly NOT NULL. */
+  nullCount: number | null;
+  /** The percentage of null values, or null if the column is strictly NOT NULL. */
   nullPercent: number | null;
-  completeness: number;        // 1 - (nullCount / rowCount), always computed
-  uniqueness: number;          // distinctCount / rowCount, always computed
+  /** The completeness ratio, calculated as 1 - (nullCount / rowCount). */
+  completeness: number;
+  /** The uniqueness ratio, calculated as distinctCount / rowCount. */
+  uniqueness: number;
+  /** The minimum value, represented as a string for generic display. */
   min?: string;
+  /** The maximum value, represented as a string for generic display. */
   max?: string;
-  mean?: number;               // integer/decimal only (standard mode)
-  stdDev?: number;             // integer/decimal only (standard mode)
+  /** The mean (average) value, applicable to integer and decimal types. */
+  mean?: number;
+  /** The standard deviation, applicable to integer and decimal types. */
+  stdDev?: number;
+  /** The minimum string length, applicable to string types. */
   minLength?: number;
+  /** The maximum string length, applicable to string types. */
   maxLength?: number;
-  zeroCount?: number;          // integer/decimal, nullable only (standard mode)
-  emptyCount?: number;         // string (standard mode)
+  /** The count of zero values, applicable to nullable integer and decimal types. */
+  zeroCount?: number;
+  /** The count of empty string values, applicable to string types. */
+  emptyCount?: number;
+  /** Indicates whether the column was skipped during profiling (e.g., for unsupported types). */
   skipped?: boolean;
 }
 
+/**
+ * Represents the statistical profile of a table.
+ */
 export interface TableStats {
+  /** The total number of rows in the table. */
   rowCount: number;
+  /** The statistical profile for each column in the table. */
   columns: ColumnStats[];
+  /** Indicates whether the statistics were generated from a sample rather than a full scan. */
   sampled: boolean;
+  /** The percentage of rows sampled, if sampling was used. */
   samplePercent?: number;
+  /** Any warnings generated during the parsing of profiling results. */
   warnings?: string[];
 }
 
+/**
+ * Defines the profiling mode.
+ * - 'quick': Computes only distinct counts and null percentages.
+ * - 'standard': Computes extended statistics including min, max, avg, stddev, zero count, and empty count.
+ */
 export type StatsMode = 'quick' | 'standard';
 
-// ─── Type Classification ────────────────────────────────────────────────────
-
+/**
+ * Categories used to determine which aggregations to apply to a column.
+ */
 type ColCategory = 'integer' | 'decimal' | 'string' | 'datetime' | 'boolean' | 'uuid' | 'skip';
 
+/**
+ * Mapping of base SQL Server types to profiling categories.
+ */
 const TYPE_CATEGORIES: Record<string, ColCategory> = {
   int: 'integer', bigint: 'integer', smallint: 'integer', tinyint: 'integer',
   decimal: 'decimal', numeric: 'decimal', float: 'decimal', real: 'decimal',
@@ -63,34 +99,58 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
   sql_variant: 'skip', timestamp: 'skip', rowversion: 'skip', sysname: 'skip',
 };
 
-/** Extract base type name from formatted type string like "nvarchar(50)" → "nvarchar" */
+/**
+ * Extracts the base type name from a formatted type string.
+ *
+ * @param typeStr - The full type string (e.g., "nvarchar(50)").
+ * @returns The base type name in lowercase (e.g., "nvarchar").
+ */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
 }
 
-/** Classify a column's SQL type into a category for profiling. */
+/**
+ * Classifies a column's SQL type into a category for profiling aggregations.
+ *
+ * @param col - The column definition to classify.
+ * @returns The determined category, or 'skip' if the type is not supported for profiling or is a computed column.
+ */
 export function classifyColumn(col: ColumnDef): ColCategory {
   if (col.extra === 'COMPUTED') return 'skip';
   const base = extractBaseType(col.type);
   return TYPE_CATEGORIES[base] ?? 'skip';
 }
 
-// ─── Query Generation ───────────────────────────────────────────────────────
-
-/** Bracket-quote a SQL identifier. */
+/**
+ * Bracket-quotes a SQL identifier.
+ *
+ * @param name - The identifier to quote.
+ * @returns The bracket-quoted identifier.
+ */
 function qi(name: string): string {
   return `[${name.replace(/\]/g, ']]')}]`;
 }
 
+/**
+ * Represents the SQL aggregation fragments generated for a single column.
+ */
 export interface ColumnAggregation {
+  /** The name of the column. */
   colName: string;
+  /** The SQL aggregation fragments to include in the SELECT clause. */
   fragments: string[];
+  /** The category used to generate the fragments. */
   category: ColCategory;
 }
 
 /**
- * Generate per-column SQL aggregation fragments.
- * Returns array of aggregation info — one per non-skipped column.
+ * Generates per-column SQL aggregation fragments based on the specified mode and column types.
+ *
+ * @param cols - The array of column definitions to profile.
+ * @param useApprox - Whether to use APPROX_COUNT_DISTINCT for faster execution on large tables.
+ * @param mode - The profiling mode ('quick' or 'standard') determining the depth of statistics.
+ * @param maxColumns - Optional limit on the number of columns to profile.
+ * @returns An array of aggregation information, one for each non-skipped column.
  */
 export function buildColumnAggregations(
   cols: ColumnDef[],
@@ -152,15 +212,16 @@ export function buildColumnAggregations(
 }
 
 /**
- * Build the full profiling SELECT query.
+ * Builds the full profiling SELECT query based on the generated column aggregations.
  *
- * @param schema        - Table schema
- * @param tableName     - Table name
- * @param aggregations  - From buildColumnAggregations()
- * @param engineEdition - From IServerInfo.engineEditionId (2/3=SQL Server, 5=Azure SQL, 6=Synapse, 11=Fabric)
- * @param rowCount      - From DMV row count query
- * @param sampleThreshold - Rows below which full scan is used
- * @param sampleSize    - Target sample size (rows)
+ * @param schema - The schema name of the table.
+ * @param tableName - The name of the table.
+ * @param aggregations - The generated column aggregations from {@link buildColumnAggregations}.
+ * @param engineEdition - The SQL Server engine edition identifier (2/3=SQL Server, 5=Azure SQL, 6=Synapse, 11=Fabric).
+ * @param rowCount - The total row count of the table.
+ * @param sampleThreshold - The row count threshold above which sampling should be applied.
+ * @param sampleSize - The target sample size in number of rows.
+ * @returns The complete T-SQL query string for profiling, or an empty string if no aggregations exist.
  */
 export function buildProfilingQuery(
   schema: string,
@@ -194,12 +255,23 @@ export function buildProfilingQuery(
   return `SELECT ${topClause}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
 }
 
-/** Bracket-quote a SQL identifier for use inside a T-SQL string literal. */
+/**
+ * Bracket-quotes a SQL identifier for use inside a T-SQL string literal.
+ *
+ * @param name - The identifier to quote.
+ * @returns The bracket-quoted and safely escaped identifier string.
+ */
 function qiStr(name: string): string {
   return qi(name).replace(/'/g, "''");
 }
 
-/** Build DMV row count query for a table. */
+/**
+ * Builds a query to efficiently retrieve the row count of a table using dynamic management views.
+ *
+ * @param schema - The schema name of the table.
+ * @param tableName - The name of the table.
+ * @returns The T-SQL query string for fetching the row count.
+ */
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
 FROM sys.partitions p
@@ -207,19 +279,28 @@ WHERE p.object_id = OBJECT_ID('${qiStr(schema)}.${qiStr(tableName)}')
   AND p.index_id IN (0, 1)`;
 }
 
-/** Compute the TABLESAMPLE percent. Fabric uses TOP N instead (handled by buildProfilingQuery caller). */
+/**
+ * Computes the TABLESAMPLE percentage based on the target sample size and total row count.
+ * Note: Fabric uses TOP N instead, which is handled directly by {@link buildProfilingQuery}.
+ *
+ * @param _engineEdition - The SQL Server engine edition identifier (currently unused but reserved).
+ * @param sampleSize - The target sample size in number of rows.
+ * @param rowCount - The total row count of the table.
+ * @returns The computed sampling percentage, between 0 and 100.
+ */
 export function computeSamplePercent(_engineEdition: number, sampleSize: number, rowCount: number): number {
   if (rowCount <= 0) return 100;
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }
 
-// ─── Compact Date Formatting ────────────────────────────────────────────────
-
 /**
- * Truncate a datetime string for display in the stats grid.
- * - Midnight or date-only → `YYYY-MM-DD`
- * - Otherwise → `YYYY-MM-DD HH:mm`
- * Never shows seconds/milliseconds.
+ * Truncates a datetime string for compact display in the statistics grid.
+ * - Formats midnight or date-only values as `YYYY-MM-DD`.
+ * - Formats values with time as `YYYY-MM-DD HH:mm`.
+ * Never displays seconds or milliseconds.
+ *
+ * @param raw - The raw datetime string.
+ * @returns The formatted and compacted datetime string.
  */
 export function compactDate(raw: string): string {
   if (!raw || raw === 'NULL') return raw;
@@ -240,9 +321,9 @@ export function compactDate(raw: string): string {
   return `${datePart} ${hh}:${mm}`;
 }
 
-// ─── Type Badge Labels ──────────────────────────────────────────────────────
-
-/** Short label for column type display in the stats grid. */
+/**
+ * A mapping for concise column type labels used in UI badges.
+ */
 const TYPE_BADGE_LABELS: Record<string, string> = {
   int: 'INT', bigint: 'INT', smallint: 'INT', tinyint: 'INT',
   decimal: 'DEC', numeric: 'DEC', float: 'DEC', real: 'DEC',
@@ -259,16 +340,26 @@ const TYPE_BADGE_LABELS: Record<string, string> = {
   sql_variant: 'VAR', timestamp: 'TS', rowversion: 'TS', sysname: 'STR',
 };
 
-/** Get the short badge label for a SQL type string. */
+/**
+ * Retrieves a short badge label for a given SQL type string.
+ *
+ * @param typeStr - The SQL type string.
+ * @returns A concise uppercase label representing the base type.
+ */
 export function typeBadgeLabel(typeStr: string): string {
   const base = extractBaseType(typeStr);
   return TYPE_BADGE_LABELS[base] ?? base.toUpperCase().slice(0, 4);
 }
 
-// ─── Result Parsing ─────────────────────────────────────────────────────────
-
 /**
- * Parse the single-row profiling result into TableStats.
+ * Parses a single-row profiling result record into structured table statistics.
+ *
+ * @param row - The raw result row returned by the profiling query.
+ * @param cols - The array of column definitions for the profiled table.
+ * @param rowCount - The total or sampled row count evaluated.
+ * @param sampled - Indicates whether the results were derived from a sampled dataset.
+ * @param samplePercent - The percentage of rows sampled, if applicable.
+ * @returns The structured {@link TableStats} object.
  */
 export function parseProfilingResult(
   row: Record<string, string>,
@@ -352,4 +443,3 @@ export function parseProfilingResult(
 
   return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
 }
-

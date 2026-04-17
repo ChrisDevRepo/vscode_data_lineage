@@ -2,15 +2,31 @@ import { memo, useEffect, useState } from 'react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 
+/**
+ * Represents the major phases of the application initialization and graph generation process.
+ * - 'load': Extracting metadata from DACPAC or live database.
+ * - 'parse': Building the internal graph and model structure.
+ * - 'generate': Calculating layout and preparing the visual canvas.
+ */
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
+/**
+ * Props for the {@link VisualizingScreen} component.
+ */
 interface VisualizingScreenProps {
+  /** The name or path of the data source currently being processed. */
   sourceName: string;
+  /** The current active phase of the loading process. */
   phase: LoadingPhase;
-  progressText: string | null;   // db-progress sub-text (load phase)
-  stats: string | null;          // "659 nodes · 1658 edges · 38 schemas" (shown on parse ✓)
+  /** Optional real-time progress text (e.g., table count) from the extractor. */
+  progressText: string | null;
+  /** High-level summary stats (node/edge count) shown once parsing is complete. */
+  stats: string | null;
+  /** Error message to display if the process fails. */
   error: string | null;
+  /** Callback to cancel the current loading operation and stop extraction. */
   onCancel: () => void;
+  /** Callback to return to the project selection screen. */
   onBack: () => void;
 }
 
@@ -24,6 +40,14 @@ const PHASE_ORDER: Record<LoadingPhase, number> = { load: 0, parse: 1, generate:
 
 type PhaseStatus = 'pending' | 'active' | 'done' | 'error';
 
+/**
+ * Determines the status of a specific loading phase based on the current active phase.
+ *
+ * @param rowPhase - The phase to check.
+ * @param current - The currently active loading phase.
+ * @param hasError - Whether an error has occurred in the process.
+ * @returns The status of the phase (pending, active, done, or error).
+ */
 function phaseStatus(rowPhase: LoadingPhase, current: LoadingPhase, hasError: boolean): PhaseStatus {
   const rowIdx = PHASE_ORDER[rowPhase];
   const curIdx = PHASE_ORDER[current];
@@ -33,6 +57,12 @@ function phaseStatus(rowPhase: LoadingPhase, current: LoadingPhase, hasError: bo
   return 'pending';
 }
 
+/**
+ * Renders an icon representing the status of a loading phase.
+ *
+ * @param props - Component properties.
+ * @returns A React element representing the phase icon.
+ */
 function PhaseIcon({ status }: { status: PhaseStatus }) {
   if (status === 'done') {
     return (
@@ -72,6 +102,16 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
 
 const AUTO_REDIRECT_MS = 8000;
 
+/**
+ * A full-screen progress and status indicator shown during project initialization.
+ *
+ * This component provides visual feedback for the multi-step process of loading
+ * database metadata and generating the lineage graph. It handles real-time
+ * progress updates, elapsed time tracking, and provides an automatic return-to-start
+ * mechanism if an error occurs.
+ *
+ * @param props - Component properties.
+ */
 export const VisualizingScreen = memo(function VisualizingScreen({
   sourceName,
   phase,
