@@ -145,41 +145,58 @@ async function loadAiOutputTemplates(
   const logger = Logger.create(outputChannel, 'Config');
   const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'description', 'sections', 'highlights', 'notes'];
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
-  
+  const builtInKeys: string[] = [];
+
+  const builtInUri = vscode.Uri.joinPath(extensionUri, 'assets', 'aiOutputTemplates.yaml');
+  logger.info(`Reading AI templates built-in: ${builtInUri.fsPath}`);
   try {
-    const builtInUri = vscode.Uri.joinPath(extensionUri, 'assets', 'aiOutputTemplates.yaml');
     const data = await vscode.workspace.fs.readFile(builtInUri);
-    const content = new TextDecoder().decode(data);
-    const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
+    const parsed = yaml.load(new TextDecoder().decode(data)) as Record<string, { instruction?: string }>;
     for (const key of REQUIRED_KEYS) {
       const entry = parsed?.[key];
       if (entry?.instruction && typeof entry.instruction === 'string') {
         builtIn[key] = entry.instruction.trim();
+        builtInKeys.push(key);
+      } else {
+        logger.info(`Skipped AI template '${key}': built-in missing or non-string 'instruction' field`);
       }
     }
-    logger.debug('AI output templates loaded from built-in defaults');
   } catch (err) {
     logger.error('load built-in AI templates', err);
   }
 
   const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
   const customPath = cfg.get<string>('outputTemplateFile', '');
-  if (!customPath) return builtIn;
+  if (!customPath) {
+    logger.info(`Applied AI templates: ${builtInKeys.length} loaded from built-in, 0 overlaid`);
+    return builtIn;
+  }
 
+  logger.info(`Reading AI templates custom: ${customPath}`);
+  const overlaid: string[] = [];
   try {
-    const customUri = vscode.Uri.file(customPath);
-    const data = await vscode.workspace.fs.readFile(customUri);
-    const content = new TextDecoder().decode(data);
-    const parsed = yaml.load(content) as Record<string, { instruction?: string }>;
+    const data = await vscode.workspace.fs.readFile(vscode.Uri.file(customPath));
+    const parsed = yaml.load(new TextDecoder().decode(data)) as Record<string, { instruction?: string }>;
+    if (parsed && typeof parsed === 'object') {
+      const required = new Set<string>(REQUIRED_KEYS);
+      for (const key of Object.keys(parsed)) {
+        if (!required.has(key)) {
+          logger.warn(`Skipped AI template '${key}': unknown key — must be one of ${REQUIRED_KEYS.join(', ')}`);
+        }
+      }
+    }
     for (const key of REQUIRED_KEYS) {
       const entry = parsed?.[key];
       if (entry?.instruction && typeof entry.instruction === 'string') {
         builtIn[key] = entry.instruction.trim();
+        overlaid.push(key);
+      } else if (entry !== undefined) {
+        logger.info(`Skipped AI template '${key}': missing or non-string 'instruction' field in custom YAML`);
       }
     }
-    logger.info(`AI output templates overlaid from: ${customPath}`);
+    logger.info(`Applied AI templates: ${builtInKeys.length} loaded from built-in, ${overlaid.length} overlaid from custom (${overlaid.join(', ') || 'none'})`);
   } catch (err) {
-    logger.error(`load custom AI templates from ${customPath}`, err);
+    logger.warn(`Fallback AI templates custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${customPath}`);
     vscode.window.showWarningMessage('Data Lineage: Failed to load custom AI output templates — using built-in defaults.');
   }
 
@@ -197,9 +214,11 @@ async function loadParseRules(
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Config');
   let config: ParseRulesConfig | null = null;
+  let source: 'built-in' | 'custom' = 'built-in';
 
+  const builtInUri = vscode.Uri.joinPath(extensionUri, 'assets', 'defaultParseRules.yaml');
+  logger.info(`Reading parse rules built-in: ${builtInUri.fsPath}`);
   try {
-    const builtInUri = vscode.Uri.joinPath(extensionUri, 'assets', 'defaultParseRules.yaml');
     const data = await vscode.workspace.fs.readFile(builtInUri);
     config = yaml.load(new TextDecoder().decode(data)) as ParseRulesConfig;
   } catch (err) {
@@ -211,23 +230,24 @@ async function loadParseRules(
   if (customPath) {
     const resolved = resolveWorkspacePath(customPath);
     if (resolved) {
+      logger.info(`Reading parse rules custom: ${resolved}`);
       try {
         const data = await vscode.workspace.fs.readFile(vscode.Uri.file(resolved));
         const parsed = yaml.load(new TextDecoder().decode(data)) as ParseRulesConfig;
         if (parsed?.rules && Array.isArray(parsed.rules)) {
           config = parsed;
+          source = 'custom';
           await persistAbsolutePath('parseRulesFile', customPath, resolved);
-          logger.info(`Custom parse rules loaded from ${path.basename(customPath)}`);
         } else {
-          logger.warn(`Invalid custom parse rules at ${customPath} — using built-in defaults`);
+          logger.warn(`Fallback parse rules custom → built-in: reason=missing or invalid "rules" array at ${resolved}`);
           vscode.window.showWarningMessage('Custom parse rules invalid — using built-in defaults.');
         }
       } catch (err) {
-        logger.warn(`Failed to load custom parse rules: ${err instanceof Error ? err.message : String(err)} — using built-in defaults`);
+        logger.warn(`Fallback parse rules custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${resolved}`);
         vscode.window.showWarningMessage('Failed to load custom parse rules — using built-in defaults. Check Output channel.');
       }
     } else {
-      logger.warn(`Cannot resolve parse rules path "${customPath}" — using built-in defaults`);
+      logger.warn(`Fallback parse rules custom → built-in: reason=cannot resolve path "${customPath}"`);
     }
   }
 
@@ -237,13 +257,11 @@ async function loadParseRules(
   }
 
   const result = loadRules(config);
-  for (const err of result.errors) logger.debug(err);
+  for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
   if (result.usedDefaults) {
-    logger.warn('Parse rules config invalid — rule list empty');
+    logger.warn(`Fallback parse rules ${source} → empty: reason=no valid rules in config`);
     vscode.window.showWarningMessage('Data Lineage: Parse rules config invalid — check Output channel.');
-  } else if (result.skipped.length > 0) {
-    logger.warn(`${result.loaded} parse rules loaded, ${result.skipped.length} skipped: ${result.skipped.join(', ')}`);
   } else {
-    logger.info(`${result.loaded} parse rules loaded`);
+    logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
   }
 }

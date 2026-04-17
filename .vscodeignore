@@ -8,6 +8,12 @@ temp-old-design/**
 tmp/**
 tmp_*
 
+# Test output emitted into out/ folder must not ship
+out/test/**
+
+# Stray AI tool-invocation captures / debug JSON at repo root
+enrich_payload.json
+
 # Config files
 .gitignore
 tsconfig.json
