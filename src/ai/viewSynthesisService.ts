@@ -96,6 +96,21 @@ export class ViewSynthesisService {
       };
     }
 
+    // Partial-result notice: when the loop hit MAX_ROUNDS before the SM completed,
+    // let the AI know its rendered graph covers only part of the intended scope so it
+    // can surface that in the view summary rather than presenting it as complete.
+    if (this.session.resultGraph?.partial) {
+      const cov = this.session.resultGraph.partialCoverage;
+      const covText = cov ? ` (${cov.analyzed} of ${cov.total} nodes)` : '';
+      const partialNote = `⚠ Partial result${covText} — exploration did not complete before the round cap.`;
+      if (input.intro) {
+        input.intro = `${partialNote}\n\n${input.intro}`;
+      } else {
+        input.intro = partialNote;
+      }
+      log?.info(`enrich_view: partial result rendered${covText}`);
+    }
+
     if (this.session.resultGraph?.notes?.length) {
       const userNoteIds = new Set((input.notes ?? []).map(n => (n as any).node_id as string));
       const autoNotes: Array<{ node_id: string; text: string }> = [];

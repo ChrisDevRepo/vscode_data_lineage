@@ -63,7 +63,8 @@ Completion semantics depend on the execution mode:
 | Mode | Trigger | AI action |
 | :--- | :--- | :--- |
 | **Inline mode** (scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`) | AI sets `complete: true` on `submit_findings`. No coverage gate — the AI has the full picture one-shot and decides when the question is answered. | On acceptance, the tool returns `{ ok: true, done: true, result }` and the AI produces the chat answer + `enrich_view`. |
-| **SM sliding-memory mode** (scope exceeds either threshold) | **AI does not decide.** The engine drains the agenda: every item must receive one of the three verdicts — `relevant`, `pass`, `irrelevant`. When the last verdict is dispatched, `submit_findings` returns `{ ok: true, done: true, result }`. The `complete: true` field is silently ignored here. | Produce the chat answer + `enrich_view` when the `done: true` response arrives. |
+| **SM sliding-memory mode** (scope exceeds either threshold) | **AI does not decide.** The engine drains the agenda: every item must receive one of the three verdicts — `relevant`, `pass`, `irrelevant`. When the last verdict is dispatched, the engine emits the synthesis trigger and the AI produces the chat answer + `enrich_view`. `complete: true` is **rejected** with `{error:'complete_not_allowed'}` so the AI cannot self-finalize. | Synthesis trigger delivered as a distinct user message; the continuation-phase nav prompt contains no mention of completion. |
+| **MAX_ROUNDS cap** (safety cut-off at `ai.maxRounds`, default 50) | The loop exits without the SM reaching `complete`. The session persists a **partial resultGraph** (flagged `partial: true`, `partialCoverage: {analyzed, total}`) from all nodes analyzed so far. | `enrich_view` / "Show in Graph" still renders the partial result; the UI surfaces a "cap hit" notice. |
 
 Three verdicts (SM mode):
 - `relevant` — full 5-block analysis stored; drives badges/notes.
@@ -149,6 +150,10 @@ A single `NavigationEngine` handles all modes (Blackboard, Column Trace, Depende
 One `AiSession` per extension instance.
 - **User-facing safety**: Explicit user acknowledgement is required before a new exploration wipes an active one.
 - **Auto-reset**: Sessions auto-reset after 1 hour of inactivity.
+- **Result-graph preservation across new chat**: When VS Code creates an empty-history chat thread and the session has a `resultGraph` less than 5 minutes old, the graph is preserved across the reset so follow-up prompts like *"Show the trace result in the graph"* can still render. Transient state (`stateMachine`, agenda) is always cleared — only the completed / partial result survives the window.
+
+### Column validation scope
+`submit_findings.route_requests[].columns` is validated against the target node's columns **only in `column_trace` mode**. In `blackboard` / `dependency` mode the field is silently dropped (it has no semantic meaning there) — the AI cannot trigger a `route_validation_failed` error by copying source-node column names onto a target UDF or proc.
 
 ## References
 - [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)

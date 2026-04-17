@@ -139,9 +139,21 @@ export class LineageParticipant {
     }
 
     if (chatContext.history.length === 0) {
+      // Preserve resultGraph for recent follow-ups: users commonly ask "Show the trace
+      // result in the graph" in a new chat thread after a completed exploration. VS Code
+      // delivers that as empty-history, which would otherwise wipe the only thing the
+      // follow-up needs. Window = 5 min (matches typical user context-switch latency).
+      const RESULT_GRAFT_WINDOW_MS = 5 * 60 * 1000;
+      const preservedResult = sess.resultGraph;
+      const recent = preservedResult && (Date.now() - sess.startTime) < RESULT_GRAFT_WINDOW_MS;
       sess.regenerateSessionId();
       sess.resetExploration();
-      this.logger.info(`[${sess.id}] New chat session detected — state rotated`);
+      if (recent && preservedResult) {
+        sess.resultGraph = preservedResult;
+        this.logger.info(`[${sess.id}] New chat session — state rotated; resultGraph preserved (${preservedResult.nodeIds.length} nodes, ${preservedResult.source})`);
+      } else {
+        this.logger.info(`[${sess.id}] New chat session detected — state rotated`);
+      }
     }
 
     this.logger.info(`[${sess.id}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
@@ -263,6 +275,9 @@ export class LineageParticipant {
       let actionRequiredPending = false;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
+      let lastProgressLine = '';
+      let consecutivePrematureFinalize = 0;
+      const PREMATURE_FINALIZE_CAP = 3;
 
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
@@ -315,15 +330,25 @@ export class LineageParticipant {
             const smDump = sess.stateMachine.toJSON() as { agendaSize?: number; currentFocusNodeId?: string | null };
             const agendaRemaining = smDump.agendaSize ?? 0;
             if (agendaRemaining > 0) {
+              consecutivePrematureFinalize++;
               const focus = smDump.currentFocusNodeId ?? '(unknown)';
-              this.logger.warn(`Round ${roundCount} [ACTIVE] — premature final answer rejected; ${agendaRemaining} agenda items remain, re-prompting`);
-              messages.push(vscode.LanguageModelChatMessage.User(
-                `STOP. You emitted a final answer but the exploration is NOT complete. ` +
-                `Engine status: awaiting_findings. Agenda: ${agendaRemaining} items remain. ` +
-                `Current focus: ${focus}. ` +
-                `Your ONLY valid next action is lineage_submit_findings for the current focus node. ` +
-                `Every agenda item must receive a verdict (relevant, pass, or irrelevant) — the engine auto-completes when the last one is dispatched. Do NOT emit prose while in active phase.`
-              ));
+              if (consecutivePrematureFinalize >= PREMATURE_FINALIZE_CAP) {
+                this.logger.warn(`Round ${roundCount} [ACTIVE] — premature-finalize cap (${PREMATURE_FINALIZE_CAP}) reached; aborting to preserve remaining round budget`);
+                stream.markdown(`\n\n⚠ Session aborted: the model attempted to emit a final answer ${consecutivePrematureFinalize} times while ${agendaRemaining} agenda items remain. The exploration is partial — any completed nodes are available via the graph.`);
+                return;
+              }
+              this.logger.warn(`Round ${roundCount} [ACTIVE] — premature final answer rejected (${consecutivePrematureFinalize}/${PREMATURE_FINALIZE_CAP}); ${agendaRemaining} agenda items remain, re-prompting`);
+              // Only push a re-prompt on the last pending assistant message; avoid
+              // accumulating STOP messages when the AI repeats the pattern.
+              const lastMsg = messages[messages.length - 1];
+              const lastText = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
+              if (!lastText.startsWith('STOP.')) {
+                messages.push(vscode.LanguageModelChatMessage.User(
+                  `STOP. The engine is awaiting findings and ${agendaRemaining} agenda items remain. ` +
+                  `Your ONLY valid action is lineage_submit_findings for focus ${focus}. ` +
+                  `Do not emit prose, summaries, or complete:true — the engine owns completion.`
+                ));
+              }
               continue;
             }
           }
@@ -361,7 +386,12 @@ export class LineageParticipant {
             const denom = st.scopeSize ?? '?';
             progressLine = `Hop ${st.hopCount ?? 1} / ${denom} — analyzing ${shortName}…`;
           }
-          stream.progress(progressLine);
+          // Dedup: failed submits (route_validation_failed, missing_field) don't advance
+          // hopCount, so the retry would emit the identical line. Skip when unchanged.
+          if (progressLine !== lastProgressLine) {
+            stream.progress(progressLine);
+            lastProgressLine = progressLine;
+          }
           totalToolCallsMade++;
           try {
             const result = await vscode.lm.invokeTool(
@@ -531,10 +561,28 @@ export class LineageParticipant {
       const smMode = sess.stateMachine?.mode ?? '—';
       const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
       this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
-      
+
       const smComplete = sess.stateMachine?.status === 'complete';
-      if (this.getActivePanel() && smComplete) {
-        stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [request.prompt] });
+      // Partial-result preservation: when the loop exits without SM completion
+      // (MAX_ROUNDS cap hit or premature-finalize abort), persist a partial
+      // resultGraph from analyzed detail slots so follow-up `Show in Graph`
+      // and `enrich_view` still have something to render.
+      if (sess.stateMachine && !smComplete && sess.resultGraph == null && sess.memory.slotCount > 0) {
+        sess.storeBbResultPartial();
+      }
+      const finalGraph = sess.resultGraph as import('./types').ResultGraph | null;
+      const hasPartial = finalGraph?.partial === true;
+      if (hasPartial && finalGraph) {
+        const cov = finalGraph.partialCoverage;
+        this.logger.info(`Partial result stored — ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes analyzed (cap hit before completion)`);
+        stream.markdown(`\n\n⚠ Exploration incomplete — analyzed ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes before the round cap. Use "Show in Graph" to render the partial result.`);
+      }
+
+      if (this.getActivePanel() && (smComplete || hasPartial)) {
+        const title = hasPartial
+          ? '$(type-hierarchy-sub) Show Partial Graph'
+          : '$(type-hierarchy-sub) Show in Graph';
+        stream.button({ command: 'dataLineageViz.aiCreateView', title, arguments: [request.prompt] });
       }
     } catch (err) {
       this.logger.error('Chat handler', err);

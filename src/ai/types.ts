@@ -45,6 +45,10 @@ export interface ResultGraph {
   suggested_notes?: Array<{ node_id: string; text: string }>;
   /** AI-suggested grouping of nodes into narrative sections. */
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
+  /** True if the result was persisted without the SM reaching `complete` — e.g. MAX_ROUNDS cap hit. */
+  partial?: boolean;
+  /** Count of nodes analyzed vs planned when `partial` is true (for user-facing messaging). */
+  partialCoverage?: { analyzed: number; total: number };
 }
 
 /** 

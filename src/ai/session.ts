@@ -154,6 +154,33 @@ export class AiSession {
   }
 
   /**
+   * Persists a partial result when the exploration exits without reaching `complete`
+   * (typically MAX_ROUNDS cap hit). Builds the ResultGraph from the analyzed detail slots
+   * so follow-up tools (enrich_view / Show in Graph) still have data to render.
+   *
+   * @remarks
+   * Only call when `this.stateMachine` is set and has visited at least one node. Uses the
+   * engine's `getResult()` helper which is already tolerant of partial state: it assembles
+   * edges over visited+noted nodes and includes bridge nodes. The returned graph is
+   * flagged `partial: true` so the view layer can surface a "cap hit" notice.
+   */
+  public storeBbResultPartial(): void {
+    const sm = this.stateMachine;
+    if (!sm) return;
+    const dump = sm.toJSON() as { scopeSize?: number; visited?: string[] };
+    const analyzed = this.memory.slotCount;
+    const total = dump.scopeSize ?? analyzed;
+    const partialResult: any = (sm as any).getResult?.();
+    if (!partialResult || !partialResult.fullNodes?.length) return;
+
+    this.storeBbResult(partialResult);
+    if (this.resultGraph) {
+      this.resultGraph.partial = true;
+      this.resultGraph.partialCoverage = { analyzed, total };
+    }
+  }
+
+  /**
    * Generates a high-level summary of the session's current status.
    * 
    * @returns A `SessionSummary` object for logging and UI updates.

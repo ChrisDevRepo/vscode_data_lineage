@@ -260,7 +260,10 @@ export class NavigationEngine implements IHopStateMachine {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
     }
 
-    // Selection Guard
+    // Selection Guard. Columns are only meaningful in column_trace mode; for BB/dependency
+    // the AI sometimes copies source-node column names onto the target, which would trip
+    // the column validator with a confusing "Columns not found" error. Drop columns
+    // silently in non-CT modes so the node-level routing still succeeds.
     if (params.route_requests) {
       const invalidRoutes = [];
       for (const req of params.route_requests) {
@@ -271,10 +274,14 @@ export class NavigationEngine implements IHopStateMachine {
           continue;
         }
         if (req.columns) {
-          const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-          const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
-          if (invalidCols.length > 0) {
-            invalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
+          if (this.mode !== 'column_trace') {
+            req.columns = undefined;
+          } else {
+            const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+            const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
+            if (invalidCols.length > 0) {
+              invalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
+            }
           }
         }
       }
@@ -333,11 +340,19 @@ export class NavigationEngine implements IHopStateMachine {
 
     // Inline mode honors the explicit `complete=true` shortcut: scope is small,
     // the model has the whole picture, and a one-shot completion signal is appropriate.
-    // SM sliding-memory mode ignores `complete` — the engine drains the agenda and
-    // auto-completes via the participant's `getHopContext().done` check after this call.
+    // SM sliding-memory mode rejects `complete=true` with an explicit error — the engine
+    // owns completion (drains the agenda, auto-completes). Silent-ignore trained the AI
+    // to believe its complete signal was accepted; explicit rejection forces the AI to
+    // keep submitting until the agenda drains.
     if (params.complete && this._inlineMode) {
       this._status = 'complete';
       return { ok: true, done: true, result: this.getResult() };
+    }
+    if (params.complete && !this._inlineMode) {
+      return {
+        error: 'complete_not_allowed',
+        detail: 'The engine owns completion in this session. Continue submitting findings for each remaining agenda item; the engine auto-completes when the last one is dispatched.',
+      };
     }
 
     return cascadedCount > 0 ? { ok: true, cascaded_count: cascadedCount } : { ok: true };

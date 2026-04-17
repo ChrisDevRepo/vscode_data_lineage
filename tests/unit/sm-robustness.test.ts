@@ -54,7 +54,7 @@ suite('State Machine Robustness', () => {
   // cannot produce a non-zero `cascaded_count` because `seedAgenda` only admits direct
   // neighbors of the origin — C and D never reach the agenda before B is popped.
 
-  test('SM sliding-memory mode: complete=true is ignored (drain-only)', () => {
+  test('SM sliding-memory mode: complete=true is rejected (engine owns completion)', () => {
     const { model, graph } = createMockModelAndGraph();
     const log = () => {};
     log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
@@ -71,12 +71,12 @@ suite('State Machine Robustness', () => {
       detail_analysis: 'ok',
       summary: 'ok',
       verdict: 'relevant',
-      complete: true,   // ← must be ignored in SM mode
+      complete: true,   // ← rejected in SM mode: the engine (not the AI) decides when to stop
     } as any);
 
-    // No error, not done — `complete` was a no-op in SM mode.
-    assert.ok('ok' in res && res.ok === true, 'submit accepted');
-    assert.strictEqual((res as any).done, undefined, 'complete=true must be ignored in SM mode');
+    // Explicit rejection so the AI learns to stop sending `complete: true` and keeps draining.
+    assert.ok('error' in res, 'submit rejected with error');
+    assert.strictEqual((res as any).error, 'complete_not_allowed', 'complete=true must be rejected in SM mode');
   });
 
   test('Inline mode: complete=true returns { done: true, result }', () => {

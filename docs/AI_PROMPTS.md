@@ -50,6 +50,8 @@ Focuses on the "Analyst" workflow:
 4.  Archive technical evidence to Detail Memory.
 5.  Propose next routes with validated questions.
 
+The navigation-mode prompt that persists across the sliding-memory wipe contains **no references to completion, final answers, `done: true`, or `enrich_view`**. The engine owns completion. Any language about synthesis would invite the AI to self-finalize early and waste rounds on rejected prose.
+
 ### 3.2 Synthesis Mode (Phase 3)
 Focuses on the "Documentarian" workflow:
 - The mode prompt is swapped to the **Synthesis Grounding Contract**.

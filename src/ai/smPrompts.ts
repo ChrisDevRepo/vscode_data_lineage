@@ -44,10 +44,21 @@ const BLOCK = {
     '   Question-shape heuristic — if the user asked WHAT the data means, lead each slot with business meaning + formulas in LaTeX + named renames. If they asked HOW the pipeline runs, lead with execution order + join strategies + rebuild pattern. For blended questions, business meaning first. Thin archive = thin final answer. An under-documented hop is a wasted hop.\n' +
     '3. **THE MAP** (System State): Topological grounding. Provides `navigation_path` (Origin -> ... -> Focus) and the agenda. Don\'t restate — reference only when needed.',
 
-  routingRules:
+  routingRulesShared:
     '### GROUNDED ROUTING (Selection-Inference)\n' +
     '- **NEVER route blindly**. Every neighbor in `route_requests` MUST have a specific technical hypothesis (the "question").\n' +
-    '- **VALIDATION**: Read the neighbor metadata (columns) and explain *why* that node is relevant to the trace. Proposing a route without a specific, validated hypothesis is a reasoning failure.',
+    '- **VALIDATION**: Read the neighbor metadata and explain *why* that node is relevant. Proposing a route without a specific, validated hypothesis is a reasoning failure.',
+
+  routingRulesBB:
+    '### ROUTING IN THIS SESSION\n' +
+    '- This session is a **blackboard** exploration — node-level analysis only. No column-level tracking.\n' +
+    '- For `route_requests`, only `nodeId` + `question` apply. The `columns` field is not part of this session and must be omitted; populating it has no effect.',
+
+  routingRulesCT:
+    '### ROUTING IN THIS SESSION\n' +
+    '- This session is a **column trace** — you follow specific columns across renames, aggregations, and transformations.\n' +
+    '- For every `route_requests` entry, set `columns` to the names that exist on the *target* node. If a rename or aggregation drops a column, translate to the target\'s column; if no target column survives, omit `columns` for that entry and rely on the next hop\'s DDL.\n' +
+    '- Column names must exist on the target node (validated against the target\'s DDL). Do not copy source-node column names onto a target UDF, scalar function, or procedure — those have parameters, not columns.',
 
   groundingContract:
     '### CRITICAL GROUNDING CONTRACT\n' +
@@ -56,11 +67,8 @@ const BLOCK = {
 
   continuationContract:
     '### CONTINUATION CONTRACT\n' +
-    '- While the engine is `awaiting_findings`, your ONLY valid action is `lineage_submit_findings`. Emitting prose without a tool call (executive summary, "here is what we found", final report) is a protocol violation — the engine will reject it and re-prompt you. Every such rejection wastes a round and burns tokens; the fix is to call `lineage_submit_findings` instead.\n' +
-    '- Do NOT decide when to stop. The engine drains the agenda and auto-completes when the last item receives a verdict. You will know synthesis has begun when `submit_findings` returns `{ done: true, result: ... }` — only then may you write prose.\n' +
-    '- Every agenda item must receive one verdict: `relevant` (analyze), `pass` (visited, no analysis — use for variant siblings of an already-analyzed archetype), or `irrelevant` (cascade-prune). `pass` is always accepted; `irrelevant` may be rejected by orphan / cascade guards (then fall back to `pass`).\n' +
-    '- When `submit_findings` returns `{ done: true, result: ... }`, the engine has auto-completed. Produce the chat answer and call `lineage_enrich_view` with your synthesized `sections[]` (one per archived slot).\n' +
-    '- A short chat answer while the agenda still has items is a protocol violation: the user will see an incomplete picture and no annotated graph view.',
+    '- Your ONLY valid action each round is `lineage_submit_findings` for the current focus node. Do not emit prose, summaries, status updates, or `complete: true`. The engine owns completion — it will deliver a synthesis instruction when the time is right; until then, only submit findings.\n' +
+    '- Every agenda item must receive one verdict: `relevant` (analyze), `pass` (visited, no analysis — use for variant siblings of an already-analyzed archetype), or `irrelevant` (cascade-prune). `pass` is always accepted; `irrelevant` may be rejected by orphan / cascade guards (then fall back to `pass`).',
 } as const;
 
 /**
@@ -84,6 +92,11 @@ export function buildNavigationPrompt(mode: SmMode): string {
     ? '# ROLE: EXPERT STRUCTURAL ANALYST (Dependency Focus)'
     : '# ROLE: EXPERT BUSINESS LOGIC ANALYST (Functional Focus)';
 
+  // Mode-specific routing block: column-trace owns all column-level guidance;
+  // blackboard / dependency explicitly state `columns` is not part of the session,
+  // so the field cannot be populated as a side-effect of shared prompt text.
+  const modeRouting = mode === 'column_trace' ? BLOCK.routingRulesCT : BLOCK.routingRulesBB;
+
   return [
     modeHeader,
     'You are an autonomous agent navigating a SQL dependency graph using a "Map & Router" pattern.',
@@ -94,7 +107,9 @@ export function buildNavigationPrompt(mode: SmMode): string {
     '',
     BLOCK.memoryProtocol,
     '',
-    BLOCK.routingRules,
+    BLOCK.routingRulesShared,
+    '',
+    modeRouting,
     '',
     BLOCK.groundingContract,
     '',
