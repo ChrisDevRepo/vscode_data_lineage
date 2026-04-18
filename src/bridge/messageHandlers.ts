@@ -707,6 +707,10 @@ async function readExtensionConfig(host: BridgeHost): Promise<any> {
     externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled') },
     overview: { enabled: cfg.get<boolean>('overview.enabled'), threshold: cfg.get<number>('overview.threshold') },
     renderLimit: cfg.get<number>('renderLimit'),
+    trace: {
+      defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels'),
+      defaultDownstreamLevels: cfg.get<number>('trace.defaultDownstreamLevels'),
+    },
     analysis: {
       hubMinDegree: cfg.get<number>('analysis.hubMinDegree'),
       islandMaxSize: cfg.get<number>('analysis.islandMaxSize'),

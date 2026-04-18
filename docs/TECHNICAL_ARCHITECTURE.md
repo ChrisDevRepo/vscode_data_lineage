@@ -26,7 +26,7 @@ Both extractors act as thin adapters, outputting `ExtractedObject[]` and `Extrac
 
 ### IPC Bridge & Zod Validation
 Communication between the Extension Host and Webview is strictly validated to prevent message injection.
-- **Contract Safety**: All `postMessage` events are typed and validated using **Zod** schemas (e.g., `BridgeMessageSchema`).
+- **Contract Safety**: IPC bridge validation, tool inputs, and extension host boundaries must strictly use **Zod** schemas (e.g., `BridgeMessageSchema`) for strong type safety, runtime validation, and security.
 - **Typed Results**: All engine operations return a `Result<T, E>` pattern to avoid silent failures. The use of `any` is strictly forbidden in parser and extractor outputs.
 - **Key Messages**: `dacpac-model`, `db-model`, `table-stats-request`, `ai-view-activate`.
 
@@ -51,7 +51,7 @@ The extension integrates with VS Code Copilot Chat (`https://code.visualstudio.c
 
 ### 4.2 State Machine & Memory Management
 To support deep 30-hop lineages within limited token budgets, the system uses **Asymmetric Tiering** (inspired by MemGPT):
-- **NavigationEngine (`smBase.ts`)**: Consolidates all traversal modes (Blackboard, Column Trace, Dependency). It guards routing by strictly validating requested node/column routes against the actual schema metadata.
+- **NavigationEngine (`smBase.ts`)**: Consolidates all traversal modes (Blackboard, Column Trace, Dependency). Following our foundational **DRY and OOP mandates**, it serves as the single source of truth for its domain. Developers must use explicit composition and delegation, avoiding redundant logic or anti-patterns that bypass its structural design. It guards routing by strictly validating requested node/column routes against the actual schema metadata.
 - **Short Memory (Incremental Blackboard)**: A single, incrementally updated narrative string. Bounded in size (e.g., 8000 chars), it provides cross-hop continuity without blowing up the context window.
 - **Detail Memory (Evidence Archive)**: Full-fidelity storage of technical findings. Evicted from the active prompt during the "Hop Loop" and only injected during Phase 3 (Synthesis) to ground the final answer.
 
