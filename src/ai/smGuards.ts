@@ -96,38 +96,6 @@ export function wouldOrphanNotedNode(
 }
 
 /**
- * Calculates how many nodes in the current agenda would be cascade-removed if a candidate is pruned.
- *
- * @remarks
- * This utility helps the state machine avoid "cascade-too-wide" scenarios where marking a single
- * intermediate node as irrelevant would inadvertently prune a large portion of the pending agenda.
- *
- * @param graph - The graphology instance.
- * @param originId - The exploration origin node.
- * @param removedSet - The current set of pruned nodes.
- * @param scopeNodeIds - The total scope of the investigation.
- * @param agendaNodeIds - The set of node IDs currently on the exploration agenda.
- * @param candidateId - The node being evaluated for pruning.
- * @returns The count of agenda nodes that would become unreachable.
- */
-export function countCascadeIfPruned(
-  graph: Graph,
-  originId: string,
-  removedSet: ReadonlySet<string>,
-  scopeNodeIds: ReadonlySet<string>,
-  agendaNodeIds: ReadonlySet<string>,
-  candidateId: string,
-): number {
-  const reachable = bfsReachable(graph, originId, removedSet, candidateId, scopeNodeIds);
-  let count = 0;
-  for (const id of agendaNodeIds) {
-    if (!reachable.has(id)) count++;
-  }
-  return count;
-}
-
-
-/**
  * Validates a list of node-related objects against a known node map.
  *
  * @remarks

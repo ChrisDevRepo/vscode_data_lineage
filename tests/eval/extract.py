@@ -545,7 +545,6 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
             "focus_mismatch",
             "route_validation_failed",
             "orphan_rejection",
-            "cascade_too_wide",
             "narrative_too_long",
         }
         for e in errs:

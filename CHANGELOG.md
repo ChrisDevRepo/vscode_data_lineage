@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Remove cascade-width 50% guard — engine stays content-blind (2026-04-18)
+**Removed**
+- `prune_cascade_too_wide` engine rejection (smBase.ts) — a numeric heuristic that rejected `irrelevant` verdicts when the resulting cascade would remove >50% of the remaining agenda. Deleted along with its helper `countCascadeIfPruned` (smGuards.ts).
+
+**Rationale.** The engine is content-blind; the AI has the only DDL view and already committed a verdict (one of `relevant | pass | irrelevant`). Overriding that with a numeric threshold both violates the content-blindness principle and creates a failure mode: when a scope is genuinely dominated by utility helpers (LogMessage, spLastRowCount, udfDivideAsDec), the correct prune is rejected → SM keeps presenting them → AI re-prunes → endless rejection loop until MAX_ROUNDS. Warning-level logging was also ruled out under the horse-with-blinkers model: the AI has no uncertainty surface to act on a warning. Over-pruning, if it shows up, is a prompt-design concern — tighten `BLOCK.verdictCategories` in smPrompts.ts. The two remaining guards (`wouldOrphanNotedNode`, `findBridgeNodes`) are both topological/reachability-based and stay.
+
+**Tests.** No dedicated test referenced the 50% guard — the docstring in `tests/unit/navigation-engine-cascade.test.ts` mentioned it but no case exercised it. Docstring updated to reflect removal. `tests/eval/extract.py` valid-error list no longer lists `cascade_too_wide`.
+
 ### Prime engine at gate-emission time + trust-on-resume UX (2026-04-18)
 Follow-up fix to the FSM refactor bundle. Observed in `sess_1776519642696_2l8lf`: user approved the `confirm_sm_start` gate, but the engine was stuck at `status: 'initialized'` — the tool had returned the gate envelope BEFORE calling `engine.getHopContext()`, so no first hop was primed. AI's first `submit_findings` bounced on `invalid_status`; the dedup cache returned `{"_dedup":true}` on each retry, hiding the real error from both the AI and `RepeatRejectGuard`. 11 rounds burned before user stopped the session. UI was stuck at "Hop 0 / 24 — analyzing node…" because `hopCount` was genuinely 0.
 

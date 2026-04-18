@@ -17,7 +17,7 @@ import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { edgeApiType } from './aiPresenter';
-import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, countCascadeIfPruned, type LogFn } from './smGuards';
+import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
 import type { ActionRequiredGate, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, SmMode, SmResult, SmStatus, SubmitResult } from './smTypes';
 
@@ -583,15 +583,15 @@ export class NavigationEngine implements IHopStateMachine {
     const isIrrelevant = params.verdict === 'irrelevant';
     const prunable = isIrrelevant && this.currentFocusNodeId !== this.originNodeId;
     if (prunable) {
+      // Topological protection only — don't orphan already-analyzed (noted) nodes.
+      // We do NOT second-guess the AI's verdict with numeric cascade thresholds: the AI has the
+      // only content view (read the DDL, emitted one of relevant|pass|irrelevant). SM is
+      // content-blind and owns execution, not judgment. If a session over-prunes, fix the
+      // `irrelevant` rubric in the prompt (smPrompts.ts BLOCK.verdictCategories).
       const notedIds = new Set<string>(this.memory.notedNodeIds);
       const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, this.currentFocusNodeId!);
       if (orphan) {
         return { error: 'prune_would_orphan_noted', detail: `Marking ${this.currentFocusNodeId} irrelevant would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
-      }
-      const agendaNodeIdSet = new Set(this.agenda.map(a => a.nodeId));
-      const cascadeCount = countCascadeIfPruned(this.graph, this.originNodeId!, this.removedSet, this.scopeNodeIds, agendaNodeIdSet, this.currentFocusNodeId!);
-      if (this.agenda.length > 2 && cascadeCount * 2 > this.agenda.length) {
-        return { error: 'prune_cascade_too_wide', detail: `Pruning ${this.currentFocusNodeId} would cascade-remove ${cascadeCount}/${this.agenda.length} agenda nodes. Use verdict='pass' to preserve scope.` };
       }
     }
 

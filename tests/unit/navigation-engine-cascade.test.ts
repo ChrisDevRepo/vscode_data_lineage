@@ -3,10 +3,14 @@
  *
  * Verifies the `irrelevant` verdict contract:
  * - A prune that would orphan a noted node is rejected (orphan_rejection).
- * - A prune that would wipe >50% of the agenda is rejected (cascade_too_wide).
  * - An accepted prune shrinks the agenda to only nodes still reachable from origin.
  * - The origin node cannot be marked irrelevant (treated as pass).
  * - Pruned nodes are excluded from getResult() edges.
+ *
+ * Note: the 50% cascade-width threshold was removed 2026-04-18. The engine is content-
+ * blind; the AI commits to a verdict (relevant|pass|irrelevant) with full DDL view, and
+ * SM doesn't second-guess it with numeric heuristics. Over-pruning is a prompt-design
+ * concern (smPrompts.ts BLOCK.verdictCategories), not an engine concern.
  *
  * Catches the regression from the original unified-engine commit where
  * params.verdict was completely ignored by submitFindings.

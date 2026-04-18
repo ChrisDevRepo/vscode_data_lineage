@@ -55,7 +55,7 @@ Completion semantics depend on the execution mode:
 Three verdicts (SM mode):
 - `relevant` — full 5-block analysis stored; drives badges/notes.
 - `pass` — visited, no analysis stored, always accepted. Intended for variant siblings of an already-analyzed archetype (reference the archetype in the blackboard).
-- `irrelevant` — cascade-prune the node + unreachable downstream. May be rejected by orphan / cascade-width guards; fall back to `pass`.
+- `irrelevant` — cascade-prune the node + unreachable downstream. May be rejected by the orphan guard (would disconnect an already-analyzed node); fall back to `pass`.
 
 This replaces the earlier `premature_complete` coverage-floor guard. That guard (removed) refused `complete=true` in SM mode until coverage ≥ 80%, which was unreachable on variant-heavy neighborhoods and created rejection loops. The drain-only contract is always satisfiable (each verdict is a legal move) and the SM — not the AI — decides when the session is over.
 
@@ -261,6 +261,18 @@ Per-neighbor flags: `in_budget`, `in_user_filter`, `would_trigger_action_require
 - **Anthropic, *Building Effective Agents* (Dec 2024)** — fewer, orthogonal tools; include stopping conditions. [anthropic.com/research/building-effective-agents](https://www.anthropic.com/research/building-effective-agents)
 - **s1 / Budget Forcing (Muennighoff et al., 2025)** — exposing a budget can cause premature stopping. Use monotonic `used` counters, not `remaining` countdowns. [arxiv.org/abs/2501.19393](https://arxiv.org/abs/2501.19393)
 - **$47k Agent Loop (Nov 2025)** — preflight budget checks prevent loops that can't finish. [relayplane.com/blog/agent-runaway-costs-2026](https://relayplane.com/blog/agent-runaway-costs-2026)
+
+## Cascade-prune guards — content-blind by design (2026-04-18)
+
+Three topological guards govern `irrelevant`-verdict pruning. All are content-blind — they operate on graph reachability, never second-guess the AI's verdict.
+
+| Guard | Where | Role |
+|---|---|---|
+| `wouldOrphanNotedNode` | Pre-prune ([smBase.ts submitFindings](src/ai/smBase.ts)) | Rejects a prune that would disconnect an already-analyzed (noted) node from the origin. Protects work already done. |
+| `findBridgeNodes` | Post-exploration ([smBase.ts getResult](src/ai/smBase.ts)) | At result-graph assembly, reinserts pruned nodes that would leave the final graph disconnected. Purely a rendering safety net for the user's visualization. |
+| ~~cascade-width > 50%~~ | **Removed 2026-04-18** | Was a numeric heuristic that rejected prunes affecting >half of remaining agenda. Removed: the engine is content-blind, the AI has the only DDL view and already committed a verdict (relevant\|pass\|irrelevant); SM doesn't second-guess that with numbers. If over-pruning shows up in evals, the fix is in the `irrelevant` rubric in [smPrompts.ts BLOCK.verdictCategories](src/ai/smPrompts.ts), not the engine. |
+
+**Principle:** engine guards are topological only. Content judgment lives in the AI + the prompts that frame it.
 
 ## Trust + Blinkers model (2026-04-18 iteration 3)
 
