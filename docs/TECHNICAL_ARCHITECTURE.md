@@ -54,6 +54,7 @@ To support deep 30-hop lineages within limited token budgets, the system uses **
 - **NavigationEngine (`smBase.ts`)**: Consolidates all traversal modes (Blackboard, Column Trace, Dependency). Following our foundational **DRY and OOP mandates**, it serves as the single source of truth for its domain. Developers must use explicit composition and delegation, avoiding redundant logic or anti-patterns that bypass its structural design. It guards routing by strictly validating requested node/column routes against the actual schema metadata.
 - **Short Memory (Incremental Blackboard)**: A single, incrementally updated narrative string. Bounded in size (e.g., 8000 chars), it provides cross-hop continuity without blowing up the context window.
 - **Detail Memory (Evidence Archive)**: Full-fidelity storage of technical findings. Evicted from the active prompt during the "Hop Loop" and only injected during Phase 3 (Synthesis) to ground the final answer.
+- **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis`) modeled as a TypeScript discriminated union with exhaustive `switch` dispatch. Hop-loop exits are themselves typed (`HopLoopExit`), so each outcome (complete / gate / budget-cap / abort / error) owns its cleanup branch — no post-hoc guards. Canonical example of the "state management" rule in `.claude/rules/code-quality.md`.
 
 ## 5. Testing & Verification Strategy
 - **Deterministic Core**: Tests focus on pure logic (`npm run test:unit`). Hook tests live in `tests/unit/hooks/`.

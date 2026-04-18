@@ -262,6 +262,49 @@ Per-neighbor flags: `in_budget`, `in_user_filter`, `would_trigger_action_require
 - **s1 / Budget Forcing (Muennighoff et al., 2025)** — exposing a budget can cause premature stopping. Use monotonic `used` counters, not `remaining` countdowns. [arxiv.org/abs/2501.19393](https://arxiv.org/abs/2501.19393)
 - **$47k Agent Loop (Nov 2025)** — preflight budget checks prevent loops that can't finish. [relayplane.com/blog/agent-runaway-costs-2026](https://relayplane.com/blog/agent-runaway-costs-2026)
 
+## Session FSM & Typed Exit Dispatch (2026-04-18 iteration 2)
+
+Follow-up to the scope-budget bundle. The mid-exploration consent gate above worked, but the turn handler had four implicit exit reasons (final_answer / gate / budget / error) with only one return path — so post-loop partial-result storage ran after any exit, including a paused gate. Fix: promote session state to a typed discriminated union; make every hop-loop exit typed; dispatch on the kind.
+
+### Phases (`SessionPhase`)
+
+Persists across VS Code chat turns. Turn-entry switches on `phase.kind`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> awaiting_gate: start_exploration needs SM\n→ action_required{gate:'confirm_sm_start'}
+    idle --> exploring: fresh hop loop enters ACTIVE\n(inline mode or post-confirm)
+    exploring --> awaiting_gate: submit_findings returns\nschema_out_of_filter /\ndepth_cap_exceeded /\nschema_and_depth
+    awaiting_gate --> exploring: user reply: yes\n(apply extendAllowedSchemas /\nextendAllowedDepth)
+    awaiting_gate --> idle: user reply: no\n(paused, no partial stored)
+    awaiting_gate --> idle: user reply: redirect\n(resetExploration → new question flows through)
+    exploring --> idle: HopLoopExit.final_answer\n(SM complete OR discovery final)
+    exploring --> idle: HopLoopExit.hop_cap\n(store partial, "incomplete" notice)
+    exploring --> idle: HopLoopExit.aborted\n(repeat-reject guard, store partial)
+    exploring --> idle: HopLoopExit.error\n(uncaught exception)
+```
+
+### Typed hop-loop exits (`HopLoopExit`)
+
+Single `dispatchExit` switch owns all post-loop cleanup. Each variant's cleanup lives in exactly one place — TypeScript discriminated-union exhaustiveness prevents the "paused gate rendered as incomplete" regression structurally.
+
+| `HopLoopExit.kind` | Triggered by | Cleanup in `dispatchExit` |
+|---|---|---|
+| `final_answer` | AI produced chat response with no tool calls (SM complete or discovery final) | `sess.enterIdle()` → optional "Show in Graph" button if SM completed |
+| `gate` | Tool result carried `action_required` envelope (Zod-validated) | `sess.enterGate(gate)` → stream consent question. **No** partial storage, **no** "incomplete" notice |
+| `hop_cap` | `MAX_ROUNDS` reached without completion | `storeBbResultPartial()` if slots exist → `sess.enterIdle()` → "incomplete" notice → "Show Partial Graph" |
+| `aborted` | Repeat-reject guard tripped | `storeBbResultPartial()` if slots exist → `sess.enterIdle()` |
+| `error` | Uncaught exception | `sess.enterIdle()` → error message |
+
+### Confirm-SM-start gate (reuses the same dispatch)
+
+`lineage_start_exploration` emits `action_required{gate:'confirm_sm_start'}` when sliding-memory mode is needed (non-inline session, scope fits budget). The tool returns the envelope; `HopLoopExit.gate` carries it; `dispatchExit` transitions to `awaiting_gate`; the participant surfaces the scope + depth + budget summary in chat. On `yes` the engine is live and resumes directly (no re-init). On `redirect` the session resets and the new question flows through normal discovery.
+
+### Why buttons are not used for the gate reply
+
+Per [`docs-internal/VS_CODE_CHAT_API.md`](../docs-internal/VS_CODE_CHAT_API.md) §4 + §12: `stream.button` dispatches commands (no back-channel into the running turn); `stream.confirmation` is deliberately unused (no destructive side-effects in this extension); turns are strictly one-shot. Text-reply yes/no/redirect is the only clean path — and `redirect` couldn't be carried by a 2-button surface anyway. The gate protocol stores everything a future command handler would need (`PendingGate.gate` + `.classes`), so adding buttons later is additive.
+
 ## References
 - [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)
 - Internal developer documentation: `docs-internal/AI_IMPLEMENTATION.md`

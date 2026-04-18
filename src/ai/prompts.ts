@@ -25,7 +25,7 @@ export function buildSystemPromptBase(maxRounds: number): string {
     `Budget: ${maxRounds} rounds.\n\n` +
     'RULES:\n' +
     '1. VALIDATE: If search returns 0 results or schema_mismatch, ask the user which object they mean before continuing. For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
-    '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
+    '2. Use only IDs returned by tools. Unknown IDs are rejected by the engine with route_validation_failed.\n' +
     '3. For column questions: call start_exploration with targetColumns. For lineage/impact/trace and broad exploration: call start_exploration without targetColumns. For single-object explanations: get_object_detail → chat text. (Tool descriptions carry the full routing rules.)\n' +
     '4. OUTPUT: enrich_view when a graph aids understanding (lineage path, data flow). Chat text for pure explanations, SQL generation, list/compare requests.\n' +
     '5. VIEW OUTPUT: the enrich_view tool description carries the sections[] contract. Write sections in the narrative sequence you want the reader to follow; the system numbers sections from your order.\n' +
