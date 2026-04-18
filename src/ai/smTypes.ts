@@ -29,9 +29,9 @@ export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 export type Verdict = 'relevant' | 'pass' | 'irrelevant';
 
 
-/** 
- * Metadata for a neighbor node encountered during a navigation hop. 
- * 
+/**
+ * Metadata for a neighbor node encountered during a navigation hop.
+ *
  * @remarks
  * This structure provides the AI with enough context to decide whether to visit
  * a node without needing to fetch its full DDL.
@@ -57,6 +57,37 @@ export interface HopNeighbor {
   scope?: 'visited' | 'agenda' | 'pruned' | 'available' | 'external';
   /** List of columns relevant to the current trace, if applicable. */
   cols?: string[];
+  /** Depth from origin (always surfaced when a depth budget is set). */
+  depth_from_origin?: number;
+  /** False when this node is beyond the active depth budget. Always surfaced when budget is set. */
+  in_budget?: boolean;
+  /** False when this node's schema is outside the session's allowed schemas. Surfaced when a filter is active. */
+  in_user_filter?: boolean;
+  /** True when routing here would trigger an `action_required` gate (out-of-depth and/or out-of-schema). */
+  would_trigger_action_required?: boolean;
+}
+
+/**
+ * Structured envelope for a user-confirmation gate emitted by the engine.
+ *
+ * @remarks
+ * Implements the LangGraph `interrupt_on` pattern: the engine halts with a structured
+ * reason, the participant surfaces it in chat, and the user's next reply resumes or
+ * aborts. One envelope can carry multiple violations (schema + depth in a single gate).
+ */
+export interface ActionRequiredGate {
+  /** Discriminator for participant routing. */
+  error: 'action_required';
+  /** The gate sub-type — drives the cache key used for "don't ask again this session". */
+  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth';
+  /** The specific class being requested (e.g. "schema:dbo" or "depth:+1"). Confirmations cache per-class. */
+  classes: string[];
+  /** Human-readable question rendered in chat, ready for yes/no reply. */
+  detail: string;
+  /** Node IDs that triggered the gate, so the engine can replay the route on confirm. */
+  nodeIds: string[];
+  /** Next-action hint for the AI if the gate returns before user reply. */
+  hint: string;
 }
 
 /**
@@ -137,6 +168,7 @@ export type SubmitResult =
       /** Final synthesized result. Present iff `done: true`. */
       result?: SmResult;
     }
+  | ActionRequiredGate
   | {
       /** Human-readable error code for AI feedback. */
       error: string;
@@ -149,6 +181,49 @@ export type SubmitResult =
       /** Current state of the state machine. */
       current_status?: SmStatus
     };
+
+/**
+ * Per-hop engine diagnostics — single structured snapshot for logging + AI visibility.
+ *
+ * @remarks
+ * Produced by `engine.getHopDiagnostics()` after each successful `submitFindings`. Feeds
+ * the `[AI] [Hop N]` structured log line and the working-memory fields the AI reads each
+ * hop. Counts are cumulative since `start_exploration`.
+ */
+export interface DiagnosticsSnapshot {
+  /** 1-based hop index. */
+  hop: number;
+  /** Node id of the focus just submitted. */
+  focus: string;
+  /** Schema of the focus. */
+  schema: string;
+  /** Depth from origin for the focus. */
+  depth: number;
+  /** Active depth budget (null if none was passed). */
+  depthBudget: number | null;
+  /** Enforcement mode as configured. */
+  depthEnforcement: 'strict' | 'soft' | 'silent';
+  /** Was the focus in the active schema allowlist? */
+  inSchema: boolean;
+  /** Detail-archive chars added this hop. */
+  detailChars: number;
+  /** Summary chars added this hop. */
+  summaryChars: number;
+  /** Cumulative archive size across the session. */
+  archiveChars: number;
+  /** Route_requests accepted this hop. */
+  routedNew: number;
+  /** Route_requests rejected this hop (validation, schema gate, depth gate). */
+  routedRejected: number;
+  /** Nodes remaining on the agenda. */
+  agendaRemaining: number;
+  /** Rolling verdict tally across the whole session. */
+  tally: { relevant: number; pass: number; irrelevant: number };
+  /** Count of soft/silent-mode scope expansions since session start. */
+  scopeExpansions: number;
+  /** Count of schemas the user has confirmed mid-session (session allowlist size). */
+  allowedSchemaCount: number;
+}
 
 
 /** 

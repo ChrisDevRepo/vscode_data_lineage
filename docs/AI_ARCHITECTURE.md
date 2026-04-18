@@ -8,6 +8,11 @@ This guide is for Super Power Users who want to understand the conceptual framew
 - **The Router (Semantic)**: Managed by the AI. It analyzes the DDL of the current node to answer a specific **Sub-Question**, updates the **Blackboard**, and requests the next **Route** to relevant neighbors.
 - **Selection-Inference Validation**: Ensures the AI only requests routes to valid, existing columns and nodes.
 
+## Engineering Standards
+As foundational mandates for the AI Assistant:
+- **Zod Validation**: IPC bridge validation, tool inputs, and extension host boundaries must strictly use `zod` for strong type safety, runtime validation, and security.
+- **DRY & OOP**: Emphasize explicit composition, reusability, and delegation. The `NavigationEngine` and similar core orchestration systems must serve as the single source of truth for their domains without redundant logic. Do not duplicate logic or introduce anti-patterns to bypass structural designs.
+
 ## Architecture/Workflow
 
 ### Execution Model: Inline vs. State Machine (SM)
@@ -166,6 +171,96 @@ One `AiSession` per extension instance.
 
 ### Column validation scope
 `submit_findings.route_requests[].columns` is validated against the target node's columns **only in `column_trace` mode**. In `blackboard` / `dependency` mode the field is silently dropped (it has no semantic meaning there) — the AI cannot trigger a `route_validation_failed` error by copying source-node column names onto a target UDF or proc.
+
+## Scope Budget Enforcement (2026-04-18)
+
+Two complementary guards keep the exploration loop inside the user's declared scope:
+
+1. **Preflight scope-vs-budget gate** — at `start_exploration`, sliding-memory sessions whose initial BFS scope exceeds `ai.maxRounds × 0.7` are rejected with `scope_exceeds_budget`. The AI receives a `safe_depth_hint` (largest depth fitting the budget) and asks the user to narrow the question or raise the setting. Inline sessions are exempt — they complete in a single reasoning round.
+2. **Per-hop consent gate** — during ACTIVE, any route that leaves the schema filter or exceeds the mode-specific depth cap returns an `action_required` envelope. The participant pauses the active loop, surfaces the question in chat, and resumes on the user's next NL reply. "Yes" caches the class (schema or depth level) on the session; "no" aborts the exploration and offers synthesis from partial findings.
+
+### Three depth-enforcement cases
+
+| User signal | Engine mode | Cap | Behavior on out-of-cap route |
+|-------------|-------------|-----|------------------------------|
+| `/depth N` slash command OR clear NL ("direct neighbors", "one level", "immediate") | `strict` | `depth` exactly | `action_required` gate |
+| Vague NL ("nearby", "surrounding", "next level") | `soft` | `depth + 1` | `action_required` gate |
+| No depth mentioned | `silent` | `depth + 2` | `action_required` gate |
+
+`strict` mode admits zero silent expansion; `soft` and `silent` let the engine expand the scope within their cap and log every expansion to `working_memory.budget_expansions`. Any route past the cap surfaces a gate; the user decides.
+
+### Two-loop control flow
+
+**Loop 1 — exploration** runs from `start_exploration` through agenda drain to synthesis. **Loop 2 — consent gate** is a nested pause on top of Loop 1: the engine halts, the participant asks the user, the user replies in NL, then either Loop 1 resumes or aborts.
+
+```mermaid
+flowchart TD
+    U[User question] --> D[DISCOVER]
+    D -->|start_exploration| PG{Preflight:<br/>scope > budget?}
+    PG -- Yes --> ReAsk[Return scope_exceeds_budget<br/>with safe_depth_hint]
+    ReAsk --> U
+    PG -- No --> A[ACTIVE: hop loop]
+    A -->|submit_findings| V{Route validation}
+    V -- route valid --> A
+    V -- out-of-schema<br/>or out-of-cap --> G[Engine emits<br/>action_required]
+    G --> H[Participant halts loop,<br/>renders gate in chat]
+    H --> UR{User replies}
+    UR -- yes --> Y[Engine caches class<br/>on session allowlist]
+    Y --> A
+    UR -- no --> N[Abort exploration,<br/>preserve partial archive]
+    N --> U
+    UR -- synthesize --> S
+    A -->|agenda drained| S[SYNTHESIS]
+    S -->|enrich_view + chat prose| End[Done]
+```
+
+### Consent-gate lifecycle (Loop 2)
+
+```mermaid
+sequenceDiagram
+    participant AI
+    participant Engine
+    participant Participant
+    participant User
+
+    AI->>Engine: submit_findings({route_requests: [out-of-scope-node]})
+    Engine->>Engine: Check schema filter + depth cap
+    Engine-->>AI: {error: 'action_required', gate, classes, nodeIds}
+    Participant->>Participant: Detect action_required in tool result
+    Participant->>User: stream.markdown("Scope expansion requested — Reply yes/no")
+    Participant->>Participant: sess.pendingGate = {...}; return from turn
+    Note over User: Turn ends. User reads and types reply.
+    User->>Participant: "yes" (or "no", or a refined question)
+    Participant->>Participant: classifyGateReply(prompt)
+    alt yes
+        Participant->>Engine: engine.extendAllowedSchemas(class) / extendAllowedDepth(n)
+        Participant->>AI: effectivePrompt = "Resume. Route the previously blocked nodes"
+        Note right of AI: Loop 1 resumes
+    else no
+        Participant->>Participant: storeBbResultPartial()
+        Participant->>User: "Exploration paused. Refine or 'synthesize'"
+        Note right of User: Loop 1 aborted
+    end
+```
+
+### AI-visible signals
+
+Each hop's `working_memory` carries the diagnostics the AI needs to self-correct:
+- `checklist.rounds_used` — monotonic counter (not countdown — countdowns anchor the model toward premature stopping per s1 / Muennighoff et al. 2025)
+- `checklist.scope_growth` — cumulative auto-expansions
+- `verdict_counts` — running R/P/I tally (flags "many relevants, zero irrelevants" imbalance)
+- `recent_rejections` — last 5 blocked routes, so the same invalid ID isn't re-submitted
+- `active_schemas` — current session allowlist (grows on each consented schema)
+- `depth_cap` — engine-enforced ceiling, always surfaced when a budget is set (removed the old silent-mode gate)
+
+Per-neighbor flags: `in_budget`, `in_user_filter`, `would_trigger_action_required` — the AI knows before routing whether it will trip the gate.
+
+### Design citations
+
+- **LangGraph `interrupt_on` / HumanInTheLoopMiddleware** — the consent-gate pattern. Halt on structured signal, resume on user input. [docs.langchain.com/oss/python/langchain/human-in-the-loop](https://docs.langchain.com/oss/python/langchain/human-in-the-loop)
+- **Anthropic, *Building Effective Agents* (Dec 2024)** — fewer, orthogonal tools; include stopping conditions. [anthropic.com/research/building-effective-agents](https://www.anthropic.com/research/building-effective-agents)
+- **s1 / Budget Forcing (Muennighoff et al., 2025)** — exposing a budget can cause premature stopping. Use monotonic `used` counters, not `remaining` countdowns. [arxiv.org/abs/2501.19393](https://arxiv.org/abs/2501.19393)
+- **$47k Agent Loop (Nov 2025)** — preflight budget checks prevent loops that can't finish. [relayplane.com/blog/agent-runaway-costs-2026](https://relayplane.com/blog/agent-runaway-costs-2026)
 
 ## References
 - [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)

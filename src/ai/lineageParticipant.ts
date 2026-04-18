@@ -32,6 +32,26 @@ export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { c
 }
 
 /**
+ * Classifies a user's free-text reply to a consent gate.
+ *
+ * @remarks
+ * Yes/no detection intentionally stays simple — we match case-insensitive prefixes and common
+ * affirmations. Anything else is treated as "other" so the caller can branch to synthesis or
+ * pass the turn through to the normal AI loop. We do NOT try to NLP-parse complex qualifiers
+ * ("yes but only dbo") — that's a future enhancement; current behaviour extends the whole
+ * blocked class on yes.
+ *
+ * @param reply - The user's chat message, verbatim.
+ * @returns `'yes'` for affirmations, `'no'` for denials, `'other'` for everything else.
+ */
+export function classifyGateReply(reply: string): 'yes' | 'no' | 'other' {
+  const trimmed = reply.trim().toLowerCase();
+  if (/^(y|yes|ok|okay|allow|approve|sure|proceed|do it|go ahead|continue)\b/.test(trimmed)) return 'yes';
+  if (/^(n|no|nope|deny|skip|stop|cancel|abort|hold)\b/.test(trimmed)) return 'no';
+  return 'other';
+}
+
+/**
  * The primary chat participant for the Data Lineage Viz extension.
  *
  * @remarks
@@ -159,6 +179,36 @@ export class LineageParticipant {
       effectivePrompt = buildTracePrompt(request.prompt);
     } else if (request.command === 'search') {
       effectivePrompt = buildSearchPrompt(request.prompt);
+    }
+
+    // Consent-gate resolution: the prior turn may have ended with an engine `action_required`.
+    // Parse the user's reply as yes / no / other. See plan §"Issue B" and the LangGraph interrupt_on pattern.
+    if (sess.pendingGate && sess.stateMachine) {
+      const gate = sess.pendingGate;
+      const answer = classifyGateReply(request.prompt);
+      if (answer === 'yes') {
+        const engine = sess.stateMachine as NavigationEngine;
+        for (const cls of gate.classes) {
+          if (cls.startsWith('schema:')) engine.extendAllowedSchemas(cls.slice('schema:'.length));
+          else if (cls.startsWith('depth:+')) engine.extendAllowedDepth(parseInt(cls.slice('depth:+'.length), 10) || 1);
+        }
+        sess.pendingGate = null;
+        stream.markdown(`\n\n> Expanding scope — ${gate.classes.join(', ')}. Resuming analysis.\n\n`);
+        effectivePrompt = `User approved scope expansion for ${gate.classes.join(', ')}. Resume the paused exploration and route the previously blocked nodes: ${gate.nodeIds.join(', ')}.`;
+      } else if (answer === 'no') {
+        sess.pendingGate = null;
+        stream.markdown(
+          `\n\n> Scope held to the declared filter. Exploration paused with ${sess.memory.slotCount} nodes analyzed. ` +
+          `Ask a refined question to restart with different scope, or reply 'synthesize' to produce a report from what I already have.\n\n`
+        );
+        sess.storeBbResultPartial();
+        return {};
+      } else {
+        sess.pendingGate = null;
+        if (request.prompt.toLowerCase().includes('synthesize') && sess.memory.slotCount > 0) {
+          stream.markdown(`\n\n> Synthesizing from ${sess.memory.slotCount} analyzed nodes.\n\n`);
+        }
+      }
     }
 
     const historyMessages: vscode.LanguageModelChatMessage[] = [];
@@ -426,22 +476,41 @@ export class LineageParticipant {
           }
         }
 
-        // Reasoning Gate (Action Required)
+        // Reasoning Gate (Action Required) and Consent Gate (engine-emitted schema/depth gates).
+        let consentGatePayload: { gate: string; classes: string[]; nodeIds: string[]; detail: string } | null = null;
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
           const res = accumulatedToolResults[f.callId];
           if (res) {
             for (const p of res.content) {
               if (p instanceof vscode.LanguageModelTextPart) {
-                try { 
+                try {
                   const data = JSON.parse(p.value);
-                  if (data.action_required === 'analyze_and_respond') actionRequiredPending = true; 
+                  if (data.action_required === 'analyze_and_respond') actionRequiredPending = true;
+                  // Engine-emitted consent gate — route violated schema/depth bound.
+                  if (data.error === 'action_required' && data.gate && Array.isArray(data.classes)) {
+                    consentGatePayload = {
+                      gate: data.gate,
+                      classes: data.classes,
+                      nodeIds: Array.isArray(data.nodeIds) ? data.nodeIds : [],
+                      detail: typeof data.detail === 'string' ? data.detail : 'Scope expansion requested.',
+                    };
+                  }
                 } catch {}
               }
             }
           }
         }
         if (actionRequiredPending) messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, buildActionRequiredGate(['analyze_and_respond'])));
+        if (consentGatePayload) {
+          sess.pendingGate = consentGatePayload;
+          stream.markdown(
+            `\n\n---\n**Scope expansion requested** — ${consentGatePayload.detail}\n\n` +
+            `Reply \`yes\` to allow for this session, or \`no\` to pause and refine the question.\n\n---\n`
+          );
+          this.logger.warn(`[Gate] ${consentGatePayload.gate} — classes=[${consentGatePayload.classes.join(', ')}] nodes=${consentGatePayload.nodeIds.length}`);
+          return;
+        }
 
         toolCallRounds.push({ response: responseText, toolCalls });
 

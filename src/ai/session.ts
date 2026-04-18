@@ -69,6 +69,17 @@ export class AiSession {
   public pendingUserNotice: Set<string> = new Set();
 
   /**
+   * Pending consent gate raised by the engine — set when `submitFindings` returns
+   * `action_required`. Cleared after the next user message resolves it (yes/no).
+   *
+   * @remarks
+   * Survives across chat turns: the participant serializes this into chat-stream
+   * prose, the user replies in NL, and the next turn checks this field before doing
+   * anything else. When present, `start_exploration` must not run.
+   */
+  public pendingGate: { gate: string; classes: string[]; nodeIds: string[]; detail: string } | null = null;
+
+  /**
    * Creates a new AiSession.
    * 
    * @param templates - Optional report generation templates.
@@ -116,6 +127,7 @@ export class AiSession {
     this.hopLog = [];
     this.pendingUserNotice.clear();
     this.startExplorationRoundId = null;
+    this.pendingGate = null;
   }
 
   /**

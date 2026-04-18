@@ -77,15 +77,23 @@ This matches the 0.9.8 contract: the state machine stores, delivers, and execute
 
 `start_exploration` accepts `depth` + `depth_enforcement` to express the exploration scope. Three modes reflect three distinct situations:
 
-| Mode | Trigger | Out-of-scope route behavior | AI awareness |
+| Mode | Trigger | Cap | Out-of-cap route behavior |
 |---|---|---|---|
-| `strict` | User set depth via an explicit slash command (e.g., future `/trace:depth=1`) | **Rejected** with a structured envelope | `depth_budget`, `depth_enforcement: 'strict'`, per-neighbor `in_budget: false`, `focus_node.depth_from_origin` |
-| `soft` | User expressed depth in natural language ("1 level deep", "direct neighbors", "immediate dependencies") | **Allowed**; scope expands in-place; expansion recorded in `working_memory.budget_expansions` | Same as strict plus `budget_expansions[]` — AI can see how many times it went beyond and why |
-| `silent` (default) | No user depth signal — AI chose a cautious starting scope on a large graph | **Allowed silently**; scope expands in-place; no awareness fields emitted | **None.** The AI routes freely as if no budget existed. Engine auto-grows scope underneath. |
+| `strict` | User set depth via slash command OR unambiguous NL phrase ("direct neighbors", "one level", "immediate", "just the upstream") | `depth` exactly | Returns `action_required` — engine pauses, participant asks user yes/no, yes caches the class for the session |
+| `soft` | Vague NL phrase ("nearby", "surrounding", "next level") | `depth + 1` | Auto-expand within the cap; `action_required` beyond |
+| `silent` (default) | No user depth signal — AI chose a cautious starting scope | `depth + 2` | Auto-expand within the cap; `action_required` beyond |
 
-Picking the mode is the AI's job at `start_exploration` time; the tool description in `package.json` guides the choice.
+**Same `action_required` path for schema filter.** A route to a schema outside `session.filter.schemas` triggers the same combined envelope — one gate may list both a schema violation and a depth violation together, and a "yes" caches each class (schema or depth) separately on the session allowlist.
 
-Why the silent default matters: on a 30-level-deep graph, seeding `depth=5` BFS can still pull hundreds of nodes. A cautious AI can pass `depth: 2, depth_enforcement: 'silent'` — the initial agenda is tight, and as `route_requests` reveal that level-3 nodes are needed, the engine absorbs them into scope transparently. No "out of budget" warnings confuse the AI; the user never set one.
+**Picking the mode is the AI's job at `start_exploration` time** — the `depth_enforcement` parameter description in `package.json` is the single source of truth for the mapping. When in doubt about NL phrasing, prefer the stricter option; the consent-gate path handles legitimate expansion cleanly.
+
+**AI-visible signals every hop** (`working_memory` and neighbor metadata):
+- `depth_budget` / `depth_cap` / `depth_enforcement` — always set when the session has a budget
+- Per-neighbor: `in_budget`, `in_user_filter`, `would_trigger_action_required`
+- `verdict_counts`, `recent_rejections`, `active_schemas`, `budget_expansions` — tally and memory for self-correction
+- `checklist.rounds_used` — monotonic counter (not a countdown; see s1 paper on budget anchoring)
+
+See `docs/AI_ARCHITECTURE.md § Scope Budget Enforcement` for the flow diagrams and the two-loop (exploration + consent gate) lifecycle.
 
 ---
 

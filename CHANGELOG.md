@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Scope budget enforcement + consent gate (2026-04-18)
+Fixes the scope-expansion runaway observed in `sess_1776506739133_xc2mh` (GPT-4o, 46+ hops on a "direct neighbors" question, visited out-of-filter `[dbo]` helpers, never reached synthesis). Three layered changes, one bundled commit.
+
+**Added**
+- **Preflight scope-vs-budget gate** in `lineage_start_exploration` — sliding-memory sessions whose initial BFS scope exceeds `ai.maxRounds × 0.7` return `scope_exceeds_budget` with a `safe_depth_hint` (largest depth fitting the budget). Inline sessions are exempt. A `Large task — scope has N nodes, running hop-by-hop analysis` blockquote is streamed when the session is inside-budget but will take hop-by-hop analysis.
+- **`action_required` consent gate** in `submitFindings` — out-of-schema or out-of-depth-cap routes return a structured envelope listing the violated classes (e.g. `["schema:dbo", "depth:+1"]`). Combined gate when a single route violates both. Participant pauses the active loop, streams the question as chat markdown, resumes on the user's next NL reply.
+- **Session-scoped consent cache** — `engine.extendAllowedSchemas(s)` and `engine.extendAllowedDepth(n)` — "yes" on a gate adds the class to the session allowlist so follow-ups pass silently. "no" aborts the exploration and preserves partial findings for synthesis-on-demand.
+- **Structured per-hop log line** `[AI] [Hop N] focus=… depth=…/… verdict=… detail=… summary=… archive=… routed=…/… agenda=… tally=R/P/I … expansions=… allowed_schemas=…` — single line per hop in the Data Lineage Viz output channel.
+- **`engine.getHopDiagnostics()`** — typed snapshot struct (`DiagnosticsSnapshot`) for logging + downstream consumers.
+- **Working-memory additions** — `verdict_counts` (running R/P/I tally), `recent_rejections` (last 5 blocked routes), `active_schemas`, `checklist.rounds_used` (monotonic counter, not a countdown — s1 paper / Muennighoff et al. 2025 on budget anchoring), `checklist.scope_growth`.
+- **Per-neighbor flags** — `in_budget`, `in_user_filter`, `depth_from_origin`, `would_trigger_action_required` — surfaced on every hop when a budget or filter is in force.
+
+**Changed**
+- **Three-case `depth_enforcement` mapping** — tool parameter description rewritten to map NL intent cleanly: clear NL ("direct neighbors", "one level", "immediate") → `strict`; vague NL ("nearby", "surrounding") → `soft`; no mention → `silent`. The old overlap that had "direct neighbors" mapping to `soft` is resolved.
+- **`soft` depth mode caps at `depth + 1`; `silent` caps at `depth + 2`.** Previously `soft` and `silent` expanded without any cap.
+- **Depth metrics always visible** — `depth_budget`, `depth_enforcement`, `depth_cap`, and per-neighbor `depth_from_origin` / `in_budget` are now surfaced in every mode, including `silent`. The old silent-mode visibility gate hid the very signals the AI needed to self-correct.
+- **Nav-prompt routing block** trimmed of hedging ("you may route beyond", "prefer staying within") and imperative prohibitions ("Do NOT self-expand"). Replaced with concrete description of the `action_required` flow and the working-memory signals.
+- **`lineage_start_exploration.modelDescription`** — 3-case depth content removed from the tool-level description, consolidated into the `depth_enforcement` parameter description. One canonical surface for the rule.
+
+**Fixed**
+- Schema filter (`session.filter.schemas`) is now enforced in `submitFindings` route validation. Previously passed into the engine constructor but never checked.
+- Fabricated node-id retry loop — `recent_rejections` in working memory surfaces the last 5 blocked routes back to the AI so the same invalid id is not re-submitted.
+
+**Docs**
+- `AI_ARCHITECTURE.md` — new "Scope Budget Enforcement" section with two Mermaid diagrams (exploration flow + consent-gate sequence), the 3-case depth table, AI-visible signal list, and design citations (LangGraph HIL middleware, Anthropic Building Effective Agents, s1 budget forcing, $47k agent loop).
+- `AI_PROMPTS.md` — depth-mode table rewritten for the 3-case / cap / `action_required` model; AI-visible signals listed.
+- `.claude/rules/logging.md` — new `[AI] [Hop N]` prefix added to the category table.
+- `test-results/archive/prompt-changelog.md` — iteration 2 logged per `prompt-change` skill protocol.
+
 ### Mechanical Map-&-Router enforcement (2026-04-18)
 Fixes the "AI emits partial text and stops mid-loop" regression observed in production GPT-4o session `sess_1776504390219_285nm` (7/27 nodes analyzed, 214 output tokens).
 

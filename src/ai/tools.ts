@@ -559,6 +559,47 @@ function findPathNodes(
   return pathNodes;
 }
 
+/**
+ * Largest BFS depth from `origin` whose scope fits within `safeNodeCap`.
+ *
+ * @remarks
+ * Used by the preflight scope-vs-budget gate in `lineage_start_exploration`. Walks
+ * outwards from the origin and returns the depth just before the scope exceeds the
+ * cap, clamping at 1 (callers never recommend `depth=0`). Returns 0 only when even
+ * the origin + immediate neighbors exceed the cap, which signals an unwinnable
+ * budget and should be surfaced as-is for the AI to re-ask the user.
+ *
+ * @param graph - Loaded lineage graph.
+ * @param origin - Origin node id.
+ * @param direction - BFS direction, same enum accepted by `lineage_start_exploration`.
+ * @param safeNodeCap - Largest scope size that still leaves headroom in the round budget.
+ * @returns Suggested depth, 1 or above when feasible, 0 when the budget is too tight.
+ */
+export function suggestNarrowerDepth(
+  graph: Graph,
+  origin: string,
+  direction: 'upstream' | 'downstream' | 'bidirectional',
+  safeNodeCap: number,
+): number {
+  const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
+  const depthMap = new Map<string, number>();
+  let maxSafeDepth = 0;
+  bfsFromNode(graph, origin, (key, _attr, depth) => {
+    depthMap.set(key, depth);
+    return false;
+  }, { mode });
+  // Count nodes at each depth and accumulate — pick the largest depth whose cumulative count fits.
+  const byDepth: number[] = [];
+  for (const d of depthMap.values()) byDepth[d] = (byDepth[d] ?? 0) + 1;
+  let running = 0;
+  for (let d = 0; d < byDepth.length; d++) {
+    running += byDepth[d] ?? 0;
+    if (running > safeNodeCap) break;
+    maxSafeDepth = d;
+  }
+  return Math.max(maxSafeDepth, maxSafeDepth === 0 ? 0 : 1);
+}
+
 /** Run bidirectional BFS and return depth maps for each direction. */
 function executeBfs(
   graph: Graph, id: string, upstreamHops: number, downstreamHops: number,

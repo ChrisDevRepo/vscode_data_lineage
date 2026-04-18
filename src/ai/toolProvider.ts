@@ -4,6 +4,7 @@ import { NavigationEngine } from './smBase';
 import type { AiSession } from './session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import {
+  suggestNarrowerDepth,
   shouldSmInline,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
@@ -191,8 +192,38 @@ export function registerAiTools(
           if ('error' in initResult) return logAndReturn('start_exploration', initResult, options.input);
 
           const scopeDdlChars = engine.estimateScopeDdlChars();
-          if (shouldSmInline(scopeDdlChars, initResult.scopeSize)) engine.setInlineMode(true);
-          
+          const useInline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
+          if (useInline) {
+            engine.setInlineMode(true);
+          } else {
+            // Sliding-memory preflight: compare initial BFS scope against the user-configured round budget.
+            // Reserve 30% of rounds for retries, route rejections, cascade prunes, and synthesis — the $47k-
+            // agent-loop post-mortem (Nov 2025) specifically called out that trimmer reserves cause boundary
+            // failures in real usage. See plan §A.1.
+            const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
+            const maxRounds = aiCfg.get<number>('maxRounds', 50);
+            const SAFETY_RATIO = 0.7;
+            const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
+            if (initResult.scopeSize > safeMax) {
+              const safeDepth = suggestNarrowerDepth(g, input.origin, input.direction || 'bidirectional', safeMax);
+              sess.resetExploration();
+              return logAndReturn('start_exploration', {
+                error: 'scope_exceeds_budget',
+                scope_size: initResult.scopeSize,
+                max_rounds: maxRounds,
+                safe_max_hops: safeMax,
+                safe_depth_hint: safeDepth,
+                hint: `Scope has ${initResult.scopeSize} nodes; sliding-memory budget allows ~${safeMax} hops (of ${maxRounds} with 30% reserve). Restart with depth=${safeDepth || 1}, narrow the direction, or ask the user to raise 'dataLineageViz.ai.maxRounds'.`,
+                next_action: 'ask_user_to_narrow_or_raise_maxRounds',
+              }, options.input);
+            }
+            sess.pendingUserNotice.add(
+              `Large task — scope has ${initResult.scopeSize} nodes, running hop-by-hop analysis (budget ~${safeMax} hops).`
+            );
+          }
+
+          logger.info(`[${sess.id}] Session-start scope=${initResult.scopeSize} agenda=${initResult.agendaSize} depth=${input.depth ?? 'default'} enforcement=${input.depth_enforcement ?? 'silent'} mode=${useInline ? 'inline' : 'sm'} schemas=${activeFilter.schemas.length}`);
+
           const hopResult = engine.getHopContext();
           return logAndReturn('start_exploration', { ...initResult, ...hopResult }, options.input);
         } catch (err) { return toolError('start_exploration', err); }
@@ -227,6 +258,16 @@ export function registerAiTools(
             sess.storeBbResult(result.result);
             return logAndReturn('submit_findings', result, options.input);
           }
+
+          // Structured per-hop diagnostic line. See .claude/rules/logging.md ([AI] [Hop N]).
+          const diag = engine.getHopDiagnostics();
+          logger.debug(
+            `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} ` +
+            `verdict=${(options.input as any).verdict} detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
+            `routed=${diag.routedNew}/${diag.routedRejected} agenda=${diag.agendaRemaining} ` +
+            `tally=R${diag.tally.relevant}/P${diag.tally.pass}/I${diag.tally.irrelevant} ` +
+            `expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}`
+          );
 
           const nextHop = engine.getHopContext();
           if (nextHop.done) {
