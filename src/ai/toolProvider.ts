@@ -14,6 +14,7 @@ import {
 import { ViewSynthesisService } from './viewSynthesisService';
 import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
 import { type SerializedFilterState } from '../engine/projectStore';
+import { PendingGateSchema } from './sessionPhase';
 
 /**
  * Registers all language model tools associated with the `@lineage` chat participant.
@@ -197,9 +198,7 @@ export function registerAiTools(
             engine.setInlineMode(true);
           } else {
             // Sliding-memory preflight: compare initial BFS scope against the user-configured round budget.
-            // Reserve 30% of rounds for retries, route rejections, cascade prunes, and synthesis — the $47k-
-            // agent-loop post-mortem (Nov 2025) specifically called out that trimmer reserves cause boundary
-            // failures in real usage. See plan §A.1.
+            // Reserve 30% of rounds for retries, route rejections, cascade prunes, and synthesis.
             const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
             const maxRounds = aiCfg.get<number>('maxRounds', 50);
             const SAFETY_RATIO = 0.7;
@@ -213,13 +212,31 @@ export function registerAiTools(
                 max_rounds: maxRounds,
                 safe_max_hops: safeMax,
                 safe_depth_hint: safeDepth,
-                hint: `Scope has ${initResult.scopeSize} nodes; sliding-memory budget allows ~${safeMax} hops (of ${maxRounds} with 30% reserve). Restart with depth=${safeDepth || 1}, narrow the direction, or ask the user to raise 'dataLineageViz.ai.maxRounds'.`,
-                next_action: 'ask_user_to_narrow_or_raise_maxRounds',
+                hint: `Scope has ${initResult.scopeSize} nodes; sliding-memory budget allows ~${safeMax} hops (of ${maxRounds} with 30% reserve). Restart with depth=${safeDepth || 1}, narrow the direction, or raise 'dataLineageViz.ai.maxRounds'.`,
+                next_action: 'retry_with_smaller_depth',
               }, options.input);
             }
-            sess.pendingUserNotice.add(
-              `Large task — scope has ${initResult.scopeSize} nodes, running hop-by-hop analysis (budget ~${safeMax} hops).`
-            );
+
+            // SM-entry consent gate: engine is initialized but no hops have run.
+            // Participant surfaces this envelope via the same gate path as mid-exploration gates.
+            // On `yes`, session transitions to `exploring` and the participant resumes the live engine.
+            if (sess.phase.kind === 'idle') {
+              const gate = PendingGateSchema.parse({
+                gate: 'confirm_sm_start',
+                classes: ['sliding_memory'],
+                nodeIds: [],
+                detail:
+                  `Large task — scope ${initResult.scopeSize} nodes, depth=${input.depth ?? 'default'} ` +
+                  `${input.depth_enforcement ?? 'silent'}, budget ~${safeMax} hops. ` +
+                  `Reply 'yes' to start, 'no' to refine, or ask a different question to redirect.`,
+              });
+              logger.info(`[${sess.id}] Session-start scope=${initResult.scopeSize} agenda=${initResult.agendaSize} depth=${input.depth ?? 'default'} enforcement=${input.depth_enforcement ?? 'silent'} mode=sm schemas=${activeFilter.schemas.length} (awaiting confirm_sm_start)`);
+              return logAndReturn('start_exploration', {
+                error: 'action_required',
+                ...gate,
+                hint: 'Tool paused — awaiting user confirmation before first hop.',
+              }, options.input);
+            }
           }
 
           logger.info(`[${sess.id}] Session-start scope=${initResult.scopeSize} agenda=${initResult.agendaSize} depth=${input.depth ?? 'default'} enforcement=${input.depth_enforcement ?? 'silent'} mode=${useInline ? 'inline' : 'sm'} schemas=${activeFilter.schemas.length}`);

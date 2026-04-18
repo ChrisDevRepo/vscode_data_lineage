@@ -6,6 +6,7 @@ import { AiMemoryManager } from './memoryManager';
 import { type ResultGraph, type AiOutputTemplates, EMPTY_AI_TEMPLATES, type SessionSummary, type NodeRole } from './types';
 import type { IHopStateMachine } from './smBase';
 import type { HopLogEntry } from './smTypes';
+import type { SessionPhase, PendingGate } from './sessionPhase';
 
 /**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
@@ -69,15 +70,15 @@ export class AiSession {
   public pendingUserNotice: Set<string> = new Set();
 
   /**
-   * Pending consent gate raised by the engine — set when `submitFindings` returns
-   * `action_required`. Cleared after the next user message resolves it (yes/no).
+   * Current finite-state-machine phase. Persists across VS Code chat turns.
    *
    * @remarks
-   * Survives across chat turns: the participant serializes this into chat-stream
-   * prose, the user replies in NL, and the next turn checks this field before doing
-   * anything else. When present, `start_exploration` must not run.
+   * The participant routes on `phase.kind` at turn entry: `awaiting_gate` runs gate
+   * resolution, `exploring` resumes the hop loop, `idle` and `synthesis` enter the
+   * normal discovery / synthesis paths. Transitions go through {@link enterGate},
+   * {@link enterExploring}, and {@link enterIdle} — never mutate this field directly.
    */
-  public pendingGate: { gate: string; classes: string[]; nodeIds: string[]; detail: string } | null = null;
+  public phase: SessionPhase = { kind: 'idle' };
 
   /**
    * Creates a new AiSession.
@@ -118,6 +119,10 @@ export class AiSession {
 
   /**
    * Clears all exploration-specific state while preserving environment metadata.
+   *
+   * @remarks
+   * Delegates phase transition to {@link enterIdle}; callers should not touch
+   * `phase` directly.
    */
   public resetExploration(): void {
     this.memory.reset();
@@ -127,7 +132,34 @@ export class AiSession {
     this.hopLog = [];
     this.pendingUserNotice.clear();
     this.startExplorationRoundId = null;
-    this.pendingGate = null;
+    this.phase = { kind: 'idle' };
+  }
+
+  /**
+   * Transitions the session into `awaiting_gate` — the engine paused on a consent
+   * gate and the next user turn must resolve it (yes / no / redirect).
+   *
+   * @param gate - The validated consent-gate envelope produced by the engine.
+   */
+  public enterGate(gate: PendingGate): void {
+    this.phase = { kind: 'awaiting_gate', gate };
+  }
+
+  /**
+   * Transitions the session into `exploring` — the engine is ready to produce the
+   * next hop. Called on fresh SM start (post-confirm) and on gate-approved resume.
+   */
+  public enterExploring(): void {
+    this.phase = { kind: 'exploring' };
+  }
+
+  /**
+   * Transitions the session into `idle` — no exploration is active, next turn
+   * enters discovery. Use {@link resetExploration} when exploration state itself
+   * also needs clearing.
+   */
+  public enterIdle(): void {
+    this.phase = { kind: 'idle' };
   }
 
   /**

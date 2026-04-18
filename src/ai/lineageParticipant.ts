@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import { AiSession } from './session';
 import { Logger, trunc } from '../utils/log';
 import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
-import { 
-  buildPlatformContext, buildSchemaContext, buildSystemPromptBase, 
+import {
+  buildPlatformContext, buildSchemaContext, buildSystemPromptBase,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
@@ -12,6 +12,8 @@ import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildE
 import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
 import { RepeatRejectGuard } from './repeatRejectGuard';
+import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
+export { classifyGateReply } from './sessionPhase';
 
 /**
  * Extracts key fields from a VS Code language model tool call part.
@@ -29,26 +31,6 @@ export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { c
     name: tc.name,
     input: tc.input,
   };
-}
-
-/**
- * Classifies a user's free-text reply to a consent gate.
- *
- * @remarks
- * Yes/no detection intentionally stays simple — we match case-insensitive prefixes and common
- * affirmations. Anything else is treated as "other" so the caller can branch to synthesis or
- * pass the turn through to the normal AI loop. We do NOT try to NLP-parse complex qualifiers
- * ("yes but only dbo") — that's a future enhancement; current behaviour extends the whole
- * blocked class on yes.
- *
- * @param reply - The user's chat message, verbatim.
- * @returns `'yes'` for affirmations, `'no'` for denials, `'other'` for everything else.
- */
-export function classifyGateReply(reply: string): 'yes' | 'no' | 'other' {
-  const trimmed = reply.trim().toLowerCase();
-  if (/^(y|yes|ok|okay|allow|approve|sure|proceed|do it|go ahead|continue)\b/.test(trimmed)) return 'yes';
-  if (/^(n|no|nope|deny|skip|stop|cancel|abort|hold)\b/.test(trimmed)) return 'no';
-  return 'other';
 }
 
 /**
@@ -181,33 +163,48 @@ export class LineageParticipant {
       effectivePrompt = buildSearchPrompt(request.prompt);
     }
 
-    // Consent-gate resolution: the prior turn may have ended with an engine `action_required`.
-    // Parse the user's reply as yes / no / other. See plan §"Issue B" and the LangGraph interrupt_on pattern.
-    if (sess.pendingGate && sess.stateMachine) {
-      const gate = sess.pendingGate;
+    // FSM turn-entry dispatch: if the previous turn paused on a gate, resolve the user's reply
+    // before anything else runs. Yes → transition to `exploring` and continue; No → idle; Redirect
+    // → idle + let the new prompt flow through normal discovery.
+    if (sess.phase.kind === 'awaiting_gate') {
+      const gate = sess.phase.gate;
       const answer = classifyGateReply(request.prompt);
-      if (answer === 'yes') {
-        const engine = sess.stateMachine as NavigationEngine;
-        for (const cls of gate.classes) {
-          if (cls.startsWith('schema:')) engine.extendAllowedSchemas(cls.slice('schema:'.length));
-          else if (cls.startsWith('depth:+')) engine.extendAllowedDepth(parseInt(cls.slice('depth:+'.length), 10) || 1);
-        }
-        sess.pendingGate = null;
-        stream.markdown(`\n\n> Expanding scope — ${gate.classes.join(', ')}. Resuming analysis.\n\n`);
-        effectivePrompt = `User approved scope expansion for ${gate.classes.join(', ')}. Resume the paused exploration and route the previously blocked nodes: ${gate.nodeIds.join(', ')}.`;
-      } else if (answer === 'no') {
-        sess.pendingGate = null;
+      if (answer === 'no') {
+        sess.enterIdle();
         stream.markdown(
-          `\n\n> Scope held to the declared filter. Exploration paused with ${sess.memory.slotCount} nodes analyzed. ` +
-          `Ask a refined question to restart with different scope, or reply 'synthesize' to produce a report from what I already have.\n\n`
+          `\n\n> Exploration paused — scope held to the declared filter. ` +
+          `Ask a refined question to restart with a different scope.\n\n`
         );
-        sess.storeBbResultPartial();
+        this.logger.info(`[Gate] ${gate.gate} — user declined`);
         return {};
+      }
+      if (answer === 'redirect') {
+        // User typed a new question instead of yes/no — treat as a fresh turn.
+        sess.resetExploration();
+        this.logger.info(`[Gate] ${gate.gate} — user redirected`);
+        // Fall through — handler continues with request.prompt as the new question.
       } else {
-        sess.pendingGate = null;
-        if (request.prompt.toLowerCase().includes('synthesize') && sess.memory.slotCount > 0) {
-          stream.markdown(`\n\n> Synthesizing from ${sess.memory.slotCount} analyzed nodes.\n\n`);
+        // answer === 'yes'
+        if (gate.gate === 'confirm_sm_start') {
+          // Engine is already initialized; just enter exploring. Pre-active-phase block below
+          // sees `phase.kind === 'exploring'` and jumps into the hop loop directly.
+          sess.enterExploring();
+          stream.markdown(`\n\n> Starting analysis — ${sess.memory.slotCount === 0 ? 'first hop' : 'resuming'}.\n\n`);
+          effectivePrompt = 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
+        } else {
+          // schema_out_of_filter | depth_cap_exceeded | schema_and_depth — apply the requested expansions.
+          const engine = sess.stateMachine as NavigationEngine | null;
+          if (engine) {
+            for (const cls of gate.classes) {
+              if (cls.startsWith('schema:')) engine.extendAllowedSchemas(cls.slice('schema:'.length));
+              else if (cls.startsWith('depth:+')) engine.extendAllowedDepth(parseInt(cls.slice('depth:+'.length), 10) || 1);
+            }
+          }
+          sess.enterExploring();
+          stream.markdown(`\n\n> Expanding scope — ${gate.classes.join(', ')}. Resuming analysis.\n\n`);
+          effectivePrompt = `User approved scope expansion for ${gate.classes.join(', ')}. Resume the paused exploration and route the previously blocked nodes: ${gate.nodeIds.join(', ')}.`;
         }
+        this.logger.info(`[Gate] ${gate.gate} — user approved classes=[${gate.classes.join(', ')}]`);
       }
     }
 
@@ -275,6 +272,18 @@ export class LineageParticipant {
         `- description (fallback): ${sess.outputTemplates.description}`;
     };
     let systemPrompt = buildStageSystemPrompt('discover');
+    // Built on active-phase entry and re-injected after every sliding-memory wipe.
+    let navPrompt = '';
+
+    // FSM post-gate pre-activation: when `phase.kind === 'exploring'` at turn entry, the prior
+    // turn approved a gate (confirm_sm_start or schema/depth) — the engine is live and the AI
+    // must jump straight to ACTIVE without re-calling start_exploration.
+    if (sess.phase.kind === 'exploring' && sess.stateMachine) {
+      activePhase = 'active';
+      lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
+      systemPrompt = buildStageSystemPrompt('active');
+      navPrompt = buildNavigationPrompt(sess.stateMachine.mode);
+    }
 
     const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
       const parts: string[] = [];
@@ -310,7 +319,12 @@ export class LineageParticipant {
       }
     }
 
-    const messages = [vscode.LanguageModelChatMessage.User(systemPrompt), ...historyMessages, vscode.LanguageModelChatMessage.User(effectivePrompt)];
+    const messages: vscode.LanguageModelChatMessage[] = [
+      vscode.LanguageModelChatMessage.User(systemPrompt),
+      ...historyMessages,
+    ];
+    if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
+    messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
     const toolCallRounds: any[] = [];
     const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
     const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
@@ -319,10 +333,8 @@ export class LineageParticipant {
     let totalOutputTokens = 0;
     let peakRoundInputTokens = 0;
     let totalRoundInputTokens = 0;
-    // Built on active-phase entry and re-injected after every sliding-memory wipe.
-    let navPrompt = '';
 
-    const runWithTools = async () => {
+    const runHopLoop = async (): Promise<HopLoopExit> => {
       let actionRequiredPending = false;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
@@ -388,7 +400,7 @@ export class LineageParticipant {
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
           drainPendingUserNotices();
-          return;
+          return { kind: 'final_answer' };
         }
 
         if (actionRequiredPending && responseText.length > 0) actionRequiredPending = false;
@@ -472,45 +484,30 @@ export class LineageParticipant {
             this.logger.warn(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
             stream.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
             messages.push(vscode.LanguageModelChatMessage.User(JSON.stringify(abortPayload)));
-            return;
+            return { kind: 'aborted', reason: `repeat_reject:${f.name}:${lastErrorText}` };
           }
         }
 
-        // Reasoning Gate (Action Required) and Consent Gate (engine-emitted schema/depth gates).
-        let consentGatePayload: { gate: string; classes: string[]; nodeIds: string[]; detail: string } | null = null;
+        // Scan tool results for reasoning-gate signals (`analyze_and_respond`) and engine-emitted
+        // consent gates (`action_required` envelopes). Consent gates are Zod-validated at the
+        // boundary before flowing into the HopLoopExit — malformed envelopes throw and surface
+        // as parse errors, not silent corruption.
+        let consentGate: PendingGate | null = null;
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
           const res = accumulatedToolResults[f.callId];
-          if (res) {
-            for (const p of res.content) {
-              if (p instanceof vscode.LanguageModelTextPart) {
-                try {
-                  const data = JSON.parse(p.value);
-                  if (data.action_required === 'analyze_and_respond') actionRequiredPending = true;
-                  // Engine-emitted consent gate — route violated schema/depth bound.
-                  if (data.error === 'action_required' && data.gate && Array.isArray(data.classes)) {
-                    consentGatePayload = {
-                      gate: data.gate,
-                      classes: data.classes,
-                      nodeIds: Array.isArray(data.nodeIds) ? data.nodeIds : [],
-                      detail: typeof data.detail === 'string' ? data.detail : 'Scope expansion requested.',
-                    };
-                  }
-                } catch {}
-              }
-            }
+          if (!res) continue;
+          for (const p of res.content) {
+            if (!(p instanceof vscode.LanguageModelTextPart)) continue;
+            try {
+              const data = JSON.parse(p.value);
+              if (data.action_required === 'analyze_and_respond') actionRequiredPending = true;
+              if (data.error === 'action_required') consentGate = PendingGateSchema.parse(data);
+            } catch { /* non-JSON or invalid envelope: ignore; malformed gates fail Zod parse */ }
           }
         }
         if (actionRequiredPending) messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, buildActionRequiredGate(['analyze_and_respond'])));
-        if (consentGatePayload) {
-          sess.pendingGate = consentGatePayload;
-          stream.markdown(
-            `\n\n---\n**Scope expansion requested** — ${consentGatePayload.detail}\n\n` +
-            `Reply \`yes\` to allow for this session, or \`no\` to pause and refine the question.\n\n---\n`
-          );
-          this.logger.warn(`[Gate] ${consentGatePayload.gate} — classes=[${consentGatePayload.classes.join(', ')}] nodes=${consentGatePayload.nodeIds.length}`);
-          return;
-        }
+        if (consentGate) return { kind: 'gate', gate: consentGate };
 
         toolCallRounds.push({ response: responseText, toolCalls });
 
@@ -611,39 +608,88 @@ export class LineageParticipant {
           }
         }
       }
+      return { kind: 'hop_cap' };
     };
 
+    let exit: HopLoopExit;
     try {
-      await runWithTools();
-      const smMode = sess.stateMachine?.mode ?? '—';
-      const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
-      this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
-
-      const smComplete = sess.stateMachine?.status === 'complete';
-      if (sess.stateMachine && !smComplete && sess.resultGraph == null && sess.memory.slotCount > 0) {
-        sess.storeBbResultPartial();
-      }
-      const finalGraph = sess.resultGraph as import('./types').ResultGraph | null;
-      const hasPartial = finalGraph?.partial === true;
-      if (hasPartial && finalGraph) {
-        const cov = finalGraph.partialCoverage;
-        const capHit = roundCount >= MAX_ROUNDS;
-        const reason = capHit ? `hit the ${MAX_ROUNDS}-round safety cap` : `stopped early before all nodes were analyzed`;
-        this.logger.info(`Partial result stored — ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes analyzed (${capHit ? 'cap hit' : 'early stop'})`);
-        stream.markdown(`\n\n⚠ Exploration incomplete — analyzed ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes; the run ${reason}. Use "Show in Graph" to render the partial result.`);
-      }
-
-      if (this.getActivePanel() && (smComplete || hasPartial)) {
-        const title = hasPartial
-          ? '$(type-hierarchy-sub) Show Partial Graph'
-          : '$(type-hierarchy-sub) Show in Graph';
-        stream.button({ command: 'dataLineageViz.aiCreateView', title, arguments: [request.prompt] });
-      }
+      exit = await runHopLoop();
     } catch (err) {
       this.logger.error('Chat handler', err);
-      stream.markdown(`\n\n*Error: ${err instanceof Error ? err.message : String(err)}*`);
+      exit = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
     }
 
+    const smMode = sess.stateMachine?.mode ?? '—';
+    const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
+    this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
+
+    this.dispatchExit(exit, sess, stream, request.prompt, roundCount, MAX_ROUNDS);
+
     return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults }, lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [] } };
+  }
+
+  /**
+   * Single source of truth for post-hop-loop cleanup. Each `HopLoopExit` variant owns its own
+   * branch — partial-result storage lives ONLY in `hop_cap` / `aborted` cases, making the
+   * "paused gate rendered as incomplete" bug structurally impossible.
+   *
+   * @param exit - The typed outcome of `runHopLoop`.
+   * @param sess - The active session (mutated via `enterGate` / `enterIdle`).
+   * @param stream - Chat response stream for gate / partial-result UX messages.
+   * @param userPrompt - Verbatim user prompt, used by the "Show in Graph" button.
+   * @param roundCount - Number of rounds actually executed.
+   * @param maxRounds - The configured round budget (for the "cap hit" message).
+   */
+  private dispatchExit(
+    exit: HopLoopExit,
+    sess: AiSession,
+    stream: vscode.ChatResponseStream,
+    userPrompt: string,
+    roundCount: number,
+    maxRounds: number
+  ): void {
+    switch (exit.kind) {
+      case 'gate': {
+        sess.enterGate(exit.gate);
+        stream.markdown(
+          `\n\n---\n**${exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : 'Scope expansion requested'}** — ${exit.gate.detail}\n\n` +
+          `Reply \`yes\` to proceed, \`no\` to pause, or ask a different question to redirect.\n\n---\n`
+        );
+        this.logger.warn(`[Gate] ${exit.gate.gate} — classes=[${exit.gate.classes.join(', ')}] nodes=${exit.gate.nodeIds.length}`);
+        return;
+      }
+      case 'final_answer': {
+        const smComplete = sess.stateMachine?.status === 'complete';
+        sess.enterIdle();
+        if (this.getActivePanel() && smComplete) {
+          stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [userPrompt] });
+        }
+        return;
+      }
+      case 'hop_cap':
+      case 'aborted': {
+        if (sess.stateMachine && sess.resultGraph == null && sess.memory.slotCount > 0) {
+          sess.storeBbResultPartial();
+        }
+        sess.enterIdle();
+        const finalGraph = sess.resultGraph;
+        if (finalGraph?.partial) {
+          const cov = finalGraph.partialCoverage;
+          const capHit = exit.kind === 'hop_cap' && roundCount >= maxRounds;
+          const reason = capHit ? `hit the ${maxRounds}-round safety cap` : `stopped early before all nodes were analyzed`;
+          this.logger.info(`Partial result stored — ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes analyzed (${capHit ? 'cap hit' : 'early stop'})`);
+          stream.markdown(`\n\n⚠ Exploration incomplete — analyzed ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes; the run ${reason}. Use "Show in Graph" to render the partial result.`);
+          if (this.getActivePanel()) {
+            stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show Partial Graph', arguments: [userPrompt] });
+          }
+        }
+        return;
+      }
+      case 'error': {
+        sess.enterIdle();
+        stream.markdown(`\n\n*Error: ${exit.message}*`);
+        return;
+      }
+    }
   }
 }

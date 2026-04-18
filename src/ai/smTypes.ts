@@ -79,7 +79,7 @@ export interface ActionRequiredGate {
   /** Discriminator for participant routing. */
   error: 'action_required';
   /** The gate sub-type — drives the cache key used for "don't ask again this session". */
-  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth';
+  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth' | 'confirm_sm_start';
   /** The specific class being requested (e.g. "schema:dbo" or "depth:+1"). Confirmations cache per-class. */
   classes: string[];
   /** Human-readable question rendered in chat, ready for yes/no reply. */

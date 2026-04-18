@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### FSM refactor + SM-start confirmation + redirect-friendly gate replies (2026-04-18)
+Follow-up fix to the prior "Scope budget enforcement + consent gate" bundle. Observed in `sess_1776516604340_93yj2`: the mid-exploration `schema_and_depth` gate fired correctly at hop 5, but the participant still emitted the "⚠ Exploration incomplete — analyzed 2 of 26 nodes" warning and "Show Partial Graph" button — making a paused session look terminated. User never got the chance to reply `yes` / `no`.
+
+**Added**
+- **`src/ai/sessionPhase.ts`** — typed FSM foundation: `SessionPhase` discriminated union (`idle | awaiting_gate | exploring | synthesis`), `HopLoopExit` discriminated union (`final_answer | gate | hop_cap | aborted | error`), `PendingGateSchema` (Zod) validating `action_required` envelopes at the tool-result boundary.
+- **`confirm_sm_start` consent gate** — sliding-memory entry requires explicit user approval. `lineage_start_exploration` returns `action_required: confirm_sm_start` after preflight; the participant surfaces the scope + depth + budget summary as chat prose; the user replies `yes` (proceed), `no` (pause), or a different question (redirect).
+- **Redirect branch on gate replies** — `classifyGateReply` now returns `'yes' | 'no' | 'redirect'`. A redirect reply at any gate clears exploration state and feeds the new prompt through normal discovery; no "please reply yes or no" loop (avoids the ReAct deferral-collapse pattern).
+
+**Changed**
+- **`LineageParticipant` rewritten around the FSM** — `runWithTools` is now `runHopLoop` returning a typed `HopLoopExit`. A single `dispatchExit` switch owns post-loop cleanup; partial-result storage lives only in the `hop_cap` / `aborted` branches. Type-narrowing makes the "paused gate rendered as incomplete" bug structurally impossible.
+- **Session state promoted to typed phase** — `AiSession.pendingGate: {...} | null` replaced by `AiSession.phase: SessionPhase`. Transitions go through `enterGate` / `enterExploring` / `enterIdle` methods (JSDoc'd); direct field mutation is no longer the API. Turn entry routes on `phase.kind`.
+- **`classifyGateReply` relocated to `sessionPhase.ts`** so unit tests can exercise it without the `vscode` dependency.
+- **Engine `ActionRequiredGate.gate` union** extended with `'confirm_sm_start'` literal.
+- **Prompt pruning** — `buildSchemaContext` stale advisory ("If answering…requires objects from other schemas, ask the user first") replaced with a one-line fact statement naming the mechanical enforcement (`schema_out_of_filter` gate). Pattern: mechanical enforcement over prompt language.
+
+**Fixed**
+- **Partial-result race on paused gates** — `storeBbResultPartial` was called unconditionally after `runWithTools` returned, regardless of exit reason. The FSM refactor moves it into the `hop_cap` / `aborted` cases only; `gate` exits transition cleanly to `awaiting_gate` and stream the consent question without any "incomplete" warning or "Show Partial Graph" button.
+
+**Docs**
+- Plan: `C:/Users/ChristianWagner/.claude/plans/review-the-output-of-curious-lemon.md` — complete design rationale, VS Code Chat API button-feasibility analysis, and open-question recommendations.
+
+**Tests**
+- `tests/unit/sm-robustness.test.ts` — 11 new cases under three suites: `classifyGateReply` (yes/no/redirect), `PendingGateSchema` (Zod parse + reject), `AiSession phase FSM` (transitions + `resetExploration`). Plus existing 7 engine-level cases unchanged. 22/22 pass.
+
 ### Scope budget enforcement + consent gate (2026-04-18)
 Fixes the scope-expansion runaway observed in `sess_1776506739133_xc2mh` (GPT-4o, 46+ hops on a "direct neighbors" question, visited out-of-filter `[dbo]` helpers, never reached synthesis). Three layered changes, one bundled commit.
 

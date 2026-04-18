@@ -60,7 +60,7 @@ export function buildSchemaContext(schemas: string[]): string {
   return (
     `Working context: user has schema(s) [${schemas.join(', ')}] selected.\n` +
     `Default all searches, SQL generation, and analysis to these schemas.\n` +
-    `If answering the question requires objects from other schemas, ask the user first.\n\n`
+    `Routing to out-of-filter schemas is gated by the engine (schema_out_of_filter consent).\n\n`
   );
 }
 

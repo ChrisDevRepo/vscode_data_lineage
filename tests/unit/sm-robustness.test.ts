@@ -3,6 +3,8 @@ import * as assert from 'assert';
 import Graph from 'graphology';
 import { NavigationEngine } from '../../src/ai/smBase';
 import { prunePreserveOnly } from '../../src/ai/viewPrune';
+import { classifyGateReply, PendingGateSchema } from '../../src/ai/sessionPhase';
+import { AiSession } from '../../src/ai/session';
 
 suite('State Machine Robustness', () => {
 
@@ -208,6 +210,90 @@ suite('State Machine Robustness', () => {
     assert.strictEqual(d2.tally.relevant, 1);
     assert.strictEqual(d2.tally.pass, 1);
     assert.strictEqual(d2.archiveChars, 110 + 50 + 5, 'archive accumulates across hops');
+  });
+
+  // ── FSM coverage: classifyGateReply + PendingGateSchema + AiSession.phase transitions ──
+  //
+  // These guard the contract described in docs/AI_ARCHITECTURE.md "Scope Budget Enforcement".
+  // The bug they prevent: `storeBbResultPartial` running on a paused gate because the turn
+  // handler can't distinguish loop exits. With typed FSM state this is structurally impossible.
+
+  suite('classifyGateReply', () => {
+    test('yes variants map to yes', () => {
+      for (const r of ['y', 'yes', 'YES', 'ok', 'okay', 'Allow', 'sure', 'proceed', 'continue']) {
+        assert.strictEqual(classifyGateReply(r), 'yes', `'${r}' should be yes`);
+      }
+    });
+    test('no variants map to no', () => {
+      for (const r of ['n', 'no', 'NO', 'nope', 'deny', 'skip', 'stop', 'cancel', 'pause']) {
+        assert.strictEqual(classifyGateReply(r), 'no', `'${r}' should be no`);
+      }
+    });
+    test('arbitrary new questions map to redirect', () => {
+      for (const r of ['actually look at STAGING only', 'trace customer instead', 'hmm maybe not']) {
+        assert.strictEqual(classifyGateReply(r), 'redirect', `'${r}' should be redirect`);
+      }
+    });
+  });
+
+  suite('PendingGateSchema', () => {
+    test('valid envelope parses', () => {
+      const g = PendingGateSchema.parse({
+        gate: 'confirm_sm_start',
+        classes: ['sliding_memory'],
+        nodeIds: [],
+        detail: 'Large task — 24 nodes.',
+      });
+      assert.strictEqual(g.gate, 'confirm_sm_start');
+      assert.deepStrictEqual(g.classes, ['sliding_memory']);
+    });
+    test('unknown gate literal rejected', () => {
+      assert.throws(() => PendingGateSchema.parse({
+        gate: 'nonsense_gate',
+        classes: [], nodeIds: [], detail: 'x',
+      }));
+    });
+    test('missing classes rejected', () => {
+      assert.throws(() => PendingGateSchema.parse({
+        gate: 'schema_and_depth',
+        nodeIds: [], detail: 'x',
+      } as any));
+    });
+  });
+
+  suite('AiSession phase FSM', () => {
+    test('initial phase is idle', () => {
+      const s = new AiSession();
+      assert.strictEqual(s.phase.kind, 'idle');
+    });
+    test('enterGate transitions to awaiting_gate', () => {
+      const s = new AiSession();
+      s.enterGate({ gate: 'schema_out_of_filter', classes: ['schema:dbo'], nodeIds: ['[dbo].[x]'], detail: 'ok' });
+      assert.strictEqual(s.phase.kind, 'awaiting_gate');
+      assert.strictEqual(s.phase.kind === 'awaiting_gate' && s.phase.gate.gate, 'schema_out_of_filter');
+    });
+    test('enterExploring transitions to exploring', () => {
+      const s = new AiSession();
+      s.enterExploring();
+      assert.strictEqual(s.phase.kind, 'exploring');
+    });
+    test('enterIdle transitions to idle', () => {
+      const s = new AiSession();
+      s.enterGate({ gate: 'confirm_sm_start', classes: ['sliding_memory'], nodeIds: [], detail: 'ok' });
+      s.enterIdle();
+      assert.strictEqual(s.phase.kind, 'idle');
+    });
+    test('resetExploration restores idle phase and clears exploration state', () => {
+      const s = new AiSession();
+      s.enterGate({ gate: 'confirm_sm_start', classes: ['sliding_memory'], nodeIds: [], detail: 'ok' });
+      s.hopCount = 5;
+      s.hopLog.push({ tool: 't', input: {}, output: {}, timestamp: '' });
+      s.resetExploration();
+      assert.strictEqual(s.phase.kind, 'idle');
+      assert.strictEqual(s.hopCount, 0);
+      assert.strictEqual(s.hopLog.length, 0);
+      assert.strictEqual(s.stateMachine, null);
+    });
   });
 
   suite('prunePreserveOnly (enrich_view prune)', () => {
