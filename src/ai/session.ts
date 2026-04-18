@@ -60,6 +60,10 @@ export class AiSession {
   /** Total number of tool execution rounds performed. */
   public hopCount = 0;
 
+  // ── User-facing notice queue (drained by runWithTools into stream.markdown) ──
+  /** Set-keyed notice queue — natural de-dupe across parallel tool calls. */
+  public pendingUserNotice: Set<string> = new Set();
+
   /**
    * Creates a new AiSession.
    * 
@@ -75,12 +79,12 @@ export class AiSession {
 
   /**
    * Determines if the session has exceeded its maximum operational lifetime.
-   * 
-   * @returns `true` if the session is older than 1 hour.
+   *
+   * @returns `true` if the session is older than 30 minutes.
    */
   public isStale(): boolean {
-    const ONE_HOUR_MS = 1 * 60 * 60 * 1000;
-    return (Date.now() - this.startTime) > ONE_HOUR_MS;
+    const STALE_AFTER_MS = 30 * 60 * 1000;
+    return (Date.now() - this.startTime) > STALE_AFTER_MS;
   }
 
   /**
@@ -106,6 +110,7 @@ export class AiSession {
     this.resultGraph = null;
     this.hopCount = 0;
     this.hopLog = [];
+    this.pendingUserNotice.clear();
   }
 
   /**

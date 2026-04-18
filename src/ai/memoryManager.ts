@@ -1,150 +1,121 @@
 /**
- * AI Memory Manager — Two-tier memory model (MemGPT-inspired).
- * 
- * Separates Short Memory (incremental narrative synthesis) from Detail Memory (full DDL analysis).
- * Used by all exploration modes to ensure strictly bounded token usage and grounded reasoning.
- * 
- * Design:
- * - Detail Memory (Disk): Map of high-fidelity analysis for every node. Visible only in Phase 3.
- * - Short Memory (RAM): A single, incrementally updated narrative string (the Blackboard).
+ * AI Memory Manager — per-hop working memory for the navigation engine.
+ *
+ * @remarks
+ * Stores high-fidelity per-node analysis (`DetailSlot`). On every hop the manager
+ * emits a {@link WorkingMemory} snapshot containing the user's original question,
+ * one-line summaries of every prior finding, pending self-ask questions, and
+ * progress metrics. Emission is state-machine-driven — delivery never filters,
+ * ranks, or truncates content. All relevance decisions are the model's.
  */
 
 import type { LineageNode } from '../engine/types';
-import { selectWorkingSet, type WorkingSetContext } from './workingSet';
 
 
-/** 
- * Represents a high-fidelity memory slot for a single node's analysis.
- * 
+/**
+ * High-fidelity analysis for a single visited node.
+ *
  * @remarks
- * Detail slots are populated during the "Analysis" phase (the hop loop) and are
- * stored at full fidelity. They are only exposed to the AI during the final
- * "Synthesis" phase to ensure grounded reasoning while keeping per-hop context
- * strictly bounded.
+ * Populated during the hop loop by `AiMemoryManager.storeDetail`. Remains at full
+ * fidelity for the entire session and is exposed in `getResult()` so the synthesis
+ * step can render every archived slot verbatim.
  */
 export interface DetailSlot {
-  /** The unique identifier of the analyzed node. */
+  /** Node identifier. */
   nodeId: string;
-  /** Schema name of the database object. */
+  /** Schema of the database object. */
   schema: string;
-  /** Name of the database object. */
+  /** Object name. */
   name: string;
-  /** Type of the database object (e.g., 'table', 'view'). */
+  /** Object type (e.g. 'table', 'view', 'procedure'). */
   type: string;
-  /** The full technical DDL/Metadata analysis performed by the AI. */
+  /** Full technical analysis written by the model. */
   analysis: string;
-  /** A concise, one-line digest of the analysis for quick reference. */
+  /** One-line digest shared across hops via `all_summaries`. */
   summary: string;
-  /** Optional semantic label used to group or identify the node in the UI. */
+  /** Optional short role tag used for graph badges. */
   badge_label?: string;
-  /** Optional descriptive caption for the node's UI note. */
+  /** Optional caption shown under the node in the graph. */
   note_caption?: string;
 }
 
-/** 
- * Represents the shared, high-level narrative state (the "Blackboard"). 
- * 
- * @remarks
- * This structure is updated incrementally at every hop. It provides a
- * rolling synthesis of the investigation's progress without including
- * the low-level details of every object.
- */
-export interface ShortMemory {
-  /** The current high-level investigation narrative. */
-  synthesis_narrative: string;
-  /** Statistics regarding exploration coverage within the current scope. */
-  coverage: { noted: number; total: number; pct: number };
-}
 
-/** 
- * A snapshot of the memory manager's state delivered to the AI during a navigation hop.
- * 
+/**
+ * Snapshot of the memory state delivered to the model at every navigation hop.
+ *
  * @remarks
- * Provides the AI with the current narrative context and progress metrics to
- * guide its next decision.
+ * Shape matches the 0.9.8 contract: the user question is echoed verbatim and every
+ * prior finding is exposed through `all_summaries`. The model receives the whole
+ * investigation context each hop; no per-hop filtering.
  */
 export interface WorkingMemory {
-  /** The current content of the synthesis narrative (Blackboard). */
-  blackboard: string;
-  /** List of nodes that have been requested but not yet visited. */
+  /** The user's original question, echoed verbatim every hop. */
+  user_question: string;
+  /** One-line summary of every previously analyzed node (ordered by visit). */
+  all_summaries: Array<{ nodeId: string; summary: string }>;
+  /** Self-ask questions posted for neighbors the model has not yet visited. */
   pending_questions: Array<{ nodeId: string; question: string }>;
-  /** Full technical analysis of immediately adjacent (1-hop) neighbors that have already been processed. */
-  local_detail_context?: DetailSlot[];
-  /** Progress tracking metadata. */
+  /** Progress metrics for this session. */
   checklist: {
-    /** Current hop index. */
+    /** Current hop index (1-based). */
     current_hop: number;
-    /** Number of nodes currently in detail memory. */
+    /** Number of nodes with a stored `DetailSlot`. */
     noted: number;
     /** Total number of nodes in the exploration scope. */
     total: number;
-    /** Nodes still open for analysis (= total - noted). */
+    /** Nodes still awaiting analysis (= `total - noted`). */
     open: number;
-    /** Exploration progress as a percentage. */
-    coveragePct: number
+    /** Coverage percentage across `total`. */
+    coveragePct: number;
   };
 }
 
 
-/** Blackboard hard limit — rejection threshold (chars). ~2000 tokens.
- *  Ensures the short memory stays strictly $O(1)$ regardless of hop count. */
-const DEFAULT_BLACKBOARD_HARD_LIMIT = 8000;
-
-
 /**
- * Orchestrates the two-tier memory model (Short vs. Detail) for AI exploration.
- * 
+ * In-session store for the per-hop working memory and full detail archive.
+ *
  * @remarks
- * Inspired by MemGPT/Sliding Context patterns, this manager ensures that the AI's
- * active context window is never overwhelmed by high-fidelity data from previous hops,
- * while still preserving all technical findings for final report synthesis.
+ * Behavior mirrors the 0.9.8 design: storage + delivery + execution only — no
+ * ranking, no truncation, no content decisions. The model reads the snapshot and
+ * decides relevance on its own.
  */
 export class AiMemoryManager {
   private detailSlots = new Map<string, DetailSlot>();
-  private synthesisNarrative = '';
   private pendingQuestions: Array<{ nodeId: string; question: string }> = [];
+  private userQuestion = '';
 
-  private readonly hardLimit: number;
-
-  /**
-   * Initializes a new AiMemoryManager.
-   * 
-   * @param config - Configuration options for memory limits.
-   */
-  constructor(config?: { shortMemoryHardLimit?: number }) {
-    this.hardLimit = config?.shortMemoryHardLimit ?? DEFAULT_BLACKBOARD_HARD_LIMIT;
-  }
-
-  /** 
-   * Resets all memory structures to their initial empty state.
-   * 
-   * @remarks
-   * Must be called at the start of every new exploration session to prevent
-   * cross-session leakage.
-   */
+  /** Clears every field so the manager can be reused across sessions. */
   public reset(): void {
     this.detailSlots.clear();
-    this.synthesisNarrative = '';
     this.pendingQuestions = [];
+    this.userQuestion = '';
   }
 
-  /** 
-   * Commits technical findings for a specific node to Detail Memory.
-   * 
-   * @param node - The node object being analyzed.
-   * @param analysis - Full technical analysis text.
-   * @param summary - Concise summary of the findings.
-   * @param meta - UI metadata (labels, captions) generated by the AI.
-   * @param inlineMode - If `true`, minimizes storage to only visual metadata.
+  /**
+   * Records the user's original question so it can be echoed in every working-memory snapshot.
+   *
+   * @param q - The user's question, verbatim.
+   */
+  public setUserQuestion(q: string): void {
+    this.userQuestion = q;
+  }
+
+  /**
+   * Stores the technical findings for a single node in the detail archive.
+   *
+   * @param node - The node the findings describe.
+   * @param analysis - Full technical analysis written by the model.
+   * @param summary - One-line digest used in `all_summaries`.
+   * @param meta - Optional UI metadata — `badge_label` and `note_caption`.
+   * @param inlineMode - When `true`, discards the bulk text and keeps only visual metadata.
    */
   public storeDetail(
     node: LineageNode,
     analysis: string,
     summary: string,
     meta?: { badge_label?: string; note_caption?: string },
-    inlineMode = false
+    inlineMode = false,
   ): void {
-    // In inline mode, we only store labels/captions for the final result building.
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
@@ -157,104 +128,62 @@ export class AiMemoryManager {
     });
   }
 
-  /** 
-   * Updates the global synthesis narrative (the Blackboard).
-   * 
-   * @remarks
-   * Enforces a hard limit on the narrative length to maintain $O(1)$ context growth.
-   * 
-   * @param newNarrative - The new narrative string to commit.
-   * @returns An error message if the limit is exceeded, otherwise `null`.
-   */
-  public updateSynthesis(newNarrative: string): { error: 'validation_error'; field: 'narrative_update'; detail: string } | null {
-    if (newNarrative.length > this.hardLimit) {
-      return {
-        error: 'validation_error',
-        field: 'narrative_update',
-        detail: `length ${newNarrative.length} exceeds hard limit ${this.hardLimit}. Tighten the narrative.`,
-      };
-    }
-    this.synthesisNarrative = newNarrative;
-    return null;
-  }
-
   /**
-   * Constructs a working memory snapshot for the AI's current hop.
+   * Produces the working-memory snapshot delivered to the model this hop.
    *
-   * @remarks
-   * When `ctx` is provided (SM mode), `local_detail_context` is populated via
-   * {@link selectWorkingSet} — a budget-bounded, path-prioritized slice.
-   * When `ctx` is omitted (inline mode), `local_detail_context` is undefined —
-   * inline callers receive the full detail archive via {@link getResult} instead.
-   *
-   * @param hopCount - The index of the current navigation hop.
-   * @param scopeSize - The total number of nodes in the exploration scope.
-   * @param ctx - Optional working-set context (focus + origin + graph). Omit in inline mode.
-   * @returns A `WorkingMemory` object containing state and progress metrics.
+   * @param hopCount - Hop index (1-based) supplied by the engine.
+   * @param scopeSize - Total number of nodes in the exploration scope.
+   * @returns A `WorkingMemory` snapshot with `user_question`, `all_summaries` for every stored slot, pending self-asks, and progress metrics.
    */
-  public getWorkingMemory(hopCount: number, scopeSize: number, ctx?: WorkingSetContext): WorkingMemory {
-    const coveragePct = scopeSize > 0 ? Math.round((this.detailSlots.size / scopeSize) * 100) : 0;
+  public getWorkingMemory(hopCount: number, scopeSize: number): WorkingMemory {
+    const noted = this.detailSlots.size;
+    const coveragePct = scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
+    const all_summaries = Array.from(this.detailSlots.values()).map(s => ({
+      nodeId: s.nodeId,
+      summary: s.summary,
+    }));
 
-    const local_detail_context = ctx ? selectWorkingSet(ctx, this.detailSlots) : undefined;
-
-    const open = Math.max(0, scopeSize - this.detailSlots.size);
     return {
-      blackboard: this.synthesisNarrative,
+      user_question: this.userQuestion,
+      all_summaries,
       pending_questions: this.pendingQuestions,
-      local_detail_context: local_detail_context && local_detail_context.length > 0 ? local_detail_context : undefined,
       checklist: {
         current_hop: hopCount,
-        noted: this.detailSlots.size,
+        noted,
         total: scopeSize,
-        open,
+        open: Math.max(0, scopeSize - noted),
         coveragePct,
       },
     };
   }
 
-  /** 
-   * Aggregates all session findings for final Phase 3 synthesis and reporting.
-   * 
-   * @returns A structured collection of short-term narrative and long-term technical details.
+  /**
+   * Returns the full detail archive for the synthesis phase.
+   *
+   * @returns An object containing every stored `DetailSlot` in insertion order.
    */
-  public getResult(): { short_memory: ShortMemory; detail_slots: DetailSlot[] } {
-    return {
-      short_memory: {
-        synthesis_narrative: this.synthesisNarrative,
-        coverage: { noted: this.slotCount, total: 0, pct: 0 } // total/pct filled by SM
-      },
-      detail_slots: Array.from(this.detailSlots.values()),
-    };
+  public getResult(): { detail_slots: DetailSlot[] } {
+    return { detail_slots: Array.from(this.detailSlots.values()) };
   }
 
-  /** 
-   * Serializes the current memory state to a JSON-compatible object.
-   * 
-   * @remarks
-   * Primarily used for telemetry, debugging, and AI quality evaluation.
-   */
+  /** JSON snapshot of the manager's current state — used by telemetry and eval extraction. */
   public toJSON() {
     const slots: Record<string, DetailSlot> = {};
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
     return {
+      userQuestion: this.userQuestion,
       detailSlots: slots,
       slotCount: this.detailSlots.size,
-      shortMemory: {
-        synthesisNarrative: this.synthesisNarrative,
-        synthesisLength: this.synthesisNarrative.length,
-        pendingQuestions: this.pendingQuestions,
-      },
+      pendingQuestions: this.pendingQuestions,
     };
   }
 
-  /** 
-   * Returns the total number of nodes currently stored in Detail Memory.
-   */
-  public get slotCount(): number { return this.detailSlots.size; }
+  /** Count of nodes currently stored in the detail archive. */
+  public get slotCount(): number {
+    return this.detailSlots.size;
+  }
 
-  /** 
-   * Returns an array of node IDs that have been "noted" (analyzed) in the current session.
-   */
+  /** Node IDs of every stored detail slot. */
   public get notedNodeIds(): string[] {
     return Array.from(this.detailSlots.keys());
   }

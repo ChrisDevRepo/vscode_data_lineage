@@ -11,7 +11,6 @@ import {
   type EnrichViewInput,
 } from './tools';
 import { ViewSynthesisService } from './viewSynthesisService';
-import { buildSynthesisReminder } from './smPrompts';
 import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
 import { type SerializedFilterState } from '../engine/projectStore';
 
@@ -114,13 +113,7 @@ export function registerAiTools(
     }),
 
     vscode.lm.registerTool('lineage_start_exploration', {
-      prepareInvocation(_options, _token) {
-        const sess = getSession();
-        if (sess.stateMachine && sess.stateMachine.status !== 'complete' && !sess.isStale()) {
-          return { invocationMessage: 'Starting exploration…', confirmationMessages: { title: 'Wipe active exploration?', message: new vscode.MarkdownString('An active exploration exists. Continue and wipe progress?') } };
-        }
-        return { invocationMessage: 'Starting exploration…' };
-      },
+      prepareInvocation(_options, _token) { return { invocationMessage: 'Starting exploration…' }; },
       invoke(options, _token) {
         try {
           if (!isAiEnabled()) return disabled();
@@ -128,8 +121,22 @@ export function registerAiTools(
           const m = requireModel();
           const g = requireGraph();
           const input = options.input as any;
-          
+
           sess.resetIfStale();
+
+          const prior = sess.stateMachine as NavigationEngine | null;
+          const priorLive = !!prior && prior.status !== 'complete';
+          if (priorLive && prior!.sessionId && prior!.sessionId !== sess.id) {
+            sess.pendingUserNotice.add(
+              'A previous exploration was still running when you started this one. Its in-memory findings were discarded.'
+            );
+            sess.resetExploration();
+          } else if (priorLive && prior!.sessionId === sess.id) {
+            return logAndReturn('start_exploration', {
+              error: 'already_started',
+              hint: 'start_exploration is one-shot per turn. Use submit_findings to continue the current agenda. After complete_rejected, the unvisited neighbors are already queued at priority 3 — the next submit_findings will present one of them.',
+            }, options.input);
+          }
 
           const filter = sess.filter;
           if (!filter) throw new Error('No filter state available.');
@@ -163,7 +170,6 @@ export function registerAiTools(
             targetColumns: input.targetColumns,
             direction: input.direction || 'bidirectional',
             depth: input.depth,
-            initial_summary: input.initial_summary
           });
 
           if ('error' in initResult) return logAndReturn('start_exploration', initResult, options.input);
@@ -190,7 +196,7 @@ export function registerAiTools(
           const engine = sess.stateMachine as NavigationEngine | null;
           if (!engine) return logAndReturn('submit_findings', { error: 'no_active_session' }, options.input);
 
-          const inputErr = validateToolInput(options.input, { focus_node_id: 'string', narrative_update: 'string', detail_analysis: 'string', summary: 'string' });
+          const inputErr = validateToolInput(options.input, { focus_node_id: 'string', detail_analysis: 'string', summary: 'string' });
           if (inputErr) return toolResult(inputErr);
 
           const result = engine.submitFindings(options.input as any);

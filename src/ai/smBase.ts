@@ -165,30 +165,25 @@ export class NavigationEngine implements IHopStateMachine {
     targetColumns?: string[];
     direction?: 'upstream' | 'downstream' | 'bidirectional';
     depth?: number;
-    initial_summary?: string;
   }): any {
     this.visited.clear();
     this.agenda = [];
     this.agendaIds.clear();
     this.memory.reset();
+    this.memory.setUserQuestion(params.question);
 
     const originNode = this.nodeMap.get(params.origin.toLowerCase());
     if (!originNode) return { error: 'origin_not_found' };
-    
+
     this.originNodeId = originNode.id;
     this.scopeNodeIds = this.computeBfsScope(originNode.id, params.direction || 'bidirectional', params.depth || 5);
-    
-    if (params.initial_summary) {
-      this.memory.updateSynthesis(`Background: ${params.initial_summary}`);
-    }
 
-    // MANDATORY: Push origin as the first task
-    this.agenda.push({ 
-      nodeId: originNode.id, 
-      question: `Root Question: ${params.question}`, 
-      priority: 3, 
-      depth: 0, 
-      activeColumns: params.targetColumns 
+    this.agenda.push({
+      nodeId: originNode.id,
+      question: `Root Question: ${params.question}`,
+      priority: 3,
+      depth: 0,
+      activeColumns: params.targetColumns
     });
     this.agendaIds.add(originNode.id);
 
@@ -230,10 +225,7 @@ export class NavigationEngine implements IHopStateMachine {
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
     const navPath = path ? (path as string[]).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
-    // Working-set selection applies only in SM mode. Inline mode delivers the full detail
-    // archive via AiMemoryManager.getResult() at synthesis, so per-hop selection is a no-op.
-    const wsCtx = this._inlineMode ? undefined : { focusId: entry.nodeId, originId: this.originNodeId!, graph: this.graph };
-    const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size, wsCtx) as NavigationWorkingMemory;
+    const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size) as NavigationWorkingMemory;
     workingMemory.topological_map = {
       navigation_path: navPath,
       visited_nodes: Array.from(this.visited),
@@ -302,10 +294,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    const synthesisErr = this.memory.updateSynthesis(params.narrative_update);
-    if (synthesisErr) return synthesisErr;
-
-    // Store detail for relevant/pass; irrelevant nodes keep only the narrative trace
+    // Store detail for relevant/pass; irrelevant nodes keep only the summary trace
     if (!isIrrelevant) {
       this.memory.storeDetail(this.nodeMap.get(this.currentFocusNodeId!)!, params.detail_analysis, params.summary, {
         badge_label: params.badge_label,
@@ -336,15 +325,48 @@ export class NavigationEngine implements IHopStateMachine {
 
     this._status = 'exploring';
 
-    if (params.complete && this._inlineMode) {
+    if (params.complete) {
+      if (this._inlineMode) {
+        this._status = 'complete';
+        return { ok: true, done: true, result: this.getResult() };
+      }
+
+      // 0.9.8 direct-neighbors gate: complete only accepted when every direct neighbor of the
+      // origin has been visited or pruned. Unvisited neighbors are promoted to priority 3 so
+      // they are served next and the model can analyze them before retrying.
+      const originId = this.originNodeId;
+      if (originId) {
+        const directIds = new Set<string>([
+          ...(this.graph.inNeighbors(originId) as string[]),
+          ...(this.graph.outNeighbors(originId) as string[]),
+        ]);
+        const unvisited = Array.from(directIds).filter(id =>
+          this.scopeNodeIds.has(id) && !this.visited.has(id) && !this.removedSet.has(id),
+        );
+        if (unvisited.length > 0) {
+          for (const id of unvisited) {
+            if (!this.agendaIds.has(id)) {
+              this.agenda.push({ nodeId: id, question: `Visit before completing`, priority: 3, depth: 1 });
+              this.agendaIds.add(id);
+            } else {
+              const entry = this.agenda.find(a => a.nodeId === id);
+              if (entry) entry.priority = 3;
+            }
+          }
+          const names = unvisited.map(id => this.nodeMap.get(id)?.name ?? id);
+          return {
+            error: 'complete_rejected',
+            detail: {
+              unvisited_direct_neighbors: unvisited,
+              names,
+              hint: `Visit or mark these direct neighbors of the origin before completing: ${names.join(', ')}. Do NOT call start_exploration — these neighbors are already queued at priority 3. Your next submit_findings call will present one of them.`,
+            },
+          };
+        }
+      }
+
       this._status = 'complete';
       return { ok: true, done: true, result: this.getResult() };
-    }
-    if (params.complete && !this._inlineMode) {
-      return {
-        error: 'complete_not_allowed',
-        detail: 'The engine owns completion in this session. Continue submitting findings for each remaining agenda item; the engine auto-completes when the last one is dispatched.',
-      };
     }
 
     return cascadedCount > 0 ? { ok: true, cascaded_count: cascadedCount } : { ok: true };
@@ -434,7 +456,6 @@ export class NavigationEngine implements IHopStateMachine {
       }),
       edges: finalEdges,
       suggested_sections: sections,
-      short_memory: mem.short_memory,
       detail_slots: mem.detail_slots,
     };
   }

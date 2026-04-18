@@ -966,7 +966,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
         "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
-        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nRequired Fields:\n- narrative_update: Update the Incremental Blackboard (Short Memory). Focus ONLY on dense business insights, formulas, and filter logic. INTEGRATE new findings into the existing story; DO NOT repeat topology (The Map already provides it).\n- detail_analysis: High-fidelity technical evidence for the Detail Archive. Use LaTeX for math and Tables for renames.\n- summary: One-line technical digest for the archive.\n- verdict: relevant | pass | irrelevant.\n    - 'relevant' → stores findings, drives badges/notes.\n    - 'pass' → visited, no analysis stored, always accepted. Use for variant siblings of an already-analyzed archetype — reference the archetype in the blackboard.\n    - 'irrelevant' → cascade-prunes (utility/logging/generic helpers). May be rejected by orphan/cascade guards; fall back to 'pass'.\n\nLabels (REQUIRED for `relevant` and `pass` verdicts — the enriched view has no badges/notes without them):\n- badge_label: 2-4 word semantic role tag for this node (e.g. 'Country Allocation', 'EV Case 1', 'SCD2 Historization', 'Source Filter'). Appears as a badge on the graph node.\n- note_caption: One-line what-this-does caption. Appears as the inline note on the graph node.\n\nSelection-Inference Routing:\n- route_requests: Array of objects { nodeId, question, columns? }. NEVER route blindly. You MUST provide a specific technical hypothesis (the 'question') for every neighbor you want to visit. `columns` is only meaningful in column_trace mode; in other modes it is silently dropped. The SM validates your request against neighbor metadata before accepting.",
+        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nRequired Fields:\n- detail_analysis: Full technical write-up for this node — business purpose, transform expressions, column I/O, relationships, risks. The archive is the sole evidence used at synthesis; thin analysis yields thin output.\n- summary: One-line digest of the findings. Future hops see every prior summary in working_memory.all_summaries — keep it specific.\n- verdict: relevant | pass | irrelevant.\n    - 'relevant' → stores findings, drives badges/notes.\n    - 'pass' → visited, no analysis stored, always accepted. Use for variant siblings of an already-analyzed archetype.\n    - 'irrelevant' → cascade-prunes (utility/logging/generic helpers). May be rejected by orphan/cascade guards; fall back to 'pass'.\n\nLabels (REQUIRED for `relevant` and `pass` verdicts — the enriched view has no badges/notes without them):\n- badge_label: 2-4 word semantic role tag (e.g. 'Country Allocation', 'EV Case 1', 'SCD2 Historization', 'Source Filter').\n- note_caption: One-line what-this-does caption shown on the graph node.\n\nRouting:\n- route_requests: Array of { nodeId, question, columns? }. Every neighbor entry needs a specific sub-question. `columns` is honored only in column_trace mode. The engine validates every request against neighbor metadata.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -978,17 +978,13 @@
               "type": "string",
               "description": "ID of the current focus node."
             },
-            "narrative_update": {
-              "type": "string",
-              "description": "Dense business logic synthesis (The Blackboard)."
-            },
             "detail_analysis": {
               "type": "string",
-              "description": "High-fidelity evidence archive (The Hard Drive)."
+              "description": "Full technical analysis stored in the detail archive."
             },
             "summary": {
               "type": "string",
-              "description": "One-line digest of findings."
+              "description": "One-line digest echoed to every future hop via working_memory.all_summaries."
             },
             "verdict": {
               "type": "string",
@@ -1028,7 +1024,7 @@
             },
             "complete": {
               "type": "boolean",
-              "description": "Reserved. Do not set — the engine owns completion. Setting true is rejected in sliding-memory mode with error 'complete_not_allowed'."
+              "description": "Set true on your final submit when every direct neighbor of the origin has been analyzed. The engine validates: if any direct neighbor is still unvisited it returns 'complete_rejected' with the list, promotes them to priority 3, and serves them next. Retry 'complete: true' after analyzing them."
             },
             "badge_label": {
               "type": "string",
@@ -1041,7 +1037,6 @@
           },
           "required": [
             "focus_node_id",
-            "narrative_update",
             "detail_analysis",
             "summary",
             "verdict"
@@ -1058,7 +1053,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/sm-robustness.test.ts && tsx tests/unit/working-set.test.ts && tsx tests/unit/repeat-reject-guard.test.ts",
+    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/sm-robustness.test.ts",
     "test:unit": "npm run test",
     "test:unit:ai": "tsx tests/unit/ai-tools.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts",
     "test:dacpac": "tsx tests/unit/dacpacExtractor.test.ts",

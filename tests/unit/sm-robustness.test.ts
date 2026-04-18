@@ -54,7 +54,7 @@ suite('State Machine Robustness', () => {
   // cannot produce a non-zero `cascaded_count` because `seedAgenda` only admits direct
   // neighbors of the origin — C and D never reach the agenda before B is popped.
 
-  test('SM sliding-memory mode: complete=true is rejected (engine owns completion)', () => {
+  test('SM sliding-memory mode: complete=true is rejected until all direct neighbors of origin are visited', () => {
     const { model, graph } = createMockModelAndGraph();
     const log = () => {};
     log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
@@ -63,20 +63,22 @@ suite('State Machine Robustness', () => {
     // Leave _inlineMode at its default (false) → sliding-memory mode.
     engine.init({ question: 'trace A', origin: 'a', direction: 'downstream', depth: 3 });
 
-    // First hop is the origin (priority 3).
+    // First hop is the origin (priority 3). 'a' has direct neighbor 'b' still unvisited.
     engine.getHopContext();
     const res = engine.submitFindings({
       focus_node_id: 'a',
-      narrative_update: 'ok',
       detail_analysis: 'ok',
       summary: 'ok',
       verdict: 'relevant',
-      complete: true,   // ← rejected in SM mode: the engine (not the AI) decides when to stop
+      complete: true,
     } as any);
 
-    // Explicit rejection so the AI learns to stop sending `complete: true` and keeps draining.
     assert.ok('error' in res, 'submit rejected with error');
-    assert.strictEqual((res as any).error, 'complete_not_allowed', 'complete=true must be rejected in SM mode');
+    assert.strictEqual((res as any).error, 'complete_rejected', 'complete=true rejected while direct neighbors unvisited');
+    const detail = (res as any).detail;
+    assert.ok(Array.isArray(detail.unvisited_direct_neighbors), 'detail lists unvisited_direct_neighbors');
+    assert.ok(detail.unvisited_direct_neighbors.length > 0, 'at least one unvisited direct neighbor reported');
+    assert.ok(typeof detail.hint === 'string' && detail.hint.length > 0, 'detail includes hint text');
   });
 
   test('Inline mode: complete=true returns { done: true, result }', () => {
@@ -91,7 +93,6 @@ suite('State Machine Robustness', () => {
     engine.getHopContext();
     const res = engine.submitFindings({
       focus_node_id: 'a',
-      narrative_update: 'ok',
       detail_analysis: 'ok',
       summary: 'ok',
       verdict: 'relevant',

@@ -1,73 +1,57 @@
-# AI Prompt Engineering — "Incremental Blackboard"
+# AI Prompt Engineering
 
-The `@lineage` participant uses a sophisticated prompt architecture designed to maintain reasoning quality during deep (30+ hop) lineages. It implements the **Incremental Blackboard** pattern, where the system provides topological grounding (The Map) and the AI provides semantic synthesis (The Narrative).
-
----
-
-## 1. Context Separation of Concerns
-
-To prevent token explosion and "Context Drift," the prompt is split into three strictly separate domains.
-
-### 1.1 The Map (Topological Grounding)
-The **Map** is injected by the extension in every hop. It is the "ground truth" of where the AI is in the graph.
-- **Content**: Visited nodes, Open Agenda, current position, and neighbor metadata (columns/types).
-- **Rule**: The AI is instructed **never to repeat** topological facts found in the Map (e.g., "I am visiting Table X") to save tokens.
-
-### 1.2 The Blackboard (Incremental Narrative)
-The **Blackboard** is a single, incrementally growing string (the Short Memory).
-- **Behavior**: In every hop, the AI receives the current Blackboard and must provide a `narrative_update`.
-- **Content**: Dense business logic, formulas, renames, and filter conditions. It tells the "Story of the Data" without the SQL noise.
-
-### 1.3 The Detail Archive (Hard Drive)
-Detailed technical findings are stored in **Detail Memory**.
-- **Behavior**: The AI writes technical evidence (verbatim SQL, LaTeX formulas) to this archive during the hop loop, but **cannot see it** until Phase 3. This keeps the active context clean for the current SQL analysis.
+The `@lineage` participant is a VS Code chat participant — stateless-per-turn, uses tools, streams markdown via `ChatResponseStream`. The state machine is a tool the model calls; the model is a domain responder, not a persistent agent. Prompts stay focused on the task (analyze the focus node, write the archive, route neighbors); the engine handles completion, cascade-prune, and memory delivery.
 
 ---
 
-## 2. Selection-Inference Routing
+## 1. Prompt Layers
 
-The system uses a **Selection-Inference** pattern to ensure the AI remains grounded.
+Three prompt layers, each with a different lifetime.
 
-### 2.1 Metadata-Guarded Questions
-For every neighbor the AI wants to visit, it **MUST** generate a specific sub-question.
-- **Example**: *"Check `sp_CalcTax` to see if the 10% rate is hardcoded or read from a table."*
-- **Validation**: The AI receives column lists for all neighbors *before* visiting. Its questions must refer to valid metadata, or the tool call will be rejected ("Fail Early").
+### 1.1 System Prompt (session-stable)
+Built by `buildSystemPromptBase(maxRounds)` in `src/ai/prompts.ts` and cached across the session so the LM cache stays hot. Six terse rules cover validation, tool routing, output shape, and LaTeX guidance. Callers append the platform context, schema context, and `aiOutputTemplates.yaml` fields. Matches the 0.9.8 system-prompt shape.
 
-### 2.2 The "Fail Early" Loop
-If the AI hallucinates a column or node ID in its `route_requests`, the `lineage_submit_findings` tool returns an error immediately. The AI then re-analyzes the metadata and submits a corrected route.
+### 1.2 Navigation Prompt (per-mode, per-session)
+`buildNavigationPrompt(mode)` in `src/ai/smPrompts.ts`. Injected once at the `discover → active` phase transition and re-injected inside every sliding-memory wipe so mode guidance survives the hop loop. Three modes:
+- **`blackboard`** — business logic / exploration framing.
+- **`column_trace`** — column-level trace with rename tracking.
+- **`dependency`** — structural dependency trace (no column tracking).
 
----
+Each mode prompt spells out the per-hop workflow (read DDL → write archive → assign badge/note → route neighbors), the three verdicts (`relevant` / `pass` / `irrelevant`), and the routing contract (every `route_requests` entry needs a specific sub-question). No "autonomous agent" framing, no persona headers — the prompt matches VS Code chat-participant conventions.
 
-## 3. Lifecycle Prompt Swapping
-
-The assistant dynamically swaps system prompts as the session progresses to keep attention on relevant instructions.
-
-### 3.1 Navigation Mode (Hops)
-Focuses on the "Analyst" workflow:
-1.  Read focus DDL.
-2.  Answer the current sub-question.
-3.  Update the Blackboard Narrative.
-4.  Archive technical evidence to Detail Memory.
-5.  Propose next routes with validated questions.
-
-The navigation-mode prompt persists across sliding-memory wipes and contains no language about completion, final answers, or `enrich_view` — the engine owns those. Situational awareness ("you are mid-loop, N items remain") is delivered as data in every hop payload (`sm_status`, `agenda_remaining`, `checklist.open`), not as prose the model has to re-learn each turn.
-
-The BB nav prompt never mentions `route_requests[].columns`; the CT nav prompt owns all column-level routing guidance. The validator reinforces this by silently dropping `columns` outside column-trace sessions.
-
-### 3.2 Synthesis Mode (Phase 3)
-Focuses on the "Documentarian" workflow:
-- The mode prompt is swapped to the **Synthesis Grounding Contract**.
-- The AI is provided with the full **Archive** (verbatim findings from all hops).
-- It is tasked with assembling the final business logic documentation into `lineage_enrich_view`.
+### 1.3 Synthesis Prompt (phase 3)
+`buildSynthesisPrompt()` in `src/ai/smPrompts.ts`. Delivered once the agenda drains. Spells out the two-deliverable contract (chat prose + `enrich_view` sections, one per archived slot) and the grounding contract (cite archive only, no new facts, preserve LaTeX and tables from slot analyses). The model self-regulates per-slot section depth based on question shape.
 
 ---
 
-## 4. Grounding Contract
+## 2. Per-Hop Memory
 
-The AI is bound by a strict **Grounding Contract** to ensure accuracy:
-- **No Hallucinations**: Every claim in the final report must cite evidence from a Detail Memory slot.
-- **LaTeX for Math**: Formulas must use LaTeX syntax for clear rendering.
-- **Tables for Renames**: Column transformations must be presented in Markdown tables.
-- **Zero SQL in Summary**: High-level summaries must be business-centric; all SQL evidence must reside in the detailed sections.
+Every hop the engine delivers a `WorkingMemory` snapshot containing:
+- `user_question` — echoed verbatim.
+- `all_summaries: Array<{ nodeId, summary }>` — every prior hop's one-line summary, in visit order, unbounded.
+- `pending_questions` — self-asks the model has not yet answered.
+- `checklist` — `{ current_hop, noted, total, open, coveragePct }` plus the drain signals `sm_status` and `agenda_remaining`.
+
+No AI-managed narrative. No cumulative "blackboard" the model has to rewrite. No token-budget-filtered slice of detail slots. The Detail Archive (`detail_analysis` per node) is stored internally and only surfaces at synthesis.
+
+This matches the 0.9.8 contract: the state machine stores, delivers, and executes; the AI decides relevance.
+
+---
+
+## 3. Routing & Grounding
+
+- **Metadata-first routing** — for every neighbor, the AI gets `{ id, schema, name, type, edge_direction, edge_type, boundary, cols }` before deciding to visit it. Every `route_requests` entry must name a specific sub-question ("Does this proc apply the 10% VAT rate?"); blind routing is a reasoning failure.
+- **Fail-early validation** — `submit_findings` rejects unknown node IDs and (in `column_trace` mode only) column names that don't appear on the target. The AI self-corrects from the rejection payload.
+- **Column scope** — in `blackboard` / `dependency` modes, `route_requests[].columns` is silently dropped; in `column_trace` mode, names must exist on the target.
+
+---
+
+## 4. Synthesis Grounding Contract
+
+- Cite only from archive slots — no new facts.
+- If a slot reads thin, call `lineage_get_object_detail` and expand from the DDL.
+- Preserve LaTeX formulas and markdown tables from slot analyses verbatim.
+- Variant siblings each get their own section — delta wording is fine ("Same skeleton as X; deltas: …").
+- Two deliverables — chat prose **and** `enrich_view` sections — both at per-slot depth. Chat is for reading; the view is for graph navigation.
 
 ---

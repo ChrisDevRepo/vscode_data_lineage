@@ -97,7 +97,6 @@ function newEngine() {
   assertEq(hop1.focus_node?.id, '[dbo].[origin]', 'Hop 1 is origin');
   engine.submitFindings({
     focus_node_id: hop1.focus_node.id,
-    narrative_update: 'Origin.',
     detail_analysis: 'Origin analysis.',
     summary: 'Origin.',
     verdict: 'relevant'
@@ -116,7 +115,6 @@ function newEngine() {
   while (util_hop.focus_node?.id !== '[dbo].[util_log]' && !util_hop.done && guard++ < 6) {
     engine.submitFindings({
       focus_node_id: util_hop.focus_node.id,
-      narrative_update: 'skip',
       detail_analysis: 'skip',
       summary: 'skip',
       verdict: 'pass'
@@ -127,7 +125,6 @@ function newEngine() {
 
   const result = engine.submitFindings({
     focus_node_id: util_hop.focus_node.id,
-    narrative_update: 'Utility only.',
     detail_analysis: 'Logging only.',
     summary: 'skip',
     verdict: 'irrelevant'
@@ -145,7 +142,6 @@ function newEngine() {
   const hop1 = engine.getHopContext() as any;
   engine.submitFindings({
     focus_node_id: hop1.focus_node.id,
-    narrative_update: 'Origin.',
     detail_analysis: '.',
     summary: '.',
     verdict: 'relevant'
@@ -157,7 +153,6 @@ function newEngine() {
   while (hop.focus_node?.id !== '[dbo].[core_a]' && !hop.done && guard++ < 6) {
     engine.submitFindings({
       focus_node_id: hop.focus_node.id,
-      narrative_update: '.',
       detail_analysis: '.',
       summary: '.',
       verdict: 'pass'
@@ -167,7 +162,6 @@ function newEngine() {
   assert(hop.focus_node?.id === '[dbo].[core_a]', 'Reached core_a');
   engine.submitFindings({
     focus_node_id: hop.focus_node.id,
-    narrative_update: 'Core path.',
     detail_analysis: 'Core work.',
     summary: 'Core.',
     verdict: 'relevant'
@@ -183,7 +177,6 @@ function newEngine() {
   while (hop.focus_node?.id !== '[dbo].[sink]' && !hop.done && guard++ < 12) {
     engine.submitFindings({
       focus_node_id: hop.focus_node.id,
-      narrative_update: '.',
       detail_analysis: '.',
       summary: '.',
       verdict: 'pass'
@@ -193,7 +186,6 @@ function newEngine() {
   if (hop.focus_node?.id === '[dbo].[sink]') {
     const pruneSink = engine.submitFindings({
       focus_node_id: hop.focus_node.id,
-      narrative_update: 'Leaf.',
       detail_analysis: '.',
       summary: '.',
       verdict: 'irrelevant'
@@ -211,7 +203,6 @@ function newEngine() {
 
   const result = engine.submitFindings({
     focus_node_id: hop1.focus_node.id,
-    narrative_update: 'Origin.',
     detail_analysis: '.',
     summary: '.',
     verdict: 'irrelevant'  // Should not remove origin; treated as pass-through
@@ -229,7 +220,6 @@ function newEngine() {
   const hop1 = engine.getHopContext() as any;
   engine.submitFindings({
     focus_node_id: hop1.focus_node.id,
-    narrative_update: 'Origin.',
     detail_analysis: '.',
     summary: '.',
     verdict: 'relevant'
@@ -241,7 +231,6 @@ function newEngine() {
   while (hop.focus_node?.id !== '[dbo].[util_log]' && !hop.done && guard++ < 6) {
     engine.submitFindings({
       focus_node_id: hop.focus_node.id,
-      narrative_update: '.',
       detail_analysis: '.',
       summary: '.',
       verdict: 'pass'
@@ -252,7 +241,6 @@ function newEngine() {
   if (hop.focus_node?.id === '[dbo].[util_log]') {
     engine.submitFindings({
       focus_node_id: hop.focus_node.id,
-      narrative_update: 'skip',
       detail_analysis: '.',
       summary: '.',
       verdict: 'irrelevant'
@@ -264,7 +252,6 @@ function newEngine() {
       if (h.done) break;
       engine.submitFindings({
         focus_node_id: h.focus_node.id,
-        narrative_update: '.',
         detail_analysis: '.',
         summary: '.',
         verdict: 'pass'
@@ -292,7 +279,6 @@ function newEngine() {
   // First submit: success, advances to hop 2
   const first = engine.submitFindings({
     focus_node_id: hop1.focus_node.id,
-    narrative_update: 'Origin.',
     detail_analysis: 'Origin analysis.',
     summary: 'Origin.',
     verdict: 'relevant'
@@ -304,7 +290,6 @@ function newEngine() {
   // loop can preserve history.
   const second = engine.submitFindings({
     focus_node_id: '[dbo].[util_a]', // arbitrary non-focus node
-    narrative_update: 'Parallel attempt.',
     detail_analysis: '.',
     summary: '.',
     verdict: 'relevant'

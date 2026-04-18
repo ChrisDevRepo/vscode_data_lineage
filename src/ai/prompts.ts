@@ -10,31 +10,35 @@
 
 /**
  * Constructs the base system prompt used to govern AI behavior across all exploration modes.
- * 
+ *
  * @remarks
- * This prompt establishes the "Ground Rules" for the AI, including validation logic,
- * tool usage priorities (e.g., `start_exploration` vs `run_bfs_trace`), and output
- * formatting requirements (LaTeX, Section/Badge contracts).
- * 
+ * Restores the 0.9.8 rule set: terse ground rules covering validation, tool routing,
+ * output shape, and LaTeX guidance. Callers append platform context, schema context, and
+ * the `aiOutputTemplates.yaml` fields (summary/badges/sections/notes/highlights/description).
+ *
  * @param maxRounds - The maximum number of tool execution rounds allowed before a hard stop.
  * @returns A string containing the foundational system rules for the SQL lineage assistant.
  */
 export function buildSystemPromptBase(maxRounds: number): string {
   return (
-    'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n\n' +
+    'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
+    `Budget: ${maxRounds} rounds.\n\n` +
     'RULES:\n' +
     '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user which object they mean.\n' +
     '   For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
     '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-    '3. For ALL lineage investigations (field-level tracking, business rules, multi-object documentation):\n' +
-    '   use start_exploration. If tracing columns, provide them in targetColumns.\n' +
-    '   BFS (run_bfs_trace) is for structural discovery only — it provides nodes/DDL but CANNOT create views.\n' +
+    '3. For column questions: start_exploration with targetColumns. For lineage/impact/trace: start_exploration without targetColumns (dependency mode).\n' +
+    '   When tracing columns: provide INPUT column names as they appear in the source, not output aliases. Track renames across hops.\n' +
+    '   When uncertain whether a column carries value to the target: trace. When a column only controls selection: omit.\n' +
+    '   For broad exploration (business rules, documentation, patterns, investigations): start_exploration explores objects hop-by-hop with persistent memory.\n' +
+    '   start_exploration is one-shot per turn: call it exactly once, never in parallel, never as a retry. All subsequent hops use submit_findings.\n' +
+    '   BFS (run_bfs_trace) is for scope discovery only — it cannot create an enrich_view.\n' +
     '   For single-object questions ("explain X"): get_object_detail → chat text.\n' +
-    '4. OUTPUT: enrich_view ONLY after completing a start_exploration session.\n' +
-    '   Chat text for: pure explanations, SQL generation, list/compare requests (no graph needed).\n' +
+    '4. OUTPUT: enrich_view when a graph aids understanding (lineage path, data flow). Chat text for pure explanations, SQL generation, list/compare requests.\n' +
     '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
-    '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow.\n' +
-    '6. MATH: In ALL output — chat text, descriptions, and enrich_view sections — heavily use LaTeX math syntax for formulas and logic.\n'
+    '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow. Do not number badges yourself or write description when sections are provided.\n' +
+    '6. MATH: In chat text use ```math fenced blocks for display formulas. In enrich_view sections, use inline $…$ LaTeX. Never use $$ delimiters.\n'
+    // Callers append: summary / badges / sections / notes / highlights / description from aiOutputTemplates
   );
 }
 

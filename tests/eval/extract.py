@@ -139,11 +139,11 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
     enrich_input = enriches[0].get("input", {}) if enriches else {}
 
     # Per-submit metrics
-    narr_lens = [len(s.get("input", {}).get("narrative_update", "")) for s in submits]
+    summary_lens = [len(s.get("input", {}).get("summary", "")) for s in submits]
     det_lens = [len(s.get("input", {}).get("detail_analysis", "")) for s in submits]
     verdicts = Counter(s.get("input", {}).get("verdict") for s in submits)
     badges = [s.get("input", {}).get("badge_label") for s in submits if s.get("input", {}).get("badge_label")]
-    empty_narr = sum(1 for n in narr_lens if n == 0)
+    empty_summary = sum(1 for n in summary_lens if n == 0)
     sql_keywords = ["INSERT ", "UPDATE ", "SELECT ", "JOIN ", "FROM ", "WHERE "]
     sql_hops = sum(
         1
@@ -158,7 +158,7 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
         if "|---" in s.get("input", {}).get("detail_analysis", "")
         or "| --- |" in s.get("input", {}).get("detail_analysis", "")
     )
-    avg_narr = (sum(narr_lens) / len(narr_lens)) if narr_lens else 0
+    avg_summary = (sum(summary_lens) / len(summary_lens)) if summary_lens else 0
     avg_det = (sum(det_lens) / len(det_lens)) if det_lens else 0
 
     # Coverage vs spec
@@ -257,7 +257,7 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
     elif test_id.startswith("bb-"):
         type_score = 3 if submits and block5_hops == len(submits) and sql_hops == len(submits) else 2
 
-    pregate_pass = (avg_det >= 400 and avg_narr >= 150 and empty_narr == 0) if submits else True
+    pregate_pass = (avg_det >= 400 and avg_summary >= 40 and empty_summary == 0) if submits else True
     total = correctness + completeness + qa + type_score
     if not pregate_pass:
         total = min(total, 6)
@@ -313,8 +313,8 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
     A("| Pre-Gate Check | Measured | Threshold | Status |")
     A("|---|---|---|---|")
     A(f"| Avg detail_analysis chars/node | {avg_det:.0f} | >= 400 | {'OK' if avg_det >= 400 else 'FAIL'} |")
-    A(f"| Avg narrative_update chars/hop | {avg_narr:.0f} | >= 150 | {'OK' if avg_narr >= 150 else 'FAIL'} |")
-    A(f"| Empty narrative hops | {empty_narr} | = 0 | {'OK' if empty_narr == 0 else 'FAIL'} |")
+    A(f"| Avg summary chars/hop | {avg_summary:.0f} | >= 40 | {'OK' if avg_summary >= 40 else 'FAIL'} |")
+    A(f"| Empty summary hops | {empty_summary} | = 0 | {'OK' if empty_summary == 0 else 'FAIL'} |")
     A(
         f"| Badge coverage | {len(badges)}/{len(submits)} hops | 100% on relevant | "
         f"{'OK' if len(badges) >= verdicts.get('relevant', 0) else 'FAIL'} |"
@@ -469,35 +469,33 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
             A(f"| route_requests | {len(inp.get('route_requests', []))} |")
             A("")
             if inp.get("summary"):
-                A(f"**Summary:** {inp.get('summary', '')}")
+                A(f"**summary ({len(inp.get('summary', ''))} chars):**")
                 A("")
-            A(f"**narrative_update ({len(inp.get('narrative_update', ''))} chars):**")
-            A("")
-            A(f"> {inp.get('narrative_update', '')}")
-            A("")
+                A(f"> {inp.get('summary', '')}")
+                A("")
             A(f"**detail_analysis ({len(inp.get('detail_analysis', ''))} chars):**")
             A("")
             A(inp.get("detail_analysis", ""))
             A("")
             A("---")
             A("")
-        A("## 7. Narrative Chain")
+        A("## 7. Summary Chain")
         A("")
         for i, s in enumerate(submits, 1):
-            A(f"{i}. {s.get('input', {}).get('narrative_update', '')}")
+            A(f"{i}. {s.get('input', {}).get('summary', '')}")
         A("")
         A("---")
         A("")
         A("## 8. Hop Sequence")
         A("")
-        A("| # | Focus | Verdict | Badge | narr | detail | ms | in | out |")
+        A("| # | Focus | Verdict | Badge | summary | detail | ms | in | out |")
         A("|---|---|---|---|---:|---:|---:|---:|---:|")
         for i, s in enumerate(submits, 1):
             inp = s.get("input", {})
             m = s.get("_meta", {})
             A(
                 f"| {i} | {name_of(inp.get('focus_node_id', ''))} | {inp.get('verdict', '')} | "
-                f"{inp.get('badge_label', '') or '-'} | {len(inp.get('narrative_update', ''))} | "
+                f"{inp.get('badge_label', '') or '-'} | {len(inp.get('summary', ''))} | "
                 f"{len(inp.get('detail_analysis', ''))} | {m.get('durationMs', '?')} | "
                 f"{m.get('inputTokens', '?')} | {m.get('outputTokens', '?')} |"
             )
@@ -583,7 +581,7 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
         "forbidden_leaked": forb_leaked if case["forbidden"] else None,
         "source_coverage": f"{src_covered}/{len(case['source_nodes'])}" if case["source_nodes"] else None,
         "avg_detail_chars": round(avg_det, 1),
-        "avg_narrative_chars": round(avg_narr, 1),
+        "avg_summary_chars": round(avg_summary, 1),
     }
     return "\n".join(L), summary
 
@@ -686,9 +684,7 @@ def write_snapshots(run_dir: Path, test_id: str, merged: dict) -> None:
         "visited_count": len(sm.get("visited", []) or []),
         "removed_count": len(sm.get("removedSet", []) or []),
         "slotCount": (sm.get("memory") or {}).get("slotCount"),
-        "synthesis_narrative_length": ((sm.get("memory") or {}).get("shortMemory") or {}).get(
-            "synthesisLength"
-        ),
+        "userQuestion": (sm.get("memory") or {}).get("userQuestion"),
     }
     (snap_dir / "sm-state-trimmed.json").write_text(json.dumps(trimmed, indent=2), encoding="utf-8")
 

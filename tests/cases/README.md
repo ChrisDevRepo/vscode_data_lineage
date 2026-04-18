@@ -12,7 +12,7 @@ Rubric dimensions (0-3 each, 12 total):
 3. **Question-Answering** — the enrich_view actually answers the user's question
 4. **Type-Appropriate Detail** — category-matched content (formulas for business, column tables for CT, hints for perf, etc.)
 
-**Memory-quality pre-gate:** if `detail_analysis` averages < 400 chars/node, or `narrative_update` averages < 150 chars/hop, the enrich_view score is capped at 6/12 because the memory is too thin to produce rich output.
+**Memory-quality pre-gate:** if `detail_analysis` averages < 400 chars/node, or any hop submits an empty `summary`, the enrich_view score is capped at 6/12 because the archive is too thin to produce rich output.
 
 Full rubric + mechanical checks + terminology convention: `EVAL-RUBRIC.md`.
 

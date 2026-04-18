@@ -263,6 +263,12 @@ export class LineageParticipant {
       const repeatGuard = new RepeatRejectGuard();
       let lastProgressLine = '';
 
+      const drainPendingUserNotices = () => {
+        if (sess.pendingUserNotice.size === 0) return;
+        for (const notice of sess.pendingUserNotice) stream.markdown(`\n\n> ${notice}\n\n`);
+        sess.pendingUserNotice.clear();
+      };
+
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
         const tRoundStart = Date.now();
@@ -306,6 +312,7 @@ export class LineageParticipant {
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
+          drainPendingUserNotices();
           return;
         }
 
@@ -359,6 +366,8 @@ export class LineageParticipant {
         }
 
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
+
+        drainPendingUserNotices();
 
         // Abort on 3 consecutive identical failures to avoid wasting the round budget on loops.
         for (const call of toolCalls) {
@@ -508,8 +517,10 @@ export class LineageParticipant {
       const hasPartial = finalGraph?.partial === true;
       if (hasPartial && finalGraph) {
         const cov = finalGraph.partialCoverage;
-        this.logger.info(`Partial result stored — ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes analyzed (cap hit before completion)`);
-        stream.markdown(`\n\n⚠ Exploration incomplete — analyzed ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes before the round cap. Use "Show in Graph" to render the partial result.`);
+        const capHit = roundCount >= MAX_ROUNDS;
+        const reason = capHit ? `hit the ${MAX_ROUNDS}-round safety cap` : `stopped early before all nodes were analyzed`;
+        this.logger.info(`Partial result stored — ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes analyzed (${capHit ? 'cap hit' : 'early stop'})`);
+        stream.markdown(`\n\n⚠ Exploration incomplete — analyzed ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes; the run ${reason}. Use "Show in Graph" to render the partial result.`);
       }
 
       if (this.getActivePanel() && (smComplete || hasPartial)) {

@@ -6,7 +6,7 @@
  * types from smBase) so it can be unit-tested without a live engine.
  */
 
-import type { DetailSlot, ShortMemory } from './memoryManager';
+import type { DetailSlot } from './memoryManager';
 
 
 /**
@@ -81,23 +81,21 @@ export interface HopContext {
   working_memory?: unknown;
 }
 
-/** 
+/**
  * Data structure used by the AI to submit its findings after analyzing a hop.
  */
 export interface HopSubmission {
   /** ID of the node that was analyzed. */
   focus_node_id: string;
-  /** Incremental update to the shared narrative (Short Memory). */
-  narrative_update: string;
-  /** High-fidelity technical analysis for storage in Detail Slots. */
+  /** High-fidelity technical analysis stored in the detail archive. */
   detail_analysis: string;
-  /** A concise, human-readable summary of the hop's findings. */
+  /** One-line digest of the findings — echoed in future hops via `all_summaries`. */
   summary: string;
   /** The relevance verdict for the focus node. */
   verdict: Verdict;
   /** List of new nodes the AI wishes to add to the exploration agenda. */
   route_requests?: RouteRequest[];
-  /** If `true`, signals that the exploration goal has been met early. */
+  /** Reserved. The engine owns completion in sliding-memory mode; setting it is rejected. */
   complete?: boolean;
   /** Optional UI label (badge) to apply to this node in the final view. */
   badge_label?: string;
@@ -183,8 +181,6 @@ export interface SmResult {
   edges: Array<[string, string, string]>;
   /** AI-suggested grouping of nodes into narrative sections. */
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
-  /** The final state of the shared narrative memory. */
-  short_memory: ShortMemory;
   /** High-fidelity analysis artifacts for each visited node. */
   detail_slots: DetailSlot[];
 }

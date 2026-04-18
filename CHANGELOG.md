@@ -1,80 +1,27 @@
 # Changelog
 
-## [Unreleased]
-
-Post-refactor hardening sprint closing the gaps from the unified NavigationEngine architecture (bf51fa9). Stabilization phase declared ended 2026-04-17.
-
-### Removed
-- **`premature_complete` coverage-floor guard** — rejected `complete=true` in SM mode unless `visited/scope ≥ 80%`. On variant-heavy neighborhoods (e.g. a `CadenceWorker` origin with 20 `spCadenceRule_*` siblings) the threshold was unreachable, the AI retried the shortcut up to ~20 times, and sessions wedged. Replaced by the drain contract: in SM sliding-memory mode the engine auto-completes when the agenda empties via verdicts; the AI never sets `complete=true`.
-- **`detail_too_thin` length-floor guard** — required `detail_analysis ≥ max(400, 25% × ddl_chars)` per hop. Was paired with `premature_complete` to "force effective memory use"; without a shortcut to guard against, this is redundant and blocked legitimate short notes on variant siblings. Removed.
-- **`submit_findings.complete` field in SM mode** — the tool schema now documents `complete: true` as inline-only. In SM sliding-memory mode the parameter is silently ignored; the agenda drains via `relevant` / `pass` / `irrelevant` verdicts and the engine auto-completes.
-
-### Changed
-- **SM sliding-memory completion is drain-only.** `submit_findings` returns `{ ok: true, done: true, result }` in the same call that drains the last agenda item. The participant no longer needs a separate `complete=true` path for SM; the signal is carried in-band. Inline mode continues to honor `complete=true` for one-shot sessions.
-- **Error-code rename** — SM rejection codes aligned to a categorical shape: `blackboard_too_long` → `validation_error` (with `field: 'narrative_update'`); `orphan_rejection` → `prune_would_orphan_noted`; `cascade_too_wide` → `prune_cascade_too_wide`. Rationale: group prune-guard failures under a `prune_*` prefix and move length-limit failures under a generic `validation_error` with structured `field` + `detail`, matching standard REST error shape.
-
-### Added
-- **`RepeatRejectGuard`** (`src/ai/repeatRejectGuard.ts`) — session-level idempotency belt. Tracks `stableHash({toolName, input})` and a consecutive-error counter; any success resets. When the same tool call fails three times in a row, the participant emits a typed `session_aborted_repeat_reject` envelope (`src/ai/smErrors.ts → RepeatRejectAbort`) and terminates the round loop cleanly. User sees a chat-visible reason. The existing `dataLineageViz.ai.maxRounds` setting (default 50) remains the absolute round-cap. Unit tests in `tests/unit/repeat-reject-guard.test.ts` (5 pins).
-
-### Added
-- **Cascade-prune for `irrelevant` verdict** — `NavigationEngine.submitFindings` now honors `verdict: 'irrelevant'` with orphan-rejection + 50%-cascade guards. Prunes utility/logging nodes from the exploration agenda so the AI focuses on business-logic paths. Previously the verdict field was ignored.
-- **4 restored AI tools** — `lineage_get_object_detail`, `lineage_run_analysis`, `lineage_search_ddl`, `lineage_get_ddl_batch` were declared in `package.json` but never wired. Now registered via `vscode.lm.registerTool()` so the AI can actually invoke them.
-- **Guard tests** — `tests/unit/ai-tool-registration.test.ts` locks manifest ↔ registration in sync. `tests/unit/navigation-engine-cascade.test.ts` exercises the cascade-prune contract end-to-end.
-- **Concrete engine contract types** — New `src/ai/smTypes.ts` (`HopContext`, `HopSubmission`, `SmResult`, `RouteRequest`, `SubmitResult`, `HopLogEntry`) replaces `any` returns on `IHopStateMachine`. `mode` is now `public readonly` on the interface.
-
-### Fixed
-- **Security: closed 3 Dependabot alerts** — bumped `dompurify` override to `^3.4.0` and added `serialize-javascript` override to `^7.0.5` (closes RCE + DoS in transitive dev deps). `npm audit` now reports 0 vulnerabilities.
-- **`toggleOverviewMode` command is no longer a no-op** — previously dispatched to unregistered `dataLineageViz.internal.toggleOverview`; now posts `toggle-overview` directly to the active panel.
-- **vitest hook glob + relative paths** — `vitest.config.ts` pointed at the old `test/hooks/**` directory; 5 hook test files used 2-level-up relative imports after being moved 3 levels deep. `npm run test:hooks` now runs 101/101.
-- **Silent catches in `lineageParticipant.ts` and `messageHandlers.ts`** — four `catch {}` / `.catch(() => {})` blocks replaced with debug log lines per CLAUDE.md "No Silent Failures" rule.
-- **Panel-scoped stats/platform caches** — `statsConnectionUri`, `allObjectsCache`, `platformInfoCache` were module-scope and leaked across panels. Moved into the `createMessageHandlers` factory closure; cleaned up on panel dispose.
-
-### Changed
-- **Hand-rolled BFS replaced with `bfsFromNode`** — `NavigationEngine.computeBfsScope` now uses `graphology-traversal` per the project rule in `.claude/rules/vscode.md`.
-- **Dead demo-reload branch removed** — `openPanel` no longer sends an orphan `auto-visualize-start` message on existing panels.
-- **Dead code swept** — unused imports in `smBase.ts`; unused methods in `memoryManager.ts` (`setPendingQuestions`, `getSlot`); legacy `storeCtResult` in `session.ts`; empty `deactivatePanels` shim.
-- **Docs aligned** — `.claude/rules/ai.md`, `.claude/rules/architecture.md`, CLAUDE.md rewritten for the unified NavigationEngine + 10-tool set. Stale BB/CT/Dep / 13-tool / Type 1-2-3 terminology removed.
-- **Eval grading is now output-quality-first** — new `tests/cases/EVAL-RUBRIC.md` replaces hop-count / error-count metrics with a 4-dimension 12-point rubric (Correctness / Completeness / Question-Answering / Type-Appropriate Detail) + memory-quality pre-gate. Anti-overfitting discipline: 13-case training / 8-case validation split, multi-category validation gate, multi-dacpac gate before committing prompt changes.
-- **Sliding-memory wipe now checks ALL submit_findings in a round** — previously `.find()` picked only the first; parallel partial failures lost error feedback and the AI gave up. Now `.filter()` — any error in the round preserves history so the AI can self-correct. (Regression fix from bb-q1-employee parallel-submit scenario.)
-- **Navigation prompt now preserved across sliding-memory wipes** — previously the nav prompt (mode rules, MEMORY PROTOCOL, routing rules, classification) was pushed once at active-phase entry and silently dropped on the first sliding wipe. Every subsequent hop ran without mode guidance. Now captured into `navPrompt` and re-pushed inside every sliding wipe. Structural bug separate from the parallel-submit fix.
-- **Prompt architecture documented** — new `docs/AI_PROMPT_ARCHITECTURE.md` codifies what belongs in system prompt vs navigation prompt vs synthesis prompt, with citations to LangChain, Anthropic Claude docs, and MemGPT. Referenced by both `/prompt-change` and `/eval-loop` skills.
-
-### Eval runs captured this sprint (Haiku against AdventureWorks2025_AI)
-
-| Test | Phase | Result | Notes |
-|------|-------|--------|-------|
-| bb-q1-employee | pre-fix | PASS | 12 hops, 11/11 required nodes, 4 rich sections (450-600 chars each) |
-| disc-q1-schemas | pre-fix | PASS | Classic-only path (no SM), 8 schemas found |
-| bb-inline-q3-errorlog v1 | pre-fix, thin agent prompt | PASS-but-thin | 2 hops, 1 section @ 54 chars, missed uspPrintError |
-| bb-inline-q3-errorlog v2 | pre-fix, structured agent prompt | PASS | 6 hops, 2 sections @ 1200+1800 chars, 5 notes, cascade-pruned uspPrintError |
-
-The v1→v2 delta (~30× section text) came from agent-prompt structure, not extension code — demonstrating that the rubric's memory-quality pre-gate is the right leverage point.
-
-Structural code fixes landed after v2 (nav-prompt preservation, sliding-memory error preservation) not yet validated in eval — full regression baseline scheduled for next session.
-
-## [0.9.9] - 2026-04-16
+## [0.9.9] - 2026-04-18
 
 ### Improved
-- **Modernized Logging Engine** — Refactored the internal logging system to use a state-of-the-art OOP architecture. This improves maintenance and consistency while preserving all existing debug and diagnostic outputs.
-- **Modular Extension Bridge** — Decomposed the complex UI-bridge logic into specialized modules, improving structural clarity and maintainability.
-- **Enhanced Stability & Performance** — Significant internal updates to the communication layer and graph engine. The app is now more reliable, faster when filtering large databases, and protected against unusually complex SQL patterns.
-- **Documentation Overhaul** — Updated project blueprints and developer contexts to align with the new multi-tier testing framework.
+- **Modernized Logging Engine** — Refactored the internal logging system to use a state-of-the-art OOP architecture. Preserves all existing debug and diagnostic outputs.
+- **Modular Extension Bridge** — Decomposed the UI-bridge logic into specialized modules for clearer structure and easier maintenance.
+- **Enhanced Stability & Performance** — Significant internal updates to the communication layer and graph engine. More reliable, faster on large databases, protected against unusually complex SQL patterns.
+- **Documentation Overhaul** — Project blueprints and developer contexts aligned with the multi-tier testing framework.
 
 ### Added
-- **Incremental AI view updates** — You can now ask the AI to add or remove specific tables and update descriptions in an existing graph without restarting the entire analysis.
-- **Smarter AI session protection** — Added automatic cleanup for old AI sessions (2-hour timeout) and a confirmation warning if you try to start a new analysis while one is already active.
-- **Improved AI "Memory"** — The AI now better remembers its initial findings from the start of a conversation, leading to more consistent results in complex, multi-step traces.
+- **Incremental AI view updates** — Ask the AI to add or remove specific tables and update descriptions in an existing graph without restarting the entire analysis.
+- **Smarter AI session protection** — Automatic cleanup for old AI sessions (30-minute timeout). If a new exploration is started while a previous one (from a different chat) is still running, the previous findings are discarded and a notice appears directly in the chat — no blocking dialogs.
+- **One-shot exploration contract** — `start_exploration` is now strictly one-shot per chat turn. Prompt rules and engine error hints prevent the AI from accidentally wiping in-progress findings by re-calling `start_exploration`; after a completion rejection, the queued neighbors are served automatically on the next hop.
 
 ### Fixed
-- **Test Suite Fixtures** — Resolved regressions in the unit test suite caused by stale fixture references, ensuring 100% test coverage against current dacpac models.
-- **Table Statistics Routing & Timeout** — Corrected message routing between the extension host and detail panel to ensure Quick/Standard stats results are displayed. Added a robust timeout mechanism using the `tableStatistics.queryTimeout` setting to prevent hangs on slow connections.
-- **Clean slate for new chats** — Starting a new chat window now correctly resets the AI state, preventing buttons or findings from old conversations from appearing.
-- **Improved "Show in Graph" button** — The button now only appears when a full AI analysis is ready, and it is correctly hidden after simple table lookups.
-- **Smart schema filtering** — The AI can now analyze objects outside your active filters when asked, with better validation to ensure requested schemas exist in your model.
-- **Enriched state machine dumps** — Debugging information now includes unique session IDs and timestamps for easier troubleshooting.
+- **Table Statistics Routing & Timeout** — Corrected message routing between the extension host and detail panel so Quick/Standard stats results are displayed. Added a robust timeout via the `tableStatistics.queryTimeout` setting.
+- **Clean slate for new chats** — Starting a new chat window correctly resets the AI state, so buttons and findings from old conversations no longer appear.
+- **Improved "Show in Graph" button** — Appears only when a full AI analysis is ready; hidden after simple table lookups.
+- **Smart schema filtering** — The AI can analyze objects outside your active filters when asked, with validation to ensure requested schemas exist.
+- **Enriched state machine dumps** — Debugging information includes unique session IDs and timestamps for easier troubleshooting.
 
 ### Changed
-- **Internal architecture cleanup** — Refactored AI session management for better stability and more reliable state handling across different chat windows.
+- **Internal architecture cleanup** — Refactored AI session management for better stability and more reliable state across chat windows.
 - **Legacy Migration extraction** — Moved obsolete workspace state migration logic out of the extension critical path.
 
 ## [0.9.8] - 2026-04-12

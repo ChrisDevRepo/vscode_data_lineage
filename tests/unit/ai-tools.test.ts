@@ -58,9 +58,9 @@ async function testGroundedRouterSchema() {
   const submitTool = tools.find(t => t.name === 'lineage_submit_findings') as Record<string, any>;
   const props = submitTool.inputSchema.properties;
   
-  assert('narrative_update' in props, 'submit schema has narrative_update (The Blackboard)');
-  assert('detail_analysis' in props, 'submit schema has detail_analysis (The Hard Drive)');
-  assert('route_requests' in props, 'submit schema has route_requests (The Router)');
+  assert('detail_analysis' in props, 'submit schema exposes the detail archive');
+  assert('summary' in props, 'submit schema exposes the one-line summary');
+  assert('route_requests' in props, 'submit schema exposes route_requests');
   
   const routeProps = props.route_requests.items.properties;
   assert('question' in routeProps, 'route_requests items require a specific question');

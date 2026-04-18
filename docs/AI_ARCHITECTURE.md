@@ -13,43 +13,24 @@ This guide is for Super Power Users who want to understand the conceptual framew
 ### Execution Model: Inline vs. State Machine (SM)
 The system automatically chooses the delivery strategy based on the complexity of the investigation.
 
-| Mode | Threshold | Context Strategy | Short Memory | Reasoning Capability |
+| Mode | Threshold | Context Strategy | Per-Hop Memory | Reasoning Capability |
 | :--- | :--- | :--- | :--- | :--- |
-| **Inline Mode** | Fits budget (< 10 nodes) | **One-Shot**: Full DDL and columns for all nodes are provided simultaneously. | **None**: The AI sees the "full picture" immediately. | **Holistic**: Turn-zero reasoning and logical grouping. |
-| **SM Mode** | Exceeds budget | **Local-Neighborhood (GraphRAG)**: Only the focus node's DDL + the detailed analysis of its immediate (1-hop) neighbors are provided per round. | **Incremental Blackboard**: A single, dense narrative synthesis. | **Segmented**: High-fidelity local edge reasoning, requires a final Phase 3 for holistic reasoning. |
+| **Inline Mode** | Fits budget (< 10 nodes) | **One-Shot**: Full DDL and columns for all nodes are provided simultaneously. | **None** — the AI sees the full picture immediately. | **Holistic**: Turn-zero reasoning and logical grouping. |
+| **SM Mode** | Exceeds budget | **Focus + auto-delivered summaries**: the current node's DDL plus every prior hop's one-line summary. | **`all_summaries`** — cumulative, unbounded, system-managed. | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
 
-### Memory Tiering (SM Mode)
-To solve the token explosion problem inherent in large graphs while preserving the high-fidelity reasoning required for data lineage, the SM Mode utilizes a **Two-Tier Memory Model**:
-1. **Short Memory (Blackboard)**: A length-capped, incrementally updated global narrative of the business logic. Injected in full every hop.
-2. **Detail Memory (Archive)**: The AI's full technical analysis (SQL transforms, math formulas) for every analyzed node. Stored in `AiMemoryManager.detailSlots` as the single source of truth. Exposed in two modes:
-   - **Inside mode (per hop)**: a budget-bounded slice — "local detail context" — is injected alongside the focus DDL. See [Working-Set Selection](#working-set-selection-sm-mode) below.
-   - **Outside mode (Phase 3 synthesis)**: the full detail archive is delivered for holistic reasoning and correction. See `AiMemoryManager.getResult()`.
+### Memory Model (SM Mode)
+SM mode preserves the 0.9.8 design: **storage + delivery + execution** only — no filtering, no ranking, no content decisions. Two stores back every session:
 
-#### Working-Set Selection (SM Mode)
-Per-hop DetailSlot delivery is driven by a single policy, independent of `SmMode`, implemented in `src/ai/workingSet.ts → selectWorkingSet()`.
+1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical analysis per node, written in `submit_findings.detail_analysis`. Never compressed. Exposed at synthesis via `AiMemoryManager.getResult()`.
+2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — the `WorkingMemory` snapshot delivered at every hop:
+   - `user_question` — echoed verbatim so the root question survives sliding-history eviction.
+   - `all_summaries: Array<{ nodeId, summary }>` — every prior hop's `submit_findings.summary`, in visit order, **unbounded**. No token budget, no path/neighbor prioritization. The model decides which summaries matter for the current hop.
+   - `pending_questions` — self-ask entries the model posted via `route_requests` but has not yet visited.
+   - `checklist` — `{ current_hop, noted, total, open, coveragePct }` for drain signaling.
 
-**Inputs**: `{ focusId, originId, graph }`, the full DetailSlot map, and a token budget (default `WORKING_SET_TOKEN_BUDGET = 4000`, ≈ 25% of a 16 K context).
+No AI-managed narrative string. No `blackboard`. No `local_detail_context` slice. The model reads the snapshot and the focus node's DDL; it writes a fresh analysis + one-line summary; the engine appends the summary to `all_summaries` for the next hop.
 
-**Selection tiers**:
-1. **PathFrame** — slots on the shortest `origin → focus` path (excluding focus). Always included; may overspend the budget. Preserves structural continuity on the current branch.
-2. **BranchLocal (near)** — 1-hop neighbors of focus (bidirectional), minus path and focus.
-3. **BranchLocal (far)** — 2-hop neighbors of focus, minus path, focus, and near.
-
-**Budget pack**: path slots are unconditional; near then far fill the remaining budget, each skipped if adding would cross it. Within each tier, nodes are sorted by id for determinism.
-
-**Emission order**: `[path → near → far]` — breadcrumbs first, then nearest evidence.
-
-**Three failure modes fixed** (versus the previous static 1-hop × 5-cap policy):
-
-| Topology | Old behavior | New behavior |
-|---|---|---|
-| Daisy chain `A→B→C→D→E`, focus `C` | Only `{B, D}` delivered (1-hop). Path context lost. | `[A, B, D, E]` — path prefix + 2-hop tail. |
-| Hub (focus has 50 fat neighbors) | Arbitrary 5 kept, 45 evicted. | Budget caps output at ~3–15 depending on slot size; path always retained. |
-| Branch-jump (focus moves to different subtree) | Last 5 visited followed focus — leaked abandoned-branch context. | PathFrame recomputes from new focus; abandoned branch falls out of the window. |
-
-**Grounding**: Working Set Theory (Denning, 1968); MemGPT two-tier memory (Packer et al., 2023); GraphRAG local-mode retrieval (Edge et al., Microsoft 2024).
-
-**Applies only in SM mode.** Inline mode delivers the full detail archive at synthesis, so no per-hop selection is performed (`NavigationEngine.getHopContext` passes `undefined` to `getWorkingMemory`).
+**Grounding**: simple per-hop delivery matches the original 0.9.8 behavior and the project's SM-never-truncates principle. Earlier iterations attempted MemGPT-style cumulative narratives and token-budget working sets; both were abandoned because the AI frequently compressed, paraphrased, or lost information when asked to manage memory, and because filtering violated the stored design principle.
 
 ### Exploration Modes (`SmMode`)
 The same `NavigationEngine` serves three personas, selected by the mode of the active session:
@@ -90,20 +71,20 @@ Every hop, `NavigationEngine.getHopContext()` returns a single JSON object deliv
 | **Focus DDL** | `focus_node` | `{id, schema, name, type, ddl, columns, fks}` for the current node |
 | **Local metadata** | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, fks, hasDdl}` — enables grounded routing decisions without fetching |
 | **Sub-goal** | `current_task` | The grounded task driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
-| **Short Memory** | `working_memory.blackboard` | Full cumulative narrative; AI overwrites it each hop via `narrative_update` |
+| **User question** | `working_memory.user_question` | The original user question, echoed verbatim every hop |
+| **Auto-delivered memory** | `working_memory.all_summaries` | `Array<{nodeId, summary}>` — every prior hop's one-line summary, in visit order, unbounded |
 | **Pending** | `working_memory.pending_questions` | Neighbors the AI deferred for later hops |
 | **Progress** | `working_memory.checklist` | `{current_hop, noted, total, open, coveragePct}` — `open = total − noted`, the per-hop count of un-analyzed nodes in scope |
-| **Detail Memory (slice)** | `working_memory.local_detail_context` | DetailSlots per the inside-mode policy (see Memory Tiering) |
 | **The Map** | `working_memory.topological_map` | `{navigation_path, visited_nodes, current_focus, agenda}` — the deterministic structural grounding |
 
 The hop payload is designed to survive sliding-memory wipes: `sm_status`, `agenda_remaining`, and `checklist.open` give the AI the situational awareness it needs to keep draining even when the conversation history has been trimmed to the last turn. Omitting these signals — as earlier iterations did — forces the AI to fall back on acknowledge-the-data prose after each hop, which shows up as a "premature final answer" pattern. The fix is data, not more prose rules.
 
-The user's original natural-language question is **not** re-injected into `current_question` after hop 1. It reaches the model via two paths: (1) the VS Code chat-history messages on every LM call, and (2) verbatim inside the hop-1 `current_question` as `"Root Question: <user text>"` (set at `init`). Long traces that survive sliding-history eviction rely on path (2) + the Blackboard for anti-drift grounding; promoting the root question into `topological_map.root_question` is a cheap future reinforcement.
+The user's original question reaches the model via three paths every hop: (1) `working_memory.user_question` (echoed verbatim by the engine), (2) the VS Code chat-history messages on every LM call, and (3) `current_task` on hop 1 as `"Root Question: <user text>"`. Sliding-history wipes preserve paths (1) and (3) because they live in tool results, not user messages.
 
 ### The Three Lifecycle Phases
 1. **Discovery (Initiation)**: The AI maps the starting point and scope. The engine seeds the initial Agenda.
-2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. In each round, the AI receives The Blackboard, The Map, and The Metadata.
-3. **Holistic Synthesis & Presentation**: Once the agenda is empty, the AI uses the **Archive (Detail Memory)** to build the final document and generate visual sections/badges.
+2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. Each hop it receives `all_summaries`, the Map, the focus DDL, and neighbor metadata.
+3. **Holistic Synthesis & Presentation**: Once the agenda drains, the AI uses the full Detail Archive to write the chat prose + `enrich_view` sections.
 
 ### State Diagram: AI Navigation Engine
 
@@ -152,8 +133,9 @@ A single `NavigationEngine` handles all modes (Blackboard, Column Trace, Depende
 
 ### Singleton Session Model
 One `AiSession` per extension instance.
-- **User-facing safety**: Explicit user acknowledgement is required before a new exploration wipes an active one.
-- **Auto-reset**: Sessions auto-reset after 1 hour of inactivity.
+- **Cross-session guard (chat-visible, non-modal)**: Each `start_exploration` stamps `engine.sessionId = sess.id`. A new `start_exploration` from a *different* session (`sess.id` rotates on every empty-history chat turn) wipes the prior SM silently and queues a one-line notice on `sess.pendingUserNotice`, which `runWithTools` drains as a `stream.markdown` blockquote after the tool round. No `confirmationMessages` modal, ever — blocking dialogs are forbidden by design.
+- **Same-session re-call is a hard error, not a wipe**: `start_exploration` is strictly one-shot per turn. Re-calling it within the same session returns `{ error: 'already_started', hint: '…' }` without touching the live SM, so the AI cannot accidentally wipe in-progress findings (e.g. after a `complete_rejected` verdict — the queued neighbors are served on the next `submit_findings`).
+- **Auto-reset**: Sessions auto-reset after 30 minutes of inactivity (`STALE_AFTER_MS`), or immediately when the prior SM has reached `complete`. Stale resets are silent — no notice.
 - **Result-graph preservation across new chat**: When VS Code creates an empty-history chat thread and the session has a `resultGraph` less than 5 minutes old, the graph is preserved across the reset so follow-up prompts like *"Show the trace result in the graph"* can still render. Transient state (`stateMachine`, agenda) is always cleared — only the completed / partial result survives the window.
 
 ### Column validation scope

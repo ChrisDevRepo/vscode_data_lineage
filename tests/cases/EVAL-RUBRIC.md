@@ -13,16 +13,16 @@ Hop counts, run times, and error counts are **operational metrics**, not quality
 
 ## Memory-Quality Pre-Gate (THE key)
 
-The `enrich_view` output is assembled from the engine's detail memory (`detail_slots[].analysis`, `summary`, `badge_label`, `note_caption`) and short memory (`narrative_update` chain). **If the memory content is thin, the output will be thin — no amount of `enrich_view` polish recovers it.**
+The `enrich_view` output is assembled from the engine's detail archive (`detail_slots[].analysis`, `summary`, `badge_label`, `note_caption`). **If the archive is thin, the output will be thin — no amount of `enrich_view` polish recovers it.**
 
-Before scoring the enrich_view, audit memory depth:
+Before scoring the enrich_view, audit archive depth:
 
 | Metric | Threshold | Why it matters |
 |---|---|---|
 | Avg `detail_analysis` chars per noted node | ≥ 400 | Short analysis = terse notes + thin section text |
 | SQL evidence citations per noted node | ≥ 1 (e.g. `INSERT ...`, `SELECT ... FROM ...`, CASE expression) | Grounds claims in actual DDL |
-| Avg `narrative_update` chars per hop | ≥ 150 | Cross-hop continuity; shorter = AI loses the thread |
-| Hops with empty `narrative_update` | 0 | Each hop must contribute to the Blackboard |
+| Avg `summary` chars per hop | ≥ 40 | Cross-hop continuity via `working_memory.all_summaries` |
+| Hops with empty `summary` | 0 | Empty summaries break the cross-hop thread |
 | `badge_label` present on `relevant` verdicts | 100% | Drives the section chips in enrich_view |
 
 If any pre-gate fails: **FLAG `memory-thin`. The enrich_view score is capped at 6/12 regardless of polish.**

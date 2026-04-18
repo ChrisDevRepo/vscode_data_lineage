@@ -1,195 +1,191 @@
 /**
- * Unified System Prompts for the Navigation Engine.
+ * Mode-scoped prompts for the navigation engine.
  *
- * Implements a "Universal Markdown" structure for consistent performance across
- * all major models (GPT-4o, Claude, Gemini).
- *
- * CONCEPTS:
- * - MAP: System-provided topological grounding and navigation path.
- * - BLACKBOARD: AI-maintained rolling executive synthesis.
- * - ARCHIVE: AI-written technical deep-dive evidence.
- * - HYPOTHESIS: Mandatory AI-generated grounded reason for every hop.
- *
- * Single source of truth for output shape: `assets/aiOutputTemplates.yaml`,
- * injected into the system prompt as `### AI OUTPUT TEMPLATES`. This file
- * references those templates rather than duplicating them — when the user
- * edits the yaml, both hop-time capture and synthesis-time output honor it.
+ * @remarks
+ * Composed from shared blocks so guidance that applies to every mode stays in one place.
+ * Framing matches the VS Code chat-participant convention: the state machine is a tool the
+ * model calls; the model is a domain responder, not a persistent agent. Keep the prompts
+ * focused on the task (analyze the focus node, write the archive, route neighbors) — the
+ * engine handles completion, cascade-prune, and memory delivery.
  */
 
 import type { SmMode } from './smTypes';
 
+
 const BLOCK = {
-  classification:
-    '### NODE CLASSIFICATION\n' +
-    '- **relevant**: Node performs DOMAIN business logic (allocations, EV calculations, reconciliation, reporting aggregations, SCD historization, etc.). Store findings and set `badge_label` + `note_caption`.\n' +
-    '- **pass**: Node is a pure wire (SELECT *, identity view, passthrough SP). Use to maintain paths with zero logic change.\n' +
-    '- **irrelevant**: Utility / logging / generic helpers with NO domain meaning. Examples: logging procs (`LogMessage`), row-count helpers (`spLastRowCount`), generic math (`udfDivideAsDec`), string builders (`udfCreateKeyValuePair`), timestamp converters (`udfConvertUnixTS`). Marking irrelevant cascade-prunes. Being a procedure or UDF does NOT automatically make it relevant — judge by whether the logic is domain-specific or reusable utility.',
+  /** Step 1 — every hop starts with DDL/column analysis. */
+  readDdl:
+    'Read the focus node DDL/columns carefully.',
 
-  workflow:
-    '### YOUR WORKFLOW\n' +
-    '1. **ANALYZE**: Deep-dive into focus DDL and columns with high technical rigor.\n' +
-    '2. **SYNTHESIZE**: Update the **Blackboard** narrative with your cumulative insights.\n' +
-    '3. **ARCHIVE**: Commit the technical truth (formulas, SQL) to the **Detail Archive** AND set `badge_label` (2-4 word role tag, e.g. "Country Allocation", "EV Case 1", "Historization") + `note_caption` (one-line what-this-does for the graph view). These drive the enriched view\'s badges and notes — omitting them produces a bare graph with no labels.\n' +
-    '4. **ROUTE**: Propose next hops with validated **Technical Hypotheses**.',
+  /** Node classification shared across all modes. */
+  verdictCategories:
+    'NODE CLASSIFICATION (three categories):\n' +
+    '- relevant (BB) / trace (CT): node has business logic, transforms, or answers the question → full analysis + badge_label.\n' +
+    '- pass: node is in the path but no transforms (SELECT *, staging, identity view, variant sibling of an archetype) → summary only, no badge_label.\n' +
+    '- irrelevant (BB) / prune (CT): utility, logging, or helpers with no domain meaning → cascade-pruned from the graph.',
 
-  memoryProtocol:
-    '### MEMORY TIERING PROTOCOL (MemGPT-style: Short / Long / Map)\n' +
-    '1. **THE BLACKBOARD** (Short Memory, CUMULATIVE). Write via `narrative_update` each hop. This field OVERWRITES the stored blackboard — so you must submit the FULL integrated narrative every hop, not just the new hop\'s contribution. Read `working_memory.blackboard` (the current state), INTEGRATE the new hop\'s insights, and submit the expanded version. Growth pattern: hop 1 ≈ 300 chars, hop 5 ≈ 1500 chars, hop 10 ≈ 3000 chars (hard cap 8000). If your `narrative_update` is the same length across hops you are ERASING prior work — protocol violation. Style: dense business logic only, no topology ("I visited X") — the Map already has that.\n' +
-    '2. **THE ARCHIVE** (Long Memory, per-node hard drive). Write to `detail_analysis` for every `relevant`/`pass` verdict. This is the ONLY source at synthesis — raw SQL access is revoked after each hop. MINIMUM length is enforced proportionally to the focus DDL (floor = max(400, 25% of DDL)), so a 4000-char SP needs ≥1000 chars of analysis. MAXIMUM is unbounded — thicker is better. 5-block structure required:\n' +
-    '   - **Business Purpose**: one sentence naming what the node does for the business (not "stores data", not "processes information" — name the actual domain role).\n' +
-    '   - **Transforms**: SQL evidence — copy actual INSERT/SELECT/UPDATE/JOIN/CASE/ISNULL/COALESCE expressions; do NOT paraphrase them away. For every computed column, include the LaTeX formula ($expr = ...$) next to the SQL. Multi-step logic → ordered 1./2./3. list. Risk or data quality → ⚠️ prefix.\n' +
-    '   - **Column I/O**: input columns → output columns. Use a markdown table `| Input | Source Column | Transform | Output |` whenever renames or computations occur. Name every column explicitly — "various columns", "several fields", "certain conditions" are banned. If the DDL has 40 columns but only 6 matter to the domain logic, list those 6 with their role; do not list generic metadata columns.\n' +
-    '   - **Relationships**: upstream / downstream in this flow, with role ("reads lookup from", "writes via MERGE to", "triggered by").\n' +
-    '   - **Risks/Notes**: nullability (which columns can be NULL and what happens), precision (decimal scale if it affects money math), edge cases (what happens when `Task_PeriodApprovedUnits = 0`).\n' +
-    '   Question-shape heuristic — if the user asked WHAT the data means, lead each slot with business meaning + formulas in LaTeX + named renames. If they asked HOW the pipeline runs, lead with execution order + join strategies + rebuild pattern. For blended questions, business meaning first. Thin archive = thin final answer. An under-documented hop is a wasted hop.\n' +
-    '3. **THE MAP** (System State): Topological grounding. Provides `navigation_path` (Origin -> ... -> Focus) and the agenda. Don\'t restate — reference only when needed.',
+  /** Step 2 — write the detail archive for this node. */
+  writeFindings:
+    'Write `detail_analysis` for the focus node — document it comprehensively:\n' +
+    '- relevant/trace → full analysis (hard limit 8000 chars). Use the budget: simple passthrough ~300 chars, moderate transform ~1000-2000 chars, complex multi-CTE SP ~3000-6000 chars. Self-contained — written as if documenting this node for a technical reference.\n' +
+    '  Include each aspect present:\n' +
+    '  COLUMNS: key column names, types, constraints (PK/FK/nullable).\n' +
+    '  TRANSFORMS: expressions, CASE/COALESCE, computed columns — quote the SQL fragment.\n' +
+    '  JOINS: join conditions (table.col = table.col).\n' +
+    '  FILTERS: WHERE/HAVING business rules.\n' +
+    '  DATA FLOW: how data enters and leaves (INSERT/SELECT/MERGE/EXEC). Note the loading pattern: full (TRUNCATE+INSERT), incremental, SCD2, MERGE upsert.\n' +
+    '  QUESTION RELEVANCE: how this node answers the user question.\n' +
+    '  OBSERVATIONS: DDL comments, version annotations, performance risks, anti-patterns.\n' +
+    '  Quote SQL verbatim — ground truth for synthesis. Then explain what each expression means in business terms.\n' +
+    '- pass → `summary` only (~100-200 chars): what passes through, from where to where.\n' +
+    '- irrelevant → brief `summary` only.\n' +
+    'Write a one-line `summary` for every hop — it is echoed in future hops via working_memory.all_summaries.',
 
-  routingRulesShared:
-    '### GROUNDED ROUTING (Selection-Inference)\n' +
-    '- **NEVER route blindly**. Every neighbor in `route_requests` MUST have a specific technical hypothesis (the "question").\n' +
-    '- **VALIDATION**: Read the neighbor metadata and explain *why* that node is relevant. Proposing a route without a specific, validated hypothesis is a reasoning failure.',
+  /** Badge + note metadata drive the graph UI. */
+  badgeAndNote:
+    'badge_label (2-4 words): semantic ROLE tag — e.g. "Source", "Transform", "Staging", "Output", "Validation", "Aggregation".\n' +
+    'SELECTIVITY: only assign badge_label to nodes with distinct functional roles. Passthrough nodes skip it.\n' +
+    'GROUPING: nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
+    'note_caption (~100-200 chars): one-line what-this-does. Write the REASONING — what you learned, what it means for the question, what is still open.',
 
-  routingRulesBB:
-    '### ROUTING IN THIS SESSION\n' +
-    '- This session is a **blackboard** exploration — node-level analysis only. No column-level tracking.\n' +
-    '- For `route_requests`, only `nodeId` + `question` apply. The `columns` field is not part of this session and must be omitted; populating it has no effect.',
+  /** Self-ask — answer your own question from the previous hop. */
+  selfAsk:
+    'The `current_task` field contains the sub-question for this hop — answer it in the analysis.',
 
-  routingRulesCT:
-    '### ROUTING IN THIS SESSION\n' +
-    '- This session is a **column trace** — you follow specific columns across renames, aggregations, and transformations.\n' +
-    '- For every `route_requests` entry, set `columns` to the names that exist on the *target* node. If a rename or aggregation drops a column, translate to the target\'s column; if no target column survives, omit `columns` for that entry and rely on the next hop\'s DDL.\n' +
-    '- Column names must exist on the target node (validated against the target\'s DDL). Do not copy source-node column names onto a target UDF, scalar function, or procedure — those have parameters, not columns.',
+  /** Route grounding — shared. */
+  routing:
+    'ROUTING: every entry in `route_requests` needs a specific sub-question ("Does this proc apply the 10% VAT rate?"). Read neighbor metadata and justify each choice — blind routing is a reasoning failure.',
 
-  groundingContract:
-    '### CRITICAL GROUNDING CONTRACT\n' +
-    '- **TRUTH**: If the Blackboard contradicts the current DDL, the DDL is correct. Update the Blackboard immediately.\n' +
-    '- **OBJECTIVE**: Every sub-question for a neighbor must be goal-oriented (e.g., "Check if this proc applies the 10% VAT rate").',
+  /** Verdict a neighbor — CT modes. */
+  verdictNeighbors:
+    'Verdict neighbors via `route_requests` (adds to agenda) or leave unchanged (engine skips). Cascade-prune happens when you verdict a focus node as irrelevant.',
 
-  verdictContract:
-    '### VERDICTS\n' +
-    '- Every agenda item must receive one verdict: `relevant` (analyze), `pass` (visited, no analysis — use for variant siblings of an already-analyzed archetype), or `irrelevant` (cascade-prune). `pass` is always accepted; `irrelevant` may be rejected by orphan / cascade guards (then fall back to `pass`).',
+  /** Column tracking — CT only. */
+  columnTracking:
+    'COLUMN TRACKING: for each `route_requests` entry, `columns` must be the names AS THEY APPEAR in the neighbor, not the output alias in the current node.\n' +
+    'Read the current node DDL to find the source column reference: `SELECT neighbor.SourceCol AS OutputAlias` → trace SourceCol into that neighbor.\n' +
+    'Track renames across hops — each hop may use a different name for the same data.\n' +
+    'SELECTIVITY: trace only columns relevant to the question. When uncertain whether a column carries value to the target: trace. When a column only controls selection: omit.',
+
+  /** Column lineage rule — CT column mode. */
+  columnLineageRule:
+    'COLUMN LINEAGE RULE: read the SELECT expression that produces the target column in the DDL. Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. Omit columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. Multi-input formulas: trace ALL inputs.',
+
+  /** Table node guidance — CT modes. */
+  tableNodes:
+    'TABLE NODES: tables store data, not transform it — verdict a table itself as `pass`. Use route_requests to follow upstream writers (INSERT/UPDATE/MERGE sources).',
+
+  /** Working memory usage — BB. */
+  workingMemory:
+    'WORKING MEMORY: `working_memory.all_summaries` contains every prior hop\'s one-line summary; `working_memory.pending_questions` lists self-asks you have not yet answered. Read them every hop — they keep cross-hop reasoning grounded.',
+
+  /** Completion contract — applies to every mode. */
+  completionContract:
+    'COMPLETION: Every hop call `submit_findings` for the presented focus node. When you have analyzed every direct neighbor of the origin (the user asked about the origin and its neighbors), set `complete: true` on your final submit. The engine verifies — if any direct neighbor of the origin is still unvisited it returns `complete_rejected` with the list (`unvisited_direct_neighbors`, `names`) and promotes them to priority 3 so they are served next; analyze those then retry `complete: true`. Never produce a final answer, chat prose wrap-up, or `lineage_enrich_view` while the loop is still draining — a silent no-tool-call mid-loop truncates the investigation and produces a partial result.\n' +
+    '`start_exploration` is a ONE-SHOT discover→active transition: call it exactly once per turn, never in parallel, never again after the first return. All subsequent hops use `submit_findings`. After `complete_rejected`, the unvisited neighbors are already queued at priority 3 — the next `submit_findings` will present one of them. Calling `start_exploration` again wipes all prior findings and restarts from hop 1.\n' +
+    'Utility / logging / helper nodes (`LogMessage`, `udf*`, `spLog*`, generic math helpers): submit with `verdict: "irrelevant"` — do NOT skip the submit. Irrelevant cascade-prunes the node and advances the agenda. Skipping leaves the engine waiting for findings and ends the investigation early.',
 } as const;
 
+
 /**
- * Constructs the primary navigation prompt for the autonomous agent.
+ * Builds the mode-scoped navigation prompt delivered at the active-phase start.
  *
  * @remarks
- * This prompt establishes the "Map & Router" pattern, defining how the AI should
- * interact with the topological map, manage its internal memory (Blackboard and Archive),
- * and validate its routing decisions through technical hypotheses.
+ * Replaces the MemGPT-style "autonomous agent" framing with 0.9.8's task framing:
+ * the engine presents nodes, the model analyzes them, the engine advances the agenda.
  *
- * It tailors the persona based on whether the focus is on functional business logic
- * (Blackboard mode) or specific column-level data flow (Column Trace mode).
- *
- * @param mode - The exploration mode ('blackboard', 'column_trace', or 'dependency').
- * @returns A structured markdown string containing the role, workflow, and grounding protocols.
+ * @param mode - The exploration mode (`blackboard`, `column_trace`, or `dependency`).
+ * @returns A markdown string containing classification rules, per-hop workflow, and routing guidance.
  */
 export function buildNavigationPrompt(mode: SmMode): string {
-  const modeHeader = mode === 'column_trace'
-    ? '# ROLE: EXPERT DATA LINEAGE ANALYST (Column Focus)'
-    : mode === 'dependency'
-    ? '# ROLE: EXPERT STRUCTURAL ANALYST (Dependency Focus)'
-    : '# ROLE: EXPERT BUSINESS LOGIC ANALYST (Functional Focus)';
+  if (mode === 'column_trace') {
+    return [
+      'COLUMN TRACE MODE: the state machine presents nodes one at a time. Analyze each node and trace specific columns across it.',
+      '',
+      BLOCK.completionContract,
+      '',
+      BLOCK.verdictCategories,
+      '',
+      'For each node:',
+      `1. ${BLOCK.readDdl}`,
+      `2. ${BLOCK.writeFindings}`,
+      `3. ${BLOCK.badgeAndNote}`,
+      `4. ${BLOCK.verdictNeighbors}`,
+      '',
+      BLOCK.columnTracking,
+      BLOCK.columnLineageRule,
+      BLOCK.tableNodes,
+      BLOCK.selfAsk,
+      BLOCK.routing,
+    ].join('\n');
+  }
 
-  const modeRouting = mode === 'column_trace' ? BLOCK.routingRulesCT : BLOCK.routingRulesBB;
+  if (mode === 'dependency') {
+    return [
+      'DEPENDENCY TRACE MODE: the state machine presents nodes one at a time. Analyze each node for its role in the dependency chain.',
+      '',
+      BLOCK.completionContract,
+      '',
+      BLOCK.verdictCategories,
+      '',
+      'For each node:',
+      `1. ${BLOCK.readDdl}`,
+      `2. ${BLOCK.writeFindings}`,
+      `3. ${BLOCK.badgeAndNote}`,
+      `4. ${BLOCK.verdictNeighbors}`,
+      '',
+      BLOCK.tableNodes,
+      BLOCK.selfAsk,
+      BLOCK.routing,
+    ].join('\n');
+  }
 
+  // blackboard (default)
   return [
-    modeHeader,
-    'You are an autonomous agent navigating a SQL dependency graph using a "Map & Router" pattern.',
+    'EXPLORATION MODE: the state machine presents nodes one at a time with full DDL and metadata.',
     '',
-    BLOCK.classification,
+    BLOCK.completionContract,
     '',
-    BLOCK.workflow,
+    BLOCK.verdictCategories,
     '',
-    BLOCK.memoryProtocol,
+    'For each node:',
+    `1. ${BLOCK.readDdl}`,
+    `2. ${BLOCK.writeFindings}`,
+    `3. ${BLOCK.badgeAndNote}`,
+    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them.',
     '',
-    BLOCK.routingRulesShared,
-    '',
-    modeRouting,
-    '',
-    BLOCK.groundingContract,
-    '',
-    BLOCK.verdictContract,
+    BLOCK.selfAsk,
+    BLOCK.workingMemory,
+    BLOCK.routing,
   ].join('\n');
 }
 
-/**
- * Constructs a reminder prompt for the final synthesis phase.
- *
- * @remarks
- * This prompt transitions the AI from "Exploration" to "Documentation" mode,
- * reminding it that its evidence is now strictly limited to the `Detail Archive`
- * it built during the previous hops. It enforces structural and formatting
- * requirements for the final report.
- *
- * @param question - The original root question or intent provided by the user.
- * @returns A markdown string defining the synthesis requirements and constraints.
- */
-export function buildSynthesisReminder(question: string): string {
-  return (
-    '# PHASE 3: HOLISTIC SYNTHESIS\n' +
-    '**Role**: Lead Documentarian. You are assembling the final annotated graph view.\n\n' +
-    '### EVIDENCE SOURCE\n' +
-    'Your evidence is strictly limited to the technical "Hard Drive" (**Detail Archive**) recorded during the hops.\n\n' +
-    '### REQUIREMENTS\n' +
-    `- **Root Question**: "${question}"\n` +
-    '- **Structure**: Group nodes into logical sections via `sections[]`.\n' +
-    '- **Formatting**: Use LaTeX for math, Markdown tables for column mappings.\n' +
-    '- **Audience**: Technical Data Engineers.'
-  );
-}
 
 /**
- * Constructs the final synthesis trigger prompt.
+ * Builds the synthesis trigger prompt delivered once the agenda drains.
  *
  * @remarks
- * This is delivered to the AI once the navigation agenda is empty and all relevant
- * nodes have been visited. it instructs the AI to use the `lineage_enrich_view` tool
- * to submit its final consolidated findings.
+ * Concise contract: the detail archive is the only evidence, two deliverables are required
+ * (chat prose + `enrich_view` sections, both at per-slot depth), and the model decides
+ * section length per question shape. No character floors, no structural enforcement —
+ * depth comes from the archive plus the model's judgment.
  *
- * @returns A markdown string signifying the end of navigation and the start of synthesis.
+ * @returns A markdown string marking the transition from exploration to synthesis.
  */
 export function buildSynthesisPrompt(): string {
   return [
-    '# SYNTHESIS MODE: Navigation Complete',
+    '# SYNTHESIS',
+    'The detail archive below is your only evidence. Raw DDL is gone.',
     '',
-    'Pattern: **Chain-of-Note + MemGPT archival-recall**. Raw DDL is gone. The `DETAIL ARCHIVE (TECHNICAL EVIDENCE)` block below is your AUTHORITATIVE long-term memory. It is the ONLY source of truth. Treat it like a hard drive: every archived slot must be read, expanded, and represented in the final output. Summarization loses information — EXPAND each slot into its own section instead of collapsing multiple slots into one paragraph.',
+    'TWO DELIVERABLES — both required:',
+    '  1. Chat prose — executive answer in 2-3 sentences, then one section per archived slot grouped by role in the answer. Write at the depth the question asks for (WHAT the data means, HOW the pipeline runs, or both).',
+    '  2. enrich_view — sections[] one entry per archive slot: `label = slot.badge_label` (verbatim), `node_ids = [slot.nodeId]`, `text = the per-node content you wrote in the chat`. notes[] — one per node, `text = slot.note_caption`.',
     '',
-    '### HARD RULES (non-negotiable)',
-    '1. **ONE SECTION PER ARCHIVED SLOT.** If the archive has N detail_slots, the `sections[]` you emit must have at least N entries. Do NOT merge slots. Do NOT skip slots. Every `relevant`/`pass` node earned its archive entry — it must appear in the output. `notes[]` alone does NOT satisfy this — notes are per-node captions, not section content. The view is empty without `sections[]`.',
-    '2. **PRESERVE THE 5-BLOCK STRUCTURE.** Each archive slot was written as: Business Purpose · Transforms (with SQL evidence) · Column I/O (markdown table) · Relationships · Risks/Notes. The section text must retain ALL FIVE blocks. Do not reduce to a single paragraph.',
-    '3. **FORMULAS STAY LaTeX.** Every `$formula = ...$` in the archive must appear verbatim in the section. Every markdown table must appear verbatim. Summarizing `$EV_{Direct} = EV_{Budget} \\times 25\\%$` to "25% allocation" is a protocol violation — the math IS the answer for a data engineer. If the archive has no LaTeX but the underlying logic is computational, infer and add it from the SQL in the `Transforms` block.',
-    '4. **SECTION LENGTH FLOOR.** Each section\'s `text` must be at least as long as the source slot\'s `analysis` field. If the slot\'s analysis is 1500 chars, the section must be ≥1500 chars. Maximum is unbounded — expansion is good, compression is not.',
-    '5. **NO NEW FACTS.** If it is not in the archive, it does not exist. Do not infer, extrapolate, or add "context" the archive does not contain. Exception: LaTeX reformatting of archive formulas (rule 3) is not a new fact.',
-    '6. **NAMED COLUMNS, NOT "VARIOUS".** Every column reference in `text` must be the concrete name. "Various SP outputs" / "several columns" / "certain conditions" are banned — if the archive says it vaguely, expand it by reading the slot\'s Transforms SQL.',
-    '',
-    '### EXTRACTION PROTOCOL (Chain-of-Note)',
-    'Before emitting `lineage_enrich_view`, internally walk the archive slot-by-slot:',
-    '  - slot[i].nodeId → section.node_ids (single-element array with the node id)',
-    '  - slot[i].badge_label (verbatim) → section.label (fall back to slot.name only if badge_label is missing)',
-    '  - slot[i].analysis → section.text (verbatim, preserving all 5 blocks + LaTeX + tables)',
-    '  - slot[i].note_caption → `notes[]` entry for that node (visible under the node in the graph)',
-    'This is not a style request — it is the extraction algorithm. The evidence block below has each slot\'s `Badge` and `Note caption` printed above its `Summary` — read them, do NOT regenerate new ones at synthesis time.',
-    '',
-    '### PER-NODE DEPTH HEURISTIC',
-    '- **DISTINCT logic** (each slot has its own formula, its own column set, its own branch condition): give every slot a full section with its own Business Purpose + Transforms + Column I/O + Relationships + Risks.',
-    '- **SIMILAR logic** (variant siblings — e.g. `spCadenceRule_Alloc1a/1b/1c/1d` that share the same skeleton): each slot STILL gets its own section (rule 1 is absolute), but the section text can lead with "Same skeleton as spCadenceRule_Alloc1a; deltas: [list specific differences in filters, weights, target columns]". The delta list must name columns and expressions concretely.',
-    '- Never collapse N variants into one section. The user needs to see each variant to understand the rule family.',
-    '',
-    '### IF A SLOT READS LIKE A TECHNICAL INDEX',
-    'If a slot\'s `Technical Analysis` looks like a column listing or raw SQL dump with no business narrative, the analysis was thin. You have two options:',
-    '- Expand the section text from the SQL in the slot\'s Transforms block, adding business interpretation (what does this computation MEAN for the user).',
-    '- If that is not possible from archive alone, call `lineage_get_object_detail` for that node to re-read the DDL, then expand.',
-    'Never ship a section that reads like a raw dictionary entry.',
-    '',
-    '### TASK — TWO DELIVERABLES (both mandatory, not either/or)',
-    '**1. Chat reply (prose)**: Write the full analytical report directly to the chat. This is the user\'s primary output — they read it in the chat window. Structure:',
-    '  - A 2-3 sentence executive answer to the root question.',
-    '  - Then `## N. <node name>` sections — ONE PER ARCHIVE SLOT, covering all N slots. Each section: Business Purpose (1-2 sentences on domain role) · Transforms (SQL evidence + LaTeX formulas for every computation) · Column I/O (markdown table `| Input | Source Column | Transform | Output |` whenever renames/computations exist) · Relationships · Risks/Notes.',
-    '  - Length floor: the chat reply must be at least as long as the combined slot analyses (~15K chars for 27 slots is normal). A chat reply under 500 chars is a protocol violation — you wasted the archive.',
-    '  - Variant siblings (e.g. `spCadenceRule_Alloc1a/1b/1c/1d`) each get their own section; delta-mode wording is fine ("Same skeleton as 1a; deltas: ...") but each variant must appear.',
-    '**2. Enrich_view tool call**: Call `lineage_enrich_view` with `sections[]` (one entry per archive slot, `label = slot.badge_label`, `node_ids = [slot.nodeId]`, `text = the same per-node content you wrote in the chat`) plus `notes[]` (one per node, `text = slot.note_caption`). `sections[]` is MANDATORY. Notes-only payloads produce a blank-looking graph.',
-    '',
-    'Both the chat prose AND the enrich_view sections must contain the same per-slot depth — the chat is for reading, the view is for graph navigation; each needs its own copy of the content. Do not ship one at full depth and the other empty.',
+    'RULES:',
+    '- Cite only from archive slots. No new facts.',
+    '- If a slot lacks evidence for a claim, omit the claim.',
+    '- If a slot reads thin, call `lineage_get_object_detail` and expand from the DDL.',
+    '- Preserve LaTeX formulas and markdown tables from slot analyses verbatim.',
+    '- Variant siblings each get their own section — delta wording is fine ("Same skeleton as X; deltas: …").',
   ].join('\n');
 }

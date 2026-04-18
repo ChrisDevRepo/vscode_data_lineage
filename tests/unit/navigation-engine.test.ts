@@ -1,10 +1,10 @@
 /**
- * Unit tests for NavigationEngine — the unified "Map & Router" state machine.
+ * Unit tests for NavigationEngine — the unified state machine.
  * Validates:
  * - Unification of BB/CT modes.
- * - Incremental Blackboard (Short Memory) updates.
- * - Selection-Inference Routing (Metadata-Guarded sub-questions).
- * - Lifecycle, Coverage, and Termination.
+ * - Per-hop `all_summaries` delivery (every prior finding surfaced automatically).
+ * - Column-trace route validation (metadata-guarded sub-questions).
+ * - Lifecycle, coverage, and termination.
  */
 
 import Graph from 'graphology';
@@ -90,7 +90,6 @@ async function testLifecycle() {
 
   const result = engine.submitFindings({
     focus_node_id: hop.focus_node.id,
-    narrative_update: 'Start.',
     detail_analysis: 'Detail.',
     summary: 'Sum.',
     verdict: 'relevant'
@@ -99,82 +98,104 @@ async function testLifecycle() {
   assertEq(engine.status, 'exploring', 'Status after submission');
 }
 
-// ─── Memory & Blackboard Tests ───────────────────────────────────────────────
+// ─── Memory Delivery Tests ──────────────────────────────────────────────────
 
-async function testIncrementalBlackboard() {
-  console.log('\n── Incremental Blackboard ──');
+async function testAllSummariesDelivery() {
+  console.log('\n── All-Summaries Delivery ──');
   const model = buildSyntheticModel();
   const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
-  engine.init({ question: 'Test', origin: '[dbo].[sptransform]' });
+  engine.init({ question: 'Test question', origin: '[dbo].[sptransform]' });
 
-  // Hop 1 (Origin)
+  // Hop 1 (origin)
   const hop1 = engine.getHopContext() as any;
+  assertEq(hop1.working_memory.user_question, 'Test question', 'Hop 1 echoes user question');
+  assertEq(hop1.working_memory.all_summaries.length, 0, 'Hop 1 starts with empty all_summaries');
   engine.submitFindings({
     focus_node_id: hop1.focus_node.id,
-    narrative_update: 'Insight Alpha.',
-    detail_analysis: 'Deep evidence.',
-    summary: 'Sum 1',
-    verdict: 'relevant'
+    detail_analysis: 'Deep evidence for origin.',
+    summary: 'Insight Alpha',
+    verdict: 'relevant',
   });
 
-  // Hop 2
+  // Hop 2 — should see hop 1's summary
   const hop2 = engine.getHopContext() as any;
-  assertEq(hop2.working_memory.blackboard, 'Insight Alpha.', 'Hop 2 receives previous Blackboard');
-  
+  assertEq(hop2.working_memory.all_summaries.length, 1, 'Hop 2 sees 1 prior summary');
+  assertEq(hop2.working_memory.all_summaries[0].summary, 'Insight Alpha', 'Hop 2 receives hop 1 summary verbatim');
   engine.submitFindings({
     focus_node_id: hop2.focus_node.id,
-    narrative_update: 'Insight Alpha + Beta.',
     detail_analysis: 'Deep evidence.',
-    summary: 'Sum 2',
-    verdict: 'relevant'
+    summary: 'Insight Beta',
+    verdict: 'relevant',
   });
 
-  // Hop 3
+  // Hop 3 — should see hops 1 + 2
   const hop3 = engine.getHopContext() as any;
-  assertEq(hop3.working_memory.blackboard, 'Insight Alpha + Beta.', 'Hop 3 receives updated Blackboard');
+  assertEq(hop3.working_memory.all_summaries.length, 2, 'Hop 3 sees 2 prior summaries (cumulative)');
+  assertEq(hop3.working_memory.all_summaries[1].summary, 'Insight Beta', 'Hop 3 sees hop 2 summary in order');
 }
 
-// ─── Selection-Inference Routing Tests ───────────────────────────────────────
+// ─── Column-Trace Route Validation ──────────────────────────────────────────
 
-async function testSelectionInferenceValidation() {
-  console.log('\n── Selection-Inference Validation ──');
+async function testColumnTraceRouteValidation() {
+  console.log('\n── Column-Trace Route Validation ──');
   const model = buildSyntheticModel();
-  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
-  engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'column_trace', { qualityGuards: false });
+  engine.init({ question: 'Trace', origin: '[dbo].[vwclean]', targetColumns: ['OrderAmount'] });
 
   const hop = engine.getHopContext() as any;
-  
-  // Submit with hallucinated column in neighbor
+
+  // Hallucinated column on the target neighbor
   const badResult = engine.submitFindings({
     focus_node_id: hop.focus_node.id,
-    narrative_update: 'Update.',
     detail_analysis: 'Detail.',
     summary: 'Sum.',
     verdict: 'relevant',
     route_requests: [{
       nodeId: '[staging].[rawdata]',
       question: 'Check bad col',
-      columns: ['NON_EXISTENT_COL']
-    }]
+      columns: ['NON_EXISTENT_COL'],
+    }],
   });
-
   assert('error' in badResult && badResult.error === 'route_validation_failed', 'Hallucinated column rejected');
   assertEq(engine.status, 'awaiting_findings', 'Engine stays awaiting findings after rejection');
 
-  // Submit with valid column
+  // Valid column succeeds
   const goodResult = engine.submitFindings({
     focus_node_id: hop.focus_node.id,
-    narrative_update: 'Update.',
     detail_analysis: 'Detail.',
     summary: 'Sum.',
     verdict: 'relevant',
     route_requests: [{
       nodeId: '[staging].[rawdata]',
       question: 'Check valid col',
-      columns: ['Amount']
-    }]
+      columns: ['Amount'],
+    }],
   });
   assert('ok' in goodResult, 'Valid column routing accepted');
+}
+
+// ─── Blackboard Drops Columns ──────────────────────────────────────────────
+
+async function testBlackboardDropsColumns() {
+  console.log('\n── Blackboard Drops route_requests.columns ──');
+  const model = buildSyntheticModel();
+  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
+  engine.init({ question: 'Test', origin: '[dbo].[vwclean]' });
+  const hop = engine.getHopContext() as any;
+
+  // In blackboard mode `columns` is silently stripped — even a fake column passes.
+  const result = engine.submitFindings({
+    focus_node_id: hop.focus_node.id,
+    detail_analysis: 'Detail.',
+    summary: 'Sum.',
+    verdict: 'relevant',
+    route_requests: [{
+      nodeId: '[staging].[rawdata]',
+      question: 'Check',
+      columns: ['NON_EXISTENT_COL'],
+    }],
+  });
+  assert('ok' in result, 'Blackboard mode ignores columns — no validation error');
 }
 
 // ─── Map & Topology Tests ───────────────────────────────────────────────────
@@ -219,8 +240,9 @@ async function main() {
 
   try {
     await testLifecycle();
-    await testIncrementalBlackboard();
-    await testSelectionInferenceValidation();
+    await testAllSummariesDelivery();
+    await testColumnTraceRouteValidation();
+    await testBlackboardDropsColumns();
     await testTopologicalMap();
     await testModes();
   } catch (err) {

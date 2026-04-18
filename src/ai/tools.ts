@@ -1320,30 +1320,29 @@ export function validateEnrichView(
     errors.push(...validateMarkdownFormat(input.description));
   }
 
-  // sections validation — content must be substantive; node_ids (when provided) must be valid
+  // Sections validation — node_ids (when provided) must be valid; section text must be present.
+  // Depth is a quality concern, not a validity concern — AI self-regulates per question shape.
   if (input.sections?.length) {
-    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
     const resolvedSet = new Set(resolvedNodeIds);
     for (const sec of input.sections) {
-      // Validate node_ids when AI uses the embedded form
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
           errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — use IDs from the result graph`);
         }
       }
-      if (!sec.text || sec.text.trim().length < 120) {
-        errors.push(`Section "${sec.label}" is too short — write 3-8 sentences or items explaining what you found (min 120 chars)`);
+      if (!sec.text || sec.text.trim().length === 0) {
+        errors.push(`Section "${sec.label}" is missing text — write the per-node content from the detail archive`);
       }
       if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
     }
   }
 
-  // notes validation — must be specific, not generic one-word captions
+  // Notes validation — must be present; brevity is fine.
   if (input.notes?.length) {
     for (const note of input.notes) {
-      if (!note.text || note.text.trim().length < 20) {
-        errors.push(`Note for "${note.node_id}" is too short — write a specific one-line caption (min 20 chars)`);
+      if (!note.text || note.text.trim().length === 0) {
+        errors.push(`Note for "${note.node_id}" is missing text`);
       }
     }
   }
