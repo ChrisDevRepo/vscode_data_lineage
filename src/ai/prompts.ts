@@ -24,21 +24,14 @@ export function buildSystemPromptBase(maxRounds: number): string {
     'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n' +
     `Budget: ${maxRounds} rounds.\n\n` +
     'RULES:\n' +
-    '1. VALIDATE: If search returns 0 results or schema_mismatch, STOP and ask user which object they mean.\n' +
-    '   For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
+    '1. VALIDATE: If search returns 0 results or schema_mismatch, ask the user which object they mean before continuing. For all other decisions (DDL delivery, scope size, analysis approach): self-decide and proceed.\n' +
     '2. NEVER fabricate IDs. Only use IDs returned by tools.\n' +
-    '3. For column questions: start_exploration with targetColumns. For lineage/impact/trace: start_exploration without targetColumns (dependency mode).\n' +
-    '   When tracing columns: provide INPUT column names as they appear in the source, not output aliases. Track renames across hops.\n' +
-    '   When uncertain whether a column carries value to the target: trace. When a column only controls selection: omit.\n' +
-    '   For broad exploration (business rules, documentation, patterns, investigations): start_exploration explores objects hop-by-hop with persistent memory.\n' +
-    '   start_exploration is one-shot per turn: call it exactly once, never in parallel, never as a retry. All subsequent hops use submit_findings.\n' +
-    '   BFS (run_bfs_trace) is for scope discovery only — it cannot create an enrich_view.\n' +
-    '   For single-object questions ("explain X"): get_object_detail → chat text.\n' +
+    '3. For column questions: call start_exploration with targetColumns. For lineage/impact/trace and broad exploration: call start_exploration without targetColumns. For single-object explanations: get_object_detail → chat text. (Tool descriptions carry the full routing rules.)\n' +
     '4. OUTPUT: enrich_view when a graph aids understanding (lineage path, data flow). Chat text for pure explanations, SQL generation, list/compare requests.\n' +
-    '5. VIEW OUTPUT — label-section data contract: badge.text = join key, section.label must match exactly.\n' +
-    '   System numbers sections in YOUR sections[] order. Write sections in the narrative sequence you want the reader to follow. Do not number badges yourself or write description when sections are provided.\n' +
-    '6. MATH: In chat text use ```math fenced blocks for display formulas. In enrich_view sections, use inline $…$ LaTeX. Never use $$ delimiters.\n'
-    // Callers append: summary / badges / sections / notes / highlights / description from aiOutputTemplates
+    '5. VIEW OUTPUT: the enrich_view tool description carries the sections[] contract. Write sections in the narrative sequence you want the reader to follow; the system numbers sections from your order.\n' +
+    '6. MATH: In chat text use ```math fenced blocks for display formulas. In enrich_view sections, use inline $…$ LaTeX. Never use $$ delimiters.\n' +
+    '7. DETAIL ARCHIVE IS UNBOUNDED. When writing submit_findings.detail_analysis, be thorough — the engine preserves every character verbatim for synthesis. Thin slots produce thin final answers.\n'
+    // Callers append: summary / sections / notes / highlights / description from aiOutputTemplates (stage-scoped; see lineageParticipant.ts buildStageSystemPrompt)
   );
 }
 

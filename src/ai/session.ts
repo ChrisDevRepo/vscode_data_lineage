@@ -59,6 +59,10 @@ export class AiSession {
   public startTime: number;
   /** Total number of tool execution rounds performed. */
   public hopCount = 0;
+  /** Monotonic round id (bumped by participant on each LM round). Used to detect parallel calls to strictly-serial tools. */
+  public currentRoundId = 0;
+  /** Round id in which start_exploration last succeeded (or was attempted). null when reset. */
+  public startExplorationRoundId: number | null = null;
 
   // ── User-facing notice queue (drained by runWithTools into stream.markdown) ──
   /** Set-keyed notice queue — natural de-dupe across parallel tool calls. */
@@ -111,6 +115,7 @@ export class AiSession {
     this.hopCount = 0;
     this.hopLog = [];
     this.pendingUserNotice.clear();
+    this.startExplorationRoundId = null;
   }
 
   /**

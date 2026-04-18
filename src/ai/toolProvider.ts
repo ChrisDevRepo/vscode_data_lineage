@@ -124,6 +124,19 @@ export function registerAiTools(
 
           sess.resetIfStale();
 
+          // Mechanical parallel-call guard: reject calls 2..N of start_exploration within one LM round.
+          // Prompt-level "Do NOT call start_exploration" hints have been observed to be ignored across
+          // models (see docs/AI_ARCHITECTURE.md "Known Failure Modes"). This is the structural enforcement.
+          if (sess.startExplorationRoundId !== null && sess.startExplorationRoundId === sess.currentRoundId) {
+            return logAndReturn('start_exploration', {
+              error: 'parallel_call_forbidden',
+              hint: 'start_exploration is strictly serial and one-shot per round. Use submit_findings for the queued neighbors — after complete_rejected they are queued at priority 3 and will be served on the next submit_findings.',
+              next_action: 'submit_findings',
+            }, options.input);
+          }
+          // Stamp the round BEFORE running: any subsequent parallel call in this same round is rejected.
+          sess.startExplorationRoundId = sess.currentRoundId;
+
           const prior = sess.stateMachine as NavigationEngine | null;
           const priorLive = !!prior && prior.status !== 'complete';
           if (priorLive && prior!.sessionId && prior!.sessionId !== sess.id) {
@@ -131,10 +144,12 @@ export function registerAiTools(
               'A previous exploration was still running when you started this one. Its in-memory findings were discarded.'
             );
             sess.resetExploration();
+            sess.startExplorationRoundId = sess.currentRoundId;
           } else if (priorLive && prior!.sessionId === sess.id) {
             return logAndReturn('start_exploration', {
               error: 'already_started',
               hint: 'start_exploration is one-shot per turn. Use submit_findings to continue the current agenda. After complete_rejected, the unvisited neighbors are already queued at priority 3 — the next submit_findings will present one of them.',
+              next_action: 'submit_findings',
             }, options.input);
           }
 
@@ -170,6 +185,7 @@ export function registerAiTools(
             targetColumns: input.targetColumns,
             direction: input.direction || 'bidirectional',
             depth: input.depth,
+            depth_enforcement: input.depth_enforcement,
           });
 
           if ('error' in initResult) return logAndReturn('start_exploration', initResult, options.input);
@@ -194,7 +210,11 @@ export function registerAiTools(
           if (!isAiEnabled()) return disabled();
           const sess = getSession();
           const engine = sess.stateMachine as NavigationEngine | null;
-          if (!engine) return logAndReturn('submit_findings', { error: 'no_active_session' }, options.input);
+          if (!engine) return logAndReturn('submit_findings', {
+            error: 'no_active_session',
+            hint: 'No active state machine. Call start_exploration first to begin a hop-by-hop investigation. If the session was idle for 30 minutes or completed previously, it was auto-reset.',
+            next_action: 'start_exploration',
+          }, options.input);
 
           const inputErr = validateToolInput(options.input, { focus_node_id: 'string', detail_analysis: 'string', summary: 'string' });
           if (inputErr) return toolResult(inputErr);

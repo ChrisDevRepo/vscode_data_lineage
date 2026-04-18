@@ -200,16 +200,31 @@ export class LineageParticipant {
       }
     }
 
-    // Keep the system prompt stable across the session so it remains cache-eligible.
-    const systemPrompt = buildPlatformContext(sess.model.dbPlatform || 'SQL Server') +
-      (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') +
-      buildSystemPromptBase(MAX_ROUNDS) +
-      `### AI OUTPUT TEMPLATES (user-editable via assets/aiOutputTemplates.yaml)\n` +
-      `- summary: ${sess.outputTemplates.summary}\n` +
-      `- sections: ${sess.outputTemplates.sections}\n` +
-      `- notes: ${sess.outputTemplates.notes}\n` +
-      `- highlights: ${sess.outputTemplates.highlights}\n` +
-      `- description (fallback): ${sess.outputTemplates.description}`;
+    // Stage-scoped system prompt: templates inject only on phases that can use them.
+    // - DISCOVERY: summary + description (for trivial chat answers without SM)
+    // - ACTIVE:    none (per-hop writing governed by BLOCK.writeFindings in nav prompt)
+    // - SYNTHESIS: full template set (enrich_view fields are written here)
+    const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
+      const base = buildPlatformContext(sess.model!.dbPlatform || 'SQL Server') +
+        (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') +
+        buildSystemPromptBase(MAX_ROUNDS);
+      if (phase === 'active') return base;
+      if (phase === 'discover') {
+        return base +
+          `### AI OUTPUT TEMPLATES (DISCOVERY — for chat-only answers without SM)\n` +
+          `- summary: ${sess.outputTemplates.summary}\n` +
+          `- description: ${sess.outputTemplates.description}`;
+      }
+      // synthesis
+      return base +
+        `### AI OUTPUT TEMPLATES (SYNTHESIS — enrich_view fields)\n` +
+        `- summary: ${sess.outputTemplates.summary}\n` +
+        `- sections: ${sess.outputTemplates.sections}\n` +
+        `- notes: ${sess.outputTemplates.notes}\n` +
+        `- highlights: ${sess.outputTemplates.highlights}\n` +
+        `- description (fallback): ${sess.outputTemplates.description}`;
+    };
+    let systemPrompt = buildStageSystemPrompt('discover');
 
     const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
       const parts: string[] = [];
@@ -271,6 +286,9 @@ export class LineageParticipant {
 
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
+        // Bump the session round counter so tools can detect parallel calls within one LM round.
+        // Used by the start_exploration parallel-call guard in toolProvider.ts.
+        sess.currentRoundId = roundCount;
         const tRoundStart = Date.now();
         let roundInputTokens = 0;
         try {
@@ -387,7 +405,13 @@ export class LineageParticipant {
               const p = res?.content.find(c => c instanceof vscode.LanguageModelTextPart) as vscode.LanguageModelTextPart | undefined;
               try { return p ? (JSON.parse(p.value).error ?? 'unknown') : 'unknown'; } catch { return 'unknown'; }
             })();
-            const abortPayload = { error: 'session_aborted_repeat_reject', tool: f.name, last_error: lastErrorText, repeat_count: obs.count };
+            const abortPayload = {
+              error: 'session_aborted_repeat_reject',
+              tool: f.name,
+              last_error: lastErrorText,
+              repeat_count: obs.count,
+              hint: `The same ${f.name.replace('lineage_', '')} call with the same arguments was rejected ${obs.count} times. The parameters cannot succeed as given. Stop retrying; if you have partial findings, produce a final answer explaining what you found and what was blocked. If no findings, tell the user the request needs different input.`,
+            };
             this.logger.warn(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
             stream.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
             messages.push(vscode.LanguageModelChatMessage.User(JSON.stringify(abortPayload)));
@@ -429,6 +453,9 @@ export class LineageParticipant {
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-engine'));
           this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
 
+          // Stage-scope the system prompt: drop output templates for ACTIVE hops.
+          systemPrompt = buildStageSystemPrompt('active');
+
           const engine = sess.stateMachine;
           if (engine) {
             navPrompt = buildNavigationPrompt(engine.mode);
@@ -440,6 +467,9 @@ export class LineageParticipant {
           activePhase = 'done';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_submit_findings');
           this.logger.info(`[Phase] active → done — SM complete, restored ${lineageTools.length} classic tools`);
+
+          // Stage-scope the system prompt: restore full output templates for SYNTHESIS.
+          systemPrompt = buildStageSystemPrompt('synthesis');
 
           if (!sess.stateMachine.inlineMode) {
             // Deliver the Detail Archive evidence for Phase 3

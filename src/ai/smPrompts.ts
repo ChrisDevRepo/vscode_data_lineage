@@ -26,20 +26,18 @@ const BLOCK = {
 
   /** Step 2 — write the detail archive for this node. */
   writeFindings:
-    'Write `detail_analysis` for the focus node — document it comprehensively:\n' +
-    '- relevant/trace → full analysis (hard limit 8000 chars). Use the budget: simple passthrough ~300 chars, moderate transform ~1000-2000 chars, complex multi-CTE SP ~3000-6000 chars. Self-contained — written as if documenting this node for a technical reference.\n' +
-    '  Include each aspect present:\n' +
+    'Write `detail_analysis` for the focus node. The archive preserves your analysis verbatim — no upper bound; synthesis uses this as sole evidence. Let the node\'s complexity dictate depth: a trivial passthrough is a few sentences; a non-trivial object is a full breakdown of every part present — each INSERT/UPDATE/MERGE/DELETE statement, each CTE, each BEGIN/COMMIT transaction, each IF/CASE branch, each JOIN condition, each filter, each computed expression. Quote SQL verbatim and explain in business terms. A thin slot produces a thin final answer.\n' +
+    'Cover each aspect present:\n' +
     '  COLUMNS: key column names, types, constraints (PK/FK/nullable).\n' +
     '  TRANSFORMS: expressions, CASE/COALESCE, computed columns — quote the SQL fragment.\n' +
     '  JOINS: join conditions (table.col = table.col).\n' +
     '  FILTERS: WHERE/HAVING business rules.\n' +
-    '  DATA FLOW: how data enters and leaves (INSERT/SELECT/MERGE/EXEC). Note the loading pattern: full (TRUNCATE+INSERT), incremental, SCD2, MERGE upsert.\n' +
+    '  DATA FLOW: how data enters and leaves (INSERT/UPDATE/MERGE/DELETE/EXEC). Note the loading pattern as present in the DDL (full refresh / incremental / merge / CDC / SCD, etc.).\n' +
     '  QUESTION RELEVANCE: how this node answers the user question.\n' +
     '  OBSERVATIONS: DDL comments, version annotations, performance risks, anti-patterns.\n' +
-    '  Quote SQL verbatim — ground truth for synthesis. Then explain what each expression means in business terms.\n' +
-    '- pass → `summary` only (~100-200 chars): what passes through, from where to where.\n' +
+    '- pass → `summary` only: what passes through, from where to where.\n' +
     '- irrelevant → brief `summary` only.\n' +
-    'Write a one-line `summary` for every hop — it is echoed in future hops via working_memory.all_summaries.',
+    'Also write a specific one-line `summary` for this hop — it carries forward to future hops via working_memory.all_summaries. Specific > short.',
 
   /** Badge + note metadata drive the graph UI. */
   badgeAndNote:
@@ -50,11 +48,12 @@ const BLOCK = {
 
   /** Self-ask — answer your own question from the previous hop. */
   selfAsk:
-    'The `current_task` field contains the sub-question for this hop — answer it in the analysis.',
+    'The `current_task` field contains the sub-question for this hop. Answer every part of it in the analysis — if the task is multi-part, address each part explicitly. Half-answered questions leave synthesis with gaps.',
 
   /** Route grounding — shared. */
   routing:
-    'ROUTING: every entry in `route_requests` needs a specific sub-question ("Does this proc apply the 10% VAT rate?"). Read neighbor metadata and justify each choice — blind routing is a reasoning failure.',
+    'ROUTING: every entry in `route_requests` carries a focused sub-question — anything from a single yes/no ("Does this procedure apply the rule the parent referenced?") to a multi-part investigation ("Which columns X, Y, Z flow through this procedure, how are they transformed, and what conditions filter them?"). Frame the sub-question at the depth the next hop needs to make progress — do not truncate a multi-part investigation into a thin single question. Read neighbor metadata and justify each choice; blind routing is a reasoning failure.\n' +
+    'DEPTH BUDGET (only when `working_memory.depth_budget` is present): the user expressed a scope in their question. Neighbors tagged `in_budget: false` are beyond that scope. If `depth_enforcement: "strict"` the engine rejects out-of-budget routes — stay within. If `depth_enforcement: "soft"` you may route beyond when the analysis genuinely requires it (expansions are tracked in `working_memory.budget_expansions`); prefer staying within the budget. If no `depth_budget` is in working_memory, route freely — the engine is auto-expanding the scope silently.',
 
   /** Verdict a neighbor — CT modes. */
   verdictNeighbors:
@@ -81,9 +80,8 @@ const BLOCK = {
 
   /** Completion contract — applies to every mode. */
   completionContract:
-    'COMPLETION: Every hop call `submit_findings` for the presented focus node. When you have analyzed every direct neighbor of the origin (the user asked about the origin and its neighbors), set `complete: true` on your final submit. The engine verifies — if any direct neighbor of the origin is still unvisited it returns `complete_rejected` with the list (`unvisited_direct_neighbors`, `names`) and promotes them to priority 3 so they are served next; analyze those then retry `complete: true`. Never produce a final answer, chat prose wrap-up, or `lineage_enrich_view` while the loop is still draining — a silent no-tool-call mid-loop truncates the investigation and produces a partial result.\n' +
-    '`start_exploration` is a ONE-SHOT discover→active transition: call it exactly once per turn, never in parallel, never again after the first return. All subsequent hops use `submit_findings`. After `complete_rejected`, the unvisited neighbors are already queued at priority 3 — the next `submit_findings` will present one of them. Calling `start_exploration` again wipes all prior findings and restarts from hop 1.\n' +
-    'Utility / logging / helper nodes (`LogMessage`, `udf*`, `spLog*`, generic math helpers): submit with `verdict: "irrelevant"` — do NOT skip the submit. Irrelevant cascade-prunes the node and advances the agenda. Skipping leaves the engine waiting for findings and ends the investigation early.',
+    'COMPLETION: Every hop call `submit_findings` for the presented focus node. When every direct neighbor of the origin has been analyzed, set `complete: true` on your final submit. The engine verifies — if any direct neighbor of the origin is still unvisited it returns `complete_rejected` with the list (`unvisited_direct_neighbors`, `names`) and promotes them to priority 3 so they are served next; analyze those then retry `complete: true`. Produce the final answer, chat prose wrap-up, or `lineage_enrich_view` only after the loop drains — a silent no-tool-call mid-loop truncates the investigation.\n' +
+    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs): submit with `verdict: "irrelevant"` — do not skip the submit. Irrelevant cascade-prunes the node and advances the agenda. Skipping leaves the engine waiting for findings and ends the investigation early.',
 } as const;
 
 
@@ -142,7 +140,7 @@ export function buildNavigationPrompt(mode: SmMode): string {
 
   // blackboard (default)
   return [
-    'EXPLORATION MODE: the state machine presents nodes one at a time with full DDL and metadata.',
+    'EXPLORATION MODE: the engine presents nodes one at a time. Use `working_memory.all_summaries` to carry cross-hop reasoning forward — this persistence is what distinguishes exploration from CT/dependency modes.',
     '',
     BLOCK.completionContract,
     '',
@@ -176,6 +174,7 @@ export function buildSynthesisPrompt(): string {
   return [
     '# SYNTHESIS',
     'The detail archive below is your only evidence. Raw DDL is gone.',
+    'The archive is comprehensive by design — do not compress, do not summarize. Lift the per-node analyses into sections verbatim, expanding with interpretation as needed. Section text has no length limit; thin synthesis negates the exploration\'s effort.',
     '',
     'TWO DELIVERABLES — both required:',
     '  1. Chat prose — executive answer in 2-3 sentences, then one section per archived slot grouped by role in the answer. Write at the depth the question asks for (WHAT the data means, HOW the pipeline runs, or both).',

@@ -15,6 +15,8 @@
 summary:
   instruction: >
     One-line graph purpose (~120 chars, max 300). Shown in the info card.
+    This is the card headline (pixel budget), NOT the analysis — the per-node text inside sections[]
+    has no length limit. Do not compress analysis depth to fit this line.
   example: "Revenue lineage from raw orders through price calculation to FactSalesReport."
 
 title:
@@ -44,6 +46,10 @@ intro:
 
 sections:
   instruction: >
+    Write per-section text as detailed as the archive supports. No length limit.
+    Every transform expression, every join condition, every business rule — lift from the archive slot
+    and expand with interpretation. Synthesis with thin sections is a failure mode.
+
     Core of the document. Each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple:
       label    = PRIMARY KEY — unique name for this logical group (also the badge chip text on the graph)
       node_ids = nodes that display this label chip (1..N, can be one or many)
@@ -95,8 +101,10 @@ closing:
 description:
   instruction: >
     Fallback only -- used when sections[] is not provided. Prefer sections[] for structured output.
-    If used: structured markdown with ## headings, one heading per logical group.
-    Explain what you found -- logic, patterns, issues, performance, column mappings -- whatever is relevant.
+    If used: write the full documentation at archive depth -- every finding, every expression,
+    every pattern, every issue. No length limit. A shallow description negates the exploration's effort.
+    Structure with ## headings (one per logical group); quote SQL verbatim inside code blocks;
+    preserve LaTeX from archive slots.
     Supported: ## headings, **bold**, `code`, lists, | tables |, LaTeX math, code blocks.
     Not supported: mermaid, HTML, images, footnotes.
     BAD: A standalone essay with no headings, re-describing the graph structure.

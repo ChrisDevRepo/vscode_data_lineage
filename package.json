@@ -590,7 +590,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only — never answer lineage questions directly from BFS results. To create an annotated view, you MUST follow with start_exploration — enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
+        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only; for annotated output (enrich_view), follow BFS with start_exploration — enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -731,7 +731,7 @@
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
         "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, and text annotations. The graph comes from a completed state-machine exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration first. Provide name and summary (both required). Document model: sections[] is the PRIMARY payload — each section is (label KEY, node_ids[] 1..N, text 1..1). After SM exploration you MUST emit one section per archived detail_slot — skipping slots or using only notes[] produces a blank-looking report with no badges and collapses the per-node findings. label = slot.badge_label verbatim, node_ids = [slot.nodeId], text = slot.analysis expanded with business interpretation. Adjust labels only to fix typos or group clear duplicates; do NOT collapse variant siblings (e.g. Alloc1a/1b/1c) into one. notes[] is complementary (hover/caption per node), NOT a replacement for sections. System numbers labels in YOUR WRITTEN ORDER; reference other groups by label name, never by number. Use prune_node_ids to remove irrelevant nodes. BAD: notes-only without sections, numbered label ('1 Source'), one section for 20 variant siblings. GOOD: { label: 'Allocation Rule 1a', node_ids: ['[schema].[spcadencerule_alloc1a]'], text: 'Full 5-block analysis with LaTeX formulas and column I/O table' }",
+        "modelDescription": "Enrich the stored result graph from your last exploration. Requires a completed state-machine result; call start_exploration first (BFS alone is not accepted). Provide name and summary. Emit one sections[] entry per archived detail_slot: label = slot.badge_label verbatim, node_ids = [slot.nodeId], text = slot.analysis expanded with business interpretation. Adjust labels only to fix typos or group clear duplicates — keep variant siblings as separate sections. notes[] is complementary (hover/caption per node), not a replacement for sections. System numbers labels in your written order; reference other groups by label name, never by number. Use prune_node_ids to remove irrelevant nodes. Write each section.text and the description fallback at the depth the archive supports — no length limit, no compression; synthesis is the one place to lift every finding forward. BAD: notes-only without sections, numbered label ('1 Source'), one section for 20 variant siblings. GOOD: { label: 'Transform Variant', node_ids: ['[schema].[spAllocRuleA]'], text: 'Full breakdown with SQL quoted verbatim, LaTeX formulas and column I/O table' }",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -749,7 +749,7 @@
             "summary": {
               "type": "string",
               "maxLength": 300,
-              "description": "One-line graph purpose for the info card (~120 chars, max 300)"
+              "description": "One-line graph purpose for the info card. This is the card headline, not the analysis — the per-node text inside sections[] is where depth goes."
             },
             "title": {
               "type": "string",
@@ -910,7 +910,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
-        "modelDescription": "Start a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking. If targetColumns provided, the engine constrains navigation to relevant column paths. If question only, it runs free-form Blackboard exploration.\n\nReturns: first hop context with Topological Map, current Incremental Blackboard, Focus DDL, and Neighbor Metadata (Columns).\n\nUse Selection-Inference Routing: read metadata and generate a sub-question for each relevant neighbor.",
+        "modelDescription": "Start a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking. If targetColumns provided, the engine constrains navigation to relevant column paths. If question only, it runs free-form Blackboard exploration.\n\nDEPTH HANDLING (three modes — pick the one that matches how the user expressed scope):\n- `depth_enforcement: 'strict'` — only when the user typed an explicit slash-command depth. Routes beyond the budget are hard-rejected.\n- `depth_enforcement: 'soft'` — when the user expressed depth in natural language ('1 level deep', 'direct neighbors', 'immediate dependencies'). Engine allows expansion but surfaces a `depth_budget` + `in_budget: false` flags so you can prefer staying within.\n- `depth_enforcement: 'silent'` (default) — when the user did NOT specify depth. On large graphs prefer starting shallow (e.g. `depth: 2`) and let the engine auto-expand as your route_requests need more reach. No user-facing constraint; no awareness fields in the hop payload — explore freely.\n\nTypical choice: no explicit depth in the question → `depth_enforcement: 'silent'` with a small `depth` (1–2) on wide graphs. User said '1 level deep' → `'soft'` with `depth: 1`.\n\nReturns: first hop context with Topological Map, current Incremental Blackboard, Focus DDL, and Neighbor Metadata (Columns).\n\nUse Selection-Inference Routing: read metadata and generate a sub-question for each relevant neighbor.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -944,7 +944,12 @@
             },
             "depth": {
               "type": "number",
-              "description": "BFS depth limit from origin (default 5)."
+              "description": "Initial BFS depth from origin (default 5). On large graphs prefer a small value (1–2) with depth_enforcement='silent' to start cautious and auto-expand."
+            },
+            "depth_enforcement": {
+              "type": "string",
+              "enum": ["strict", "soft", "silent"],
+              "description": "How to treat the depth. 'strict' = hard boundary (slash-command-set); 'soft' = advisory (user said it in chat); 'silent' = cautious-start / auto-expand (no user constraint — default)."
             },
             "schemas": {
               "type": "array",
@@ -966,7 +971,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
         "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
-        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nRequired Fields:\n- detail_analysis: Full technical write-up for this node — business purpose, transform expressions, column I/O, relationships, risks. The archive is the sole evidence used at synthesis; thin analysis yields thin output.\n- summary: One-line digest of the findings. Future hops see every prior summary in working_memory.all_summaries — keep it specific.\n- verdict: relevant | pass | irrelevant.\n    - 'relevant' → stores findings, drives badges/notes.\n    - 'pass' → visited, no analysis stored, always accepted. Use for variant siblings of an already-analyzed archetype.\n    - 'irrelevant' → cascade-prunes (utility/logging/generic helpers). May be rejected by orphan/cascade guards; fall back to 'pass'.\n\nLabels (REQUIRED for `relevant` and `pass` verdicts — the enriched view has no badges/notes without them):\n- badge_label: 2-4 word semantic role tag (e.g. 'Country Allocation', 'EV Case 1', 'SCD2 Historization', 'Source Filter').\n- note_caption: One-line what-this-does caption shown on the graph node.\n\nRouting:\n- route_requests: Array of { nodeId, question, columns? }. Every neighbor entry needs a specific sub-question. `columns` is honored only in column_trace mode. The engine validates every request against neighbor metadata.",
+        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nFields:\n- detail_analysis: Full technical write-up for this node — business purpose, transform expressions, column I/O, relationships, risks. The archive is the sole evidence used at synthesis; it is unbounded and preserved verbatim. Write thoroughly — thin analysis produces thin synthesis.\n- summary: Specific one-line digest for this hop. Carries forward to future hops as context.\n- verdict: relevant | pass | irrelevant.\n    - 'relevant' → stores findings, drives badges/notes.\n    - 'pass' → visited, no analysis stored, always accepted. Use for variant siblings of an already-analyzed archetype.\n    - 'irrelevant' → cascade-prunes (utility/logging/generic helpers). May be rejected by orphan/cascade guards; fall back to 'pass'.\n\nLabels (required for 'relevant' and 'pass' — the enriched view has no badges/notes without them):\n- badge_label: 2-4 word semantic role tag (Source / Transform / Transform Variant / Staging / Output / Validation / Aggregation, or a domain-specific role the DDL suggests).\n- note_caption: One-line what-this-does caption shown on the graph node.\n\nRouting:\n- route_requests: Array of { nodeId, question, columns? }. Every neighbor entry carries a focused sub-question — single yes/no or multi-part investigation, whichever matches the depth the next hop needs. `columns` is honored only in column_trace mode. The engine validates every request against neighbor metadata.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -980,11 +985,11 @@
             },
             "detail_analysis": {
               "type": "string",
-              "description": "Full technical analysis stored in the detail archive."
+              "description": "Full per-node analysis. Archive is unbounded — write at the depth the node's complexity warrants; quote SQL verbatim."
             },
             "summary": {
               "type": "string",
-              "description": "One-line digest echoed to every future hop via working_memory.all_summaries."
+              "description": "Specific one-line digest for this hop."
             },
             "verdict": {
               "type": "string",
@@ -1005,7 +1010,7 @@
                   },
                   "question": {
                     "type": "string",
-                    "description": "Specific sub-question for this neighbor."
+                    "description": "Focused sub-question for this neighbor — single yes/no or multi-part investigation, whichever depth the next hop needs."
                   },
                   "columns": {
                     "type": "array",

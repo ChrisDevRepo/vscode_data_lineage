@@ -113,6 +113,14 @@ export class NavigationEngine implements IHopStateMachine {
   protected agendaIds = new Set<string>();
   protected currentFocusNodeId: string | null = null;
   protected hopCount = 0;
+  /** Depth of each in-scope node from origin (BFS distance). Populated during computeBfsScope. */
+  protected depthFromOrigin = new Map<string, number>();
+  /** User-specified depth budget (from start_exploration.depth). null when unset (default 5 was used). */
+  protected depthBudget: number | null = null;
+  /** How strictly to enforce the depth budget. 'silent' is default; 'soft' surfaces awareness; 'strict' rejects out-of-scope routes. */
+  protected depthEnforcement: 'strict' | 'soft' | 'silent' = 'silent';
+  /** Record of out-of-budget routes the AI chose to expand into — surfaced next hop only in 'soft' mode. */
+  protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
   /**
    * Initializes a new NavigationEngine.
@@ -165,6 +173,7 @@ export class NavigationEngine implements IHopStateMachine {
     targetColumns?: string[];
     direction?: 'upstream' | 'downstream' | 'bidirectional';
     depth?: number;
+    depth_enforcement?: 'strict' | 'soft' | 'silent';
   }): any {
     this.visited.clear();
     this.agenda = [];
@@ -173,9 +182,17 @@ export class NavigationEngine implements IHopStateMachine {
     this.memory.setUserQuestion(params.question);
 
     const originNode = this.nodeMap.get(params.origin.toLowerCase());
-    if (!originNode) return { error: 'origin_not_found' };
+    if (!originNode) {
+      return {
+        error: 'origin_not_found',
+        hint: 'Verify the origin node id with search_objects or get_context first. Use the exact id returned by those tools (case-insensitive match against the loaded graph).',
+      } as any;
+    }
 
     this.originNodeId = originNode.id;
+    this.depthBudget = typeof params.depth === 'number' ? params.depth : null;
+    this.depthEnforcement = params.depth_enforcement ?? 'silent';
+    this.budgetExpansions = [];
     this.scopeNodeIds = this.computeBfsScope(originNode.id, params.direction || 'bidirectional', params.depth || 5);
 
     this.agenda.push({
@@ -221,7 +238,13 @@ export class NavigationEngine implements IHopStateMachine {
 
     const node = this.nodeMap.get(entry.nodeId)!;
     const focusNode = buildHopFocusNode(node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
-    
+    // Surface depth awareness only in strict/soft modes — silent mode means no budget talk reaches the AI.
+    const surfaceDepth = this.depthBudget !== null && this.depthEnforcement !== 'silent';
+    if (surfaceDepth) {
+      const d = this.depthFromOrigin.get(entry.nodeId);
+      if (d !== undefined) focusNode.depth_from_origin = d;
+    }
+
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
     const navPath = path ? (path as string[]).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
@@ -232,6 +255,13 @@ export class NavigationEngine implements IHopStateMachine {
       current_focus: entry.nodeId,
       agenda: this.agenda.map(a => ({ id: a.nodeId, name: this.nodeMap.get(a.nodeId)?.name ?? a.nodeId, question: a.question })),
     };
+    if (surfaceDepth) {
+      (workingMemory as any).depth_budget = this.depthBudget;
+      (workingMemory as any).depth_enforcement = this.depthEnforcement; // 'strict' or 'soft'
+      if (this.depthEnforcement === 'soft' && this.budgetExpansions.length > 0) {
+        (workingMemory as any).budget_expansions = this.budgetExpansions.slice();
+      }
+    }
 
     this._status = 'awaiting_findings';
     return {
@@ -246,7 +276,14 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   submitFindings(params: HopSubmission): SubmitResult {
-    if (this._status !== 'awaiting_findings') return { error: 'invalid_status', current_status: this._status };
+    if (this._status !== 'awaiting_findings') {
+      const hint = this._status === 'complete'
+        ? 'The engine already completed this exploration. Produce the synthesis output (chat prose + enrich_view) now — do not call submit_findings again.'
+        : this._status === 'error'
+          ? 'The engine is in an error state. Call start_exploration to begin a fresh exploration.'
+          : `Engine is in status '${this._status}'. Expected 'awaiting_findings'. Wait for a hop context, or restart via start_exploration if the session was wiped.`;
+      return { error: 'invalid_status', current_status: this._status, hint } as any;
+    }
 
     // Normalize and check focus
     const focusId = params.focus_node_id?.toLowerCase();
@@ -262,6 +299,27 @@ export class NavigationEngine implements IHopStateMachine {
         if (!nNode) {
           invalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
           continue;
+        }
+        // Depth handling — three modes, driven by how the user expressed the depth:
+        //   strict  → slash command set depth; reject out-of-scope routes (hard rule)
+        //   soft    → user expressed depth in chat; allow expansion but track + surface (advisory)
+        //   silent  → AI chose a cautious starting scope on a large graph; expand freely, no awareness
+        if (nid && !this.scopeNodeIds.has(nid)) {
+          if (this.depthEnforcement === 'strict' && this.depthBudget !== null) {
+            const nodeDepth = this.depthFromOrigin.get(nid);
+            invalidRoutes.push({
+              id: req.nodeId,
+              reason: `Node is outside the user-requested depth budget (${this.depthBudget} from origin${nodeDepth !== undefined ? `; this node is at depth ${nodeDepth}` : ''}). Omit this route, or reference the node in analysis prose without routing to it.`,
+            });
+            continue;
+          }
+          // soft + silent: expand scope in-place so the node can be visited and appears in the result graph
+          this.scopeNodeIds.add(nid);
+          const focusDepth = this.depthFromOrigin.get(this.currentFocusNodeId!) ?? 0;
+          if (!this.depthFromOrigin.has(nid)) this.depthFromOrigin.set(nid, focusDepth + 1);
+          if (this.depthEnforcement === 'soft' && this.depthBudget !== null) {
+            this.budgetExpansions.push({ nodeId: nid, depth: focusDepth + 1, atHop: this.hopCount });
+          }
         }
         if (req.columns) {
           if (this.mode !== 'column_trace') {
@@ -384,8 +442,11 @@ export class NavigationEngine implements IHopStateMachine {
   private computeBfsScope(startId: string, direction: string, maxDepth: number): Set<string> {
     const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
     const seen = new Set<string>();
+    // Record BFS distance per node so route validation + hop payloads can reason about depth.
+    this.depthFromOrigin.clear();
     bfsFromNode(this.graph, startId, (key, _attr, depth) => {
       seen.add(key);
+      if (!this.depthFromOrigin.has(key)) this.depthFromOrigin.set(key, depth);
       return depth >= maxDepth; // stop traversing past this node
     }, { mode });
     return seen;
@@ -403,15 +464,24 @@ export class NavigationEngine implements IHopStateMachine {
 
   private buildNeighborList(focusId: string): HopNeighbor[] {
     const ids = Array.from(new Set([...(this.graph.inNeighbors(focusId) as string[]), ...(this.graph.outNeighbors(focusId) as string[])])) as string[];
+    // Only surface in-budget flags in strict/soft modes. In silent mode the scope grows transparently
+    // and the AI should not see any budget talk — it would cause confusion on cautious-start explorations.
+    const surfaceDepth = this.depthBudget !== null && this.depthEnforcement !== 'silent';
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const boundary = this.visited.has(nid) ? 'cycle' : 'none';
       const cols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name);
-      return {
+      const neighbor: HopNeighbor = {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: (this.graph.inNeighbors(focusId) as string[]).includes(nid) ? 'upstream' : 'downstream',
         edge_type: 'read', boundary, cols,
       };
+      if (surfaceDepth && !this.scopeNodeIds.has(nid)) {
+        (neighbor as any).in_budget = false;
+        const d = this.depthFromOrigin.get(nid);
+        if (d !== undefined) (neighbor as any).depth_from_origin = d;
+      }
+      return neighbor;
     });
   }
 

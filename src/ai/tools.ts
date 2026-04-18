@@ -175,6 +175,11 @@ export function getNodeDdl(
  * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
  * @returns A record containing the focus node's metadata.
  */
+/** Per-node DDL character cap for hop focus delivery. Verbose utility/log procs (LogMessage etc.)
+ *  can balloon a hop payload 5x+; cap them and instruct the AI to fetch the full DDL on-demand
+ *  via get_ddl_batch if the context is insufficient. */
+const HOP_DDL_CHAR_CAP = 8000;
+
 export function buildHopFocusNode(
   node: LineageNode,
   nodeMap: Map<string, LineageNode>,
@@ -188,7 +193,14 @@ export function buildHopFocusNode(
   const ddl = getNodeDdl(node.id, nodeMap, store);
   const cols = getNodeColumns(node.id, nodeMap, store);
   if (SCRIPT_TYPES.has(node.type) && ddl) {
-    focusNode[ddlKey] = ddl;
+    if (ddl.length > HOP_DDL_CHAR_CAP) {
+      focusNode[ddlKey] = ddl.slice(0, HOP_DDL_CHAR_CAP) + '\n-- …DDL truncated…';
+      focusNode.ddl_truncated = true;
+      focusNode.ddl_original_chars = ddl.length;
+      focusNode.ddl_hint = `DDL truncated at ${HOP_DDL_CHAR_CAP} chars (original ${ddl.length}). Call get_ddl_batch with this node id if the truncated portion is material to the analysis.`;
+    } else {
+      focusNode[ddlKey] = ddl;
+    }
   } else if (cols?.length) {
     focusNode.cols = cols.map(c => presentColumnCompact(c));
   }

@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Depth handling — three modes (Gate 7)
+- `start_exploration` now accepts `depth_enforcement: 'strict' | 'soft' | 'silent'` alongside `depth`.
+  - `strict` → hard-rejects out-of-scope routes (for future slash-command-set depths)
+  - `soft` → allows expansion but surfaces `depth_budget`, `in_budget: false` per neighbor, and `budget_expansions[]` in working memory (for user-expressed natural-language depth)
+  - `silent` (default) → scope auto-expands in-place with **no awareness fields emitted**, letting the AI start cautious on large graphs and expand organically
+- Engine tracks BFS distance per node (`depthFromOrigin`) and expands `scopeNodeIds` on route_requests when appropriate; cascade-prune and result-graph construction naturally include expanded nodes.
+- Nav-prompt routing block references the three modes so the AI only sees "stay within" language when a budget actually exists.
+
+### Prompt architecture refactor (deep review 2026-04-18)
+- **Stage-placement discipline** — system prompt carries global invariants only; discovery-tool routing lives in tool descriptions; CT column semantics live in the CT nav block; output templates inject by phase (summary+description in DISCOVERY, none in ACTIVE, full set in SYNTHESIS).
+- **Parallel-call guard** — `start_exploration` now rejects calls 2..N within one LM round with a structured `parallel_call_forbidden` envelope, preventing the "storm after complete_rejected" failure that wiped the Detail Archive.
+- **Abundance framing** — archive fields (`detail_analysis`, synthesis `sections[].text`, `description` fallback) signal "write thoroughly — no length limit" instead of imposing char ceilings. UI-real-estate fields (summary, note_caption, badge_label) keep their pixel budgets local.
+- **Sub-question depth** — `route_requests[].question` and `current_task` framing explicitly allows multi-part investigative questions, not just yes/no narrow framing.
+- **Customer examples removed** — `spcadencerule_alloc1a` and "10% VAT" example text replaced with generic placeholders.
+- **Missing reject hints added** — `origin_not_found`, `invalid_status`, `no_active_session` now carry next-step hints. Repeat-reject abort injects an AI-facing hint before session close.
+- **Token budget** — per ACTIVE hop prompt-side cost drops from ~3,000 to ~1,625 tokens (−46%); per-session cost on a 28-hop session drops ~16–30% depending on history compounding.
+- **Model-agnostic** — all prompt guidance written to work across Claude / GPT-4o/4.1/5 / Gemini. Hard tool invariants enforced mechanically, not via prose imperatives.
+- **Docs** — `docs/AI_PROMPTS.md` adds §1.4 (stage-placement invariants), §1.5 (per-phase template scope), §5 (model-agnostic authoring). `docs/AI_ARCHITECTURE.md` adds phase-boundary contract + known failure modes. `prompt-change` skill adds stage-placement rule, length+duplication audit, VS Code framing, model-agnostic rules, and a case study from the real failure log.
+
 ## [0.9.9] - 2026-04-18
 
 ### Improved
