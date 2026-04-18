@@ -1029,7 +1029,7 @@
             },
             "complete": {
               "type": "boolean",
-              "description": "Set true on your final submit when every direct neighbor of the origin has been analyzed. The engine validates: if any direct neighbor is still unvisited it returns 'complete_rejected' with the list, promotes them to priority 3, and serves them next. Retry 'complete: true' after analyzing them."
+              "description": "Reserved. The engine handles completion automatically — leave unset."
             },
             "badge_label": {
               "type": "string",

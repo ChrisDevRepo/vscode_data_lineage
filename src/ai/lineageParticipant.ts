@@ -299,7 +299,14 @@ export class LineageParticipant {
           this.logger.debug(`Per-round countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
 
-        const response = await request.model.sendRequest(messages, { tools: lineageTools }, token);
+        // Map-&-Router enforcement: in ACTIVE the AI is a callback that must call submit_findings.
+        // Required mode makes free-form text impossible so there's no silent-bail escape hatch. The
+        // AI retains full speed control via verdicts (irrelevant cascade-prunes → fast drain).
+        // DISCOVER and SYNTHESIS stay Auto so the AI can produce trivial chat answers or final prose.
+        const toolMode = activePhase === 'active'
+          ? vscode.LanguageModelChatToolMode.Required
+          : vscode.LanguageModelChatToolMode.Auto;
+        const response = await request.model.sendRequest(messages, { tools: lineageTools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
@@ -450,7 +457,11 @@ export class LineageParticipant {
         const hasStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
         if (hasStart && activePhase === 'discover') {
           activePhase = 'active';
-          lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage-engine'));
+          // ACTIVE-phase tool set is submit_findings only — Required mode forces a tool call, and
+          // some models only support a single tool under Required. The start_exploration tool is
+          // dropped here; the parallel-call guard remains as defense-in-depth in case a model
+          // somehow calls it, but the schema itself no longer lists it.
+          lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
           this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
 
           // Stage-scope the system prompt: drop output templates for ACTIVE hops.

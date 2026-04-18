@@ -383,46 +383,11 @@ export class NavigationEngine implements IHopStateMachine {
 
     this._status = 'exploring';
 
-    if (params.complete) {
-      if (this._inlineMode) {
-        this._status = 'complete';
-        return { ok: true, done: true, result: this.getResult() };
-      }
-
-      // 0.9.8 direct-neighbors gate: complete only accepted when every direct neighbor of the
-      // origin has been visited or pruned. Unvisited neighbors are promoted to priority 3 so
-      // they are served next and the model can analyze them before retrying.
-      const originId = this.originNodeId;
-      if (originId) {
-        const directIds = new Set<string>([
-          ...(this.graph.inNeighbors(originId) as string[]),
-          ...(this.graph.outNeighbors(originId) as string[]),
-        ]);
-        const unvisited = Array.from(directIds).filter(id =>
-          this.scopeNodeIds.has(id) && !this.visited.has(id) && !this.removedSet.has(id),
-        );
-        if (unvisited.length > 0) {
-          for (const id of unvisited) {
-            if (!this.agendaIds.has(id)) {
-              this.agenda.push({ nodeId: id, question: `Visit before completing`, priority: 3, depth: 1 });
-              this.agendaIds.add(id);
-            } else {
-              const entry = this.agenda.find(a => a.nodeId === id);
-              if (entry) entry.priority = 3;
-            }
-          }
-          const names = unvisited.map(id => this.nodeMap.get(id)?.name ?? id);
-          return {
-            error: 'complete_rejected',
-            detail: {
-              unvisited_direct_neighbors: unvisited,
-              names,
-              hint: `Visit or mark these direct neighbors of the origin before completing: ${names.join(', ')}. Do NOT call start_exploration — these neighbors are already queued at priority 3. Your next submit_findings call will present one of them.`,
-            },
-          };
-        }
-      }
-
+    // `complete: true` is inline-mode only. In sliding-memory mode the engine owns termination
+    // via natural agenda drain (getHopContext sets status='complete' when agenda is empty);
+    // surfacing AI-driven completion would give the AI a self-exit path, which breaks the
+    // Map-&-Router invariant. If set in SM mode, silently ignore.
+    if (params.complete && this._inlineMode) {
       this._status = 'complete';
       return { ok: true, done: true, result: this.getResult() };
     }

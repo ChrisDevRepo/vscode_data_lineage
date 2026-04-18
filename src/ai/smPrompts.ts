@@ -78,10 +78,10 @@ const BLOCK = {
   workingMemory:
     'WORKING MEMORY: `working_memory.all_summaries` contains every prior hop\'s one-line summary; `working_memory.pending_questions` lists self-asks you have not yet answered. Read them every hop — they keep cross-hop reasoning grounded.',
 
-  /** Completion contract — applies to every mode. */
+  /** Loop contract — applies to every mode. */
   completionContract:
-    'COMPLETION: Every hop call `submit_findings` for the presented focus node. When every direct neighbor of the origin has been analyzed, set `complete: true` on your final submit. The engine verifies — if any direct neighbor of the origin is still unvisited it returns `complete_rejected` with the list (`unvisited_direct_neighbors`, `names`) and promotes them to priority 3 so they are served next; analyze those then retry `complete: true`. Produce the final answer, chat prose wrap-up, or `lineage_enrich_view` only after the loop drains — a silent no-tool-call mid-loop truncates the investigation.\n' +
-    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs): submit with `verdict: "irrelevant"` — do not skip the submit. Irrelevant cascade-prunes the node and advances the agenda. Skipping leaves the engine waiting for findings and ends the investigation early.',
+    'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: relevant | pass | irrelevant`. The engine keeps presenting the next node until every one has a verdict.\n' +
+    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs) take `verdict: "irrelevant"` — cascade-prunes the node and advances the agenda quickly.',
 } as const;
 
 

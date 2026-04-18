@@ -19,6 +19,8 @@ Built by `buildSystemPromptBase(maxRounds)` in `src/ai/prompts.ts` and cached ac
 
 Each mode prompt spells out the per-hop workflow (read DDL → write archive → assign badge/note → route neighbors), the three verdicts (`relevant` / `pass` / `irrelevant`), and the routing contract (every `route_requests` entry needs a specific sub-question). No "autonomous agent" framing, no persona headers — the prompt matches VS Code chat-participant conventions.
 
+**ACTIVE-phase mechanical enforcement (2026-04-18):** the chat loop sets `vscode.LanguageModelChatToolMode.Required` and narrows the visible tool set to `submit_findings` during ACTIVE. The AI cannot emit free-form text mid-loop — it must call a tool. Termination is owned by the engine (agenda drains → synthesis prompt injected). Prompt surfaces therefore contain no self-exit vocabulary (`complete: true`, "final answer", "enrich_view only after"); those paths are unreachable by design.
+
 ### 1.3 Synthesis Prompt (phase 3)
 `buildSynthesisPrompt()` in `src/ai/smPrompts.ts`. Delivered once the agenda drains. Spells out the two-deliverable contract (chat prose + `enrich_view` sections, one per archived slot) and the grounding contract (cite archive only, no new facts, preserve LaTeX and tables from slot analyses). The model self-regulates per-slot section depth based on question shape.
 

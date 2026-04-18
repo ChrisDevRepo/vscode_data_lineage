@@ -92,6 +92,18 @@ The user's original question reaches the model via three paths every hop: (1) `w
 - **ACTIVE hop loop** — `submit_findings` is the only active-phase tool (plus `get_object_detail` for ad-hoc look-up). Nav prompt is re-injected on every sliding-memory wipe (`lineageParticipant.ts:494`).
 - **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. Detail archive is injected as a fresh user message, followed by the synthesis prompt. The synthesis prompt is not preserved through sliding-memory wipes today; if synthesis is reached post-wipe, the rules may be stale (known limitation; re-injection is an active investigation).
 
+### Mechanical Map-&-Router enforcement (2026-04-18)
+
+The ACTIVE phase of the chat loop sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`. The AI **cannot** produce free-form text during the hop loop — it must call `submit_findings`. This enforces the Map-&-Router contract ("the engine owns the loop") at the API level rather than relying on prompt discipline.
+
+Consequences:
+- **No self-exit for the AI.** `complete: true` is honored only in inline mode (`_inlineMode === true`); in sliding-memory mode it is silently ignored. Termination is owned by the engine — `getHopContext` sets status to `'complete'` when the agenda is empty, which triggers the `active → done` phase transition.
+- **Speed control via verdicts, not prose.** If the AI judges a branch unworthy, it emits `verdict: "irrelevant"` for each focus node → cascade-prune drains the agenda quickly → synthesis fires. No silent text bail possible.
+- **ACTIVE tool set is narrowed to `submit_findings` only.** `start_exploration` is dropped from the ACTIVE schema (the parallel-call guard in `toolProvider.ts` remains as defense-in-depth). This both satisfies the "some models support only a single tool under Required" caveat in the VS Code API and removes the AI's temptation to re-enter discovery.
+- **Prompt surfaces contain no exit vocabulary.** `BLOCK.completionContract` in `smPrompts.ts` describes only the loop (call `submit_findings` with a verdict until the engine drains). No mention of `complete: true`, "final answer", or "enrich_view only after" — those would teach the AI a path it cannot take.
+
+Reference: VS Code API `LanguageModelChatToolMode.Required` at `node_modules/@types/vscode/index.d.ts:20843`.
+
 ### Known Failure Modes (observed in production logs)
 
 | Mode | Symptom | Root cause | Mitigation |

@@ -54,7 +54,7 @@ suite('State Machine Robustness', () => {
   // cannot produce a non-zero `cascaded_count` because `seedAgenda` only admits direct
   // neighbors of the origin — C and D never reach the agenda before B is popped.
 
-  test('SM sliding-memory mode: complete=true is rejected until all direct neighbors of origin are visited', () => {
+  test('SM sliding-memory mode: complete=true is silently ignored (engine owns termination via agenda drain)', () => {
     const { model, graph } = createMockModelAndGraph();
     const log = () => {};
     log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
@@ -70,15 +70,14 @@ suite('State Machine Robustness', () => {
       detail_analysis: 'ok',
       summary: 'ok',
       verdict: 'relevant',
-      complete: true,
+      complete: true, // ignored in SM mode — the engine owns termination
     } as any);
 
-    assert.ok('error' in res, 'submit rejected with error');
-    assert.strictEqual((res as any).error, 'complete_rejected', 'complete=true rejected while direct neighbors unvisited');
-    const detail = (res as any).detail;
-    assert.ok(Array.isArray(detail.unvisited_direct_neighbors), 'detail lists unvisited_direct_neighbors');
-    assert.ok(detail.unvisited_direct_neighbors.length > 0, 'at least one unvisited direct neighbor reported');
-    assert.ok(typeof detail.hint === 'string' && detail.hint.length > 0, 'detail includes hint text');
+    // In SM mode, complete:true is silently ignored. The submit processes normally;
+    // termination happens later when getHopContext finds an empty agenda.
+    assert.ok(!('error' in res), 'complete=true in SM mode does NOT return an error');
+    assert.ok('ok' in res && (res as any).ok === true, 'submit is accepted');
+    assert.ok(!(res as any).done, 'done:true is NOT emitted from complete=true in SM mode (engine owns it)');
   });
 
   test('Inline mode: complete=true returns { done: true, result }', () => {

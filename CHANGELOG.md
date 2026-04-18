@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Mechanical Map-&-Router enforcement (2026-04-18)
+Fixes the "AI emits partial text and stops mid-loop" regression observed in production GPT-4o session `sess_1776504390219_285nm` (7/27 nodes analyzed, 214 output tokens).
+
+- **`vscode.LanguageModelChatToolMode.Required` in ACTIVE phase** — the AI physically cannot emit free-form text during the hop loop; must call a tool. DISCOVER and SYNTHESIS remain `Auto`.
+- **ACTIVE tool set narrowed to `submit_findings` only** — satisfies the "single tool under Required" caveat for some models; `start_exploration` is dropped from the ACTIVE schema (parallel-call guard kept as defense-in-depth).
+- **Removed SM-mode direct-neighbor gate** in `submitFindings` — `complete: true` is now inline-mode-only; in sliding-memory mode it is silently ignored. The engine owns termination via agenda drain.
+- **Stripped all self-exit vocabulary** from `BLOCK.completionContract` and the `complete` tool-param description.
+- **Updated unit test** `sm-robustness` for the new contract (`complete=true is silently ignored in SM mode`).
+- Docs: `AI_ARCHITECTURE.md` adds "Mechanical Map-&-Router enforcement" section; `AI_PROMPTS.md` notes Required mode in §1.
+- Skill protocol artifacts: `test-results/archive/prompt-baseline.md`, `test-results/archive/prompt-changelog.md`, `test-results/eval-runs/knowledge.json` initialized.
+
 ### Depth handling — three modes (Gate 7)
 - `start_exploration` now accepts `depth_enforcement: 'strict' | 'soft' | 'silent'` alongside `depth`.
   - `strict` → hard-rejects out-of-scope routes (for future slash-command-set depths)
