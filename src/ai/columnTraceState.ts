@@ -14,8 +14,7 @@ import { SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './t
 import { presentNode, presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import type Graph from 'graphology';
 import { wouldOrphanNotedNode, type LogFn } from './smGuards';
-import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type SmResult } from './smBase';
-import type { AiMemoryManager, DetailSlot, ShortMemory } from './memoryManager';
+import { HopStateMachine, type BaseWorkingMemory, type BoundaryFlag, type HopNeighbor, type ShortMemory, type DetailSlot } from './smBase';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -51,7 +50,6 @@ export interface OutOfScopeEntry {
 export interface ColumnTraceConfig {
   maxFrontierSize?: number;   // default 200
   activeFilter?: SerializedFilterState | null;  // user's active filter — for scope REPORTING, not filtering
-  memory?: AiMemoryManager;
 }
 
 
@@ -94,7 +92,6 @@ export class ColumnTraceState extends HopStateMachine {
   ) {
     super(model, graph, log, {
       activeFilter: config?.activeFilter,
-      memory: config?.memory,
     }, store);
     this.maxFrontierSize = config?.maxFrontierSize ?? DEFAULT_MAX_FRONTIER;
   }
@@ -168,7 +165,6 @@ export class ColumnTraceState extends HopStateMachine {
     origin?: string;
     direction?: ColumnTraceDirection;
     depth?: number;
-    initial_summary?: string;
   }): { ok: true; scopeSize: number; originNode: Record<string, unknown> }
      | { error: string; hint?: string; candidates?: Array<{ id: string; name: string; type: string }> } {
 
@@ -186,15 +182,15 @@ export class ColumnTraceState extends HopStateMachine {
     this.revisitCount = 0;
     this.rejectionHistory = [];
 
-    const { targetColumns: rawCols, origin, direction = 'up', initial_summary } = params;
+    const { targetColumns: rawCols, origin, direction = 'up' } = params;
 
-    // Validate direction
-    if (!['up', 'down', 'both'].includes(direction)) {
+    // Runtime validation — LM API passes untyped JSON
+    const VALID_DIRECTIONS: ColumnTraceDirection[] = ['up', 'down', 'both'];
+    if (!VALID_DIRECTIONS.includes(direction)) {
       this._status = 'error';
-      return { error: 'invalid_direction', hint: `Direction must be 'up', 'down', or 'both'. Got: '${direction}'.` };
+      this.log('debug', `INIT ERROR: invalid direction "${direction}"`);
+      return { error: 'invalid_direction', hint: `direction must be 'up', 'down', or 'both'` };
     }
-
-    // Assign instance fields from params
     this.direction = direction;
     this.targetColumns = [...new Set((rawCols ?? []).map((c: string) => c.trim()).filter(Boolean))];
 
@@ -213,8 +209,9 @@ export class ColumnTraceState extends HopStateMachine {
       this.log('debug', 'INIT ERROR: no origin and no columns');
       return { error: 'no_origin', hint: 'Provide origin object when tracing without columns.' };
     } else {
-      // Auto-discover logic ...
+      // Auto-discover: find tables/views with a matching column
       const colLower = new Set(this.targetColumns.map(c => c.toLowerCase()));
+      // Auto-discover: use ColumnStore reverse index (O(1)) or scan nodes (fallback for tests)
       let candidates: LineageNode[];
       if (this.store) {
         candidates = this.targetColumns.flatMap(col => this.store!.findByColumnName(col))
@@ -233,6 +230,7 @@ export class ColumnTraceState extends HopStateMachine {
         return { error: 'column_not_found', hint: `No object contains column(s): ${this.targetColumns.join(', ')}.` };
       }
       if (candidates.length > MAX_AUTODISCOVER_CANDIDATES) {
+        // Too many candidates — ask for clarification
         this._status = 'error';
         this.log('debug', `INIT ERROR: ${candidates.length} candidates for columns [${this.targetColumns}] — ambiguous`);
         return {
@@ -241,13 +239,16 @@ export class ColumnTraceState extends HopStateMachine {
           candidates: candidates.slice(0, CANDIDATE_DISPLAY_LIMIT).map((c: LineageNode) => ({ id: c.id, name: c.name, type: c.type })),
         };
       }
+      // 1-5 candidates: pick the one with highest degree (most connected = likely the fact/main table)
       originNode = candidates.sort((a: LineageNode, b: LineageNode) => {
         const degA = (this.model.neighborIndex[a.id]?.in.length ?? 0) + (this.model.neighborIndex[a.id]?.out.length ?? 0);
         const degB = (this.model.neighborIndex[b.id]?.in.length ?? 0) + (this.model.neighborIndex[b.id]?.out.length ?? 0);
         return degB - degA;
       })[0];
+      this.log('info', `Auto-discovered origin: ${originNode!.id} (${candidates.length} candidate(s), picked highest degree)`);
     }
 
+    // All error paths returned above — originNode is guaranteed defined here
     const origin_ = originNode!;
     this.originNodeId = origin_.id;
 
@@ -255,12 +256,7 @@ export class ColumnTraceState extends HopStateMachine {
     const scopeIds = this.bfsScopeViaIndex(origin_.id, params.depth);
     this.scopeNodeIds = scopeIds;
 
-    // Inject initial summary if provided (discovery phase grounding)
-    if (initial_summary) {
-      this.updateShortMemory(`Discovery: ${initial_summary}`);
-    }
-
-    // Seed frontier with directional neighbors of origin ...
+    // Seed frontier with directional neighbors of origin
     const neighbors = this.getDirectionalNeighbors(origin_.id);
     for (const nid of neighbors) {
       if (this.frontier.length >= this.maxFrontierSize) break;
@@ -287,6 +283,7 @@ export class ColumnTraceState extends HopStateMachine {
 
     this._status = 'initialized';
     this.log('info', `INIT | origin=${origin_.id} | columns=[${this.targetColumns}] | direction=${direction} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} nodes to walk | frontier=${this.frontier.length} initial`);
+    this.log('debug', `INIT detail | origin=${origin_.id} (${origin_.type}) | auto_discovered=${!origin} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | frontier=${this.frontier.length} | direction=${direction}`);
 
     return {
       ok: true,
@@ -323,30 +320,25 @@ export class ColumnTraceState extends HopStateMachine {
     // Pop next valid frontier entry (skip visited + missing nodes without recursion)
     let entry: FrontierEntry | undefined;
     let node: LineageNode | undefined;
-    let skipVisited = 0, skipPruned = 0, skipMissing = 0;
     while (this.frontier.length > 0) {
       const candidate = this.frontier.shift()!;
       if (this.visited.has(candidate.nodeId)) {
-        skipVisited++;
+        this.log('debug', `Frontier skip: ${candidate.nodeId} — already visited`);
         continue;
       }
       if (this.removedSet.has(candidate.nodeId)) {
-        skipPruned++;
+        this.log('debug', `Frontier skip: ${candidate.nodeId} — pruned (parent removed)`);
         continue;
       }
       const n = this.nodeMap.get(candidate.nodeId);
       if (!n) {
-        skipMissing++;
+        this.log('debug', `Node not in model: ${candidate.nodeId} — skipped`);
         this.visited.add(candidate.nodeId); // prevent re-encounter
         continue;
       }
       entry = candidate;
       node = n;
       break;
-    }
-    const totalSkipped = skipVisited + skipPruned + skipMissing;
-    if (totalSkipped > 0) {
-      this.log('debug', `Frontier: skipped ${totalSkipped} (visited=${skipVisited}, pruned=${skipPruned}, not_in_model=${skipMissing})`);
     }
 
     if (!entry || !node) {
@@ -391,6 +383,7 @@ export class ColumnTraceState extends HopStateMachine {
         : `Analyze ${node.id} for columns [${entry.activeColumns.join(', ')}]. Which neighbors carry these columns?`);
     const pct = this.scopeNodeIds.size > 0 ? Math.round((this.visited.size / this.scopeNodeIds.size) * 100) : 0;
     this.log('info', `Hop ${this.hopCount} | ${node.id} | cols=[${entry.activeColumns}] | neighbors=${neighbors.length} | progress: ${this.visited.size}/${this.scopeNodeIds.size} visited (${pct}%) | frontier=${this.frontier.length} | depth=${entry.depth}`);
+    this.log('debug', `Hop ${this.hopCount} detail | ${node.id} (${node.type}) | task=${entry.question ? 'self-ask' : 'default'} | chain=${this.chain.size} | removed=${this.removedSet.size} | passthrough=${this.passthroughMap.size}`);
     if (entry.depth >= DEPTH_WARNING_THRESHOLD) {
       this.log('warn', `Deep trace: depth=${entry.depth}, frontier=${this.frontier.length}, visited=${this.visited.size}/${this.scopeNodeIds.size}`);
     }
@@ -542,22 +535,19 @@ export class ColumnTraceState extends HopStateMachine {
 
     // 1. Store detail memory (before verdicts — doesn't depend on summary)
     this.storeFocusNodeDetail(params);
-// 2. Apply verdicts (populates chain summaries via applyTrace)
-let advanced = 0;
-let pruneCount = 0;
-try {
-  for (const v of params.verdicts) {
-    const result = this.applyVerdict(v);
-    if ('error' in result) return result;
-    advanced += result.advanced;
-    if (v.verdict === 'prune') pruneCount++;
-  }
-} catch (err) {
-  this.log('error', `submitVerdicts CRASH: ${err}`);
-  return { error: 'internal_error', hint: String(err) };
-}
 
-// 3. Update short memory (after verdicts — captures both chain and passthrough nodes)    //    Two parts: SM-generated metadata (traced/pruned) + AI-generated insight (notes)
+    // 2. Apply verdicts (populates chain summaries via applyTrace)
+    let advanced = 0;
+    let pruneCount = 0;
+    for (const v of params.verdicts) {
+      const result = this.applyVerdict(v);
+      if ('error' in result) return result;
+      advanced += result.advanced;
+      if (v.verdict === 'prune') pruneCount++;
+    }
+
+    // 3. Update short memory (after verdicts — captures both chain and passthrough nodes)
+    //    Two parts: SM-generated metadata (traced/pruned) + AI-generated insight (notes)
     //    SM adds the mechanical facts automatically. AI writes only the insight (FOUND/OPEN).
     const focusChain = this.chain.get(this.currentFocusNodeId!);
     const focusName = focusChain?.name ?? this.nodeMap.get(this.currentFocusNodeId!)?.name ?? '';
@@ -576,7 +566,7 @@ try {
       if (pruned.length) parts.push(`✕ pruned: ${pruned.join(', ')}`);
       const entry = `${focusName}: ${parts.join(' | ')}`;
       const smErr = this.updateShortMemory(entry);
-      if (smErr) return { error: 'notes_too_long', limit: this.summaryHardLimit, hint: `Shorten your notes — aim for ~${this.summarySoftLimit} chars.` };
+      if (smErr) return { error: 'notes_too_long', limit: this.shortMemoryHardLimit, hint: `Shorten your notes — aim for ~${this.shortMemorySoftLimit} chars.` };
     }
 
     // Cascade prune: remove frontier entries unreachable from origin after prunes
@@ -708,6 +698,7 @@ try {
       depth: this.currentFocusDepth + 1,
       parentNodeId: this.currentFocusNodeId,
     });
+    this.log('debug', `Verdict: ${v.nodeId} = prune ("${v.summary ?? ''}")`);
     return { advanced: 0 };
   }
 
@@ -740,6 +731,7 @@ try {
     this.passthroughMap.set(v.nodeId, [...passColumns]);
     if (boundary !== 'none') {
       this.visited.add(v.nodeId);
+      this.log('debug', `Verdict: ${v.nodeId} = pass (boundary=${boundary}) → terminal`);
       return { advanced: 0 };
     }
     // Queue as lightweight focus hop — AI will see neighbors and verdict them
@@ -752,6 +744,7 @@ try {
       question: `Passthrough — which neighbors carry [${passColumns.join(', ')}] upstream?`,
     };
     this.frontierUpdateOrPush(entry);
+    this.log('debug', `Verdict: ${v.nodeId} = pass → queued as focus hop (no auto-expand)`);
     return { advanced: 1 };
   }
 
@@ -769,6 +762,7 @@ try {
         const mergedOut = new Set([...existingChain.columnsOut, ...v.columnsOut]);
         existingChain.columnsOut = [...mergedOut];
       }
+      this.log('debug', `Verdict: ${v.nodeId} = trace (merge into existing chain entry), columnsIn=[${existingChain.columnsIn}]`);
     } else {
       this.chain.set(v.nodeId, {
         nodeId: v.nodeId,
@@ -794,9 +788,15 @@ try {
         parentNodeId: this.currentFocusNodeId ?? '',
         question: v.question,
       };
-      this.frontierUpdateOrPush(entry);
+      const action = this.frontierUpdateOrPush(entry);
+      if (action === 'updated') {
+        this.log('debug', `Verdict: ${v.nodeId} = trace, updated existing frontier entry${v.question ? ` Q: "${v.question}"` : ''}`);
+      } else {
+        this.log('debug', `Verdict: ${v.nodeId} = trace, columns [${v.columnsOut}]${v.question ? ` Q: "${v.question}"` : ''} → queued as next focus hop`);
+      }
       return { advanced: 1 };
     }
+    this.log('debug', `Verdict: ${v.nodeId} = trace (boundary=${boundary}), columns [${v.columnsOut}] → terminal, not queued`);
     return { advanced: 0 };
   }
 
@@ -871,29 +871,6 @@ try {
     return { ok: true, result: this.getResult() };
   }
 
-  override toJSON(): Record<string, unknown> {
-    return {
-      ...super.toJSON(),
-      direction: this.direction,
-      targetColumns: [...this.targetColumns],
-      frontier: this.frontier.map(f => ({ ...f, activeColumns: [...f.activeColumns] })),
-      frontierSize: this.frontier.length,
-      chain: Object.fromEntries(
-        [...this.chain.entries()].map(([k, v]) => [k, { ...v, columnsIn: [...v.columnsIn], columnsOut: [...v.columnsOut] }]),
-      ),
-      chainSize: this.chain.size,
-      passthroughMap: Object.fromEntries(
-        [...this.passthroughMap.entries()].map(([k, v]) => [k, [...v]]),
-      ),
-      outOfScope: [...this.outOfScope],
-      prunedEntries: Object.fromEntries(
-        [...this.prunedEntries.entries()].map(([k, v]) => [k, { ...v, parentColumns: [...v.parentColumns] }]),
-      ),
-      revisitCount: this.revisitCount,
-      rejectionHistory: this.rejectionHistory.map(r => ({ ...r, submitted: [...r.submitted], valid: [...r.valid] })),
-    };
-  }
-
   // ─── getResult ─────────────────────────────────────────────────────────────
 
   getResult(): {
@@ -958,6 +935,7 @@ try {
 
     const pruneRate = this.scopeNodeIds.size > 0 ? Math.round(((this.scopeNodeIds.size - stats.examined) / this.scopeNodeIds.size) * 100) : 0;
     this.log('info', `COMPLETE | ${stats.hops} hops | examined ${stats.examined}/${this.scopeNodeIds.size} (${pruneRate}% pruned) | chain=${stats.relevant} relevant + ${stats.passthrough} passthrough | ${stats.removed} removed`);
+    this.log('debug', `COMPLETE detail | fullNodes=${fullNodes.length} | edges=${edges.length} | outOfScope=${this.outOfScope.length} | revisits=${this.revisitCount}`);
 
     // Derive badge/note suggestions from chain entries.
     // Chain is already the curated traced set — every entry is a relevant node.
@@ -966,12 +944,12 @@ try {
     const BADGE_NUM_RE = /^\d+[\.\s]+/;
     const stripBadgeNum = (s: string) => s.replace(BADGE_NUM_RE, '').trim();
     const suggested_labels = chainArr.map(e => {
-      const slot = this.memory.getSlot(e.nodeId);
+      const slot = this.detailSlots.get(e.nodeId);
       const label = slot?.badge_label ? stripBadgeNum(slot.badge_label) : e.name;
       return { node_id: e.nodeId, text: label };
     });
     const suggested_notes  = chainArr.map(e => {
-      const slot = this.memory.getSlot(e.nodeId);
+      const slot = this.detailSlots.get(e.nodeId);
       return { node_id: e.nodeId, text: slot?.note_caption ?? e.notes ?? e.summary };
     });
 
@@ -980,7 +958,7 @@ try {
     const sectionMap = new Map<string, string[]>();
     const sectionOrder: string[] = [];
     for (const sl of suggested_labels) {
-      const slot = this.memory.getSlot(sl.node_id);
+      const slot = this.detailSlots.get(sl.node_id);
       if (!slot?.badge_label) continue; // Only nodes with explicit badge_label form sections
       const label = stripBadgeNum(slot.badge_label);
       if (!sectionMap.has(label)) {

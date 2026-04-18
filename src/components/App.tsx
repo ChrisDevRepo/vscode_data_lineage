@@ -13,7 +13,7 @@ import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
-import { runAnalysis, getNeighborSchemas } from '../engine/graphAnalysis';
+import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import { escapeRegexLiteral } from '../utils/sql';
@@ -807,23 +807,6 @@ export function App() {
     endTrace();
   }, [analysisMode, endTrace]);
 
-  const handlePendingPositionsApplied = useCallback(() => {
-    setPendingPositions(undefined);
-    setPendingViewport(undefined);
-  }, []);
-
-  const handleRemoveFromView = useCallback((nodeId: string) => {
-    setFilter(f => {
-      if (!f.allowlistNodeIds) return f;
-      const next: FilterState = {
-        ...f,
-        allowlistNodeIds: new Set([...f.allowlistNodeIds].filter(id => id !== nodeId)),
-      };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
-
   const handleDiscardAiPreview = useCallback(() => {
     setAiPreview(null);
     // Mode-lock restore triggers automatically via isModeLocked → false
@@ -1010,32 +993,6 @@ export function App() {
     return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(serializeFilter(clean));
   }, [model, filter, activeViewId, isViewModified]);
 
-  const persistFilterProfile = useCallback((
-    profile: FilterProfile,
-    options?: { 
-      clearAiPreview?: boolean, 
-      activateProfile?: boolean 
-    }
-  ) => {
-    if (!activeProjectId) return;
-
-    // Optimistic update
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-
-    if (options?.clearAiPreview) setAiPreview(null);
-    if (options?.activateProfile) {
-      if ((profile.filter.allowlistNodeIds?.length ?? 0) > 0) {
-        setActiveAdvancedProfile(profile);
-      }
-      setActiveViewId(profile.id);
-    }
-  }, [activeProjectId, lastOpenedId, vscodeApi]);
-
   const handleSaveView = useCallback((name: string) => {
     if (!activeProjectId) {
       vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
@@ -1047,20 +1004,46 @@ export function App() {
       createdAt: new Date().toISOString(),
       filter: serializeFilter(filter),
     };
-    persistFilterProfile(profile, { activateProfile: true });
-  }, [activeProjectId, filter, persistFilterProfile, vscodeApi]);
+    setActiveViewId(profile.id);
+    // Optimistic update
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
 
   const handleUpdateView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
     const existing = filterProfiles.find(p => p.id === profileId);
     if (!existing) return;
-
     const updated: FilterProfile = {
       ...existing,
       filter: serializeFilter(filter),
     };
-    persistFilterProfile(updated);
-  }, [activeProjectId, filter, filterProfiles, persistFilterProfile]);
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, updated).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: updated });
+  }, [activeProjectId, filter, filterProfiles, lastOpenedId, vscodeApi]);
+
+  const handlePendingPositionsApplied = useCallback(() => {
+    setPendingPositions(undefined);
+    setPendingViewport(undefined);
+  }, []);
+
+  const handleRemoveFromView = useCallback((nodeId: string) => {
+    setFilter(f => {
+      if (!f.allowlistNodeIds) return f;
+      const next: FilterState = {
+        ...f,
+        allowlistNodeIds: new Set([...f.allowlistNodeIds].filter(id => id !== nodeId)),
+      };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
 
   const handleSaveTraceAsBookmark = useCallback((
     name: string,
@@ -1069,6 +1052,7 @@ export function App() {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
+    if (!activeProjectId) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1081,8 +1065,12 @@ export function App() {
       ...(positions ? { positions } : {}),
       ...(viewport ? { viewport } : {}),
     };
-    persistFilterProfile(profile, { activateProfile: true });
-  }, [filter, persistFilterProfile]);
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
 
   const handleSaveAnalysisBookmark = useCallback((
     name: string,
@@ -1090,6 +1078,7 @@ export function App() {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
+    if (!activeProjectId) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1102,8 +1091,12 @@ export function App() {
       ...(positions ? { positions } : {}),
       ...(viewport ? { viewport } : {}),
     };
-    persistFilterProfile(profile, { activateProfile: true });
-  }, [filter, persistFilterProfile]);
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
 
   const handleSaveAiBookmark = useCallback((
     name: string,
@@ -1111,7 +1104,7 @@ export function App() {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
-    if (!aiPreview) return;
+    if (!activeProjectId || !aiPreview) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1125,8 +1118,16 @@ export function App() {
       ...(withPositions && positions ? { positions } : {}),
       ...(withPositions && viewport ? { viewport } : {}),
     };
-    persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
-  }, [filter, aiPreview, persistFilterProfile]);
+    // Optimistic update + persist
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+    // Clear transient preview and switch to the saved profile
+    setAiPreview(null);
+    setActiveAdvancedProfile(profile);
+  }, [activeProjectId, filter, aiPreview, lastOpenedId, vscodeApi]);
 
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
@@ -1207,8 +1208,8 @@ export function App() {
     );
   }
 
-  const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : flowNodes);
-  const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : flowEdges);
+  const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
+  const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
 
   return (
     <ReactFlowProvider>
@@ -1287,10 +1288,8 @@ export function App() {
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
-          } else {
-            vscodeApi.postMessage({ type: 'show-detail' });
-            setIsDetailOpen(true);
           }
+          // else: no-op — user must select a node first
         }}
       />
 

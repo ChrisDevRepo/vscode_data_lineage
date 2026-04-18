@@ -1,19 +1,26 @@
 /**
  * Tests for src/engine/projectStore.ts
- * Focus: Migration and Serialization (Core Data Integrity)
+ * Covers: createProject, updateProject, deleteProject, migrateProjectStore,
+ *         serializeFilter/deserializeFilter roundtrips
  */
 
 import { assert, assertEq, test, printSummary } from './testUtils';
 import {
   createProject,
+  updateProject,
+  deleteProject,
   migrateProjectStore,
+  addFilterProfile,
+  deleteFilterProfile,
   serializeFilter,
   deserializeFilter,
 } from '../src/engine/projectStore';
 import type {
+  ProjectStore,
   Project,
   DacpacConnection,
   DatabaseConnection,
+  FilterProfile,
   SerializedFilterState,
 } from '../src/engine/projectStore';
 import type { FilterState } from '../src/engine/types';
@@ -39,6 +46,50 @@ const dbConn: DatabaseConnection = {
   sourceName: 'SalesDB (myserver)',
   schemas: ['dbo', 'Sales'],
 };
+
+function makeStore(projects: Project[] = [], lastOpenedId: string | null = null): ProjectStore {
+  return { schemaVersion: 1, projects, lastOpenedId };
+}
+
+// ─── createProject ────────────────────────────────────────────────────────────
+
+console.log('\n── createProject ──────────────────────────────────────────────');
+
+test('generates unique non-empty ids', () => {
+  const p1 = createProject('A', dacpacConn);
+  const p2 = createProject('B', dacpacConn);
+  assert(typeof p1.id === 'string' && p1.id.length > 0, 'id is non-empty string');
+  assert(p1.id !== p2.id, 'ids are distinct');
+});
+
+test('timestamps are correct on creation', () => {
+  const before = Date.now();
+  const p = createProject('T', dacpacConn);
+  const after = Date.now();
+  const ts = new Date(p.createdAt).getTime();
+  assert(!isNaN(ts), 'createdAt is parseable');
+  assert(ts >= before && ts <= after, 'createdAt is within call window');
+  assertEq(p.updatedAt, p.createdAt, 'updatedAt equals createdAt');
+});
+
+// ─── deleteProject: lastOpenedId fallback ────────────────────────────────────
+
+console.log('\n── deleteProject ──────────────────────────────────────────────');
+
+test('clears lastOpenedId when deleted project was last opened and no others exist', () => {
+  const p = createProject('A', dacpacConn);
+  const next = deleteProject(makeStore([p], p.id), p.id);
+  assertEq(next.lastOpenedId, null, 'lastOpenedId is null');
+  assertEq(next.projects.length, 0, 'no projects');
+});
+
+test('falls back lastOpenedId to another project when last opened is deleted', () => {
+  const p1 = createProject('A', dacpacConn);
+  const p2 = createProject('B', dacpacConn);
+  const next = deleteProject(makeStore([p1, p2], p1.id), p1.id);
+  assertEq(next.lastOpenedId, p2.id, 'lastOpenedId falls back to p2');
+  assertEq(next.projects.length, 1, 'one project remains');
+});
 
 // ─── migrateProjectStore ──────────────────────────────────────────────────────
 
@@ -80,6 +131,13 @@ test('filters out malformed project entries', () => {
   const s = migrateProjectStore(raw);
   assertEq(s.projects.length, 1, 'only valid project retained');
   assertEq(s.projects[0].id, valid.id, 'valid project preserved');
+});
+
+test('handles lastOpenedId edge cases', () => {
+  const s1 = migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: null });
+  assertEq(s1.lastOpenedId, null, 'null preserved');
+  const s2 = migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: 42 });
+  assertEq(s2.lastOpenedId, null, 'non-string lastOpenedId becomes null');
 });
 
 // ─── serializeFilter / deserializeFilter ──────────────────────────────────────
@@ -125,6 +183,49 @@ test('deserializeFilter defaults exclusionPatterns when absent', () => {
   };
   const restored = deserializeFilter(s);
   assertEq(restored.exclusionPatterns.length, 0, 'defaults to empty array');
+});
+
+// ─── addFilterProfile / deleteFilterProfile ──────────────────────────────────
+
+console.log('\n── addFilterProfile / deleteFilterProfile ─────────────────────');
+
+test('filter profile lifecycle: add, replace, delete', () => {
+  const store: ProjectStore = {
+    schemaVersion: 1,
+    projects: [{ ...createProject('Test', dacpacConn), id: 'proj-1' }],
+    lastOpenedId: 'proj-1',
+  };
+  const fp1: FilterProfile = {
+    id: 'fp-1', name: 'Sales Focus', createdAt: '2026-01-01T00:00:00.000Z',
+    filter: serializeFilter(sampleFilter),
+  };
+  const fp2: FilterProfile = {
+    id: 'fp-2', name: 'All Types', createdAt: '2026-01-02T00:00:00.000Z',
+    filter: serializeFilter({ ...sampleFilter, searchTerm: '' }),
+  };
+
+  // Add two profiles
+  const s1 = addFilterProfile(store, 'proj-1', fp1);
+  const s2 = addFilterProfile(s1, 'proj-1', fp2);
+  const profiles2 = s2.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles2.length, 2, 'two profiles after adds');
+
+  // Replace fp1
+  const s3 = addFilterProfile(s2, 'proj-1', { ...fp1, name: 'Renamed' });
+  const profiles3 = s3.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles3.length, 2, 'still two profiles after replace');
+  assertEq(profiles3.find(p => p.id === 'fp-1')?.name, 'Renamed', 'name updated');
+
+  // Delete fp1
+  const s4 = deleteFilterProfile(s3, 'proj-1', 'fp-1');
+  const profiles4 = s4.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles4.length, 1, 'one profile after delete');
+  assertEq(profiles4[0].id, 'fp-2', 'correct profile remains');
+
+  // Delete last profile
+  const s5 = deleteFilterProfile(s4, 'proj-1', 'fp-2');
+  const profiles5 = s5.projects.find(p => p.id === 'proj-1')?.filterProfiles ?? [];
+  assertEq(profiles5.length, 0, 'empty after removing last');
 });
 
 // ─── Summary ──────────────────────────────────────────────────────────────────

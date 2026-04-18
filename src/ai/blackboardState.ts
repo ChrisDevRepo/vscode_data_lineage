@@ -14,8 +14,7 @@ import type { SerializedFilterState } from '../engine/projectStore';
 import { buildHopFocusNode, SCRIPT_TYPES, getNodeDdl } from './tools';
 import { presentNode, strip, edgeApiType } from './aiPresenter';
 import { wouldOrphanNotedNode, countCascadeIfPruned, validateNodeIds, bfsReachable, type LogFn } from './smGuards';
-import { HopStateMachine, type HopNeighbor, type SmResult } from './smBase';
-import type { AiMemoryManager, DetailSlot } from './memoryManager';
+import { HopStateMachine, type HopNeighbor, type SmResult, type DetailSlot } from './smBase';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -32,7 +31,6 @@ export interface BlackboardConfig {
   summaryHardLimit?: number;
   activeFilter?: SerializedFilterState | null;
   scopeDirection?: 'upstream' | 'downstream' | 'bidirectional';
-  memory?: AiMemoryManager;
 }
 
 interface WorkingMemory {
@@ -91,7 +89,7 @@ export class BlackboardState extends HopStateMachine {
 
   // ── Public accessors ──
 
-  get noteCount(): number { return this.memory.slotCount; }
+  get noteCount(): number { return this.detailSlots.size; }
   get agendaRemaining(): number { return this.agenda.length; }
   get question(): string { return this.userQuestion; }
 
@@ -119,7 +117,6 @@ export class BlackboardState extends HopStateMachine {
     question: string;
     origin: string;
     depth?: number;
-    initial_summary?: string;
   }): { ok: true; scopeSize: number; agendaSize: number; originNode: Record<string, unknown>; map: MapOverview }
      | { error: string; hint?: string; scope_size?: number; in_filter?: number; outside_filter?: number } {
 
@@ -131,7 +128,7 @@ export class BlackboardState extends HopStateMachine {
     this.userQuestion = '';
     this.invalidNodeIds.clear();
 
-    const { question, origin, initial_summary } = params;
+    const { question, origin } = params;
     this.userQuestion = question;
 
     // Resolve origin
@@ -147,11 +144,6 @@ export class BlackboardState extends HopStateMachine {
     // Compute scope (depth-limited BFS — AI controls scope via depth + expand_frontier)
     const scopeIds = this.bfsScope(originNode.id, this.scopeDirection, params.depth);
     this.scopeNodeIds = scopeIds;
-
-    // Inject initial summary if provided (discovery phase grounding)
-    if (initial_summary) {
-      this.updateShortMemory(`Discovery: ${initial_summary}`);
-    }
 
     // Hard gate: bidirectional on large scope
     if (scopeIds.size > SCOPE_DIRECTION_GATE && this.scopeDirection === 'bidirectional') {
@@ -178,7 +170,8 @@ export class BlackboardState extends HopStateMachine {
 
     this._status = 'initialized';
     this.log('info', `BB INIT | origin=${originNode.id} | question="${question}" | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | scope=${scopeIds.size} | agenda=${this.agenda.length}`);
-    this.log('trace', `BB INIT scope nodes | [${[...scopeIds].map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
+    this.log('debug', `BB INIT detail | origin=${originNode.id} (${originNode.type}) | direction=${this.scopeDirection} | depth=${params.depth ?? 'unlimited'} | bfs_scope=${scopeIds.size}${scopeIds.size >= BFS_SCOPE_CAP ? ' (CAPPED)' : ''} | agenda=${this.agenda.length} | map_nodes=${map.nodes.length} | map_edges=${map.edges.length}`);
+    this.log('debug', `BB INIT scope nodes | [${[...scopeIds].map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
 
     return {
       ok: true,
@@ -213,7 +206,7 @@ export class BlackboardState extends HopStateMachine {
       if (!entry) {
         this._status = 'complete';
         const outsideScope = this.scopeNodeIds.size - this.visited.size - this.removedSet.size;
-        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.memory.slotCount} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
+        this.log('info', `BB COMPLETE | agenda exhausted | notes=${this.detailSlots.size} | visited=${this.visited.size} | pruned=${this.removedSet.size} | outside_scope=${Math.max(0, outsideScope)}`);
         return {
           done: true,
           ...(outsideScope > 0 && {
@@ -265,7 +258,8 @@ export class BlackboardState extends HopStateMachine {
     const workingMemory = this.buildWorkingMemory();
 
     this._status = 'awaiting_findings';
-    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.memory.slotCount} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
+    this.log('info', `BB Hop ${this.hopCount} | ${node.id} | neighbors=${neighbors.length} | visited=${this.detailSlots.size} | pruned=${this.removedSet.size} | agenda=${this.agenda.length}`);
+    this.log('debug', `BB Hop ${this.hopCount} detail | ${node.id} (${node.type}) | priority=${entry.priority} | task=${entry.question ? 'self-ask' : 'default'} | memory: ${workingMemory.all_summaries.length} summaries, ${workingMemory.pending_questions.length} pending Qs | coverage=${this.coveragePct}%`);
     if (this.agenda.length > 0) {
       this.log('trace', `BB Hop ${this.hopCount} remaining | [${this.agenda.map(e => this.nodeMap.get(e.nodeId)?.name ?? e.nodeId).join(', ')}]`);
     }
@@ -353,7 +347,7 @@ export class BlackboardState extends HopStateMachine {
 
     // Update short memory — base class validates soft/hard limits
     const smErr = this.updateShortMemory(`${this.nodeMap.get(focusNodeId)?.name ?? focusNodeId}: ${summary}`);
-    if (smErr) return { error: 'summary_too_long', limit: this.summaryHardLimit };
+    if (smErr) return { error: 'summary_too_long', limit: this.shortMemoryHardLimit };
 
     // Mark any pending questions for this node as answered
     for (const q of this.questionLog) {
@@ -384,7 +378,10 @@ export class BlackboardState extends HopStateMachine {
         this.invalidNodeIds.set(inv.nodeId, 'not_in_model');
       }
       for (const q of valid) {
-        if (this.removedSet.has(q.nodeId)) { continue; }
+        if (this.removedSet.has(q.nodeId)) {
+          this.log('debug', `BB question for pruned ${q.nodeId}, skipping`);
+          continue;
+        }
         this.addQuestion(q.nodeId, q.question);
         advanced++;
       }
@@ -394,8 +391,8 @@ export class BlackboardState extends HopStateMachine {
     let added = 0;
     if (params.addIds?.length) {
       for (const addId of params.addIds) {
-        if (!this.nodeMap.has(addId)) { continue; }
-        if (this.visited.has(addId) || this.removedSet.has(addId)) { continue; }
+        if (!this.nodeMap.has(addId)) { this.log('debug', `BB add_ids: ${addId} not in model, skipping`); continue; }
+        if (this.visited.has(addId) || this.removedSet.has(addId)) { this.log('debug', `BB add_ids: ${addId} already visited/pruned, skipping`); continue; }
         this.addQuestion(addId, '(auto-added)');
         advanced++;
         added++;
@@ -412,7 +409,7 @@ export class BlackboardState extends HopStateMachine {
         ...(this.scopeDirection !== 'upstream'   ? this.graph.outNeighbors(this.originNodeId) : []),
       ]) : new Set();
 
-      const notedIdSet = new Set(this.memory.notedNodeIds);
+      const notedIdSet = new Set(this.detailSlots.keys());
       for (const pruneId of pruneIds) {
         if (pruneId === this.originNodeId) continue;
         if (this.visited.has(pruneId)) continue;
@@ -468,13 +465,14 @@ export class BlackboardState extends HopStateMachine {
         const cascadedIds = [...this.removedSet].slice(removedBefore).filter(id => id !== pruneId);
         this.log('info', `BB PRUNE | ${pruneId} | cascade=${pruned} | agenda=${this.agenda.length}`);
         if (cascadedIds.length > 0) {
-          this.log('trace', `BB PRUNE cascade removed | [${cascadedIds.map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
+          this.log('debug', `BB PRUNE cascade removed | [${cascadedIds.map(id => this.nodeMap.get(id)?.name ?? id).join(', ')}]`);
         }
       }
     }
 
     this._status = 'exploring';
     this.log('info', `BB submit | ${focusNodeId} | verdict=${verdict} | findings=${findings.length}ch | questions=${questions?.length ?? 0} | pruned=${pruned} | agenda=${this.agenda.length}`);
+    this.log('debug', `BB submit detail | ${focusNodeId} | summary=${summary.length}ch | tags=[${tags?.join(',') ?? ''}] | advanced=${advanced} | notes_total=${this.detailSlots.size} | coverage=${this.coveragePct}%`);
 
     const nodeName = this.nodeMap.get(focusNodeId)?.name ?? focusNodeId;
     this.buildProgressLine(nodeName, verdict, pruned, added);
@@ -509,7 +507,7 @@ export class BlackboardState extends HopStateMachine {
         this.log('info', `BB COMPLETE REJECTED | unvisited direct neighbors: [${names.join(', ')}]`);
         return { ...base, complete_rejected: { nodes: unvisitedDirect, names, hint: `Visit or mark these direct neighbors before completing: ${names.join(', ')}` } };
       }
-      this.log('info', `BB EARLY COMPLETE | notes=${this.memory.slotCount} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
+      this.log('info', `BB EARLY COMPLETE | notes=${this.detailSlots.size} | coverage=${this.coveragePct}% | agenda_remaining=${this.agenda.length}`);
       return { ...base, early_complete: this.getResult() };
     }
 
@@ -853,18 +851,6 @@ export class BlackboardState extends HopStateMachine {
     }
 
     return wm;
-  }
-
-  override toJSON(): Record<string, unknown> {
-    return {
-      ...super.toJSON(),
-      scopeDirection: this.scopeDirection,
-      userQuestion: this.userQuestion,
-      agenda: this.agenda.map(a => ({ ...a })),
-      agendaSize: this.agenda.length,
-      questionLog: this.questionLog.map(q => ({ ...q })),
-      invalidNodeIds: Object.fromEntries(this.invalidNodeIds),
-    };
   }
 
   private buildMapOverview(): MapOverview {

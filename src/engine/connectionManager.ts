@@ -165,12 +165,12 @@ export async function connectDirect(
   }
 }
 
-export function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+function dmvTimeout<T>(promise: Promise<T>, ms: number, queryName: string): Promise<T> {
   let handle: ReturnType<typeof setTimeout>;
   return Promise.race([
     promise.finally(() => clearTimeout(handle)),
     new Promise<never>((_, reject) => {
-      handle = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+      handle = setTimeout(() => reject(new Error(`DMV query "${queryName}" timed out after ${ms / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)), ms);
     }),
   ]);
 }
@@ -200,9 +200,7 @@ export async function executeDmvQueries(
 
     const start = Date.now();
     const queryPromise = sharing.executeSimpleQuery(connectionUri, query.sql);
-    const result = queryTimeoutMs
-      ? await withQueryTimeout(queryPromise, queryTimeoutMs, `DMV query "${query.name}" timed out after ${queryTimeoutMs / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)
-      : await queryPromise;
+    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
@@ -250,9 +248,7 @@ export async function executeDmvQueriesFiltered(
 
     const start = Date.now();
     const queryPromise = sharing.executeSimpleQuery(connectionUri, sql);
-    const result = queryTimeoutMs
-      ? await withQueryTimeout(queryPromise, queryTimeoutMs, `DMV query "${query.name}" timed out after ${queryTimeoutMs / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)
-      : await queryPromise;
+    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);

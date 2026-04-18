@@ -131,14 +131,6 @@ const BLOCK = {
     'suggested_sections groups your badge_labels into sections ordered by dependency depth.\n' +
     'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
     'adjust labels if needed, and write text per section from your detail memory findings.',
-
-  /** Handling user change requests for the graph results */
-  graphAdjustments:
-    'GRAPH ADJUSTMENTS: If the user requests to add or remove specific nodes:\n' +
-    '- To ADD: (Exploration mode only) Use add_ids to include nodes from scope=available. ' +
-    'Tell the user: "I can add them one by one using add_ids via the exploration state machine. Let me do that properly."\n' +
-    '- To REMOVE: Use prune_ids (Exploration) or verdict=prune (Column Trace) to cut branches. ' +
-    'You can also use prune_node_ids in enrich_view at synthesis to hide nodes from the final view.',
 } as const;
 
 // ─── Synthesis Reminder (injected at END of SM result — highest attention zone) ──
@@ -155,19 +147,6 @@ export function buildSynthesisReminder(question: string): string {
     '- Present at full depth — do not compress or re-summarize.\n' +
     '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.'
   );
-}
-
-// ─── Synthesis Prompt (replaces mode prompt after SM completion) ─────────────
-
-/** Synthesis-only prompt — strips hop instructions (readDdl, writeFindings,
- *  verdicts, scopeTiers, etc.) that are noise at synthesis. Only the grounding
- *  contract remains. Swapped in by cleanHopContext at BB/CT completion. */
-export function buildSynthesisPrompt(): string {
-  return [
-    'SYNTHESIS MODE: The exploration is complete. Your detail memory slots are below.',
-    '',
-    BLOCK.detailMemory,
-  ].join('\n');
 }
 
 // ─── Mode Prompts (composed from blocks) ────────────────────────────────────
@@ -187,8 +166,6 @@ export function buildBbPrompt(): string {
     `5. prune_ids: remove from agenda (scope=in_scope only). add_ids: add to agenda (scope=available).`,
     '',
     BLOCK.scopeTiers,
-    '',
-    BLOCK.graphAdjustments,
     '',
     BLOCK.selfAsk,
     BLOCK.earlyComplete,
@@ -214,7 +191,6 @@ export function buildCtPrompt(): string {
     BLOCK.tableNodes,
     BLOCK.revisit,
     BLOCK.fieldMapping,
-    BLOCK.graphAdjustments,
     BLOCK.selfAsk,
     BLOCK.detailMemory,
   ].join('\n');
@@ -235,7 +211,6 @@ export function buildCtDepPrompt(): string {
     BLOCK.tableNodes,
     BLOCK.revisit,
     BLOCK.fieldMapping,
-    BLOCK.graphAdjustments,
     BLOCK.selfAsk,
     BLOCK.detailMemory,
   ].join('\n');

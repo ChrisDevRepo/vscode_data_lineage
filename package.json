@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.9",
+  "version": "0.9.8",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "engines": {
@@ -137,10 +137,6 @@
         "command": "dataLineageViz.copyDebugInfo",
         "title": "Data Lineage: Copy Debug Info",
         "icon": "$(bug)"
-      },
-      {
-        "command": "dataLineageViz.dumpSmState",
-        "title": "Data Lineage: Dump SM State"
       }
     ],
     "keybindings": [],
@@ -905,7 +901,7 @@
         "toolReferenceName": "lineage_start_column_trace",
         "displayName": "Start Column Trace",
         "userDescription": "Start a column-level lineage trace through the dependency graph.",
-        "modelDescription": "Start a hop-by-hop lineage trace. Call as first action — origin is optional.\n\nReturns: scope preview + first hop context with focus node DDL + neighbor list.\n\nUse schemas[] parameter to explicitly target objects outside the active user filter (e.g. ['STAGING', 'DBO']). Provided schemas are validated against the model.\n\nAfter receiving: read DDL, verdict each neighbor:\n- trace: follow this path. Provide columns (INPUT columns) + question.\n- prune: cut branch and descendants. Explain why.\n- pass: data passes through unchanged, children queued automatically.\nThen call lineage_submit_hop_analysis. Repeat until all paths exhausted.",
+        "modelDescription": "Start a hop-by-hop lineage trace. Call as first action — origin is optional.\n\nReturns: scope preview + first hop context with focus node DDL + neighbor list.\n\nAfter receiving: read DDL, verdict each neighbor:\n- trace: follow this path. Provide columns (INPUT columns) + question.\n- prune: cut branch and descendants. Explain why.\n- pass: data passes through unchanged, children queued automatically.\nThen call lineage_submit_hop_analysis. Repeat until all paths exhausted.\n\ncolumns must be INPUT columns:\n  SP computes ListPrice = CostPrice * (1+MarkupPct) → [CostPrice, MarkupPct]\nIf no columns provided (concept-level trace): omit columns from verdicts.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -939,13 +935,6 @@
             "depth": {
               "type": "number",
               "description": "BFS depth limit from origin (default 5). Controls scope for cascade prune and coverage tracking."
-            },
-            "schemas": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Optional: override active filter to search specific schemas. Must exist in the model."
             }
           }
         }
@@ -1035,7 +1024,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start a broad exploration of database objects for business rules, documentation, or investigations.",
-        "modelDescription": "Start a broad exploration across multiple database objects. Use when the question spans many objects: business rules across a pipeline, documentation of a data flow, SQL pattern investigations. Requires a multi-object scope to be useful.\n\nProvide an origin node — the state machine runs depth-limited BFS to build the initial exploration scope and seeds the agenda.\n\nUse schemas[] parameter to explicitly target objects outside the active user filter (e.g. ['STAGING', 'DBO']). Provided schemas are validated against the model.\n\ndepth controls how many BFS hops from origin are included in the initial scope (default 5).",
+        "modelDescription": "Start a broad exploration across multiple database objects. Use when the question spans many objects: business rules across a pipeline, documentation of a data flow, SQL pattern investigations. Requires a multi-object scope to be useful.\n\nProvide an origin node — the state machine runs depth-limited BFS to build the initial exploration scope and seeds the agenda.\n\ndepth controls how many BFS hops from origin are included in the initial scope (default 5). Start with the default; use expand_frontier to extend if you reach the boundary and the question is not fully answered. Individual nodes can also be added via add_ids in submit_findings.\n\nscope_direction controls what BFS finds — ALWAYS specify it:\n- 'upstream': \"what are the sources / what feeds into X?\" — reverse BFS, finds ancestors only (inbound edges). Use for tables, views.\n- 'downstream': \"what does X affect / what reads from X?\" — forward BFS, finds descendants only (outbound edges). Use for impact analysis.\n- 'bidirectional': full connected context — all edges. Only suitable for SPs/functions or when graph is small. Tables/views with high degree will REJECT without explicit direction.\nIf you omit scope_direction on a highly-connected node the SM will return scope_too_broad and require you to resubmit with a direction. The user's active schema filter is applied as a BFS boundary — exploration stays within filtered schemas.\n\nReturns: scope map (nodes + edges) + first hop context with focus node DDL + neighbors.\n\nAfter receiving: analyze the focus node DDL/columns. Record your findings:\n- findings: comprehensive analysis — business meaning first, then SQL evidence. Stored permanently in long-term memory\n- summary: one-line digest (~100 chars) — shown in working memory for all future hops\n- questions: sub-questions for neighbors you want to investigate (boosts their agenda priority)\n- prune_ids: neighbor node IDs to prune (utility functions, unrelated objects). Cascades downstream.\n\nThe state machine manages your memory:\n- Long-term: full findings stored per node (never lost)\n- Working: ALL summaries + ALL pending questions returned each hop\n- Checklist: noted/total/open counts\n\ncurrent_task: your own question from a previous hop — answer it.\n\nDo NOT use for column-level tracing — use start_column_trace instead.",
         "tags": [
           "lineage",
           "lineage-bb"
@@ -1063,13 +1052,6 @@
             "depth": {
               "type": "number",
               "description": "BFS depth limit from origin (default 5). Controls initial scope size. Use expand_frontier to extend if you reach the boundary."
-            },
-            "schemas": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Optional: override active filter to search specific schemas. Must exist in the model."
             }
           },
           "required": [
@@ -1209,7 +1191,8 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/snapshot-aw-baseline.ts",
+    "test": "tsx test/dacpacExtractor.test.ts && tsx test/graphBuilder.test.ts && tsx test/parser-edge-cases.test.ts && tsx test/graphAnalysis.test.ts && tsx test/dmvExtractor.test.ts && tsx test/tsql-complex.test.ts && tsx test/projectStore.test.ts && tsx test/snapshot-aw-baseline.ts && vitest run --config vitest.config.ts",
+    "test:internal": "tsx test-internal/ai-tools.test.ts && tsx test-internal/column-trace-state.test.ts && tsx test-internal/blackboard-state.test.ts",
     "test:dacpac": "tsx test/dacpacExtractor.test.ts",
     "test:graph": "tsx test/graphBuilder.test.ts",
     "test:parser": "tsx test/parser-edge-cases.test.ts",
@@ -1217,12 +1200,13 @@
     "test:dmv": "tsx test/dmvExtractor.test.ts",
     "test:sql": "tsx test/tsql-complex.test.ts",
     "test:project": "tsx test/projectStore.test.ts",
-    "test:ai:quick": "npm run build:ext && node esbuild.test.mjs && vscode-test --files out/test/suite/ai-real-model.test.js --files out/test/suite/ai-integration.test.js",
-    "test:ai:real": "npm run build:ext && node esbuild.test.mjs && vscode-test --files out/test/suite/ai-real-model.test.js",
-    "test:baseline": "npx tsx test-internal/ai/report-gen.ts",
-    "test:ai": "npm run test:ai:quick && npm run test:baseline",
+    "test:ai": "tsx test-internal/ai-tools.test.ts",
     "test:snapshot": "tsx test/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx test/snapshot-aw-baseline.ts --update",
+    "test:hooks": "vitest run --config vitest.config.ts",
+    "test:hooks:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
+    "test:db": "tsx test-internal/integration-db.test.ts",
     "package": "npx @vscode/vsce package"
   },
   "dependencies": {
@@ -1244,29 +1228,22 @@
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
-    "zod": "^4.3.6"
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
-    "@types/assert": "^1.5.11",
     "@types/js-yaml": "^4.0.9",
     "@types/jsdom": "^28.0.1",
-    "@types/mocha": "^10.0.10",
     "@types/mssql": "^9",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.95.0",
     "@vitejs/plugin-react": "^4.3.0",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2",
     "autoprefixer": "^10.4.20",
     "dotenv": "^16",
     "esbuild": "^0.25.0",
-    "glob": "^13.0.6",
     "jsdom": "^29.0.1",
-    "mocha": "^11.7.5",
     "mssql": "^11",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",

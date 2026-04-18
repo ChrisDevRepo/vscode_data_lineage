@@ -12,7 +12,7 @@ const config = {
   platform: 'node',
   target: 'node20',
   sourcemap: true,
-  minify: false,
+  minify: !watch,
   define: {
     '__BUILD_TIMESTAMP__': JSON.stringify(new Date().toISOString()),
   },

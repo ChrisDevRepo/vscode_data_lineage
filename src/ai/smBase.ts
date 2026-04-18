@@ -19,7 +19,6 @@ import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, buildUnrelatedMap, SCRIPT_TYPES, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
 import { presentColumnCompact, presentFkCompact, strip, edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, type LogFn } from './smGuards';
-import { AiMemoryManager, type DetailSlot, type ShortMemory, type WorkingMemory } from './memoryManager';
 
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -46,9 +45,31 @@ export interface HopNeighbor {
   hasDdl: boolean;
 }
 
+/** Detail memory slot — per-node analysis stored during hops. */
+export interface DetailSlot {
+  nodeId: string;
+  schema: string;
+  name: string;
+  type: string;
+  analysis: string;       // AI's DDL findings (full text — never truncated)
+  summary: string;        // one-line digest (AI's own compression)
+  tags?: string[];
+  badge_label?: string;   // semantic label for enrich_view badge
+  note_caption?: string;  // 1-line caption for enrich_view note
+}
+
+/** Short memory — compressed narrative, always available. */
+export interface ShortMemory {
+  narrative: string[];                                     // key findings per hop
+  coverage: { noted: number; total: number; pct: number };
+  pending_questions: Array<{ nodeId: string; question: string }>;
+}
+
 /** Base working memory — shared by BB and CT during hops. Subclasses extend with SM-specific fields. */
-export interface BaseWorkingMemory extends WorkingMemory {
-  // WorkingMemory provides all_summaries, pending_questions, and checklist
+export interface BaseWorkingMemory {
+  all_summaries: Array<{ nodeId: string; summary: string }>;
+  pending_questions: Array<{ nodeId: string; question: string }>;
+  checklist: { current_hop: number; noted: number; total: number; coveragePct: number };
 }
 
 /** Shared result shape returned by getResult(). Subclasses extend with SM-specific fields. */
@@ -66,21 +87,22 @@ export interface SmResult {
   stats: Record<string, number>;
 }
 
-export type HopContext = any;
-export type HopCompletion = any;
-
 /**
  * Public caller contract for hop-by-hop state machines.
+ *
+ * Both ColumnTraceState (CT) and BlackboardState (BB) satisfy this interface.
+ * Callers that only need lifecycle checks (extension.ts phase logic) should
+ * type against IHopStateMachine rather than the concrete subclass.
+ *
+ * Note: init(), getHopContext(), and the submission methods (submitVerdicts / submitFindings)
+ * have SM-specific signatures and are NOT part of this shared interface.
+ * Use the concrete subclass type for handlers that call those methods.
  */
 export interface IHopStateMachine {
   readonly status: SmStatus;
   readonly slotCount: number;
   readonly coveragePct: number;
   readonly inlineMode: boolean;
-  readonly scopeSize: number;
-  getHopContext(): HopContext;
-  getResult(): HopCompletion;
-  toJSON(): any;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -88,6 +110,11 @@ export interface IHopStateMachine {
 const BFS_SCOPE_CAP = 10_000;
 const DEFAULT_FINDINGS_LIMIT = 8000;
 const DEFAULT_SUMMARY_LIMIT = 500;
+
+/** Short memory soft limit — AI target for per-hop narrative entries (chars). */
+const DEFAULT_SHORT_MEMORY_SOFT_LIMIT = 500;
+/** Short memory hard limit — rejection threshold (chars). ~300 tokens; attention degrades above this. */
+const DEFAULT_SHORT_MEMORY_HARD_LIMIT = 1200;
 
 // ─── Abstract Base ──────────────────────────────────────────────────────────
 
@@ -104,13 +131,11 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected readonly activeFilter: SerializedFilterState | null;
   protected readonly filterSchemas: Set<string> | null;
   protected readonly findingsHardLimit: number;
-  public readonly summaryHardLimit: number;
-  public readonly summarySoftLimit: number;
-  protected readonly memory: AiMemoryManager;
+  protected readonly summaryHardLimit: number;
+  protected readonly shortMemorySoftLimit: number;
+  protected readonly shortMemoryHardLimit: number;
 
   // ── Shared mutable state ──
-  public sessionId?: string;
-  public readonly createdAt: string;
   protected _status: SmStatus = 'created';
   protected _inlineMode = false;
   protected originNodeId: string | null = null;
@@ -121,6 +146,14 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected hopCount = 0;
   protected lastProgressLine = '';
 
+  // ── Two-tier memory ──
+  protected shortMemory: ShortMemory = {
+    narrative: [],
+    coverage: { noted: 0, total: 0, pct: 0 },
+    pending_questions: [],
+  };
+  protected detailSlots = new Map<string, DetailSlot>();
+
   constructor(
     model: DatabaseModel,
     graph: Graph,
@@ -129,7 +162,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
       activeFilter?: SerializedFilterState | null;
       findingsHardLimit?: number;
       summaryHardLimit?: number;
-      memory?: AiMemoryManager;
+      shortMemorySoftLimit?: number;
+      shortMemoryHardLimit?: number;
     },
     store?: ColumnStore | null,
   ) {
@@ -143,20 +177,17 @@ export abstract class HopStateMachine implements IHopStateMachine {
       : null;
     this.findingsHardLimit = config.findingsHardLimit ?? DEFAULT_FINDINGS_LIMIT;
     this.summaryHardLimit = config.summaryHardLimit ?? DEFAULT_SUMMARY_LIMIT;
-    this.summarySoftLimit = Math.floor(this.summaryHardLimit * 0.8);
+    this.shortMemorySoftLimit = config.shortMemorySoftLimit ?? DEFAULT_SHORT_MEMORY_SOFT_LIMIT;
+    this.shortMemoryHardLimit = config.shortMemoryHardLimit ?? DEFAULT_SHORT_MEMORY_HARD_LIMIT;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.unrelatedMap = buildUnrelatedMap(model);
-    this.createdAt = new Date().toISOString();
-    
-    // Use injected memory manager or create a fresh one (fallback for tests)
-    this.memory = config.memory ?? new AiMemoryManager();
   }
 
   // ── Public accessors ──
 
   get status(): SmStatus { return this._status; }
-  get slotCount(): number { return this.memory.slotCount; }
+  get slotCount(): number { return this.detailSlots.size; }
   get inlineMode(): boolean { return this._inlineMode; }
 
   get hopNumber(): number { return this.hopCount; }
@@ -165,7 +196,7 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   get coveragePct(): number {
     return this.scopeNodeIds.size > 0
-      ? Math.round((this.memory.slotCount / this.scopeNodeIds.size) * 100)
+      ? Math.round((this.detailSlots.size / this.scopeNodeIds.size) * 100)
       : 0;
   }
 
@@ -205,22 +236,47 @@ export abstract class HopStateMachine implements IHopStateMachine {
   ): void {
     const node = this.nodeMap.get(nodeId);
     if (!node) return;
-    this.memory.storeDetail(node, analysis, summary, meta, this._inlineMode);
-  }
-
-  /**
-   * Append a finding to short memory narrative.
-   */
-  updateShortMemory(hopSummary: string): string | null {
-    if (this._inlineMode) return null;
-    return this.memory.addNarrative(hopSummary, {
-      noted: this.memory.slotCount,
-      total: this.scopeNodeIds.size
+    // Inline mode: store only labels/captions for getResult() suggested_sections — skip analysis/summary
+    this.detailSlots.set(nodeId, {
+      nodeId,
+      schema: node.schema,
+      name: node.name,
+      type: node.type,
+      analysis: this._inlineMode ? '' : analysis,
+      summary: this._inlineMode ? '' : summary,
+      tags: meta?.tags,
+      badge_label: meta?.badge_label,
+      note_caption: meta?.note_caption,
     });
   }
 
   /**
+   * Append a finding to short memory narrative.
+   * Central gate — validates soft/hard character limits. Never truncates.
+   * Returns error string if rejected (> hard limit), null if accepted.
+   * Skipped in inline mode — AI has all DDL in context.
+   */
+  updateShortMemory(hopSummary: string): string | null {
+    if (this._inlineMode) return null;
+    if (hopSummary.length > this.shortMemoryHardLimit) {
+      this.log('debug', `short memory rejected: ${hopSummary.length} chars (limit ${this.shortMemoryHardLimit}, aim for ~${this.shortMemorySoftLimit})`);
+      return `short_memory_too_long: ${hopSummary.length} chars exceeds ${this.shortMemoryHardLimit} (aim for ~${this.shortMemorySoftLimit})`;
+    }
+    if (hopSummary.length > this.shortMemorySoftLimit) {
+      this.log('debug', `short memory long: ${hopSummary.length} chars (soft limit ${this.shortMemorySoftLimit})`);
+    }
+    this.shortMemory.narrative.push(hopSummary);
+    this.shortMemory.coverage = {
+      noted: this.detailSlots.size,
+      total: this.scopeNodeIds.size,
+      pct: this.coveragePct,
+    };
+    return null;
+  }
+
+  /**
    * Build a one-line progress summary after each successful submission.
+   * Included in tool response (progress_line) and shown via stream.progress().
    */
   protected buildProgressLine(
     nodeName: string,
@@ -241,17 +297,38 @@ export abstract class HopStateMachine implements IHopStateMachine {
 
   /**
    * Get both memory tiers for the final result tool response.
+   *
+   * SM is a data provider — delivers ALL detail slots at full fidelity.
+   * No eviction, no budget pressure. Context window management is the
+   * AI platform's job (VS Code Copilot Chat handles turn eviction).
    */
   getMemoryForSynthesis(): { short_memory: ShortMemory; detail_slots: DetailSlot[] } {
-    return this.memory.getResult();
+    this.shortMemory.coverage = {
+      noted: this.detailSlots.size,
+      total: this.scopeNodeIds.size,
+      pct: this.coveragePct,
+    };
+    return {
+      short_memory: { ...this.shortMemory },
+      detail_slots: [...this.detailSlots.values()],
+    };
   }
 
   /**
    * Build base working memory — shared core fields for both BB and CT during hops.
+   * Subclasses call this and extend with SM-specific fields (agenda, frontier, etc.).
    */
   protected buildBaseWorkingMemory(): BaseWorkingMemory {
-    const work = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size);
-    return { ...work };
+    return {
+      all_summaries: [...this.detailSlots.values()].map(s => ({ nodeId: s.nodeId, summary: s.summary })),
+      pending_questions: this.shortMemory.pending_questions,
+      checklist: {
+        current_hop: this.hopCount,
+        noted: this.detailSlots.size,
+        total: this.scopeNodeIds.size,
+        coveragePct: this.coveragePct,
+      },
+    };
   }
 
   // ── Shared helpers (extracted from BB+CT duplication) ──
@@ -390,9 +467,8 @@ export abstract class HopStateMachine implements IHopStateMachine {
   protected buildSharedResult(): SmResult {
     this._status = 'complete';
 
-    const memory = this.memory.getResult();
-    const slots = memory.detail_slots;
-    const slotIds = new Set(slots.map(s => s.nodeId));
+    const slots = [...this.detailSlots.values()];
+    const slotIds = new Set(this.detailSlots.keys());
 
     // Anchored IDs = detail slots + origin (ensures hub/star edges include SP→origin)
     const anchoredIds = new Set([...slotIds, this.originNodeId!]);
@@ -460,7 +536,11 @@ export abstract class HopStateMachine implements IHopStateMachine {
       node_ids: sectionMap.get(label)!,
     }));
 
+    // Attach both memory tiers
+    const memory = this.getMemoryForSynthesis();
+
     this.log('info', `[Result] notes=${slots.length} | edges=${edges.length} | scope=${this.scopeNodeIds.size} | coverage=${this.coveragePct}% | hops=${this.hopCount}`);
+    this.log('debug', `[Result] detail | fullNodes=${fullNodes.length} | bridges=${bridgeResult.bridgeNodes.length} | model_edges=${this.model.edges.length} | pruned=${this.removedSet.size} | visited=${this.visited.size}`);
     if (edges.length > 0) {
       this.log('trace', `[Result] EDGES | ${edges.map(([s, t, tp]) => `${s}→${t}(${tp})`).join(', ')}`);
     }
@@ -525,60 +605,14 @@ export abstract class HopStateMachine implements IHopStateMachine {
     this.removedSet.clear();
     this.currentFocusNodeId = null;
     this.hopCount = 0;
-    this.memory.reset();
-  }
-
-  // ── Lifecycle ──
-
-  /** Force SM to complete state — used when session ends before natural completion (round/token exhaustion).
-   *  Allows getResult() to extract partial results for enrich_view and "Show in Graph" button.
-   *  All SM types inherit this — unified OOP concept. */
-  forceComplete(): void {
-    if (this._status !== 'created') {
-      this.log('info', `Force complete: ${this._status} → complete`);
-      this._status = 'complete';
-    }
-  }
-
-  // ── State dump ──
-
-  /** Serialize full SM state to a plain object — shared foundation for dump command and eval reports. */
-  toJSON(): Record<string, unknown> {
-    const memory = this.memory.getResult();
-    return {
-      type: this.constructor.name,
-      sessionId: this.sessionId,
-      createdAt: this.createdAt,
-      status: this._status,
-      originNodeId: this.originNodeId,
-      inlineMode: this._inlineMode,
-      hopCount: this.hopCount,
-      scopeSize: this.scopeNodeIds.size,
-      visitedCount: this.visited.size,
-      removedCount: this.removedSet.size,
-      currentFocusNodeId: this.currentFocusNodeId,
-      lastProgressLine: this.lastProgressLine,
-      shortMemory: {
-        narrative: [...memory.short_memory.narrative],
-        coverage: { ...memory.short_memory.coverage },
-        pending_questions: memory.short_memory.pending_questions.map(q => ({ ...q })),
-      },
-      detailSlots: Object.fromEntries(
-        memory.detail_slots.map(s => [s.nodeId, { ...s }])
-      ),
-      scopeNodeIds: [...this.scopeNodeIds],
-      visited: [...this.visited],
-      removedSet: [...this.removedSet],
-    };
+    this.shortMemory = { narrative: [], coverage: { noted: 0, total: 0, pct: 0 }, pending_questions: [] };
+    this.detailSlots.clear();
   }
 
   // ── Abstract methods — subclass-specific ──
 
   /** Return the scope direction for boundary detection. */
   protected abstract getScopeDirection(): 'upstream' | 'downstream' | 'bidirectional';
-
-  public abstract getHopContext(): HopContext;
-  public abstract getResult(): HopCompletion;
 }
 
 // Re-export types used by extension.ts
