@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### SM strict-mode scope leak (2026-04-18)
+**Fixed**
+- **Strict-mode scope leak in the route validator** — when `bidirectional(origin, target)` returned null (reverse-edge-only targets, disconnected subgraphs), `candidateDepth` was `undefined` and `depthBlocked` silently evaluated to `false`, letting routes escape the user-approved scope. Observed in `sess_1776539990015_qalis` (CadenceWorker, 2026-04-18): user approved depth=1 strict with 3 schemas, engine auto-added `vdatafilters` at hop 15 and continued to depth 5 before user aborted.
+
+**Changed**
+- **Route validator** ([smBase.ts:589-605](src/ai/smBase.ts#L589)) — two-part fix:
+  - Semantic fallback: when directed shortest-path can't resolve the target, use `focusDepth + 1` (a routed target is always one hop from the current focus).
+  - Strict-scope check: `strictScopeBlocked = depthEnforcement === 'strict' && !scopeNodeIds.has(nid)` treats the initial BFS set as the immutable user-approved contract. Any route outside it is deferred (SM) or gated (inline) independent of depth math.
+- Inline gate envelope adds a `scope:strict` class when the trigger was strict-scope membership rather than depth-cap overrun.
+
+**Tests** (`tests/unit/sm-robustness.test.ts`)
+- New regression: reverse-only neighbor in SM strict mode → deferred via `strictScopeBlocked` (exercises the `candidateDepth === undefined` path).
+
 ### SM closed-loop contract restored + deferred-questions checkpoint (2026-04-18)
 **Fixed**
 - **Mid-session scope-gate leak in SM mode** — after `confirm_sm_start` was approved, routes to out-of-approved-scope nodes (schema or depth) still emitted `schema_out_of_filter` / `depth_cap_exceeded` consent gates, breaking the "trust + blinkers" closed-loop contract. Observed in `sess_1776522740185_hjzk5` (2026-04-18): user approved a 3-schema scope at `confirm_sm_start`, engine still prompted for `[dbo].[udfdivideasdec]` one hop later.

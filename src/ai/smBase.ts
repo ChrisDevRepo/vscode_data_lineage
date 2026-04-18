@@ -590,24 +590,39 @@ export class NavigationEngine implements IHopStateMachine {
         if (candidateDepth === undefined && this.originNodeId) {
           const path = bidirectional(this.graph, this.originNodeId, nid);
           candidateDepth = Array.isArray(path) ? path.length - 1 : undefined;
-          if (candidateDepth !== undefined) this.depthFromOrigin.set(nid, candidateDepth);
         }
+        // Fallback: a routed target is always one hop from the current focus, so its distance
+        // from origin is at most focusDepth + 1. Without this, directed-path misses let
+        // strict-mode routes escape the cap silently (reverse-edge-only targets, disconnected).
+        if (candidateDepth === undefined && this.currentFocusNodeId) {
+          const focusDepth = this.depthFromOrigin.get(this.currentFocusNodeId) ?? 0;
+          candidateDepth = focusDepth + 1;
+        }
+        if (candidateDepth !== undefined) this.depthFromOrigin.set(nid, candidateDepth);
         const depthBlocked = depthCap !== null && candidateDepth !== undefined && candidateDepth > depthCap;
+        // Strict mode: the initial BFS scope is the user-approved contract and is immutable.
+        const strictScopeBlocked = this.depthEnforcement === 'strict' && !this.scopeNodeIds.has(nid);
 
-        if (schemaBlocked || depthBlocked) {
+        if (schemaBlocked || depthBlocked || strictScopeBlocked) {
+          const scopeReason = depthBlocked || strictScopeBlocked;
           if (this._inlineMode) {
-            // Inline: consent-gate flow (unchanged).
+            // Inline: consent-gate flow.
             gateNodeIds.push(req.nodeId);
             if (schemaBlocked) {
               gateHasSchema = true;
               gateClasses.add(`schema:${schemaLower}`);
               gateDetails.push(`\`${req.nodeId}\` is in schema \`${nNode.schema}\`, outside the active filter`);
             }
-            if (depthBlocked) {
+            if (scopeReason) {
               gateHasDepth = true;
-              const extraOffset = candidateDepth! - depthCap!;
-              gateClasses.add(`depth:+${extraOffset}`);
-              gateDetails.push(`\`${req.nodeId}\` is at depth ${candidateDepth}, beyond the current cap ${depthCap}`);
+              if (depthBlocked) {
+                const extraOffset = candidateDepth! - depthCap!;
+                gateClasses.add(`depth:+${extraOffset}`);
+                gateDetails.push(`\`${req.nodeId}\` is at depth ${candidateDepth}, beyond the current cap ${depthCap}`);
+              } else {
+                gateClasses.add('scope:strict');
+                gateDetails.push(`\`${req.nodeId}\` is outside the initial approved scope (strict mode)`);
+              }
             }
           } else {
             // SM: defer, keep the closed-loop invariant. `deferQuestion` owns dedup + rejection record.
@@ -616,7 +631,7 @@ export class NavigationEngine implements IHopStateMachine {
               schema: nNode.schema,
               fromFocusNodeId: this.currentFocusNodeId!,
               question: req.question ?? '',
-              reason: schemaBlocked && depthBlocked ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth',
+              reason: schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth',
               depth: candidateDepth,
               atHop: this.hopCount,
             });

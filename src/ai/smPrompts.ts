@@ -26,7 +26,7 @@ const BLOCK = {
 
   /** Step 2 — write the detail archive for this node. */
   writeFindings:
-    'Write `detail_analysis` for the focus node. The archive preserves your analysis verbatim — no upper bound; synthesis uses this as sole evidence. Let the node\'s complexity dictate depth: a trivial passthrough is a few sentences; a non-trivial object is a full breakdown of every part present — each INSERT/UPDATE/MERGE/DELETE statement, each CTE, each BEGIN/COMMIT transaction, each IF/CASE branch, each JOIN condition, each filter, each computed expression. Quote SQL verbatim and explain in business terms. A thin slot produces a thin final answer.\n' +
+    'Write `detail_analysis` for the focus node. The archive preserves your analysis verbatim — no upper bound; synthesis uses this as sole evidence. Let `working_memory.user_question` dictate analysis depth — "thorough" means thorough on what the question asks, not exhaustive on every DDL construct. A trivial passthrough is a few sentences; a question-relevant object breaks down each part the question needs: INSERT/UPDATE/MERGE/DELETE statements, CTEs, BEGIN/COMMIT transactions, IF/CASE branches, JOIN conditions, filters, computed expressions. Quote SQL verbatim and explain in business terms. A thin slot produces a thin final answer.\n' +
     'Cover each aspect present:\n' +
     '  COLUMNS: key column names, types, constraints (PK/FK/nullable).\n' +
     '  TRANSFORMS: expressions, CASE/COALESCE, computed columns — quote the SQL fragment.\n' +
@@ -46,9 +46,9 @@ const BLOCK = {
     'GROUPING: nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
     'note_caption (~100-200 chars): one-line what-this-does. Write the REASONING — what you learned, what it means for the question, what is still open.',
 
-  /** Self-ask — answer your own question from the previous hop. */
+  /** Self-ask — the sub-question is a lens; the main user question is the anchor. */
   selfAsk:
-    'The `current_task` field contains the sub-question for this hop. Answer every part of it in the analysis — if the task is multi-part, address each part explicitly. Half-answered questions leave synthesis with gaps.',
+    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on `working_memory.user_question` (the user\'s original request) — relevance is judged against the main question, not the sub-question. If answering the sub-question produces material that does not serve the main question, omit it.',
 
   /** Route grounding — shared. */
   routing:
@@ -81,8 +81,8 @@ const BLOCK = {
 
   /** Loop contract — applies to every mode. */
   completionContract:
-    'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: relevant | pass | irrelevant`. The engine keeps presenting the next node until every one has a verdict.\n' +
-    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs) take `verdict: "irrelevant"` — cascade-prunes the node and advances the agenda quickly.',
+    'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: relevant | pass | irrelevant`. The engine stops presenting when the agenda drains — you shape the agenda: `verdict: "irrelevant"` cascade-prunes the node and its unvisited descendants. Route only neighbors the main user question needs.\n' +
+    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs) take `verdict: "irrelevant"` — removes the subtree quickly.',
 } as const;
 
 

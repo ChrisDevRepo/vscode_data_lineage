@@ -174,6 +174,42 @@ suite('State Machine Robustness', () => {
     assert.strictEqual(engine.deferredQuestions[0].nodeId, 'd_ext');
   });
 
+  test('A.2 strict mode SM: reverse-only neighbor is deferred via strictScopeBlocked (regression for undefined candidateDepth)', () => {
+    // Model where origin has no directed out-path to x_up — x_up writes INTO origin.
+    // Directed BFS from origin misses x_up; `bidirectional(origin, x_up)` returns null;
+    // pre-fix the validator accepted the route because candidateDepth was undefined.
+    const model = {
+      nodes: [
+        { id: 'origin', name: 'Origin', schema: 'dbo', type: 'table' },
+        { id: 'a', name: 'A', schema: 'dbo', type: 'table' },
+        { id: 'x_up', name: 'X', schema: 'dbo', type: 'procedure' },
+      ],
+      edges: [
+        { source: 'origin', target: 'a', type: 'read' },
+        { source: 'x_up', target: 'origin', type: 'read' }, // x_up is upstream; only reverse edge to origin
+      ],
+      schemas: [{ name: 'dbo', n: 3, t: 2, v: 0, p: 1 }],
+    };
+    const graph = new Graph({ directed: true });
+    model.nodes.forEach(n => graph.addNode(n.id, n));
+    model.edges.forEach(e => graph.addEdge(e.source, e.target, { type: e.type }));
+
+    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
+    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 1, depth_enforcement: 'strict' });
+    engine.getHopContext();
+
+    const res = engine.submitFindings({
+      focus_node_id: 'origin',
+      detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
+      route_requests: [{ nodeId: 'x_up', question: 'why' }],
+    } as any);
+
+    assert.ok(!('error' in res) || (res as any).error === undefined, 'hop succeeds');
+    assert.strictEqual(engine.deferredQuestions.length, 1, 'reverse-only route is deferred, not auto-added');
+    assert.strictEqual(engine.deferredQuestions[0].nodeId, 'x_up');
+    assert.strictEqual(engine.deferredQuestions[0].reason, 'depth');
+  });
+
   test('A.2 soft mode: +1 depth auto-expands silently; +2 triggers action_required', () => {
     const { model, graph } = mkFanoutModel();
     const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
