@@ -53,8 +53,8 @@ const BLOCK = {
   /** Route grounding — shared. */
   routing:
     'ROUTING: every entry in `route_requests` carries a focused sub-question — anything from a single yes/no ("Does this procedure apply the rule the parent referenced?") to a multi-part investigation ("Which columns X, Y, Z flow through this procedure, how are they transformed, and what conditions filter them?"). Frame the sub-question at the depth the next hop needs to make progress — do not truncate a multi-part investigation into a thin single question. Read neighbor metadata and justify each choice; blind routing is a reasoning failure.\n' +
-    'CONSENT GATES: each neighbor carries `in_budget`, `in_user_filter`, and `would_trigger_action_required` flags. Stay within the declared budget and schema filter by default. When the analysis genuinely needs an out-of-bound node, include it in `route_requests`. The engine handles out-of-bound routes automatically; your task is analysis, not interaction.\n' +
-    'WORKING MEMORY SIGNALS: `depth_budget` is the user-declared depth; `depth_cap` is the engine ceiling (strict = budget, soft = budget+1, silent = budget+2, plus user-approved extensions). `verdict_counts` shows the running R/P/I tally — many relevants and zero irrelevants usually means genuine utility/helper nodes were missed (those take `irrelevant`). `recent_rejections` lists the last five blocked routes already surfaced by the engine.',
+    'APPROVED SCOPE: `working_memory.approved_border` carries the schemas and depth cap locked at session start. Each neighbor is tagged `in_budget` and `in_approved_scope`. Prefer in-border routes. When a focus node references something out of the border that matters for the question, include it in `route_requests` with its sub-question — the engine defers it to a post-session review list so the user can approve scope extension as a single end-of-session decision. `working_memory.deferred_count` shows the running tally.\n' +
+    'WORKING MEMORY SIGNALS: `depth_budget` is the user-declared depth; `depth_cap` is the engine ceiling (strict = budget, soft = budget+1, silent = budget+2, plus user-approved extensions). `verdict_counts` shows the running R/P/I tally — many relevants and zero irrelevants usually means genuine utility/helper nodes were missed (those take `irrelevant`). `recent_rejections` lists the last five deferred or blocked routes already surfaced by the engine.',
 
   /** Verdict a neighbor — CT modes. */
   verdictNeighbors:
@@ -187,5 +187,7 @@ export function buildSynthesisPrompt(): string {
     '- If a slot reads thin, call `lineage_get_object_detail` and expand from the DDL.',
     '- Preserve LaTeX formulas and markdown tables from slot analyses verbatim.',
     '- Variant siblings each get their own section — delta wording is fine ("Same skeleton as X; deltas: …").',
+    '',
+    'DEFERRED QUESTIONS: the evidence block may include a "DEFERRED QUESTIONS" section listing out-of-approved-scope references the engine deferred during exploration. If present, render those entries as a trailing "Unanswered (out of approved scope)" section in the chat prose — one line per entry, preserving the node id, the sub-question, and the referencing focus node. Do not fabricate answers for deferred entries; the user will be offered a one-click scope extension after the report.',
   ].join('\n');
 }

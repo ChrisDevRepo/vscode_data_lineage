@@ -60,7 +60,7 @@ export function buildSchemaContext(schemas: string[]): string {
   return (
     `Working context: user has schema(s) [${schemas.join(', ')}] selected.\n` +
     `Default all searches, SQL generation, and analysis to these schemas.\n` +
-    `Routing to out-of-filter schemas is gated by the engine (schema_out_of_filter consent).\n\n`
+    `In sliding-memory exploration the scope is locked at session start; out-of-scope routes are deferred to a post-session review list rather than prompting for mid-session consent.\n\n`
   );
 }
 

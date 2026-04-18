@@ -6,6 +6,7 @@
  * types from smBase) so it can be unit-tested without a live engine.
  */
 
+import { z } from 'zod';
 import type { DetailSlot } from './memoryManager';
 
 
@@ -61,9 +62,20 @@ export interface HopNeighbor {
   depth_from_origin?: number;
   /** False when this node is beyond the active depth budget. Always surfaced when budget is set. */
   in_budget?: boolean;
-  /** False when this node's schema is outside the session's allowed schemas. Surfaced when a filter is active. */
-  in_user_filter?: boolean;
-  /** True when routing here would trigger an `action_required` gate (out-of-depth and/or out-of-schema). */
+  /**
+   * False when this node's schema is outside the session's approved scope. Surfaced when a filter is active.
+   *
+   * @remarks
+   * In SM sessions the approved scope is locked at `confirm_sm_start`; routes to out-of-scope
+   * neighbors are deferred (not rejected) and surfaced at synthesis. In inline sessions the flag
+   * still drives the `schema_out_of_filter` consent gate.
+   */
+  in_approved_scope?: boolean;
+  /**
+   * True when routing here would trigger engine-level handling:
+   * inline sessions raise an `action_required` gate; SM sessions record the route as a deferred
+   * question for post-session review.
+   */
   would_trigger_action_required?: boolean;
 }
 
@@ -78,8 +90,15 @@ export interface HopNeighbor {
 export interface ActionRequiredGate {
   /** Discriminator for participant routing. */
   error: 'action_required';
-  /** The gate sub-type — drives the cache key used for "don't ask again this session". */
-  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth' | 'confirm_sm_start';
+  /**
+   * The gate sub-type — drives the cache key used for "don't ask again this session".
+   *
+   * @remarks
+   * - `confirm_sm_start` — session-entry consent (SM mode).
+   * - `schema_out_of_filter` / `depth_cap_exceeded` / `schema_and_depth` — inline-mode mid-session expansion.
+   * - `confirm_scope_extension` — optional post-synthesis offer when deferred questions accumulated.
+   */
+  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth' | 'confirm_sm_start' | 'confirm_scope_extension';
   /** The specific class being requested (e.g. "schema:dbo" or "depth:+1"). Confirmations cache per-class. */
   classes: string[];
   /** Human-readable question rendered in chat, ready for yes/no reply. */
@@ -215,6 +234,10 @@ export interface DiagnosticsSnapshot {
   routedNew: number;
   /** Route_requests rejected this hop (validation, schema gate, depth gate). */
   routedRejected: number;
+  /** Route_requests deferred this hop (SM mode — out-of-approved-scope routes captured for synthesis). */
+  routedDeferred: number;
+  /** Cumulative size of the SM deferred-questions bucket across the session. */
+  deferredQueued: number;
   /** Nodes remaining on the agenda. */
   agendaRemaining: number;
   /** Rolling verdict tally across the whole session. */
@@ -261,7 +284,57 @@ export interface SmResult {
 }
 
 
-/** 
+/**
+ * A route request to an out-of-approved-scope node, captured during an SM session.
+ *
+ * @remarks
+ * Produced by the engine when a `submit_findings` route targets a node whose schema is
+ * outside `approved_border.schemas` or whose depth exceeds `approved_border.depth_cap`.
+ * Surfaced to the AI at synthesis (rendered as an "Unanswered" section) and to the user
+ * as an optional `confirm_scope_extension` checkpoint post-session. Never silently
+ * dropped — this is the scope-gap audit trail that keeps SM closed-loop honest.
+ */
+export interface DeferredQuestion {
+  /** Fully-qualified id of the out-of-scope target. */
+  nodeId: string;
+  /** Schema of the target — the reason for schema-class deferral. */
+  schema: string;
+  /** Focus node id from which the route was proposed. */
+  fromFocusNodeId: string;
+  /** Sub-question the AI wanted to ask at the target. */
+  question: string;
+  /** Discriminator for why the route was deferred. */
+  reason: 'schema' | 'depth' | 'schema_and_depth';
+  /** Depth-from-origin of the target. Populated when `reason` includes 'depth'. */
+  depth?: number;
+  /** Hop number at which the deferral was recorded. */
+  atHop: number;
+}
+
+/**
+ * Runtime schema for {@link DeferredQuestion}. Parses untrusted payloads crossing the
+ * engine → participant boundary (synthesis memory, `confirm_scope_extension` envelope).
+ * Inner layers consume the typed interface without re-validation.
+ */
+export const DeferredQuestionSchema = z.object({
+  nodeId: z.string(),
+  schema: z.string(),
+  fromFocusNodeId: z.string(),
+  question: z.string(),
+  reason: z.enum(['schema', 'depth', 'schema_and_depth']),
+  depth: z.number().int().nonnegative().optional(),
+  atHop: z.number().int().nonnegative(),
+}).strict();
+
+/** The border the user approved at session start — locked for the rest of the SM session. */
+export interface ApprovedBorder {
+  /** Lower-cased schemas in scope. */
+  schemas: string[];
+  /** Effective depth ceiling including mode headroom and any session extensions, or null when no depth budget is set. */
+  depth_cap: number | null;
+}
+
+/**
  * Log entry representing a single tool invocation within the SM lifecycle.
  */
 export interface HopLogEntry {

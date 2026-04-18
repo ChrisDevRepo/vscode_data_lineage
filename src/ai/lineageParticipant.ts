@@ -192,7 +192,8 @@ export class LineageParticipant {
           stream.markdown(`\n\n> Starting analysis — ${sess.memory.slotCount === 0 ? 'first hop' : 'resuming'}.\n\n`);
           effectivePrompt = 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
-          // schema_out_of_filter | depth_cap_exceeded | schema_and_depth — apply the requested expansions.
+          // Inline-only expansion path. SM never reaches here — SM scope is locked at confirm_sm_start;
+          // mid-session out-of-scope routes are deferred and surfaced at synthesis (never a mid-session gate).
           const engine = sess.stateMachine as NavigationEngine | null;
           if (engine) {
             for (const cls of gate.classes) {
@@ -577,23 +578,31 @@ export class LineageParticipant {
             const archive = sess.memory.getResult();
             const evidenceHeader = '### DETAIL ARCHIVE (TECHNICAL EVIDENCE)\n' +
               'The following evidence was captured during the investigation. Assembly this into your final report.\n\n';
-            
+
             const evidenceItems = archive.detail_slots.map(s => {
               const badge = s.badge_label ? `- **Badge**: ${s.badge_label}\n` : '';
               const note = s.note_caption ? `- **Note caption**: ${s.note_caption}\n` : '';
               return `#### ${s.nodeId}\n${badge}${note}- **Summary**: ${s.summary}\n- **Technical Analysis**:\n${s.analysis}\n`;
             }).join('\n---\n');
 
+            // Deferred questions: out-of-approved-scope routes the AI wanted to pursue but couldn't.
+            // Rendered at the tail of the report as the "Unanswered (out of approved scope)" section.
+            const deferred = sess.stateMachine.deferredQuestions;
+            const deferredBlock = deferred.length === 0 ? '' :
+              '\n\n### DEFERRED QUESTIONS (out of approved scope)\n' +
+              'Render these as an "Unanswered (out of approved scope)" section at the end of the report. One line per entry:\n\n' +
+              deferred.map(d => `- \`${d.nodeId}\` (schema \`${d.schema}\`, reason=${d.reason}${d.depth !== undefined ? `, depth=${d.depth}` : ''}) — ${d.question || '(no sub-question recorded)'} — referenced from \`${d.fromFocusNodeId}\``).join('\n');
+
             messages.length = 0;
             messages.push(
               vscode.LanguageModelChatMessage.User(systemPrompt),
               vscode.LanguageModelChatMessage.User(effectivePrompt),
               vscode.LanguageModelChatMessage.User(buildSynthesisPrompt()),
-              vscode.LanguageModelChatMessage.User(evidenceHeader + evidenceItems)
+              vscode.LanguageModelChatMessage.User(evidenceHeader + evidenceItems + deferredBlock)
             );
             const archiveChars = evidenceItems.length;
             const archiveTokensEst = Math.round(archiveChars / 4);
-            this.logger.info(`[Synthesis] Detail archive: ${archive.detail_slots.length} slot(s), ${archiveChars} chars, ~${archiveTokensEst} tokens — injected as evidence for final synthesis`);
+            this.logger.info(`[Synthesis] Detail archive: ${archive.detail_slots.length} slot(s), ${archiveChars} chars, ~${archiveTokensEst} tokens, ${deferred.length} deferred question(s) — injected as evidence for final synthesis`);
           }
         }
 
@@ -675,7 +684,10 @@ export class LineageParticipant {
     switch (exit.kind) {
       case 'gate': {
         sess.enterGate(exit.gate);
-        const title = exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : 'Scope expansion requested';
+        const title =
+          exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' :
+          exit.gate.gate === 'confirm_scope_extension' ? 'Scope extension available' :
+          'Scope expansion requested';
         stream.markdown(
           `\n\n---\n**${title}**\n\n${exit.gate.detail}\n\n` +
           `Reply \`yes\` to proceed, \`no\` to pause, or ask a different question to redirect.\n\n---\n`
@@ -685,6 +697,21 @@ export class LineageParticipant {
       }
       case 'final_answer': {
         const smComplete = sess.stateMachine?.status === 'complete';
+        // Post-synthesis deferred-questions checkpoint: surface out-of-approved-scope references the
+        // engine collected during SM, so the scope gap is visible and the user can issue a follow-up.
+        const deferred = sess.stateMachine?.deferredQuestions ?? [];
+        if (smComplete && deferred.length > 0) {
+          const lines = deferred.slice(0, 10).map(d =>
+            `- \`${d.nodeId}\` — ${d.question || '(no sub-question recorded)'} (referenced from \`${d.fromFocusNodeId}\`)`
+          );
+          const more = deferred.length > 10 ? `\n… and ${deferred.length - 10} more` : '';
+          stream.markdown(
+            `\n\n---\n**Unanswered (out of approved scope) — ${deferred.length}**\n\n` +
+            `${lines.join('\n')}${more}\n\n` +
+            `To investigate any of these, ask a follow-up question naming the object(s) you care about — the next session can include their schemas in the approved scope.\n\n---\n`
+          );
+          this.logger.info(`[Synthesis] Deferred-questions checkpoint surfaced — ${deferred.length} entry(ies)`);
+        }
         sess.enterIdle();
         if (this.getActivePanel() && smComplete) {
           stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [userPrompt] });

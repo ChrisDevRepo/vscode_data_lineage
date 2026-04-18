@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### SM closed-loop contract restored + deferred-questions checkpoint (2026-04-18)
+**Fixed**
+- **Mid-session scope-gate leak in SM mode** — after `confirm_sm_start` was approved, routes to out-of-approved-scope nodes (schema or depth) still emitted `schema_out_of_filter` / `depth_cap_exceeded` consent gates, breaking the "trust + blinkers" closed-loop contract. Observed in `sess_1776522740185_hjzk5` (2026-04-18): user approved a 3-schema scope at `confirm_sm_start`, engine still prompted for `[dbo].[udfdivideasdec]` one hop later.
+
+**Changed**
+- **Route validator branches on `_inlineMode`** ([smBase.ts:526-540](src/ai/smBase.ts#L526)). Inline sessions keep the gate path; SM sessions route out-of-border requests into a typed `DeferredQuestion[]` bucket via the encapsulated `deferQuestion()` method. In-border routes in the same `route_requests` array are accepted normally — the hop continues without pausing.
+- **`NavigationEngine.deferredQuestions: ReadonlyArray<DeferredQuestion>`** — new public accessor (single auditable mutation surface; private bucket + dedup on `(nodeId, fromFocusNodeId)` with `MAX_DEFERRED=50` ceiling). Added to `IHopStateMachine`.
+- **Hop context** — SM sessions expose `working_memory.approved_border = { schemas, depth_cap }` (the locked fence) and `working_memory.deferred_count` (running tally) every hop.
+- **Synthesis evidence** — when the deferred bucket is non-empty, the synthesis message block appends a `DEFERRED QUESTIONS` section listing `(nodeId, schema, question, fromFocusNode, reason)` per entry. The synthesis prompt instructs the AI to render an "Unanswered (out of approved scope)" tail-section so the final report exposes the gap.
+- **Post-synthesis checkpoint** — when SM completes with non-empty deferred questions, the participant streams a summary block with follow-up guidance. The `confirm_scope_extension` gate literal is reserved for future one-click re-spawn flows.
+- **`HopNeighbor.in_user_filter` → `in_approved_scope`** — field rename on SM hop neighbors; the old name conflated UI filter with session-approved scope. `src/ai/tools.ts` (`search_objects`) keeps its independent `in_user_filter` tag — different surface, different invariant.
+- **Prompts** — `smPrompts.ts BLOCK.routing` replaced the "engine handles out-of-bound routes automatically" license with positive framing pointing at `approved_border` + `deferred_count`. `prompts.ts buildSchemaContext` reframed for SM closed-loop. `lineage_start_exploration` / `lineage_submit_findings` / `depth_enforcement` parameter descriptions aligned.
+- **Structured hop log** — `[AI] [Hop N]` now carries `routed=<new>/<rejected>/<deferred>` and `deferred_queued=<N>` (via `DiagnosticsSnapshot.routedDeferred` + `deferredQueued`).
+
+**Added (types)**
+- `DeferredQuestion` interface + `DeferredQuestionSchema` Zod parser in `src/ai/smTypes.ts` — typed boundary between engine (producer) and participant/synthesis (consumer).
+- `ApprovedBorder` interface — working-memory shape.
+- `confirm_scope_extension` literal in `ActionRequiredGate.gate` and `PendingGateSchema`.
+
+**Tests** (`tests/unit/sm-robustness.test.ts`)
+- Inline variants of depth / schema gate tests (explicit `setInlineMode(true)`) — regression guard.
+- New SM tests: depth deferral, schema deferral with `approved_border` visibility, dedup on repeat deferral within one hop, `in_approved_scope` neighbor rename. 29/29 green, full `npm test` green.
+
+**Grounded in.** Anthropic — *Effective Context Engineering* (compaction over truncation); Reflexion / ReAct (self-reflective deferral); MemGPT (hierarchical memory preservation); HITL batching (two checkpoints rather than many mid-flight). This also aligns with the repo's `code-quality.md` §"Mechanical Enforcement Over Prompt Language" — the closed-loop contract is enforced in the engine (branch + deferral bucket), not in prompt prose.
+
 ### Remove cascade-width 50% guard — engine stays content-blind (2026-04-18)
 **Removed**
 - `prune_cascade_too_wide` engine rejection (smBase.ts) — a numeric heuristic that rejected `irrelevant` verdicts when the resulting cascade would remove >50% of the remaining agenda. Deleted along with its helper `countCascadeIfPruned` (smGuards.ts).

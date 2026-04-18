@@ -253,7 +253,19 @@ Each hop's `working_memory` carries the diagnostics the AI needs to self-correct
 - `active_schemas` — current session allowlist (grows on each consented schema)
 - `depth_cap` — engine-enforced ceiling, always surfaced when a budget is set (removed the old silent-mode gate)
 
-Per-neighbor flags: `in_budget`, `in_user_filter`, `would_trigger_action_required` — the AI knows before routing whether it will trip the gate.
+Per-neighbor flags: `in_budget`, `in_approved_scope`, `would_trigger_action_required` — the AI knows before routing whether it will trip the gate (inline mode) or be deferred (SM mode).
+
+### SM closed-loop contract & deferred-questions checkpoint (2026-04-18)
+
+After `confirm_sm_start` is approved, the SM session runs as a closed loop — no mid-session consent gates. The AI's tool surface is a single tool (`lineage_submit_findings`), `LanguageModelChatToolMode.Required` prevents free-form chat, and the engine enforces the border mechanically:
+
+- **Approved border** — `working_memory.approved_border = { schemas, depth_cap }` surfaced every hop. Locked at session start; extensions require a new session.
+- **Deferral, not rejection** — when the AI routes to an out-of-border node, the engine calls `deferQuestion({...})` into an internal bucket (single encapsulated mutation point on `NavigationEngine`) and the hop proceeds. In-border routes in the same `route_requests` array are accepted normally.
+- **Visibility every hop** — `working_memory.deferred_count` shows the running tally. The structured `[AI] [Hop N]` log line carries `routed=<new>/<rejected>/<deferred>` and `deferred_queued=<N>`.
+- **Synthesis surfaces the gap** — the Detail Archive is accompanied by a `DEFERRED QUESTIONS` block listing `(nodeId, schema, question, fromFocusNode, reason)` per entry. The synthesis prompt instructs the AI to render an "Unanswered (out of approved scope)" section at the tail of the report.
+- **Post-synthesis checkpoint** — when the session completes with a non-empty deferred list, the participant streams a concluding summary of deferred entries so the user can decide to follow up in a new question. The gate literal `confirm_scope_extension` is reserved in `PendingGateSchema` for future one-click re-spawn flows.
+
+Grounded in: Anthropic *Effective Context Engineering* (compaction over truncation), Reflexion / ReAct (self-reflective deferral in the reasoning trace), MemGPT (hierarchical memory preservation), and HITL-batching (two checkpoints — entry and optional exit — rather than many mid-flight).
 
 ### Design citations
 
@@ -304,8 +316,8 @@ stateDiagram-v2
     [*] --> idle
     idle --> awaiting_gate: start_exploration needs SM\n→ action_required{gate:'confirm_sm_start'}
     idle --> exploring: fresh hop loop enters ACTIVE\n(inline mode or post-confirm)
-    exploring --> awaiting_gate: submit_findings returns\nschema_out_of_filter /\ndepth_cap_exceeded /\nschema_and_depth
-    awaiting_gate --> exploring: user reply: yes\n(apply extendAllowedSchemas /\nextendAllowedDepth)
+    exploring --> awaiting_gate: [inline only] submit_findings returns\nschema_out_of_filter /\ndepth_cap_exceeded /\nschema_and_depth
+    awaiting_gate --> exploring: user reply: yes\n(apply extendAllowedSchemas /\nextendAllowedDepth — inline only)
     awaiting_gate --> idle: user reply: no\n(paused, no partial stored)
     awaiting_gate --> idle: user reply: redirect\n(resetExploration → new question flows through)
     exploring --> idle: HopLoopExit.final_answer\n(SM complete OR discovery final)

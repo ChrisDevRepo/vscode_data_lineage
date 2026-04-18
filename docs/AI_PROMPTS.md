@@ -89,7 +89,9 @@ This matches the 0.9.8 contract: the state machine stores, delivers, and execute
 
 **AI-visible signals every hop** (`working_memory` and neighbor metadata):
 - `depth_budget` / `depth_cap` / `depth_enforcement` — always set when the session has a budget
-- Per-neighbor: `in_budget`, `in_user_filter`, `would_trigger_action_required`
+- `approved_border = { schemas, depth_cap }` — SM-only, the locked border set at session start
+- `deferred_count` — SM-only, running tally of out-of-scope routes captured for post-session review
+- Per-neighbor: `in_budget`, `in_approved_scope`, `would_trigger_action_required`
 - `verdict_counts`, `recent_rejections`, `active_schemas`, `budget_expansions` — tally and memory for self-correction
 - `checklist.rounds_used` — monotonic counter (not a countdown; see s1 paper on budget anchoring)
 

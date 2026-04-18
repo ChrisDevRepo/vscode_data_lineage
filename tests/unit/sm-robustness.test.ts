@@ -134,9 +134,10 @@ suite('State Machine Robustness', () => {
 
   const nopLog: any = Object.assign(() => {}, { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} });
 
-  test('A.2 strict mode: route beyond depth cap is rejected via action_required', () => {
+  test('A.2 strict mode INLINE: route beyond depth cap raises action_required', () => {
     const { model, graph } = mkFanoutModel();
     const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
+    engine.setInlineMode(true);
     engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 1, depth_enforcement: 'strict' });
     engine.getHopContext();
 
@@ -148,8 +149,29 @@ suite('State Machine Robustness', () => {
       route_requests: [{ nodeId: 'd_ext', question: 'why' }],
     } as any);
 
-    assert.ok('error' in res && (res as any).error === 'action_required', 'strict depth violation raises action_required');
+    assert.ok('error' in res && (res as any).error === 'action_required', 'strict depth violation raises action_required in inline mode');
     assert.ok((res as any).classes.some((c: string) => c.startsWith('depth:')), 'classes include depth');
+  });
+
+  test('A.2 strict mode SM: route beyond depth cap is deferred, hop succeeds', () => {
+    const { model, graph } = mkFanoutModel();
+    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
+    // SM mode is default — no setInlineMode call.
+    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 1, depth_enforcement: 'strict' });
+    engine.getHopContext();
+
+    const res = engine.submitFindings({
+      focus_node_id: 'origin',
+      detail_analysis: 'ok',
+      summary: 'ok',
+      verdict: 'relevant',
+      route_requests: [{ nodeId: 'd_ext', question: 'why' }],
+    } as any);
+
+    assert.ok(!('error' in res) || (res as any).error === undefined, 'SM does not raise action_required on depth violations');
+    assert.strictEqual(engine.deferredQuestions.length, 1, 'depth-violating route goes into deferred bucket');
+    assert.strictEqual(engine.deferredQuestions[0].reason, 'depth', 'deferral reason is depth');
+    assert.strictEqual(engine.deferredQuestions[0].nodeId, 'd_ext');
   });
 
   test('A.2 soft mode: +1 depth auto-expands silently; +2 triggers action_required', () => {
@@ -169,10 +191,11 @@ suite('State Machine Robustness', () => {
     assert.ok('ok' in res1 && (res1 as any).ok === true, 'soft +1 expansion accepted silently');
   });
 
-  test('B schema gate: out-of-filter route triggers action_required; extendAllowedSchemas re-opens the route', () => {
+  test('B schema gate INLINE: out-of-filter route triggers action_required; extendAllowedSchemas re-opens the route', () => {
     const { model, graph } = mkFanoutModel();
     const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
     const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
+    engine.setInlineMode(true);
     engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
     engine.getHopContext();
 
@@ -181,7 +204,7 @@ suite('State Machine Robustness', () => {
       detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
       route_requests: [{ nodeId: 'd_ext', question: 'why' }],
     } as any);
-    assert.ok('error' in res1 && (res1 as any).error === 'action_required', 'schema violation raises action_required');
+    assert.ok('error' in res1 && (res1 as any).error === 'action_required', 'schema violation raises action_required in inline mode');
     assert.ok((res1 as any).classes.includes('schema:ext'), 'classes include schema:ext');
 
     engine.extendAllowedSchemas('ext');
@@ -191,6 +214,67 @@ suite('State Machine Robustness', () => {
       route_requests: [{ nodeId: 'd_ext', question: 'why' }],
     } as any);
     assert.ok('ok' in res2 && (res2 as any).ok === true, 'after extending allowlist the route passes');
+  });
+
+  test('B schema gate SM: out-of-filter route is deferred, hop succeeds, approved_border visible', () => {
+    const { model, graph } = mkFanoutModel();
+    const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
+    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
+    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
+    const hopCtx = engine.getHopContext() as any;
+
+    // approved_border and deferred_count surfaced in working memory
+    const border = hopCtx.working_memory?.approved_border;
+    assert.ok(border, 'working_memory.approved_border is set in SM mode');
+    assert.deepStrictEqual(border.schemas, ['dbo'], 'approved_border.schemas lists the approved set');
+    assert.strictEqual(hopCtx.working_memory.deferred_count, 0, 'deferred_count starts at 0');
+
+    const res1 = engine.submitFindings({
+      focus_node_id: 'origin',
+      detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
+      route_requests: [{ nodeId: 'd_ext', question: 'why external' }],
+    } as any);
+    assert.ok(!('error' in res1) || (res1 as any).error === undefined, 'SM does not gate — hop succeeds');
+    assert.strictEqual(engine.deferredQuestions.length, 1, 'out-of-filter route is deferred');
+    assert.strictEqual(engine.deferredQuestions[0].nodeId, 'd_ext');
+    assert.strictEqual(engine.deferredQuestions[0].schema, 'ext');
+    assert.strictEqual(engine.deferredQuestions[0].reason, 'schema');
+    assert.strictEqual(engine.deferredQuestions[0].question, 'why external');
+  });
+
+  test('SM deferral: dedup on (nodeId, fromFocusNodeId) — later deferral replaces earlier', () => {
+    const { model, graph } = mkFanoutModel();
+    const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
+    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
+    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
+    engine.getHopContext();
+
+    engine.submitFindings({
+      focus_node_id: 'origin', detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
+      route_requests: [{ nodeId: 'd_ext', question: 'first' }, { nodeId: 'd_ext', question: 'duplicate same hop' }],
+    } as any);
+
+    assert.strictEqual(engine.deferredQuestions.length, 1, 'duplicate within one hop is deduped');
+    assert.strictEqual(engine.deferredQuestions[0].question, 'duplicate same hop', 'latest question wins');
+  });
+
+  test('SM neighbors carry in_approved_scope (not in_user_filter) + would_trigger_action_required', () => {
+    const { model, graph } = mkFanoutModel();
+    const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
+    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
+    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
+    engine.getHopContext();
+
+    engine.submitFindings({
+      focus_node_id: 'origin', detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
+    } as any);
+    const nextHop = engine.getHopContext();
+    const neighbors = nextHop.neighbors ?? [];
+    assert.ok(neighbors.length > 0, 'at least one neighbor presented');
+    for (const nb of neighbors) {
+      assert.ok('in_approved_scope' in nb, 'neighbor carries in_approved_scope');
+      assert.strictEqual((nb as any).in_user_filter, undefined, 'in_user_filter is removed');
+    }
   });
 
   test('C diagnostics: getHopDiagnostics tracks verdict tally and archive growth across hops', () => {

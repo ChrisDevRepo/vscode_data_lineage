@@ -19,7 +19,7 @@ import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFoc
 import { edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
-import type { ActionRequiredGate, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, SmMode, SmResult, SmStatus, SubmitResult } from './smTypes';
+import type { ActionRequiredGate, ApprovedBorder, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, SmMode, SmResult, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -27,6 +27,8 @@ const SOFT_DEPTH_HEADROOM = 1;
 const SILENT_DEPTH_HEADROOM = 2;
 /** Ring-buffer size for `recent_rejections` surfaced in working memory. */
 const RECENT_REJECTION_CAP = 5;
+/** Defensive ceiling on the SM deferred-questions bucket — prevents a pathological session from flooding the final report. */
+const MAX_DEFERRED = 50;
 
 export type { SmMode, SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
 export type { BoundaryFlag } from './smTypes';
@@ -93,6 +95,8 @@ export interface IHopStateMachine {
   readonly inlineMode: boolean;
   /** The exploration mode type. */
   readonly mode: SmMode;
+  /** Out-of-approved-scope routes deferred during the SM session (empty in inline mode). */
+  readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
 
   /**
    * Toggles the inline operating mode.
@@ -206,6 +210,14 @@ export class NavigationEngine implements IHopStateMachine {
   protected lastRoutedNew = 0;
   /** Route requests rejected during the most recent submit, for diagnostics. */
   protected lastRoutedRejected = 0;
+  /** Route requests deferred during the most recent submit (SM mode), for diagnostics. */
+  protected lastRoutedDeferred = 0;
+  /**
+   * Out-of-approved-scope routes captured during an SM session. Single encapsulated
+   * bucket — all mutations flow through {@link deferQuestion}. Surfaced at synthesis
+   * and seeded into the optional `confirm_scope_extension` envelope.
+   */
+  private readonly _deferredQuestions: DeferredQuestion[] = [];
 
   /**
    * Initializes a new NavigationEngine.
@@ -280,6 +292,50 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Read-only view of the SM deferred-questions bucket.
+   *
+   * @remarks
+   * Consumed at synthesis (rendered as the "Unanswered" section) and when priming the
+   * post-synthesis `confirm_scope_extension` envelope. Callers cannot mutate the bucket
+   * through this accessor.
+   */
+  public get deferredQuestions(): ReadonlyArray<DeferredQuestion> {
+    return this._deferredQuestions;
+  }
+
+  /**
+   * Records a deferred route — the sole entry point for mutating the bucket.
+   *
+   * @remarks
+   * Deduplicates on `(nodeId, fromFocusNodeId)`: a later deferral for the same pair
+   * replaces the earlier one (latest `atHop` and `question` win). Hard-capped at
+   * {@link MAX_DEFERRED}; beyond the cap new entries are dropped and a log line is
+   * emitted. Also records a rejection in memory so `recent_rejections` reflects the
+   * same event — DRY with the inline gate path.
+   *
+   * @param entry - Fully-populated deferral record. Internal callers pass typed values;
+   *   the participant boundary validates external payloads via `DeferredQuestionSchema`.
+   * @returns The index of the stored entry (new or replaced), or `-1` if dropped at the ceiling.
+   */
+  protected deferQuestion(entry: DeferredQuestion): number {
+    const existing = this._deferredQuestions.findIndex(
+      d => d.nodeId === entry.nodeId && d.fromFocusNodeId === entry.fromFocusNodeId,
+    );
+    if (existing >= 0) {
+      this._deferredQuestions[existing] = entry;
+      this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
+      return existing;
+    }
+    if (this._deferredQuestions.length >= MAX_DEFERRED) {
+      this.log('warn', `[deferQuestion] MAX_DEFERRED=${MAX_DEFERRED} reached; dropping ${entry.nodeId}`);
+      return -1;
+    }
+    this._deferredQuestions.push(entry);
+    this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
+    return this._deferredQuestions.length - 1;
+  }
+
+  /**
    * Per-hop diagnostic snapshot for structured logging and AI-visible fields.
    *
    * @returns A point-in-time view of depth, schema, tally, and routing counters — safe to log.
@@ -300,6 +356,8 @@ export class NavigationEngine implements IHopStateMachine {
       archiveChars: this.archiveChars,
       routedNew: this.lastRoutedNew,
       routedRejected: this.lastRoutedRejected,
+      routedDeferred: this.lastRoutedDeferred,
+      deferredQueued: this._deferredQuestions.length,
       agendaRemaining: this.agenda.length,
       tally: this.memory.getVerdictCounts(),
       scopeExpansions: this.budgetExpansions.length,
@@ -451,6 +509,18 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    // SM closed-loop signals: the AI reads the locked border every hop plus the running
+    // deferred tally, so it can self-correct routing without seeing the full deferred list
+    // (preserved for synthesis where it matters for the final report).
+    if (!this._inlineMode) {
+      const border: ApprovedBorder = {
+        schemas: Array.from(this.sessionAllowedSchemas).sort(),
+        depth_cap: this.computeDepthCap(),
+      };
+      (workingMemory as any).approved_border = border;
+      (workingMemory as any).deferred_count = this._deferredQuestions.length;
+    }
+
     this._status = 'awaiting_findings';
     return {
       sm_status: 'awaiting_findings' as const,
@@ -484,12 +554,15 @@ export class NavigationEngine implements IHopStateMachine {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
     }
 
-    // Route validation proceeds in two layers:
-    //   1. Hard invalid routes — unknown node ids, bad columns → `route_validation_failed` as before.
-    //   2. Consent gates — schema/depth violations → single combined `action_required` envelope
-    //      that pauses the active loop until the user replies yes/no via the participant.
+    // Route validation proceeds in three layers:
+    //   1. Hard invalid routes — unknown node ids, bad columns → `route_validation_failed`.
+    //   2. Inline-mode consent gates — schema/depth violations accumulate into one `action_required`
+    //      envelope that pauses the active loop until the user replies.
+    //   3. SM-mode deferrals — out-of-approved-scope routes are recorded in `_deferredQuestions`
+    //      (via `deferQuestion`) and surfaced at synthesis; the loop continues without pausing.
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
+    this.lastRoutedDeferred = 0;
     if (params.route_requests) {
       const invalidRoutes: Array<{ id: string; reason: string }> = [];
       const depthCap = this.computeDepthCap();
@@ -507,14 +580,12 @@ export class NavigationEngine implements IHopStateMachine {
           continue;
         }
 
-        // Schema gate — route to an out-of-filter schema requires user confirmation (per-class cache).
+        // Schema blocked — route targets a schema outside the session allowlist.
         const schemaLower = nNode.schema.toLowerCase();
         const schemaBlocked = this.sessionAllowedSchemas.size > 0 && !this.sessionAllowedSchemas.has(schemaLower);
 
-        // Depth gate — beyond mode cap requires user confirmation.
-        // `depthFromOrigin` is populated only for nodes BFS reached within the initial `depth` pass,
-        // so out-of-scope nodes need an on-demand shortest-path lookup to get their true depth.
-        // Memoized back into `depthFromOrigin` so repeat routes to the same node don't recompute.
+        // Depth blocked — target beyond the effective cap. Memoize shortest-path depth so repeat
+        // routes to the same out-of-scope node don't recompute.
         let candidateDepth = this.depthFromOrigin.get(nid);
         if (candidateDepth === undefined && this.originNodeId) {
           const path = bidirectional(this.graph, this.originNodeId, nid);
@@ -524,17 +595,32 @@ export class NavigationEngine implements IHopStateMachine {
         const depthBlocked = depthCap !== null && candidateDepth !== undefined && candidateDepth > depthCap;
 
         if (schemaBlocked || depthBlocked) {
-          gateNodeIds.push(req.nodeId);
-          if (schemaBlocked) {
-            gateHasSchema = true;
-            gateClasses.add(`schema:${schemaLower}`);
-            gateDetails.push(`\`${req.nodeId}\` is in schema \`${nNode.schema}\`, outside the active filter`);
-          }
-          if (depthBlocked) {
-            gateHasDepth = true;
-            const extraOffset = candidateDepth! - depthCap!;
-            gateClasses.add(`depth:+${extraOffset}`);
-            gateDetails.push(`\`${req.nodeId}\` is at depth ${candidateDepth}, beyond the current cap ${depthCap}`);
+          if (this._inlineMode) {
+            // Inline: consent-gate flow (unchanged).
+            gateNodeIds.push(req.nodeId);
+            if (schemaBlocked) {
+              gateHasSchema = true;
+              gateClasses.add(`schema:${schemaLower}`);
+              gateDetails.push(`\`${req.nodeId}\` is in schema \`${nNode.schema}\`, outside the active filter`);
+            }
+            if (depthBlocked) {
+              gateHasDepth = true;
+              const extraOffset = candidateDepth! - depthCap!;
+              gateClasses.add(`depth:+${extraOffset}`);
+              gateDetails.push(`\`${req.nodeId}\` is at depth ${candidateDepth}, beyond the current cap ${depthCap}`);
+            }
+          } else {
+            // SM: defer, keep the closed-loop invariant. `deferQuestion` owns dedup + rejection record.
+            this.deferQuestion({
+              nodeId: req.nodeId,
+              schema: nNode.schema,
+              fromFocusNodeId: this.currentFocusNodeId!,
+              question: req.question ?? '',
+              reason: schemaBlocked && depthBlocked ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth',
+              depth: candidateDepth,
+              atHop: this.hopCount,
+            });
+            this.lastRoutedDeferred++;
           }
           continue;
         }
@@ -565,6 +651,7 @@ export class NavigationEngine implements IHopStateMachine {
         return { error: 'route_validation_failed', detail: invalidRoutes };
       }
 
+      // Invariant: reached only in inline mode. SM routes through `deferQuestion` above.
       if (gateNodeIds.length > 0) {
         this.lastRoutedRejected = gateNodeIds.length;
         for (const id of gateNodeIds) this.memory.recordRejection(id, 'blocked by user-confirmation gate', this.hopCount);
@@ -723,9 +810,9 @@ export class NavigationEngine implements IHopStateMachine {
       if (d !== undefined) neighbor.depth_from_origin = d;
       if (this.depthBudget !== null) neighbor.in_budget = this.scopeNodeIds.has(nid) && (depthCap === null || d === undefined || d <= depthCap);
 
-      if (hasSchemaFilter) neighbor.in_user_filter = this.sessionAllowedSchemas.has(n.schema.toLowerCase());
+      if (hasSchemaFilter) neighbor.in_approved_scope = this.sessionAllowedSchemas.has(n.schema.toLowerCase());
 
-      const schemaBlocked = hasSchemaFilter && neighbor.in_user_filter === false;
+      const schemaBlocked = hasSchemaFilter && neighbor.in_approved_scope === false;
       const depthBlocked = depthCap !== null && d !== undefined && d > depthCap;
       if (schemaBlocked || depthBlocked) neighbor.would_trigger_action_required = true;
       return neighbor;

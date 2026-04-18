@@ -290,7 +290,7 @@ export function registerAiTools(
           logger.debug(
             `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} ` +
             `verdict=${(options.input as any).verdict} detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
-            `routed=${diag.routedNew}/${diag.routedRejected} agenda=${diag.agendaRemaining} ` +
+            `routed=${diag.routedNew}/${diag.routedRejected}/${diag.routedDeferred} deferred_queued=${diag.deferredQueued} agenda=${diag.agendaRemaining} ` +
             `tally=R${diag.tally.relevant}/P${diag.tally.pass}/I${diag.tally.irrelevant} ` +
             `expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}`
           );
