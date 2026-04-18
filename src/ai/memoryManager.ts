@@ -95,6 +95,7 @@ export class AiMemoryManager {
   private detailSlots = new Map<string, DetailSlot>();
   private pendingQuestions: Array<{ nodeId: string; question: string }> = [];
   private userQuestion = '';
+  private missionBrief = '';
   private verdictCounts = { relevant: 0, pass: 0, irrelevant: 0 };
   private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
 
@@ -103,6 +104,7 @@ export class AiMemoryManager {
     this.detailSlots.clear();
     this.pendingQuestions = [];
     this.userQuestion = '';
+    this.missionBrief = '';
     this.verdictCounts = { relevant: 0, pass: 0, irrelevant: 0 };
     this.recentRejections = [];
   }
@@ -136,6 +138,24 @@ export class AiMemoryManager {
    */
   public setUserQuestion(q: string): void {
     this.userQuestion = q;
+  }
+
+  /** The user's original question, as captured at session start. */
+  public getUserQuestion(): string {
+    return this.userQuestion;
+  }
+
+  /**
+   * Records the AI-composed mission brief — a distilled narrative of intent + filters + scope
+   * delivered every hop. Survives sliding-memory wipes.
+   */
+  public setMissionBrief(brief: string): void {
+    this.missionBrief = brief;
+  }
+
+  /** The mission brief the AI composed at discovery→active transition. */
+  public getMissionBrief(): string {
+    return this.missionBrief;
   }
 
   /**

@@ -143,6 +143,44 @@ export class ViewSynthesisService {
       }
     }
 
+    // Synthesis compression-ratio check (Fix 5): per-section `text` must preserve ≥50% of its
+    // source-slot length (≥30% for variant-sibling groups covering ≥2 nodes). Catches the failure
+    // mode where a 2500-char slot gets summarized into a 2-line blurb.
+    if (input.sections?.length && this.session.memory.slotCount > 0) {
+      const slotsById = new Map<string, number>();
+      for (const slot of this.session.memory.getResult().detail_slots) {
+        slotsById.set(slot.nodeId, (slot.analysis ?? '').length);
+      }
+      const failures: string[] = [];
+      const ratios: string[] = [];
+      for (const sec of input.sections) {
+        const ids = sec.node_ids ?? [];
+        if (ids.length === 0) continue;
+        const sourceLen = ids.reduce((acc, id) => acc + (slotsById.get(id) ?? 0), 0);
+        if (sourceLen < 500) continue;
+        const textLen = (sec.text ?? '').length;
+        const ratio = sourceLen > 0 ? textLen / sourceLen : 1;
+        const floor = ids.length > 1 ? 0.3 : 0.5;
+        ratios.push(`${sec.label}:${ratio.toFixed(2)}${ratio < floor ? ' FAIL' : ' OK'}`);
+        if (ratio < floor) {
+          failures.push(`Section "${sec.label}" text is ${textLen} chars; source slot(s) total ${sourceLen} chars (ratio ${ratio.toFixed(2)}, needed ≥${floor}). Rewrite preserving slot content; LAYER A is preservation, not summarization.`);
+        }
+      }
+      const introLen = (input.intro ?? '').length;
+      const crossNodeOk = input.sections.length < 3 || introLen >= 300;
+      log?.debug(`[Synthesis] ratios=[${ratios.join(', ')}] intro_chars=${introLen} cross_node_score=${crossNodeOk ? 1 : 0}`);
+      if (failures.length > 0) {
+        return {
+          success: false,
+          errors: [
+            'synthesis_sections_too_thin — one or more sections compress the archive below the preservation floor:',
+            ...failures,
+            'Rewrite sections preserving slot analysis verbatim (keep LaTeX $…$, tables, and SQL). Cross-node reasoning belongs in `intro`, not in section compression.',
+          ],
+        };
+      }
+    }
+
     let assembledBadges: Array<{ node_id: string; text: string }> = [];
     if (input.sections?.length) {
       const assembled = orderAndAssemble(input.sections, { title: input.title, intro: input.intro, closing: input.closing });

@@ -53,14 +53,14 @@ const BLOCK = {
 
   /** Badge + note metadata drive the graph UI. */
   badgeAndNote:
-    'badge_label (2-4 words): semantic ROLE tag — e.g. "Source", "Transform", "Staging", "Output", "Validation", "Aggregation".\n' +
+    'badge_label (2-4 words, ≤30 chars): semantic ROLE tag. Prefer a role that groups variant siblings under one label — e.g. "Source", "Transform", "Transform Variant", "Staging", "Output", "Validation", "Aggregation", "Rule Family". When several nodes share the same skeleton, give them the SAME badge_label so the final view groups them into one section.\n' +
     'SELECTIVITY: only assign badge_label to nodes with distinct functional roles. Passthrough nodes skip it.\n' +
-    'GROUPING: nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
-    'note_caption (~100-200 chars): one-line what-this-does. Write the REASONING — what you learned, what it means for the question, what is still open.',
+    'GROUPING: nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source"; five variant procedures → all "Transform Variant").\n' +
+    'note_caption (≤200 chars): cross-hop REASONING — what this hop taught you that future hops need. `summary` already captures WHAT the node does; do not restate it. Use note_caption for the delta (e.g. "Same skeleton as the prior variant; delta: department+function match instead of global match") or for still-open questions.',
 
-  /** Self-ask — the sub-question is a lens; the main user question is the anchor. */
+  /** Self-ask — the sub-question is a lens; the mission brief (or user question) is the anchor. */
   selfAsk:
-    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on `working_memory.user_question` (the user\'s original request) — relevance is judged against the main question, not the sub-question. If answering the sub-question produces material that does not serve the main question, omit it.',
+    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on the `mission_brief` (AI-authored at session start, delivered every hop) — or `working_memory.user_question` if no brief is set. Relevance is judged against the mission, not the sub-question. If the mission names NL filters (e.g. "ignore UDFs and views", "only tables in schema X"), honor them: verdict any neighbor that violates the filter as `irrelevant`, don\'t analyze it, don\'t route more routes into it. If answering the sub-question produces material that does not serve the mission, omit it.',
 
   /** Route grounding — shared. */
   routing:
@@ -165,21 +165,38 @@ export function buildNavigationPrompt(mode: SmMode): string {
  */
 export function buildSynthesisPrompt(): string {
   return [
-    '# SYNTHESIS',
-    'The detail archive below is your only evidence. Raw DDL is gone.',
-    'The archive is comprehensive by design — do not compress, do not summarize. Lift the per-node analyses into sections verbatim, expanding with interpretation as needed. Section text has no length limit; thin synthesis negates the exploration\'s effort.',
+    '# SYNTHESIS — two-layer output',
     '',
-    'TWO DELIVERABLES — both required:',
-    '  1. Chat prose — executive answer in 2-3 sentences, then one section per archived slot grouped by role in the answer. Write at the depth the question asks for (WHAT the data means, HOW the pipeline runs, or both).',
-    '  2. enrich_view — sections[] one entry per archive slot: `label = slot.badge_label` (verbatim), `node_ids = [slot.nodeId]`, `text = the per-node content you wrote in the chat`. notes[] — one per node, `text = slot.note_caption`.',
+    'Your ONLY evidence is the detail archive below. Raw DDL is gone.',
     '',
-    'RULES:',
-    '- Cite only from archive slots. No new facts.',
-    '- If a slot lacks evidence for a claim, omit the claim.',
-    '- If a slot reads thin, call `lineage_get_object_detail` and expand from the DDL.',
-    '- Preserve LaTeX formulas and markdown tables from slot analyses verbatim.',
-    '- Variant siblings each get their own section — delta wording is fine ("Same skeleton as X; deltas: …").',
+    '## LAYER A — per-node preservation',
+    'For each archived slot, emit one enrich_view section where `text` ≈ the slot analysis CONTENT, preserved. You may reformat (promote inline `### COLUMNS` etc. to clean markdown sub-headings, render tables cleanly). Keep LaTeX `$…$` and ```math fences untouched. Keep quoted SQL untouched.',
+    'Do not compress, summarize, or paraphrase. A 2500-char slot must produce a ~2500-char section. Targets: section length ≥ 50% of its source slot length; variant-sibling groups (one section, ≥2 node_ids) may compress to ≥ 30%.',
     '',
-    'DEFERRED QUESTIONS: the evidence block may include a "DEFERRED QUESTIONS" section listing out-of-approved-scope references the engine deferred during exploration. If present, render those entries as a trailing "Unanswered (out of approved scope)" section in the chat prose — one line per entry, preserving the node id, the sub-question, and the referencing focus node. Do not fabricate answers for deferred entries; the user will be offered a one-click scope extension after the report.',
+    '## LAYER B — cross-node reasoning (what synthesis adds)',
+    'Write a 2–4 paragraph `intro` (enrich_view.intro) that NO single slot could have produced. Identify:',
+    '  • The pipeline shape — which nodes run first, which feed which.',
+    '  • Recurring patterns — variant siblings sharing a skeleton (name the skeleton, list the variants).',
+    '  • Pattern deltas — what differentiates each variant.',
+    '  • System-level risks — cycles, consistency gaps, missing coverage.',
+    '  • A grounded answer to the mission (the user\'s original intent).',
+    '',
+    '## CHAT PROSE',
+    '  1. 2–3 sentence executive answer to the mission.',
+    '  2. Cross-node reasoning (1–2 paragraphs — same content as enrich_view.intro).',
+    '  3. One section per archived slot, per LAYER A.',
+    '',
+    '## RULES',
+    '- Formulas: keep LaTeX verbatim when lifting slot content. Paraphrasing `$EV_{Direct} = EV_{Budget} \\times 25\\%$` into "25% allocation" loses the evidence.',
+    '- Tables: keep markdown pipe-tables verbatim.',
+    '- SQL: keep quoted fragments verbatim.',
+    '- Cite only from slots. No new facts at the node level.',
+    '- Cross-node reasoning (Layer B) is the ONE place you may synthesize across slots — connect them, name patterns, flag risks. Everything else is lift-and-format.',
+    '',
+    '## DEFERRED QUESTIONS',
+    'The evidence block may include a "DEFERRED QUESTIONS" section listing out-of-approved-scope references the engine deferred during exploration. The participant renders a collapsed click-to-review button after your response — you do NOT need to enumerate them in chat prose. A brief one-line acknowledgement ("N references were deferred; click below to review.") is sufficient.',
+    '',
+    '## SYNTHESIS REMINDER',
+    'Re-read before emitting: the mission statement anchors every section. Your archived slots are draft section text — assemble and reformat; do not re-summarize.',
   ].join('\n');
 }

@@ -744,7 +744,7 @@
             "name": {
               "type": "string",
               "maxLength": 60,
-              "description": "Display name for the view (max 60 chars)"
+              "description": "Display name for the view (max 60 chars). Derive it from the ORIGINAL user question — the subject and focus of the analysis — not from conversational confirmation text like 'yes' or 'ok'. Pattern: '[Subject] — [Focus]'. GOOD: 'CadenceWorker — Direct Neighbor Business Logic'. BAD: 'yes', 'ok', or the literal user turn text from a gate resume."
             },
             "summary": {
               "type": "string",
@@ -910,7 +910,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
-        "modelDescription": "Start a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking. If targetColumns provided, the engine constrains navigation to relevant column paths. If question only, it runs free-form Blackboard exploration.\n\nSCOPE PARAMETERS: pick `direction`, `depth`, and `depth_enforcement` to match how the user phrased scope. See the `depth_enforcement` parameter description for the 3-case mapping (strict / soft / silent). On wide graphs start with a small `depth` (1–2); sliding-memory sessions lock the scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session.\n\nReturns: first hop context with Topological Map, current Incremental Blackboard, Focus DDL, and Neighbor Metadata (Columns).\n\nUse Selection-Inference Routing: read neighbor metadata — including `in_budget` and `in_approved_scope` — and generate a sub-question for each relevant neighbor. Out-of-approved-scope neighbors may still be routed; the engine defers them for post-session review.",
+        "modelDescription": "Start a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking. If targetColumns provided, the engine constrains navigation to relevant column paths. If question only, it runs free-form Blackboard exploration.\n\nSCOPE PARAMETERS: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. See the `depth_enforcement` parameter description for the 3-case mapping (strict / soft / silent). Honor user NL filters in `excludeTypes`: 'ignore UDFs/functions' → excludeTypes:['function']; 'ignore views' → excludeTypes:['view']; 'only tables' → excludeTypes:['view','procedure','function']. On wide graphs start with a small `depth` (1–2); sliding-memory sessions lock the scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session.\n\nReturns: first hop context with Topological Map, current Incremental Blackboard, Focus DDL, and Neighbor Metadata (Columns).\n\nUse Selection-Inference Routing: read neighbor metadata — including `in_budget` and `in_approved_scope` — and generate a sub-question for each relevant neighbor. Out-of-approved-scope neighbors may still be routed; the engine defers them for post-session review.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -957,6 +957,19 @@
                 "type": "string"
               },
               "description": "Optional: override active filter to search specific schemas."
+            },
+            "mission_brief": {
+              "type": "string",
+              "maxLength": 1500,
+              "description": "A 3-6 sentence natural-language briefing you (the AI) compose after discovery, distilling: (a) the user's intent in your own words, (b) any NL filters the user expressed ('ignore UDFs and views', 'only tables', 'only schema X'), (c) the scope you chose (schemas, depth, enforcement, direction) and why. This brief is the canonical mission statement — it is shown to you verbatim every hop and survives sliding-memory wipes. Write it so a future you (post-wipe) can act correctly with no other context."
+            },
+            "excludeTypes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["table", "view", "procedure", "function", "external"]
+              },
+              "description": "Optional. Object types to prune from the exploration scope before the first hop. Map user NL filters: 'ignore UDFs'/'ignore functions' → ['function']; 'ignore views' → ['view']; 'only tables' → ['view','procedure','function']. Excluded nodes never enter the agenda or neighbor list — the AI cannot accidentally analyze them."
             }
           },
           "required": [
@@ -1033,11 +1046,13 @@
             },
             "badge_label": {
               "type": "string",
+              "maxLength": 30,
               "description": "Short semantic role (2-4 words) for enriched view badge."
             },
             "note_caption": {
               "type": "string",
-              "description": "One-line caption for enriched view note."
+              "maxLength": 200,
+              "description": "One-line caption for the node note (max 200 chars). Must differ from `summary`: `summary` is WHAT the node does (one-line role); `note_caption` is the cross-hop REASONING — what this hop taught you that future hops need (e.g. 'Same skeleton as the prior variant; delta: department+function match instead of global match')."
             }
           },
           "required": [

@@ -181,6 +181,13 @@ export function registerAiTools(
           engine.sessionId = sess.id;
           sess.stateMachine = engine;
 
+          const excludeTypes: string[] = Array.isArray(input.excludeTypes)
+            ? (input.excludeTypes as unknown[]).filter((t): t is string => typeof t === 'string')
+            : [];
+          if (excludeTypes.length > 0) {
+            logger.debug(`[Filter] excludeTypes=[${excludeTypes.join(',')}] applied to BFS scope (user NL-filter from question)`);
+          }
+
           const initResult = engine.init({
             question: input.question || 'Explore lineage',
             origin: input.origin,
@@ -188,6 +195,8 @@ export function registerAiTools(
             direction: input.direction || 'bidirectional',
             depth: input.depth,
             depth_enforcement: input.depth_enforcement,
+            excludeTypes,
+            mission_brief: typeof input.mission_brief === 'string' ? input.mission_brief : undefined,
           });
 
           if ('error' in initResult) return logAndReturn('start_exploration', initResult, options.input);

@@ -172,6 +172,12 @@ suite('State Machine Robustness', () => {
     assert.strictEqual(engine.deferredQuestions.length, 1, 'depth-violating route goes into deferred bucket');
     assert.strictEqual(engine.deferredQuestions[0].reason, 'depth', 'deferral reason is depth');
     assert.strictEqual(engine.deferredQuestions[0].nodeId, 'd_ext');
+
+    // Regression (restore-0.9.8-quality): deferred node must NOT be pushed onto the agenda by the
+    // second-pass route loop. Pre-fix, the loop ignored the defer decision and added every route,
+    // letting depth-5 nodes reach visited under strict depth=1.
+    const dump = engine.toJSON() as any;
+    assert.ok(!dump.agenda.some((a: any) => a.id === 'd_ext'), 'deferred node must not leak into agenda');
   });
 
   test('A.2 strict mode SM: reverse-only neighbor is deferred via strictScopeBlocked (regression for undefined candidateDepth)', () => {

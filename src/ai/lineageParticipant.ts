@@ -698,23 +698,25 @@ export class LineageParticipant {
       case 'final_answer': {
         const smComplete = sess.stateMachine?.status === 'complete';
         // Post-synthesis deferred-questions checkpoint: surface out-of-approved-scope references the
-        // engine collected during SM, so the scope gap is visible and the user can issue a follow-up.
+        // engine collected during SM. Rendered as a single collapsed button — users click to review
+        // the full list in a QuickPick instead of reading a bullet dump in chat.
         const deferred = sess.stateMachine?.deferredQuestions ?? [];
         if (smComplete && deferred.length > 0) {
-          const lines = deferred.slice(0, 10).map(d =>
-            `- \`${d.nodeId}\` — ${d.question || '(no sub-question recorded)'} (referenced from \`${d.fromFocusNodeId}\`)`
-          );
-          const more = deferred.length > 10 ? `\n… and ${deferred.length - 10} more` : '';
-          stream.markdown(
-            `\n\n---\n**Unanswered (out of approved scope) — ${deferred.length}**\n\n` +
-            `${lines.join('\n')}${more}\n\n` +
-            `To investigate any of these, ask a follow-up question naming the object(s) you care about — the next session can include their schemas in the approved scope.\n\n---\n`
-          );
+          stream.markdown(`\n\n_${deferred.length} out-of-scope reference${deferred.length === 1 ? '' : 's'} noted during exploration — click below to review._\n`);
+          stream.button({
+            command: 'dataLineageViz.showDeferredQuestions',
+            title: `$(question) Review ${deferred.length} unanswered question${deferred.length === 1 ? '' : 's'}`,
+            arguments: [deferred.map(d => ({ nodeId: d.nodeId, question: d.question ?? '', fromFocusNodeId: d.fromFocusNodeId, schema: d.schema }))],
+          });
           this.logger.info(`[Synthesis] Deferred-questions checkpoint surfaced — ${deferred.length} entry(ies)`);
         }
         sess.enterIdle();
         if (this.getActivePanel() && smComplete) {
-          stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [userPrompt] });
+          // Prefer the original user question (captured at SM start) over the current turn's prompt,
+          // which may be a gate confirmation like "yes" that would leak into enrich_view.name.
+          const originalQ = sess.memory.getUserQuestion() || userPrompt;
+          this.logger.debug(`[CreateView] button arg=${sess.memory.getUserQuestion() ? 'userQuestion' : 'userPrompt'} (${originalQ.length} chars): ${originalQ.slice(0, 100)}`);
+          stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
         }
         return;
       }
@@ -732,7 +734,8 @@ export class LineageParticipant {
           this.logger.info(`Partial result stored — ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes analyzed (${capHit ? 'cap hit' : 'early stop'})`);
           stream.markdown(`\n\n⚠ Exploration incomplete — analyzed ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes; the run ${reason}. Use "Show in Graph" to render the partial result.`);
           if (this.getActivePanel()) {
-            stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show Partial Graph', arguments: [userPrompt] });
+            const originalQ = sess.memory.getUserQuestion() || userPrompt;
+            stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show Partial Graph', arguments: [originalQ] });
           }
         }
         return;

@@ -129,6 +129,11 @@ export interface HopContext {
   current_task?: string;
   /** Implementation-specific state carried across hops. */
   working_memory?: unknown;
+  /**
+   * Canonical mission statement — AI-composed at discovery, delivered verbatim every hop.
+   * Survives sliding-memory wipes. Anchors verdicts and respects NL filters the user expressed.
+   */
+  mission_brief?: string;
 }
 
 /**

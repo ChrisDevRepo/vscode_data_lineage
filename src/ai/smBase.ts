@@ -198,6 +198,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected userSchemas: Set<string> = new Set();
   /** Session-scoped schema allowlist. Starts as a copy of {@link userSchemas}; grows via {@link extendAllowedSchemas}. */
   protected sessionAllowedSchemas: Set<string> = new Set();
+  /** Object types the user asked to exclude (e.g. ['view','function']); pruned from scope at init. */
+  protected excludedTypes: Set<string> = new Set();
   /** Extra depth levels the user has confirmed mid-session beyond the mode-cap. 0 = no extension. */
   protected extendedDepthCap = 0;
   /** Last per-hop snapshot of detail/summary chars, used for diagnostics. */
@@ -336,6 +338,23 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Emits a session-end diagnostic summarizing badge_label diversity across relevant verdicts.
+   * Low diversity (e.g. 20 relevants all tagged "Transform") indicates the AI is not distinguishing
+   * functional roles — the final view won't group variants usefully.
+   */
+  private logLabelDiversity(): void {
+    const labels: string[] = [];
+    for (const slot of this.memory.getResult().detail_slots) {
+      if (slot.badge_label && slot.badge_label.trim().length > 0) labels.push(slot.badge_label);
+    }
+    if (labels.length === 0) return;
+    const distinct = new Set(labels).size;
+    const diversity = distinct / labels.length;
+    const flag = diversity < 0.3 ? ' (low — variants not distinguished)' : '';
+    this.log('info', `[Labels] distinct=${distinct} labeled=${labels.length} diversity=${diversity.toFixed(2)}${flag}`);
+  }
+
+  /**
    * Per-hop diagnostic snapshot for structured logging and AI-visible fields.
    *
    * @returns A point-in-time view of depth, schema, tally, and routing counters — safe to log.
@@ -407,12 +426,19 @@ export class NavigationEngine implements IHopStateMachine {
     direction?: 'upstream' | 'downstream' | 'bidirectional';
     depth?: number;
     depth_enforcement?: 'strict' | 'soft' | 'silent';
+    excludeTypes?: string[];
+    mission_brief?: string;
   }): any {
     this.visited.clear();
     this.agenda = [];
     this.agendaIds.clear();
     this.memory.reset();
     this.memory.setUserQuestion(params.question);
+    if (params.mission_brief) {
+      this.memory.setMissionBrief(params.mission_brief);
+      this.log('debug', `[Mission] brief=${params.mission_brief.slice(0, 200)}${params.mission_brief.length > 200 ? ` [+${params.mission_brief.length - 200} chars]` : ''}`);
+    }
+    this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
 
     const originNode = this.nodeMap.get(params.origin.toLowerCase());
     if (!originNode) {
@@ -427,6 +453,14 @@ export class NavigationEngine implements IHopStateMachine {
     this.depthEnforcement = params.depth_enforcement ?? 'silent';
     this.budgetExpansions = [];
     this.scopeNodeIds = this.computeBfsScope(originNode.id, params.direction || 'bidirectional', params.depth || 5);
+
+    const breakdown = { table: 0, view: 0, procedure: 0, function: 0, external: 0 } as Record<string, number>;
+    for (const id of this.scopeNodeIds) {
+      const t = this.nodeMap.get(id)?.type?.toLowerCase() ?? 'external';
+      breakdown[t] = (breakdown[t] ?? 0) + 1;
+    }
+    const excluded = Array.from(this.excludedTypes).join(',') || 'none';
+    this.log('debug', `[BFS] origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excluded}]`);
 
     this.agenda.push({
       nodeId: originNode.id,
@@ -467,6 +501,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (!entry) {
       this._status = 'complete';
+      this.logLabelDiversity();
       return { done: true };
     }
 
@@ -522,6 +557,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     this._status = 'awaiting_findings';
+    const brief = this.memory.getMissionBrief();
     return {
       sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
@@ -530,6 +566,7 @@ export class NavigationEngine implements IHopStateMachine {
       neighbors: this.buildNeighborList(entry.nodeId),
       current_task: entry.question,
       working_memory: workingMemory,
+      ...(brief ? { mission_brief: brief } : {}),
     };
   }
 
@@ -563,6 +600,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
     this.lastRoutedDeferred = 0;
+    const acceptedNids = new Set<string>();
     if (params.route_requests) {
       const invalidRoutes: Array<{ id: string; reason: string }> = [];
       const depthCap = this.computeDepthCap();
@@ -636,11 +674,17 @@ export class NavigationEngine implements IHopStateMachine {
               atHop: this.hopCount,
             });
             this.lastRoutedDeferred++;
+            const reasonTag = schemaBlocked && scopeReason ? 'schema_and_depth'
+              : schemaBlocked ? 'out_of_approved_schema'
+              : depthBlocked ? `depth_cap (${candidateDepth}>${depthCap})`
+              : 'strict_scope';
+            this.log('debug', `[Defer] node=${req.nodeId} reason=${reasonTag} from=${this.currentFocusNodeId} hop=${this.hopCount}`);
           }
           continue;
         }
 
         // Accept the route. Soft/silent mode may expand the scope to include in-cap out-of-scope nodes.
+        acceptedNids.add(nid);
         if (!this.scopeNodeIds.has(nid)) {
           this.scopeNodeIds.add(nid);
           const focusDepth = this.depthFromOrigin.get(this.currentFocusNodeId!) ?? 0;
@@ -726,6 +770,10 @@ export class NavigationEngine implements IHopStateMachine {
     if (params.route_requests) {
       for (const req of params.route_requests) {
         const nid = req.nodeId.toLowerCase();
+        // Only push routes the first-pass validator accepted. Deferred and gate-blocked routes
+        // already recorded their rejection; re-adding them here would silently defeat strict depth
+        // enforcement and schema filters.
+        if (!acceptedNids.has(nid)) continue;
         if (!this.visited.has(nid) && !this.agendaIds.has(nid) && !this.removedSet.has(nid)) {
           this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
           this.agendaIds.add(nid);
@@ -738,6 +786,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (params.complete && this._inlineMode) {
       this._status = 'complete';
+      this.logLabelDiversity();
       return { ok: true, done: true, result: this.getResult() };
     }
 
@@ -771,7 +820,7 @@ export class NavigationEngine implements IHopStateMachine {
   private computeBfsScope(startId: string, direction: string, maxDepth: number): Set<string> {
     const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
     const seen = new Set<string>();
-    
+
     this.depthFromOrigin.clear();
     bfsFromNode(this.graph, startId, (key, _attr, depth) => {
       seen.add(key);
@@ -780,7 +829,15 @@ export class NavigationEngine implements IHopStateMachine {
       }
       return depth >= maxDepth;
     }, { mode });
-    
+
+    if (this.excludedTypes.size > 0) {
+      for (const id of Array.from(seen)) {
+        if (id === startId) continue;
+        const t = this.nodeMap.get(id)?.type?.toLowerCase();
+        if (t && this.excludedTypes.has(t)) seen.delete(id);
+      }
+    }
+
     return seen;
   }
 
@@ -826,6 +883,12 @@ export class NavigationEngine implements IHopStateMachine {
       if (this.depthBudget !== null) neighbor.in_budget = this.scopeNodeIds.has(nid) && (depthCap === null || d === undefined || d <= depthCap);
 
       if (hasSchemaFilter) neighbor.in_approved_scope = this.sessionAllowedSchemas.has(n.schema.toLowerCase());
+
+      const typeBlocked = this.excludedTypes.size > 0 && this.excludedTypes.has(n.type.toLowerCase());
+      if (typeBlocked) {
+        neighbor.in_approved_scope = false;
+        neighbor.would_trigger_action_required = true;
+      }
 
       const schemaBlocked = hasSchemaFilter && neighbor.in_approved_scope === false;
       const depthBlocked = depthCap !== null && d !== undefined && d > depthCap;

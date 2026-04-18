@@ -121,6 +121,33 @@ export function registerCommands(
       });
     }),
 
+    /**
+     * Opens a QuickPick listing deferred (out-of-approved-scope) sub-questions the engine
+     * collected during an SM session. Selecting one opens a new chat turn asking @lineage
+     * to investigate the specific node — its schema is surfaced so the user can widen scope.
+     */
+    vscode.commands.registerCommand('dataLineageViz.showDeferredQuestions', async (entries: Array<{ nodeId: string; question: string; fromFocusNodeId: string; schema?: string }>) => {
+      if (!Array.isArray(entries) || entries.length === 0) return;
+      const items = entries.map(d => ({
+        label: `$(question) ${d.nodeId}`,
+        description: d.schema ? `schema: ${d.schema}` : undefined,
+        detail: d.question ? `${d.question}  — referenced from ${d.fromFocusNodeId}` : `(no sub-question recorded) — referenced from ${d.fromFocusNodeId}`,
+        data: d,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        matchOnDescription: true,
+        matchOnDetail: true,
+        placeHolder: `${entries.length} deferred question${entries.length === 1 ? '' : 's'} — pick one to investigate`,
+      });
+      if (!picked) return;
+      const d = picked.data;
+      const schemaHint = d.schema ? ` — include schema '${d.schema}' in the scope` : '';
+      const q = d.question ? d.question : `Investigate ${d.nodeId}`;
+      vscode.commands.executeCommand('workbench.action.chat.open', {
+        query: `@lineage Investigate ${d.nodeId}: ${q}${schemaHint}.`,
+      });
+    }),
+
     // --- UI Controls ---
     vscode.commands.registerCommand('dataLineageViz.toggleOverviewMode', () => {
       const panel = getActivePanel();
