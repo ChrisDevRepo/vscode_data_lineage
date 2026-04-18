@@ -262,6 +262,23 @@ Per-neighbor flags: `in_budget`, `in_user_filter`, `would_trigger_action_require
 - **s1 / Budget Forcing (Muennighoff et al., 2025)** — exposing a budget can cause premature stopping. Use monotonic `used` counters, not `remaining` countdowns. [arxiv.org/abs/2501.19393](https://arxiv.org/abs/2501.19393)
 - **$47k Agent Loop (Nov 2025)** — preflight budget checks prevent loops that can't finish. [relayplane.com/blog/agent-runaway-costs-2026](https://relayplane.com/blog/agent-runaway-costs-2026)
 
+## Trust + Blinkers model (2026-04-18 iteration 3)
+
+The `@lineage` exploration loop implements the **Orchestrator-Workers** pattern (Anthropic, [*Building Effective Agents*](https://www.anthropic.com/research/building-effective-agents), Dec 2024):
+
+- **Orchestrator** — `NavigationEngine`. Decomposes the user question into hop-sized work items (focus nodes), presents them one at a time via `getHopContext()`, decides termination (agenda drained, gate emitted, or MAX_ROUNDS).
+- **Worker** — the AI at each hop. Reads DDL, emits a verdict + optional route requests via `submit_findings`. That's the entire job.
+- **Aggregator** — synthesis phase, which lifts the detail archive into the final report.
+
+The worker is bounded by **horse-with-blinkers mechanics**:
+- `LanguageModelChatToolMode.Required` in ACTIVE — can't emit free-form text.
+- Tool filter narrows the visible toolset to `submit_findings` only — no `enrich_view`, `run_bfs_trace`, etc.
+- Engine rejects `complete: true` in SM mode — worker can't self-terminate.
+
+**Consent gates are two-turn pauses** (not a sub-loop): engine emits `action_required` envelope → turn ends → user replies yes/no/redirect → next turn resumes. On yes, the participant does NOT mechanically advance the engine — the engine was already primed at gate-emission time (tool called `getHopContext()` before returning the envelope). AI's next `submit_findings` lands on an already-primed engine. **Trust-on-resume** — no runtime coupling between participant state and engine state beyond what the AI sees in its history.
+
+Design citation: Orchestrator-Workers. Key deviation from autonomous-agent patterns (plain ReAct, AutoGPT): we give up the AI's termination authority in exchange for bounded, auditable completion.
+
 ## Session FSM & Typed Exit Dispatch (2026-04-18 iteration 2)
 
 Follow-up to the scope-budget bundle. The mid-exploration consent gate above worked, but the turn handler had four implicit exit reasons (final_answer / gate / budget / error) with only one return path — so post-loop partial-result storage ran after any exit, including a paused gate. Fix: promote session state to a typed discriminated union; make every hop-loop exit typed; dispatch on the kind.

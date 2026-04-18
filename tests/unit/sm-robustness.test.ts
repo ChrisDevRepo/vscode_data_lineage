@@ -261,6 +261,67 @@ suite('State Machine Robustness', () => {
     });
   });
 
+  // ── confirm_sm_start priming (plan: "Trust + Blinkers" model) ──
+  //
+  // Models the sequence the tool executes when sliding-memory mode is needed:
+  //   1. engine.init() — scope + agenda built, status='initialized'
+  //   2. engine.getHopContext() — PRIMES to 'awaiting_findings' + sets focus
+  //   3. Tool returns action_required envelope with hop_context in payload
+  //   4. [user types yes, next turn starts]
+  //   5. AI's first submit_findings — engine accepts (status is 'awaiting_findings')
+  //
+  // The bug we're guarding: step 2 was skipped. Step 5 bounced with `invalid_status`.
+
+  suite('confirm_sm_start priming (trust+blinkers)', () => {
+    test('engine is primed (status=awaiting_findings, focus set) after init()+getHopContext()', () => {
+      const { model, graph } = mkFanoutModel();
+      const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
+      engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 2, depth_enforcement: 'silent' });
+      assert.strictEqual(engine.status, 'initialized', 'status=initialized after init() alone');
+
+      const hopCtx = engine.getHopContext();
+      assert.strictEqual(engine.status, 'awaiting_findings', 'status advances on getHopContext');
+      assert.ok(hopCtx.focus_node, 'hop context carries focus_node');
+      const focusId = (hopCtx.focus_node as any).id as string;
+      assert.ok(focusId, 'focus_node.id is set');
+      const state = engine.toJSON() as any;
+      assert.strictEqual(state.hopCount, 1, 'hopCount=1 after first getHopContext');
+      assert.strictEqual(state.currentFocusNodeId, focusId, 'currentFocusNodeId matches hop_context');
+    });
+
+    test('first submit_findings after primed gate succeeds', () => {
+      const { model, graph } = mkFanoutModel();
+      const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
+      engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 2, depth_enforcement: 'silent' });
+      const hopCtx = engine.getHopContext();
+      const focusId = (hopCtx.focus_node as any).id as string;
+
+      const res = engine.submitFindings({
+        focus_node_id: focusId,
+        verdict: 'relevant',
+        detail_analysis: 'x',
+        summary: 'x',
+      } as any);
+      assert.ok('ok' in res && (res as any).ok === true, 'submit accepted on primed engine');
+    });
+
+    test('regression: init-only engine rejects submit with invalid_status', () => {
+      const { model, graph } = mkFanoutModel();
+      const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
+      engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 2, depth_enforcement: 'silent' });
+      // Intentionally skip getHopContext() — reproduces the pre-fix bug state.
+
+      const res = engine.submitFindings({
+        focus_node_id: 'origin',
+        verdict: 'relevant',
+        detail_analysis: 'x',
+        summary: 'x',
+      } as any);
+      assert.ok('error' in res && (res as any).error === 'invalid_status', 'init-only engine rejects submit');
+      assert.strictEqual((res as any).current_status, 'initialized', 'error carries current_status=initialized');
+    });
+  });
+
   suite('AiSession phase FSM', () => {
     test('initial phase is idle', () => {
       const s = new AiSession();

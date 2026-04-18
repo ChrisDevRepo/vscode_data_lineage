@@ -217,24 +217,33 @@ export function registerAiTools(
               }, options.input);
             }
 
-            // SM-entry consent gate: engine is initialized but no hops have run.
-            // Participant surfaces this envelope via the same gate path as mid-exploration gates.
-            // On `yes`, session transitions to `exploring` and the participant resumes the live engine.
+            // SM-entry consent gate: prime the engine BEFORE emitting the envelope so that when
+            // the user approves on the next turn, the AI's first submit_findings lands on an
+            // already-primed engine (status='awaiting_findings'). Including hop_context in the
+            // envelope lets the AI pick focus_node_id from its history without any further
+            // engine mutation on resume — pure trust-on-yes.
+            //
+            // State mutation before consent is safe: on no/redirect, sess.resetExploration() in
+            // the participant discards the engine entirely.
             if (sess.phase.kind === 'idle') {
+              const hopCtx = engine.getHopContext();
+              const direction = input.direction || 'bidirectional';
               const gate = PendingGateSchema.parse({
                 gate: 'confirm_sm_start',
                 classes: ['sliding_memory'],
                 nodeIds: [],
                 detail:
-                  `Large task — scope ${initResult.scopeSize} nodes, depth=${input.depth ?? 'default'} ` +
-                  `${input.depth_enforcement ?? 'silent'}, budget ~${safeMax} hops. ` +
-                  `Reply 'yes' to start, 'no' to refine, or ask a different question to redirect.`,
+                  `Large task — ${initResult.scopeSize} nodes to analyze, budget ~${safeMax} hops.\n` +
+                  `Schemas in scope: ${activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
+                  `Depth: ${input.depth ?? 'default'} (${input.depth_enforcement ?? 'silent'} enforcement)\n` +
+                  `Direction: ${direction}`,
               });
-              logger.info(`[${sess.id}] Session-start scope=${initResult.scopeSize} agenda=${initResult.agendaSize} depth=${input.depth ?? 'default'} enforcement=${input.depth_enforcement ?? 'silent'} mode=sm schemas=${activeFilter.schemas.length} (awaiting confirm_sm_start)`);
+              logger.info(`[${sess.id}] Session-start scope=${initResult.scopeSize} agenda=${initResult.agendaSize} depth=${input.depth ?? 'default'} enforcement=${input.depth_enforcement ?? 'silent'} mode=sm schemas=${activeFilter.schemas.length} (primed, awaiting confirm_sm_start)`);
               return logAndReturn('start_exploration', {
                 error: 'action_required',
                 ...gate,
-                hint: 'Tool paused — awaiting user confirmation before first hop.',
+                hop_context: hopCtx,
+                hint: 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.',
               }, options.input);
             }
           }

@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Prime engine at gate-emission time + trust-on-resume UX (2026-04-18)
+Follow-up fix to the FSM refactor bundle. Observed in `sess_1776519642696_2l8lf`: user approved the `confirm_sm_start` gate, but the engine was stuck at `status: 'initialized'` — the tool had returned the gate envelope BEFORE calling `engine.getHopContext()`, so no first hop was primed. AI's first `submit_findings` bounced on `invalid_status`; the dedup cache returned `{"_dedup":true}` on each retry, hiding the real error from both the AI and `RepeatRejectGuard`. 11 rounds burned before user stopped the session. UI was stuck at "Hop 0 / 24 — analyzing node…" because `hopCount` was genuinely 0.
+
+Design grounding: this matches the Orchestrator-Workers pattern (Anthropic, *Building Effective Agents*, Dec 2024). The engine is the orchestrator; AI at each hop is a worker with blinkers (`toolMode: Required` + single-tool filter enforces this mechanically). On gate-yes we trust the AI to fire the next `submit_findings` correctly — no mechanical engine manipulation on resume.
+
+**Fixed**
+- **Engine never primed after confirm_sm_start yes** — `lineage_start_exploration` now calls `engine.getHopContext()` BEFORE emitting the `confirm_sm_start` envelope, so the engine is already at `awaiting_findings` with a `currentFocusNodeId` set when the user approves. Envelope carries `hop_context` so the AI picks the focus node from its reconstructed history with zero participant-side engine manipulation.
+- **Dedup cache hid errors** — when the cached tool result contains an error envelope, the short-circuit is bypassed and the call re-invokes. AI sees the real error on retries (can adapt); `RepeatRejectGuard` can observe the same error 3× and abort.
+- **Progress bar stuck at "Hop 0 / N — analyzing node…"** — when `hopCount === 0` or focus is null, renders "Preparing first hop…" instead. Defensive — with the priming fix above, ACTIVE never enters with hopCount=0.
+
+**Changed**
+- **Gate detail multi-line** — schemas in scope + depth + enforcement + direction now listed, not just node count + hop budget. User asked to see what BFS + depth were requested; now they do. "Reply 'yes'…" suffix moved exclusively to the participant's markdown (no duplication).
+- **Prompt pruning (`src/ai/smPrompts.ts` BLOCK.routing)** — removed the clause describing the user-interaction flow ("the user replies yes/no in chat"). The AI's job inside Loop 2 is analysis, not interaction narration. Per `prompt-change` iteration 3 (logged in `test-results/archive/prompt-changelog.md`). Orchestrator-Workers alignment.
+
+**Added (observability)**
+- `[Round N] engine_status=<s> focus=<id> hop=<n>` at round entry in ACTIVE — would have diagnosed this bug in seconds.
+- `(cache-hit)` suffix on the round-summary line when all tool results came from the dedup cache.
+- `[Phase] idle → active (gate-resume)` log on gate-approved transitions (was only logged on `hasStart`).
+
+**Tests**
+- `tests/unit/sm-robustness.test.ts` — 3 new cases: engine primed via init+getHopContext; first submit after primed gate succeeds; init-only engine regression guard (rejects submit with `invalid_status`). 25/25 pass.
+
 ### FSM refactor + SM-start confirmation + redirect-friendly gate replies (2026-04-18)
 Follow-up fix to the prior "Scope budget enforcement + consent gate" bundle. Observed in `sess_1776516604340_93yj2`: the mid-exploration `schema_and_depth` gate fired correctly at hop 5, but the participant still emitted the "⚠ Exploration incomplete — analyzed 2 of 26 nodes" warning and "Show Partial Graph" button — making a paused session look terminated. User never got the chance to reply `yes` / `no`.
 

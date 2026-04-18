@@ -283,6 +283,7 @@ export class LineageParticipant {
       lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
       systemPrompt = buildStageSystemPrompt('active');
       navPrompt = buildNavigationPrompt(sess.stateMachine.mode);
+      this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings`);
     }
 
     const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
@@ -368,6 +369,13 @@ export class LineageParticipant {
         const toolMode = activePhase === 'active'
           ? vscode.LanguageModelChatToolMode.Required
           : vscode.LanguageModelChatToolMode.Auto;
+
+        // Round-entry diagnostic for ACTIVE phase — makes state-machine progress visible per hop.
+        if (activePhase === 'active' && sess.stateMachine) {
+          const st = sess.stateMachine.toJSON() as { status?: string; currentFocusNodeId?: string | null; hopCount?: number };
+          this.logger.debug(`[Round ${roundCount}] engine_status=${st.status} focus=${st.currentFocusNodeId ?? '(null)'} hop=${st.hopCount ?? 0}`);
+        }
+
         const response = await request.model.sendRequest(messages, { tools: lineageTools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
@@ -407,12 +415,25 @@ export class LineageParticipant {
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
         const resultParts: vscode.LanguageModelToolResultPart[] = [];
 
+        let roundHadCacheHit = false;
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
           const cacheKey = `${f.name}::${JSON.stringify(f.input)}`;
           if (toolCallCache.has(cacheKey)) {
-            resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true }))]));
-            continue;
+            // Bypass the dedup short-circuit when the cached result is an error envelope — let
+            // the AI see the real error on retries (so it can adapt) and let RepeatRejectGuard
+            // observe the same error 3x to trigger the 3-strike abort.
+            const cached = toolCallCache.get(cacheKey)!;
+            const cachedIsError = cached.content.some(p =>
+              p instanceof vscode.LanguageModelTextPart &&
+              (() => { try { return !!JSON.parse(p.value).error; } catch { return false; } })()
+            );
+            if (!cachedIsError) {
+              resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true }))]));
+              roundHadCacheHit = true;
+              continue;
+            }
+            // cached error → fall through and re-invoke
           }
 
           if (actionRequiredPending && !SEARCH_TOOLS.has(f.name)) {
@@ -424,9 +445,12 @@ export class LineageParticipant {
           let progressLine = `Invoking ${f.name.replace('lineage_', '')}…`;
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
             const st = sess.stateMachine.toJSON() as { hopCount?: number; scopeSize?: number; currentFocusNodeId?: string | null };
-            const shortName = st.currentFocusNodeId?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
-            const denom = st.scopeSize ?? '?';
-            progressLine = `Hop ${st.hopCount ?? 1} / ${denom} — analyzing ${shortName}…`;
+            if (!st.currentFocusNodeId || (st.hopCount ?? 0) === 0) {
+              progressLine = `Preparing first hop…`;
+            } else {
+              const shortName = st.currentFocusNodeId.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
+              progressLine = `Hop ${st.hopCount} / ${st.scopeSize ?? '?'} — analyzing ${shortName}…`;
+            }
           }
           if (progressLine !== lastProgressLine) {
             stream.progress(progressLine);
@@ -517,7 +541,7 @@ export class LineageParticipant {
           try { return acc + JSON.stringify((p as any).content).length; } catch { return acc; }
         }, 0);
         const pct = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
-        this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — ${toolCalls.length} tool(s): ${toolNames.join(', ')} (${roundMs}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pct}%, ${roundResultChars} result chars)`);
+        this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — ${toolCalls.length} tool(s): ${toolNames.join(', ')} (${roundMs}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pct}%, ${roundResultChars} result chars${roundHadCacheHit ? ', cache-hit' : ''})`);
 
         // Phase transitions
         const hasStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
@@ -651,8 +675,9 @@ export class LineageParticipant {
     switch (exit.kind) {
       case 'gate': {
         sess.enterGate(exit.gate);
+        const title = exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : 'Scope expansion requested';
         stream.markdown(
-          `\n\n---\n**${exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : 'Scope expansion requested'}** — ${exit.gate.detail}\n\n` +
+          `\n\n---\n**${title}**\n\n${exit.gate.detail}\n\n` +
           `Reply \`yes\` to proceed, \`no\` to pause, or ask a different question to redirect.\n\n---\n`
         );
         this.logger.warn(`[Gate] ${exit.gate.gate} — classes=[${exit.gate.classes.join(', ')}] nodes=${exit.gate.nodeIds.length}`);
