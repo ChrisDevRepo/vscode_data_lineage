@@ -26,8 +26,20 @@ const BLOCK = {
 
   /** Step 2 — write the detail archive for this node. */
   writeFindings:
-    'Write `detail_analysis` for the focus node. The archive preserves your analysis verbatim — no upper bound; synthesis uses this as sole evidence. Let `working_memory.user_question` dictate analysis depth — "thorough" means thorough on what the question asks, not exhaustive on every DDL construct. A trivial passthrough is a few sentences; a question-relevant object breaks down each part the question needs: INSERT/UPDATE/MERGE/DELETE statements, CTEs, BEGIN/COMMIT transactions, IF/CASE branches, JOIN conditions, filters, computed expressions. Quote SQL verbatim and explain in business terms. A thin slot produces a thin final answer.\n' +
-    'Cover each aspect present:\n' +
+    'Write `detail_analysis` for the focus node. The archive preserves your analysis verbatim — no upper bound; synthesis uses this as sole evidence. Self-contained — written to answer the user\'s question. Aim ≥ 800 chars per relevant node; a thin slot produces thin synthesis.\n' +
+    'CLASSIFY the question — this drives findings depth:\n' +
+    '  WHAT the data means → lead with business meaning: formulas in LaTeX math syntax, column renames as | From | To | Business meaning | table, what each value represents, which consumers are affected.\n' +
+    '  HOW the pipeline runs → lead with execution: join strategies, loading patterns, constraints, rebuild order.\n' +
+    '  For blended questions: combine both — business meaning first.\n' +
+    'FORMAT to fit content:\n' +
+    '  Column rename or mapping → | From | To | Notes | table.\n' +
+    '  Formula → LaTeX math syntax.\n' +
+    '  Multi-step logic → ordered 1. 2. 3. list.\n' +
+    '  Risk or data quality → ⚠️ prefix.\n' +
+    'Name every column and expression explicitly — never "various columns" or "certain conditions". Quote SQL verbatim and explain in business terms.\n' +
+    'BAD: "COLUMNS: OrderID (int PK), Qty (decimal), UnitPrice (money)"\n' +
+    'GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT. Reads Qty from staging (rename OrderQty → Qty), UnitPrice from price view (PriceMaster lookup).\\n| Source | Column | Transform | Output |\\n| FactOrders | OrderQty | rename | Qty |\\n| PriceMaster | ListPrice | markup formula | UnitPrice |"\n' +
+    'When the question shape is unclear, fall back to covering each aspect present:\n' +
     '  COLUMNS: key column names, types, constraints (PK/FK/nullable).\n' +
     '  TRANSFORMS: expressions, CASE/COALESCE, computed columns — quote the SQL fragment.\n' +
     '  JOINS: join conditions (table.col = table.col).\n' +

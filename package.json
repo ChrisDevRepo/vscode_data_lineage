@@ -754,16 +754,16 @@
             "title": {
               "type": "string",
               "maxLength": 80,
-              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the analysis subject and its key finding."
+              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the analysis subject and its key finding: '[Subject] — [computation, pattern, or finding]'. GOOD: 'TotalRevenue — Qty × UnitPrice, 6-hop chain to FactSalesReport'. Omit if graph name is sufficient."
             },
             "intro": {
               "type": "string",
-              "description": "Optional. 2–4 sentence paragraph rendered BEFORE the numbered ## sections."
+              "description": "Optional. 2–4 sentence paragraph rendered BEFORE the numbered ## sections. Set context: what is computed, where data originates, key structural pre-conditions. No bullets, no headings. Do NOT repeat section content. Omit if sections are self-explanatory."
             },
             "closing": {
               "type": "string",
               "maxLength": 400,
-              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider."
+              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider. Use ONLY for a cross-cutting risk or design note that spans the whole graph. Prefix risks with ⚠️. GOOD: '⚠️ If vwPriceList returns NULL, TotalRevenue = Qty × 0.' Omit if nothing material to add."
             },
             "prune_node_ids": {
               "type": "array",

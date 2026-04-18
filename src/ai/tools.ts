@@ -1414,6 +1414,9 @@ export function validateEnrichView(
     const failedFields = new Set<string>();
     for (const e of errors) {
       if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
+      else if (e.startsWith('intro ')) failedFields.add('intro');
+      else if (e.startsWith('title ')) failedFields.add('title');
+      else if (e.startsWith('closing ')) failedFields.add('closing');
       else if (e.includes('summary')) failedFields.add('summary');
       else if (e.includes('description')) failedFields.add('description');
       else if (e.startsWith('Section ')) failedFields.add('sections');
