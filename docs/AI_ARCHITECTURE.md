@@ -38,10 +38,9 @@ No AI-managed narrative string. No `blackboard`. No `local_detail_context` slice
 **Grounding**: simple per-hop delivery matches the original 0.9.8 behavior and the project's SM-never-truncates principle. Earlier iterations attempted MemGPT-style cumulative narratives and token-budget working sets; both were abandoned because the AI frequently compressed, paraphrased, or lost information when asked to manage memory, and because filtering violated the stored design principle.
 
 ### Exploration Modes (`SmMode`)
-The same `NavigationEngine` serves three personas, selected by the mode of the active session:
-- **`blackboard`** — Business Logic Analyst (Functional Focus). The default for "explain / summarize" style questions.
-- **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when the user asks about specific column flow.
-- **`dependency`** — Structural Analyst (Dependency Focus). Structural topology questions ("what depends on X"). Uses the same hop workflow and memory tiering as `blackboard`; only the role framing of the system prompt differs.
+The same `NavigationEngine` serves two personas, selected by the mode of the active session:
+- **`blackboard`** — Business Logic Analyst / Default. Used for "explain / summarize / what depends on X" style questions. Carries cross-hop reasoning via `working_memory.all_summaries`.
+- **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when the user asks about specific column flow; adds column-name validation on `route_requests`.
 
 ### Completion Contract (when SM says "done")
 Completion semantics depend on the execution mode:
@@ -157,7 +156,7 @@ stateDiagram-v2
 ## Detailed Specs
 
 ### The Unified Navigation Engine
-A single `NavigationEngine` handles all modes (Blackboard, Column Trace, Dependency).
+A single `NavigationEngine` handles both modes (Blackboard, Column Trace).
 - **Metadata Guard**: The engine provides column lists for neighbors *before* the AI visits them.
 - **Fail Early**: Hallucinated questions or non-existent columns are rejected immediately.
 - **Grounded Routing**: Every hop is driven by a specific AI-generated sub-question attached to the node on the agenda.
@@ -170,7 +169,7 @@ One `AiSession` per extension instance.
 - **Result-graph preservation across new chat**: When VS Code creates an empty-history chat thread and the session has a `resultGraph` less than 5 minutes old, the graph is preserved across the reset so follow-up prompts like *"Show the trace result in the graph"* can still render. Transient state (`stateMachine`, agenda) is always cleared — only the completed / partial result survives the window.
 
 ### Column validation scope
-`submit_findings.route_requests[].columns` is validated against the target node's columns **only in `column_trace` mode**. In `blackboard` / `dependency` mode the field is silently dropped (it has no semantic meaning there) — the AI cannot trigger a `route_validation_failed` error by copying source-node column names onto a target UDF or proc.
+`submit_findings.route_requests[].columns` is validated against the target node's columns **only in `column_trace` mode**. In `blackboard` mode the field is silently dropped (it has no semantic meaning there) — the AI cannot trigger a `route_validation_failed` error by copying source-node column names onto a target UDF or proc.
 
 ## Scope Budget Enforcement (2026-04-18)
 

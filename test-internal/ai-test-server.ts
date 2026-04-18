@@ -25,9 +25,9 @@
  * Endpoints:
  *   GET  /health              → { status, model: { nodes, edges, schemas } }
  *   GET  /tools               → array of 12 tool names
- *   GET  /prompts[?sessionId] → { system, ct_mode_columns, ct_mode_deps, bb_mode, tool_descriptions }
+ *   GET  /prompts[?sessionId] → { system, ct_mode_columns, bb_mode, tool_descriptions }
  *                               system includes schema context if session has active filter
- *                               ct_mode_columns = Type 3 (with columns), ct_mode_deps = Type 2 (no columns)
+ *                               ct_mode_columns = column_trace nav prompt; bb_mode = blackboard nav prompt
  *   POST /tool                → { tool, input, sessionId? } → { result, _meta }
  *   POST /session             → { sessionId }
  *   POST /filter              → { sessionId?, schemas[], types[] }
@@ -313,8 +313,6 @@ async function main() {
 
       // GET /prompts — system + mode prompts + tool descriptions
       // ?sessionId=xxx injects that session's active filter into schema context (default: 'default')
-      // ct_mode_columns = CT_MODE_PROMPT (Type 3, with columns)
-      // ct_mode_deps    = CT_DEP_MODE_PROMPT (Type 2, dependency only, no columns)
       if (method === 'GET' && url.startsWith('/prompts')) {
         const qsId = url.includes('?')
           ? new URLSearchParams(url.split('?')[1]).get('sessionId') ?? 'default'
@@ -323,7 +321,6 @@ async function main() {
         return respond(res, 200, {
           system: buildBridgeSystemPrompt(promptSession?.filter ?? null, loadedTemplates),
           ct_mode_columns: buildNavigationPrompt('column_trace'),
-          ct_mode_deps: buildNavigationPrompt('dependency'),
           bb_mode: buildNavigationPrompt('blackboard'),
           tool_descriptions: TOOL_DEFS,
         });
@@ -439,7 +436,7 @@ async function main() {
     console.log(`\nAI Test Bridge ready at http://127.0.0.1:${port}`);
     console.log(`  GET  /health   — model stats`);
     console.log(`  GET  /tools    — list tool names`);
-    console.log(`  GET  /prompts  — system (with schema ctx) + ct_mode_columns/ct_mode_deps/bb_mode`);
+    console.log(`  GET  /prompts  — system (with schema ctx) + ct_mode_columns/bb_mode`);
     console.log(`  POST /tool     — { tool, input, sessionId? }`);
     console.log(`  POST /session  — create new session`);
     console.log(`  Ctrl+C to stop\n`);

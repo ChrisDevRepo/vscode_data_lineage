@@ -104,7 +104,6 @@ suite('AI Eval Proxy', function () {
     assert.ok(data.system, 'Should have system prompt');
     assert.ok(data.bb_mode, 'Should have BB mode prompt');
     assert.ok(data.ct_mode_columns, 'Should have CT columns mode prompt');
-    assert.ok(data.ct_mode_deps, 'Should have CT deps mode prompt');
     assert.ok(data.tool_descriptions, 'Should have tool descriptions');
     console.log(`[eval] System prompt: ${data.system.length} chars`);
   });

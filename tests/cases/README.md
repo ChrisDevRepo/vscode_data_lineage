@@ -28,10 +28,10 @@ Full rubric + mechanical checks + terminology convention: `EVAL-RUBRIC.md`.
 | `doc-` | Documentation request (SM or classic tools) |
 | `bb-` | BlackboardState exploration with sliding memory |
 | `bb-inline-` | BlackboardState with inline delivery (small scope) |
+| `bb-dep-` | BB exploration on a dependency-shaped chain-walk question (sliding) |
+| `bb-dep-inline-` | BB exploration on a dependency-shaped question with inline delivery |
 | `ct-` | Column trace with sliding memory |
 | `ct-inline-` | Column trace with inline delivery |
-| `dep-` | Dependency trace (CT without columns) — sliding |
-| `dep-inline-` | Dependency trace — inline |
 | `follow-` | Multi-turn follow-up on a completed SM result |
 
 ## File structure
@@ -48,7 +48,7 @@ Full rubric + mechanical checks + terminology convention: `EVAL-RUBRIC.md`.
 | Field | Value |
 |-------|-------|
 | Type | bb / ct / discovery / analysis / explanation / documentation / multi-turn |
-| Subtype | optional — e.g. "Dependency Trace (Type 2, no columns)" |
+| Subtype | optional — e.g. "Cross-schema sliding", "Filter forces inline" |
 | Persona | any / junior-dev / PM / DBA |
 | Difficulty | easy / medium / hard |
 | Dacpac | tests/fixtures/AdventureWorks2025_AI.dacpac |
@@ -61,7 +61,7 @@ Full rubric + mechanical checks + terminology convention: `EVAL-RUBRIC.md`.
 
 | Field | Value |
 |-------|-------|
-| SM Type | bb / ct_columns / ct_deps / none |
+| SM Type | bb / ct_columns / none |
 | Delivery | sm / inline / classic (no SM) |
 | Memory mode | Two-tier (sliding) / Inline (no sliding) / n/a |
 | Scope | N–M nodes |
@@ -158,8 +158,8 @@ The MD report shows rejections grouped by type, with recovery status (did the ne
 | BB sliding (>10) | 3 | bb-q1-employee (46), bb-q4-sales (varies), bb-q10-ai-report-sources (20) | 12-50 |
 | CT columns inline | 2 | ct-inline-q2-jobtitle-filtered (4), ct-q3-businessentityid (4) | 4 |
 | CT columns sliding | 2 | ct-q1-totalrevenue (26), ct-q2-customersegment (20) | 20-26 |
-| CT deps inline | 1 | dep-inline-q1-vemployeedepartment (8) | 8 |
-| CT deps sliding | 2 | dep-q1-vemployee (13), dep-q2-vsalesperson-sliding (15) | 13-15 |
+| BB dep-shaped inline | 1 | bb-dep-inline-q1-vemployeedepartment (8) | 8 |
+| BB dep-shaped sliding | 2 | bb-dep-q1-vemployee (13), bb-dep-q2-vsalesperson-sliding (15) | 13-15 |
 | Multi-turn follow-up | 3 | follow-q1-add-cross-schema, follow-q2-prune-scope, follow-q3-active-sm-warning | varies |
 
 ### Delivery mode coverage (verified by fact-check)
@@ -172,4 +172,4 @@ The MD report shows rejections grouped by type, with recovery status (did the ne
 ### Filter usage
 
 - **No filter** (13 tests) — full model navigation
-- **Starting-point filter** (8 tests) — filter defines scope before SM: disc-q2, doc-q1, bb-inline-q1/q2, ct-inline-q2, dep-inline-q1, dep-q2, follow-q1
+- **Starting-point filter** (8 tests) — filter defines scope before SM: disc-q2, doc-q1, bb-inline-q1/q2, ct-inline-q2, bb-dep-inline-q1, bb-dep-q2, follow-q1

@@ -13,7 +13,7 @@ import type { DetailSlot } from './memoryManager';
 /**
  * Defines the operational mode of the State Machine (SM) exploration.
  */
-export type SmMode = 'blackboard' | 'column_trace' | 'dependency';
+export type SmMode = 'blackboard' | 'column_trace';
 /** 
  * Represents the current lifecycle stage of an SM exploration session.
  */

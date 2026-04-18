@@ -93,7 +93,7 @@ const BLOCK = {
  * Replaces the MemGPT-style "autonomous agent" framing with 0.9.8's task framing:
  * the engine presents nodes, the model analyzes them, the engine advances the agenda.
  *
- * @param mode - The exploration mode (`blackboard`, `column_trace`, or `dependency`).
+ * @param mode - The exploration mode (`blackboard` or `column_trace`).
  * @returns A markdown string containing classification rules, per-hop workflow, and routing guidance.
  */
 export function buildNavigationPrompt(mode: SmMode): string {
@@ -119,29 +119,9 @@ export function buildNavigationPrompt(mode: SmMode): string {
     ].join('\n');
   }
 
-  if (mode === 'dependency') {
-    return [
-      'DEPENDENCY TRACE MODE: the state machine presents nodes one at a time. Analyze each node for its role in the dependency chain.',
-      '',
-      BLOCK.completionContract,
-      '',
-      BLOCK.verdictCategories,
-      '',
-      'For each node:',
-      `1. ${BLOCK.readDdl}`,
-      `2. ${BLOCK.writeFindings}`,
-      `3. ${BLOCK.badgeAndNote}`,
-      `4. ${BLOCK.verdictNeighbors}`,
-      '',
-      BLOCK.tableNodes,
-      BLOCK.selfAsk,
-      BLOCK.routing,
-    ].join('\n');
-  }
-
   // blackboard (default)
   return [
-    'EXPLORATION MODE: the engine presents nodes one at a time. Use `working_memory.all_summaries` to carry cross-hop reasoning forward — this persistence is what distinguishes exploration from CT/dependency modes.',
+    'EXPLORATION MODE: the engine presents nodes one at a time. Use `working_memory.all_summaries` to carry cross-hop reasoning forward — this persistence is what distinguishes exploration from CT.',
     '',
     BLOCK.completionContract,
     '',
@@ -151,7 +131,7 @@ export function buildNavigationPrompt(mode: SmMode): string {
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
     `3. ${BLOCK.badgeAndNote}`,
-    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them.',
+    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them. Cascade-prune happens when you verdict the focus node as `irrelevant` — use it deliberately for helpers and utilities only.',
     '',
     BLOCK.selfAsk,
     BLOCK.workingMemory,

@@ -12,10 +12,9 @@ Three prompt layers, each with a different lifetime.
 Built by `buildSystemPromptBase(maxRounds)` in `src/ai/prompts.ts` and cached across the session so the LM cache stays hot. Six terse rules cover validation, tool routing, output shape, and LaTeX guidance. Callers append the platform context, schema context, and `aiOutputTemplates.yaml` fields. Matches the 0.9.8 system-prompt shape.
 
 ### 1.2 Navigation Prompt (per-mode, per-session)
-`buildNavigationPrompt(mode)` in `src/ai/smPrompts.ts`. Injected once at the `discover → active` phase transition and re-injected inside every sliding-memory wipe so mode guidance survives the hop loop. Three modes:
-- **`blackboard`** — business logic / exploration framing.
-- **`column_trace`** — column-level trace with rename tracking.
-- **`dependency`** — structural dependency trace (no column tracking).
+`buildNavigationPrompt(mode)` in `src/ai/smPrompts.ts`. Injected once at the `discover → active` phase transition and re-injected inside every sliding-memory wipe so mode guidance survives the hop loop. Two modes:
+- **`blackboard`** — business logic / exploration / dependency-shaped chain walks.
+- **`column_trace`** — column-level trace with rename tracking and column-name validation.
 
 Each mode prompt spells out the per-hop workflow (read DDL → write archive → assign badge/note → route neighbors), the three verdicts (`relevant` / `pass` / `irrelevant`), and the routing contract (every `route_requests` entry needs a specific sub-question). No "autonomous agent" framing, no persona headers — the prompt matches VS Code chat-participant conventions.
 
@@ -71,7 +70,7 @@ This matches the 0.9.8 contract: the state machine stores, delivers, and execute
 - **Metadata-first routing** — for every neighbor, the AI gets `{ id, schema, name, type, edge_direction, edge_type, boundary, cols }` before deciding to visit it. Every `route_requests` entry carries a focused sub-question; blind routing is a reasoning failure.
 - **Sub-question depth** — `route_requests[].question` and `current_task` may be a single yes/no ("Does this procedure apply the rule the parent referenced?") or a multi-part investigation ("Which columns X/Y/Z flow through this proc, how are they transformed, and what conditions filter them?"). Frame the question at the depth the next hop needs — narrow questions constrain the next hop's analysis unnecessarily.
 - **Fail-early validation** — `submit_findings` rejects unknown node IDs and (in `column_trace` mode only) column names that don't appear on the target. The AI self-corrects from the rejection payload.
-- **Column scope** — in `blackboard` / `dependency` modes, `route_requests[].columns` is silently dropped; in `column_trace` mode, names must exist on the target.
+- **Column scope** — in `blackboard` mode, `route_requests[].columns` is silently dropped; in `column_trace` mode, names must exist on the target.
 
 ### Depth handling — three modes
 

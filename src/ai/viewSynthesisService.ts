@@ -92,7 +92,7 @@ export class ViewSynthesisService {
     } else {
       return {
         success: false,
-        errors: ['No state-machine result available — enrich_view requires a completed blackboard, column_trace, or dependency exploration.'],
+        errors: ['No state-machine result available — enrich_view requires a completed blackboard or column_trace exploration.'],
       };
     }
 

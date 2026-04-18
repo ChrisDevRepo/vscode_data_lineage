@@ -1,4 +1,4 @@
-# dep-q2-vsalesperson-sliding
+# bb-dep-q2-vsalesperson-sliding
 
 ## Question
 
@@ -8,27 +8,27 @@
 
 | Field | Value |
 |-------|-------|
-| Type | ct — Dependency Trace (Type 2, no columns) |
+| Type | bb — Dependency-style chain walk |
 | Subtype | Cross-schema sliding |
 | Persona | any |
 | Difficulty | easy |
 | Dacpac | tests/fixtures/AdventureWorks2025_AI.dacpac |
 | Origin | [Sales].[vSalesPerson] |
 | Direction | up |
-| Columns | _None (dep mode)_ |
+| Columns | _None_ |
 | Filter | schemas: [Sales, HumanResources, Person] |
 
 ## Expected Outcome
 
 | Field | Value |
 |-------|-------|
-| SM Type | ct_deps |
+| SM Type | bb |
 | Delivery | sm |
 | Memory mode | Two-tier (hop-by-hop with sliding memory) |
 | Scope | 10–20 nodes |
 | Max hops | 10 |
 | Filter expected | Yes (3 schemas) |
-| Required tools | lineage_start_column_trace, lineage_submit_hop_analysis, lineage_enrich_view |
+| Required tools | lineage_start_exploration, lineage_submit_findings, lineage_enrich_view |
 | Forbidden tools | _None_ |
 | Max total runtime (ms) | 180000 |
 | Max hop-avg tokens | 4000 |
@@ -61,9 +61,9 @@
 ## Optimal Path
 
 1. Set filter = [Sales, HumanResources, Person]
-2. start_column_trace empty columns, direction=up from [Sales].[vSalesPerson], depth=5
+2. start_exploration direction=up from [Sales].[vSalesPerson], depth=5 (no targetColumns → BB mode)
 3. Scope=15 → sliding mode. Agent hops through:
-   - SalesPerson (direct dep in Sales)
+   - SalesPerson (relevant — direct dep in Sales)
    - Employee, Person (HR + Person schemas via joins)
    - Various supporting tables in the cross-schema view
 4. enrich_view with schema-grouped sections

@@ -69,8 +69,8 @@ The kind of detail a good answer contains depends on the question category. Lift
 | Category | What "type-appropriate detail" looks like |
 |----------|-------------------------------------------|
 | `bb-` (business logic) | LaTeX math for calculations (`$CogsPerUnit = TotalCost / Qty$`), CASE-expression logic spelled out, business-rule narrative ("when customer tier is Gold, discount is 15%") |
+| `bb-dep-` (dependency-shaped, runs as BB) | Edge types named explicitly (`exec`, `body`, `fk`), call patterns (recursive, conditional), dependency chain narrative |
 | `ct-` (column trace) | Column rename table (`Input → Output` per hop), NULL handling, transformation rules (e.g. ISNULL, COALESCE, CAST) |
-| `dep-` (dependency) | Edge types named explicitly (`exec`, `body`, `fk`), call patterns (recursive, conditional), dependency chain narrative |
 | `disc-` (discovery) | Structured counts per category, schema/type tabulation |
 | `perf-` (performance) | Degree counts, path lengths, hub identification, index/join hints, rough cost estimates |
 | `doc-` (documentation) | Superset — formulas + column maps + dependency narrative + performance hints + examples |
@@ -152,8 +152,8 @@ A change must be validated across **at least 3 of these 6 test categories** befo
 | Category | Representative test |
 |----------|---------------------|
 | `bb-` (business) | bb-q1-employee, bb-q4-sales |
+| `bb-dep-` (dependency-shaped) | bb-dep-q1-vemployee |
 | `ct-` (column trace) | ct-q1-totalrevenue |
-| `dep-` (dependency) | dep-q1-vemployee |
 | `disc-` (discovery) | disc-q1-schemas |
 | `perf-` (performance) | perf-q1-hubs |
 | `follow-` (multi-turn) | follow-q2-prune-scope |
@@ -169,10 +169,10 @@ Documented known-good: the sprint on 2026-04-17 committed structural fixes using
 ### Train / Validation Split (for prompt tuning iterations)
 
 **Training (13 cases) — free to use during prompt iteration:**
-`bb-q1-employee`, `bb-q4-sales`, `bb-inline-q1-vproduct`, `bb-inline-q2-vemployee-filtered`, `ct-q1-totalrevenue`, `ct-q2-customersegment`, `ct-inline-q2-jobtitle-filtered`, `dep-q1-vemployee`, `dep-inline-q1-vemployeedepartment`, `disc-q1-schemas`, `expl-q1-sql`, `perf-q1-hubs`, `follow-q2-prune-scope`
+`bb-q1-employee`, `bb-q4-sales`, `bb-inline-q1-vproduct`, `bb-inline-q2-vemployee-filtered`, `ct-q1-totalrevenue`, `ct-q2-customersegment`, `ct-inline-q2-jobtitle-filtered`, `bb-dep-q1-vemployee`, `bb-dep-inline-q1-vemployeedepartment`, `disc-q1-schemas`, `expl-q1-sql`, `perf-q1-hubs`, `follow-q2-prune-scope`
 
 **Validation (8 cases) — held out; ONLY touched to confirm a change before commit:**
-`bb-q10-ai-report-sources`, `bb-inline-q3-errorlog`, `ct-q3-businessentityid`, `dep-q2-vsalesperson-sliding`, `disc-q2-tables`, `doc-q1-readme`, `follow-q1-add-cross-schema`, `follow-q3-active-sm-warning`
+`bb-q10-ai-report-sources`, `bb-inline-q3-errorlog`, `ct-q3-businessentityid`, `bb-dep-q2-vsalesperson-sliding`, `disc-q2-tables`, `doc-q1-readme`, `follow-q1-add-cross-schema`, `follow-q3-active-sm-warning`
 
 Validation tests are **never re-run during iteration** — only at the gate before accepting the change. Any drop on the validation set = revert.
 
