@@ -174,8 +174,8 @@ export class AiSession {
    * Transmutes State Machine findings into the visual ResultGraph format.
    * 
    * @remarks
-   * Maps navigation engine output (nodes, edges, detail slots) to the 
-   * standard contract consumed by `ViewSynthesisService` and the React webview.
+   * Maps navigation engine output (nodes, edges, detail slots) to the
+   * standard contract consumed by the `enrich_view` tool handler and the React webview.
    * 
    * @param fullResult - The raw completion result from the State Machine.
    */

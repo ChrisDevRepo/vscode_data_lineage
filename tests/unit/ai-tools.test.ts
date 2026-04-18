@@ -9,7 +9,7 @@ import { assert, assertEq, rootPath, printSummary, loadAdventureWorksModel } fro
 import { buildBareGraph } from '../../src/ai/graphUtils';
 import {
   getContext, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, autoFixEnrichView, validateEnrichView,
+  runBfsTrace, runAnalysis, searchDdl, getDdlBatch, validateEnrichView,
   validateQuery, validateMarkdownFormat, orderAndAssemble,
 } from '../../src/ai/tools';
 import { bfsDepthMap } from '../../src/ai/smGuards';

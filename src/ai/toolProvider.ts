@@ -9,11 +9,13 @@ import {
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
   validateToolInput,
+  autoFixEnrichView, validateEnrichView, orderAndAssemble,
   type EnrichViewInput,
 } from './tools';
-import { ViewSynthesisService } from './viewSynthesisService';
+import { edgeApiType } from './aiPresenter';
+import { prunePreserveOnly } from './viewPrune';
 import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
-import { type SerializedFilterState } from '../engine/projectStore';
+import { type SerializedFilterState, type AIViewMetadata } from '../engine/projectStore';
 import { PendingGateSchema } from './sessionPhase';
 
 /**
@@ -324,9 +326,125 @@ export function registerAiTools(
         try {
           if (!isAiEnabled()) return disabled();
           const sess = getSession();
-          const service = new ViewSynthesisService(sess, getPanel, logger);
-          const result = service.synthesizeView(requireModel(), options.input as any);
-          return logAndReturn('enrich_view', result, options.input);
+          const model = requireModel();
+          const input = options.input as EnrichViewInput;
+
+          logger.debug(`enrich_view: entry — name="${input.name ?? '?'}", summary len=${(input.summary ?? '').length}, desc len=${(input.description ?? '').length}, stored_graph=${!!sess.resultGraph}`);
+
+          if (!sess.resultGraph) {
+            return logAndReturn('enrich_view', {
+              success: false,
+              errors: ['No state-machine result available — enrich_view requires a completed blackboard or column_trace exploration.'],
+            }, options.input);
+          }
+
+          let resolvedNodeIds: string[] = [...sess.resultGraph.nodeIds];
+          let resolvedEdges: [string, string, string][] = [...sess.resultGraph.edges];
+          const graphSource = sess.resultGraph.source;
+
+          if (input.is_update && input.add_node_ids?.length) {
+            const currentSet = new Set(resolvedNodeIds);
+            const toAdd = input.add_node_ids.filter(id => model.nodes.some(n => n.id === id) && !currentSet.has(id));
+            resolvedNodeIds.push(...toAdd);
+            const newSet = new Set(resolvedNodeIds);
+            resolvedEdges = model.edges
+              .filter(e => newSet.has(e.source) && newSet.has(e.target))
+              .map(e => [e.source, e.target, edgeApiType(e.type)] as [string, string, string]);
+          }
+
+          if (input.prune_node_ids?.length) {
+            const before = resolvedNodeIds.length;
+            const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, input.prune_node_ids);
+            resolvedNodeIds = pruned.nodeIds;
+            resolvedEdges = pruned.edges;
+            logger.debug(`enrich_view: pruned ${before - resolvedNodeIds.length} node(s), ${resolvedNodeIds.length} remaining`);
+          }
+
+          if (sess.resultGraph.partial) {
+            const cov = sess.resultGraph.partialCoverage;
+            const covText = cov ? ` (${cov.analyzed} of ${cov.total} nodes)` : '';
+            const partialNote = `⚠ Partial result${covText} — exploration did not complete before the round cap.`;
+            input.intro = input.intro ? `${partialNote}\n\n${input.intro}` : partialNote;
+            logger.info(`enrich_view: partial result rendered${covText}`);
+          }
+
+          if (sess.resultGraph.notes?.length) {
+            const userNoteIds = new Set((input.notes ?? []).map(n => (n as { node_id: string }).node_id));
+            const resolvedSet = new Set(resolvedNodeIds);
+            const autoNotes: Array<{ node_id: string; text: string }> = [];
+            for (const { nodeId, summary } of sess.resultGraph.notes) {
+              if (resolvedSet.has(nodeId) && !userNoteIds.has(nodeId) && summary) {
+                autoNotes.push({ node_id: nodeId, text: summary });
+              }
+            }
+            if (autoNotes.length > 0) {
+              input.notes = [...(input.notes ?? []), ...autoNotes];
+              logger.debug(`enrich_view: auto-populated ${autoNotes.length} note(s) from SM`);
+            }
+          }
+
+          if (sess.resultGraph.suggested_labels?.length && input.sections?.length) {
+            const hasNodeIds = input.sections.some(s => s.node_ids && s.node_ids.length > 0);
+            if (!hasNodeIds) {
+              const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+              const labelToNodeIds = new Map<string, string[]>();
+              for (const sl of sess.resultGraph.suggested_labels) {
+                if (!sl.text) continue;
+                const label = stripNum(sl.text);
+                if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, []);
+                labelToNodeIds.get(label)!.push(sl.node_id);
+              }
+              input.sections = input.sections.map(sec => {
+                const ids = labelToNodeIds.get(stripNum(sec.label));
+                return ids?.length ? { ...sec, node_ids: ids } : sec;
+              });
+            }
+          }
+
+          let assembledBadges: Array<{ node_id: string; text: string }> = [];
+          if (input.sections?.length) {
+            const assembled = orderAndAssemble(input.sections, { title: input.title, intro: input.intro, closing: input.closing });
+            assembledBadges = assembled.badges;
+            if (!input.description) input.description = assembled.description;
+            input.sections = undefined;
+          }
+
+          const { input: fixedInput } = autoFixEnrichView(model, input, resolvedNodeIds);
+          const validation = validateEnrichView(fixedInput, resolvedNodeIds, assembledBadges);
+
+          if (!validation.success) {
+            return logAndReturn('enrich_view', validation, options.input);
+          }
+
+          const aiMetadata: AIViewMetadata = {
+            summary: validation.summary,
+            description: validation.description,
+            createdAt: new Date().toISOString(),
+            modelName: sess.modelName || 'unknown',
+            highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
+            badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
+            notes: validation.notes.map(n => ({ nodeId: n.node_id, text: n.text })),
+            layoutDirection: validation.layout_direction,
+          };
+
+          const panel = getPanel();
+          if (panel) {
+            panel.webview.postMessage({ type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata });
+            panel.reveal(vscode.ViewColumn.One);
+          }
+
+          if (input.is_update && sess.resultGraph) {
+            sess.resultGraph.nodeIds = resolvedNodeIds;
+            sess.resultGraph.edges = resolvedEdges;
+            const existingNotes = new Map((sess.resultGraph.notes ?? []).map(n => [n.nodeId, n]));
+            for (const n of validation.notes) {
+              existingNotes.set(n.node_id, { nodeId: n.node_id, summary: n.text });
+            }
+            sess.resultGraph.notes = Array.from(existingNotes.values());
+          }
+
+          logger.info(`AI view "${validation.name}" displayed (${validation.node_ids.length} objects)`);
+          return logAndReturn('enrich_view', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, options.input);
         } catch (err) { return toolError('enrich_view', err); }
       },
     }),

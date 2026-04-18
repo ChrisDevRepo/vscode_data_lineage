@@ -82,10 +82,26 @@ export class LineageParticipant {
 
     participant.followupProvider = {
       provideFollowups(result) {
-        const lastTools = (result.metadata as any)?.lastTools ?? [];
+        const meta = (result.metadata as any) ?? {};
+        const lastTools: string[] = meta.lastTools ?? [];
+        const deferred: Array<{ nodeId: string; question: string; fromFocusNodeId: string; schema?: string }> = meta.deferredQuestions ?? [];
         const followups: vscode.ChatFollowup[] = [];
         if (lastTools.some((t: string) => t.includes('bfs_trace'))) followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
         if (lastTools.some((t: string) => t.includes('submit_findings'))) followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
+
+        // Deferred-question chips — each click opens a new @lineage turn focused on the out-of-scope node.
+        const shortName = (id: string) => id.replace(/^\[[^\]]+\]\./, '').replace(/\]$/, '').replace(/^\[/, '');
+        for (const d of deferred.slice(0, 3)) {
+          const schemaHint = d.schema ? ` — include schema '${d.schema}' in scope` : '';
+          const q = d.question ? d.question : `Investigate ${d.nodeId}`;
+          followups.push({
+            prompt: `Investigate ${d.nodeId}: ${q}${schemaHint}.`,
+            label: `Investigate ${shortName(d.nodeId)}`,
+          });
+        }
+        if (deferred.length > 3) {
+          followups.push({ prompt: `Show all ${deferred.length} unanswered questions`, label: `Show all ${deferred.length}` });
+        }
         return followups;
       }
     };
@@ -658,7 +674,14 @@ export class LineageParticipant {
 
     this.dispatchExit(exit, sess, stream, request.prompt, roundCount, MAX_ROUNDS);
 
-    return { metadata: { toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults }, lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [] } };
+    const deferredForFollowups = (sess.stateMachine?.status === 'complete' ? sess.stateMachine.deferredQuestions : []) ?? [];
+    return {
+      metadata: {
+        toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults },
+        lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [],
+        deferredQuestions: deferredForFollowups.map(d => ({ nodeId: d.nodeId, question: d.question ?? '', fromFocusNodeId: d.fromFocusNodeId, schema: d.schema })),
+      },
+    };
   }
 
   /**
@@ -697,19 +720,6 @@ export class LineageParticipant {
       }
       case 'final_answer': {
         const smComplete = sess.stateMachine?.status === 'complete';
-        // Post-synthesis deferred-questions checkpoint: surface out-of-approved-scope references the
-        // engine collected during SM. Rendered as a single collapsed button — users click to review
-        // the full list in a QuickPick instead of reading a bullet dump in chat.
-        const deferred = sess.stateMachine?.deferredQuestions ?? [];
-        if (smComplete && deferred.length > 0) {
-          stream.markdown(`\n\n_${deferred.length} out-of-scope reference${deferred.length === 1 ? '' : 's'} noted during exploration — click below to review._\n`);
-          stream.button({
-            command: 'dataLineageViz.showDeferredQuestions',
-            title: `$(question) Review ${deferred.length} unanswered question${deferred.length === 1 ? '' : 's'}`,
-            arguments: [deferred.map(d => ({ nodeId: d.nodeId, question: d.question ?? '', fromFocusNodeId: d.fromFocusNodeId, schema: d.schema }))],
-          });
-          this.logger.info(`[Synthesis] Deferred-questions checkpoint surfaced — ${deferred.length} entry(ies)`);
-        }
         sess.enterIdle();
         if (this.getActivePanel() && smComplete) {
           // Prefer the original user question (captured at SM start) over the current turn's prompt,

@@ -193,9 +193,6 @@ export function buildSynthesisPrompt(): string {
     '- Cite only from slots. No new facts at the node level.',
     '- Cross-node reasoning (Layer B) is the ONE place you may synthesize across slots — connect them, name patterns, flag risks. Everything else is lift-and-format.',
     '',
-    '## DEFERRED QUESTIONS',
-    'The evidence block may include a "DEFERRED QUESTIONS" section listing out-of-approved-scope references the engine deferred during exploration. The participant renders a collapsed click-to-review button after your response — you do NOT need to enumerate them in chat prose. A brief one-line acknowledgement ("N references were deferred; click below to review.") is sufficient.',
-    '',
     '## SYNTHESIS REMINDER',
     'Re-read before emitting: the mission statement anchors every section. Your archived slots are draft section text — assemble and reformat; do not re-summarize.',
   ].join('\n');

@@ -41,7 +41,7 @@
 ## Fact Check (verified 2026-04-16)
 
 - Turn 1 = bb-q1-employee (scope=46 or 12 depending on depth)
-- `enrich_view.prune_node_ids` is a supported field in ViewSynthesisService — removes nodes from the final view without SM restart
+- `enrich_view.prune_node_ids` is a supported field in the enrich_view tool handler — removes nodes from the final view without SM restart
 - Session persistence between turns relies on `session.resultGraph` (populated by `storeBbResult()` at end of turn 1)
 - Expected final view: 5 views (vEmployee*, vSalesPerson*) — no write SPs
 

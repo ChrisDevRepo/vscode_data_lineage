@@ -1308,14 +1308,13 @@ export function validateMarkdownFormat(md: string): string[] {
 }
 
 /**
- * Validates the full `enrich_view` input against strict architectural and aesthetic requirements.
+ * Validates the full `enrich_view` input against mechanical contracts only.
  *
  * @remarks
- * This function enforces naming conventions, summary length, and structural quality
- * of the AI's final report. It ensures that the description uses proper headings,
- * doesn't simply re-describe the graph structure ("walkthrough"), and that all
- * node references are valid. If validation fails, it provides a "hint" to the AI
- * to help it self-correct.
+ * Enforces naming length, summary length, mutual-exclusion between `description`
+ * and `sections[]`, required fields, node-id resolution, and markdown-fence closure.
+ * Content-quality judgments (prose style, depth, compression against source slots)
+ * belong in the prompt — see `.claude/rules/code-quality.md` "Rejection Policy".
  *
  * @param input - The (possibly auto-fixed) AI input.
  * @param resolvedNodeIds - The canonical set of node IDs.
@@ -1338,12 +1337,8 @@ export function validateEnrichView(
     errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
-  // title/intro/closing optional — validate length and no-walkthrough
+  // title/intro/closing optional — validate length only (mechanical)
   if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
-  const WALKTHROUGH_PREFIXES_DOC = ['this graph', 'this view', 'data flows', 'shows the', 'visualizes'];
-  if (input.intro && WALKTHROUGH_PREFIXES_DOC.some(p => input.intro!.trimStart().toLowerCase().startsWith(p))) {
-    errors.push('intro re-describes the graph structure — provide context: what is computed, where data originates');
-  }
   if (input.closing && input.closing.trim().length > 400) errors.push('closing exceeds 400 characters — keep it to 1–2 sentences');
 
   // summary required + length: soft 120 (instructed), hard 300 (rejected)
@@ -1353,23 +1348,13 @@ export function validateEnrichView(
     errors.push(`summary exceeds hard limit (${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
   }
 
-  // description optional — if provided, validate structure + markdown format
+  // description optional — if provided, validate mechanical shape only
   if (input.description && input.description.trim().length > 0) {
-    // sections[] and description are mutually exclusive — sections is preferred
+    // sections[] and description are mutually exclusive — contract, not content judgment
     if (input.sections?.length) {
       errors.push('Provide either sections[] or description — not both. Use sections[] for structured output; description is the fallback for unstructured answers only');
     }
-    // Must have structure: ## headings or multiple paragraphs
-    if (!input.description.includes('##') && !input.description.includes('\n\n')) {
-      errors.push('description must use ## headings or multiple paragraphs — not a single block of text');
-    }
-    // Must not be a graph walkthrough
-    const descLower = input.description.trimStart().toLowerCase();
-    const WALKTHROUGH_PREFIXES = ['traces how', 'shows the', 'data flows', 'this view shows', 'visualizes'];
-    if (WALKTHROUGH_PREFIXES.some(p => descLower.startsWith(p))) {
-      errors.push('description re-describes the graph — explain what you found: formulas, column mappings, issues, patterns instead');
-    }
-    // Markdown format validation (LaTeX delimiters, math blocks)
+    // Markdown format validation (unclosed fences) — mechanical
     errors.push(...validateMarkdownFormat(input.description));
   }
 
@@ -1414,7 +1399,6 @@ export function validateEnrichView(
     const failedFields = new Set<string>();
     for (const e of errors) {
       if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
-      else if (e.startsWith('intro ')) failedFields.add('intro');
       else if (e.startsWith('title ')) failedFields.add('title');
       else if (e.startsWith('closing ')) failedFields.add('closing');
       else if (e.includes('summary')) failedFields.add('summary');
