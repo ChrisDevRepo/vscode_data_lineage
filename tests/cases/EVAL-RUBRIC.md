@@ -92,3 +92,16 @@ Any pre-gate failure → flag `memory-thin`, cap the total score at 6/12.
 - Prompt iteration loop is **suspended** until UAT parity proves the framework faithfully simulates real VS Code chat.
 - `aiOutputTemplates.yaml` contains AdventureWorks-specific examples — known tech debt, left for a later `/prompt-change` pass.
 - Train/validation split (from the 23-case suite) is shelved. Reintroduce if/when the case count grows back.
+
+## Baseline-v1 — 2026-04-19
+
+Captured at `test-results/eval-runs/baseline-v1-2026-04-19/` against `tests/fixtures/AdventureWorks2025_AI.dacpac` with the `optimization` branch + Electron proxy + Haiku 4.5 agents.
+
+| Case | Grade | Hops | Scope | Notes |
+|---|---|---|---|---|
+| `bb-inline-q1-vproduct` | EXCELLENT 11/12 | 5 | 5 | inline BB |
+| `bb-q1-employee` | EXCELLENT 11/12 | 12 | 33 | sliding BB, gate resolved via POST /gate |
+| `ct-inline-q1-jobtitle` | PASS 8/12 | 5 | 8 | inline CT — Employee (physical source) counted `pass` not `relevant` → required_coverage 0/1 |
+| `ct-q1-totalrevenue` | PARTIAL 7/12 | 8 | 26 | sliding CT, gate resolved — did not reach deepest upstream sources (SAPOrders, OracleOrders, SupplierPrices, MarkupRules), source_coverage 0/4 |
+
+UAT parity cross-checked on `bb-inline-q1-vproduct` 2026-04-19: real VS Code chat produced identical scope/hops/node-order/verdicts/badges. Real-chat detail_analysis ran ~3× richer (sampling variance). `enrich_view` failure in real chat was a v0.9.9 installed-extension bug already fixed on `optimization`. Framework confirmed as faithful simulation.
