@@ -23,10 +23,21 @@ The system automatically chooses the delivery strategy based on the complexity o
 | **Inline Mode** | Fits budget (< 10 nodes) | **One-Shot**: Full DDL and columns for all nodes are provided simultaneously. | **None** — the AI sees the full picture immediately. | **Holistic**: Turn-zero reasoning and logical grouping. |
 | **SM Mode** | Exceeds budget | **Focus + auto-delivered summaries**: the current node's DDL plus every prior hop's one-line summary. | **`all_summaries`** — cumulative, unbounded, system-managed. | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
 
+#### Mode contract (who gates what, who decides when done)
+
+| Contract dimension | Inline Mode | SM Mode (hop-by-hop) |
+| :--- | :--- | :--- |
+| **Session-entry yes/no gate** | **None.** Small scope runs immediately. | **`confirm_sm_start`** — engine surfaces planned scope (nodes, schemas, depth, budget) and pauses for user approval before hop 1. |
+| **Out-of-filter / out-of-depth route mid-session** | **Per-route approval gate.** Engine emits `action_required` (`schema_out_of_filter` / `depth_cap_exceeded` / `schema_and_depth`); participant halts the turn, asks yes/no. `yes` calls `extendAllowedSchemas` / `extendAllowedDepth` and resumes. | **Silent deferral.** Engine calls `deferQuestion({...})`; the hop loop keeps running within the approved border. Deferred entries surface at synthesis as an "Unanswered (out of approved scope)" section and as clickable `/followup` chips. |
+| **Termination authority** | **AI decides.** Sets `complete: true` on `submit_findings` ("compilation send"); engine returns `{ done: true, result }` and synthesis fires. | **Engine decides.** AI is trapped in `submit_findings` by `LanguageModelChatToolMode.Required`; `complete: true` is silently ignored. Synthesis fires only when the engine drains the agenda. |
+| **Scope extension** | AI can extend silently within the filter; stepping outside requires the approval gate. Strict depth (`/depth N strict`) blocks expansion. | Approved border is locked at `confirm_sm_start`. Out-of-border intent is collected (not executed) and rendered post-synthesis for follow-up. |
+
+The inline contract trusts the AI with a small scope and gives the user a veto on each scope stretch. The SM contract trusts the user with the up-front border and gives the AI a closed loop to drain inside it.
+
 ### Memory Model (SM Mode)
 SM mode preserves the 0.9.8 design: **storage + delivery + execution** only — no filtering, no ranking, no content decisions. Two stores back every session:
 
-1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical analysis per node, written in `submit_findings.detail_analysis`. Never compressed. Exposed at synthesis via `AiMemoryManager.getResult()`.
+1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical `analysis` string per node, written in `submit_findings.detail_analysis`. Never compressed. **Not shipped per hop.** Exposed at synthesis via `AiMemoryManager.getResult()`.
 2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — the `WorkingMemory` snapshot delivered at every hop:
    - `user_question` — echoed verbatim so the root question survives sliding-history eviction.
    - `all_summaries: Array<{ nodeId, summary }>` — every prior hop's `submit_findings.summary`, in visit order, **unbounded**. No token budget, no path/neighbor prioritization. The model decides which summaries matter for the current hop.
@@ -37,10 +48,12 @@ No AI-managed narrative string. No `blackboard`. No `local_detail_context` slice
 
 **Grounding**: simple per-hop delivery matches the original 0.9.8 behavior and the project's SM-never-truncates principle. Earlier iterations attempted MemGPT-style cumulative narratives and token-budget working sets; both were abandoned because the AI frequently compressed, paraphrased, or lost information when asked to manage memory, and because filtering violated the stored design principle.
 
-### Exploration Modes (`SmMode`)
-The same `NavigationEngine` serves two personas, selected by the mode of the active session:
+### Exploration Modes (unified `NavigationEngine` in `smBase.ts`)
+One `NavigationEngine` class serves two modes, selected at construction by the `SmMode` literal (`'blackboard' | 'column_trace'`):
 - **`blackboard`** — Business Logic Analyst / Default. Used for "explain / summarize / what depends on X" style questions. Carries cross-hop reasoning via `working_memory.all_summaries`.
-- **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when the user asks about specific column flow; adds column-name validation on `route_requests`.
+- **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when `start_exploration` is called with `targetColumns`; adds column-name validation on `route_requests`.
+
+The earlier separate `BlackboardState` / `ColumnTraceState` / `DependencyState` classes were consolidated into this single engine (commit `bf51fa9`, "unified navigation engine"). The `dependency` mode was folded into `blackboard` (commit `a3a75a5`). Routing logic, completion contract, and memory layout are identical — only the route-validation rules differ between modes.
 
 ### Completion Contract (when SM says "done")
 Completion semantics depend on the execution mode:
@@ -88,7 +101,7 @@ The user's original question reaches the model via three paths every hop: (1) `w
 ### The Three Lifecycle Phases
 1. **Discovery (Initiation)**: The AI maps the starting point and scope. The engine seeds the initial Agenda.
 2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. Each hop it receives `all_summaries`, the Map, the focus DDL, and neighbor metadata.
-3. **Holistic Synthesis & Presentation**: Once the agenda drains, the AI uses the full Detail Archive to write the chat prose + `enrich_view` sections.
+3. **Holistic Synthesis & Presentation**: Once the agenda drains, the synthesis phase (`lineageParticipant.ts` active→done transition) injects the full Detail Archive as a fresh user message; the AI produces the chat prose + `enrich_view` sections directly. (`ViewSynthesisService` was inlined in commit `95316fc`.)
 
 ### Phase-Boundary Contract for Prompt Authors
 
@@ -188,32 +201,53 @@ Two complementary guards keep the exploration loop inside the user's declared sc
 
 `strict` mode admits zero silent expansion; `soft` and `silent` let the engine expand the scope within their cap and log every expansion to `working_memory.budget_expansions`. Any route past the cap surfaces a gate; the user decides.
 
-### Two-loop control flow
+### Two-loop control flow — one per mode
 
-**Loop 1 — exploration** runs from `start_exploration` through agenda drain to synthesis. **Loop 2 — consent gate** is a nested pause on top of Loop 1: the engine halts, the participant asks the user, the user replies in NL, then either Loop 1 resumes or aborts.
+**Inline mode** — no session-entry gate. The AI drives the hop loop and "compiles" its own completion via `complete: true`. Per-route approval gates only fire when the AI wants to step outside the user-declared filter schemas or depth cap.
 
 ```mermaid
 flowchart TD
     U[User question] --> D[DISCOVER]
-    D -->|start_exploration| PG{Preflight:<br/>scope > budget?}
-    PG -- Yes --> ReAsk[Return scope_exceeds_budget<br/>with safe_depth_hint]
-    ReAsk --> U
-    PG -- No --> A[ACTIVE: hop loop]
-    A -->|submit_findings| V{Route validation}
-    V -- route valid --> A
-    V -- out-of-schema<br/>or out-of-cap --> G[Engine emits<br/>action_required]
-    G --> H[Participant halts loop,<br/>renders gate in chat]
-    H --> UR{User replies}
-    UR -- yes --> Y[Engine caches class<br/>on session allowlist]
-    Y --> A
-    UR -- no --> N[Abort exploration,<br/>preserve partial archive]
-    N --> U
-    UR -- synthesize --> S
-    A -->|agenda drained| S[SYNTHESIS]
-    S -->|enrich_view + chat prose| End[Done]
+    D -->|start_exploration| M{shouldSmInline?<br/>≤10 nodes AND ≤10k chars}
+    M -- Yes --> IA[ACTIVE: inline hop loop]
+    M -- No --> SM((see SM flow))
+    IA -->|submit_findings| IV{Route validation}
+    IV -- in filter --> IA
+    IV -- out of filter /<br/>out of depth cap --> IG[Engine emits<br/>action_required gate]
+    IG --> IH[Participant halts turn,<br/>renders yes/no in chat]
+    IH --> IR{User reply}
+    IR -- yes --> IY[extendAllowedSchemas /<br/>extendAllowedDepth]
+    IY --> IA
+    IR -- no --> IN[Abort, preserve partial]
+    IN --> U
+    IA -->|AI: complete: true| IS[Inline synthesis<br/>enrich_view + chat prose]
+    IS --> End[Done]
 ```
 
-### Consent-gate lifecycle (Loop 2)
+**SM mode** — session-entry gate locks the contract; no mid-session gates after approval. The engine owns termination and out-of-border routes are collected into a deferred bucket surfaced at synthesis.
+
+```mermaid
+flowchart TD
+    U[User question] --> D[DISCOVER]
+    D -->|start_exploration| PG{Preflight:<br/>scope > maxRounds × 0.7?}
+    PG -- Yes --> ReAsk[Return scope_exceeds_budget<br/>+ safe_depth_hint]
+    ReAsk --> U
+    PG -- No --> CS[Engine primes,<br/>emits confirm_sm_start]
+    CS --> UC{User reply}
+    UC -- no --> N1[Abort, idle]
+    UC -- redirect --> U
+    UC -- yes --> SA[ACTIVE: SM hop loop<br/>LanguageModelChatToolMode.Required]
+    SA -->|submit_findings| SV{Route validation}
+    SV -- in approved border --> SA
+    SV -- out of border --> SD[deferQuestion — silent,<br/>hop continues]
+    SD --> SA
+    SA -->|engine drains agenda| SS[SM synthesis<br/>+ Unanswered section<br/>+ /followup chips]
+    SS --> End[Done]
+```
+
+### Inline consent-gate lifecycle (mid-session yes/no — inline mode only)
+
+Inline sessions run without a session-entry gate, but every out-of-filter or out-of-depth-cap route during the hop loop is a two-turn pause. The engine halts, the participant asks the user, the user replies in natural language, then the loop resumes or aborts. SM sessions never enter this lifecycle — their out-of-border routes are deferred silently (see the SM contract lifecycle below).
 
 ```mermaid
 sequenceDiagram
@@ -223,7 +257,7 @@ sequenceDiagram
     participant User
 
     AI->>Engine: submit_findings({route_requests: [out-of-scope-node]})
-    Engine->>Engine: Check schema filter + depth cap
+    Engine->>Engine: Check schema filter + depth cap (inline branch)
     Engine-->>AI: {error: 'action_required', gate, classes, nodeIds}
     Participant->>Participant: Detect action_required in tool result
     Participant->>User: stream.markdown("Scope expansion requested — Reply yes/no")
@@ -234,11 +268,45 @@ sequenceDiagram
     alt yes
         Participant->>Engine: engine.extendAllowedSchemas(class) / extendAllowedDepth(n)
         Participant->>AI: effectivePrompt = "Resume. Route the previously blocked nodes"
-        Note right of AI: Loop 1 resumes
+        Note right of AI: Loop resumes
     else no
         Participant->>Participant: storeBbResultPartial()
         Participant->>User: "Exploration paused. Refine or 'synthesize'"
-        Note right of User: Loop 1 aborted
+        Note right of User: Loop aborted
+    end
+```
+
+### SM contract lifecycle (entry gate + deferred bucket — SM mode only)
+
+SM sessions are gated **once**, at the entrance. Once the user approves `confirm_sm_start`, the session runs as a closed loop with a single tool visible (`lineage_submit_findings`) under `LanguageModelChatToolMode.Required`. Out-of-border routes during the loop are not mid-session gates — they flow into a typed deferred bucket surfaced at synthesis.
+
+```mermaid
+sequenceDiagram
+    participant AI
+    participant Engine
+    participant Participant
+    participant User
+
+    AI->>Engine: start_exploration(scope)
+    Engine->>Engine: Preflight — scope > maxRounds × 0.7 ?
+    alt scope fits budget
+        Engine->>Engine: Prime engine (status='awaiting_findings'), capture hop_context
+        Engine-->>AI: {error: 'action_required', gate: 'confirm_sm_start', hop_context}
+        Participant->>User: Render scope summary, ask yes/no/redirect
+        Note over User: Turn ends. User reads and types reply.
+        User->>Participant: "yes"
+        Participant->>Participant: sess.enterExploring() — engine already primed
+        Note right of AI: Hop loop runs. Any out-of-border route hits deferQuestion silently.
+        AI->>Engine: submit_findings (drain...)
+        Engine->>Engine: deferQuestion({...}) on out-of-border targets
+        Engine-->>AI: hop_context + approved_border + deferred_count
+        Engine->>Participant: agenda drained → synthesis trigger
+        Participant->>AI: Detail archive + DEFERRED QUESTIONS block + synthesis prompt
+        AI->>User: Final report with "Unanswered (out of approved scope)" section
+        Participant->>User: /followup chips for each deferred entry
+    else scope too big
+        Engine-->>AI: {error: 'scope_exceeds_budget', safe_depth_hint}
+        AI->>User: Ask to narrow or raise ai.maxRounds
     end
 ```
 
@@ -253,6 +321,10 @@ Each hop's `working_memory` carries the diagnostics the AI needs to self-correct
 - `depth_cap` — engine-enforced ceiling, always surfaced when a budget is set (removed the old silent-mode gate)
 
 Per-neighbor flags: `in_budget`, `in_approved_scope`, `would_trigger_action_required` — the AI knows before routing whether it will trip the gate (inline mode) or be deferred (SM mode).
+
+### Log telemetry: `archive=<N>` is a counter, not a payload
+
+The structured `[AI] [Hop N]` debug log emits `archive=<N>` — this is `archiveChars`, a scalar counter on `NavigationEngine` (`smBase.ts:210`, incremented at `:793` by `detailChars + summaryChars` per successful hop). It tracks the cumulative character count the AI has **authored** across all hops (every `submit_findings.detail_analysis` + `.summary` written so far). It is **not** the size of any payload shipped to the model. `DetailSlot.analysis` text is never on the wire during hops — it only leaves memory at synthesis via `AiMemoryManager.getResult()`. So a log line with `archive=87000` on hop 22 means "the AI has written ~87 KB of analysis+summary text total," while the hop-22 input to the model is bounded to ~15–20 KB by the sliding-memory wipe (see §Memory Model). Readers of the debug log should not conflate the archive counter with per-hop context size.
 
 ### SM closed-loop contract & deferred-questions checkpoint (2026-04-18)
 

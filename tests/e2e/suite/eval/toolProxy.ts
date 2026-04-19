@@ -12,6 +12,10 @@
  *   POST /tool                → { tool, input, sessionId? } → vscode.lm.invokeTool()
  *   POST /session             → create/reset session → { sessionId }
  *   POST /filter              → { schemas[], types[] } → set filter on session
+ *   POST /gate                → { sessionId, approved } → harness equivalent of the
+ *                                user typing "yes"/"no" in chat. Calls the REAL
+ *                                sess.enterExploring() (approve) — same method
+ *                                lineageParticipant.ts runs on user yes-reply.
  *   GET  /session/:id/state   → sess.stateMachine.toJSON() (100% SM data)
  *   DELETE /session/:id       → cleanup
  */
@@ -21,6 +25,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import type { AiSession } from '../../../../src/ai/session';
 import { buildSystemPromptBase } from '../../../../src/ai/prompts';
 import { buildNavigationPrompt } from '../../../../src/ai/smPrompts';
+import { PendingGateSchema } from '../../../../src/ai/sessionPhase';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -118,11 +123,19 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
           `   highlights: ${tpl.highlights}\n` +
           `   description (fallback): ${tpl.description}`;
 
-        // Tool descriptions from registered tools
-        const toolDescs: Record<string, string> = {};
+        // Tool descriptions + inputSchema from registered tools. Real VS Code chat
+        // sees both because `vscode.lm.registerTool` registers the schema with
+        // the LM. Eval agents only see what we deliver via this endpoint, so
+        // without inputSchema they have to guess parameter names (observed:
+        // Haiku guessed `nodeId` instead of `origin`, causing every
+        // start_exploration to crash on `params.origin.toLowerCase()`).
+        const toolDescs: Record<string, { description: string; inputSchema?: unknown }> = {};
         for (const t of vscode.lm.tools) {
           if (t.tags.includes('lineage') && t.description) {
-            toolDescs[t.name] = t.description;
+            toolDescs[t.name] = {
+              description: t.description,
+              ...(t.inputSchema ? { inputSchema: t.inputSchema } : {}),
+            };
           }
         }
 
@@ -163,6 +176,41 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         };
         console.log(`[proxy:filter] schemas=[${sess.filter.schemas.join(', ')}]`);
         return respond(res, 200, { sessionId: sess.id, filter: sess.filter });
+      }
+
+      // POST /gate — resolve action_required{gate:'confirm_sm_start'}.
+      // Harness equivalent of the user typing "yes"/"no" in chat; mirrors
+      // lineageParticipant.ts:248-270 exactly — same enterExploring() call on
+      // the real AiSession. "no" leaves phase=awaiting_gate (matches the
+      // production "paused" branch); the agent can still redirect via a new
+      // question which would reset the session.
+      if (method === 'POST' && url === '/gate') {
+        const body = await readBody(req);
+        let parsed: { sessionId?: string; approved?: boolean };
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          return respond(res, 400, { error: 'invalid_json', hint: 'Body must be {sessionId, approved}.' });
+        }
+        const { approved } = parsed;
+        if (typeof approved !== 'boolean') {
+          return respond(res, 400, { error: 'missing_approved', hint: 'Body must include "approved" (boolean).' });
+        }
+        const sess = getSession();
+        if (sess.phase.kind !== 'awaiting_gate') {
+          return respond(res, 409, {
+            error: 'no_pending_gate',
+            phase: sess.phase.kind,
+            hint: '/gate only applies when the session is awaiting_gate (start_exploration returned action_required).',
+          });
+        }
+        if (approved) {
+          sess.enterExploring();
+          console.log(`[proxy:gate] session=${sess.id.slice(0, 12)} approved=true → phase=exploring`);
+        } else {
+          console.log(`[proxy:gate] session=${sess.id.slice(0, 12)} approved=false → phase=awaiting_gate (paused)`);
+        }
+        return respond(res, 200, { ok: true, phase: sess.phase.kind });
       }
 
       // GET /session/:id/state — full SM state dump (100% data from RAM)
@@ -258,6 +306,19 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         const isError = typeof resultObj === 'object' && resultObj !== null &&
           ('error' in resultObj || ((resultObj as any).success === false));
         const errorType = isError ? ((resultObj as any).error || 'tool_error_other') : null;
+
+        // Phase transition for action_required envelopes. Production `lineageParticipant.ts`
+        // calls `sess.enterGate()` after the hop-loop surfaces a `gate` exit; the eval proxy
+        // bypasses that layer, so we mirror the transition here. Without this, a subsequent
+        // POST /gate would see `phase: idle` and reject. The gate envelope is parsed by the
+        // same Zod schema the participant uses — any structural drift fails fast.
+        if (errorType === 'action_required' && (resultObj as any).gate) {
+          const parsed = PendingGateSchema.safeParse(resultObj);
+          if (parsed.success) {
+            getSession().enterGate(parsed.data);
+            console.log(`[proxy:tool] ${tool} emitted gate=${parsed.data.gate} → phase=awaiting_gate`);
+          }
+        }
 
         console.log(`[proxy:tool] ${tool} → ${durationMs}ms, in=${inputBytes}b/~${inputTokens}t, out=${outputBytes}b/~${outputTokens}t${isError ? ` ERROR=${errorType}` : ''}`);
 

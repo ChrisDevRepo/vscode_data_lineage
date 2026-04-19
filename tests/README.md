@@ -9,7 +9,8 @@ Multi-tier test infrastructure for the Data Lineage VS Code extension. Tests are
 | **Unit (Logic)** | `tests/unit/*.test.ts` | `tsx` | Pure deterministic logic (parsing, algorithms) | CI, pre-commit |
 | **Unit (Baseline)**| `tests/unit/*-aw.test.ts` | `tsx` | High-fidelity verification vs. frozen snapshots | CI, regression |
 | **Integration** | `tests/integration/` | `tsx` | Live SQL Server pipeline (.env required) | Local only |
-| **E2E + Eval** | `tests/e2e/` | `@vscode/test-electron` | VS Code integration & AI behavior quality | Local only |
+| **E2E** | `tests/e2e/` | `@vscode/test-electron` | VS Code integration smoke tests | Local only |
+| **Eval (AI)** | `tests/eval/` + `test-internal/ai-test-server.ts` | `tsx` + Haiku agent | 4-case baseline via HTTP bridge (POST /gate for `confirm_sm_start`) | Local only |
 
 ## Folder layout
 
@@ -44,9 +45,25 @@ tests/
 ├── integration/                           # Live SQL Server tests (.env required)
 │   └── integration-db.test.ts             # DB pipeline tests
 │
+├── cases/                                 # 4-case baseline (see tests/cases/README.md)
+│   ├── EVAL-RUBRIC.md                     # Interim scoring rubric
+│   ├── bb-inline-q1-vproduct.md
+│   ├── bb-q1-employee.md
+│   ├── ct-inline-q1-jobtitle.md
+│   ├── ct-q1-totalrevenue.md
+│   (18 archived cases live in tmp/cases-archive/ — gitignored, parked for post-UAT phase)
+│
+├── eval/                                  # Eval runner (entry point: run.py)
+│   ├── agent-prompt.template.txt
+│   ├── run.py
+│   ├── validate.py
+│   └── extract.py
+│
 └── e2e/                                   # Runs inside VS Code extension host
-    └── suite/eval/                        # AI Assistant behavior evaluation
+    └── suite/                             # Integration smoke tests (non-eval)
 ```
+
+The HTTP bridge that evals talk to (`test-internal/ai-test-server.ts`) exposes `lineage_*` tools, `/session`, `/filter`, and `/gate` (resolves the `confirm_sm_start` gate — harness equivalent of the user typing "yes"/"no" in chat). See `.claude/skills/eval-loop/SKILL.md` for the full flow.
 
 ## Snapshot Baseline Pattern
 

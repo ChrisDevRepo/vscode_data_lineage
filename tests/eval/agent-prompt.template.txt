@@ -6,7 +6,11 @@
 
 [Transport: tools are invoked via POST http://127.0.0.1:3271/tool with body
 {"tool": "<name>", "input": {...}, "sessionId": "{{SESSION_ID}}"} — same payload
-shape as vscode.lm.invokeTool(name, {input}). Session: {{SESSION_ID}}.]
+shape as vscode.lm.invokeTool(name, {input}).
+When a tool returns action_required with a gate, continue by posting to
+POST http://127.0.0.1:3271/gate with body {"sessionId":"{{SESSION_ID}}","approved":true|false}
+— this is the harness equivalent of the user typing "yes"/"no" in chat.
+Session: {{SESSION_ID}}.]
 
 User: {{QUESTION}}
 

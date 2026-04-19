@@ -95,6 +95,18 @@ def parse_case(test_id: str) -> dict:
         if in_filter and stripped.startswith("- types:"):
             val = stripped.split(":", 1)[1].strip()
             filter_types = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
+        # Classification-table format: `| Filter | schemas: [HumanResources, Sales] |`
+        # (used by current baseline cases; legacy `## Filter` section still supported above)
+        if in_classification and stripped.startswith("| Filter"):
+            cell = stripped.split("|")[2].strip() if stripped.count("|") >= 3 else ""
+            for token in cell.split(";"):
+                token = token.strip()
+                if token.lower().startswith("schemas:"):
+                    val = token.split(":", 1)[1].strip()
+                    filter_schemas = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
+                elif token.lower().startswith("types:"):
+                    val = token.split(":", 1)[1].strip()
+                    filter_types = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
         if in_classification and "column" in stripped.lower() and "trace" in stripped.lower():
             use_columns = True
     if test_id.startswith("ct-"):
