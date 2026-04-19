@@ -23,6 +23,8 @@ vitest.config.ts
 tailwind.config.js
 postcss.config.js
 esbuild.config.mjs
+esbuild.test.mjs
+.vscode-test.mjs
 
 # Dev artifacts
 node_modules/**
@@ -54,12 +56,22 @@ manual-trace.ts
 bb_result.json
 *ct_hop*.json
 
+# Unreferenced screenshot (superseded by viz-search/viz-ai variants).
+# NOTE: logo.png IS used at runtime by src/panelProvider.ts — keep it.
+images/viz-screenshot.png
+
+# KaTeX TTF fonts — never loaded by VS Code's webview (Chromium picks
+# woff2 > woff > ttf; TTF only matters for legacy browsers). Keep woff+woff2
+# as the actual delivery formats.
+dist/assets/KaTeX_*.ttf
+
 # AI dev artifacts (eval runs, replay JSON, prompt changelogs — internal only)
 ai/**
 
 # Misc
 PLAN*.md
 CLAUDE.md
+GEMINI.md
 SECURITY.md
 CODE_OF_CONDUCT.md
 *.vsix
