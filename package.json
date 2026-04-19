@@ -468,6 +468,10 @@
           {
             "name": "search",
             "description": "Search for database objects by name or schema"
+          },
+          {
+            "name": "followup",
+            "description": "Extend the last exploration with the AI's deferred follow-up questions"
           }
         ],
         "disambiguation": [
@@ -731,7 +735,7 @@
         "toolReferenceName": "lineage_enrich_view",
         "displayName": "Enrich View",
         "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, and text annotations. The graph comes from a completed state-machine exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last exploration. Requires a completed state-machine result; call start_exploration first (BFS alone is not accepted). Provide name and summary. Emit one sections[] entry per archived detail_slot: label = slot.badge_label verbatim, node_ids = [slot.nodeId], text = slot.analysis expanded with business interpretation. Adjust labels only to fix typos or group clear duplicates — keep variant siblings as separate sections. notes[] is complementary (hover/caption per node), not a replacement for sections. System numbers labels in your written order; reference other groups by label name, never by number. Use prune_node_ids to remove irrelevant nodes. Write each section.text and the description fallback at the depth the archive supports — no length limit, no compression; synthesis is the one place to lift every finding forward. BAD: notes-only without sections, numbered label ('1 Source'), one section for 20 variant siblings. GOOD: { label: 'Transform Variant', node_ids: ['[schema].[spAllocRuleA]'], text: 'Full breakdown with SQL quoted verbatim, LaTeX formulas and column I/O table' }",
+        "modelDescription": "Enrich the stored result graph from your last column_trace or blackboard exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration first. Provide name and summary (both required). Document model: sections[] is the core — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = the primary key AND the chip shown on all nodes in node_ids. The completion result includes suggested_sections — a pre-grouped, depth-ordered section skeleton built from your per-hop badge_labels. Use this as your starting structure: the grouping reflects your own role labels, the order reflects pipeline depth. Adjust labels, merge or split groups as needed, then add text from detail memory per section. Not every node needs a badge — only nodes you labeled during hops. System numbers labels in YOUR WRITTEN ORDER. Passthrough nodes: mention in section text only — omit from node_ids, no separate section. Reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. Write each section.text at the depth the archive supports — no length limit. BAD: numbered label ('1 Source'), node_ids with unknown IDs, description instead of sections. GOOD: { label: 'AC Reallocation', node_ids: ['dbo.spAllocA', 'dbo.spAllocB'], text: 'Both procedures redistribute cost across the Global/Country dimension...' }",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -818,7 +822,7 @@
             },
             "sections": {
               "type": "array",
-              "description": "Document sections — one entry per logical group.",
+              "description": "Document sections — one entry per logical group. Each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label is the PRIMARY KEY and the badge chip text shown on every node in node_ids. System numbers sections in YOUR WRITTEN ORDER. Reference other groups by label name ('reads from **Source**'), never by number.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -835,7 +839,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Markdown description for this section. Detail findings go here."
+                    "description": "Markdown description for this label group (1..1 per label). Explain what you found: formulas, column mappings, logic, risks. Supported: **bold**, `code`, tables, LaTeX math."
                   }
                 },
                 "required": [

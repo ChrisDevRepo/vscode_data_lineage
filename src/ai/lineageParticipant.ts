@@ -7,7 +7,7 @@ import {
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
-import { buildNavigationPrompt, buildSynthesisPrompt } from './smPrompts';
+import { buildNavigationPrompt } from './smPrompts';
 import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
@@ -84,23 +84,25 @@ export class LineageParticipant {
       provideFollowups(result) {
         const meta = (result.metadata as any) ?? {};
         const lastTools: string[] = meta.lastTools ?? [];
-        const deferred: Array<{ nodeId: string; question: string; fromFocusNodeId: string; schema?: string }> = meta.deferredQuestions ?? [];
+        const deferredCount: number = typeof meta.deferredQuestionCount === 'number' ? meta.deferredQuestionCount : 0;
         const followups: vscode.ChatFollowup[] = [];
-        if (lastTools.some((t: string) => t.includes('bfs_trace'))) followups.push({ prompt: 'Create a view from this trace', label: 'Create AI view' });
-        if (lastTools.some((t: string) => t.includes('submit_findings'))) followups.push({ prompt: 'Show the trace result in the graph', label: 'Show in Graph' });
-
-        // Deferred-question chips — each click opens a new @lineage turn focused on the out-of-scope node.
-        const shortName = (id: string) => id.replace(/^\[[^\]]+\]\./, '').replace(/\]$/, '').replace(/^\[/, '');
-        for (const d of deferred.slice(0, 3)) {
-          const schemaHint = d.schema ? ` — include schema '${d.schema}' in scope` : '';
-          const q = d.question ? d.question : `Investigate ${d.nodeId}`;
+        // "Detailed explanation" chip — gated on two conditions:
+        // (a) enrich_view ran this turn (we have a view to extend, not just chat prose);
+        // (b) the engine has at least one deferred question (there IS something new to analyze).
+        // Click fires `/followup` → handler extends the live SM with the deferred-question
+        // nodes via NavigationEngine.extendScope, reusing the existing detail archive.
+        //
+        // The "Show in Graph" / "Create AI view" affordances are rendered as an INLINE
+        // stream.button inside the response body (see dispatchExit 'final_answer' case),
+        // not as chips here — the button is context-aware (reveal existing view vs. create
+        // new one) via the dataLineageViz.aiCreateView command.
+        const hasEnrichView = lastTools.some((t: string) => t.includes('enrich_view'));
+        if (hasEnrichView && deferredCount > 0) {
           followups.push({
-            prompt: `Investigate ${d.nodeId}: ${q}${schemaHint}.`,
-            label: `Investigate ${shortName(d.nodeId)}`,
+            prompt: 'Explain the lineage in more detail',
+            label: `Detailed explanation (${deferredCount})`,
+            command: 'followup',
           });
-        }
-        if (deferred.length > 3) {
-          followups.push({ prompt: `Show all ${deferred.length} unanswered questions`, label: `Show all ${deferred.length}` });
         }
         return followups;
       }
@@ -131,6 +133,37 @@ export class LineageParticipant {
    * @param token - A cancellation token to stop processing if the user cancels.
    * @returns A promise that resolves to the chat result metadata.
    */
+  /**
+   * Routes the "Detailed explanation" chip click into the engine's extend path.
+   *
+   * @remarks
+   * Called only from the `/followup` slash command branch. Looks up the engine's deferred
+   * questions (nodes the AI wanted to investigate but were outside the approved scope)
+   * and adds them to the agenda via {@link NavigationEngine.extendScope}. The existing
+   * hop loop then processes them and synthesis patches the view via `enrich_view.is_update`.
+   *
+   * @param sess - The active session; must have `stateMachine.status === 'complete'`.
+   * @param stream - Chat response stream for a short user-visible progress line.
+   * @returns `true` when at least one node was added to the agenda; `false` otherwise.
+   */
+  private tryExtendWithDeferredQuestions(sess: AiSession, stream: vscode.ChatResponseStream): boolean {
+    const engine = sess.stateMachine as NavigationEngine | null;
+    if (!engine || engine.status !== 'complete' || sess.isStale()) return false;
+    const deferred = engine.deferredQuestions ?? [];
+    if (deferred.length === 0) return false;
+    // Dedup by nodeId — the engine ring-buffers but a node can be deferred more than once.
+    const byNode = new Map<string, string>();
+    for (const d of deferred) {
+      if (!byNode.has(d.nodeId)) byNode.set(d.nodeId, d.question ?? 'User-requested follow-up');
+    }
+    const nodeIds = Array.from(byNode.keys());
+    const question = `Extended scope: ${byNode.size} deferred question(s) requested by user`;
+    const result = engine.extendScope(nodeIds, question);
+    if (result.added === 0) return false;
+    stream.markdown(`\n\n> Extending analysis — ${result.added} new node(s), reusing ${sess.memory.slotCount} existing finding(s).\n\n`);
+    return true;
+  }
+
   public async handleChatRequest(
     request: vscode.ChatRequest,
     chatContext: vscode.ChatContext,
@@ -177,6 +210,18 @@ export class LineageParticipant {
       effectivePrompt = buildTracePrompt(request.prompt);
     } else if (request.command === 'search') {
       effectivePrompt = buildSearchPrompt(request.prompt);
+    } else if (request.command === 'followup') {
+      // Fired by the "Detailed explanation" chip (ChatFollowup with `command: 'followup'`).
+      // Route the existing live SM session into its extend path: add deferred-question nodes
+      // to the agenda and resume the hop loop. Preserves the detail archive so this is fast.
+      const extended = this.tryExtendWithDeferredQuestions(sess, stream);
+      if (extended) {
+        sess.enterExploring();
+        effectivePrompt = 'Continue the hop-by-hop analysis — call submit_findings for the newly-added focus node. Merge findings into the existing archive and update the view via is_update:true.';
+      } else {
+        // Fallback: no live SM or no deferred questions. Treat as a generic drill-in.
+        effectivePrompt = 'Explain the lineage in more detail — drill into the most load-bearing nodes of the last exploration.';
+      }
     }
 
     // FSM turn-entry dispatch: if the previous turn paused on a gate, resolve the user's reply
@@ -283,7 +328,10 @@ export class LineageParticipant {
       return base +
         `### AI OUTPUT TEMPLATES (SYNTHESIS — enrich_view fields)\n` +
         `- summary: ${sess.outputTemplates.summary}\n` +
+        `- title: ${sess.outputTemplates.title}\n` +
+        `- intro: ${sess.outputTemplates.intro}\n` +
         `- sections: ${sess.outputTemplates.sections}\n` +
+        `- closing: ${sess.outputTemplates.closing}\n` +
         `- notes: ${sess.outputTemplates.notes}\n` +
         `- highlights: ${sess.outputTemplates.highlights}\n` +
         `- description (fallback): ${sess.outputTemplates.description}`;
@@ -589,36 +637,26 @@ export class LineageParticipant {
           // Stage-scope the system prompt: restore full output templates for SYNTHESIS.
           systemPrompt = buildStageSystemPrompt('synthesis');
 
+          // Clean hop history, preserve the completion envelope verbatim. The last
+          // Assistant(tool_call submit_findings) + User(tool_result) pair carries detail_slots,
+          // suggested_sections, suggested_labels, fullNodes, edges, and synthesis_reminder
+          // (appended as the last JSON key in toolProvider). Main's proven pattern — keeps the
+          // reminder at the end-of-context attention peak and preserves the structural skeleton
+          // the AI uses to produce labeled, grouped, detailed sections.
           if (!sess.stateMachine.inlineMode) {
-            // Deliver the Detail Archive evidence for Phase 3
-            const archive = sess.memory.getResult();
-            const evidenceHeader = '### DETAIL ARCHIVE (TECHNICAL EVIDENCE)\n' +
-              'The following evidence was captured during the investigation. Assembly this into your final report.\n\n';
-
-            const evidenceItems = archive.detail_slots.map(s => {
-              const badge = s.badge_label ? `- **Badge**: ${s.badge_label}\n` : '';
-              const note = s.note_caption ? `- **Note caption**: ${s.note_caption}\n` : '';
-              return `#### ${s.nodeId}\n${badge}${note}- **Summary**: ${s.summary}\n- **Technical Analysis**:\n${s.analysis}\n`;
-            }).join('\n---\n');
-
-            // Deferred questions: out-of-approved-scope routes the AI wanted to pursue but couldn't.
-            // Rendered at the tail of the report as the "Unanswered (out of approved scope)" section.
-            const deferred = sess.stateMachine.deferredQuestions;
-            const deferredBlock = deferred.length === 0 ? '' :
-              '\n\n### DEFERRED QUESTIONS (out of approved scope)\n' +
-              'Render these as an "Unanswered (out of approved scope)" section at the end of the report. One line per entry:\n\n' +
-              deferred.map(d => `- \`${d.nodeId}\` (schema \`${d.schema}\`, reason=${d.reason}${d.depth !== undefined ? `, depth=${d.depth}` : ''}) — ${d.question || '(no sub-question recorded)'} — referenced from \`${d.fromFocusNodeId}\``).join('\n');
-
+            const lastAssistant = messages[messages.length - 2];
+            const lastResult    = messages[messages.length - 1];
+            const beforeCount   = messages.length;
             messages.length = 0;
             messages.push(
               vscode.LanguageModelChatMessage.User(systemPrompt),
               vscode.LanguageModelChatMessage.User(effectivePrompt),
-              vscode.LanguageModelChatMessage.User(buildSynthesisPrompt()),
-              vscode.LanguageModelChatMessage.User(evidenceHeader + evidenceItems + deferredBlock)
+              lastAssistant,
+              lastResult,
             );
-            const archiveChars = evidenceItems.length;
-            const archiveTokensEst = Math.round(archiveChars / 4);
-            this.logger.info(`[Synthesis] Detail archive: ${archive.detail_slots.length} slot(s), ${archiveChars} chars, ~${archiveTokensEst} tokens, ${deferred.length} deferred question(s) — injected as evidence for final synthesis`);
+            const archive = sess.memory.getResult();
+            const deferred = sess.stateMachine.deferredQuestions;
+            this.logger.info(`[Synthesis] Context cleaned: ${beforeCount} → ${messages.length} messages; envelope preserved (${archive.detail_slots.length} slots, ${deferred.length} deferred)`);
           }
         }
 
@@ -674,12 +712,17 @@ export class LineageParticipant {
 
     this.dispatchExit(exit, sess, stream, request.prompt, roundCount, MAX_ROUNDS);
 
-    const deferredForFollowups = (sess.stateMachine?.status === 'complete' ? sess.stateMachine.deferredQuestions : []) ?? [];
+    // Count distinct deferred-question nodes so the followup provider knows whether to render
+    // the "Detailed explanation" chip. Chip is gated on (a) the turn included an enrich_view
+    // call AND (b) the engine has unanswered out-of-scope routes to investigate.
+    const deferredQuestionCount = (sess.stateMachine?.status === 'complete'
+      ? new Set(sess.stateMachine.deferredQuestions.map(d => d.nodeId)).size
+      : 0);
     return {
       metadata: {
         toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults },
         lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [],
-        deferredQuestions: deferredForFollowups.map(d => ({ nodeId: d.nodeId, question: d.question ?? '', fromFocusNodeId: d.fromFocusNodeId, schema: d.schema })),
+        deferredQuestionCount,
       },
     };
   }
@@ -731,28 +774,16 @@ export class LineageParticipant {
         return;
       }
       case 'hop_cap':
-      case 'aborted': {
-        if (sess.stateMachine && sess.resultGraph == null && sess.memory.slotCount > 0) {
-          sess.storeBbResultPartial();
-        }
-        sess.enterIdle();
-        const finalGraph = sess.resultGraph;
-        if (finalGraph?.partial) {
-          const cov = finalGraph.partialCoverage;
-          const capHit = exit.kind === 'hop_cap' && roundCount >= maxRounds;
-          const reason = capHit ? `hit the ${maxRounds}-round safety cap` : `stopped early before all nodes were analyzed`;
-          this.logger.info(`Partial result stored — ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes analyzed (${capHit ? 'cap hit' : 'early stop'})`);
-          stream.markdown(`\n\n⚠ Exploration incomplete — analyzed ${cov?.analyzed ?? '?'} of ${cov?.total ?? '?'} nodes; the run ${reason}. Use "Show in Graph" to render the partial result.`);
-          if (this.getActivePanel()) {
-            const originalQ = sess.memory.getUserQuestion() || userPrompt;
-            stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show Partial Graph', arguments: [originalQ] });
-          }
-        }
-        return;
-      }
+      case 'aborted':
       case 'error': {
         sess.enterIdle();
-        stream.markdown(`\n\n*Error: ${exit.message}*`);
+        const msg = exit.kind === 'hop_cap'
+          ? `Exploration stopped — hit the ${maxRounds}-round safety cap before the agenda drained. Rerun with a narrower scope or raise 'dataLineageViz.ai.maxRounds'.`
+          : exit.kind === 'aborted'
+            ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.`
+            : exit.message;
+        this.logger.warn(`Exit ${exit.kind}: ${msg}`);
+        stream.markdown(`\n\n*Error: ${msg}*`);
         return;
       }
     }

@@ -30,7 +30,7 @@ export function buildSystemPromptBase(maxRounds: number): string {
     '   Before calling start_exploration, compose `mission_brief` — a 3–6 sentence narrative distilling (a) the user\'s intent, (b) any NL filters they expressed ("ignore UDFs/views", "only tables in schema X"), (c) the scope you chose. The brief is delivered to you verbatim every hop and survives memory wipes. If the user expressed type filters, also set `excludeTypes` to enforce them structurally.\n' +
     '4. OUTPUT: enrich_view when a graph aids understanding (lineage path, data flow). Chat text for pure explanations, SQL generation, list/compare requests.\n' +
     '5. VIEW OUTPUT: the enrich_view tool description carries the sections[] contract. Write sections in the narrative sequence you want the reader to follow; the system numbers sections from your order.\n' +
-    '6. MATH: In chat text use ```math fenced blocks for display formulas. In enrich_view sections, use inline $…$ LaTeX. Never use $$ delimiters.\n' +
+    '6. MATH: Use LaTeX math syntax for formulas in all output — chat text and enrich_view section text.\n' +
     '7. DETAIL ARCHIVE IS UNBOUNDED. When writing submit_findings.detail_analysis, be thorough — the engine preserves every character verbatim for synthesis. Thin slots produce thin final answers.\n'
     // Callers append: summary / sections / notes / highlights / description from aiOutputTemplates (stage-scoped; see lineageParticipant.ts buildStageSystemPrompt)
   );

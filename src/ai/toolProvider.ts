@@ -17,6 +17,7 @@ import { prunePreserveOnly } from './viewPrune';
 import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
 import { type SerializedFilterState, type AIViewMetadata } from '../engine/projectStore';
 import { PendingGateSchema } from './sessionPhase';
+import { buildSynthesisReminder } from './smPrompts';
 
 /**
  * Registers all language model tools associated with the `@lineage` chat participant.
@@ -312,7 +313,20 @@ export function registerAiTools(
             // in the same call so the model can synthesize + call enrich_view without another round.
             const finalResult = engine.getResult();
             sess.storeBbResult(finalResult);
-            return logAndReturn('submit_findings', { ok: true, done: true, result: finalResult }, options.input);
+            // Deferred questions (out-of-approved-scope routes) travel with the envelope so the
+            // AI can render them as an "Unanswered" tail-section and the followup provider can
+            // surface them as chips after the turn ends.
+            const deferredQuestions = sess.stateMachine?.deferredQuestions ?? [];
+            // Synthesis reminder appended as the last key of the envelope — end-of-context
+            // attention peak re-asserts depth + grounding. Anthropic long-context guidance.
+            const synthesisReminder = buildSynthesisReminder(sess.memory.getUserQuestion());
+            return logAndReturn('submit_findings', {
+              ok: true,
+              done: true,
+              result: finalResult,
+              deferred_questions: deferredQuestions,
+              synthesis_reminder: synthesisReminder,
+            }, options.input);
           }
 
           return logAndReturn('submit_findings', nextHop, options.input);
@@ -358,14 +372,6 @@ export function registerAiTools(
             resolvedNodeIds = pruned.nodeIds;
             resolvedEdges = pruned.edges;
             logger.debug(`enrich_view: pruned ${before - resolvedNodeIds.length} node(s), ${resolvedNodeIds.length} remaining`);
-          }
-
-          if (sess.resultGraph.partial) {
-            const cov = sess.resultGraph.partialCoverage;
-            const covText = cov ? ` (${cov.analyzed} of ${cov.total} nodes)` : '';
-            const partialNote = `⚠ Partial result${covText} — exploration did not complete before the round cap.`;
-            input.intro = input.intro ? `${partialNote}\n\n${input.intro}` : partialNote;
-            logger.info(`enrich_view: partial result rendered${covText}`);
           }
 
           if (sess.resultGraph.notes?.length) {

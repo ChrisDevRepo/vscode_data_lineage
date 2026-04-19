@@ -111,10 +111,29 @@ export function registerCommands(
     ),
 
     // --- AI Integration ---
-    /** 
-     * Internal command used by the AI to trigger view synthesis in the chat UI.
+    /**
+     * Command invoked by the "Show in Graph" button (rendered by `stream.button` at the end
+     * of a completed SM turn). Handles both cases in one place so the UI only needs one entry
+     * point.
+     *
+     * @remarks
+     * - **Fast path**: if an AI view has already been synthesized this session
+     *   (`sess.resultGraph` is populated) and the lineage panel exists, just reveal it.
+     *   No new chat turn, no AI round-trip, no token cost.
+     * - **Slow path**: if no view exists yet (e.g. the user ran a `bfs_trace` but the AI
+     *   never called `enrich_view`), open a fresh `@lineage` chat turn asking the AI to
+     *   synthesize a view from the stored trace results.
+     *
+     * @param originalPrompt - The user's original question, captured at SM start; used as
+     *   the seed for the view name in the slow path.
      */
     vscode.commands.registerCommand('dataLineageViz.aiCreateView', (originalPrompt: string) => {
+      const sess = getSession();
+      const panel = getActivePanel();
+      if (sess.resultGraph && panel) {
+        panel.reveal(vscode.ViewColumn.One);
+        return;
+      }
       const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${trunc(originalPrompt || '', 60)}"`;
       vscode.commands.executeCommand('workbench.action.chat.open', {
         query: `@lineage ${viewPrompt}`,

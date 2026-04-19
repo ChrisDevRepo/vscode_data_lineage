@@ -39,16 +39,6 @@ export interface ResultGraph {
   suggested_notes?: Array<{ node_id: string; text: string }>;
   /** AI-suggested grouping of nodes into narrative sections. */
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
-  /**
-   * Indicates the result was persisted without the state machine reaching `complete`.
-   * Set when the participant loop hits `MAX_ROUNDS` before the agenda drains.
-   */
-  partial?: boolean;
-  /**
-   * Coverage snapshot captured when {@link partial} is true.
-   * `analyzed` is the number of detail slots committed; `total` is the scope size.
-   */
-  partialCoverage?: { analyzed: number; total: number };
 }
 
 /** 
@@ -61,28 +51,37 @@ export interface ResultGraph {
 export interface AiOutputTemplates {
   /** Instructions for generating the high-level summary. */
   summary: string;
+  /** Instructions for the document heading rendered as `# …` above sections. */
+  title: string;
+  /** Instructions for the 2-4 sentence intro paragraph before the sections. */
+  intro: string;
   /** Instructions for generating the detailed technical description. */
   description: string;
   /** Instructions for grouping nodes into logical sections. */
   sections: string;
+  /** Instructions for the 1-2 sentence closing rendered after the sections. */
+  closing: string;
   /** Instructions for identifying critical highlights and takeaways. */
   highlights: string;
   /** Instructions for extracting and formatting node-level notes. */
   notes: string;
 }
 
-/** 
- * Default empty state for AI output templates. 
- * 
+/**
+ * Default empty state for AI output templates.
+ *
  * @remarks
  * Prevents runtime errors if template loading fails or is delayed.
  */
-export const EMPTY_AI_TEMPLATES: AiOutputTemplates = { 
-  summary: '', 
-  description: '', 
-  sections: '', 
-  highlights: '', 
-  notes: '' 
+export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
+  summary: '',
+  title: '',
+  intro: '',
+  description: '',
+  sections: '',
+  closing: '',
+  highlights: '',
+  notes: ''
 };
 
 /** 

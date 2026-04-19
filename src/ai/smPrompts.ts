@@ -20,9 +20,9 @@ const BLOCK = {
   /** Node classification shared across all modes. */
   verdictCategories:
     'NODE CLASSIFICATION (three categories):\n' +
-    '- relevant (BB) / trace (CT): node has business logic, transforms, or answers the question → full analysis + badge_label.\n' +
-    '- pass: node is in the path but no transforms (SELECT *, staging, identity view, variant sibling of an archetype) → summary only, no badge_label.\n' +
-    '- irrelevant (BB) / prune (CT): utility, logging, or helpers with no domain meaning → cascade-pruned from the graph.',
+    '- relevant (BB) / trace (CT): node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS relevant — even if its connection to the question is indirect.\n' +
+    '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use relevant.\n' +
+    '- irrelevant (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the pipeline → removed from graph.',
 
   /** Step 2 — write the detail archive for this node. */
   writeFindings:
@@ -53,10 +53,10 @@ const BLOCK = {
 
   /** Badge + note metadata drive the graph UI. */
   badgeAndNote:
-    'badge_label (2-4 words, ≤30 chars): semantic ROLE tag. Prefer a role that groups variant siblings under one label — e.g. "Source", "Transform", "Transform Variant", "Staging", "Output", "Validation", "Aggregation", "Rule Family". When several nodes share the same skeleton, give them the SAME badge_label so the final view groups them into one section.\n' +
-    'SELECTIVITY: only assign badge_label to nodes with distinct functional roles. Passthrough nodes skip it.\n' +
-    'GROUPING: nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source"; five variant procedures → all "Transform Variant").\n' +
-    'note_caption (≤200 chars): cross-hop REASONING — what this hop taught you that future hops need. `summary` already captures WHAT the node does; do not restate it. Use note_caption for the delta (e.g. "Same skeleton as the prior variant; delta: department+function match instead of global match") or for still-open questions.',
+    'badge_label (2-4 words, ≤30 chars): semantic ROLE label, e.g. "Source", "Transform", "Staging", "Output", "Validation", "Aggregation". Pick labels that capture the node\'s role in the pipeline — each distinct stage gets a distinct label.\n' +
+    'SELECTIVITY: Only assign badge_label to nodes with distinct functional roles. Passthrough nodes (SELECT *, simple staging, lookup joins) — skip badge_label, they will be mentioned in section text.\n' +
+    'GROUPING: Nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
+    'note_caption (≤200 chars): cross-hop REASONING — what this hop taught you that future hops need. `summary` already captures WHAT the node does; do not restate it. Use note_caption for the delta or for still-open questions.',
 
   /** Self-ask — the sub-question is a lens; the mission brief (or user question) is the anchor. */
   selfAsk:
@@ -153,47 +153,25 @@ export function buildNavigationPrompt(mode: SmMode): string {
 
 
 /**
- * Builds the synthesis trigger prompt delivered once the agenda drains.
+ * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
  *
  * @remarks
- * Concise contract: the detail archive is the only evidence, two deliverables are required
- * (chat prose + `enrich_view` sections, both at per-slot depth), and the model decides
- * section length per question shape. No character floors, no structural enforcement —
- * depth comes from the archive plus the model's judgment.
+ * Main's 0.9.8 pattern: instructions at end of context improve compliance ~30% (Anthropic
+ * long-context guidance). The reminder re-asserts depth and grounding at the highest-attention
+ * slot — the last key of the JSON that carries the archive + skeleton. Pairs with the
+ * completion envelope preservation in `lineageParticipant.ts` / `toolProvider.ts`.
  *
- * @returns A markdown string marking the transition from exploration to synthesis.
+ * @param question - The user's original question, used to re-anchor synthesis on intent.
+ * @returns A short reminder string injected as `synthesis_reminder` in the completion result.
  */
-export function buildSynthesisPrompt(): string {
-  return [
-    '# SYNTHESIS — two-layer output',
-    '',
-    'Your ONLY evidence is the detail archive below. Raw DDL is gone.',
-    '',
-    '## LAYER A — per-node preservation',
-    'For each archived slot, emit one enrich_view section where `text` ≈ the slot analysis CONTENT, preserved. You may reformat (promote inline `### COLUMNS` etc. to clean markdown sub-headings, render tables cleanly). Keep LaTeX `$…$` and ```math fences untouched. Keep quoted SQL untouched.',
-    'Do not compress, summarize, or paraphrase. A 2500-char slot must produce a ~2500-char section. Targets: section length ≥ 50% of its source slot length; variant-sibling groups (one section, ≥2 node_ids) may compress to ≥ 30%.',
-    '',
-    '## LAYER B — cross-node reasoning (what synthesis adds)',
-    'Write a 2–4 paragraph `intro` (enrich_view.intro) that NO single slot could have produced. Identify:',
-    '  • The pipeline shape — which nodes run first, which feed which.',
-    '  • Recurring patterns — variant siblings sharing a skeleton (name the skeleton, list the variants).',
-    '  • Pattern deltas — what differentiates each variant.',
-    '  • System-level risks — cycles, consistency gaps, missing coverage.',
-    '  • A grounded answer to the mission (the user\'s original intent).',
-    '',
-    '## CHAT PROSE',
-    '  1. 2–3 sentence executive answer to the mission.',
-    '  2. Cross-node reasoning (1–2 paragraphs — same content as enrich_view.intro).',
-    '  3. One section per archived slot, per LAYER A.',
-    '',
-    '## RULES',
-    '- Formulas: keep LaTeX verbatim when lifting slot content. Paraphrasing `$EV_{Direct} = EV_{Budget} \\times 25\\%$` into "25% allocation" loses the evidence.',
-    '- Tables: keep markdown pipe-tables verbatim.',
-    '- SQL: keep quoted fragments verbatim.',
-    '- Cite only from slots. No new facts at the node level.',
-    '- Cross-node reasoning (Layer B) is the ONE place you may synthesize across slots — connect them, name patterns, flag risks. Everything else is lift-and-format.',
-    '',
-    '## SYNTHESIS REMINDER',
-    'Re-read before emitting: the mission statement anchors every section. Your archived slots are draft section text — assemble and reformat; do not re-summarize.',
-  ].join('\n');
+export function buildSynthesisReminder(question: string): string {
+  return (
+    'SYNTHESIS REMINDER — re-read before generating enrich_view:\n' +
+    `- User question: "${question}"\n` +
+    '- Your detail slots are draft section text — assemble into enrich_view sections.\n' +
+    '- Every badged node: 3+ sentences with business meaning + SQL evidence.\n' +
+    '- Present at full depth — do not compress or re-summarize.\n' +
+    '- Deferred questions (out-of-approved-scope routes) surface as a "Detailed explanation" chip beneath the chat — focus your writing on the analyzed nodes only; do not list deferred questions in enrich_view or chat prose.\n' +
+    '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.'
+  );
 }
