@@ -46,6 +46,8 @@ export class AiSession {
   public stateMachine: IHopStateMachine | null = null;
   /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
+  /** Last enrich_view description string — surfaced in chat by the "Show full description" chip. */
+  public lastEnrichViewDescription: string | null = null;
   /** YAML-loaded instructions for report generation. */
   public outputTemplates: AiOutputTemplates;
   /** Hard limit on input tokens for the underlying LLM. */
@@ -65,8 +67,8 @@ export class AiSession {
   /** Round id in which start_exploration last succeeded (or was attempted). null when reset. */
   public startExplorationRoundId: number | null = null;
 
-  // ── User-facing notice queue (drained by runWithTools into stream.markdown) ──
-  /** Set-keyed notice queue — natural de-dupe across parallel tool calls. */
+  // ── Notice Queue ──
+  /** Set-keyed notice queue to deduplicate messages across parallel tool calls. */
   public pendingUserNotice: Set<string> = new Set();
 
   /**
@@ -128,6 +130,7 @@ export class AiSession {
     this.memory.reset();
     this.stateMachine = null;
     this.resultGraph = null;
+    this.lastEnrichViewDescription = null;
     this.hopCount = 0;
     this.hopLog = [];
     this.pendingUserNotice.clear();

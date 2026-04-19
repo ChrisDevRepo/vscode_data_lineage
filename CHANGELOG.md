@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - optimization branch
+
+### Added
+- **"Show full description" chip** — after every `@lineage` response that produced a graph view, a second chat chip renders the full AI description 1:1 inline. No re-analysis, no extra LM call — the description is captured when the view is created and replayed verbatim on click. Complements the existing "Detailed explanation (N)" chip (which extends the scope via deferred questions).
+
+### Changed
+- **Richer enrich_view descriptions — preservation target** — the AI's per-hop synthesis reminder now states a numeric target for description section length relative to the in-session detail memory (≥ 50% standalone, ≥ 30% for consolidated variant-sibling sections) and requires formulas / pipe-tables / SQL fragments to be lifted verbatim. Addresses observed compression from 90k chars of detail memory down to ~28k chars of rendered description (~69% drop) — sibling consolidation is legitimate but per-slot paraphrase was eroding evidence.
+- **Deferred follow-ups now fire for NL-filtered dependencies** — when the user's question included an NL filter like `ignore UDFs and views`, `@lineage` was silently dropping references to out-of-scope objects instead of deferring them. The "Detailed explanation (N)" chip consequently stayed hidden. `@lineage` now still won't *analyze* filter violators, but if one is a meaningful dependency for the mission it lists it as a deferred follow-up the user can click to review.
+
+### Internal
+- `AiSession.lastEnrichViewDescription` — stores the last successful enrich_view description for the "Show full description" chip. Cleared on `resetExploration()`.
+- Branch workflow — `restore-0.9.8-quality` frozen on remote as `baseline1`; `optimization` forked from it for ongoing work.
+- Local-only dev tool: `.claude/skills/iteration-review/SKILL.md` — automates the UAT baseline-vs-iteration comparison (content quality first, tokens/duration second). Not shipped (`.claude/` is gitignored).
+
 ## [0.9.9] - 2026-04-18
 
 ### Added

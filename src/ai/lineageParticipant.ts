@@ -104,6 +104,13 @@ export class LineageParticipant {
             command: 'followup',
           });
         }
+        if (hasEnrichView) {
+          followups.push({
+            prompt: 'Show the full description',
+            label: 'Show full description',
+            command: 'followup',
+          });
+        }
         return followups;
       }
     };
@@ -211,6 +218,12 @@ export class LineageParticipant {
     } else if (request.command === 'search') {
       effectivePrompt = buildSearchPrompt(request.prompt);
     } else if (request.command === 'followup') {
+      // "Show full description" chip — short-circuit: stream the stored enrich_view description
+      // 1:1 into chat. No SM extension, no new LM call. Detected by prompt sentinel.
+      if (request.prompt === 'Show the full description' && sess.lastEnrichViewDescription) {
+        stream.markdown(sess.lastEnrichViewDescription);
+        return {};
+      }
       // Fired by the "Detailed explanation" chip (ChatFollowup with `command: 'followup'`).
       // Route the existing live SM session into its extend path: add deferred-question nodes
       // to the agenda and resume the hop loop. Preserves the detail archive so this is fast.

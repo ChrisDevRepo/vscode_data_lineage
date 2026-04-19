@@ -449,6 +449,8 @@ export function registerAiTools(
             sess.resultGraph.notes = Array.from(existingNotes.values());
           }
 
+          sess.lastEnrichViewDescription = validation.description ?? null;
+
           logger.info(`AI view "${validation.name}" displayed (${validation.node_ids.length} objects)`);
           return logAndReturn('enrich_view', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, options.input);
         } catch (err) { return toolError('enrich_view', err); }

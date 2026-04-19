@@ -60,7 +60,7 @@ const BLOCK = {
 
   /** Self-ask — the sub-question is a lens; the mission brief (or user question) is the anchor. */
   selfAsk:
-    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on the `mission_brief` (AI-authored at session start, delivered every hop) — or `working_memory.user_question` if no brief is set. Relevance is judged against the mission, not the sub-question. If the mission names NL filters (e.g. "ignore UDFs and views", "only tables in schema X"), honor them: verdict any neighbor that violates the filter as `irrelevant`, don\'t analyze it, don\'t route more routes into it. If answering the sub-question produces material that does not serve the mission, omit it.',
+    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on the `mission_brief` (AI-authored at session start, delivered every hop) — or `working_memory.user_question` if no brief is set. Relevance is judged against the mission, not the sub-question. If the mission names NL filters (e.g. "ignore UDFs and views", "only tables in schema X"), honor them: verdict any neighbor that violates the filter as `irrelevant`, don\'t analyze it, don\'t expand the agenda into it — but if it is a meaningful dependency for the mission, list it in `route_requests` with a sub-question so the engine defers it as a user follow-up. If answering the sub-question produces material that does not serve the mission, omit it.',
 
   /** Route grounding — shared. */
   routing:
@@ -171,6 +171,7 @@ export function buildSynthesisReminder(question: string): string {
     '- Your detail slots are draft section text — assemble into enrich_view sections.\n' +
     '- Every badged node: 3+ sentences with business meaning + SQL evidence.\n' +
     '- Present at full depth — do not compress or re-summarize.\n' +
+    '- Preservation target: each standalone badged slot → a section at comparable length (aim ≥ 50% of the slot\'s analysis length). Consolidated variant-sibling sections (e.g. Alloc1a+1b+1c merged) may compress to ≥ 30% of combined slot length. Formulas, pipe-tables, and SQL fragments lift VERBATIM — paraphrasing "EVDirect = EVBudget × 25%" into "25% allocation" loses the evidence your analysis captured.\n' +
     '- Deferred questions (out-of-approved-scope routes) surface as a "Detailed explanation" chip beneath the chat — focus your writing on the analyzed nodes only; do not list deferred questions in enrich_view or chat prose.\n' +
     '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.'
   );
