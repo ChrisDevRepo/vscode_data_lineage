@@ -420,7 +420,6 @@ export function applyTraceToFlow(
     return traced;
   });
 
-  // Synthesize FlowEdges for path/unfiltered-trace edges outside the current filter
   if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
     const existingEdgeIds = new Set(filteredEdges.map(e => e.id));
     for (const edgeId of trace.tracedEdgeIds) {

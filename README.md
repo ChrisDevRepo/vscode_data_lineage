@@ -32,6 +32,11 @@ Trace object dependencies and create bookmarked graph views. The AI assistant ca
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
+`@lineage` adapts to the size of the question:
+
+- **Small scopes run inline.** The AI sees all relevant DDL at once and answers directly. If a relevant dependency falls outside your filter schemas, it pauses and asks you to approve extending the scope for this session.
+- **Large scopes run hop-by-hop.** Before the first hop the assistant shows you the planned scope (nodes, schemas, depth, budget) and asks for confirmation. Once approved, the contract is locked — anything outside that agreed border is collected as clickable follow-up chips instead of silently pulled in. You stay in control of the budget.
+
 Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
 
 ## Features

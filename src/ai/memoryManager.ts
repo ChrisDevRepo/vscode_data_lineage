@@ -127,7 +127,7 @@ export class AiMemoryManager {
    */
   public recordRejection(nodeId: string, reason: string, atHop: number): void {
     this.recentRejections.push({ nodeId, reason, atHop });
-    // Ring-buffer cap — drop oldest when over the surface limit (constant lives in smBase).
+    // Enforce ring-buffer cap to prevent unbounded growth.
     if (this.recentRejections.length > 5) this.recentRejections.shift();
   }
 

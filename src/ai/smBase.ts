@@ -428,7 +428,7 @@ export class NavigationEngine implements IHopStateMachine {
     depth_enforcement?: 'strict' | 'soft' | 'silent';
     excludeTypes?: string[];
     mission_brief?: string;
-  }): any {
+  }): { ok: true; scopeSize: number; agendaSize: number } | { error: string; hint?: string } {
     this.visited.clear();
     this.agenda = [];
     this.agendaIds.clear();
