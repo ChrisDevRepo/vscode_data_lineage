@@ -478,7 +478,6 @@ export function createMessageHandlers(
         if (level === 'info') outputChannel.info(text);
         else if (level === 'warn') outputChannel.warn(text);
         else if (level === 'error') outputChannel.error(text);
-        else if (level === 'trace') outputChannel.trace(text);
         else outputChannel.debug(text);
       } else {
         host.log(level, 'Bridge', text);
@@ -761,9 +760,10 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
   add('');
   add('AI SESSION');
-  add(`  Session ID:   ${sess.id}`);
-  add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
-  add(`  Hops:         ${sess.hopCount}`);
+  add(`  Session ID:     ${sess.id}`);
+  add(`  Status:         ${sess.stateMachine?.status ?? 'idle'}`);
+  add(`  Hops:           ${sess.hopCount}`);
+  add(`  Classification: ${sess.classification ?? '(unresolved)'}`);
   if (sess.stateMachine) {
     add('');
     add('STATE MACHINE DUMP (JSON)');

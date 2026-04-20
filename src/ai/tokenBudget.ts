@@ -20,7 +20,7 @@
 const DEFAULT_INLINE_TOKEN_BUDGET = 10_000;
 
 /** Runtime budget — set from VS Code setting at each request start. */
-let _inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
+let inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
 
 /**
  * Configures the runtime inline token budget from VS Code settings.
@@ -32,7 +32,7 @@ let _inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
  * @param value - The maximum number of tokens allowed for inline (one-shot) delivery.
  */
 export function setInlineTokenBudget(value: number): void {
-  _inlineTokenBudget = value;
+  inlineTokenBudget = value;
 }
 
 /** 
@@ -41,7 +41,7 @@ export function setInlineTokenBudget(value: number): void {
  * @returns The effective token budget used for delivery mode decisions.
  */
 export function getEffectiveBudget(): number {
-  return _inlineTokenBudget;
+  return inlineTokenBudget;
 }
 
 
@@ -79,7 +79,7 @@ export function shouldInline(payloadChars: number, precomputedTokens?: number): 
 const DEFAULT_SM_INLINE_NODE_CAP = 10;
 
 /** Runtime node cap — set from VS Code setting at each request start. */
-let _smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
+let smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
 
 /** 
  * Configures the runtime inline node cap from VS Code settings. 
@@ -87,7 +87,7 @@ let _smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
  * @param value - The maximum number of nodes allowed for inline State Machine (SM) delivery.
  */
 export function setSmInlineNodeCap(value: number): void {
-  _smInlineNodeCap = value;
+  smInlineNodeCap = value;
 }
 
 /** 
@@ -96,7 +96,7 @@ export function setSmInlineNodeCap(value: number): void {
  * @returns The maximum node count allowed for inline exploration.
  */
 export function getSmInlineNodeCap(): number {
-  return _smInlineNodeCap;
+  return smInlineNodeCap;
 }
 
 /**
@@ -112,7 +112,7 @@ export function getSmInlineNodeCap(): number {
  * @returns `true` if both node count and token budget constraints are satisfied.
  */
 export function shouldSmInline(payloadChars: number, scopeNodeCount: number): boolean {
-  return scopeNodeCount <= _smInlineNodeCap && shouldInline(payloadChars);
+  return scopeNodeCount <= smInlineNodeCap && shouldInline(payloadChars);
 }
 
 

@@ -7,6 +7,7 @@ import { type ResultGraph, type AiOutputTemplates, EMPTY_AI_TEMPLATES, type Sess
 import type { IHopStateMachine } from './smBase';
 import type { HopLogEntry } from './smTypes';
 import type { SessionPhase, PendingGate } from './sessionPhase';
+import { ClassificationSchema, type ClassificationValue } from './classification';
 
 /**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
@@ -48,6 +49,15 @@ export class AiSession {
   public resultGraph: ResultGraph | null = null;
   /** Last enrich_view description string — surfaced in chat by the "Show full description" chip. */
   public lastEnrichViewDescription: string | null = null;
+  /**
+   * Mission-type classification inferred at end of discovery.
+   *
+   * @remarks
+   * Drives which subsections fire at synthesis. `business` omits the Technical
+   * subsection; `technical` renders technical content only; `both` renders both.
+   * `undefined` means classification has not yet been resolved for this session.
+   */
+  public classification?: ClassificationValue;
   /** YAML-loaded instructions for report generation. */
   public outputTemplates: AiOutputTemplates;
   /** Hard limit on input tokens for the underlying LLM. */
@@ -60,6 +70,12 @@ export class AiSession {
   // ── Telemetry / Log Correlation ──
   /** Unix timestamp of session creation. */
   public startTime: number;
+  /**
+   * Unix timestamp of the last user-driven activity (new prompt, gate resume).
+   * Drives {@link isStale}; distinct from {@link startTime}, which stays pinned to
+   * session creation for result-graft windowing.
+   */
+  public lastActivity: number;
   /** Total number of tool execution rounds performed. */
   public hopCount = 0;
   /** Monotonic round id (bumped by participant on each LM round). Used to detect parallel calls to strictly-serial tools. */
@@ -93,16 +109,28 @@ export class AiSession {
     this.columnStore = new ColumnStore();
     this.outputTemplates = templates ?? { ...EMPTY_AI_TEMPLATES };
     this.startTime = Date.now();
+    this.lastActivity = this.startTime;
   }
 
   /**
-   * Determines if the session has exceeded its maximum operational lifetime.
+   * Determines if the session has been idle past the stale threshold (30 minutes
+   * since the last user activity).
    *
-   * @returns `true` if the session is older than 30 minutes.
+   * @remarks
+   * Measured from {@link lastActivity}, not {@link startTime}: a user resuming a
+   * long-pending gate is active, and the session should not be wiped under them.
    */
   public isStale(): boolean {
     const STALE_AFTER_MS = 30 * 60 * 1000;
-    return (Date.now() - this.startTime) > STALE_AFTER_MS;
+    return (Date.now() - this.lastActivity) > STALE_AFTER_MS;
+  }
+
+  /**
+   * Marks the session as active now. Call on every user-driven turn boundary
+   * (new prompt, gate approval/redirect) so {@link isStale} measures true idle.
+   */
+  public touch(): void {
+    this.lastActivity = Date.now();
   }
 
   /**
@@ -136,6 +164,22 @@ export class AiSession {
     this.pendingUserNotice.clear();
     this.startExplorationRoundId = null;
     this.phase = { kind: 'idle' };
+    this.classification = undefined;
+  }
+
+  /**
+   * Stores the mission-type classification inferred at end of discovery.
+   *
+   * @remarks
+   * Zod-validates the value at the boundary. Invalid values are rejected
+   * mechanically — callers should pass only `'business' | 'technical' | 'both'`.
+   * Use {@link inferClassificationFromText} for heuristic inference from mission
+   * brief or question text.
+   *
+   * @param value - One of `business` | `technical` | `both`.
+   */
+  public setClassification(value: ClassificationValue): void {
+    this.classification = ClassificationSchema.parse(value);
   }
 
   /**
@@ -171,6 +215,7 @@ export class AiSession {
   public regenerateSessionId(): void {
     this.id = this.generateId();
     this.startTime = Date.now();
+    this.lastActivity = this.startTime;
   }
 
   /** 

@@ -8,6 +8,7 @@
  */
 import { bfsFromNode } from 'graphology-traversal';
 import type Graph from 'graphology';
+import { z } from 'zod';
 import {
   DEFAULT_CONFIG,
   type DatabaseModel,
@@ -37,6 +38,24 @@ export const FALLBACK_RESULT_LIMIT = 10;
 
 
 type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
+
+/**
+ * Zod schema for `start_exploration` tool input. Parsed at the boundary so malformed
+ * payloads (e.g. missing `origin`) produce a structured `missing_field` error instead
+ * of crashing `NavigationEngine.init` on `.toLowerCase()` of undefined.
+ */
+export const StartExplorationInputSchema = z.object({
+  origin: z.string().min(1),
+  question: z.string().optional(),
+  targetColumns: z.array(z.string()).optional(),
+  direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
+  depth: z.number().int().positive().optional(),
+  depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
+  excludeTypes: z.array(z.string()).optional(),
+  mission_brief: z.string().optional(),
+});
+
+export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
 
 /**
  * Lightweight runtime validation for LLM tool inputs.
@@ -944,6 +963,7 @@ export type EnrichViewInput = {
   title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
   intro?: string;       // 2–4 sentence paragraph before the numbered sections
   closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
+  loading_pattern?: string; // SP-only, AI-inferred. Rendered in metadata band above sections.
   description?: string;
   prune_node_ids?: string[];
   add_node_ids?: string[];    // NEW: incremental add
@@ -993,12 +1013,18 @@ const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'go
  * system-managed numbering scheme.
  *
  * @param sections - AI-authored sections containing labels, node associations, and text.
- * @param opts - Optional wrapper blocks for the final document (title, intro, closing).
+ * @param opts - Optional wrapper blocks for the final document. `metadataBand`
+ * is injected between `intro` and the first section.
  * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
  */
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text: string }>,
-  opts?: { title?: string; intro?: string; closing?: string },
+  opts?: {
+    title?: string;
+    intro?: string;
+    closing?: string;
+    metadataBand?: string;
+  },
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
   // Strip leading "N " or "N. " so AI numbers don't interfere with label matching
   const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.]?\s+/, '').trim();
@@ -1035,11 +1061,19 @@ export function orderAndAssemble(
     .sort((a, b) => a._n - b._n)
     .map(({ node_id, text }) => ({ node_id, text }));
 
-  // Assemble markdown: title → intro → ## sections → closing
+  // Assemble markdown: title → intro → metadata band → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
+  // First-occurrence node_ids list per unique label (AI-authored order preserved).
+  const labelToNodeIds = new Map<string, string[]>();
+  for (const sec of sections) {
+    const label = stripLeadingNumber(sec.label);
+    if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, sec.node_ids ?? []);
+  }
+
   const parts: string[] = [];
-  if (opts?.title)   parts.push(`# ${opts.title}`);
-  if (opts?.intro)   parts.push(opts.intro);
+  if (opts?.title)        parts.push(`# ${opts.title}`);
+  if (opts?.intro)        parts.push(opts.intro);
+  if (opts?.metadataBand) parts.push(opts.metadataBand);
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
@@ -1337,9 +1371,7 @@ export function validateEnrichView(
     errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
-  // title/intro/closing optional — validate length only (mechanical)
   if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
-  if (input.closing && input.closing.trim().length > 400) errors.push('closing exceeds 400 characters — keep it to 1–2 sentences');
 
   // summary required + length: soft 120 (instructed), hard 300 (rejected)
   if (!input.summary || input.summary.trim().length === 0) {

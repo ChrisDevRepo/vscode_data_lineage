@@ -131,6 +131,30 @@ export function registerCommands(
       const sess = getSession();
       const panel = getActivePanel();
       if (sess.resultGraph && panel) {
+        // Always re-post the preview: enrich_view's ai-view-preview is ephemeral.
+        // If it was never sent (enrich_view errored/skipped) or the webview lost state,
+        // reveal alone would show a stale/empty panel.
+        const rg = sess.resultGraph;
+        const badges = (rg.suggested_labels ?? []).map(l => ({ nodeId: l.node_id, text: l.text }));
+        const notes = (rg.notes ?? [])
+          .filter(n => n.summary)
+          .map(n => ({ nodeId: n.nodeId, text: n.summary }));
+        const name = trunc(originalPrompt || 'AI Lineage View', 80);
+        panel.webview.postMessage({
+          type: 'ai-view-preview',
+          name,
+          nodeIds: rg.nodeIds,
+          aiMetadata: {
+            summary: sess.lastEnrichViewDescription ? '' : `Lineage trace for: ${trunc(originalPrompt || '', 120)}`,
+            description: sess.lastEnrichViewDescription ?? '',
+            createdAt: new Date().toISOString(),
+            modelName: sess.modelName || 'unknown',
+            highlightGroups: [],
+            badges,
+            notes,
+            layoutDirection: 'LR' as const,
+          },
+        });
         panel.reveal(vscode.ViewColumn.One);
         return;
       }

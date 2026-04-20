@@ -101,7 +101,7 @@ export function openPanel(
 
   // Ensure that database connections and stats caches are released when the panel is closed.
   panel.onDidDispose(() => {
-    cleanup().catch(err => bridgeLogger.debug(`Cleanup failed: ${err}`));
+    cleanup().catch(err => bridgeLogger.warn(`Cleanup failed — next session may reuse stale state: ${err}`));
   });
 
   panel.webview.onDidReceiveMessage(async (rawMsg) => {

@@ -37,17 +37,27 @@ Every prompt surface has a stage (DISCOVERY / ACTIVE / SYNTHESIS / ALL). Before 
 
 Do not duplicate across surfaces. The system prompt is sent on every turn — anything repeated in nav or tool description is triple-billed. If a rule belongs in a tool description, keep it there; the tool is visible at every call that matters.
 
-### 1.5 Per-Phase Template Scope
+### 1.5 Per-Phase Template Scope — stage routing
 
-`aiOutputTemplates.yaml` has 7 `instruction` fields. Injecting all 7 into the system prompt on every turn wastes tokens in phases where the model cannot write `enrich_view`.
+`aiOutputTemplates.yaml` has 13 keys. Each declares a `stages:` field listing which phases inject it into the AI system prompt. The authoritative routing lives in code (`STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)) — the YAML `stages:` field is informational for power-user readers; overlays that contradict the canonical routing are logged and ignored.
 
-| Phase | Templates injected | Reason |
+Routing via the helper `resolveStagePrompt(templates, phase, classification)`:
+
+| Phase | Keys injected | What they shape |
 |---|---|---|
-| DISCOVERY | `summary` + `description` | Trivial questions finalized without SM need a chat-description template. Others route to `start_exploration`. |
-| ACTIVE (hop loop) | *none* | Model writes `detail_analysis` via `submit_findings`. Format governed by `BLOCK.writeFindings` in `smPrompts.ts`. Output templates are irrelevant here. |
-| SYNTHESIS | `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes` | All `enrich_view` fields are written here. |
+| **DISCOVERY** | `summary`, `description` | Trivial questions finalized without SM need a chat-description template. Others route to `start_exploration`. |
+| **ACTIVE** (per-hop) | `business_capture`, `technical_capture` | **Capture rules** — what the AI writes into `detail_analysis` per node. Edit these to change what gets archived. Format invariants (archive-is-unbounded, NO NEW FACTS, mission_brief anchor) stay in `BLOCK.writeFindings` (TS). |
+| **SYNTHESIS** | `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes`, `loading_pattern`, `business_subsection`, `technical_subsection` | **Render rules** — how the captured content becomes the final enrich_view document. Edit these to change the document's structure. A `**Mission type:** <value>` line is also injected at synthesis by code (the classification value is code-resolved, not AI-emitted). |
 
-Saving: ~1,000 tokens per ACTIVE hop. For a 26-hop session, ~26k tokens total (~12% of session input).
+**Convention: `*_capture` at ACTIVE, `*_subsection` at SYNTHESIS.** This keeps each YAML key phase-pure — no meta preambles, no `CAPTURE (active phase)` / `RENDER (synthesis phase)` labels inside the instruction text. A power user reads a key and knows exactly where it fires.
+
+**Classification gating** (`CLASSIFICATION_GATED` in `templateRenderer.ts`): mission type (`business` | `technical` | `both`) is inferred heuristically at the active→synthesis boundary from the user's question + mission brief. At ACTIVE the gate is open (classification is still `undefined`), so `*_capture` keys for both angles fire — the AI captures both angles per node. At SYNTHESIS the gate applies: `business_*` keys fire for `business`/`both`; `technical_*` keys fire for `technical`/`both`.
+
+**Human-readable section titles.** Inside the injected block, each instruction is prefixed by `#### <Human Title>` (not the snake_case YAML key name). The AI reads `#### Business angle`, `#### Technical section block`, etc. — clear communicative labels, no internal identifiers.
+
+**LaTeX, markdown tables, code fences** stay in `buildSystemPromptBase` rule #6 because they are tied to the webview renderer capability, not user preference. Do not restate in YAML.
+
+**User overlay safety.** If the user points `dataLineageViz.ai.outputTemplateFile` at an invalid YAML, the loader logs a WARN + shows a VS Code notification and falls back to the shipped defaults. Per-key: unknown keys log a WARN and are ignored; missing `instruction` fields log an INFO and keep the built-in value for that key; the built-in defaults always succeed so the extension remains functional.
 
 ---
 
@@ -122,5 +132,68 @@ Design rules (observed across providers):
 5. **Abundance signals where storage allows.** Where the engine preserves verbatim (Detail Archive), prompts say "write thoroughly". UI-real-estate fields (summary, note_caption, badge_label) keep their pixel budgets local.
 
 These rules map directly to the mechanical guards in `.claude/skills/prompt-change/references/prompt-surface-map.md` and the anti-pattern table in `references/best-practices.md`.
+
+---
+
+## 6. Onion-Layered enrich_view Document
+
+The `enrich_view` description is assembled from four concentric layers. AI owns the inner content; the render layer injects graph-sourced topology above and inside the AI's body.
+
+```
+title / intro                     (AI-authored)
+metadata band                     (render-layer, graph-sourced)
+  ├ In                            graph.inNeighbors(origin)
+  ├ Out                           graph.outNeighbors(origin)
+  └ Loading Pattern (SP-only)     AI-inferred, optional
+sections[]                        (AI-authored)
+  ├ per-section object table      (render-layer, fires when node_ids.length ≥ 2)
+  ├ business body                 (AI-authored, classification ∈ [business, both])
+  └ #### Technical subsection     (AI-authored, classification ∈ [technical, both])
+closing                           (AI-authored)
+```
+
+### 6.1 Metadata band
+
+Rendered between `intro` and the first section. Three lines:
+
+- `**In:** [schema].[name], …` — direct upstream neighbors of the origin node (from `graph.inNeighbors`).
+- `**Out:** [schema].[name], …` — direct downstream neighbors (from `graph.outNeighbors`).
+- `**Loading Pattern:** <value>` — only when the origin is a stored procedure. AI-inferred, soft guideline.
+
+Empty neighbor sets render `(none — root node)` / `(none — terminal node)`.
+
+Loading-pattern guidance (YAML key `loading_pattern.instruction`) lists six coarse values — `reload`, `append`, `upsert`, `historization`, `purge`, `orchestration`. No hard enum; AI may write a short phrase if none fits. Views and UDFs skip the line entirely.
+
+### 6.2 Per-section object table
+
+When a section groups ≥ 2 nodes under one label, the render layer prepends a `| Object | In | Out |` table. Each row shows that node's direct graph neighbors (object-level, NOT column-level). Single-object sections skip the table — the badge + section title already convey the same information.
+
+### 6.3 Technical subsection
+
+Appended below the business body when the session classification resolves to `technical` or `both`. The YAML key `technical_subsection.instruction` defines the content rules:
+
+- SQL as code snippets (key expression, join predicate, CASE condition) — never full INSERT/SELECT statements.
+- LaTeX formulas (```math block) beside every computed column.
+- Named columns only — "various / several / certain" are banned.
+- Variant siblings use delta-mode: `Same skeleton as <first>; deltas: …`.
+- Performance observations when visible in DDL: Hash/Nested Loop joins with Cartesian warnings, DISTINCT/OR antipatterns, distribution/indexing hints.
+- NO NEW FACTS — archive is the sole evidence.
+
+Column I/O tables, nullability/precision prose, and full SQL statements are explicitly out of scope for this subsection.
+
+### 6.4 Classification
+
+The mission-type signal that selects whether the Technical subsection fires.
+
+- `business` — WHAT the data means. Technical subsection omitted.
+- `technical` — HOW the pipeline runs. Business body becomes the technical write-up (no separate `#### Technical` header).
+- `both` — blended question. Business body + Technical subsection both render.
+
+Inference is heuristic (keyword scan on the user's question + mission brief) — no separate tool-call. Defaults to `business`. Inline mode surfaces a one-line banner at synthesis start (`> Starting analyze phase — <kind>-driven.`); SM mode folds the classification into the `confirm_sm_start` messaging instead of a separate banner.
+
+YAML keys:
+- `loading_pattern.instruction` — SP load-pattern guidance.
+- `technical_subsection.instruction` — rules for the `#### Technical` block.
+- `classification.instruction` — mission-type inference guidance.
 
 ---

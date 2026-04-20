@@ -77,6 +77,8 @@ export type HopLoopExit =
   | { kind: 'hop_cap' }
   /** Repeat-reject guard tripped — same tool call failed N times in a row. Partial result stored if slots exist. */
   | { kind: 'aborted'; reason: string }
+  /** User cancelled the turn (Stop button, new prompt typed, panel closed). Stream is already closed; no further UI. */
+  | { kind: 'cancelled' }
   /** Unhandled exception inside the hop loop. */
   | { kind: 'error'; message: string };
 

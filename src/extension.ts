@@ -158,7 +158,7 @@ async function loadAiOutputTemplates(
   extensionUri: vscode.Uri,
 ): Promise<AiOutputTemplates> {
   const logger = Logger.create(outputChannel, 'Config');
-  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'title', 'intro', 'description', 'sections', 'closing', 'highlights', 'notes'];
+  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'title', 'intro', 'description', 'sections', 'closing', 'highlights', 'notes', 'loading_pattern', 'business_capture', 'business_subsection', 'technical_capture', 'technical_subsection'];
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   const builtInKeys: string[] = [];
 
@@ -212,7 +212,7 @@ async function loadAiOutputTemplates(
     logger.info(`Applied AI templates: ${builtInKeys.length} loaded from built-in, ${overlaid.length} overlaid from custom (${overlaid.join(', ') || 'none'})`);
   } catch (err) {
     logger.warn(`Fallback AI templates custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${customPath}`);
-    vscode.window.showWarningMessage('Data Lineage: Failed to load custom AI output templates — using built-in defaults.');
+    vscode.window.showWarningMessage(`Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`);
   }
 
   return builtIn;
@@ -260,11 +260,11 @@ async function loadParseRules(
           await persistAbsolutePath('parseRulesFile', customPath, resolved);
         } else {
           logger.warn(`Fallback parse rules custom → built-in: reason=missing or invalid "rules" array at ${resolved}`);
-          vscode.window.showWarningMessage('Custom parse rules invalid — using built-in defaults.');
+          vscode.window.showWarningMessage(`Custom parse rules invalid at "${resolved}" — using built-in defaults.`);
         }
       } catch (err) {
         logger.warn(`Fallback parse rules custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${resolved}`);
-        vscode.window.showWarningMessage('Failed to load custom parse rules — using built-in defaults. Check Output channel.');
+        vscode.window.showWarningMessage(`Failed to load custom parse rules from "${resolved}" — using built-in defaults. Check Output channel for details.`);
       }
     } else {
       logger.warn(`Fallback parse rules custom → built-in: reason=cannot resolve path "${customPath}"`);

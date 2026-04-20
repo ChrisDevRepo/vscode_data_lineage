@@ -24,32 +24,18 @@ const BLOCK = {
     '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use relevant.\n' +
     '- irrelevant (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the pipeline → removed from graph.',
 
-  /** Step 2 — write the detail archive for this node. */
+  /** Step 2 — write the detail archive. Engine invariants only; CAPTURE rules live in YAML. */
   writeFindings:
-    'Write `detail_analysis` for the focus node. The archive preserves your analysis verbatim — no upper bound; synthesis uses this as sole evidence. Self-contained — written to answer the user\'s question. Aim ≥ 800 chars per relevant node; a thin slot produces thin synthesis.\n' +
-    'CLASSIFY the question — this drives findings depth:\n' +
-    '  WHAT the data means → lead with business meaning: formulas in LaTeX math syntax, column renames as | From | To | Business meaning | table, what each value represents, which consumers are affected.\n' +
-    '  HOW the pipeline runs → lead with execution: join strategies, loading patterns, constraints, rebuild order.\n' +
-    '  For blended questions: combine both — business meaning first.\n' +
-    'FORMAT to fit content:\n' +
-    '  Column rename or mapping → | From | To | Notes | table.\n' +
-    '  Formula → LaTeX math syntax.\n' +
-    '  Multi-step logic → ordered 1. 2. 3. list.\n' +
-    '  Risk or data quality → ⚠️ prefix.\n' +
-    'Name every column and expression explicitly — never "various columns" or "certain conditions". Quote SQL verbatim and explain in business terms.\n' +
-    'BAD: "COLUMNS: OrderID (int PK), Qty (decimal), UnitPrice (money)"\n' +
-    'GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT. Reads Qty from staging (rename OrderQty → Qty), UnitPrice from price view (PriceMaster lookup).\\n| Source | Column | Transform | Output |\\n| FactOrders | OrderQty | rename | Qty |\\n| PriceMaster | ListPrice | markup formula | UnitPrice |"\n' +
-    'When the question shape is unclear, fall back to covering each aspect present:\n' +
-    '  COLUMNS: key column names, types, constraints (PK/FK/nullable).\n' +
-    '  TRANSFORMS: expressions, CASE/COALESCE, computed columns — quote the SQL fragment.\n' +
-    '  JOINS: join conditions (table.col = table.col).\n' +
-    '  FILTERS: WHERE/HAVING business rules.\n' +
-    '  DATA FLOW: how data enters and leaves (INSERT/UPDATE/MERGE/DELETE/EXEC). Note the loading pattern as present in the DDL (full refresh / incremental / merge / CDC / SCD, etc.).\n' +
-    '  QUESTION RELEVANCE: how this node answers the user question.\n' +
-    '  OBSERVATIONS: DDL comments, version annotations, performance risks, anti-patterns.\n' +
+    'Write `detail_analysis` for the focus node.\n' +
+    'CRITICAL invariants (non-negotiable):\n' +
+    '  • The archive is the SOLE evidence at synthesis. It is UNBOUNDED.\n' +
+    '  • NO NEW FACTS at synthesis — if you don\'t capture it here, it is gone.\n' +
+    '  • `mission_brief` (delivered every hop) anchors every relevance decision.\n' +
+    'Aim ≥ 800 chars per relevant node; a thin slot produces a thin synthesis. Self-contained — written to answer the user\'s question.\n' +
+    'The Capture rules above (Business angle / Technical angle) list what to capture per node. When both angles apply, capture both.\n' +
+    'Also write a specific one-line `summary` — it carries forward via `working_memory.all_summaries` to future hops. Specific > short.\n' +
     '- pass → `summary` only: what passes through, from where to where.\n' +
-    '- irrelevant → brief `summary` only.\n' +
-    'Also write a specific one-line `summary` for this hop — it carries forward to future hops via working_memory.all_summaries. Specific > short.',
+    '- irrelevant → brief `summary` only.',
 
   /** Badge + note metadata drive the graph UI. */
   badgeAndNote:
@@ -85,7 +71,9 @@ const BLOCK = {
 
   /** Table node guidance — CT modes. */
   tableNodes:
-    'TABLE NODES: tables store data, not transform it — verdict a table itself as `pass`. Use route_requests to follow upstream writers (INSERT/UPDATE/MERGE sources).',
+    'TABLE NODES: tables store data, not transform it. Two cases:\n' +
+    '- PHYSICAL SOURCE (terminal): the traced column is a physical column on this table AND no in-DB upstream writer (INSERT/UPDATE/MERGE SP or view) populates it from other objects in scope → verdict = `relevant` (badge_label "Source"). Document the column definition (data type, nullable, constraints) in detail_analysis. This is the terminus of the chain — do not add route_requests.\n' +
+    '- INTERMEDIATE TABLE: an in-DB stored procedure or ETL view loads the traced column into this table → verdict = `pass`, and ALWAYS add the writer SP/view to route_requests with the column name as it appears in the writer\'s source. Do not stop here — the chain continues through the writer.',
 
   /** Working memory usage — BB. */
   workingMemory:
@@ -152,6 +140,8 @@ export function buildNavigationPrompt(mode: SmMode): string {
 }
 
 
+import type { ClassificationValue } from './classification';
+
 /**
  * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
  *
@@ -161,17 +151,36 @@ export function buildNavigationPrompt(mode: SmMode): string {
  * slot — the last key of the JSON that carries the archive + skeleton. Pairs with the
  * completion envelope preservation in `lineageParticipant.ts` / `toolProvider.ts`.
  *
+ * When `classification` is `technical` or `both`, the Technical-subsection
+ * instruction is appended as an extra bullet so the AI emits a `#### Technical`
+ * block per section.
+ *
  * @param question - The user's original question, used to re-anchor synthesis on intent.
+ * @param classification - Resolved mission type; drives technical-subsection emission.
+ * @param technicalSubsectionInstruction - Full YAML `technical_subsection.instruction` text.
+ * Required when classification is `technical` or `both`; ignored when `business`.
  * @returns A short reminder string injected as `synthesis_reminder` in the completion result.
  */
-export function buildSynthesisReminder(question: string): string {
-  return (
-    'SYNTHESIS REMINDER — re-read before generating enrich_view:\n' +
-    `- User question: "${question}"\n` +
-    '- Your detail slots are draft section text — assemble into enrich_view sections.\n' +
-    '- Every badged node: 3+ sentences with business meaning + SQL evidence.\n' +
-    '- Present at full depth — do not compress or re-summarize.\n' +
-    '- Deferred questions (out-of-approved-scope routes) surface as a "Detailed explanation" chip beneath the chat — focus your writing on the analyzed nodes only; do not list deferred questions in enrich_view or chat prose.\n' +
-    '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.'
-  );
+export function buildSynthesisReminder(
+  question: string,
+  classification?: ClassificationValue,
+  technicalSubsectionInstruction?: string,
+): string {
+  const lines = [
+    'SYNTHESIS REMINDER — re-read before generating enrich_view:',
+    `- User question: "${question}"`,
+    '- Your detail slots are draft section text — assemble into enrich_view sections.',
+    '- Every badged node: 3+ sentences with business meaning + SQL evidence.',
+    '- Present at full depth — do not compress or re-summarize.',
+    '- Deferred questions (out-of-approved-scope routes) surface as a "Detailed explanation" chip beneath the chat — focus your writing on the analyzed nodes only; do not list deferred questions in enrich_view or chat prose.',
+    '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.',
+  ];
+
+  if ((classification === 'technical' || classification === 'both') && technicalSubsectionInstruction?.trim()) {
+    lines.push(
+      `- When you render each section, also include a "#### Technical" subsection with: ${technicalSubsectionInstruction.trim()}`,
+    );
+  }
+
+  return lines.join('\n');
 }

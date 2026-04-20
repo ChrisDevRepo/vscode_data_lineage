@@ -83,12 +83,12 @@ export function compactStaleHopResult(
     const hop = parsed.hop ?? '';
     const status = parsed.bb_mode ?? parsed.status ?? '';
     return JSON.stringify({
-      _compacted: true,
+      compacted: true,
       summary: `${shortName} → ${node ? node + ' · ' : ''}${hop ? 'hop ' + hop + ' · ' : ''}${status}`,
     });
   } catch (e) {
     if (!(e instanceof SyntaxError)) console.debug('[AI] compactStaleHopResult unexpected error:', e);
-    return JSON.stringify({ _compacted: true, summary: `${shortName} → (compacted)` });
+    return JSON.stringify({ compacted: true, summary: `${shortName} → (compacted)` });
   }
 }
 
@@ -115,7 +115,7 @@ export const MIN_HISTORY_MESSAGES = 6;
  */
 export function buildEvictionStub(evictedCount: number): string {
   return JSON.stringify({
-    _evicted: true,
+    evicted: true,
     messages_dropped: evictedCount,
     reason: 'context_pressure',
     hint: 'Earlier conversation was removed to fit context window. Key context from those turns may be missing.',

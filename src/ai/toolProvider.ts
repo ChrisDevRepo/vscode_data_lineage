@@ -9,15 +9,18 @@ import {
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
   validateToolInput,
+  StartExplorationInputSchema,
   autoFixEnrichView, validateEnrichView, orderAndAssemble,
   type EnrichViewInput,
 } from './tools';
 import { edgeApiType } from './aiPresenter';
 import { prunePreserveOnly } from './viewPrune';
-import { type ObjectType, type AnalysisType, type DatabaseModel } from '../engine/types';
+import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNode } from '../engine/types';
 import { type SerializedFilterState, type AIViewMetadata } from '../engine/projectStore';
 import { PendingGateSchema } from './sessionPhase';
 import { buildSynthesisReminder } from './smPrompts';
+import { renderMetadataBand } from './templateRenderer';
+import { inferClassificationFromText, CLASSIFICATION_LABEL } from './classification';
 
 /**
  * Registers all language model tools associated with the `@lineage` chat participant.
@@ -76,8 +79,6 @@ export function registerAiTools(
 
     sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
 
-    const isError = 'error' in data || ('success' in data && !(data as any).success);
-    if (isError) logger.warn(`${toolName}: ${preview}`);
     logger.debug(`${toolName} → ${chars} chars: ${preview}`);
     return toolResult(data);
   }
@@ -125,7 +126,19 @@ export function registerAiTools(
           const sess = getSession();
           const m = requireModel();
           const g = requireGraph();
-          const input = options.input as any;
+
+          // Parse at the boundary: undefined `origin` used to crash at smBase.ts
+          // init → toLowerCase(); now produces a structured missing_field response.
+          const parsed = StartExplorationInputSchema.safeParse(options.input);
+          if (!parsed.success) {
+            const issue = parsed.error.issues[0];
+            const field = issue?.path?.join('.') || '(root)';
+            return logAndReturn('start_exploration', {
+              error: 'missing_field',
+              hint: `Invalid start_exploration input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: origin (non-empty string). Optional: question, direction, depth, depth_enforcement, excludeTypes, mission_brief, targetColumns.`,
+            }, options.input);
+          }
+          const input = parsed.data;
 
           sess.resetIfStale();
 
@@ -238,6 +251,16 @@ export function registerAiTools(
             // State mutation before consent is safe: on no/redirect, sess.resetExploration() in
             // the participant discards the engine entirely.
             if (sess.phase.kind === 'idle') {
+              // Resolve classification NOW so it is (a) visible in the confirm-SM-start detail
+              // shown to the user and (b) available to the active-phase system prompt that ships
+              // the capture rules. Signals: mission_brief (AI-authored at start_exploration) + the
+              // user question. Default = business if neither signal fires.
+              if (!sess.classification) {
+                const brief = sess.memory.getMissionBrief();
+                const question = sess.memory.getUserQuestion();
+                sess.setClassification(inferClassificationFromText(`${brief} ${question}`));
+                logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (SM mode, pre-confirm)`);
+              }
               const hopCtx = engine.getHopContext();
               const direction = input.direction || 'bidirectional';
               const gate = PendingGateSchema.parse({
@@ -246,11 +269,12 @@ export function registerAiTools(
                 nodeIds: [],
                 detail:
                   `Large task — ${initResult.scopeSize} nodes to analyze, budget ~${safeMax} hops.\n` +
+                  `Analysis: ${CLASSIFICATION_LABEL[sess.classification!]}\n` +
                   `Schemas in scope: ${activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
                   `Depth: ${input.depth ?? 'default'} (${input.depth_enforcement ?? 'silent'} enforcement)\n` +
                   `Direction: ${direction}`,
               });
-              logger.info(`[${sess.id}] Session-start scope=${initResult.scopeSize} agenda=${initResult.agendaSize} depth=${input.depth ?? 'default'} enforcement=${input.depth_enforcement ?? 'silent'} mode=sm schemas=${activeFilter.schemas.length} (primed, awaiting confirm_sm_start)`);
+              logger.info(`[${sess.id}] Session-start scope=${initResult.scopeSize} agenda=${initResult.agendaSize} depth=${input.depth ?? 'default'} enforcement=${input.depth_enforcement ?? 'silent'} classification=${sess.classification} mode=sm schemas=${activeFilter.schemas.length} (primed, awaiting confirm_sm_start)`);
               return logAndReturn('start_exploration', {
                 error: 'action_required',
                 ...gate,
@@ -264,7 +288,17 @@ export function registerAiTools(
 
           const hopResult = engine.getHopContext();
           return logAndReturn('start_exploration', { ...initResult, ...hopResult }, options.input);
-        } catch (err) { return toolError('start_exploration', err); }
+        } catch (err) {
+          // Engine may be partially initialized and wired to the session. Clear it so the
+          // next start_exploration/submit_findings is not locked behind already_started or
+          // invalid_status (engine stuck at status='created' after a throw in init).
+          try {
+            const sess = getSession();
+            sess.stateMachine = null;
+            sess.startExplorationRoundId = null;
+          } catch { /* session accessor is infallible; guard is defensive */ }
+          return toolError('start_exploration', err);
+        }
       },
     }),
 
@@ -302,7 +336,7 @@ export function registerAiTools(
           logger.debug(
             `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} ` +
             `verdict=${(options.input as any).verdict} detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
-            `routed=${diag.routedNew}/${diag.routedRejected}/${diag.routedDeferred} deferred_queued=${diag.deferredQueued} agenda=${diag.agendaRemaining} ` +
+            `routed=${diag.routedNew}/${diag.routedRejected} routed_deferred=${diag.routedDeferred} deferred_queued=${diag.deferredQueued} agenda=${diag.agendaRemaining} ` +
             `tally=R${diag.tally.relevant}/P${diag.tally.pass}/I${diag.tally.irrelevant} ` +
             `expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}`
           );
@@ -317,9 +351,21 @@ export function registerAiTools(
             // AI can render them as an "Unanswered" tail-section and the followup provider can
             // surface them as chips after the turn ends.
             const deferredQuestions = sess.stateMachine?.deferredQuestions ?? [];
+            // Classification gate: infer mission-type from mission brief + user question
+            // before synthesis. Default to `business` when signals are absent.
+            if (!sess.classification) {
+              const brief = sess.memory.getMissionBrief();
+              const question = sess.memory.getUserQuestion();
+              sess.setClassification(inferClassificationFromText(`${brief} ${question}`));
+              logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (SM mode, pre-synthesis fallback)`);
+            }
             // Synthesis reminder appended as the last key of the envelope — end-of-context
             // attention peak re-asserts depth + grounding. Anthropic long-context guidance.
-            const synthesisReminder = buildSynthesisReminder(sess.memory.getUserQuestion());
+            const synthesisReminder = buildSynthesisReminder(
+              sess.memory.getUserQuestion(),
+              sess.classification,
+              sess.outputTemplates.technical_subsection,
+            );
             return logAndReturn('submit_findings', {
               ok: true,
               done: true,
@@ -343,7 +389,25 @@ export function registerAiTools(
           const model = requireModel();
           const input = options.input as EnrichViewInput;
 
-          logger.debug(`enrich_view: entry — name="${input.name ?? '?'}", summary len=${(input.summary ?? '').length}, desc len=${(input.description ?? '').length}, stored_graph=${!!sess.resultGraph}`);
+          // Haiku occasionally passes optional array fields as a single object or string instead of an array.
+          // Normalize at the boundary so downstream `?.length` guards and `.some`/`.map`/`.filter` calls cannot crash.
+          if (input.sections !== undefined && !Array.isArray(input.sections)) input.sections = undefined;
+          if (input.notes !== undefined && !Array.isArray(input.notes)) input.notes = undefined;
+          if (input.add_node_ids !== undefined && !Array.isArray(input.add_node_ids)) input.add_node_ids = undefined;
+          if (input.prune_node_ids !== undefined && !Array.isArray(input.prune_node_ids)) input.prune_node_ids = undefined;
+          if (input.highlight_groups !== undefined && !Array.isArray(input.highlight_groups)) input.highlight_groups = undefined;
+
+          logger.debug(
+            `enrich_view: entry — name="${input.name ?? '?'}" (${(input.name ?? '').length}), ` +
+            `title len=${(input.title ?? '').length}, ` +
+            `summary len=${(input.summary ?? '').length}, ` +
+            `desc len=${(input.description ?? '').length}, ` +
+            `closing len=${(input.closing ?? '').length}, ` +
+            `sections=${input.sections?.length ?? 0}, ` +
+            `notes=${input.notes?.length ?? 0}, ` +
+            `highlights=${input.highlight_groups?.length ?? 0}, ` +
+            `stored_graph=${!!sess.resultGraph}`
+          );
 
           if (!sess.resultGraph) {
             return logAndReturn('enrich_view', {
@@ -409,7 +473,22 @@ export function registerAiTools(
 
           let assembledBadges: Array<{ node_id: string; text: string }> = [];
           if (input.sections?.length) {
-            const assembled = orderAndAssemble(input.sections, { title: input.title, intro: input.intro, closing: input.closing });
+            // Metadata band is SP-only Loading Pattern now (In/Out rows removed — topology
+            // lives in the graph view, not in the description text).
+            const originId = sess.resultGraph?.originNodeId;
+            const nodeMap = new Map<string, LineageNode>(
+              (model.nodes as LineageNode[]).map(n => [n.id, n]),
+            );
+            const metadataBand = originId
+              ? renderMetadataBand(originId, nodeMap, input.loading_pattern)
+              : '';
+
+            const assembled = orderAndAssemble(input.sections, {
+              title: input.title,
+              intro: input.intro,
+              closing: input.closing,
+              metadataBand,
+            });
             assembledBadges = assembled.badges;
             if (!input.description) input.description = assembled.description;
             input.sections = undefined;

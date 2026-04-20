@@ -65,6 +65,36 @@ export interface AiOutputTemplates {
   highlights: string;
   /** Instructions for extracting and formatting node-level notes. */
   notes: string;
+  /**
+   * AI-inferred SP loading pattern (reload / append / upsert / historization
+   * / purge / orchestration). SP-only; omitted for views and UDFs. Rendered
+   * inside the metadata band above the sections. Synthesis stage.
+   */
+  loading_pattern: string;
+  /**
+   * Business-angle capture rules — shown at ACTIVE phase so the AI writes
+   * business meaning, formulas, column renames, and question-relevance
+   * evidence into `detail_analysis` per hop.
+   */
+  business_capture: string;
+  /**
+   * Business-angle render rules — shown at SYNTHESIS phase. Tells the AI
+   * how the business content captured at ACTIVE becomes the main body of
+   * each section's text (no subheading).
+   */
+  business_subsection: string;
+  /**
+   * Technical-angle capture rules — shown at ACTIVE phase so the AI writes
+   * SQL snippets, LaTeX formulas, observations, join types, antipatterns,
+   * and distribution hints into `detail_analysis` per hop.
+   */
+  technical_capture: string;
+  /**
+   * Technical-angle render rules — shown at SYNTHESIS phase when the
+   * resolved classification is `technical` or `both`. Tells the AI how to
+   * emit a `#### Technical` block below the business body.
+   */
+  technical_subsection: string;
 }
 
 /**
@@ -81,7 +111,12 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   sections: '',
   closing: '',
   highlights: '',
-  notes: ''
+  notes: '',
+  loading_pattern: '',
+  business_capture: '',
+  business_subsection: '',
+  technical_capture: '',
+  technical_subsection: '',
 };
 
 /** 

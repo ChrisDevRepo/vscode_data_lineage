@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AiSession } from './session';
-import { Logger, trunc } from '../utils/log';
+import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import {
   buildPlatformContext, buildSchemaContext, buildSystemPromptBase,
@@ -13,6 +13,9 @@ import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
 import { RepeatRejectGuard } from './repeatRejectGuard';
 import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
+import { inferClassificationFromText, CLASSIFICATION_BANNER } from './classification';
+import { resolveStagePrompt } from './templateRenderer';
+import { ChatResponseWriter } from './chatResponseWriter';
 export { classifyGateReply } from './sessionPhase';
 
 /**
@@ -31,6 +34,30 @@ export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { c
     name: tc.name,
     input: tc.input,
   };
+}
+
+/**
+ * Extract the `error` code from a tool result's JSON envelope, or `null` if the result
+ * is not an error.
+ *
+ * @remarks
+ * Our tools return `{ error: '<code>', … }` on rejection and anything else on success.
+ * Non-JSON text parts or envelopes without an `error` field are treated as success.
+ * Shared by the dedup bypass, the repeat-reject detector, and the abort-payload builder.
+ *
+ * @param result - The tool result to inspect, or `undefined` if the call produced none.
+ * @returns The error code string, or `null` if the result is absent or successful.
+ */
+export function extractToolErrorCode(result: vscode.LanguageModelToolResult | undefined): string | null {
+  if (!result) return null;
+  for (const p of result.content) {
+    if (!(p instanceof vscode.LanguageModelTextPart)) continue;
+    try {
+      const data = JSON.parse(p.value);
+      if (data && typeof data.error !== 'undefined') return String(data.error);
+    } catch { /* non-JSON: not an error envelope, continue scanning */ }
+  }
+  return null;
 }
 
 /**
@@ -150,10 +177,10 @@ export class LineageParticipant {
    * hop loop then processes them and synthesis patches the view via `enrich_view.is_update`.
    *
    * @param sess - The active session; must have `stateMachine.status === 'complete'`.
-   * @param stream - Chat response stream for a short user-visible progress line.
+   * @param writer - Lifecycle-aware chat writer for a short user-visible progress line.
    * @returns `true` when at least one node was added to the agenda; `false` otherwise.
    */
-  private tryExtendWithDeferredQuestions(sess: AiSession, stream: vscode.ChatResponseStream): boolean {
+  private tryExtendWithDeferredQuestions(sess: AiSession, writer: ChatResponseWriter): boolean {
     const engine = sess.stateMachine as NavigationEngine | null;
     if (!engine || engine.status !== 'complete' || sess.isStale()) return false;
     const deferred = engine.deferredQuestions ?? [];
@@ -167,7 +194,7 @@ export class LineageParticipant {
     const question = `Extended scope: ${byNode.size} deferred question(s) requested by user`;
     const result = engine.extendScope(nodeIds, question);
     if (result.added === 0) return false;
-    stream.markdown(`\n\n> Extending analysis — ${result.added} new node(s), reusing ${sess.memory.slotCount} existing finding(s).\n\n`);
+    writer.markdown(`\n\n> Extending analysis — ${result.added} new node(s), reusing ${sess.memory.slotCount} existing finding(s).\n\n`);
     return true;
   }
 
@@ -180,7 +207,11 @@ export class LineageParticipant {
     const sess = this.getSession();
     sess.maxInputTokens = request.model.maxInputTokens;
     sess.modelName = request.model.name || request.model.id;
-    
+    // Stream lifecycle is owned by the writer — every stream.* call in this handler routes
+    // through it so cancellation (Stop button / new prompt / panel close) is observed once
+    // and subsequent writes become silent no-ops. Replaces direct `stream.*` access.
+    const writer = new ChatResponseWriter(stream, token, this.logger, sess.id);
+
     const aiConfig = vscode.workspace.getConfiguration('dataLineageViz');
     const MAX_ROUNDS = aiConfig.get<number>('ai.maxRounds', 50);
     setInlineTokenBudget(aiConfig.get<number>('ai.inlineTokenBudget', 10_000));
@@ -189,7 +220,7 @@ export class LineageParticipant {
     const showToolInvocations = aiConfig.get<boolean>('ai.showToolInvocations', false);
 
     if (!sess.model) {
-      stream.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first.');
+      writer.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first.');
       return {};
     }
 
@@ -207,6 +238,11 @@ export class LineageParticipant {
       }
     }
 
+    // Any user-driven turn (new prompt, gate reply, follow-up chip) is activity — refresh
+    // the stale timer so a long-pending confirm_sm_start gate can be resumed without
+    // resetIfStale() wiping the primed engine on the next start_exploration call.
+    sess.touch();
+
     this.logger.info(`[${sess.id}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
     let activePhase: 'discover' | 'active' | 'done' = 'discover';
@@ -221,13 +257,13 @@ export class LineageParticipant {
       // "Show full description" chip — short-circuit: stream the stored enrich_view description
       // 1:1 into chat. No SM extension, no new LM call. Detected by prompt sentinel.
       if (request.prompt === 'Show the full description' && sess.lastEnrichViewDescription) {
-        stream.markdown(sess.lastEnrichViewDescription);
+        writer.markdown(sess.lastEnrichViewDescription);
         return {};
       }
       // Fired by the "Detailed explanation" chip (ChatFollowup with `command: 'followup'`).
       // Route the existing live SM session into its extend path: add deferred-question nodes
       // to the agenda and resume the hop loop. Preserves the detail archive so this is fast.
-      const extended = this.tryExtendWithDeferredQuestions(sess, stream);
+      const extended = this.tryExtendWithDeferredQuestions(sess, writer);
       if (extended) {
         sess.enterExploring();
         effectivePrompt = 'Continue the hop-by-hop analysis — call submit_findings for the newly-added focus node. Merge findings into the existing archive and update the view via is_update:true.';
@@ -245,7 +281,7 @@ export class LineageParticipant {
       const answer = classifyGateReply(request.prompt);
       if (answer === 'no') {
         sess.enterIdle();
-        stream.markdown(
+        writer.markdown(
           `\n\n> Exploration paused — scope held to the declared filter. ` +
           `Ask a refined question to restart with a different scope.\n\n`
         );
@@ -263,7 +299,6 @@ export class LineageParticipant {
           // Engine is already initialized; just enter exploring. Pre-active-phase block below
           // sees `phase.kind === 'exploring'` and jumps into the hop loop directly.
           sess.enterExploring();
-          stream.markdown(`\n\n> Starting analysis — ${sess.memory.slotCount === 0 ? 'first hop' : 'resuming'}.\n\n`);
           effectivePrompt = 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
           // Inline-only expansion path. SM never reaches here — SM scope is locked at confirm_sm_start;
@@ -276,7 +311,7 @@ export class LineageParticipant {
             }
           }
           sess.enterExploring();
-          stream.markdown(`\n\n> Expanding scope — ${gate.classes.join(', ')}. Resuming analysis.\n\n`);
+          writer.markdown(`\n\n> Expanding scope — ${gate.classes.join(', ')}. Resuming analysis.\n\n`);
           effectivePrompt = `User approved scope expansion for ${gate.classes.join(', ')}. Resume the paused exploration and route the previously blocked nodes: ${gate.nodeIds.join(', ')}.`;
         }
         this.logger.info(`[Gate] ${gate.gate} — user approved classes=[${gate.classes.join(', ')}]`);
@@ -322,32 +357,16 @@ export class LineageParticipant {
       }
     }
 
-    // Stage-scoped system prompt: templates inject only on phases that can use them.
-    // - DISCOVERY: summary + description (for trivial chat answers without SM)
-    // - ACTIVE:    none (per-hop writing governed by BLOCK.writeFindings in nav prompt)
-    // - SYNTHESIS: full template set (enrich_view fields are written here)
+    // Stage-scoped system prompt: templates inject per phase via resolveStagePrompt,
+    // driven by `STAGE_BY_KEY` in templateRenderer.ts. Active phase now injects the
+    // dual-stage subsections (business_subsection, technical_subsection) so capture
+    // rules live in the YAML the user edits — end-to-end effect.
     const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
       const base = buildPlatformContext(sess.model!.dbPlatform || 'SQL Server') +
         (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') +
         buildSystemPromptBase(MAX_ROUNDS);
-      if (phase === 'active') return base;
-      if (phase === 'discover') {
-        return base +
-          `### AI OUTPUT TEMPLATES (DISCOVERY — for chat-only answers without SM)\n` +
-          `- summary: ${sess.outputTemplates.summary}\n` +
-          `- description: ${sess.outputTemplates.description}`;
-      }
-      // synthesis
-      return base +
-        `### AI OUTPUT TEMPLATES (SYNTHESIS — enrich_view fields)\n` +
-        `- summary: ${sess.outputTemplates.summary}\n` +
-        `- title: ${sess.outputTemplates.title}\n` +
-        `- intro: ${sess.outputTemplates.intro}\n` +
-        `- sections: ${sess.outputTemplates.sections}\n` +
-        `- closing: ${sess.outputTemplates.closing}\n` +
-        `- notes: ${sess.outputTemplates.notes}\n` +
-        `- highlights: ${sess.outputTemplates.highlights}\n` +
-        `- description (fallback): ${sess.outputTemplates.description}`;
+      const stageBlock = resolveStagePrompt(sess.outputTemplates, phase, sess.classification);
+      return stageBlock ? `${base}\n${stageBlock}` : base;
     };
     let systemPrompt = buildStageSystemPrompt('discover');
     // Built on active-phase entry and re-injected after every sliding-memory wipe.
@@ -394,7 +413,7 @@ export class LineageParticipant {
           historyMessages.unshift(vscode.LanguageModelChatMessage.User(buildEvictionStub(evicted)));
         }
       } catch (err) {
-        this.logger.debug(`Context eviction countTokens failed: ${err instanceof Error ? err.message : err}`);
+        this.logger.warn(`Context eviction countTokens failed — proceeding without pressure check, may overflow budget: ${err instanceof Error ? err.message : err}`);
       }
     }
 
@@ -421,11 +440,14 @@ export class LineageParticipant {
 
       const drainPendingUserNotices = () => {
         if (sess.pendingUserNotice.size === 0) return;
-        for (const notice of sess.pendingUserNotice) stream.markdown(`\n\n> ${notice}\n\n`);
+        for (const notice of sess.pendingUserNotice) writer.markdown(`\n\n> ${notice}\n\n`);
         sess.pendingUserNotice.clear();
       };
 
       while (roundCount < MAX_ROUNDS) {
+        // Cooperative cancellation at hop boundary — VS Code has already torn the stream down,
+        // so any further sendRequest / stream write would crash. Exit cleanly.
+        if (!writer.isOpen()) return { kind: 'cancelled' };
         roundCount++;
         // Bump the session round counter so tools can detect parallel calls within one LM round.
         // Used by the start_exploration parallel-call guard in toolProvider.ts.
@@ -462,17 +484,20 @@ export class LineageParticipant {
         // Suppress active-phase prose so hop narratives don't surface as duplicate chat output.
         const surfaceProse = activePhase !== 'active';
         for await (const part of response.stream) {
+          // Stop draining LM output if the user cancelled — pushing to a closed stream throws.
+          if (!writer.isOpen()) break;
           if (part instanceof vscode.ChatResponseMarkdownPart) {
             assistantParts.push(new vscode.LanguageModelTextPart(part.value.value));
             responseText += part.value.value;
-            if (surfaceProse) stream.markdown(part.value.value);
+            if (surfaceProse) writer.markdown(part.value.value);
           } else if (part instanceof vscode.LanguageModelTextPart) {
             assistantParts.push(part);
             responseText += part.value;
-            if (surfaceProse) stream.markdown(part.value);
+            if (surfaceProse) writer.markdown(part.value);
           }
           else if (part instanceof vscode.LanguageModelToolCallPart) { assistantParts.push(part); toolCalls.push(part); }
         }
+        if (!writer.isOpen()) return { kind: 'cancelled' };
 
         let roundOutputTokens = 0;
         try {
@@ -502,11 +527,7 @@ export class LineageParticipant {
             // the AI see the real error on retries (so it can adapt) and let RepeatRejectGuard
             // observe the same error 3x to trigger the 3-strike abort.
             const cached = toolCallCache.get(cacheKey)!;
-            const cachedIsError = cached.content.some(p =>
-              p instanceof vscode.LanguageModelTextPart &&
-              (() => { try { return !!JSON.parse(p.value).error; } catch { return false; } })()
-            );
-            if (!cachedIsError) {
+            if (extractToolErrorCode(cached) === null) {
               resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true }))]));
               roundHadCacheHit = true;
               continue;
@@ -519,19 +540,17 @@ export class LineageParticipant {
             continue;
           }
 
-          // Per-tool progress line; submit_findings gets a hop-aware format.
+          // Per-tool progress line; submit_findings shows hop count + focus-node short name,
+          // non-hop tools show generic "Invoking <tool>…".
           let progressLine = `Invoking ${f.name.replace('lineage_', '')}…`;
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
             const st = sess.stateMachine.toJSON() as { hopCount?: number; scopeSize?: number; currentFocusNodeId?: string | null };
-            if (!st.currentFocusNodeId || (st.hopCount ?? 0) === 0) {
-              progressLine = `Preparing first hop…`;
-            } else {
-              const shortName = st.currentFocusNodeId.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
-              progressLine = `Hop ${st.hopCount} / ${st.scopeSize ?? '?'} — analyzing ${shortName}…`;
-            }
+            const shortName = st.currentFocusNodeId?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
+            const denom = st.scopeSize ?? '?';
+            progressLine = `Hop ${st.hopCount ?? 1} / ${denom} — analyzing ${shortName}…`;
           }
           if (progressLine !== lastProgressLine) {
-            stream.progress(progressLine);
+            writer.progress(progressLine);
             lastProgressLine = progressLine;
           }
           totalToolCallsMade++;
@@ -562,20 +581,10 @@ export class LineageParticipant {
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
           const res = accumulatedToolResults[f.callId];
-          let isError = false;
-          if (res) {
-            for (const p of res.content) {
-              if (p instanceof vscode.LanguageModelTextPart) {
-                try { if (JSON.parse(p.value).error) { isError = true; break; } } catch { /* non-JSON result: treat as success */ }
-              }
-            }
-          }
-          const obs = repeatGuard.observe(f.name, f.input, isError);
+          const errorCode = extractToolErrorCode(res);
+          const obs = repeatGuard.observe(f.name, f.input, errorCode !== null);
           if (obs.abort) {
-            const lastErrorText = (() => {
-              const p = res?.content.find(c => c instanceof vscode.LanguageModelTextPart) as vscode.LanguageModelTextPart | undefined;
-              try { return p ? (JSON.parse(p.value).error ?? 'unknown') : 'unknown'; } catch { return 'unknown'; }
-            })();
+            const lastErrorText = errorCode ?? 'unknown';
             const abortPayload = {
               error: 'session_aborted_repeat_reject',
               tool: f.name,
@@ -584,7 +593,7 @@ export class LineageParticipant {
               hint: `The same ${f.name.replace('lineage_', '')} call with the same arguments was rejected ${obs.count} times. The parameters cannot succeed as given. Stop retrying; if you have partial findings, produce a final answer explaining what you found and what was blocked. If no findings, tell the user the request needs different input.`,
             };
             this.logger.warn(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
-            stream.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
+            writer.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
             messages.push(vscode.LanguageModelChatMessage.User(JSON.stringify(abortPayload)));
             return { kind: 'aborted', reason: `repeat_reject:${f.name}:${lastErrorText}` };
           }
@@ -605,7 +614,7 @@ export class LineageParticipant {
               const data = JSON.parse(p.value);
               if (data.action_required === 'analyze_and_respond') actionRequiredPending = true;
               if (data.error === 'action_required') consentGate = PendingGateSchema.parse(data);
-            } catch { /* non-JSON or invalid envelope: ignore; malformed gates fail Zod parse */ }
+            } catch (e) { this.logger.debug(`[Gate] tool-result not JSON or envelope failed Zod parse: ${sanitizeForLog(String(e))}`); }
           }
         }
         if (actionRequiredPending) messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, buildActionRequiredGate(['analyze_and_respond'])));
@@ -646,6 +655,18 @@ export class LineageParticipant {
           activePhase = 'done';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_submit_findings');
           this.logger.info(`[Phase] active → done — SM complete, restored ${lineageTools.length} classic tools`);
+
+          // Classification gate (inline path): infer from mission brief + user question,
+          // store on session, stream a one-line banner to chat. SM path classifies earlier
+          // inside toolProvider's submit_findings drain — that path does not render a banner
+          // (SM's confirm-sm-start message already set the user's expectation).
+          if (sess.stateMachine.inlineMode && !sess.classification) {
+            const brief = sess.memory.getMissionBrief();
+            const question = sess.memory.getUserQuestion();
+            sess.setClassification(inferClassificationFromText(`${brief} ${question}`));
+            writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification!]}\n\n`);
+            this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (inline mode)`);
+          }
 
           // Stage-scope the system prompt: restore full output templates for SYNTHESIS.
           systemPrompt = buildStageSystemPrompt('synthesis');
@@ -704,7 +725,7 @@ export class LineageParticipant {
             messages.push(lastAssistant, lastResult);
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
           } else {
-            this.logger.warn(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
+            this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
           }
         }
       }
@@ -715,15 +736,22 @@ export class LineageParticipant {
     try {
       exit = await runHopLoop();
     } catch (err) {
-      this.logger.error('Chat handler', err);
-      exit = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
+      // Cancellation during an in-flight sendRequest / invokeTool surfaces as a thrown error,
+      // but it is a user action — not a bug. Only treat it as `error` when the writer is still
+      // open (i.e. the throw came from a real code path, not a cancelled turn).
+      if (!writer.isOpen() && writer.status().kind === 'cancelled') {
+        exit = { kind: 'cancelled' };
+      } else {
+        this.logger.error('Chat handler', err);
+        exit = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
+      }
     }
 
     const smMode = sess.stateMachine?.mode ?? '—';
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
     this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
 
-    this.dispatchExit(exit, sess, stream, request.prompt, roundCount, MAX_ROUNDS);
+    this.dispatchExit(exit, sess, writer, request.prompt, roundCount, MAX_ROUNDS);
 
     // Count distinct deferred-question nodes so the followup provider knows whether to render
     // the "Detailed explanation" chip. Chip is gated on (a) the turn included an enrich_view
@@ -747,7 +775,7 @@ export class LineageParticipant {
    *
    * @param exit - The typed outcome of `runHopLoop`.
    * @param sess - The active session (mutated via `enterGate` / `enterIdle`).
-   * @param stream - Chat response stream for gate / partial-result UX messages.
+   * @param writer - Lifecycle-aware chat writer; writes become no-ops if the stream closed.
    * @param userPrompt - Verbatim user prompt, used by the "Show in Graph" button.
    * @param roundCount - Number of rounds actually executed.
    * @param maxRounds - The configured round budget (for the "cap hit" message).
@@ -755,7 +783,7 @@ export class LineageParticipant {
   private dispatchExit(
     exit: HopLoopExit,
     sess: AiSession,
-    stream: vscode.ChatResponseStream,
+    writer: ChatResponseWriter,
     userPrompt: string,
     roundCount: number,
     maxRounds: number
@@ -767,11 +795,11 @@ export class LineageParticipant {
           exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' :
           exit.gate.gate === 'confirm_scope_extension' ? 'Scope extension available' :
           'Scope expansion requested';
-        stream.markdown(
+        writer.markdown(
           `\n\n---\n**${title}**\n\n${exit.gate.detail}\n\n` +
           `Reply \`yes\` to proceed, \`no\` to pause, or ask a different question to redirect.\n\n---\n`
         );
-        this.logger.warn(`[Gate] ${exit.gate.gate} — classes=[${exit.gate.classes.join(', ')}] nodes=${exit.gate.nodeIds.length}`);
+        this.logger.info(`[Gate] ${exit.gate.gate} — classes=[${exit.gate.classes.join(', ')}] nodes=${exit.gate.nodeIds.length}`);
         return;
       }
       case 'final_answer': {
@@ -782,8 +810,15 @@ export class LineageParticipant {
           // which may be a gate confirmation like "yes" that would leak into enrich_view.name.
           const originalQ = sess.memory.getUserQuestion() || userPrompt;
           this.logger.debug(`[CreateView] button arg=${sess.memory.getUserQuestion() ? 'userQuestion' : 'userPrompt'} (${originalQ.length} chars): ${originalQ.slice(0, 100)}`);
-          stream.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
+          writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
         }
+        return;
+      }
+      case 'cancelled': {
+        // User cancelled — stream is already torn down; VS Code renders its own "Cancelled" UI.
+        // Only session bookkeeping here; no stream write would land anyway.
+        sess.enterIdle();
+        this.logger.info(`[${sess.id}] Exit cancelled — session returned to idle`);
         return;
       }
       case 'hop_cap':
@@ -796,7 +831,7 @@ export class LineageParticipant {
             ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.`
             : exit.message;
         this.logger.warn(`Exit ${exit.kind}: ${msg}`);
-        stream.markdown(`\n\n*Error: ${msg}*`);
+        writer.markdown(`\n\n*Error: ${msg}*`);
         return;
       }
     }

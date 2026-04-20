@@ -103,6 +103,8 @@ The user's original question reaches the model via three paths every hop: (1) `w
 2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. Each hop it receives `all_summaries`, the Map, the focus DDL, and neighbor metadata.
 3. **Holistic Synthesis & Presentation**: Once the agenda drains, the synthesis phase (`lineageParticipant.ts` active→done transition) injects the full Detail Archive as a fresh user message; the AI produces the chat prose + `enrich_view` sections directly. (`ViewSynthesisService` was inlined in commit `95316fc`.)
 
+At the active→synthesis transition a **classification gate** resolves the mission type to `business`, `technical`, or `both` — a heuristic keyword scan over the mission brief + user question. The value is stored on the session (`AiSession.classification`, Zod-validated at the boundary) and drives which subsections render inside each `enrich_view` section: `business` omits the `#### Technical` block; `technical` treats the body as the technical write-up; `both` emits business body + Technical subsection. Inline mode surfaces a one-line banner (`> Starting analyze phase — <kind>-driven.`) at synthesis start; SM mode already set expectations via `confirm_sm_start`. See `docs/AI_PROMPTS.md` §6 for the onion-layered document shape.
+
 ### Phase-Boundary Contract for Prompt Authors
 
 - **DISCOVERY → ACTIVE** — triggered by `lineage_start_exploration`. Nav prompt for the chosen mode is injected. `lineage-engine` tool tag replaces `lineage` (so classic tools are hidden). Prompts added in DISCOVERY that mention classic-tool choice are dead weight after this transition — scope them to DISCOVERY only.

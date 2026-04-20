@@ -82,12 +82,19 @@ export function escHtml(s: string): string {
 const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
 
 /**
- * Expands a `{{SCHEMAS}}` placeholder within a SQL template with a comma-separated list 
+ * Expands a `{{SCHEMAS}}` placeholder within a SQL template with a comma-separated list
  * of single-quoted schema names.
- * 
- * Example: `SELECT * FROM sys.tables WHERE schema_name IN ({{SCHEMAS}})` 
+ *
+ * Example: `SELECT * FROM sys.tables WHERE schema_name IN ({{SCHEMAS}})`
  * becomes `SELECT * FROM sys.tables WHERE schema_name IN ('dbo', 'Sales')`.
- * 
+ *
+ * @remarks
+ * Safe for string-literal (`IN (…)`, `= '…'`) contexts only. Embedded `'` characters are
+ * SQL-escaped to `''`. The output is **not** safe to use as a SQL identifier — do not
+ * interpolate into `[schema]`/`"schema"` positions. If an identifier context is ever
+ * needed, add a dedicated helper that validates against `sys.schemas` or brackets with
+ * `]`-escaping.
+ *
  * @param sql - The SQL template string containing the placeholder.
  * @param schemas - The list of schema names to inject.
  * @returns The expanded SQL query.
