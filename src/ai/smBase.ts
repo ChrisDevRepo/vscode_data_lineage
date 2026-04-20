@@ -909,11 +909,14 @@ export class NavigationEngine implements IHopStateMachine {
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const boundary = this.visited.has(nid) ? 'cycle' : 'none';
-      const cols = getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name);
+      // CT mode tracks column flows; BB mode routes by type/direction/scope only
+      const cols = this.mode !== 'blackboard'
+        ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name)
+        : undefined;
       const neighbor: HopNeighbor = {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: (this.graph.inNeighbors(focusId) as string[]).includes(nid) ? 'upstream' : 'downstream',
-        edge_type: 'read', boundary, cols,
+        edge_type: 'read', boundary, ...(cols?.length ? { cols } : {}),
       };
 
       const d = this.depthFromOrigin.get(nid);

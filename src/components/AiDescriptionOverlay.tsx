@@ -92,7 +92,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   function AnchorComponent({ href, children, ...props }: React.HTMLAttributes<HTMLAnchorElement> & { href?: string }) {
     if (href?.startsWith('#focus-node:') && onFocusNode) {
       return (
-        <a href={href} {...props} onClick={(e) => { e.preventDefault(); onFocusNode(href.slice('#focus-node:'.length)); }}>
+        <a href={href} {...props} onClick={(e) => { e.preventDefault(); onFocusNode(decodeURIComponent(href.slice('#focus-node:'.length))); }}>
           {children}
         </a>
       );

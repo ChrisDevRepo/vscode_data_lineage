@@ -37,7 +37,7 @@ npm run test:snapshot     # parser baseline regression check
 ```
 
 ### 3.1 AI Eval Integrity — Hard Rule
-The AI eval framework (`tests/e2e/suite/eval/` + `tests/eval/`) measures the real behavior of the `@lineage` chat participant. The eval agent receives ONLY what the real VS Code chat delivers to the language model: the user's question, the system + navigation prompts + tool descriptions from `GET /prompts`, and the HTTP transport to the in-extension `toolProxy`.
+The AI eval framework (`tests/eval/`) measures the real behavior of the `@lineage` chat participant. The eval agent receives ONLY what the real VS Code chat delivers to the language model: the user's question, the system + navigation prompts + tool descriptions from `GET /prompts`, and the HTTP transport to the in-extension `toolProxy`.
 
 **Forbidden in the eval-agent prompt:** any behavior hint, structural template, density target, terminology rule, error-recovery coaching, "keep calling submit_findings" reminder, corrected example, or re-emphasis of production-prompt rules. If the production prompt can't drive the behavior, that IS the finding — fix it upstream via `/prompt-change`, never patch it in the harness.
 
