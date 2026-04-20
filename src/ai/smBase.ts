@@ -772,10 +772,6 @@ export class NavigationEngine implements IHopStateMachine {
     const prunable = isIrrelevant && this.currentFocusNodeId !== this.originNodeId;
     if (prunable) {
       // Topological protection only — don't orphan already-analyzed (noted) nodes.
-      // We do NOT second-guess the AI's verdict with numeric cascade thresholds: the AI has the
-      // only content view (read the DDL, emitted one of relevant|pass|irrelevant). SM is
-      // content-blind and owns execution, not judgment. If a session over-prunes, fix the
-      // `irrelevant` rubric in the prompt (smPrompts.ts BLOCK.verdictCategories).
       const notedIds = new Set<string>(this.memory.notedNodeIds);
       const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, this.currentFocusNodeId!);
       if (orphan) {

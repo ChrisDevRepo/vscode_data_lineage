@@ -15,8 +15,8 @@ export function applyExclusionFilter(model: DatabaseModel, patterns: string[]): 
   for (const p of patterns) {
     try {
       regexes.push(compileExclusionPattern(p));
-    } catch {
-      console.debug(`[Exclusion] Skipping invalid pattern: ${p}`);
+    } catch (err) {
+      console.warn(`[Exclusion] Skipping invalid pattern: ${p}`, err);
     }
   }
 

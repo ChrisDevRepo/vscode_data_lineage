@@ -13,7 +13,7 @@ import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
 import { RepeatRejectGuard } from './repeatRejectGuard';
 import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
-import { inferClassificationFromText, CLASSIFICATION_BANNER } from './classification';
+import { CLASSIFICATION_BANNER } from './classification';
 import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
 export { classifyGateReply } from './sessionPhase';
@@ -661,11 +661,9 @@ export class LineageParticipant {
           // inside toolProvider's submit_findings drain — that path does not render a banner
           // (SM's confirm-sm-start message already set the user's expectation).
           if (sess.stateMachine.inlineMode && !sess.classification) {
-            const brief = sess.memory.getMissionBrief();
-            const question = sess.memory.getUserQuestion();
-            sess.setClassification(inferClassificationFromText(`${brief} ${question}`));
+            sess.setClassification('business');
             writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification!]}\n\n`);
-            this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (inline mode)`);
+            this.logger.info(`[${sess.id}] [Classification] fired=business (inline mode, fallback)`);
           }
 
           // Stage-scope the system prompt: restore full output templates for SYNTHESIS.

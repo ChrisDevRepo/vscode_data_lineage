@@ -983,6 +983,7 @@ export function GraphCanvas({
               (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
               ? true : false
             }
+            onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
           />
         )}
         </div>

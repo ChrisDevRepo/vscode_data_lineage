@@ -1,16 +1,14 @@
 /**
- * Unit tests for the classification gate (mission-type inference).
+ * Unit tests for the classification gate.
  *
  * Covers:
  *   ClassificationSchema — Zod enum rejects invalid values
- *   inferClassificationFromText — heuristic defaults + both-signal handling
  *   AiSession.setClassification — stores value, reset clears it
  */
 
 import { assert, printSummary } from './helpers/testUtils';
 import {
   ClassificationSchema,
-  inferClassificationFromText,
   CLASSIFICATION_BANNER,
 } from '../../src/ai/classification';
 import { AiSession } from '../../src/ai/session';
@@ -26,35 +24,6 @@ async function runTests() {
   assert(!ClassificationSchema.safeParse('other').success, 'invalid value rejected');
   assert(!ClassificationSchema.safeParse('').success, 'empty string rejected');
   assert(!ClassificationSchema.safeParse(undefined as any).success, 'undefined rejected');
-
-  // inferClassificationFromText — pure heuristic
-  console.log('\n── inferClassificationFromText (heuristic) ──');
-  assert(inferClassificationFromText('') === 'business', 'empty → business default');
-  assert(inferClassificationFromText('   ') === 'business', 'whitespace → business default');
-  assert(
-    inferClassificationFromText('What is the business meaning of TotalRevenue?') === 'business',
-    'business keyword → business',
-  );
-  assert(
-    inferClassificationFromText('Explain the impact on downstream consumers') === 'business',
-    'explain + impact → business',
-  );
-  assert(
-    inferClassificationFromText('What join strategy does spLoadFact use and is performance good?') === 'both',
-    'join + performance + what → both (technical + business signals)',
-  );
-  assert(
-    inferClassificationFromText('Check for antipatterns in the join predicates') === 'technical',
-    'antipattern + join (no business signal) → technical',
-  );
-  assert(
-    inferClassificationFromText('How does this procedure run — show me the execution plan') === 'technical',
-    'how does + execution → technical',
-  );
-  assert(
-    inferClassificationFromText('Describe the pipeline performance') === 'both',
-    'describe (business) + performance (technical) → both',
-  );
 
   // Banner text
   console.log('\n── CLASSIFICATION_BANNER ──');

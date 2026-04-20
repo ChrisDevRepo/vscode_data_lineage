@@ -178,7 +178,6 @@ export function normalizeName(name: string): string {
   const parts = splitSqlName(name).map(p => stripBrackets(p));
   if (parts.length < 2) {
     // No schema qualifier — return bare name that will never match a node ID.
-    // We do NOT assume dbo because the default schema is a per-connection SQL Server setting.
     return `[${parts[0] ?? ''}]`.toLowerCase();
   }
   if (parts.length >= 4) {

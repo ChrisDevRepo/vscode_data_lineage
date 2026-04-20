@@ -7,9 +7,9 @@
  * business body. `business` omits it; `technical` treats the section body
  * as the technical write-up; `both` appends the subsection.
  *
- * Classification is inferred heuristically from the user's question and
- * mission brief — see {@link inferClassificationFromText}. No separate
- * tool-call is required from the AI.
+ * The AI declares the classification in the `start_exploration` tool call
+ * via the optional `classification` enum parameter. If omitted the engine
+ * defaults to `business` (asymmetric conservative default).
  */
 
 import { z } from 'zod';
@@ -43,44 +43,3 @@ export const CLASSIFICATION_BANNER: Record<ClassificationValue, string> = {
   both: `> Starting analyze phase — ${CLASSIFICATION_LABEL.both}.`,
 };
 
-/**
- * Heuristically infers a classification value from free-text input.
- *
- * @remarks
- * Pure keyword scan. The intent is to avoid asking the AI for a separate
- * tool-call — the mission brief and question are already on hand and carry
- * the mission-type signal. Defaults to `business` when no keyword fires.
- * Intentionally conservative — `both` fires only when BOTH a technical and
- * a business signal are present.
- *
- * Signals (case-insensitive):
- *   technical — `performance`, `join`, `antipattern`, `anti-pattern`,
- *               `distribution`, `index`, `partition`, `execution`, `slow`,
- *               `how does`, `how is`, `how are`
- *   business  — `what`, `business`, `logic`, `meaning`, `impact`, `explain`,
- *               `describe`, `documentation`
- *
- * @param text - Concatenated text to scan (e.g. `mission_brief + ' ' + question`).
- * @returns The inferred `ClassificationValue`.
- */
-export function inferClassificationFromText(text: string): ClassificationValue {
-  const t = (text ?? '').toLowerCase();
-  if (!t.trim()) return 'business';
-
-  const technicalSignals = [
-    'performance', 'join', 'antipattern', 'anti-pattern',
-    'distribution', 'index', 'partition', 'execution', 'slow',
-    'how does', 'how is', 'how are',
-  ];
-  const businessSignals = [
-    'what', 'business', 'logic', 'meaning', 'impact',
-    'explain', 'describe', 'documentation',
-  ];
-
-  const hitsTechnical = technicalSignals.some(kw => t.includes(kw));
-  const hitsBusiness = businessSignals.some(kw => t.includes(kw));
-
-  if (hitsTechnical && hitsBusiness) return 'both';
-  if (hitsTechnical) return 'technical';
-  return 'business';
-}

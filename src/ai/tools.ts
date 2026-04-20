@@ -53,6 +53,7 @@ export const StartExplorationInputSchema = z.object({
   depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
   excludeTypes: z.array(z.string()).optional(),
   mission_brief: z.string().optional(),
+  classification: z.enum(['business', 'technical', 'both']).optional(),
 });
 
 export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
@@ -1024,6 +1025,8 @@ export function orderAndAssemble(
     intro?: string;
     closing?: string;
     metadataBand?: string;
+    /** Optional node lookup for injecting clickable H3 object-name headings per section. */
+    nodeMap?: Map<string, { id: string; name: string }>;
   },
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
   // Strip leading "N " or "N. " so AI numbers don't interfere with label matching
@@ -1077,7 +1080,16 @@ export function orderAndAssemble(
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
-    parts.push(`## ${n} ${label}\n\n${text}`);
+    const nodeIds = labelToNodeIds.get(label) ?? [];
+    let objectHeadings = '';
+    if (opts?.nodeMap && nodeIds.length > 0) {
+      const lines = nodeIds
+        .map(id => opts.nodeMap!.get(id))
+        .filter((node): node is { id: string; name: string } => !!node)
+        .map(node => `### [${node.name}](#focus-node:${node.id})`);
+      if (lines.length > 0) objectHeadings = lines.join('\n') + '\n\n';
+    }
+    parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 

@@ -63,6 +63,8 @@ interface AiDescriptionOverlayProps {
   description: string;
   /** Whether the overlay should be expanded by default on initial render. */
   defaultExpanded?: boolean;
+  /** Called when a `#focus-node:<nodeId>` link is clicked — zooms the graph to that node. */
+  onFocusNode?: (nodeId: string) => void;
 }
 
 /**
@@ -81,10 +83,22 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   viewName,
   description,
   defaultExpanded = false,
+  onFocusNode,
 }: AiDescriptionOverlayProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [rawMode, setRawMode] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  function AnchorComponent({ href, children, ...props }: React.HTMLAttributes<HTMLAnchorElement> & { href?: string }) {
+    if (href?.startsWith('#focus-node:') && onFocusNode) {
+      return (
+        <a href={href} {...props} onClick={(e) => { e.preventDefault(); onFocusNode(href.slice('#focus-node:'.length)); }}>
+          {children}
+        </a>
+      );
+    }
+    return <a href={href} {...props}>{children}</a>;
+  }
 
   /**
    * Copies the raw markdown description to the system clipboard.
@@ -152,7 +166,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                 <Markdown
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                  components={{ code: CodeComponent, pre: PreComponent }}
+                  components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent }}
                 >{description}</Markdown>
               </div>
             )}

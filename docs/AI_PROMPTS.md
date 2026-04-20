@@ -39,19 +39,21 @@ Do not duplicate across surfaces. The system prompt is sent on every turn — an
 
 ### 1.5 Per-Phase Template Scope — stage routing
 
-`aiOutputTemplates.yaml` has 13 keys. Each declares a `stages:` field listing which phases inject it into the AI system prompt. The authoritative routing lives in code (`STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)) — the YAML `stages:` field is informational for power-user readers; overlays that contradict the canonical routing are logged and ignored.
+`aiOutputTemplates.yaml` has 14 keys. Each declares a `stages:` field listing which phases inject it into the AI system prompt. The authoritative routing lives in code (`STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)) — the YAML `stages:` field is informational for power-user readers; overlays that contradict the canonical routing are logged and ignored.
 
 Routing via the helper `resolveStagePrompt(templates, phase, classification)`:
 
 | Phase | Keys injected | What they shape |
 |---|---|---|
 | **DISCOVERY** | `summary`, `description` | Trivial questions finalized without SM need a chat-description template. Others route to `start_exploration`. |
-| **ACTIVE** (per-hop) | `business_capture`, `technical_capture` | **Capture rules** — what the AI writes into `detail_analysis` per node. Edit these to change what gets archived. Format invariants (archive-is-unbounded, NO NEW FACTS, mission_brief anchor) stay in `BLOCK.writeFindings` (TS). |
-| **SYNTHESIS** | `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes`, `loading_pattern`, `business_subsection`, `technical_subsection` | **Render rules** — how the captured content becomes the final enrich_view document. Edit these to change the document's structure. A `**Mission type:** <value>` line is also injected at synthesis by code (the classification value is code-resolved, not AI-emitted). |
+| **ACTIVE** (per-hop) | `general`, `business_capture`, `technical_capture` | **Capture rules** — what the AI writes into `detail_analysis` per node. `general` fires once regardless of classification (depth target, shared format rules). `business_capture` / `technical_capture` are classification-gated but both fire at ACTIVE (classification is still `undefined`) — the AI captures both angles per node. |
+| **SYNTHESIS** | `general`, `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes`, `loading_pattern`, `business_subsection`, `technical_subsection` | **Render rules** — how the captured content becomes the final enrich_view document. `general` fires once (ungated). A `**Mission type:** <value>` line is injected by code (classification is code-resolved). |
 
-**Convention: `*_capture` at ACTIVE, `*_subsection` at SYNTHESIS.** This keeps each YAML key phase-pure — no meta preambles, no `CAPTURE (active phase)` / `RENDER (synthesis phase)` labels inside the instruction text. A power user reads a key and knows exactly where it fires.
+**Convention: `*_capture` at ACTIVE, `*_subsection` at SYNTHESIS.** This keeps each YAML key phase-pure — no meta preambles inside the instruction text.
 
-**Classification gating** (`CLASSIFICATION_GATED` in `templateRenderer.ts`): mission type (`business` | `technical` | `both`) is inferred heuristically at the active→synthesis boundary from the user's question + mission brief. At ACTIVE the gate is open (classification is still `undefined`), so `*_capture` keys for both angles fire — the AI captures both angles per node. At SYNTHESIS the gate applies: `business_*` keys fire for `business`/`both`; `technical_*` keys fire for `technical`/`both`.
+**`general` key** fires at both ACTIVE and SYNTHESIS, ungated — not in `CLASSIFICATION_GATED`. It owns the shared depth target and format rules (tables, lists, code fences, ⚠️ inline placement, supported block types). Avoids duplication when classification is `both` (business and technical both fire; `general` still fires once).
+
+**Classification gating** (`CLASSIFICATION_GATED` in `templateRenderer.ts`): at SYNTHESIS the gate applies: `business_*` keys fire for `business`/`both`; `technical_*` keys fire for `technical`/`both`.
 
 **Human-readable section titles.** Inside the injected block, each instruction is prefixed by `#### <Human Title>` (not the snake_case YAML key name). The AI reads `#### Business angle`, `#### Technical section block`, etc. — clear communicative labels, no internal identifiers.
 
@@ -189,11 +191,15 @@ The mission-type signal that selects whether the Technical subsection fires.
 - `technical` — HOW the pipeline runs. Business body becomes the technical write-up (no separate `#### Technical` header).
 - `both` — blended question. Business body + Technical subsection both render.
 
-Inference is heuristic (keyword scan on the user's question + mission brief) — no separate tool-call. Defaults to `business`. Inline mode surfaces a one-line banner at synthesis start (`> Starting analyze phase — <kind>-driven.`); SM mode folds the classification into the `confirm_sm_start` messaging instead of a separate banner.
+**AI-declared at `start_exploration`.** The optional `classification` enum parameter (`business` | `technical` | `both`) is declared by the AI in the same `start_exploration` call, using full semantic context of the user's question. Omitted = `business` (asymmetric conservative default — `technical`/`both` only when the user explicitly asks for performance, SQL patterns, or execution detail).
+
+For SM mode, classification is resolved at the `confirm_sm_start` gate and shown in the confirmation message. For inline mode, it is resolved when `start_exploration` returns. If somehow unset at synthesis, the engine falls back to `business`.
+
+Inline mode surfaces a one-line banner at synthesis start (`> Starting analyze phase — <kind>-driven.`); SM mode folds the classification into the `confirm_sm_start` detail instead.
 
 YAML keys:
 - `loading_pattern.instruction` — SP load-pattern guidance.
 - `technical_subsection.instruction` — rules for the `#### Technical` block.
-- `classification.instruction` — mission-type inference guidance.
+- `general.instruction` — shared depth + format guidance for both angles.
 
 ---

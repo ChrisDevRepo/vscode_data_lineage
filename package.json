@@ -974,6 +974,11 @@
                 "enum": ["table", "view", "procedure", "function", "external"]
               },
               "description": "Optional. Object types to prune from the exploration scope before the first hop. Map user NL filters: 'ignore UDFs'/'ignore functions' → ['function']; 'ignore views' → ['view']; 'only tables' → ['view','procedure','function']. Excluded nodes never enter the agenda or neighbor list — the AI cannot accidentally analyze them."
+            },
+            "classification": {
+              "type": "string",
+              "enum": ["business", "technical", "both"],
+              "description": "Declare the analysis angle from the user's question. business: user asks WHAT the data means — business rules, formulas, column meaning, impact, documentation. technical: user explicitly asks HOW the pipeline runs — performance, SQL patterns, join strategies, execution, optimization. both: user explicitly asks for both business meaning AND technical detail in the same question. Omit when uncertain — engine defaults to business."
             }
           },
           "required": [

@@ -20,7 +20,7 @@ import { type SerializedFilterState, type AIViewMetadata } from '../engine/proje
 import { PendingGateSchema } from './sessionPhase';
 import { buildSynthesisReminder } from './smPrompts';
 import { renderMetadataBand } from './templateRenderer';
-import { inferClassificationFromText, CLASSIFICATION_LABEL } from './classification';
+import { ClassificationSchema, CLASSIFICATION_LABEL } from './classification';
 
 /**
  * Registers all language model tools associated with the `@lineage` chat participant.
@@ -221,6 +221,12 @@ export function registerAiTools(
           const useInline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
           if (useInline) {
             engine.setInlineMode(true);
+            // Inline path: resolve classification from AI-declared value (no confirm gate on this path).
+            if (!sess.classification) {
+              const parsed = ClassificationSchema.safeParse(input.classification);
+              sess.setClassification(parsed.success ? parsed.data : 'business');
+              logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (inline mode, AI-declared)`);
+            }
           } else {
             // Sliding-memory preflight: compare initial BFS scope against the user-configured round budget.
             // Reserve 30% of rounds for retries, route rejections, cascade prunes, and synthesis.
@@ -256,10 +262,9 @@ export function registerAiTools(
               // the capture rules. Signals: mission_brief (AI-authored at start_exploration) + the
               // user question. Default = business if neither signal fires.
               if (!sess.classification) {
-                const brief = sess.memory.getMissionBrief();
-                const question = sess.memory.getUserQuestion();
-                sess.setClassification(inferClassificationFromText(`${brief} ${question}`));
-                logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (SM mode, pre-confirm)`);
+                const parsed = ClassificationSchema.safeParse(input.classification);
+                sess.setClassification(parsed.success ? parsed.data : 'business');
+                logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (SM mode, AI-declared)`);
               }
               const hopCtx = engine.getHopContext();
               const direction = input.direction || 'bidirectional';
@@ -296,7 +301,9 @@ export function registerAiTools(
             const sess = getSession();
             sess.stateMachine = null;
             sess.startExplorationRoundId = null;
-          } catch { /* session accessor is infallible; guard is defensive */ }
+          } catch (guardErr) {
+            logger.debug(`start_exploration defensive clear failed: ${guardErr instanceof Error ? guardErr.message : String(guardErr)}`);
+          }
           return toolError('start_exploration', err);
         }
       },
@@ -354,10 +361,8 @@ export function registerAiTools(
             // Classification gate: infer mission-type from mission brief + user question
             // before synthesis. Default to `business` when signals are absent.
             if (!sess.classification) {
-              const brief = sess.memory.getMissionBrief();
-              const question = sess.memory.getUserQuestion();
-              sess.setClassification(inferClassificationFromText(`${brief} ${question}`));
-              logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (SM mode, pre-synthesis fallback)`);
+              sess.setClassification('business');
+              logger.info(`[${sess.id}] [Classification] fired=business (SM mode, pre-synthesis fallback)`);
             }
             // Synthesis reminder appended as the last key of the envelope — end-of-context
             // attention peak re-asserts depth + grounding. Anthropic long-context guidance.
@@ -488,6 +493,7 @@ export function registerAiTools(
               intro: input.intro,
               closing: input.closing,
               metadataBand,
+              nodeMap,
             });
             assembledBadges = assembled.badges;
             if (!input.description) input.description = assembled.description;
