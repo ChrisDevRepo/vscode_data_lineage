@@ -89,6 +89,7 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
   business_subsection:  ['synthesis'],
   technical_capture:    ['active'],
   technical_subsection: ['synthesis'],
+  general:              ['active', 'synthesis'],
 };
 
 /**
@@ -140,6 +141,7 @@ const KEY_TITLE: Readonly<Record<keyof AiOutputTemplates, string>> = {
   business_subsection:  'Business section body',
   technical_capture:    'Technical angle',
   technical_subsection: 'Technical section block',
+  general:              'General guidance',
 };
 
 /**

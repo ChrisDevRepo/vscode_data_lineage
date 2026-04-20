@@ -178,6 +178,22 @@ loading_pattern:
     Views and UDFs: omit.
   example: "reload"
 
+# ── Shared guidance (fires once regardless of classification) ─────────────────
+
+general:
+  stages: [active, synthesis]
+  instruction: >
+    Write at full depth — this IS the documentation; there is no follow-up step.
+    Aim ≥ 800 chars per relevant node; a thin archive slot produces a thin section.
+    Format to fit the content:
+    Column renames or mappings → | From | To | Notes | table.
+    Multi-step logic → ordered 1. 2. 3. list.
+    Key SQL expressions → ```sql code fence (snippet only, not the full statement).
+    Column and object names → `backtick`.
+    Risk or data-quality issue → ⚠️ prefix inline inside the section where it occurs — not consolidated in closing.
+    Supported: ## headings, **bold**, `code`, tables, math, code fences.
+    Not supported: mermaid, HTML, images, footnotes.
+
 # ── Business angle ───────────────────────────────────────────────────────────
 # `business_capture` runs at ACTIVE — defines what the AI writes into detail
 # memory per hop for the business angle.
@@ -190,22 +206,53 @@ loading_pattern:
 business_capture:
   stages: [active]
   instruction: >
-    Write into detail_analysis per node:
+    Write the WHAT angle into detail_analysis — what the data means, which
+    business rules apply, which consumers are affected.
+    Question shape: if the question asks WHAT the data means or WHY a value is
+    computed, lead with business meaning first. If it asks HOW the pipeline runs,
+    write the business context after the technical_capture slot.
+    Business Purpose: open with one sentence naming the actual domain role of this
+    node — not "stores data" or "processes records" but the specific function:
+    "computes revenue at INSERT", "allocates budget units to cost centres",
+    "historizes price changes into SCD rows". Specific > generic.
+    Document every business rule visible in the DDL — every CASE condition, every
+    threshold value, every allocation formula, every special-case branch. If the
+    DDL has five CASE conditions, all five belong in the archive. Selective capture
+    produces thin synthesis.
+    Capture per node:
     - Business meaning: what each column / computation represents, which
       consumers are affected, what the rule achieves for the business.
     - Formulas with their variable definitions (write the math directly).
     - Column renames or mappings as a | From | To | Business meaning | table.
-    - Multi-step logic as an ordered 1. 2. 3. list.
     - Risk or data-quality issue — prefix with ⚠️.
     - How this node answers the user's question.
-    Name every column. Banned phrases: "various columns", "several fields",
+    Name every column. Banned: "various columns", "several fields",
     "certain conditions" — list the names or quote the predicate.
+    BAD: "COLUMNS: OrderQty (int), UnitPrice (money) — stores order data."
+    GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT.
+    Qty = units sold (renamed from OrderQty in CTE_Orders). UnitPrice = list
+    price after markup (CostPrice × (1 + MarkupPct)). ⚠️ Null MarkupPct
+    collapses UnitPrice to CostPrice — verify coverage before each run."
 
 business_subsection:
   stages: [synthesis]
-  instruction: >
-    Emit as the main body of the section's text. No subheading; the
-    business content IS the section body.
+  instruction: |
+    Emit as the main body of the section's text. No subheading.
+    Write the WHAT angle: formulas, column renames as | From | To | Business meaning |
+    table, what each value represents, which consumers are affected.
+    Lift every business rule from the archive and present it at full depth — every
+    formula, every rename, every condition. Synthesis with thin sections wastes the
+    archive; expand, do not compress.
+    Risk or data-quality issue: ⚠️ prefix inline inside this section text — closing is
+    for cross-cutting issues only.
+    Name every column explicitly. "Various columns" → list each name.
+    BAD: "spCalcRevenue computes revenue from orders and products."
+    GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT.
+    | From | To | Business meaning |
+    |---|---|---|
+    | OrderQty | Qty | Units sold |
+    | CostPrice × (1 + MarkupPct) | UnitPrice | List price after markup |
+    ⚠️ Null MarkupPct collapses UnitPrice to CostPrice — verify coverage."
   example: |
     `spCalcRevenue` computes TotalRevenue at INSERT:
     $TotalRevenue = Qty \times UnitPrice$
@@ -224,33 +271,50 @@ business_subsection:
 technical_capture:
   stages: [active]
   instruction: >
-    Write into detail_analysis per node:
-    - SQL evidence as code snippets — the key expression, the join
-      predicate, the CASE condition, the filter clause. Not entire
-      INSERT / SELECT / UPDATE statements.
+    Write the HOW angle into detail_analysis — how the pipeline runs, the SQL
+    expressions that drive it, performance characteristics.
+    Question shape: if the question asks HOW the pipeline runs, rebuild order, or
+    join strategies, lead with execution first. If it asks WHAT the data means,
+    write the technical context after the business_capture slot.
+    Capture per node:
+    - SQL evidence: copy key expressions verbatim — JOIN predicate, CASE WHEN
+      condition, COALESCE fallback, computed column formula. Quote as written in
+      the DDL; do not paraphrase. Snippet only, not the full INSERT/SELECT statement.
     - Every computed column: formula alongside its snippet.
-    - DDL comments, version annotations, in-script notes if present — they
-      carry author intent that is unrecoverable later.
-    - Join types when explicitly hinted (HASH / MERGE / LOOP) — ⚠️ warn on
-      Cartesian (no join key).
-    - Antipatterns when visible: excessive DISTINCT, OR inside join
-      predicates, correlated subqueries in SELECT.
-    - Distribution / indexing hints: partition key, hash-distribution
-      column, index usage.
-    Variant siblings (several procedures sharing one skeleton): capture
-    the first variant in full; siblings write "Same skeleton as <first>;
-    deltas: <list specific differences>". Every variant still appears in
-    the per-section object table — do not collapse the roster.
-    No new facts at render — capture it here or it is gone.
-    Constraints: no Column I/O tables, no nullability or precision prose,
-    no full SQL statements.
-    Name every column. Banned phrases: "various", "several", "certain".
+    - Relationships with role labels: "reads lookup from DimProduct", "writes via
+      MERGE to FactSalesReport", "triggered by spLoadOrders".
+    - Join types when hinted (HASH / MERGE / LOOP) — ⚠️ warn on Cartesian.
+    - Antipatterns: excessive DISTINCT, OR in join predicates, correlated
+      subqueries in SELECT.
+    - Distribution / indexing hints: partition key, hash-distribution column.
+    - DDL comments, version annotations — carry author intent lost after this hop.
+    Variant siblings: capture the first in full; siblings write "Same skeleton as
+    <first>; deltas: <specific differences in filters, weights, target columns>".
+    Constraints: no Column I/O tables, no nullability or precision prose.
+    Name every column. Banned: "various", "several", "certain".
+    BAD: "The procedure joins product and order tables and applies filter conditions."
+    GOOD: "Loading: TRUNCATE + INSERT — full reload, no delta tracking.
+    CTE_Orders: base filter WHERE IsActive = 1 (sargable, index on IsActive).
+    INNER HASH JOIN DimProduct on ProductId — correct for large-orders × small-products.
+    LEFT JOIN vwPriceList on ProductId — ⚠️ unmatched rows produce NULL downstream;
+    no ISNULL guard before the final INSERT."
 
 technical_subsection:
   stages: [synthesis]
-  instruction: >
-    Emit as a `#### Technical` subheading below the business body, inside
-    the same section text.
+  instruction: |
+    Emit as a `#### Technical` subheading below the business body in the same section text.
+    Write the HOW angle: how the pipeline runs, SQL expression evidence, join strategies,
+    loading patterns, constraint coverage, antipatterns, rebuild order.
+    Quote key SQL expressions exactly as captured — do not paraphrase.
+    Every computed column: SQL snippet + its LaTeX formula side by side.
+    Variant siblings: DISTINCT logic → full block per variant. SIMILAR logic →
+    delta-mode "Same skeleton as spCalcRevenue; deltas: [specific differences in
+    filters, weights, target columns]". Every variant still gets its own #### Technical block.
+    BAD: "The procedure applies several transformations using standard SQL patterns."
+    GOOD: "Loading: TRUNCATE + INSERT — full reload on every run.
+    INNER HASH JOIN FactOrders on ProductId — correct shape for large-orders × small-products.
+    LEFT JOIN vwPriceList on ProductId — unmatched rows yield NULL before INSERT.
+    ⚠️ No ISNULL guard — NULL price propagates silently to downstream aggregations."
   example: |
     ```sql
     UnitPrice    = CostPrice * (1 + MarkupPct)

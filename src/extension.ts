@@ -158,7 +158,7 @@ async function loadAiOutputTemplates(
   extensionUri: vscode.Uri,
 ): Promise<AiOutputTemplates> {
   const logger = Logger.create(outputChannel, 'Config');
-  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'title', 'intro', 'description', 'sections', 'closing', 'highlights', 'notes', 'loading_pattern', 'business_capture', 'business_subsection', 'technical_capture', 'technical_subsection'];
+  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'title', 'intro', 'description', 'sections', 'closing', 'highlights', 'notes', 'loading_pattern', 'business_capture', 'business_subsection', 'technical_capture', 'technical_subsection', 'general'];
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   const builtInKeys: string[] = [];
 

@@ -95,6 +95,13 @@ export interface AiOutputTemplates {
    * emit a `#### Technical` block below the business body.
    */
   technical_subsection: string;
+  /**
+   * Shared guidance injected at both ACTIVE and SYNTHESIS phases regardless
+   * of classification. Owns depth target, format choices (table, list, code
+   * fence, backtick, ⚠️ inline), and supported/not-supported block types.
+   * Fires once — avoids duplication when classification is `both`.
+   */
+  general: string;
 }
 
 /**
@@ -117,6 +124,7 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   business_subsection: '',
   technical_capture: '',
   technical_subsection: '',
+  general: '',
 };
 
 /** 
