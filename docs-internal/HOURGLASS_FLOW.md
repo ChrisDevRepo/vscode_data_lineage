@@ -3,6 +3,8 @@
 ## Overview
 The "Hourglass" model is our architectural pattern for managing LLM context efficiency and reasoning quality during long-running data lineage investigations. It prevents "Context Poisoning" (hallucinations caused by over-exposure to global state) while maintaining full-fidelity reporting.
 
+For small graphs that fit within the budget, the model expands the "neck" of the hourglass into **True Inline Mode**, providing full context throughout the active phase.
+
 ```mermaid
 graph TD
     subgraph Discovery ["1. Discovery (Wide Context)"]
@@ -10,9 +12,20 @@ graph TD
         D2 --> D3[Mission Brief Creation]
     end
 
-    subgraph Active ["2. Active Phase (Narrow Context)"]
-        A1[Isolated Node DDL] --- A2[Sliding Memory Window - Last 3 nodes]
-        A2 --- A3[Incremental Blackboard]
+    subgraph Active_Choice ["Active Phase Decision"]
+        M1{Fits Budget?}
+        M1 -->|Yes| A_Inline[True Inline Mode - Full Context]
+        M1 -->|No| A_SM[Sliding Memory Mode - Narrow Context]
+    end
+
+    subgraph Active_Inline ["2a. Active: True Inline (Wide)"]
+        AI1[Full Graph DDL] --- AI2[No History Wipe]
+        AI2 --- AI3[Batch Findings Submission]
+    end
+
+    subgraph Active_SM ["2b. Active: Sliding Memory (Narrow)"]
+        AS1[Isolated Node DDL] --- AS2[Sliding Window - Last 3 nodes]
+        AS2 --- AS3[History Wiped Every Hop]
     end
 
     subgraph Synthesis ["3. Synthesis (Wide Context)"]
@@ -20,8 +33,9 @@ graph TD
         S2 --> S3[Report Generation - present_result]
     end
 
-    Discovery -->|start_exploration| Active
-    Active -->|Agenda Empty| Synthesis
+    Discovery -->|start_exploration| M1
+    A_Inline -->|Complete| Synthesis
+    A_SM -->|Agenda Empty| Synthesis
 ```
 
 ---
@@ -33,12 +47,15 @@ graph TD
 - **Context**: Wide. The AI has access to the full model stats and search tools.
 - **Output**: A `mission_brief` that anchors all subsequent reasoning.
 
-### 2. Active (The Blinders)
-- **Goal**: Surgical node-by-node analysis.
-- **Context**: Narrow (Sliding Memory).
+### 2. Active (The Blinders vs. The Map)
+- **Sliding Memory Mode (Narrow)**:
   - The engine physically strips global arrays (`agenda`, `visited_nodes`, `pending_questions`) from the payload.
   - The AI only sees the **Focus Node DDL** and `short_term_memory` (last 3 summaries).
-- **Enforcement**: `LanguageModelChatToolMode.Required` prevents the AI from escaping the loop via chat prose.
+  - History is wiped every successful hop.
+- **True Inline Mode (Wide)**:
+  - The AI receives the full DDL and columns for all nodes in the scope at once.
+  - History is preserved turn-to-turn.
+  - Findings are submitted in a single batch array.
 
 ### 3. Synthesis (The Aggregator)
 - **Goal**: High-fidelity report generation.
@@ -52,13 +69,14 @@ graph TD
 
 | Tier | Scale | Delivery | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Short-Term Memory** | Capped (3 nodes) | Every Hop | Local continuity & rename tracking. |
+| **Short-Term Memory** | Capped (3 nodes) | Every Hop (SM Only) | Local continuity & rename tracking. |
 | **Working Memory** | Tiny | Every Hop | Progress signals (checklist, tally). |
 | **Detail Archive** | Unbounded | Synthesis Only | Full technical documentation per node. |
 
 ## Best Practice Alignment
 
 1. **Anthropic / Google**: Follows "System Prompt Siloing" by using phase-specific system prompts.
-2. **s1 / Budget Forcing**: Uses monotonic `rounds_used` counters instead of countdowns to prevent reasoning shortcuts.
+2. **s1 / Budget Forcing**: Uses monotonic `rounds_used` counters instead of countdowns to prevent reasoning shortcuts.      
 3. **Reflexion**: AI reflects on neighbor metadata *before* routing.
 4. **Hourglass**: Capping history in long conversations is the industry standard for preventing performance degradation (Context Eviction).
+5. **True Inline**: Small-context batching optimizes latency and reasoning quality for small graphs.

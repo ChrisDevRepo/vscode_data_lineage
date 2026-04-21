@@ -49,20 +49,26 @@ export function buildDiscoveryPrompt(): string {
 
 
 /**
- * Constructs the prompt for the Active (Hop-by-Hop) phase.
+ * Constructs the prompt for the Active (Hop-by-Hop or Full Run) phase.
  * 
  * @remarks
- * Enforces sliding memory (horse with blinders). AI is isolated to the focus node.
- * 
- * @returns A string containing active-phase rules.
+ * Dynamically switches instructions based on whether the engine is in True Inline mode
+ * or Sliding Memory mode, while sharing the core heuristic rules for node analysis.
+ *
+ * @param isInline - Whether the engine is delivering the entire graph context at once.
+ * @returns A formatted system instruction for the active phase.
  */
-export function buildActivePhasePrompt(): string {
+export function buildActivePhasePrompt(isInline: boolean): string {
+  const deliveryInstruct = isInline
+    ? 'You have received the entire graph context at once. Analyze all presented nodes holistically and submit your findings in a single batch. You do not need to navigate hop-by-hop.'
+    : 'You are currently analyzing nodes one by one in isolation. You do not have access to the full graph or the global BFS agenda.';
+
   return (
-    'ACTIVE EXPLORATION RULES (Sliding Memory):\n' +
-    'You are currently analyzing nodes one by one in isolation. You do not have access to the full graph or the global BFS agenda.\n' +
+    'ACTIVE EXPLORATION RULES:\n' +
+    `${deliveryInstruct}\n` +
     '1. DETAIL ARCHIVE IS UNBOUNDED. When writing submit_findings.detail_analysis, be thorough — the engine preserves every character verbatim for synthesis. Thin slots produce thin final answers.\n' +
-    '2. Anchor every analysis on the `mission_brief` and the incoming `current_task` (sub-question).\n' +
-    '3. TRUNCATION: If `focus_node.ddl_truncated` is true, call `lineage_get_ddl_batch` to retrieve the missing logic before committing your verdict.\n'
+    '2. Anchor every analysis on the `mission_brief` and the incoming `current_task` (if hop-by-hop) or global intent (if inline).\n' +
+    '3. TRUNCATION: If any node DDL is truncated, you MUST call `lineage_get_ddl_batch` to retrieve the missing logic before committing your verdict.\n'
   );
 }
 

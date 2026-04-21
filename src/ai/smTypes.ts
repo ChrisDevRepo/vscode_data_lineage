@@ -137,9 +137,9 @@ export interface HopContext {
 }
 
 /**
- * Data structure used by the AI to submit its findings after analyzing a hop.
+ * A single technical finding for a focus node, including analysis and routing.
  */
-export interface HopSubmission {
+export interface HopFinding {
   /** ID of the node that was analyzed. */
   focus_node_id: string;
   /** High-fidelity technical analysis stored in the detail archive. */
@@ -157,6 +157,12 @@ export interface HopSubmission {
   /** Optional short descriptive text to attach to this node in the final view. */
   note_caption?: string;
 }
+
+/**
+ * Data structure used by the AI to submit its findings after analyzing a hop.
+ * In True Inline Mode, this can be an array of findings for batch processing.
+ */
+export type HopSubmission = HopFinding | HopFinding[];
 
 /** 
  * A request to add a specific node to the navigation agenda.

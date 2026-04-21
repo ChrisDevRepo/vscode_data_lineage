@@ -379,19 +379,22 @@ export class LineageParticipant {
       }
     }
 
-    const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
-      const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
-      const schemas = sess.filter?.schemas || [];
-      const base = buildGeneralSystemPrompt(dbPlatform, schemas);
+      const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
+        const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
+        const schemas = sess.filter?.schemas || [];
+        const base = buildGeneralSystemPrompt(dbPlatform, schemas);
 
-      let phaseSpecific = '';
-      if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
-      else if (phase === 'active') phaseSpecific = buildActivePhasePrompt();
-      else if (phase === 'synthesis') phaseSpecific = buildSynthesisPrompt();
+        let phaseSpecific = '';
+        if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
+        else if (phase === 'active') {
+          const isInline = sess.stateMachine?.inlineMode ?? false;
+          phaseSpecific = buildActivePhasePrompt(isInline);
+        }
+        else if (phase === 'synthesis') phaseSpecific = buildSynthesisPrompt();
 
-      const stageBlock = resolveStagePrompt(sess.outputTemplates, phase, sess.classification);
-      return [base, phaseSpecific, stageBlock].filter(Boolean).join('\n');
-    };
+        const stageBlock = resolveStagePrompt(sess.outputTemplates, phase, sess.classification);
+        return [base, phaseSpecific, stageBlock].filter(Boolean).join('\n');
+      };
     let systemPrompt = buildStageSystemPrompt('discover');
     let navPrompt = '';
 
@@ -399,7 +402,7 @@ export class LineageParticipant {
       activePhase = 'active';
       lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
       systemPrompt = buildStageSystemPrompt('active');
-      navPrompt = buildNavigationPrompt(sess.stateMachine.mode);
+      navPrompt = buildNavigationPrompt(sess.stateMachine.mode, sess.stateMachine.inlineMode);
       this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings`);
     }
 
@@ -618,7 +621,7 @@ export class LineageParticipant {
           systemPrompt = buildStageSystemPrompt('active');
           const engine = sess.stateMachine;
           if (engine) {
-            navPrompt = buildNavigationPrompt(engine.mode);
+            navPrompt = buildNavigationPrompt(engine.mode, engine.inlineMode);
             messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
           }
         }

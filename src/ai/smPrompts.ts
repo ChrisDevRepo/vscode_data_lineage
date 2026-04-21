@@ -79,6 +79,10 @@ const BLOCK = {
   completionContract:
     'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: analyze | pass | prune`. The engine stops presenting when the agenda drains — you shape the agenda: `verdict: "prune"` cascade-prunes the node and its unvisited descendants. Route only neighbors the main user question needs.\n' +
     'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs) take `verdict: "prune"` — removes the subtree quickly.',
+
+  /** Batch contract for True Inline mode. */
+  batchCompletionContract:
+    'You have received the entire graph context at once. Call `submit_findings` with an ARRAY of findings for all presented nodes in a single turn. For each node, provide its verdict and analysis. You can also request new routes (expansions) in the same turn. The engine will process the entire batch and either finalize the exploration or pause if a user-confirmation gate is triggered.',
 } as const;
 
 
@@ -90,9 +94,10 @@ const BLOCK = {
  * the engine presents nodes, the model analyzes them, the engine advances the agenda.
  *
  * @param mode - The exploration mode (`blackboard` or `column_trace`).
+ * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @returns A markdown string containing classification rules, per-hop workflow, and routing guidance.
  */
-export function buildNavigationPrompt(mode: SmMode): string {
+export function buildNavigationPrompt(mode: SmMode, isInline: boolean = false): string {
   if (mode === 'column_trace') {
     return [
       'COLUMN TRACE MODE: the state machine presents nodes one at a time. Analyze each node and trace specific columns across it.',
@@ -116,6 +121,24 @@ export function buildNavigationPrompt(mode: SmMode): string {
   }
 
   // blackboard (default)
+  if (isInline) {
+    return [
+      'EXPLORATION MODE: True Inline (Full Graph provided). Analyze the entire scope in a single batch. You have access to all nodes and their DDL upfront.',
+      '',
+      BLOCK.batchCompletionContract,
+      '',
+      BLOCK.verdictCategories,
+      '',
+      'Workflow:',
+      '1. Analyze all nodes in the context.',
+      '2. Submit findings for all nodes in an array via `submit_findings`.',
+      '3. If you need to explore outside the current boundaries, request route expansions (which may trigger a gate).',
+      '',
+      BLOCK.selfAsk,
+      BLOCK.routing,
+    ].join('\n');
+  }
+
   return [
     'EXPLORATION MODE: Sliding Memory (Isolated Node Analysis). The engine presents nodes one at a time. Use `working_memory.short_term_memory` (incremental loading) to ground your immediate reasoning. You do not have access to the global graph or the full BFS agenda.',
     '',

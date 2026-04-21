@@ -20,17 +20,19 @@ The system automatically chooses the delivery strategy based on the complexity o
 
 | Mode | Threshold | Context Strategy | Per-Hop Memory | Reasoning Capability |
 | :--- | :--- | :--- | :--- | :--- |
-| **Inline Mode** | Fits budget (< 10 nodes) | **One-Shot**: Full DDL and columns for all nodes are provided simultaneously. | **None** — the AI sees the full picture immediately. | **Holistic**: Turn-zero reasoning and logical grouping. |
-| **SM Mode** | Exceeds budget | **Focus + auto-delivered summaries**: the current node's DDL plus a sliding window of recent node summaries (Hourglass context model). | **`short_term_memory`** — incremental, sliding-window (last 3 nodes). | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
+| **True Inline Mode** | Fits budget (< 10 nodes) AND mode = `blackboard` | **One-Shot**: Full DDL and columns for ALL nodes in the scope are provided simultaneously. | **None** — the AI sees the full graph context immediately. History is not wiped. | **Holistic**: Turn-zero reasoning, logical grouping, and batch submission of findings. |
+| **SM Mode (Sliding Memory)** | Exceeds budget OR mode = `column_trace` | **Focus + auto-delivered summaries**: the current node's DDL plus a sliding window of recent node summaries (Hourglass context model). | **`short_term_memory`** — incremental, sliding-window (last 3 nodes). History is wiped every hop. | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
 
 #### Mode contract (who gates what, who decides when done)
 
-| Contract dimension | Inline Mode | SM Mode (hop-by-hop) |
+| Contract dimension | True Inline Mode | SM Mode (hop-by-hop) |
 | :--- | :--- | :--- |
 | **Session-entry yes/no gate** | **None.** Small scope runs immediately. | **`confirm_sm_start`** — engine surfaces planned scope (nodes, schemas, depth, budget) and pauses for user approval before hop 1. |
-| **Out-of-filter / out-of-depth route mid-session** | **Per-route approval gate.** Engine emits `action_required` (`schema_out_of_filter` / `depth_cap_exceeded` / `schema_and_depth`); participant halts the turn, asks yes/no. `yes` calls `extendAllowedSchemas` / `extendAllowedDepth` and resumes. | **Silent deferral.** Engine calls `deferQuestion({...})`; the hop loop keeps running within the approved border. Deferred entries surface at synthesis as an "Unanswered (out of approved scope)" section and as clickable `/followup` chips. |
-| **Termination authority** | **AI decides.** Sets `complete: true` on `submit_findings` ("compilation send"); engine returns `{ done: true, result }` and synthesis fires. | **Engine decides.** AI is trapped in `submit_findings` by `LanguageModelChatToolMode.Required`; `complete: true` is silently ignored. Synthesis fires only when the engine drains the agenda. |
-| **Scope extension** | AI can extend silently within the filter; stepping outside requires the approval gate. Strict depth (`/depth N strict`) blocks expansion. | Approved border is locked at `confirm_sm_start`. Out-of-border intent is collected (not executed) and rendered post-synthesis for follow-up. |
+| **Out-of-filter / out-of-depth route mid-session** | **Consent gate.** Engine emits `action_required`; participant halts, asks yes/no. Resumes turn after approval. | **Silent deferral.** Engine calls `deferQuestion({...})`; the hop loop keeps running. Deferred entries surface post-synthesis. |
+| **Termination authority** | **AI-led Batch.** AI submits an array of findings for all nodes via `submit_findings`. It can also set `complete: true` to finalize. | **Engine-led Flow.** AI analyzes nodes one-by-one. Synthesis fires only when the engine drains the agenda. `complete: true` is rejected. |
+| **Scope extension** | AI can request routes outside the filter; stepping outside requires the consent gate. | Approved border is locked. Out-of-border intent is collected for follow-up only. |
+
+True Inline Mode (Blackboard only) simplifies exploration for small graphs by allowing the AI to reason about all nodes at once, while Column Trace is strictly restricted to Sliding Memory to manage its inherent complexity.
 
 The inline contract trusts the AI with a small scope and gives the user a veto on each scope stretch. The SM contract trusts the user with the up-front border and gives the AI a closed loop to drain inside it.
 

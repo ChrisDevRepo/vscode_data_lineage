@@ -17,11 +17,20 @@ Built by `buildGeneralSystemPrompt()` in `src/ai/prompts.ts`. Injected into ever
 ### 1.2 Discovery Phase Prompt
 Built by `buildDiscoveryPrompt()` in `src/ai/prompts.ts`. Used when the AI is searching for objects or defining the `mission_brief`. Includes the rules for `start_exploration` and the "Budget: 50 rounds" constraint. This phase also applies when the AI is idle between explorations.
 
-### 1.3 Active Phase / Navigation Prompt (Sliding Memory)
-Built by `buildActivePhasePrompt()` (general active rules) and `buildNavigationPrompt(mode)` (mode-specific workflow). 
-- **Isolated Analysis:** The AI operates like a "horse with blinders." It sees only the current node's DDL and its immediate neighbors.
-- **Incremental Loading:** Instead of the full history, the AI receives `working_memory.short_term_memory`—a sliding window of the most recent node summaries to ground immediate reasoning.
-- **Mechanical Enforcement:** Global arrays (`agenda`, `visited_nodes`, `all_summaries`, `pending_questions`) are physically stripped from the JSON payload during this phase to prevent context poisoning and token bloat.
+### 1.3 Active Phase / Navigation Prompt
+Built by `buildActivePhasePrompt(isInline)` (general active rules) and `buildNavigationPrompt(mode, isInline)` (mode-specific workflow). 
+The engine chooses one of two delivery strategies:
+
+- **True Inline Mode (Blackboard only):**
+  - **Holistic Analysis:** The AI receives the *entire* approved graph scope (DDL and columns) at once.
+  - **Batch Submission:** Instead of hop-by-hop navigation, the AI submits an array of findings for all presented nodes in a single turn.
+  - **History Accumulation:** Chat history is *not* wiped after each turn, allowing the AI to naturally accumulate reasoning across turns (e.g., during consent gates).
+
+- **Sliding Memory Mode (CT and large BB):**
+  - **Isolated Analysis:** The AI operates like a "horse with blinders." It sees only the current node's DDL and its immediate neighbors.
+  - **Incremental Loading:** Instead of the full history, the AI receives `working_memory.short_term_memory`—a sliding window of the most recent node summaries (last 3).
+  - **Mechanical Enforcement:** Global arrays (`agenda`, `visited_nodes`, `all_summaries`, `pending_questions`) are physically stripped from the JSON payload.
+  - **Memory Wipe:** Chat history is aggressively wiped after each successful hop to keep the context focused on the focus node.
 
 ### 1.4 Synthesis Phase Prompt
 Built by `buildSynthesisPrompt()` in `src/ai/prompts.ts`. Hyper-focused on generating the final report.

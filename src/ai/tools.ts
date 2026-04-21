@@ -59,6 +59,36 @@ export const StartExplorationInputSchema = z.object({
 export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
 
 /**
+ * Zod schema for a single finding within `submit_findings`.
+ */
+const HopFindingSchema = z.object({
+  focus_node_id: z.string(),
+  detail_analysis: z.string(),
+  summary: z.string(),
+  verdict: z.enum(['analyze', 'pass', 'prune']),
+  route_requests: z.array(z.object({
+    nodeId: z.string(),
+    question: z.string(),
+    columns: z.array(z.string()).optional(),
+  })).optional(),
+  complete: z.boolean().optional(),
+  badge_label: z.string().optional(),
+  note_caption: z.string().optional(),
+});
+
+/**
+ * Zod schema for `submit_findings` tool input. 
+ * Supports both a single finding object (Sliding Memory) 
+ * and an array of finding objects (True Inline batch).
+ */
+export const SubmitFindingsInputSchema = z.union([
+  HopFindingSchema,
+  z.array(HopFindingSchema)
+]);
+
+export type SubmitFindingsInput = z.infer<typeof SubmitFindingsInputSchema>;
+
+/**
  * Lightweight runtime validation for LLM tool inputs.
  *
  * @remarks

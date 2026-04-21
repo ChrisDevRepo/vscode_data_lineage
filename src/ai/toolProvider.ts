@@ -10,6 +10,7 @@ import {
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
   validateToolInput,
   StartExplorationInputSchema,
+  SubmitFindingsInputSchema,
   autoFixPresentResult, validatePresentResult, orderAndAssemble,
   type PresentResultInput,
 } from './tools';
@@ -191,7 +192,7 @@ class ToolHandler {
       if ('error' in initResult) return this.logAndReturn('start_exploration', initResult, input);
 
       const scopeDdlChars = engine.estimateScopeDdlChars();
-      const useInline = shouldSmInline(scopeDdlChars, initResult.scopeSize);
+      const useInline = shouldSmInline(engine.mode, scopeDdlChars, initResult.scopeSize);
       if (useInline) {
         engine.setInlineMode(true);
         if (!sess.classification) {
@@ -265,10 +266,17 @@ class ToolHandler {
         next_action: 'start_exploration',
       }, input);
 
-      const inputErr = validateToolInput(input, { focus_node_id: 'string', detail_analysis: 'string', summary: 'string' });
-      if (inputErr) return this.toolResult(inputErr);
+      const parsed = SubmitFindingsInputSchema.safeParse(input);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        const field = issue?.path?.join('.') || '(root)';
+        return this.logAndReturn('submit_findings', {
+          error: 'invalid_input',
+          hint: `Invalid submit_findings input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: focus_node_id, detail_analysis, summary, verdict.`,
+        }, input);
+      }
 
-      const result = engine.submitFindings(input);
+      const result = engine.submitFindings(parsed.data);
       if ('error' in result) return this.logAndReturn('submit_findings', result, input);
 
       if ('done' in result && result.done && result.result) {
@@ -279,7 +287,7 @@ class ToolHandler {
       const diag = engine.getHopDiagnostics();
       this.logger.debug(
         `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} ` +
-        `verdict=${input.verdict} detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
+        `detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
         `routed=${diag.routedNew}/${diag.routedRejected} agenda=${diag.agendaRemaining}`
       );
 
@@ -512,6 +520,9 @@ export function registerAiTools(
     vscode.lm.registerTool('lineage_submit_findings', {
       prepareInvocation(options, _token) {
         const input = options.input as any;
+        if (Array.isArray(input)) {
+          return { invocationMessage: `Analyzing batch of ${input.length} objects…` };
+        }
         const name = input.focus_node_id?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
         return { invocationMessage: `Analyzing ${name}…` };
       },

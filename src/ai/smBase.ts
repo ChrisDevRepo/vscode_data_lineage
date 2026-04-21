@@ -525,6 +525,64 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns Context data mapped for the AI router.
    */
   public getHopContext(): HopContext {
+    const brief = this.memory.getMissionBrief();
+    
+    if (this._inlineMode) {
+      // TRUE INLINE MODE: Drain the entire agenda into a single batch delivery.
+      const batchEntries: AgendaEntry[] = [];
+      while (this.agenda.length > 0) {
+        const candidate = this.agenda.shift()!;
+        this.agendaIds.delete(candidate.nodeId);
+        if (!this.visited.has(candidate.nodeId)) {
+          batchEntries.push(candidate);
+          this.visited.add(candidate.nodeId);
+        }
+      }
+
+      if (batchEntries.length === 0) {
+        this._status = 'complete';
+        this.logLabelDiversity();
+        return { done: true };
+      }
+
+      this.hopCount++;
+      // In inline mode, focus is the batch of nodes. We pick the first as the primary "focus" for state-machine
+      // consistency, but the AI receives the full list.
+      this.currentFocusNodeId = batchEntries[0].nodeId; 
+
+      const nodes = batchEntries.map(e => {
+        const n = this.nodeMap.get(e.nodeId)!;
+        const fn = buildHopFocusNode(n, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
+        if (this.depthBudget !== null) {
+          const d = this.depthFromOrigin.get(e.nodeId);
+          if (d !== undefined) (fn as any).depth_from_origin = d;
+        }
+        return fn;
+      });
+
+      const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size, {
+        rounds_used: this.hopCount,
+        scope_growth: this.budgetExpansions.length,
+        active_schemas: Array.from(this.sessionAllowedSchemas),
+      }) as NavigationWorkingMemory;
+      
+      workingMemory.topological_map = {
+        navigation_path: 'Full Graph (Inline)',
+        current_focus: 'batch_delivery',
+      };
+
+      this._status = 'awaiting_findings';
+      return {
+        sm_status: 'awaiting_findings' as const,
+        hop: this.hopCount,
+        agenda_remaining: 0,
+        focus_node: nodes, // Array of nodes in inline mode
+        working_memory: workingMemory,
+        ...(brief ? { mission_brief: brief } : {}),
+      };
+    }
+
+    // SLIDING MEMORY MODE (Isolated Hop)
     let entry: AgendaEntry | undefined;
     while (this.agenda.length > 0) {
       const nextIdx = this.agenda.reduce((best, curr, i, arr) => curr.priority > arr[best].priority ? i : best, 0);
@@ -550,9 +608,6 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(entry.nodeId)!;
     const focusNode = buildHopFocusNode(node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
 
-    // Always surface depth_from_origin when a budget is in force — visibility required for self-correction
-    // regardless of enforcement mode. Hiding depth in silent mode was the inverse of the "start small, autoadd
-    // carefully" intent (see plan §A.2).
     if (this.depthBudget !== null) {
       const d = this.depthFromOrigin.get(entry.nodeId);
       if (d !== undefined) focusNode.depth_from_origin = d;
@@ -580,9 +635,6 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // SM closed-loop signals: the AI reads the locked border every hop plus the running
-    // deferred tally, so it can self-correct routing without seeing the full deferred list
-    // (preserved for synthesis where it matters for the final report).
     if (!this._inlineMode) {
       const border: ApprovedBorder = {
         schemas: Array.from(this.sessionAllowedSchemas).sort(),
@@ -593,7 +645,6 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     this._status = 'awaiting_findings';
-    const brief = this.memory.getMissionBrief();
     return {
       sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
@@ -610,6 +661,7 @@ export class NavigationEngine implements IHopStateMachine {
    * Processes the findings from a completed hop and adjusts the agenda.
    *
    * @param params - Submission details including focus, verdict, and routing data.
+   * In True Inline Mode, this can be an array of findings for batch processing.
    * @returns Information summarizing the operation's outcome.
    */
   public submitFindings(params: HopSubmission): SubmitResult {
@@ -622,207 +674,190 @@ export class NavigationEngine implements IHopStateMachine {
       return { error: 'invalid_status', current_status: this._status, hint } as any;
     }
 
-    const focusId = params.focus_node_id?.toLowerCase();
-    if (focusId !== this.currentFocusNodeId) {
-      return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
-    }
+    const findings = Array.isArray(params) ? params : [params];
+    if (findings.length === 0) return { error: 'empty_submission', hint: 'Provide at least one finding.' };
 
-    // Route validation proceeds in three layers:
-    //   1. Hard invalid routes — unknown node ids, bad columns → `route_validation_failed`.
-    //   2. Inline-mode consent gates — schema/depth violations accumulate into one `action_required`
-    //      envelope that pauses the active loop until the user replies.
-    //   3. SM-mode deferrals — out-of-approved-scope routes are recorded in `_deferredQuestions`
-    //      (via `deferQuestion`) and surfaced at synthesis; the loop continues without pausing.
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
     this.lastRoutedDeferred = 0;
-    const acceptedNids = new Set<string>();
-    if (params.route_requests) {
-      const invalidRoutes: Array<{ id: string; reason: string }> = [];
-      const depthCap = this.computeDepthCap();
-      const gateClasses = new Set<string>();
-      const gateNodeIds: string[] = [];
-      const gateDetails: string[] = [];
-      let gateHasSchema = false;
-      let gateHasDepth = false;
+    let totalCascadedCount = 0;
+    let forceComplete = false;
 
-      for (const req of params.route_requests) {
-        const nid = req.nodeId?.toLowerCase();
-        const nNode = nid ? this.nodeMap.get(nid) : null;
-        if (!nNode || !nid) {
-          invalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
-          continue;
-        }
+    const allInvalidRoutes: Array<{ id: string; reason: string }> = [];
+    const gateNodeIds: string[] = [];
+    const gateClasses = new Set<string>();
+    const gateDetails: string[] = [];
+    let gateHasSchema = false;
+    let gateHasDepth = false;
 
-        // Schema blocked — route targets a schema outside the session allowlist.
-        const schemaLower = nNode.schema.toLowerCase();
-        const schemaBlocked = this.sessionAllowedSchemas.size > 0 && !this.sessionAllowedSchemas.has(schemaLower);
+    for (const finding of findings) {
+      const focusId = finding.focus_node_id?.toLowerCase();
+      if (!this._inlineMode && focusId !== this.currentFocusNodeId) {
+        return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
+      }
+      if (!focusId || !this.nodeMap.has(focusId)) {
+        return { error: 'invalid_focus_node', got: focusId };
+      }
 
-        // Depth blocked — target beyond the effective cap. Memoize shortest-path depth so repeat
-        // routes to the same out-of-scope node don't recompute.
-        let candidateDepth = this.depthFromOrigin.get(nid);
-        if (candidateDepth === undefined && this.originNodeId) {
-          const path = bidirectional(this.graph, this.originNodeId, nid);
-          candidateDepth = Array.isArray(path) ? path.length - 1 : undefined;
-        }
-        // Fallback: a routed target is always one hop from the current focus, so its distance
-        // from origin is at most focusDepth + 1. Without this, directed-path misses let
-        // strict-mode routes escape the cap silently (reverse-edge-only targets, disconnected).
-        if (candidateDepth === undefined && this.currentFocusNodeId) {
-          const focusDepth = this.depthFromOrigin.get(this.currentFocusNodeId) ?? 0;
-          candidateDepth = focusDepth + 1;
-        }
-        if (candidateDepth !== undefined) this.depthFromOrigin.set(nid, candidateDepth);
-        const depthBlocked = depthCap !== null && candidateDepth !== undefined && candidateDepth > depthCap;
-        // Strict mode: the initial BFS scope is the user-approved contract and is immutable.
-        const strictScopeBlocked = this.depthEnforcement === 'strict' && !this.scopeNodeIds.has(nid);
+      const acceptedNids = new Set<string>();
+      if (finding.route_requests) {
+        const depthCap = this.computeDepthCap();
 
-        if (schemaBlocked || depthBlocked || strictScopeBlocked) {
-          const scopeReason = depthBlocked || strictScopeBlocked;
-          if (this._inlineMode) {
-            // Inline: consent-gate flow.
-            gateNodeIds.push(req.nodeId);
-            if (schemaBlocked) {
-              gateHasSchema = true;
-              gateClasses.add(`schema:${schemaLower}`);
-              gateDetails.push(`\`${req.nodeId}\` is in schema \`${nNode.schema}\`, outside the active filter`);
-            }
-            if (scopeReason) {
-              gateHasDepth = true;
-              if (depthBlocked) {
-                const extraOffset = candidateDepth! - depthCap!;
-                gateClasses.add(`depth:+${extraOffset}`);
-                gateDetails.push(`\`${req.nodeId}\` is at depth ${candidateDepth}, beyond the current cap ${depthCap}`);
-              } else {
-                gateClasses.add('scope:strict');
-                gateDetails.push(`\`${req.nodeId}\` is outside the initial approved scope (strict mode)`);
+        for (const req of finding.route_requests) {
+          const nid = req.nodeId?.toLowerCase();
+          const nNode = nid ? this.nodeMap.get(nid) : null;
+          if (!nNode || !nid) {
+            allInvalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
+            continue;
+          }
+
+          const schemaLower = nNode.schema.toLowerCase();
+          const schemaBlocked = this.sessionAllowedSchemas.size > 0 && !this.sessionAllowedSchemas.has(schemaLower);
+
+          let candidateDepth = this.depthFromOrigin.get(nid);
+          if (candidateDepth === undefined && this.originNodeId) {
+            const path = bidirectional(this.graph, this.originNodeId, nid);
+            candidateDepth = Array.isArray(path) ? path.length - 1 : undefined;
+          }
+          if (candidateDepth === undefined) {
+            const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
+            candidateDepth = focusDepth + 1;
+          }
+          if (candidateDepth !== undefined) this.depthFromOrigin.set(nid, candidateDepth);
+          
+          const depthBlocked = depthCap !== null && candidateDepth !== undefined && candidateDepth > depthCap;
+          const strictScopeBlocked = this.depthEnforcement === 'strict' && !this.scopeNodeIds.has(nid);
+
+          if (schemaBlocked || depthBlocked || strictScopeBlocked) {
+            const scopeReason = depthBlocked || strictScopeBlocked;
+            if (this._inlineMode) {
+              gateNodeIds.push(req.nodeId);
+              if (schemaBlocked) {
+                gateHasSchema = true;
+                gateClasses.add(`schema:${schemaLower}`);
+                gateDetails.push(`\`${req.nodeId}\` is in schema \`${nNode.schema}\`, outside the active filter`);
               }
+              if (scopeReason) {
+                gateHasDepth = true;
+                if (depthBlocked) {
+                  const extraOffset = candidateDepth! - depthCap!;
+                  gateClasses.add(`depth:+${extraOffset}`);
+                  gateDetails.push(`\`${req.nodeId}\` is at depth ${candidateDepth}, beyond the current cap ${depthCap}`);
+                } else {
+                  gateClasses.add('scope:strict');
+                  gateDetails.push(`\`${req.nodeId}\` is outside the initial approved scope (strict mode)`);
+                }
+              }
+            } else {
+              this.deferQuestion({
+                nodeId: req.nodeId,
+                schema: nNode.schema,
+                fromFocusNodeId: focusId,
+                question: req.question ?? '',
+                reason: schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth',
+                depth: candidateDepth,
+                atHop: this.hopCount,
+              });
+              this.lastRoutedDeferred++;
             }
-          } else {
-            // SM: defer, keep the closed-loop invariant. `deferQuestion` owns dedup + rejection record.
-            this.deferQuestion({
-              nodeId: req.nodeId,
-              schema: nNode.schema,
-              fromFocusNodeId: this.currentFocusNodeId!,
-              question: req.question ?? '',
-              reason: schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth',
-              depth: candidateDepth,
-              atHop: this.hopCount,
-            });
-            this.lastRoutedDeferred++;
-            const reasonTag = schemaBlocked && scopeReason ? 'schema_and_depth'
-              : schemaBlocked ? 'out_of_approved_schema'
-              : depthBlocked ? `depth_cap (${candidateDepth}>${depthCap})`
-              : 'strict_scope';
-            this.log('debug', `[Defer] node=${req.nodeId} reason=${reasonTag} from=${this.currentFocusNodeId} hop=${this.hopCount}`);
+            continue;
           }
-          continue;
-        }
 
-        // Accept the route. Soft/silent mode may expand the scope to include in-cap out-of-scope nodes.
-        acceptedNids.add(nid);
-        if (!this.scopeNodeIds.has(nid)) {
-          this.scopeNodeIds.add(nid);
-          const focusDepth = this.depthFromOrigin.get(this.currentFocusNodeId!) ?? 0;
-          if (!this.depthFromOrigin.has(nid)) this.depthFromOrigin.set(nid, focusDepth + 1);
-          if (this.depthBudget !== null && this.depthEnforcement !== 'strict') {
-            this.budgetExpansions.push({ nodeId: nid, depth: focusDepth + 1, atHop: this.hopCount });
+          acceptedNids.add(nid);
+          if (!this.scopeNodeIds.has(nid)) {
+            this.scopeNodeIds.add(nid);
+            const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
+            if (!this.depthFromOrigin.has(nid)) this.depthFromOrigin.set(nid, focusDepth + 1);
+            if (this.depthBudget !== null && this.depthEnforcement !== 'strict') {
+              this.budgetExpansions.push({ nodeId: nid, depth: focusDepth + 1, atHop: this.hopCount });
+            }
           }
-        }
-        if (req.columns) {
-          if (this.mode !== 'column_trace') {
-            req.columns = undefined;
-          } else {
-            const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-            const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
-            if (invalidCols.length > 0) invalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
+          if (req.columns) {
+            if (this.mode !== 'column_trace') {
+              req.columns = undefined;
+            } else {
+              const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+              const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
+              if (invalidCols.length > 0) allInvalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
+            }
           }
         }
       }
 
-      if (invalidRoutes.length > 0) {
-        this.lastRoutedRejected = invalidRoutes.length;
-        for (const r of invalidRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-        return { error: 'route_validation_failed', detail: invalidRoutes };
-      }
-
-      // Invariant: reached only in inline mode. SM routes through `deferQuestion` above.
-      if (gateNodeIds.length > 0) {
-        this.lastRoutedRejected = gateNodeIds.length;
-        for (const id of gateNodeIds) this.memory.recordRejection(id, 'blocked by user-confirmation gate', this.hopCount);
-        const gate: ActionRequiredGate = {
-          error: 'action_required',
-          gate: gateHasSchema && gateHasDepth ? 'schema_and_depth' : gateHasSchema ? 'schema_out_of_filter' : 'depth_cap_exceeded',
-          classes: Array.from(gateClasses),
-          nodeIds: gateNodeIds,
-          detail: `Route requires user confirmation: ${gateDetails.slice(0, 3).join('; ')}${gateDetails.length > 3 ? ` (+${gateDetails.length - 3} more)` : ''}. Reply 'yes' to allow for this session or 'no' to pause and refine the question.`,
-          hint: 'Wait for the user to reply. Do not re-submit the same route until the gate is resolved.',
-        };
-        return gate;
-      }
-    }
-
-    const isPrune = params.verdict === 'prune';
-    const prunable = isPrune && this.currentFocusNodeId !== this.originNodeId;
-    if (prunable) {
-      // Topological protection only — don't orphan already-analyzed (noted) nodes.
-      const notedIds = new Set<string>(this.memory.notedNodeIds);
-      const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, this.currentFocusNodeId!);
-      if (orphan) {
-        return { error: 'prune_would_orphan_noted', detail: `Marking ${this.currentFocusNodeId} prune would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
-      }
-    }
-
-    if (!isPrune) {
-      this.memory.storeDetail(this.nodeMap.get(this.currentFocusNodeId!)!, params.detail_analysis, params.summary, {
-        badge_label: params.badge_label,
-        note_caption: params.note_caption
-      }, this._inlineMode);
-      this.lastHopDetailChars = params.detail_analysis?.length ?? 0;
-      this.lastHopSummaryChars = params.summary?.length ?? 0;
-      this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
-    } else {
-      this.lastHopDetailChars = 0;
-      this.lastHopSummaryChars = 0;
-    }
-
-    // Record the verdict AFTER guards passed so the tally reflects accepted submissions only.
-    this.memory.recordVerdict(params.verdict);
-
-    let cascadedCount = 0;
-    if (prunable) {
-      this.removedSet.add(this.currentFocusNodeId!);
-      const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
-      const before = this.agenda.length;
-      this.agenda = this.agenda.filter(e => reachable.has(e.nodeId));
-      this.agendaIds = new Set(this.agenda.map(e => e.nodeId));
-      cascadedCount = before - this.agenda.length;
-    }
-
-    if (params.route_requests) {
-      for (const req of params.route_requests) {
-        const nid = req.nodeId.toLowerCase();
-        // Only push routes the first-pass validator accepted. Deferred and gate-blocked routes
-        // already recorded their rejection; re-adding them here would silently defeat strict depth
-        // enforcement and schema filters.
-        if (!acceptedNids.has(nid)) continue;
-        if (!this.visited.has(nid) && !this.agendaIds.has(nid) && !this.removedSet.has(nid)) {
-          this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
-          this.agendaIds.add(nid);
-          this.lastRoutedNew++;
+      const isPrune = finding.verdict === 'prune';
+      const prunable = isPrune && focusId !== this.originNodeId;
+      if (prunable) {
+        const notedIds = new Set<string>(this.memory.notedNodeIds);
+        const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, focusId);
+        if (orphan) {
+          return { error: 'prune_would_orphan_noted', detail: `Marking ${focusId} prune would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
         }
       }
+
+      if (!isPrune) {
+        this.memory.storeDetail(this.nodeMap.get(focusId)!, finding.detail_analysis, finding.summary, {
+          badge_label: finding.badge_label,
+          note_caption: finding.note_caption
+        }, this._inlineMode);
+        this.lastHopDetailChars = finding.detail_analysis?.length ?? 0;
+        this.lastHopSummaryChars = finding.summary?.length ?? 0;
+        this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
+      }
+
+      this.memory.recordVerdict(finding.verdict);
+
+      if (prunable) {
+        this.removedSet.add(focusId);
+        const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
+        const before = this.agenda.length;
+        this.agenda = this.agenda.filter(e => reachable.has(e.nodeId));
+        this.agendaIds = new Set(this.agenda.map(e => e.nodeId));
+        totalCascadedCount += (before - this.agenda.length);
+      }
+
+      if (finding.route_requests) {
+        for (const req of finding.route_requests) {
+          const nid = req.nodeId.toLowerCase();
+          if (!acceptedNids.has(nid)) continue;
+          if (!this.visited.has(nid) && !this.agendaIds.has(nid) && !this.removedSet.has(nid)) {
+            this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
+            this.agendaIds.add(nid);
+            this.lastRoutedNew++;
+          }
+        }
+      }
+
+      if (finding.complete && this._inlineMode) forceComplete = true;
+    }
+
+    if (allInvalidRoutes.length > 0) {
+      this.lastRoutedRejected = allInvalidRoutes.length;
+      for (const r of allInvalidRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
+      return { error: 'route_validation_failed', detail: allInvalidRoutes };
+    }
+
+    if (gateNodeIds.length > 0) {
+      this.lastRoutedRejected = gateNodeIds.length;
+      for (const id of gateNodeIds) this.memory.recordRejection(id, 'blocked by user-confirmation gate', this.hopCount);
+      const gate: ActionRequiredGate = {
+        error: 'action_required',
+        gate: gateHasSchema && gateHasDepth ? 'schema_and_depth' : gateHasSchema ? 'schema_out_of_filter' : 'depth_cap_exceeded',
+        classes: Array.from(gateClasses),
+        nodeIds: gateNodeIds,
+        detail: `Route requires user confirmation: ${gateDetails.slice(0, 3).join('; ')}${gateDetails.length > 3 ? ` (+${gateDetails.length - 3} more)` : ''}. Reply 'yes' to allow for this session or 'no' to pause and refine the question.`,
+        hint: 'Wait for the user to reply. Do not re-submit the same route until the gate is resolved.',
+      };
+      return gate;
     }
 
     this._status = 'exploring';
-
-    if (params.complete && this._inlineMode) {
+    if (forceComplete) {
       this._status = 'complete';
       this.logLabelDiversity();
       return { ok: true, done: true, result: this.getResult() };
     }
 
-    return cascadedCount > 0 ? { ok: true, cascaded_count: cascadedCount } : { ok: true };
+    return totalCascadedCount > 0 ? { ok: true, cascaded_count: totalCascadedCount } : { ok: true };
   }
 
   /**
