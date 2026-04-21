@@ -6,6 +6,7 @@
   "version": "0.9.9",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
+  "extensionDependencies": [],
   "engines": {
     "vscode": "^1.95.0"
   },

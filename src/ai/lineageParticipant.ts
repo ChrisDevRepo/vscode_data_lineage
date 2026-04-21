@@ -16,6 +16,7 @@ import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExi
 import { CLASSIFICATION_BANNER } from './classification';
 import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
+import { PerformanceCollector } from './diagnostics';
 export { classifyGateReply } from './sessionPhase';
 
 /**
@@ -118,11 +119,6 @@ export class LineageParticipant {
         // (b) the engine has at least one deferred question (there IS something new to analyze).
         // Click fires `/followup` → handler extends the live SM with the deferred-question
         // nodes via NavigationEngine.extendScope, reusing the existing detail archive.
-        //
-        // The "Show in Graph" / "Create AI view" affordances are rendered as an INLINE
-        // stream.button inside the response body (see dispatchExit 'final_answer' case),
-        // not as chips here — the button is context-aware (reveal existing view vs. create
-        // new one) via the dataLineageViz.aiCreateView command.
         const hasEnrichView = lastTools.some((t: string) => t.includes('enrich_view'));
         if (hasEnrichView && deferredCount > 0) {
           followups.push({
@@ -151,22 +147,53 @@ export class LineageParticipant {
   }
 
   /**
-   * Main entry point for handling chat requests from the user.
-   *
+   * Dynamically resolves a requested model to an officially registered provider instance.
+   * 
    * @remarks
-   * This method implements the core agent loop, which includes:
-   * - Session rotation on new chat starts.
-   * - History reconstruction and context eviction.
-   * - Multi-round tool execution (Agentic Loop).
-   * - Phase transitions based on tool output and state machine status.
-   * - Final synthesis of technical evidence into a user-facing response.
+   * This method uses a discovery-based approach grounded in VS Code best practices.
+   * It handles ID discrepancies (e.g., missing vendor prefixes) by querying the
+   * system registry and finding the closest registered match that supports tools.
    *
-   * @param request - The user's chat request containing the prompt and model selection.
-   * @param chatContext - The conversation history provided by VS Code.
-   * @param stream - The response stream for delivering markdown and progress updates.
-   * @param token - A cancellation token to stop processing if the user cancels.
-   * @returns A promise that resolves to the chat result metadata.
+   * @param sessId - The active session ID for logging.
+   * @param requested - The model handle provided by the chat participant request.
+   * @returns A registered LanguageModelChat instance, or the original handle as a fallback.
    */
+  private async resolveRegisteredModel(sessId: string, requested: vscode.LanguageModelChat): Promise<vscode.LanguageModelChat> {
+    try {
+      const registry = await vscode.lm.selectChatModels({});
+      this.logger.debug(`[${sessId}] Registry Discovery: [${registry.map(m => m.id).join(', ')}]`);
+      
+      const reqId = requested.id.toLowerCase();
+      // Discovery Priority (respects user choice while ensuring registration):
+      // 1. Exact ID match
+      // 2. Fragment match (agnostic of vendor prefix)
+      // 3. Any model from same vendor with tool support
+      // 4. Any tool-capable model (essential for @lineage engine)
+      // 5. First available registered model
+      const match = registry.find(m => m.id.toLowerCase() === reqId)
+                 || registry.find(m => m.id.toLowerCase().includes(reqId))
+                 || registry.find(m => reqId.includes(m.id.toLowerCase()))
+                 || registry.find(m => m.vendor === requested.vendor && m.capabilities.tools)
+                 || registry.find(m => m.capabilities.tools)
+                 || registry[0];
+
+      if (match) {
+        if (match.id !== requested.id) {
+          this.logger.info(`[${sessId}] Model resolved dynamically: ${match.id} (requested: ${requested.id})`);
+        } else {
+          this.logger.debug(`[${sessId}] Model verified in registry: ${match.id}`);
+        }
+        return match;
+      }
+      
+      this.logger.warn(`[${sessId}] No models found in registry. Using request handle as-is.`);
+      return requested;
+    } catch (err) {
+      this.logger.debug(`[${sessId}] Model discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+      return requested;
+    }
+  }
+
   /**
    * Routes the "Detailed explanation" chip click into the engine's extend path.
    *
@@ -198,6 +225,19 @@ export class LineageParticipant {
     return true;
   }
 
+  /**
+   * Main entry point for handling chat requests from the user.
+   *
+   * @remarks
+   * This method implements the core agent loop, which includes session rotation, history reconstruction,
+   * dynamic model resolution, multi-round tool execution, and final synthesis.
+   *
+   * @param request - The user's chat request containing the prompt and model selection.
+   * @param chatContext - The conversation history provided by VS Code.
+   * @param stream - The response stream for delivering markdown and progress updates.
+   * @param token - A cancellation token to stop processing if the user cancels.
+   * @returns A promise that resolves to the chat result metadata.
+   */
   public async handleChatRequest(
     request: vscode.ChatRequest,
     chatContext: vscode.ChatContext,
@@ -205,18 +245,19 @@ export class LineageParticipant {
     token: vscode.CancellationToken
   ): Promise<vscode.ChatResult> {
     const sess = this.getSession();
-    sess.maxInputTokens = request.model.maxInputTokens;
-    sess.modelName = request.model.name || request.model.id;
-    // Stream lifecycle is owned by the writer — every stream.* call in this handler routes
-    // through it so cancellation (Stop button / new prompt / panel close) is observed once
-    // and subsequent writes become silent no-ops. Replaces direct `stream.*` access.
+
+    // Resolve the model to a registered instance to ensure registration truth and correct maxInputTokens.
+    const model = await this.resolveRegisteredModel(sess.id, request.model);
+    sess.maxInputTokens = model.maxInputTokens || 32768; 
+    sess.modelName = model.name || model.id;
+
     const writer = new ChatResponseWriter(stream, token, this.logger, sess.id);
+    const collector = new PerformanceCollector(this.logger, sess.id);
 
     const aiConfig = vscode.workspace.getConfiguration('dataLineageViz');
     const MAX_ROUNDS = aiConfig.get<number>('ai.maxRounds', 50);
     setInlineTokenBudget(aiConfig.get<number>('ai.inlineTokenBudget', 10_000));
     setSmInlineNodeCap(aiConfig.get<number>('ai.inlineNodeCap', 10));
-    // Off by default so the built-in chat copy button captures only AI prose, not expanded tool JSON.
     const showToolInvocations = aiConfig.get<boolean>('ai.showToolInvocations', false);
 
     if (!sess.model) {
@@ -238,12 +279,8 @@ export class LineageParticipant {
       }
     }
 
-    // Any user-driven turn (new prompt, gate reply, follow-up chip) is activity — refresh
-    // the stale timer so a long-pending confirm_sm_start gate can be resumed without
-    // resetIfStale() wiping the primed engine on the next start_exploration call.
     sess.touch();
-
-    this.logger.info(`[${sess.id}] Session start — model=${request.model.id}, prompt="${trunc(request.prompt, 200)}"`);
+    this.logger.info(`[${sess.id}] Session start — model=${model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
     let activePhase: 'discover' | 'active' | 'done' = 'discover';
     let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
@@ -254,55 +291,36 @@ export class LineageParticipant {
     } else if (request.command === 'search') {
       effectivePrompt = buildSearchPrompt(request.prompt);
     } else if (request.command === 'followup') {
-      // "Show full description" chip — short-circuit: stream the stored enrich_view description
-      // 1:1 into chat. No SM extension, no new LM call. Detected by prompt sentinel.
       if (request.prompt === 'Show the full description' && sess.lastEnrichViewDescription) {
         writer.markdown(sess.lastEnrichViewDescription);
         return {};
       }
-      // Fired by the "Detailed explanation" chip (ChatFollowup with `command: 'followup'`).
-      // Route the existing live SM session into its extend path: add deferred-question nodes
-      // to the agenda and resume the hop loop. Preserves the detail archive so this is fast.
       const extended = this.tryExtendWithDeferredQuestions(sess, writer);
       if (extended) {
         sess.enterExploring();
         effectivePrompt = 'Continue the hop-by-hop analysis — call submit_findings for the newly-added focus node. Merge findings into the existing archive and update the view via is_update:true.';
       } else {
-        // Fallback: no live SM or no deferred questions. Treat as a generic drill-in.
         effectivePrompt = 'Explain the lineage in more detail — drill into the most load-bearing nodes of the last exploration.';
       }
     }
 
-    // FSM turn-entry dispatch: if the previous turn paused on a gate, resolve the user's reply
-    // before anything else runs. Yes → transition to `exploring` and continue; No → idle; Redirect
-    // → idle + let the new prompt flow through normal discovery.
     if (sess.phase.kind === 'awaiting_gate') {
       const gate = sess.phase.gate;
       const answer = classifyGateReply(request.prompt);
       if (answer === 'no') {
         sess.enterIdle();
-        writer.markdown(
-          `\n\n> Exploration paused — scope held to the declared filter. ` +
-          `Ask a refined question to restart with a different scope.\n\n`
-        );
+        writer.markdown(`\n\n> Exploration paused — scope held to the declared filter. Ask a refined question to restart with a different scope.\n\n`);
         this.logger.info(`[Gate] ${gate.gate} — user declined`);
         return {};
       }
       if (answer === 'redirect') {
-        // User typed a new question instead of yes/no — treat as a fresh turn.
         sess.resetExploration();
         this.logger.info(`[Gate] ${gate.gate} — user redirected`);
-        // Fall through — handler continues with request.prompt as the new question.
       } else {
-        // answer === 'yes'
         if (gate.gate === 'confirm_sm_start') {
-          // Engine is already initialized; just enter exploring. Pre-active-phase block below
-          // sees `phase.kind === 'exploring'` and jumps into the hop loop directly.
           sess.enterExploring();
           effectivePrompt = 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
-          // Inline-only expansion path. SM never reaches here — SM scope is locked at confirm_sm_start;
-          // mid-session out-of-scope routes are deferred and surfaced at synthesis (never a mid-session gate).
           const engine = sess.stateMachine as NavigationEngine | null;
           if (engine) {
             for (const cls of gate.classes) {
@@ -357,10 +375,6 @@ export class LineageParticipant {
       }
     }
 
-    // Stage-scoped system prompt: templates inject per phase via resolveStagePrompt,
-    // driven by `STAGE_BY_KEY` in templateRenderer.ts. Active phase now injects the
-    // dual-stage subsections (business_subsection, technical_subsection) so capture
-    // rules live in the YAML the user edits — end-to-end effect.
     const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
       const base = buildPlatformContext(sess.model!.dbPlatform || 'SQL Server') +
         (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') +
@@ -369,12 +383,8 @@ export class LineageParticipant {
       return stageBlock ? `${base}\n${stageBlock}` : base;
     };
     let systemPrompt = buildStageSystemPrompt('discover');
-    // Built on active-phase entry and re-injected after every sliding-memory wipe.
     let navPrompt = '';
 
-    // FSM post-gate pre-activation: when `phase.kind === 'exploring'` at turn entry, the prior
-    // turn approved a gate (confirm_sm_start or schema/depth) — the engine is live and the AI
-    // must jump straight to ACTIVE without re-calling start_exploration.
     if (sess.phase.kind === 'exploring' && sess.stateMachine) {
       activePhase = 'active';
       lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
@@ -400,27 +410,20 @@ export class LineageParticipant {
     };
 
     const budgetTokens = Math.floor(sess.maxInputTokens * CONTEXT_PRESSURE_THRESHOLD);
-    if (historyMessages.length > MIN_HISTORY_MESSAGES) {
+    if (budgetTokens > 0 && historyMessages.length > MIN_HISTORY_MESSAGES) {
       try {
         const fullText = `${systemPrompt}\n${serializeMessages(historyMessages)}\n${effectivePrompt}`;
-        let totalTokens = await request.model.countTokens(fullText);
+        const totalTokens = await model.countTokens(fullText);
         if (totalTokens > budgetTokens) {
-          let evicted = 0;
-          while (historyMessages.length > MIN_HISTORY_MESSAGES && totalTokens > budgetTokens) {
-            historyMessages.shift(); evicted++;
-            totalTokens = await request.model.countTokens(`${systemPrompt}\n${serializeMessages(historyMessages)}\n${effectivePrompt}`);
-          }
-          historyMessages.unshift(vscode.LanguageModelChatMessage.User(buildEvictionStub(evicted)));
+          this.logger.debug(`[Performance] Context pressure: ${totalTokens}/${budgetTokens} tokens (${((totalTokens / sess.maxInputTokens) * 100).toFixed(0)}%)`);
+          collector.recordEviction();
         }
       } catch (err) {
-        this.logger.warn(`Context eviction countTokens failed — proceeding without pressure check, may overflow budget: ${err instanceof Error ? err.message : err}`);
+        this.logger.debug(`Context pressure check failed: ${err instanceof Error ? err.message : err}`);
       }
     }
 
-    const messages: vscode.LanguageModelChatMessage[] = [
-      vscode.LanguageModelChatMessage.User(systemPrompt),
-      ...historyMessages,
-    ];
+    const messages: vscode.LanguageModelChatMessage[] = [vscode.LanguageModelChatMessage.User(systemPrompt), ...historyMessages];
     if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
     messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
     const toolCallRounds: any[] = [];
@@ -445,46 +448,33 @@ export class LineageParticipant {
       };
 
       while (roundCount < MAX_ROUNDS) {
-        // Cooperative cancellation at hop boundary — VS Code has already torn the stream down,
-        // so any further sendRequest / stream write would crash. Exit cleanly.
         if (!writer.isOpen()) return { kind: 'cancelled' };
         roundCount++;
-        // Bump the session round counter so tools can detect parallel calls within one LM round.
-        // Used by the start_exploration parallel-call guard in toolProvider.ts.
         sess.currentRoundId = roundCount;
+        collector.startRound();
         const tRoundStart = Date.now();
         let roundInputTokens = 0;
         try {
-          roundInputTokens = await request.model.countTokens(serializeMessages(messages));
+          roundInputTokens = await model.countTokens(serializeMessages(messages));
           totalRoundInputTokens += roundInputTokens;
           if (roundInputTokens > peakRoundInputTokens) peakRoundInputTokens = roundInputTokens;
         } catch (err) {
           this.logger.debug(`Per-round countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
 
-        // Map-&-Router enforcement: in ACTIVE the AI is a callback that must call submit_findings.
-        // Required mode makes free-form text impossible so there's no silent-bail escape hatch. The
-        // AI retains full speed control via verdicts (irrelevant cascade-prunes → fast drain).
-        // DISCOVER and SYNTHESIS stay Auto so the AI can produce trivial chat answers or final prose.
-        const toolMode = activePhase === 'active'
-          ? vscode.LanguageModelChatToolMode.Required
-          : vscode.LanguageModelChatToolMode.Auto;
-
-        // Round-entry diagnostic for ACTIVE phase — makes state-machine progress visible per hop.
+        const toolMode = activePhase === 'active' ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
         if (activePhase === 'active' && sess.stateMachine) {
           const st = sess.stateMachine.toJSON() as { status?: string; currentFocusNodeId?: string | null; hopCount?: number };
-          this.logger.debug(`[Round ${roundCount}] engine_status=${st.status} focus=${st.currentFocusNodeId ?? '(null)'} hop=${st.hopCount ?? 0}`);
+          this.logger.debug(`[Hop ${roundCount}] engine_status=${st.status} focus=${st.currentFocusNodeId ?? '(null)'}`);
         }
 
-        const response = await request.model.sendRequest(messages, { tools: lineageTools, toolMode }, token);
+        const response = await model.sendRequest(messages, { tools: lineageTools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
 
-        // Suppress active-phase prose so hop narratives don't surface as duplicate chat output.
         const surfaceProse = activePhase !== 'active';
         for await (const part of response.stream) {
-          // Stop draining LM output if the user cancelled — pushing to a closed stream throws.
           if (!writer.isOpen()) break;
           if (part instanceof vscode.ChatResponseMarkdownPart) {
             assistantParts.push(new vscode.LanguageModelTextPart(part.value.value));
@@ -501,7 +491,7 @@ export class LineageParticipant {
 
         let roundOutputTokens = 0;
         try {
-          roundOutputTokens = await request.model.countTokens(responseText);
+          roundOutputTokens = await model.countTokens(responseText);
           totalOutputTokens += roundOutputTokens;
         } catch (err) {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
@@ -523,16 +513,12 @@ export class LineageParticipant {
           const f = extractToolCallFields(call);
           const cacheKey = `${f.name}::${JSON.stringify(f.input)}`;
           if (toolCallCache.has(cacheKey)) {
-            // Bypass the dedup short-circuit when the cached result is an error envelope — let
-            // the AI see the real error on retries (so it can adapt) and let RepeatRejectGuard
-            // observe the same error 3x to trigger the 3-strike abort.
             const cached = toolCallCache.get(cacheKey)!;
             if (extractToolErrorCode(cached) === null) {
               resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true }))]));
               roundHadCacheHit = true;
               continue;
             }
-            // cached error → fall through and re-invoke
           }
 
           if (actionRequiredPending && !SEARCH_TOOLS.has(f.name)) {
@@ -540,8 +526,6 @@ export class LineageParticipant {
             continue;
           }
 
-          // Per-tool progress line; submit_findings shows hop count + focus-node short name,
-          // non-hop tools show generic "Invoking <tool>…".
           let progressLine = `Invoking ${f.name.replace('lineage_', '')}…`;
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
             const st = sess.stateMachine.toJSON() as { hopCount?: number; scopeSize?: number; currentFocusNodeId?: string | null };
@@ -555,14 +539,7 @@ export class LineageParticipant {
           }
           totalToolCallsMade++;
           try {
-            const result = await vscode.lm.invokeTool(
-              f.name,
-              {
-                input: f.input,
-                toolInvocationToken: showToolInvocations ? request.toolInvocationToken : undefined,
-              },
-              token
-            );
+            const result = await vscode.lm.invokeTool(f.name, { input: f.input, toolInvocationToken: showToolInvocations ? request.toolInvocationToken : undefined }, token);
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, result.content));
             accumulatedToolResults[f.callId] = result;
             toolCallCache.set(cacheKey, result);
@@ -574,10 +551,8 @@ export class LineageParticipant {
         }
 
         messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
-
         drainPendingUserNotices();
 
-        // Abort on 3 consecutive identical failures to avoid wasting the round budget on loops.
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
           const res = accumulatedToolResults[f.callId];
@@ -599,10 +574,6 @@ export class LineageParticipant {
           }
         }
 
-        // Scan tool results for reasoning-gate signals (`analyze_and_respond`) and engine-emitted
-        // consent gates (`action_required` envelopes). Consent gates are Zod-validated at the
-        // boundary before flowing into the HopLoopExit — malformed envelopes throw and surface
-        // as parse errors, not silent corruption.
         let consentGate: PendingGate | null = null;
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
@@ -621,29 +592,20 @@ export class LineageParticipant {
         if (consentGate) return { kind: 'gate', gate: consentGate };
 
         toolCallRounds.push({ response: responseText, toolCalls });
-
         const roundMs = Date.now() - tRoundStart;
         const toolNames = toolCalls.map(tc => tc.name.replace('lineage_', ''));
-        const roundResultChars = resultParts.reduce((acc, p) => {
-          try { return acc + JSON.stringify((p as any).content).length; } catch { return acc; }
-        }, 0);
+        const focusNode = (toolCalls[0]?.input as any)?.focus_node_id;
+        collector.recordRound(roundCount, activePhase, roundInputTokens, roundOutputTokens, toolNames, focusNode, roundHadCacheHit);
+        const roundResultChars = resultParts.reduce((acc, p) => { try { return acc + JSON.stringify((p as any).content).length; } catch { return acc; } }, 0);
         const pct = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
         this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — ${toolCalls.length} tool(s): ${toolNames.join(', ')} (${roundMs}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pct}%, ${roundResultChars} result chars${roundHadCacheHit ? ', cache-hit' : ''})`);
 
-        // Phase transitions
         const hasStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
         if (hasStart && activePhase === 'discover') {
           activePhase = 'active';
-          // ACTIVE-phase tool set is submit_findings only — Required mode forces a tool call, and
-          // some models only support a single tool under Required. The start_exploration tool is
-          // dropped here; the parallel-call guard remains as defense-in-depth in case a model
-          // somehow calls it, but the schema itself no longer lists it.
           lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
           this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
-
-          // Stage-scope the system prompt: drop output templates for ACTIVE hops.
           systemPrompt = buildStageSystemPrompt('active');
-
           const engine = sess.stateMachine;
           if (engine) {
             navPrompt = buildNavigationPrompt(engine.mode);
@@ -655,44 +617,23 @@ export class LineageParticipant {
           activePhase = 'done';
           lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_submit_findings');
           this.logger.info(`[Phase] active → done — SM complete, restored ${lineageTools.length} classic tools`);
-
-          // Classification gate (inline path): infer from mission brief + user question,
-          // store on session, stream a one-line banner to chat. SM path classifies earlier
-          // inside toolProvider's submit_findings drain — that path does not render a banner
-          // (SM's confirm-sm-start message already set the user's expectation).
           if (sess.stateMachine.inlineMode && !sess.classification) {
             sess.setClassification('business');
             writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification!]}\n\n`);
-            this.logger.info(`[${sess.id}] [Classification] fired=business (inline mode, fallback)`);
           }
-
-          // Stage-scope the system prompt: restore full output templates for SYNTHESIS.
           systemPrompt = buildStageSystemPrompt('synthesis');
-
-          // Clean hop history, preserve the completion envelope verbatim. The last
-          // Assistant(tool_call submit_findings) + User(tool_result) pair carries detail_slots,
-          // suggested_sections, suggested_labels, fullNodes, edges, and synthesis_reminder
-          // (appended as the last JSON key in toolProvider). Main's proven pattern — keeps the
-          // reminder at the end-of-context attention peak and preserves the structural skeleton
-          // the AI uses to produce labeled, grouped, detailed sections.
           if (!sess.stateMachine.inlineMode) {
             const lastAssistant = messages[messages.length - 2];
             const lastResult    = messages[messages.length - 1];
             const beforeCount   = messages.length;
             messages.length = 0;
-            messages.push(
-              vscode.LanguageModelChatMessage.User(systemPrompt),
-              vscode.LanguageModelChatMessage.User(effectivePrompt),
-              lastAssistant,
-              lastResult,
-            );
+            messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt), lastAssistant, lastResult);
             const archive = sess.memory.getResult();
             const deferred = sess.stateMachine.deferredQuestions;
             this.logger.info(`[Synthesis] Context cleaned: ${beforeCount} → ${messages.length} messages; envelope preserved (${archive.detail_slots.length} slots, ${deferred.length} deferred)`);
           }
         }
 
-        // Wipe history only when every submit in this round succeeded; preserve on error so the AI can self-correct.
         const submitParts = toolCalls.filter(tc => tc.name === 'lineage_submit_findings');
         if (submitParts.length > 0 && activePhase === 'active' && sess.stateMachine && !sess.stateMachine.inlineMode) {
           let anyError = false;
@@ -708,17 +649,13 @@ export class LineageParticipant {
                 errorSample = parsed.error;
                 break;
               }
-            } catch {
-              // non-JSON result — treat as success (rare, but safe default)
-            }
+            } catch {}
           }
-
           if (!anyError) {
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
             messages.length = 0;
             messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt));
-            // Nav prompt must survive the wipe so mode guidance persists past hop 1.
             if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
             messages.push(lastAssistant, lastResult);
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
@@ -734,9 +671,6 @@ export class LineageParticipant {
     try {
       exit = await runHopLoop();
     } catch (err) {
-      // Cancellation during an in-flight sendRequest / invokeTool surfaces as a thrown error,
-      // but it is a user action — not a bug. Only treat it as `error` when the writer is still
-      // open (i.e. the throw came from a real code path, not a cancelled turn).
       if (!writer.isOpen() && writer.status().kind === 'cancelled') {
         exit = { kind: 'cancelled' };
       } else {
@@ -748,55 +682,36 @@ export class LineageParticipant {
     const smMode = sess.stateMachine?.mode ?? '—';
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
     this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
-
     this.dispatchExit(exit, sess, writer, request.prompt, roundCount, MAX_ROUNDS);
 
-    // Count distinct deferred-question nodes so the followup provider knows whether to render
-    // the "Detailed explanation" chip. Chip is gated on (a) the turn included an enrich_view
-    // call AND (b) the engine has unanswered out-of-scope routes to investigate.
-    const deferredQuestionCount = (sess.stateMachine?.status === 'complete'
-      ? new Set(sess.stateMachine.deferredQuestions.map(d => d.nodeId)).size
-      : 0);
+    const deferredQuestionCount = (sess.stateMachine?.status === 'complete' ? new Set(sess.stateMachine.deferredQuestions.map(d => d.nodeId)).size : 0);
     return {
       metadata: {
         toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults },
         lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [],
         deferredQuestionCount,
+        performanceDiagnostics: collector.finalize(sess, peakRoundInputTokens)
       },
     };
   }
 
   /**
    * Single source of truth for post-hop-loop cleanup. Each `HopLoopExit` variant owns its own
-   * branch — partial-result storage lives ONLY in `hop_cap` / `aborted` cases, making the
-   * "paused gate rendered as incomplete" bug structurally impossible.
+   * branch — partial-result storage lives ONLY in `hop_cap` / `aborted` cases.
    *
    * @param exit - The typed outcome of `runHopLoop`.
    * @param sess - The active session (mutated via `enterGate` / `enterIdle`).
-   * @param writer - Lifecycle-aware chat writer; writes become no-ops if the stream closed.
-   * @param userPrompt - Verbatim user prompt, used by the "Show in Graph" button.
+   * @param writer - Lifecycle-aware chat writer.
+   * @param userPrompt - Verbatim user prompt.
    * @param roundCount - Number of rounds actually executed.
-   * @param maxRounds - The configured round budget (for the "cap hit" message).
+   * @param maxRounds - The configured round budget.
    */
-  private dispatchExit(
-    exit: HopLoopExit,
-    sess: AiSession,
-    writer: ChatResponseWriter,
-    userPrompt: string,
-    roundCount: number,
-    maxRounds: number
-  ): void {
+  private dispatchExit(exit: HopLoopExit, sess: AiSession, writer: ChatResponseWriter, userPrompt: string, roundCount: number, maxRounds: number): void {
     switch (exit.kind) {
       case 'gate': {
         sess.enterGate(exit.gate);
-        const title =
-          exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' :
-          exit.gate.gate === 'confirm_scope_extension' ? 'Scope extension available' :
-          'Scope expansion requested';
-        writer.markdown(
-          `\n\n---\n**${title}**\n\n${exit.gate.detail}\n\n` +
-          `Reply \`yes\` to proceed, \`no\` to pause, or ask a different question to redirect.\n\n---\n`
-        );
+        const title = exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : exit.gate.gate === 'confirm_scope_extension' ? 'Scope extension available' : 'Scope expansion requested';
+        writer.markdown(`\n\n---\n**${title}**\n\n${exit.gate.detail}\n\nReply \`yes\` to proceed, \`no\` to pause, or ask a different question to redirect.\n\n---\n`);
         this.logger.info(`[Gate] ${exit.gate.gate} — classes=[${exit.gate.classes.join(', ')}] nodes=${exit.gate.nodeIds.length}`);
         return;
       }
@@ -804,17 +719,12 @@ export class LineageParticipant {
         const smComplete = sess.stateMachine?.status === 'complete';
         sess.enterIdle();
         if (this.getActivePanel() && smComplete) {
-          // Prefer the original user question (captured at SM start) over the current turn's prompt,
-          // which may be a gate confirmation like "yes" that would leak into enrich_view.name.
           const originalQ = sess.memory.getUserQuestion() || userPrompt;
-          this.logger.debug(`[CreateView] button arg=${sess.memory.getUserQuestion() ? 'userQuestion' : 'userPrompt'} (${originalQ.length} chars): ${originalQ.slice(0, 100)}`);
           writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
         }
         return;
       }
       case 'cancelled': {
-        // User cancelled — stream is already torn down; VS Code renders its own "Cancelled" UI.
-        // Only session bookkeeping here; no stream write would land anyway.
         sess.enterIdle();
         this.logger.info(`[${sess.id}] Exit cancelled — session returned to idle`);
         return;
@@ -823,11 +733,7 @@ export class LineageParticipant {
       case 'aborted':
       case 'error': {
         sess.enterIdle();
-        const msg = exit.kind === 'hop_cap'
-          ? `Exploration stopped — hit the ${maxRounds}-round safety cap before the agenda drained. Rerun with a narrower scope or raise 'dataLineageViz.ai.maxRounds'.`
-          : exit.kind === 'aborted'
-            ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.`
-            : exit.message;
+        const msg = exit.kind === 'hop_cap' ? `Exploration stopped — hit the ${maxRounds}-round safety cap before the agenda drained. Rerun with a narrower scope or raise 'dataLineageViz.ai.maxRounds'.` : exit.kind === 'aborted' ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.` : exit.message;
         this.logger.warn(`Exit ${exit.kind}: ${msg}`);
         writer.markdown(`\n\n*Error: ${msg}*`);
         return;
