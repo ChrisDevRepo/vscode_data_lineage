@@ -728,8 +728,8 @@ function createVirtualNodes(
     for (const rawTarget of rawTargets) {
       const parts = splitSqlName(rawTarget).map(p => stripBrackets(p));
       if (parts.length < 3) continue;
-      const relevant = parts.length >= 4 ? parts.slice(-3) : parts;
-      const [db, schema, object] = relevant;
+      const pertinentParts = parts.length >= 4 ? parts.slice(-3) : parts;
+      const [db, schema, object] = pertinentParts;
       if (CLR_TYPE_METHODS.has(object.toLowerCase())) continue;
       const localId = `[${schema}].[${object}]`.toLowerCase();
       const crossDbId = `[${db}].[${schema}].[${object}]`.toLowerCase();

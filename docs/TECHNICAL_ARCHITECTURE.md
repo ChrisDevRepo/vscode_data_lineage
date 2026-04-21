@@ -46,13 +46,13 @@ The extension integrates with VS Code Copilot Chat (`https://code.visualstudio.c
 
 ### 4.1 The Three Chat Phases
 1. **Discovery**: The user invokes the participant. The AI maps the starting point, intents, and scope, seeding the initial topological Agenda.
-2. **Analysis (The Hop Loop)**: Active traversal. The AI navigates the graph hop-by-hop. In each round it receives the focus node's DDL, the Map, neighbor Metadata, and `working_memory.all_summaries` (one-liner per prior visited node), then executes tools (via `vscode.lm.invokeTool`).
-3. **Holistic Synthesis**: Once the agenda is empty, the AI evaluates the entire Detail Memory to deduce final business logic and generate a visually enriched report (`enrich_view`).
+2. **Analysis (The Hop Loop)**: Active traversal. The AI navigates the graph hop-by-hop. In each round it receives the focus node's DDL, the Map, neighbor Metadata, and `working_memory.short_term_memory` (sliding window of recent findings), then executes tools (via `vscode.lm.invokeTool`).
+3. **Holistic Synthesis**: Once the agenda is empty, the AI evaluates the entire Detail Memory to deduce final business logic and generate a visually enriched report (`present_result`).
 
 ### 4.2 State Machine & Memory Management
 To support deep 30-hop lineages within limited token budgets, the system uses a **two-tier memory model**:
 - **NavigationEngine (`smBase.ts`)**: Consolidates all traversal modes (Blackboard, Column Trace). Following our foundational **DRY and OOP mandates**, it serves as the single source of truth for its domain. Developers must use explicit composition and delegation, avoiding redundant logic or anti-patterns that bypass its structural design. It guards routing by strictly validating requested node/column routes against the actual schema metadata.
-- **Short Memory (`all_summaries`)**: After each hop, the AI's one-line summary is appended to `working_memory.all_summaries: Array<{nodeId, summary}>` and echoed every subsequent hop. Per-entry ~100–300 B; grows linearly with visited-node count but stays tiny on the wire. The sliding-memory wipe at `lineageParticipant.ts:697-704` rebuilds the conversation history after each successful hop to `[systemPrompt, effectivePrompt, navPrompt, lastAssistant, lastResult]`, keeping per-hop input flat.
+- **Short Memory (`short_term_memory`)**: After each hop, the AI's one-line summary is appended to `working_memory.short_term_memory: Array<{nodeId, summary}>` and echoed every subsequent hop. Implements incremental loading (sliding window) to prevent context bloat.
 - **Detail Memory (Evidence Archive)**: Full technical analysis per node, stored in `AiMemoryManager.detailSlots`. **Not shipped per hop** — delivered to the AI only in Phase 3 (Synthesis) via `getResult()`. This is the architectural reason synthesis can hit a context ceiling on very large graphs (see `CLAUDE.md` § "Known pain points").
 - **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis`) modeled as a TypeScript discriminated union with exhaustive `switch` dispatch. Hop-loop exits are themselves typed (`HopLoopExit`), so each outcome (complete / gate / budget-cap / abort / error) owns its cleanup branch — no post-hoc guards. Canonical example of the "state management" rule in `.claude/rules/code-quality.md`.
 

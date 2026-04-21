@@ -2,21 +2,21 @@
 
 ## Question
 
-> Build an annotated lineage graph showing where [Production].[vProductAndDescription] gets its data. Traverse upstream, include every source table/view in scope, and label each node with the columns it contributes to the view. Use a schema filter limited to [Production].
+> Build a bidrectional annotated lineage graph for [Production].[vProductAndDescription]. Explain where the product description comes from and which tables are involved in the join.
 
 ## Classification
 
 | Field | Value |
 |-------|-------|
-| Type | bb (Blackboard) |
+| Type | bb |
 | Subtype | Small-scope inline |
 | Persona | any |
 | Difficulty | easy |
 | Dacpac | tests/fixtures/AdventureWorks2025_AI.dacpac |
 | Origin | [Production].[vProductAndDescription] |
-| Direction | upstream |
+| Direction | bidirectional |
 | Columns | _None_ |
-| Filter | schemas: [Production] |
+| Filter | _None_ |
 
 ## Expected Outcome
 
@@ -24,56 +24,39 @@
 |-------|-------|
 | SM Type | bb |
 | Delivery | inline |
-| Memory mode | Inline (no sliding memory) — scope ≤ 10 |
-| Scope | 2–10 nodes |
+| Memory mode | Inline |
+| Scope | 5 nodes |
 | Max hops | 5 |
-| Filter expected | Yes (Production only) |
-| Required tools | lineage_start_exploration, lineage_submit_findings, lineage_enrich_view |
-| Forbidden tools | lineage_run_bfs_trace-only (must follow with exploration) |
-| Max total runtime (ms) | 60000 |
-| Max hop-avg tokens | 5000 |
-
-## Fact Check (verified 2026-04-16 against AdventureWorks2025_AI)
-
-- Origin: [production].[vproductanddescription] ✓
-- Filter: [Production]
-- **scope: 5 nodes** → inline ✓ (scope ≤ 10)
-- Schemas in scope: {Production: 5}
-- Delivery: inline (confirmed — scope_nodes present)
+| Required tools | lineage_start_exploration, lineage_submit_findings, lineage_present_result |
+| Forbidden tools | _None_ |
+| Max total runtime (ms) | 15000 |
 
 ## Required Nodes
-
-- Product
-- ProductModel
-- ProductDescription
-- ProductModelProductDescriptionCulture
+- [Production].[vProductAndDescription]
+- [Production].[Product]
+- [Production].[ProductModel]
+- [Production].[ProductDescription]
+- [Production].[ProductModelProductDescriptionCulture]
 
 ## Forbidden Nodes
-
 _None._
 
 ## Optimal Path
-
-1. Apply schema filter [Production] on the session (via `POST /filter` or the chat participant's filter UI).
-2. Call `lineage_start_exploration` with origin=[Production].[vProductAndDescription], direction=up.
-3. Scope ≤10 → engine returns inline delivery, all DDL upfront, one batched hop.
-4. Agent writes `detail_analysis` for each source node with `badge_label` + `note_caption`.
-5. Call `lineage_enrich_view` with 1 section ("Product Description Sources") listing all 4 source objects with per-node notes describing what each contributes (ProductModel → model metadata, ProductDescription → descriptive text, ProductModelProductDescriptionCulture → the bridge that joins them, Product → the anchor).
-
-## Deliverable shape
-
-- 1 enrich_view section: label="Product Description Sources"
-- notes[] populated for each source node with a one-line caption
-- sections[].text includes column-level "what this contributes" detail
-- No highlight_groups (optional)
-
-## Why this question is focused
-
-- "annotated lineage graph" → clearly requests `enrich_view` output, not prose.
-- "upstream" → direction=up, no ambiguity.
-- "label each node with the columns it contributes" → forces per-node note content.
-- "schema filter limited to [Production]" → forces filter application; ensures inline scope.
+1. `lineage_get_context` to verify schemas.
+2. `lineage_search_objects` for vProductAndDescription.
+3. `lineage_start_exploration` with origin="[Production].[vProductAndDescription]", direction="bidirectional".
+4. The tool returns `inline: true` with all 5 nodes. AI analyzes the DDLs in one turn.
+5. Call `lineage_present_result` with 1 section ("Product Description Sources") listing all 4 source objects with per-node notes describing what each contributes (ProductModel → model metadata, ProductDescription → descriptive text, ProductModelProductDescriptionCulture → the bridge that joins them, Product → the anchor).
+6. Return chat answer summarizing the join logic.
 
 ## Known Limitations
-
 _None._
+
+## Verification Rules
+- `present_result.name` contains "Product" or "Lineage".
+- 1 `present_result` section: label="Product Description Sources"
+- `sections[0].node_ids` contains all 4 upstream objects.
+- Chat answer mentions `ProductModelProductDescriptionCulture` as the join bridge.
+
+## Evaluation Notes
+- "annotated lineage graph" → clearly requests `present_result` output, not prose.

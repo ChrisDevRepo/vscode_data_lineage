@@ -1,5 +1,5 @@
 /**
- * Render helpers for the enrich_view description + stage-scoped prompt assembly.
+ * Render helpers for the present_result description + stage-scoped prompt assembly.
  *
  * @remarks
  * The metadata band previously rendered In / Out object lists and a per-section
@@ -60,7 +60,7 @@ export function renderMetadataBand(
  * @remarks
  * - `discover`  = inline chat first response (no SM engaged).
  * - `active`    = per-hop `detail_analysis` writing — capture rules only.
- * - `synthesis` = enrich_view assembly — render rules + classification-gated
+ * - `synthesis` = present_result assembly — render rules + classification-gated
  *                 subsections.
  */
 export type TemplateStage = 'discover' | 'active' | 'synthesis';
@@ -119,7 +119,7 @@ const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue
 const STAGE_HEADER: Readonly<Record<TemplateStage, string>> = {
   discover:  '### Chat response format',
   active:    '### Capture rules — write these into detail_analysis',
-  synthesis: '### Enrich_view document rules',
+  synthesis: '### Presentation document rules',
 };
 
 /**

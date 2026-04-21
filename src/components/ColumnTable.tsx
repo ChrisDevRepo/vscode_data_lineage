@@ -17,7 +17,7 @@ interface ColumnTableProps {
   findQuery?: string;
   /** 
    * If true, hides the 'Null' and 'Flags' columns to save space.
-   * Typically used for views or functions where these attributes are less relevant.
+   * Typically used for views or functions where these attributes are non-applicable.
    */
   compact?: boolean;
 }

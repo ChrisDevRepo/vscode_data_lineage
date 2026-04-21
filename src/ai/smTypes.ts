@@ -27,7 +27,7 @@ export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 /** 
  * The AI's qualitative assessment of a node's relevance to the current lineage investigation.
  */
-export type Verdict = 'relevant' | 'pass' | 'irrelevant';
+export type Verdict = 'analyze' | 'pass' | 'prune';
 
 
 /**
@@ -56,7 +56,7 @@ export interface HopNeighbor {
   boundary_reason?: string;
   /** Current state of this node within the navigation engine's agenda. */
   scope?: 'visited' | 'agenda' | 'pruned' | 'available' | 'external';
-  /** List of columns relevant to the current trace, if applicable. */
+  /** List of columns pertinent to the current trace, if applicable. */
   cols?: string[];
   /** Depth from origin (always surfaced when a depth budget is set). */
   depth_from_origin?: number;
@@ -144,7 +144,7 @@ export interface HopSubmission {
   focus_node_id: string;
   /** High-fidelity technical analysis stored in the detail archive. */
   detail_analysis: string;
-  /** One-line digest of the findings — echoed in future hops via `all_summaries`. */
+  /** One-line digest of the findings — echoed in future hops via `short_term_memory`. */
   summary: string;
   /** The relevance verdict for the focus node. */
   verdict: Verdict;
@@ -181,7 +181,7 @@ export type SubmitResult =
   | {
       /** Indicates the submission was accepted. */
       ok: true;
-      /** Number of agenda items cascade-removed because the focus was marked irrelevant. */
+      /** Number of agenda items cascade-removed because the focus was marked prune. */
       cascaded_count?: number;
       /**
        * Signals the engine has auto-completed. Present when:
@@ -246,7 +246,7 @@ export interface DiagnosticsSnapshot {
   /** Nodes remaining on the agenda. */
   agendaRemaining: number;
   /** Rolling verdict tally across the whole session. */
-  tally: { relevant: number; pass: number; irrelevant: number };
+  tally: { analyze: number; pass: number; prune: number };
   /** Count of soft/silent-mode scope expansions since session start. */
   scopeExpansions: number;
   /** Count of schemas the user has confirmed mid-session (session allowlist size). */

@@ -98,8 +98,8 @@ export function validateToolInput(
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
 const COLUMN_SEARCH_LIMIT = 50;
-const ENRICH_VIEW_NAME_MAX_LENGTH = 60;
-const ENRICH_VIEW_SUMMARY_HARD_LIMIT = 300;
+const PRESENT_RESULT_NAME_MAX_LENGTH = 60;
+const PRESENT_RESULT_SUMMARY_HARD_LIMIT = 300;
 
 /**
  * Builds a lookup map for edges between nodes.
@@ -185,7 +185,7 @@ export function getNodeDdl(
  * Constructs a detailed "Focus Node" object for use in exploration hop contexts.
  *
  * @remarks
- * This function packages all relevant metadata for a node (DDL, columns, foreign keys,
+ * This function packages all pertinent metadata for a node (DDL, columns, foreign keys,
  * and unresolved references) into a shape suitable for the AI agent to analyze during a hop.
  *
  * @param node - The node currently in focus.
@@ -958,7 +958,7 @@ export function searchDdl(
 
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
-export type EnrichViewInput = {
+export type PresentResultInput = {
   name: string;
   summary: string;
   title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
@@ -984,10 +984,9 @@ export type EnrichViewInput = {
     node_id: string;
     text: string;
   }>;
-  // node_ids fallback removed — enrich_view requires SM result graph (BB or CT)
 };
 
-export type EnrichViewRequest = {
+export type PresentResultRequest = {
   success: true;
   name: string;
   node_ids: string[];
@@ -999,7 +998,7 @@ export type EnrichViewRequest = {
   notes: Array<{ node_id: string; text: string }>;
 };
 
-export type EnrichViewError = { success: false; errors: string[]; hint: string };
+export type PresentResultError = { success: false; errors: string[]; hint: string };
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
@@ -1097,7 +1096,7 @@ export function orderAndAssemble(
 }
 
 /**
- * Normalizes and "auto-fixes" common AI output artifacts in the enrichment view input.
+ * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
  *
  * @remarks
  * LLMs often produce slightly malformed outputs such as double-escaped newlines,
@@ -1111,11 +1110,11 @@ export function orderAndAssemble(
  * @param resolvedNodeIds - The canonical set of node IDs in the current session.
  * @returns The fixed input object and a list of applied fixes for logging.
  */
-export function autoFixEnrichView(
+export function autoFixPresentResult(
   model: DatabaseModel,
-  input: EnrichViewInput,
+  input: PresentResultInput,
   resolvedNodeIds?: string[],
-): { input: EnrichViewInput; fixes: string[] } {
+): { input: PresentResultInput; fixes: string[] } {
   const fixes: string[] = [];
   let fixed = { ...input };
 
@@ -1129,10 +1128,10 @@ export function autoFixEnrichView(
   }
 
   // 1. Auto-truncate name at word boundary if too long
-  if (fixed.name && fixed.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) {
-    const truncated = fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
-    fixed = { ...fixed, name: truncated || fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH) };
-    fixes.push(`Truncated name to ${ENRICH_VIEW_NAME_MAX_LENGTH} chars`);
+  if (fixed.name && fixed.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) {
+    const truncated = fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, name: truncated || fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH) };
+    fixes.push(`Truncated name to ${PRESENT_RESULT_NAME_MAX_LENGTH} chars`);
   }
 
   // 2. Auto-truncate title at word boundary if too long
@@ -1143,11 +1142,11 @@ export function autoFixEnrichView(
   }
 
   // 3. Auto-truncate summary at sentence boundary if too long
-  if (fixed.summary && fixed.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
-    const truncated = fixed.summary.slice(0, ENRICH_VIEW_SUMMARY_HARD_LIMIT);
+  if (fixed.summary && fixed.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
+    const truncated = fixed.summary.slice(0, PRESENT_RESULT_SUMMARY_HARD_LIMIT);
     const lastPeriod = truncated.lastIndexOf('.');
     fixed = { ...fixed, summary: lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated.trimEnd() };
-    fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
+    fixes.push(`Truncated summary to ${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars`);
   }
 
   // 4. Convert $$ block math to ```math code fences.
@@ -1290,8 +1289,6 @@ export function autoFixEnrichView(
     if (noteFixed) { fixed = { ...fixed, notes: newNotes }; fixes.push('Converted LaTeX to ```math blocks in notes'); }
   }
 
-  // node_ids fallback removed — enrich_view requires SM result graph.
-  // resolvedNodeIds is always provided from SM (BB/CT).
   const nodeIdSet = new Set(resolvedNodeIds ?? []);
 
   // 5. Drop empty notes & notes for nodes not in the resolved set
@@ -1347,36 +1344,31 @@ export function validateMarkdownFormat(md: string): string[] {
     );
   }
 
-  // $$ balance check removed — fixLatex converts all $$ to ```math fences.
-  // Code fences are structurally safe (CommonMark) and can't break markdown.
-
   return errors;
 }
 
 /**
- * Validates the full `enrich_view` input against mechanical contracts only.
+ * Validates the full `present_result` input against mechanical contracts only.
  *
  * @remarks
  * Enforces naming length, summary length, mutual-exclusion between `description`
  * and `sections[]`, required fields, node-id resolution, and markdown-fence closure.
- * Content-quality judgments (prose style, depth, compression against source slots)
- * belong in the prompt — see `.claude/rules/code-quality.md` "Rejection Policy".
  *
  * @param input - The (possibly auto-fixed) AI input.
  * @param resolvedNodeIds - The canonical set of node IDs.
  * @param assembledBadges - Pre-assembled numbered badges for consistency.
  * @returns A successful request object or a structured error with correction hints.
  */
-export function validateEnrichView(
-  input: EnrichViewInput,
+export function validatePresentResult(
+  input: PresentResultInput,
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
-): EnrichViewRequest | EnrichViewError {
+): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
 
   // Name validation
   if (!input.name || input.name.trim().length === 0) errors.push('name is required');
-  else if (input.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) errors.push(`name exceeds ${ENRICH_VIEW_NAME_MAX_LENGTH} characters`);
+  else if (input.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) errors.push(`name exceeds ${PRESENT_RESULT_NAME_MAX_LENGTH} characters`);
 
   // Node set must be non-empty (after resolve + prune)
   if (resolvedNodeIds.length === 0) {
@@ -1385,28 +1377,34 @@ export function validateEnrichView(
 
   if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
 
-  // summary required + length: soft 120 (instructed), hard 300 (rejected)
+  // summary required + length
   if (!input.summary || input.summary.trim().length === 0) {
-    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${ENRICH_VIEW_SUMMARY_HARD_LIMIT})`);
-  } else if (input.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
-    errors.push(`summary exceeds hard limit (${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
+    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${PRESENT_RESULT_SUMMARY_HARD_LIMIT})`);
+  } else if (input.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
+    errors.push(`summary exceeds hard limit (${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
   }
 
-  // description optional — if provided, validate mechanical shape only
-  if (input.description && input.description.trim().length > 0) {
+  const hasSections = !!(input.sections && input.sections.length > 0);
+  const hasDescription = !!(input.description && input.description.trim().length > 0);
+
+  if (!hasSections && !hasDescription) {
+    errors.push('provide either sections[] (node groupings with labels) OR description (narrative summary) — at least one is required');
+  }
+
+  // description validation
+  if (hasDescription) {
     // sections[] and description are mutually exclusive — contract, not content judgment
-    if (input.sections?.length) {
+    if (hasSections) {
       errors.push('Provide either sections[] or description — not both. Use sections[] for structured output; description is the fallback for unstructured answers only');
     }
     // Markdown format validation (unclosed fences) — mechanical
-    errors.push(...validateMarkdownFormat(input.description));
+    errors.push(...validateMarkdownFormat(input.description!));
   }
 
   // Sections validation — node_ids (when provided) must be valid; section text must be present.
-  // Depth is a quality concern, not a validity concern — AI self-regulates per question shape.
-  if (input.sections?.length) {
+  if (hasSections) {
     const resolvedSet = new Set(resolvedNodeIds);
-    for (const sec of input.sections) {
+    for (const sec of input.sections!) {
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
@@ -1420,7 +1418,7 @@ export function validateEnrichView(
     }
   }
 
-  // Notes validation — must be present; brevity is fine.
+  // Notes validation
   if (input.notes?.length) {
     for (const note of input.notes) {
       if (!note.text || note.text.trim().length === 0) {
@@ -1429,7 +1427,7 @@ export function validateEnrichView(
     }
   }
 
-  // highlight_groups validation (structural + color validity)
+  // highlight_groups validation
   if (input.highlight_groups) {
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
@@ -1446,7 +1444,10 @@ export function validateEnrichView(
       else if (e.startsWith('title ')) failedFields.add('title');
       else if (e.startsWith('closing ')) failedFields.add('closing');
       else if (e.includes('summary')) failedFields.add('summary');
-      else if (e.includes('description')) failedFields.add('description');
+      else if (e.includes('description') || e.includes('sections')) {
+        failedFields.add('description');
+        failedFields.add('sections');
+      }
       else if (e.startsWith('Section ')) failedFields.add('sections');
       else if (e.startsWith('Note for ')) failedFields.add('notes');
       else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
@@ -1509,3 +1510,25 @@ export function getDdlBatch(
   return { results, total: results.length };
 }
 
+export type PresentResultRequest = {
+  success: true;
+  name: string;
+  node_ids: string[];
+  summary: string;
+  description?: string;
+  layout_direction: 'LR' | 'TB';
+  highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
+  badges: Array<{ node_id: string; text: string }>;
+  notes: Array<{ node_id: string; text: string }>;
+};
+
+/**
+ * Structural summary of the final presentation result.
+ */
+export interface PresentResultResult {
+  success: boolean;
+  name: string;
+  summary: string;
+  description?: string;
+  node_count: number;
+}

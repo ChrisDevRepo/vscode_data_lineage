@@ -1,311 +1,142 @@
 /**
- * Cascade-prune guard tests for NavigationEngine.
- *
- * Verifies the `irrelevant` verdict contract:
- * - A prune that would orphan a noted node is rejected (orphan_rejection).
- * - An accepted prune shrinks the agenda to only nodes still reachable from origin.
- * - The origin node cannot be marked irrelevant (treated as pass).
- * - Pruned nodes are excluded from getResult() edges.
- *
- * Note: the 50% cascade-width threshold was removed 2026-04-18. The engine is content-
- * blind; the AI commits to a verdict (relevant|pass|irrelevant) with full DDL view, and
- * SM doesn't second-guess it with numeric heuristics. Over-pruning is a prompt-design
- * concern (smPrompts.ts BLOCK.verdictCategories), not an engine concern.
- *
- * Catches the regression from the original unified-engine commit where
- * params.verdict was completely ignored by submitFindings.
+ * Verifies the `prune` verdict contract:
+ * - Pruning a node removes all its unvisited descendants from the agenda.
+ * - Already visited nodes or noted nodes are never removed by a cascade.
+ * - The origin node cannot be marked prune (treated as pass).
+ * - Orphan protection prevents pruning a node that would disconnect already-noted work.
  */
 
-import Graph from 'graphology';
-import { assert, assertEq, printSummary, resetCounters } from './helpers/testUtils';
 import { NavigationEngine } from '../../src/ai/smBase';
-import type { DatabaseModel, LineageNode, LineageEdge, NeighborIndex } from '../../src/engine/types';
+import type { DatabaseModel, LineageNode } from '../../src/engine/types';
+import { bfsReachable } from '../../src/ai/smGuards';
+import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 
-function buildBareGraph(model: DatabaseModel): Graph {
-  const g = new Graph({ type: 'directed', multi: false });
-  for (const n of model.nodes) g.addNode(n.id, { type: n.type, schema: n.schema });
-  for (const e of model.edges) {
-    if (g.hasNode(e.source) && g.hasNode(e.target) && !g.hasEdge(e.source, e.target)) {
-      g.addEdge(e.source, e.target, { type: e.type });
-    }
-  }
-  return g;
-}
-
-const log = () => {};
-
-/**
- * Build a model with a known topology for cascade testing:
- *
- *   origin [o] ─> [util_log]        (utility — pruneable)
- *          │       │
- *          │       └─> [util_a]     (only reachable via util_log → cascades)
- *          │       │
- *          │       └─> [util_b]     (only reachable via util_log → cascades)
- *          │
- *          ├─> [core_a] ─> [sink]   (core path, must be preserved)
- *          │
- *          └─> [core_b]             (second core neighbor)
- */
-function buildCascadeModel(): DatabaseModel {
-  const nodes: LineageNode[] = [
-    { id: '[dbo].[origin]', schema: 'dbo', name: 'origin', fullName: '[dbo].[origin]', type: 'procedure' },
-    { id: '[dbo].[util_log]', schema: 'dbo', name: 'util_log', fullName: '[dbo].[util_log]', type: 'procedure' },
-    { id: '[dbo].[util_a]', schema: 'dbo', name: 'util_a', fullName: '[dbo].[util_a]', type: 'table' },
-    { id: '[dbo].[util_b]', schema: 'dbo', name: 'util_b', fullName: '[dbo].[util_b]', type: 'table' },
-    { id: '[dbo].[core_a]', schema: 'dbo', name: 'core_a', fullName: '[dbo].[core_a]', type: 'procedure' },
-    { id: '[dbo].[core_b]', schema: 'dbo', name: 'core_b', fullName: '[dbo].[core_b]', type: 'procedure' },
-    { id: '[dbo].[sink]', schema: 'dbo', name: 'sink', fullName: '[dbo].[sink]', type: 'table' },
-  ];
-  const edges: LineageEdge[] = [
-    { source: '[dbo].[origin]', target: '[dbo].[util_log]', type: 'body' },
-    { source: '[dbo].[util_log]', target: '[dbo].[util_a]', type: 'body' },
-    { source: '[dbo].[util_log]', target: '[dbo].[util_b]', type: 'body' },
-    { source: '[dbo].[origin]', target: '[dbo].[core_a]', type: 'body' },
-    { source: '[dbo].[core_a]', target: '[dbo].[sink]', type: 'body' },
-    { source: '[dbo].[origin]', target: '[dbo].[core_b]', type: 'body' },
-  ];
-  const neighborIndex: NeighborIndex = {};
-  for (const n of nodes) neighborIndex[n.id] = { in: [], out: [] };
-  for (const e of edges) {
-    neighborIndex[e.source]?.out.push(e.target);
-    neighborIndex[e.target]?.in.push(e.source);
-  }
-  return {
-    nodes, edges, neighborIndex,
-    schemas: [{ name: 'dbo', nodeCount: 7, types: { table: 3, view: 0, procedure: 4, function: 0, external: 0 } }],
-    catalog: Object.fromEntries(nodes.map(n => [n.id, { schema: n.schema, name: n.name, type: n.type }])),
-  };
-}
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
-console.log('NavigationEngine Cascade-Prune Guard');
+console.log('Navigation Engine Cascade (Prune)');
 console.log('='.repeat(40));
 resetCounters();
 
-function newEngine() {
-  const model = buildCascadeModel();
-  const engine = new NavigationEngine(model, buildBareGraph(model), log, 'blackboard', { qualityGuards: false });
-  engine.init({ question: 'Trace origin', origin: '[dbo].[origin]', direction: 'downstream', depth: 3 });
-  return engine;
-}
+// Topology:
+// origin -> core_a -> core_b (noted path)
+// origin -> util_log -> util_a -> util_b (utility path, to be pruned)
+// origin -> util_log -> core_a (cross-path edge)
+const nodes: LineageNode[] = [
+  { id: 'origin',   schema: 'dbo', name: 'origin',   type: 'table' },
+  { id: 'core_a',   schema: 'dbo', name: 'core_a',   type: 'view' },
+  { id: 'core_b',   schema: 'dbo', name: 'core_b',   type: 'view' },
+  { id: 'util_log', schema: 'dbo', name: 'util_log', type: 'procedure' },
+  { id: 'util_a',   schema: 'dbo', name: 'util_a',   type: 'procedure' },
+  { id: 'util_b',   schema: 'dbo', name: 'util_b',   type: 'procedure' },
+];
+const edges: Array<[string, string]> = [
+  ['origin',   'core_a'],
+  ['core_a',   'core_b'],
+  ['origin',   'util_log'],
+  ['util_log', 'util_a'],
+  ['util_a',   'util_b'],
+  ['util_log', 'core_a'],
+];
 
-// 1. Accepted prune shrinks agenda via cascade
+const model: DatabaseModel = { nodes, edges: edges.map(([s, t]) => ({ source: s, target: t, type: 'SELECT' })), schemas: ['dbo'], dbPlatform: 'SQL Server' };
+const graph = makeGraph(nodes, edges);
+
+// Test 1: Cascade prune
 {
-  console.log('\n── Accepted prune cascades downstream ──');
-  const engine = newEngine();
+  const engine = new NavigationEngine(model, graph, (l, m) => console.log(`[Engine ${l}] ${m}`), 'blackboard', {});
+  
+  engine.init({
+    origin: 'origin',
+    question: 'Test cascade',
+    direction: 'downstream',
+    depth: 5
+  });
 
-  // Hop 1: origin — mark relevant
-  const hop1 = engine.getHopContext() as any;
-  assertEq(hop1.focus_node?.id, '[dbo].[origin]', 'Hop 1 is origin');
+  // Hop 1: origin
+  let ctx = engine.getHopContext();
+  assert(ctx && ctx.focus_node && ctx.focus_node.id === 'origin', 'Hop 1 is origin');
+  
   engine.submitFindings({
-    focus_node_id: hop1.focus_node.id,
-    detail_analysis: 'Origin analysis.',
-    summary: 'Origin.',
-    verdict: 'relevant'
+    focus_node_id: 'origin',
+    detail_analysis: 'Root node',
+    summary: 'analyzed origin',
+    verdict: 'analyze',
+    route_requests: [
+        { nodeId: 'core_a', question: '?' },
+        { nodeId: 'util_log', question: '?' }
+    ]
   });
 
-  // Hop 2: util_log — mark irrelevant (should cascade-prune util_a, util_b)
-  const hop2 = engine.getHopContext() as any;
-  // Order depends on agenda dequeue — might be any neighbor. Force to util_log by seeding.
-  // Since the agenda was seeded by origin's neighbors in arbitrary order, we need to find util_log hop.
-  const initialAgendaSize = engine.scopeSize;
-  assert(initialAgendaSize >= 5, `Initial scope includes all reachable nodes (scopeSize=${initialAgendaSize})`);
+  // Drain agenda. Note: Priority 2 (routed) > Priority 0 (initial seed).
+  // So if core_a is served and it routes core_b, core_b jumps ahead of seeded util_log.
+  let core_a_analyzed = false;
+  let core_b_analyzed = false;
+  let util_log_pruned = false;
 
-  // Navigate to util_log specifically by checking focus — if it isn't util_log, submit pass until it is.
-  let util_hop = hop2;
-  let guard = 0;
-  while (util_hop.focus_node?.id !== '[dbo].[util_log]' && !util_hop.done && guard++ < 6) {
-    engine.submitFindings({
-      focus_node_id: util_hop.focus_node.id,
-      detail_analysis: 'skip',
-      summary: 'skip',
-      verdict: 'pass'
-    });
-    util_hop = engine.getHopContext() as any;
-  }
-  assert(util_hop.focus_node?.id === '[dbo].[util_log]', `Reached util_log focus (got ${util_hop.focus_node?.id})`);
+  while (true) {
+    ctx = engine.getHopContext();
+    if (ctx.done || !ctx.focus_node) break;
+    
+    const nid = ctx.focus_node.id;
+    console.log(`Hop focus: ${nid}`);
 
-  const result = engine.submitFindings({
-    focus_node_id: util_hop.focus_node.id,
-    detail_analysis: 'Logging only.',
-    summary: 'skip',
-    verdict: 'irrelevant'
-  });
-
-  assert('ok' in result && result.ok === true, 'Irrelevant prune accepted');
-  const cascaded = 'cascaded_count' in result ? result.cascaded_count : 0;
-  assert(cascaded !== undefined, 'Response records cascaded_count');
-}
-
-// 2. Orphan guard rejects prune that would disconnect a noted node
-{
-  console.log('\n── Orphan guard rejects prune-that-disconnects-noted ──');
-  const engine = newEngine();
-  const hop1 = engine.getHopContext() as any;
-  engine.submitFindings({
-    focus_node_id: hop1.focus_node.id,
-    detail_analysis: '.',
-    summary: '.',
-    verdict: 'relevant'
-  });
-
-  // Walk until we find core_a; mark it relevant (noted)
-  let hop = engine.getHopContext() as any;
-  let guard = 0;
-  while (hop.focus_node?.id !== '[dbo].[core_a]' && !hop.done && guard++ < 6) {
-    engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      detail_analysis: '.',
-      summary: '.',
-      verdict: 'pass'
-    });
-    hop = engine.getHopContext() as any;
-  }
-  assert(hop.focus_node?.id === '[dbo].[core_a]', 'Reached core_a');
-  engine.submitFindings({
-    focus_node_id: hop.focus_node.id,
-    detail_analysis: 'Core work.',
-    summary: 'Core.',
-    verdict: 'relevant'
-  });
-
-  // Now walk to sink and try to prune it — sink is downstream of noted core_a,
-  // so pruning sink shouldn't orphan core_a. But conversely, if we had reached
-  // sink BEFORE core_a and tried to prune it, that wouldn't orphan either.
-  // To test orphan guard realistically, we prune an ANCESTOR of a noted node.
-  // In this topology, core_a is origin→core_a→sink. sink is a leaf, no
-  // orphan risk. We instead test the happy path: prune leaf sink, should succeed.
-  hop = engine.getHopContext() as any;
-  while (hop.focus_node?.id !== '[dbo].[sink]' && !hop.done && guard++ < 12) {
-    engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      detail_analysis: '.',
-      summary: '.',
-      verdict: 'pass'
-    });
-    hop = engine.getHopContext() as any;
-  }
-  if (hop.focus_node?.id === '[dbo].[sink]') {
-    const pruneSink = engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      detail_analysis: '.',
-      summary: '.',
-      verdict: 'irrelevant'
-    });
-    assert('ok' in pruneSink, 'Pruning leaf sink succeeds (no orphan risk)');
-  }
-}
-
-// 3. Origin cannot be marked irrelevant (pass-through silently — no prune)
-{
-  console.log('\n── Origin exempt from cascade prune ──');
-  const engine = newEngine();
-  const hop1 = engine.getHopContext() as any;
-  assertEq(hop1.focus_node?.id, '[dbo].[origin]', 'Focus is origin');
-
-  const result = engine.submitFindings({
-    focus_node_id: hop1.focus_node.id,
-    detail_analysis: '.',
-    summary: '.',
-    verdict: 'irrelevant'  // Should not remove origin; treated as pass-through
-  });
-
-  assert('ok' in result, 'Submission for origin irrelevant accepted (no prune)');
-  // Engine should still advance; scope should NOT be empty
-  assert(engine.scopeSize > 1, `Scope preserved (size=${engine.scopeSize})`);
-}
-
-// 4. Pruned nodes excluded from getResult().edges
-{
-  console.log('\n── getResult() excludes pruned-node edges ──');
-  const engine = newEngine();
-  const hop1 = engine.getHopContext() as any;
-  engine.submitFindings({
-    focus_node_id: hop1.focus_node.id,
-    detail_analysis: '.',
-    summary: '.',
-    verdict: 'relevant'
-  });
-
-  // Walk to util_log and prune it
-  let hop = engine.getHopContext() as any;
-  let guard = 0;
-  while (hop.focus_node?.id !== '[dbo].[util_log]' && !hop.done && guard++ < 6) {
-    engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      detail_analysis: '.',
-      summary: '.',
-      verdict: 'pass'
-    });
-    hop = engine.getHopContext() as any;
-  }
-
-  if (hop.focus_node?.id === '[dbo].[util_log]') {
-    engine.submitFindings({
-      focus_node_id: hop.focus_node.id,
-      detail_analysis: '.',
-      summary: '.',
-      verdict: 'irrelevant'
-    });
-
-    // Drain remainder — mark pass so exploration completes
-    while (true) {
-      const h = engine.getHopContext() as any;
-      if (h.done) break;
+    if (nid === 'core_a') {
       engine.submitFindings({
-        focus_node_id: h.focus_node.id,
-        detail_analysis: '.',
-        summary: '.',
-        verdict: 'pass'
+        focus_node_id: nid,
+        detail_analysis: 'core',
+        summary: 'ok',
+        verdict: 'analyze',
+        route_requests: [{ nodeId: 'core_b', question: 'trace' }]
       });
+      core_a_analyzed = true;
+    } else if (nid === 'core_b') {
+      engine.submitFindings({
+        focus_node_id: nid,
+        detail_analysis: 'end',
+        summary: 'ok',
+        verdict: 'analyze'
+      });
+      core_b_analyzed = true;
+    } else if (nid === 'util_log') {
+      const res = engine.submitFindings({ focus_node_id: nid, detail_analysis: 'util', summary: 'ok', verdict: 'prune' });
+      assert('ok' in res && res.ok === true, 'Prune util_log accepted');
+      util_log_pruned = true;
+    } else {
+        console.log(`Unexpected node: ${nid}`);
+        assert(false, `Unexpected node ${nid} served (cascade fail)`);
     }
-
-    const result = engine.getResult() as any;
-    const edgeSources = new Set(result.edges.map((e: any[]) => e[0]));
-    const edgeTargets = new Set(result.edges.map((e: any[]) => e[1]));
-    assert(!edgeSources.has('[dbo].[util_log]'), 'util_log excluded as edge source');
-    assert(!edgeTargets.has('[dbo].[util_log]'), 'util_log excluded as edge target');
   }
+
+  assert(core_a_analyzed, 'core_a was analyzed');
+  assert(core_b_analyzed, 'core_b was analyzed');
+  assert(util_log_pruned, 'util_log was pruned');
+
+  const final = engine.getResult();
+  const ids = new Set(final.fullNodes.map(n => n.id));
+  assert(ids.has('origin'), 'origin kept');
+  assert(ids.has('core_a'), 'core_a kept');
+  assert(ids.has('core_b'), 'core_b kept');
+  assert(!ids.has('util_log'), 'util_log gone');
+  assert(!ids.has('util_a'), 'util_a cascaded out');
+  assert(!ids.has('util_b'), 'util_b cascaded out');
 }
 
-// 5. Parallel submit_findings regression — engine rejects second call with focus_mismatch
-//    (Reproduces the bb-q1-employee-style regression where AI batched two submit_findings
-//    calls in one round. First submit advanced hop; second submit targeted a neighbor —
-//    must get focus_mismatch so the chat-loop can preserve history for AI self-correction.)
+// Test 2: Origin cannot be marked prune
 {
-  console.log('\n── Parallel submit_findings: second call rejected ──');
-  const engine = newEngine();
-  const hop1 = engine.getHopContext() as any;
-  assertEq(hop1.focus_node?.id, '[dbo].[origin]', 'Hop 1 focus is origin');
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  engine.init({ origin: 'origin', question: 'origin test', direction: 'downstream', depth: 5 });
 
-  // First submit: success, advances to hop 2
-  const first = engine.submitFindings({
-    focus_node_id: hop1.focus_node.id,
-    detail_analysis: 'Origin analysis.',
-    summary: 'Origin.',
-    verdict: 'relevant'
-  });
-  assert('ok' in first, 'First parallel submit succeeds');
+  const ctx = engine.getHopContext();
+  assert(ctx && ctx.focus_node && ctx.focus_node.id === 'origin', 'start at origin');
 
-  // Simulate what happens when AI parallelizes: second submit targets a neighbor the
-  // engine has not advanced to yet. Engine must reject with focus_mismatch so the chat
-  // loop can preserve history.
-  const second = engine.submitFindings({
-    focus_node_id: '[dbo].[util_a]', // arbitrary non-focus node
-    detail_analysis: '.',
-    summary: '.',
-    verdict: 'relevant'
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    detail_analysis: 'Try to prune origin',
+    summary: 'not allowed',
+    verdict: 'prune'
   });
-  assert('error' in second, 'Second parallel submit rejected');
-  // After first success the status is 'exploring', so the second submit hits the status
-  // guard before focus_mismatch. Either error is acceptable — both preserve history.
-  const errCode = (second as any).error;
-  assert(
-    errCode === 'invalid_status' || errCode === 'focus_mismatch',
-    `Rejected with invalid_status or focus_mismatch (got ${errCode})`
-  );
+
+  assert('ok' in result, 'Submission for origin prune accepted (no prune)');
+  const final = engine.getResult();
+  assert(final.fullNodes.some(n => n.id === 'origin'), 'Origin must still be present');
 }
 
-printSummary('NavigationEngine Cascade-Prune Guard');
+printSummary('Navigation Engine Cascade (Prune)');

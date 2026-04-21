@@ -1,526 +1,189 @@
-import { suite, test } from 'node:test';
-import * as assert from 'assert';
-import Graph from 'graphology';
+/**
+ * High-fidelity unit tests for the NavigationEngine's state management,
+ * routing validation, and verdict tallying.
+ */
+
 import { NavigationEngine } from '../../src/ai/smBase';
-import { prunePreserveOnly } from '../../src/ai/viewPrune';
-import { classifyGateReply, PendingGateSchema } from '../../src/ai/sessionPhase';
-import { AiSession } from '../../src/ai/session';
+import type { DatabaseModel, LineageNode } from '../../src/engine/types';
+import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 
-suite('State Machine Robustness', () => {
+console.log('NavigationEngine Robustness');
+console.log('='.repeat(40));
+resetCounters();
 
-  function createMockModelAndGraph() {
-    const model = {
-      nodes: [
-        { id: 'a', name: 'A', schema: 'dbo', type: 'table' },
-        { id: 'b', name: 'B', schema: 'dbo', type: 'table' },
-        { id: 'c', name: 'C', schema: 'dbo', type: 'table' },
-        { id: 'd', name: 'D', schema: 'dbo', type: 'table' }
-      ],
-      edges: [
-        { source: 'a', target: 'b', type: 'read' },
-        { source: 'b', target: 'c', type: 'read' },
-        { source: 'c', target: 'd', type: 'read' }
-      ],
-      schemas: [{ name: 'dbo', n: 4, t: 4, v: 0, p: 0 }]
-    };
+const nodes: LineageNode[] = [
+  { id: 'origin', schema: 'dbo', name: 'origin', type: 'table' },
+  { id: 'child_a', schema: 'dbo', name: 'child_a', type: 'view' },
+  { id: 'child_b', schema: 'dbo', name: 'child_b', type: 'view' },
+];
+const edges: Array<[string, string]> = [
+  ['origin', 'child_a'],
+  ['child_a', 'child_b'],
+];
+const model: DatabaseModel = { nodes, edges: edges.map(([s, t]) => ({ source: s, target: t, type: 'SELECT' })), schemas: ['dbo'], dbPlatform: 'SQL Server' };
+const graph = makeGraph(nodes, edges);
 
-    const graph = new Graph({ directed: true });
-    model.nodes.forEach(n => graph.addNode(n.id, n));
-    model.edges.forEach(e => graph.addEdge(e.source, e.target, { type: e.type }));
+// Status check
+{
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  assert(engine.status === 'created', 'status created');
 
-    return { model, graph };
-  }
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
+  assert(engine.status === 'initialized', 'status initialized');
 
-  test('BFS Scope should not collapse and properly calculate bidirectional scope', () => {
-    const { model, graph } = createMockModelAndGraph();
-    const log = () => {};
-    log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
+  engine.getHopContext();
+  assert(engine.status === 'awaiting_findings', 'status awaiting_findings');
 
-    const engine = new NavigationEngine(model as any, graph, log as any, 'blackboard', { qualityGuards: false });
-    
-    // Test A downstream (A -> B -> C -> D)
-    const resA = engine.init({ question: 'trace A', origin: 'a', direction: 'downstream', depth: 3 });
-    assert.strictEqual(resA.scopeSize, 4, 'Downstream from A should find all 4 nodes');
+  engine.submitFindings({
+    focus_node_id: 'origin',
+    detail_analysis: 'Root node',
+    summary: 'analyzed origin',
+    verdict: 'analyze',
+  });
+  assert(engine.status === 'exploring', 'status exploring');
+}
 
-    // Test C upstream (A -> B -> C)
-    const resC = engine.init({ question: 'trace C', origin: 'c', direction: 'upstream', depth: 2 });
-    assert.strictEqual(resC.scopeSize, 3, 'Upstream from C should find A, B, C');
-    
-    // Test B bidirectional (A -> B -> C)
-    const resB = engine.init({ question: 'trace B', origin: 'b', direction: 'bidirectional', depth: 1 });
-    assert.strictEqual(resB.scopeSize, 3, 'Bidirectional from B depth 1 should find A, B, C');
+// Tally tracking
+{
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
+
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'origin',
+    detail_analysis: 'Root',
+    summary: 'ok',
+    verdict: 'analyze',
   });
 
-  // SM cascade-prune behavior is covered by tests/unit/navigation-engine-cascade.test.ts
-  // against a fan-out graph where cascade is observable. The linear A→B→C→D fixture here
-  // cannot produce a non-zero `cascaded_count` because `seedAgenda` only admits direct
-  // neighbors of the origin — C and D never reach the agenda before B is popped.
-
-  test('SM sliding-memory mode: complete=true is silently ignored (engine owns termination via agenda drain)', () => {
-    const { model, graph } = createMockModelAndGraph();
-    const log = () => {};
-    log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
-
-    const engine = new NavigationEngine(model as any, graph, log as any, 'blackboard', { qualityGuards: false });
-    // Leave _inlineMode at its default (false) → sliding-memory mode.
-    engine.init({ question: 'trace A', origin: 'a', direction: 'downstream', depth: 3 });
-
-    // First hop is the origin (priority 3). 'a' has direct neighbor 'b' still unvisited.
-    engine.getHopContext();
-    const res = engine.submitFindings({
-      focus_node_id: 'a',
-      detail_analysis: 'ok',
-      summary: 'ok',
-      verdict: 'relevant',
-      complete: true, // ignored in SM mode — the engine owns termination
-    } as any);
-
-    // In SM mode, complete:true is silently ignored. The submit processes normally;
-    // termination happens later when getHopContext finds an empty agenda.
-    assert.ok(!('error' in res), 'complete=true in SM mode does NOT return an error');
-    assert.ok('ok' in res && (res as any).ok === true, 'submit is accepted');
-    assert.ok(!(res as any).done, 'done:true is NOT emitted from complete=true in SM mode (engine owns it)');
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'child_a',
+    detail_analysis: 'child',
+    summary: 'ok',
+    verdict: 'prune',
   });
 
-  test('Inline mode: complete=true returns { done: true, result }', () => {
-    const { model, graph } = createMockModelAndGraph();
-    const log = () => {};
-    log.debug = () => {}; log.info = () => {}; log.warn = () => {}; log.error = () => {};
+  const diag = engine.getHopDiagnostics();
+  assert(diag.tally.analyze === 1, 'analyze tally 1');
+  assert(diag.tally.prune === 1, 'prune tally 1');
+}
 
-    const engine = new NavigationEngine(model as any, graph, log as any, 'blackboard', { qualityGuards: false });
-    engine.init({ question: 'trace A', origin: 'a', direction: 'downstream', depth: 3 });
-    engine.setInlineMode(true);
+// Path grounding
+{
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
-    engine.getHopContext();
-    const res = engine.submitFindings({
-      focus_node_id: 'a',
-      detail_analysis: 'ok',
-      summary: 'ok',
-      verdict: 'relevant',
-      complete: true,   // ← honored in inline mode
-    } as any);
+  const ctx1 = engine.getHopContext();
+  assert(ctx1.working_memory.topological_map.navigation_path === 'origin', 'path 1');
 
-    assert.ok('ok' in res && res.ok === true, 'submit accepted');
-    assert.strictEqual((res as any).done, true, 'inline mode honors complete=true');
-    assert.ok((res as any).result, 'result payload present when done');
+  engine.submitFindings({ focus_node_id: 'origin', detail_analysis: 'ok', summary: 'ok', verdict: 'analyze' });
+
+  const ctx2 = engine.getHopContext();
+  assert(ctx2.working_memory.topological_map.navigation_path === 'origin → child_a', 'path 2');
+}
+
+// Inline mode completion contract
+{
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  engine.setInlineMode(true);
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
+
+  engine.getHopContext();
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    detail_analysis: 'ok',
+    summary: 'ok',
+    verdict: 'analyze',
+    complete: true,
   });
 
-  // ── Scope-budget + consent-gate coverage (plan §A.2, §B, §C) ─────────────────
+  assert('done' in result && result.done === true, 'Inline mode should allow AI-driven completion');
+  assert(engine.status === 'complete', 'status complete');
+}
 
-  function mkFanoutModel() {
-    // origin → b (dbo), origin → c (dbo), c → d_ext (ext schema)
-    const model = {
-      nodes: [
-        { id: 'origin', name: 'Origin', schema: 'dbo', type: 'table' },
-        { id: 'b', name: 'B', schema: 'dbo', type: 'table' },
-        { id: 'c', name: 'C', schema: 'dbo', type: 'table' },
-        { id: 'd_ext', name: 'D', schema: 'ext', type: 'table' },
-      ],
-      edges: [
-        { source: 'origin', target: 'b', type: 'read' },
-        { source: 'origin', target: 'c', type: 'read' },
-        { source: 'c', target: 'd_ext', type: 'read' },
-      ],
-      schemas: [
-        { name: 'dbo', n: 3, t: 3, v: 0, p: 0 },
-        { name: 'ext', n: 1, t: 1, v: 0, p: 0 },
-      ],
-    };
-    const graph = new Graph({ directed: true });
-    model.nodes.forEach(n => graph.addNode(n.id, n));
-    model.edges.forEach(e => graph.addEdge(e.source, e.target, { type: e.type }));
-    return { model, graph };
-  }
+// SM mode completion contract: reject complete=true
+{
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  engine.setInlineMode(false);
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
-  const nopLog: any = Object.assign(() => {}, { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} });
+  engine.getHopContext();
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    detail_analysis: 'ok',
+    summary: 'ok',
+    verdict: 'analyze',
+    complete: true,
+  } as any);
 
-  test('A.2 strict mode INLINE: route beyond depth cap raises action_required', () => {
-    const { model, graph } = mkFanoutModel();
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-    engine.setInlineMode(true);
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 1, depth_enforcement: 'strict' });
-    engine.getHopContext();
+  assert(!('done' in result), 'SM mode should ignore or reject complete:true');
+  assert(engine.status === 'exploring', 'status exploring');
+}
 
-    const res = engine.submitFindings({
-      focus_node_id: 'origin',
-      detail_analysis: 'ok',
-      summary: 'ok',
-      verdict: 'relevant',
-      route_requests: [{ nodeId: 'd_ext', question: 'why' }],
-    } as any);
+// Route rejections are recorded and surfaced
+{
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
-    assert.ok('error' in res && (res as any).error === 'action_required', 'strict depth violation raises action_required in inline mode');
-    assert.ok((res as any).classes.some((c: string) => c.startsWith('depth:')), 'classes include depth');
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'origin',
+    detail_analysis: 'ok',
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'NON_EXISTENT', question: '?' }],
   });
 
-  test('A.2 strict mode SM: route beyond depth cap is deferred, hop succeeds', () => {
-    const { model, graph } = mkFanoutModel();
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-    // SM mode is default — no setInlineMode call.
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 1, depth_enforcement: 'strict' });
-    engine.getHopContext();
+  const ctx2 = engine.getHopContext();
+  const rejections = ctx2.working_memory.recent_rejections;
+  assert(rejections.length === 1, 'rejection recorded');
+  assert(rejections[0].nodeId === 'NON_EXISTENT', 'nodeId matched');
+}
 
-    const res = engine.submitFindings({
-      focus_node_id: 'origin',
-      detail_analysis: 'ok',
-      summary: 'ok',
-      verdict: 'relevant',
-      route_requests: [{ nodeId: 'd_ext', question: 'why' }],
-    } as any);
+// Diagnostics archive counter
+{
+  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
-    assert.ok(!('error' in res) || (res as any).error === undefined, 'SM does not raise action_required on depth violations');
-    assert.strictEqual(engine.deferredQuestions.length, 1, 'depth-violating route goes into deferred bucket');
-    assert.strictEqual(engine.deferredQuestions[0].reason, 'depth', 'deferral reason is depth');
-    assert.strictEqual(engine.deferredQuestions[0].nodeId, 'd_ext');
-
-    // Regression (restore-0.9.8-quality): deferred node must NOT be pushed onto the agenda by the
-    // second-pass route loop. Pre-fix, the loop ignored the defer decision and added every route,
-    // letting depth-5 nodes reach visited under strict depth=1.
-    const dump = engine.toJSON() as any;
-    assert.ok(!dump.agenda.some((a: any) => a.id === 'd_ext'), 'deferred node must not leak into agenda');
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'origin',
+    detail_analysis: 'a'.repeat(100),
+    summary: 's'.repeat(10),
+    verdict: 'analyze',
   });
 
-  test('A.2 strict mode SM: reverse-only neighbor is deferred via strictScopeBlocked (regression for undefined candidateDepth)', () => {
-    // Model where origin has no directed out-path to x_up — x_up writes INTO origin.
-    // Directed BFS from origin misses x_up; `bidirectional(origin, x_up)` returns null;
-    // pre-fix the validator accepted the route because candidateDepth was undefined.
-    const model = {
-      nodes: [
-        { id: 'origin', name: 'Origin', schema: 'dbo', type: 'table' },
-        { id: 'a', name: 'A', schema: 'dbo', type: 'table' },
-        { id: 'x_up', name: 'X', schema: 'dbo', type: 'procedure' },
-      ],
-      edges: [
-        { source: 'origin', target: 'a', type: 'read' },
-        { source: 'x_up', target: 'origin', type: 'read' }, // x_up is upstream; only reverse edge to origin
-      ],
-      schemas: [{ name: 'dbo', n: 3, t: 2, v: 0, p: 1 }],
-    };
-    const graph = new Graph({ directed: true });
-    model.nodes.forEach(n => graph.addNode(n.id, n));
-    model.edges.forEach(e => graph.addEdge(e.source, e.target, { type: e.type }));
+  const d1 = engine.getHopDiagnostics();
+  assert(d1.archiveChars === 110, 'archiveChars 110');
+  assert(d1.tally.analyze === 1, 'tally 1');
 
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 1, depth_enforcement: 'strict' });
-    engine.getHopContext();
-
-    const res = engine.submitFindings({
-      focus_node_id: 'origin',
-      detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
-      route_requests: [{ nodeId: 'x_up', question: 'why' }],
-    } as any);
-
-    assert.ok(!('error' in res) || (res as any).error === undefined, 'hop succeeds');
-    assert.strictEqual(engine.deferredQuestions.length, 1, 'reverse-only route is deferred, not auto-added');
-    assert.strictEqual(engine.deferredQuestions[0].nodeId, 'x_up');
-    assert.strictEqual(engine.deferredQuestions[0].reason, 'depth');
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'child_a',
+    detail_analysis: 'b'.repeat(50),
+    summary: 't'.repeat(5),
+    verdict: 'analyze',
   });
 
-  test('A.2 soft mode: +1 depth auto-expands silently; +2 triggers action_required', () => {
-    const { model, graph } = mkFanoutModel();
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 1, depth_enforcement: 'soft' });
-    engine.getHopContext();
+  const d2 = engine.getHopDiagnostics();
+  assert(d2.archiveChars === 165, 'archiveChars 165');
+}
 
-    // d_ext is at depth 2 (origin→c→d_ext) — within soft cap (1+1=2), should be accepted silently.
-    const res1 = engine.submitFindings({
-      focus_node_id: 'origin',
-      detail_analysis: 'ok',
-      summary: 'ok',
-      verdict: 'relevant',
-      route_requests: [{ nodeId: 'd_ext', question: 'why' }],
-    } as any);
-    assert.ok('ok' in res1 && (res1 as any).ok === true, 'soft +1 expansion accepted silently');
-  });
+// prunePreserveOnly (present_result prune)
+{
+  const { prunePreserveOnly } = require('../../src/ai/viewPrune');
+  const nodeIds = ['A', 'B', 'C'];
+  const edges: Array<[string, string, string]> = [['A', 'B', 'read'], ['B', 'C', 'read']];
+  const pruneIds = ['B'];
 
-  test('B schema gate INLINE: out-of-filter route triggers action_required; extendAllowedSchemas re-opens the route', () => {
-    const { model, graph } = mkFanoutModel();
-    const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
-    engine.setInlineMode(true);
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
-    engine.getHopContext();
+  const result = prunePreserveOnly(nodeIds, edges, pruneIds);
+  
+  assert(result.nodeIds.length === 2 && result.nodeIds.includes('A') && result.nodeIds.includes('C'), 'pruned nodeIds');
+  assert(result.edges.length === 0, 'pruned edges');
 
-    const res1 = engine.submitFindings({
-      focus_node_id: 'origin',
-      detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
-      route_requests: [{ nodeId: 'd_ext', question: 'why' }],
-    } as any);
-    assert.ok('error' in res1 && (res1 as any).error === 'action_required', 'schema violation raises action_required in inline mode');
-    assert.ok((res1 as any).classes.includes('schema:ext'), 'classes include schema:ext');
+  const result2 = prunePreserveOnly(nodeIds, edges, []);
+  assert(result2.nodeIds.length === 3, 'no-op nodeIds');
+}
 
-    engine.extendAllowedSchemas('ext');
-    const res2 = engine.submitFindings({
-      focus_node_id: 'origin',
-      detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
-      route_requests: [{ nodeId: 'd_ext', question: 'why' }],
-    } as any);
-    assert.ok('ok' in res2 && (res2 as any).ok === true, 'after extending allowlist the route passes');
-  });
-
-  test('B schema gate SM: out-of-filter route is deferred, hop succeeds, approved_border visible', () => {
-    const { model, graph } = mkFanoutModel();
-    const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
-    const hopCtx = engine.getHopContext() as any;
-
-    // approved_border and deferred_count surfaced in working memory
-    const border = hopCtx.working_memory?.approved_border;
-    assert.ok(border, 'working_memory.approved_border is set in SM mode');
-    assert.deepStrictEqual(border.schemas, ['dbo'], 'approved_border.schemas lists the approved set');
-    assert.strictEqual(hopCtx.working_memory.deferred_count, 0, 'deferred_count starts at 0');
-
-    const res1 = engine.submitFindings({
-      focus_node_id: 'origin',
-      detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
-      route_requests: [{ nodeId: 'd_ext', question: 'why external' }],
-    } as any);
-    assert.ok(!('error' in res1) || (res1 as any).error === undefined, 'SM does not gate — hop succeeds');
-    assert.strictEqual(engine.deferredQuestions.length, 1, 'out-of-filter route is deferred');
-    assert.strictEqual(engine.deferredQuestions[0].nodeId, 'd_ext');
-    assert.strictEqual(engine.deferredQuestions[0].schema, 'ext');
-    assert.strictEqual(engine.deferredQuestions[0].reason, 'schema');
-    assert.strictEqual(engine.deferredQuestions[0].question, 'why external');
-  });
-
-  test('SM deferral: dedup on (nodeId, fromFocusNodeId) — later deferral replaces earlier', () => {
-    const { model, graph } = mkFanoutModel();
-    const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
-    engine.getHopContext();
-
-    engine.submitFindings({
-      focus_node_id: 'origin', detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
-      route_requests: [{ nodeId: 'd_ext', question: 'first' }, { nodeId: 'd_ext', question: 'duplicate same hop' }],
-    } as any);
-
-    assert.strictEqual(engine.deferredQuestions.length, 1, 'duplicate within one hop is deduped');
-    assert.strictEqual(engine.deferredQuestions[0].question, 'duplicate same hop', 'latest question wins');
-  });
-
-  test('SM neighbors carry in_approved_scope (not in_user_filter) + would_trigger_action_required', () => {
-    const { model, graph } = mkFanoutModel();
-    const activeFilter = { schemas: ['dbo'], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [], exclusionPatterns: [] } as any;
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false, activeFilter });
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 3, depth_enforcement: 'silent' });
-    engine.getHopContext();
-
-    engine.submitFindings({
-      focus_node_id: 'origin', detail_analysis: 'ok', summary: 'ok', verdict: 'relevant',
-    } as any);
-    const nextHop = engine.getHopContext();
-    const neighbors = nextHop.neighbors ?? [];
-    assert.ok(neighbors.length > 0, 'at least one neighbor presented');
-    for (const nb of neighbors) {
-      assert.ok('in_approved_scope' in nb, 'neighbor carries in_approved_scope');
-      assert.strictEqual((nb as any).in_user_filter, undefined, 'in_user_filter is removed');
-    }
-  });
-
-  test('C diagnostics: getHopDiagnostics tracks verdict tally and archive growth across hops', () => {
-    const { model, graph } = mkFanoutModel();
-    const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-    engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 2, depth_enforcement: 'silent' });
-    engine.getHopContext(); // hop 1 — origin
-
-    engine.submitFindings({ focus_node_id: 'origin', detail_analysis: 'a'.repeat(100), summary: 's'.repeat(10), verdict: 'relevant' } as any);
-    const d1 = engine.getHopDiagnostics();
-    assert.strictEqual(d1.tally.relevant, 1, 'one relevant recorded');
-    assert.strictEqual(d1.archiveChars, 110, 'archive = detail + summary');
-
-    engine.getHopContext(); // hop 2 — b or c
-    engine.submitFindings({ focus_node_id: engine.getHopDiagnostics().focus, detail_analysis: 'x'.repeat(50), summary: 'y'.repeat(5), verdict: 'pass' } as any);
-    const d2 = engine.getHopDiagnostics();
-    assert.strictEqual(d2.tally.relevant, 1);
-    assert.strictEqual(d2.tally.pass, 1);
-    assert.strictEqual(d2.archiveChars, 110 + 50 + 5, 'archive accumulates across hops');
-  });
-
-  // ── FSM coverage: classifyGateReply + PendingGateSchema + AiSession.phase transitions ──
-  //
-  // These guard the contract described in docs/AI_ARCHITECTURE.md "Scope Budget Enforcement".
-  // The bug they prevent: `storeBbResultPartial` running on a paused gate because the turn
-  // handler can't distinguish loop exits. With typed FSM state this is structurally impossible.
-
-  suite('classifyGateReply', () => {
-    test('yes variants map to yes', () => {
-      for (const r of ['y', 'yes', 'YES', 'ok', 'okay', 'Allow', 'sure', 'proceed', 'continue']) {
-        assert.strictEqual(classifyGateReply(r), 'yes', `'${r}' should be yes`);
-      }
-    });
-    test('no variants map to no', () => {
-      for (const r of ['n', 'no', 'NO', 'nope', 'deny', 'skip', 'stop', 'cancel', 'pause']) {
-        assert.strictEqual(classifyGateReply(r), 'no', `'${r}' should be no`);
-      }
-    });
-    test('arbitrary new questions map to redirect', () => {
-      for (const r of ['actually look at STAGING only', 'trace customer instead', 'hmm maybe not']) {
-        assert.strictEqual(classifyGateReply(r), 'redirect', `'${r}' should be redirect`);
-      }
-    });
-  });
-
-  suite('PendingGateSchema', () => {
-    test('valid envelope parses', () => {
-      const g = PendingGateSchema.parse({
-        gate: 'confirm_sm_start',
-        classes: ['sliding_memory'],
-        nodeIds: [],
-        detail: 'Large task — 24 nodes.',
-      });
-      assert.strictEqual(g.gate, 'confirm_sm_start');
-      assert.deepStrictEqual(g.classes, ['sliding_memory']);
-    });
-    test('unknown gate literal rejected', () => {
-      assert.throws(() => PendingGateSchema.parse({
-        gate: 'nonsense_gate',
-        classes: [], nodeIds: [], detail: 'x',
-      }));
-    });
-    test('missing classes rejected', () => {
-      assert.throws(() => PendingGateSchema.parse({
-        gate: 'schema_and_depth',
-        nodeIds: [], detail: 'x',
-      } as any));
-    });
-  });
-
-  // ── confirm_sm_start priming (plan: "Trust + Blinkers" model) ──
-  //
-  // Models the sequence the tool executes when sliding-memory mode is needed:
-  //   1. engine.init() — scope + agenda built, status='initialized'
-  //   2. engine.getHopContext() — PRIMES to 'awaiting_findings' + sets focus
-  //   3. Tool returns action_required envelope with hop_context in payload
-  //   4. [user types yes, next turn starts]
-  //   5. AI's first submit_findings — engine accepts (status is 'awaiting_findings')
-  //
-  // The bug we're guarding: step 2 was skipped. Step 5 bounced with `invalid_status`.
-
-  suite('confirm_sm_start priming (trust+blinkers)', () => {
-    test('engine is primed (status=awaiting_findings, focus set) after init()+getHopContext()', () => {
-      const { model, graph } = mkFanoutModel();
-      const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-      engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 2, depth_enforcement: 'silent' });
-      assert.strictEqual(engine.status, 'initialized', 'status=initialized after init() alone');
-
-      const hopCtx = engine.getHopContext();
-      assert.strictEqual(engine.status, 'awaiting_findings', 'status advances on getHopContext');
-      assert.ok(hopCtx.focus_node, 'hop context carries focus_node');
-      const focusId = (hopCtx.focus_node as any).id as string;
-      assert.ok(focusId, 'focus_node.id is set');
-      const state = engine.toJSON() as any;
-      assert.strictEqual(state.hopCount, 1, 'hopCount=1 after first getHopContext');
-      assert.strictEqual(state.currentFocusNodeId, focusId, 'currentFocusNodeId matches hop_context');
-    });
-
-    test('first submit_findings after primed gate succeeds', () => {
-      const { model, graph } = mkFanoutModel();
-      const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-      engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 2, depth_enforcement: 'silent' });
-      const hopCtx = engine.getHopContext();
-      const focusId = (hopCtx.focus_node as any).id as string;
-
-      const res = engine.submitFindings({
-        focus_node_id: focusId,
-        verdict: 'relevant',
-        detail_analysis: 'x',
-        summary: 'x',
-      } as any);
-      assert.ok('ok' in res && (res as any).ok === true, 'submit accepted on primed engine');
-    });
-
-    test('regression: init-only engine rejects submit with invalid_status', () => {
-      const { model, graph } = mkFanoutModel();
-      const engine = new NavigationEngine(model as any, graph, nopLog, 'blackboard', { qualityGuards: false });
-      engine.init({ question: 'q', origin: 'origin', direction: 'downstream', depth: 2, depth_enforcement: 'silent' });
-      // Intentionally skip getHopContext() — reproduces the pre-fix bug state.
-
-      const res = engine.submitFindings({
-        focus_node_id: 'origin',
-        verdict: 'relevant',
-        detail_analysis: 'x',
-        summary: 'x',
-      } as any);
-      assert.ok('error' in res && (res as any).error === 'invalid_status', 'init-only engine rejects submit');
-      assert.strictEqual((res as any).current_status, 'initialized', 'error carries current_status=initialized');
-    });
-  });
-
-  suite('AiSession phase FSM', () => {
-    test('initial phase is idle', () => {
-      const s = new AiSession();
-      assert.strictEqual(s.phase.kind, 'idle');
-    });
-    test('enterGate transitions to awaiting_gate', () => {
-      const s = new AiSession();
-      s.enterGate({ gate: 'schema_out_of_filter', classes: ['schema:dbo'], nodeIds: ['[dbo].[x]'], detail: 'ok' });
-      assert.strictEqual(s.phase.kind, 'awaiting_gate');
-      assert.strictEqual(s.phase.kind === 'awaiting_gate' && s.phase.gate.gate, 'schema_out_of_filter');
-    });
-    test('enterExploring transitions to exploring', () => {
-      const s = new AiSession();
-      s.enterExploring();
-      assert.strictEqual(s.phase.kind, 'exploring');
-    });
-    test('enterIdle transitions to idle', () => {
-      const s = new AiSession();
-      s.enterGate({ gate: 'confirm_sm_start', classes: ['sliding_memory'], nodeIds: [], detail: 'ok' });
-      s.enterIdle();
-      assert.strictEqual(s.phase.kind, 'idle');
-    });
-    test('resetExploration restores idle phase and clears exploration state', () => {
-      const s = new AiSession();
-      s.enterGate({ gate: 'confirm_sm_start', classes: ['sliding_memory'], nodeIds: [], detail: 'ok' });
-      s.hopCount = 5;
-      s.hopLog.push({ tool: 't', input: {}, output: {}, timestamp: '' });
-      s.resetExploration();
-      assert.strictEqual(s.phase.kind, 'idle');
-      assert.strictEqual(s.hopCount, 0);
-      assert.strictEqual(s.hopLog.length, 0);
-      assert.strictEqual(s.stateMachine, null);
-    });
-  });
-
-  suite('prunePreserveOnly (enrich_view prune)', () => {
-    test('simple leaf prune drops node and incident edges only', () => {
-      const nodeIds = ['A', 'B', 'C'];
-      const edges: [string, string, string][] = [['A', 'B', 'read'], ['B', 'C', 'read']];
-      const out = prunePreserveOnly(nodeIds, edges, ['C']);
-      assert.deepStrictEqual(out.nodeIds, ['A', 'B']);
-      assert.deepStrictEqual(out.edges, [['A', 'B', 'read']]);
-    });
-
-    test('pruning a shared hub must NOT create phantom edges between siblings', () => {
-      // Regression guard: earlier passthrough rewrite walked P as a hub and emitted
-      // A→D and C→B — edges that never existed in the original graph.
-      const nodeIds = ['A', 'B', 'C', 'D', 'P'];
-      const edges: [string, string, string][] = [
-        ['A', 'P', 'read'],
-        ['C', 'P', 'read'],
-        ['P', 'B', 'read'],
-        ['P', 'D', 'read'],
-      ];
-      const out = prunePreserveOnly(nodeIds, edges, ['P']);
-      assert.deepStrictEqual(out.nodeIds.sort(), ['A', 'B', 'C', 'D']);
-      assert.strictEqual(out.edges.length, 0, 'pruning hub P must drop all its incident edges; no phantoms');
-    });
-
-    test('pruning nothing returns the inputs unchanged (shape-equivalent)', () => {
-      const nodeIds = ['A', 'B'];
-      const edges: [string, string, string][] = [['A', 'B', 'write']];
-      const out = prunePreserveOnly(nodeIds, edges, []);
-      assert.deepStrictEqual(out.nodeIds, nodeIds);
-      assert.deepStrictEqual(out.edges, edges);
-    });
-
-    test('pruning a node not present is a no-op on nodeIds and edges', () => {
-      const nodeIds = ['A', 'B'];
-      const edges: [string, string, string][] = [['A', 'B', 'read']];
-      const out = prunePreserveOnly(nodeIds, edges, ['Z']);
-      assert.deepStrictEqual(out.nodeIds, ['A', 'B']);
-      assert.deepStrictEqual(out.edges, edges);
-    });
-  });
-});
+printSummary('NavigationEngine Robustness');

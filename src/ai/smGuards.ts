@@ -155,7 +155,7 @@ export interface BridgeResult {
  * Identifies orphan noted nodes and calculates the shortest paths required to reconnect them to the origin.
  *
  * @remarks
- * During exploration, the AI might mark intermediate nodes as "irrelevant," which can break
+ * During exploration, the AI might mark intermediate nodes as "prune," which can break
  * the connectivity of the final result graph. This function performs "Bridge Injection"
  * by finding the shortest path through the full graph to reconnect these important orphans,
  * ensuring the final visualization remains structurally sound.

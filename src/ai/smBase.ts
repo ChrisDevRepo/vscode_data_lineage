@@ -72,12 +72,8 @@ export interface NavigationWorkingMemory extends WorkingMemory {
   topological_map: {
     /** A human-readable path string showing the traversal (e.g., "Origin -> ... -> Focus"). */
     navigation_path: string;
-    /** List of node IDs that have already been visited and analyzed. */
-    visited_nodes: string[];
     /** The node ID currently under investigation. */
     current_focus: string;
-    /** The current queue of nodes scheduled for future hops. */
-    agenda: Array<{ id: string; name: string; question: string }>;
   };
 }
 
@@ -338,8 +334,8 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Emits a session-end diagnostic summarizing badge_label diversity across relevant verdicts.
-   * Low diversity (e.g. 20 relevants all tagged "Transform") indicates the AI is not distinguishing
+   * Emits a session-end diagnostic summarizing badge_label diversity across analyzed verdicts.
+   * Low diversity (e.g. 20 analyzed nodes all tagged "Transform") indicates the AI is not distinguishing
    * functional roles — the final view won't group variants usefully.
    */
   private logLabelDiversity(): void {
@@ -572,9 +568,7 @@ export class NavigationEngine implements IHopStateMachine {
     }) as NavigationWorkingMemory;
     workingMemory.topological_map = {
       navigation_path: navPath,
-      visited_nodes: Array.from(this.visited),
       current_focus: entry.nodeId,
-      agenda: this.agenda.map(a => ({ id: a.nodeId, name: this.nodeMap.get(a.nodeId)?.name ?? a.nodeId, question: a.question })),
     };
 
     if (this.depthBudget !== null) {
@@ -621,7 +615,7 @@ export class NavigationEngine implements IHopStateMachine {
   public submitFindings(params: HopSubmission): SubmitResult {
     if (this._status !== 'awaiting_findings') {
       const hint = this._status === 'complete'
-        ? 'The engine already completed this exploration. Produce the synthesis output (chat prose + enrich_view) now — do not call submit_findings again.'
+        ? 'The engine already completed this exploration. Produce the synthesis output (chat prose + present_result) now — do not call submit_findings again.'
         : this._status === 'error'
           ? 'The engine is in an error state. Call start_exploration to begin a fresh exploration.'
           : `Engine is in status '${this._status}'. Expected 'awaiting_findings'. Wait for a hop context, or restart via start_exploration if the session was wiped.`;
@@ -768,18 +762,18 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    const isIrrelevant = params.verdict === 'irrelevant';
-    const prunable = isIrrelevant && this.currentFocusNodeId !== this.originNodeId;
+    const isPrune = params.verdict === 'prune';
+    const prunable = isPrune && this.currentFocusNodeId !== this.originNodeId;
     if (prunable) {
       // Topological protection only — don't orphan already-analyzed (noted) nodes.
       const notedIds = new Set<string>(this.memory.notedNodeIds);
       const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, this.currentFocusNodeId!);
       if (orphan) {
-        return { error: 'prune_would_orphan_noted', detail: `Marking ${this.currentFocusNodeId} irrelevant would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
+        return { error: 'prune_would_orphan_noted', detail: `Marking ${this.currentFocusNodeId} prune would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
       }
     }
 
-    if (!isIrrelevant) {
+    if (!isPrune) {
       this.memory.storeDetail(this.nodeMap.get(this.currentFocusNodeId!)!, params.detail_analysis, params.summary, {
         badge_label: params.badge_label,
         note_caption: params.note_caption

@@ -2,7 +2,7 @@
 # AI Output Templates — how @lineage captures and formats its analysis.
 #
 # This file drives BOTH what the AI captures per hop AND how the final
-# enrich_view document is rendered. Edit any `instruction` text below to
+# present_result document is rendered. Edit any `instruction` text below to
 # change the AI's behaviour.
 #
 # VS Code override: setting `dataLineageViz.ai.outputTemplateFile`. Point it
@@ -12,7 +12,7 @@
 # Every key declares a `stages:` list saying when its instruction is shown to
 # the AI. Three stages:
 #
-#   discover   = first response in a chat turn, before any exploration has
+#   discovery  = first response in a chat turn, before any exploration has
 #                started. Fires only for trivial questions that never engage
 #                the state machine.
 #
@@ -21,7 +21,7 @@
 #                the AI captures. If you don't capture it here, it's gone —
 #                the synthesis phase has no access to the raw DDL.
 #
-#   synthesis  = final document assembly. The AI builds the enrich_view
+#   synthesis  = final document assembly. The AI builds the present_result
 #                payload from the archive it just captured. Keys at this
 #                stage shape HOW the final document reads.
 #
@@ -83,7 +83,7 @@ intro:
 sections:
   stages: [synthesis]
   instruction: >
-    Assemble sections[] for the enrich_view payload. Each section is a
+    Assemble sections[] for the present_result payload. Each section is a
     (label, node_ids[] 1..N, text 1..1) tuple:
       label    = unique name for this logical group (also the badge chip on the graph)
       node_ids = nodes that display this label chip (1..N)
@@ -184,7 +184,7 @@ general:
   stages: [active, synthesis]
   instruction: >
     Write at full depth — this IS the documentation; there is no follow-up step.
-    Aim ≥ 800 chars per relevant node; a thin archive slot produces a thin section.
+    Aim ≥ 800 chars per analyzed node; a thin archive slot produces a thin section.
     Format to fit the content:
     Column renames or mappings → | From | To | Notes | table.
     Multi-step logic → ordered 1. 2. 3. list.

@@ -62,7 +62,7 @@ export interface ParsedDependencies {
  * 
  * @remarks
  * Rules are the atomic unit of extraction in the engine. They use named capture 
- * groups to identify relevant identifiers in the SQL text.
+ * groups to identify pertinent identifiers in the SQL text.
  */
 export interface ParseRule {
   /** 
@@ -562,10 +562,10 @@ function normalizeCrossDb(raw: string): string | null {
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
   if (parts.length < 3) return null;
-  const relevant = parts.length >= 4 ? parts.slice(-3) : parts;
-  const object = relevant[relevant.length - 1];
+  const pertinent = parts.length >= 4 ? parts.slice(-3) : parts;
+  const object = pertinent[pertinent.length - 1];
   if (CLR_TYPE_METHODS.has(object.toLowerCase())) return null;
-  return relevant.map(p => p.toLowerCase()).join('.');
+  return pertinent.map(p => p.toLowerCase()).join('.');
 }
 
 /**

@@ -3,7 +3,7 @@ import { AiSession } from './session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import {
-  buildPlatformContext, buildSchemaContext, buildSystemPromptBase,
+  buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
@@ -115,19 +115,19 @@ export class LineageParticipant {
         const deferredCount: number = typeof meta.deferredQuestionCount === 'number' ? meta.deferredQuestionCount : 0;
         const followups: vscode.ChatFollowup[] = [];
         // "Detailed explanation" chip — gated on two conditions:
-        // (a) enrich_view ran this turn (we have a view to extend, not just chat prose);
+        // (a) present_result ran this turn (we have a view to extend, not just chat prose);
         // (b) the engine has at least one deferred question (there IS something new to analyze).
         // Click fires `/followup` → handler extends the live SM with the deferred-question
         // nodes via NavigationEngine.extendScope, reusing the existing detail archive.
-        const hasEnrichView = lastTools.some((t: string) => t.includes('enrich_view'));
-        if (hasEnrichView && deferredCount > 0) {
+        const hasPresentResult = lastTools.some((t: string) => t.includes('present_result'));
+        if (hasPresentResult && deferredCount > 0) {
           followups.push({
             prompt: 'Explain the lineage in more detail',
             label: `Detailed explanation (${deferredCount})`,
             command: 'followup',
           });
         }
-        if (hasEnrichView) {
+        if (hasPresentResult) {
           followups.push({
             prompt: 'Show the full description',
             label: 'Show full description',
@@ -201,7 +201,8 @@ export class LineageParticipant {
    * Called only from the `/followup` slash command branch. Looks up the engine's deferred
    * questions (nodes the AI wanted to investigate but were outside the approved scope)
    * and adds them to the agenda via {@link NavigationEngine.extendScope}. The existing
-   * hop loop then processes them and synthesis patches the view via `enrich_view.is_update`.
+   * hop loop then processes them and synthesis patches the view via `present_result.is_update`.
+
    *
    * @param sess - The active session; must have `stateMachine.status === 'complete'`.
    * @param writer - Lifecycle-aware chat writer for a short user-visible progress line.
@@ -282,17 +283,20 @@ export class LineageParticipant {
     sess.touch();
     this.logger.info(`[${sess.id}] Session start — model=${model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
-    let activePhase: 'discover' | 'active' | 'done' = 'discover';
-    let lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage'));
-
-    let effectivePrompt = request.prompt;
+    let activePhase: 'discover' | 'active' | 'synthesis' = 'discover';
+    const isSynthesis = activePhase === 'synthesis';
+    let lineageTools = vscode.lm.tools.filter(t => {
+      if (t.name === 'lineage_submit_findings') return false;
+      if (t.tags.includes('lineage-presentation')) return isSynthesis;
+      return t.tags.includes('lineage');
+    });
     if (request.command === 'trace') {
       effectivePrompt = buildTracePrompt(request.prompt);
     } else if (request.command === 'search') {
       effectivePrompt = buildSearchPrompt(request.prompt);
     } else if (request.command === 'followup') {
-      if (request.prompt === 'Show the full description' && sess.lastEnrichViewDescription) {
-        writer.markdown(sess.lastEnrichViewDescription);
+      if (request.prompt === 'Show the full description' && sess.lastPresentResultDescription) {
+        writer.markdown(sess.lastPresentResultDescription);
         return {};
       }
       const extended = this.tryExtendWithDeferredQuestions(sess, writer);
@@ -376,11 +380,17 @@ export class LineageParticipant {
     }
 
     const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
-      const base = buildPlatformContext(sess.model!.dbPlatform || 'SQL Server') +
-        (sess.filter?.schemas?.length ? buildSchemaContext(sess.filter.schemas) : '') +
-        buildSystemPromptBase(MAX_ROUNDS);
+      const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
+      const schemas = sess.filter?.schemas || [];
+      const base = buildGeneralSystemPrompt(dbPlatform, schemas);
+
+      let phaseSpecific = '';
+      if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
+      else if (phase === 'active') phaseSpecific = buildActivePhasePrompt();
+      else if (phase === 'synthesis') phaseSpecific = buildSynthesisPrompt();
+
       const stageBlock = resolveStagePrompt(sess.outputTemplates, phase, sess.classification);
-      return stageBlock ? `${base}\n${stageBlock}` : base;
+      return [base, phaseSpecific, stageBlock].filter(Boolean).join('\n');
     };
     let systemPrompt = buildStageSystemPrompt('discover');
     let navPrompt = '';
@@ -614,9 +624,13 @@ export class LineageParticipant {
         }
 
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
-          activePhase = 'done';
-          lineageTools = vscode.lm.tools.filter(t => t.tags.includes('lineage') && t.name !== 'lineage_submit_findings');
-          this.logger.info(`[Phase] active → done — SM complete, restored ${lineageTools.length} classic tools`);
+          activePhase = 'synthesis';
+          lineageTools = vscode.lm.tools.filter(t => {
+            if (t.name === 'lineage_submit_findings') return false;
+            if (t.tags.includes('lineage-presentation')) return true; // Enabled in synthesis
+            return t.tags.includes('lineage');
+          });
+          this.logger.info(`[Phase] active → synthesis — SM complete, restored ${lineageTools.length} tools including presentation`);
           if (sess.stateMachine.inlineMode && !sess.classification) {
             sess.setClassification('business');
             writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification!]}\n\n`);

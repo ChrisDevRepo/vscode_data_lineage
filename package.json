@@ -595,7 +595,7 @@
         "toolReferenceName": "lineage_run_bfs_trace",
         "displayName": "Trace Lineage",
         "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only; for annotated output (enrich_view), follow BFS with start_exploration — enrich_view requires a completed state-machine result.\nUse schemas[] on large models.",
+        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only; for annotated output (present_result), follow BFS with start_exploration — present_result requires a completed state-machine result.\nUse schemas[] on large models.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -732,14 +732,14 @@
         }
       },
       {
-        "name": "lineage_enrich_view",
-        "toolReferenceName": "lineage_enrich_view",
-        "displayName": "Enrich View",
-        "userDescription": "Enrich a stored result graph with a name, summary, optional description, highlight groups, and text annotations. The graph comes from a completed state-machine exploration — you provide the presentation layer.",
-        "modelDescription": "Enrich the stored result graph from your last column_trace or blackboard exploration. Requires a completed state-machine result — BFS alone is not accepted; call start_exploration first. Provide name and summary (both required). Document model: sections[] is the core — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = the primary key AND the chip shown on all nodes in node_ids. The completion result includes suggested_sections — a pre-grouped, depth-ordered section skeleton built from your per-hop badge_labels. Use this as your starting structure: the grouping reflects your own role labels, the order reflects pipeline depth. Adjust labels, merge or split groups as needed, then add text from detail memory per section. Not every node needs a badge — only nodes you labeled during hops. System numbers labels in YOUR WRITTEN ORDER. Passthrough nodes: mention in section text only — omit from node_ids, no separate section. Reference other groups by label name ('reads from **Source**'), never by number. Notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). Use prune_node_ids to remove irrelevant nodes. Write each section.text at the depth the archive supports — no length limit. BAD: numbered label ('1 Source'), node_ids with unknown IDs, description instead of sections. GOOD: { label: 'AC Reallocation', node_ids: ['dbo.spAllocA', 'dbo.spAllocB'], text: 'Both procedures redistribute cost across the Global/Country dimension...' }",
+        "name": "lineage_present_result",
+        "toolReferenceName": "lineage_present_result",
+        "displayName": "Present Result",
+        "userDescription": "Authors the final presentation layer (report) for the lineage exploration.",
+        "modelDescription": "Call this as your LAST tool action — after start_exploration completes (SM or inline). Do NOT call in discovery or active phases. This tool requires a completed exploration result.\n\nREQUIRED fields:\n- name: short title for the graph\n- summary: one-sentence digest (shown in panel header)\n- description: 2–4 sentence executive summary of the full analysis — what the graph shows and key business insights. Shown in collapsible top panel. REQUIRED when NOT using sections[].\n\nFIELDS:\n- sections[] is the core for node grouping — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = primary key AND chip shown on nodes. The completion result includes suggested_sections — use this as your starting structure. System numbers labels in YOUR WRITTEN ORDER. \n- Passthrough nodes: mention in section text only — omit from node_ids. \n- Reference other groups by label name ('reads from **Source**'), never by number. \n- notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). \n- Use prune_node_ids to remove nodes that do not serve the mission report. \n- At least one of sections[] OR description is REQUIRED.",
         "canBeReferencedInPrompt": true,
         "tags": [
-          "lineage"
+          "lineage-presentation"
         ],
         "icon": "$(sparkle)",
         "when": "dataLineageViz.modelLoaded",
@@ -994,7 +994,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
         "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
-        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nFields:\n- detail_analysis: Full technical write-up for this node — business purpose, transform expressions, column I/O, relationships, risks. The archive is the sole evidence used at synthesis; it is unbounded and preserved verbatim. Write thoroughly — thin analysis produces thin synthesis.\n- summary: Specific one-line digest for this hop. Carries forward to future hops as context.\n- verdict: relevant | pass | irrelevant.\n    - 'relevant' → stores findings, drives badges/notes.\n    - 'pass' → visited, no analysis stored, always accepted. Use for variant siblings of an already-analyzed archetype.\n    - 'irrelevant' → cascade-prunes (utility/logging/generic helpers). May be rejected by orphan/cascade guards; fall back to 'pass'.\n\nLabels (required for 'relevant' and 'pass' — the enriched view has no badges/notes without them):\n- badge_label: 2-4 word semantic role tag (Source / Transform / Transform Variant / Staging / Output / Validation / Aggregation, or a domain-specific role the DDL suggests).\n- note_caption: One-line what-this-does caption shown on the graph node.\n\nRouting:\n- route_requests: Array of { nodeId, question, columns? }. Every neighbor entry carries a focused sub-question — single yes/no or multi-part investigation, whichever matches the depth the next hop needs. `columns` is honored only in column_trace mode. The engine validates every request against neighbor metadata. In sliding-memory sessions, out-of-approved-scope routes are deferred (recorded for post-session review), not rejected; the hop continues with remaining in-scope routes.",
+        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nFields:\n- detail_analysis: Full technical write-up for this node — business purpose, transform expressions, column I/O, relationships, risks. The archive is the sole evidence used at synthesis; it is unbounded and preserved verbatim. Write thoroughly — thin analysis produces thin synthesis.\n- summary: Specific one-line digest for this hop. Carries forward to future hops as context.\n- verdict: analyze | pass | prune.\n    - 'analyze' → stores findings, drives badges/notes.\n    - 'pass' → visited, no analysis stored, always accepted. Use for variant siblings of an already-analyzed archetype.\n    - 'prune' → cascade-prunes (utility/logging/generic helpers). May be rejected by orphan/cascade guards; fall back to 'pass'.\n\nLabels (required for 'analyze' and 'pass' — the presented view has no badges/notes without them):\n- badge_label: 2-4 word semantic role tag (Source / Transform / Transform Variant / Staging / Output / Validation / Aggregation, or a domain-specific role the DDL suggests).\n- note_caption: One-line what-this-does caption shown on the graph node.\n\nRouting:\n- route_requests: Array of { nodeId, question, columns? }. Every neighbor entry carries a focused sub-question — single yes/no or multi-part investigation, whichever matches the depth the next hop needs. `columns` is honored only in column_trace mode. The engine validates every request against neighbor metadata. In sliding-memory sessions, out-of-approved-scope routes are deferred (recorded for post-session review), not rejected; the hop continues with remaining in-scope routes.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -1017,9 +1017,9 @@
             "verdict": {
               "type": "string",
               "enum": [
-                "relevant",
+                "analyze",
                 "pass",
-                "irrelevant"
+                "prune"
               ]
             },
             "route_requests": {

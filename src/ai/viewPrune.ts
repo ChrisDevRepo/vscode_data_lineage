@@ -1,5 +1,5 @@
 /**
- * Pure prune helper for `enrich_view`.
+ * Pure prune helper for `present_result`.
  *
  * Kept in its own module (no `vscode` imports) so unit tests can exercise it
  * from plain Node without the VS Code extension host.

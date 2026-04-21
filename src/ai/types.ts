@@ -4,21 +4,20 @@
  * @remarks
  * Used for both graph visualization (React Flow) and AI reasoning (BFS/DFS).
  * - `trace`: Part of the active lineage path.
- * - `pass`: Node was traversed but deemed less relevant.
+ * - `pass`: Node was traversed but deemed a non-critical passthrough.
  * - `prune`: Node and its descendants were explicitly excluded.
  * - `noted`: Node has a high-signal business annotation.
  * - `bridge`: Structural node connecting critical parts of the graph.
  * - `origin`: The starting point of the lineage investigation.
- * - `relevant`: Node contains important semantic context.
  */
-export type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'origin' | 'relevant';
+export type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'origin';
 
 /** 
  * Represents the grounded findings of an AI session, serialized for visualization.
  * 
  * @remarks
  * This structure is typically populated by `ColumnTrace` or `Blackboard` modes and
- * consumed by the `enrich_view` synthesis logic to generate the final interactive report.
+ * consumed by the `present_result` synthesis logic to generate the final interactive report.
  */
 export interface ResultGraph {
   /** IDs of nodes that are part of the result scope. */

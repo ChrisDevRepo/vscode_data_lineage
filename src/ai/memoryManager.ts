@@ -4,9 +4,9 @@
  * @remarks
  * Stores high-fidelity per-node analysis (`DetailSlot`). On every hop the manager
  * emits a {@link WorkingMemory} snapshot containing the user's original question,
- * one-line summaries of every prior finding, pending self-ask questions, and
- * progress metrics. Emission is state-machine-driven — delivery never filters,
- * ranks, or truncates content. All relevance decisions are the model's.
+ * a sliding window of recent node summaries (incremental loading), and progress 
+ * metrics. Emission is state-machine-driven — the full detail archive remains 
+ * internal until synthesis to prevent context bloat.
  */
 
 import type { LineageNode } from '../engine/types';
@@ -31,7 +31,7 @@ export interface DetailSlot {
   type: string;
   /** Full technical analysis written by the model. */
   analysis: string;
-  /** One-line digest shared across hops via `all_summaries`. */
+  /** One-line digest shared across hops via `short_term_memory`. */
   summary: string;
   /** Optional short role tag used for graph badges. */
   badge_label?: string;
@@ -44,17 +44,15 @@ export interface DetailSlot {
  * Snapshot of the memory state delivered to the model at every navigation hop.
  *
  * @remarks
- * Shape matches the 0.9.8 contract: the user question is echoed verbatim and every
- * prior finding is exposed through `all_summaries`. The model receives the whole
- * investigation context each hop; no per-hop filtering.
+ * Shape matches the 0.9.8 contract: the user question is echoed verbatim and a 
+ * sliding window of prior findings is exposed through `short_term_memory`. 
+ * The model receives the immediate investigation context each hop.
  */
 export interface WorkingMemory {
   /** The user's original question, echoed verbatim every hop. */
   user_question: string;
-  /** One-line summary of every previously analyzed node (ordered by visit). */
-  all_summaries: Array<{ nodeId: string; summary: string }>;
-  /** Self-ask questions posted for neighbors the model has not yet visited. */
-  pending_questions: Array<{ nodeId: string; question: string }>;
+  /** Sliding window of recent node summaries (incremental loading). */
+  short_term_memory: Array<{ nodeId: string; summary: string }>;
   /** Progress metrics for this session. */
   checklist: {
     /** Current hop index (1-based). */
@@ -72,8 +70,9 @@ export interface WorkingMemory {
     /** Cumulative count of soft/silent-mode scope expansions. */
     scope_growth: number;
   };
-  /** Running verdict distribution across the whole session. Helps the AI spot imbalance (e.g. 30 relevants, 0 irrelevants). */
-  verdict_counts: { relevant: number; pass: number; irrelevant: number };
+  /** Running verdict distribution across the whole session. Helps the AI spot imbalance (e.g. 30 analyze, 0 prune). */
+  tally: { analyze: number; pass: number; prune: number };
+
   /** Recent route rejections — prevents the AI from repeating the same invalid or blocked route. Capped at 5 entries. */
   recent_rejections: Array<{ nodeId: string; reason: string; atHop: number }>;
   /** Schemas currently on the session allowlist. Starts from the user filter; grows when the user confirms an expansion gate. */
@@ -96,7 +95,7 @@ export class AiMemoryManager {
   private pendingQuestions: Array<{ nodeId: string; question: string }> = [];
   private userQuestion = '';
   private missionBrief = '';
-  private verdictCounts = { relevant: 0, pass: 0, irrelevant: 0 };
+  private verdictCounts = { analyze: 0, pass: 0, prune: 0 };
   private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
 
   /** Clears every field so the manager can be reused across sessions. */
@@ -105,16 +104,16 @@ export class AiMemoryManager {
     this.pendingQuestions = [];
     this.userQuestion = '';
     this.missionBrief = '';
-    this.verdictCounts = { relevant: 0, pass: 0, irrelevant: 0 };
+    this.verdictCounts = { analyze: 0, pass: 0, prune: 0 };
     this.recentRejections = [];
   }
 
   /**
-   * Records one verdict against the running R/P/I tally.
+   * Records one verdict against the running A/P/Pr tally.
    *
    * @param verdict - The verdict the model submitted this hop.
    */
-  public recordVerdict(verdict: 'relevant' | 'pass' | 'irrelevant'): void {
+  public recordVerdict(verdict: 'analyze' | 'pass' | 'prune'): void {
     this.verdictCounts[verdict]++;
   }
 
@@ -163,7 +162,7 @@ export class AiMemoryManager {
    *
    * @param node - The node the findings describe.
    * @param analysis - Full technical analysis written by the model.
-   * @param summary - One-line digest used in `all_summaries`.
+   * @param summary - One-line digest shared across hops via `short_term_memory`.
    * @param meta - Optional UI metadata — `badge_label` and `note_caption`.
    * @param inlineMode - When `true`, discards the bulk text and keeps only visual metadata.
    */
@@ -191,7 +190,7 @@ export class AiMemoryManager {
    *
    * @param hopCount - Hop index (1-based) supplied by the engine.
    * @param scopeSize - Total number of nodes in the exploration scope.
-   * @returns A `WorkingMemory` snapshot with `user_question`, `all_summaries` for every stored slot, pending self-asks, and progress metrics.
+   * @returns A `WorkingMemory` snapshot with `user_question`, `short_term_memory` (sliding window), and progress metrics.
    */
   public getWorkingMemory(
     hopCount: number,
@@ -205,15 +204,13 @@ export class AiMemoryManager {
   ): WorkingMemory {
     const noted = this.detailSlots.size;
     const coveragePct = scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
-    const all_summaries = Array.from(this.detailSlots.values()).map(s => ({
-      nodeId: s.nodeId,
-      summary: s.summary,
-    }));
+    const short_term_memory = Array.from(this.detailSlots.values())
+      .slice(-3) // Last 3 summaries (sliding window)
+      .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
 
     const memory: WorkingMemory = {
       user_question: this.userQuestion,
-      all_summaries,
-      pending_questions: this.pendingQuestions,
+      short_term_memory,
       checklist: {
         current_hop: hopCount,
         noted,
@@ -263,7 +260,7 @@ export class AiMemoryManager {
   }
 
   /** Cloned verdict tally for diagnostics / logging. */
-  public getVerdictCounts(): { relevant: number; pass: number; irrelevant: number } {
+  public getVerdictCounts(): { analyze: number; pass: number; prune: number } {
     return { ...this.verdictCounts };
   }
 }

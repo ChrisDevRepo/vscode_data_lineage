@@ -47,8 +47,8 @@ export class AiSession {
   public stateMachine: IHopStateMachine | null = null;
   /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
-  /** Last enrich_view description string — surfaced in chat by the "Show full description" chip. */
-  public lastEnrichViewDescription: string | null = null;
+  /** Last present_result description string — surfaced in chat by the "Show full description" chip. */
+  public lastPresentResultDescription: string | null = null;
   /**
    * Mission-type classification inferred at end of discovery.
    *
@@ -158,7 +158,7 @@ export class AiSession {
     this.memory.reset();
     this.stateMachine = null;
     this.resultGraph = null;
-    this.lastEnrichViewDescription = null;
+    this.lastPresentResultDescription = null;
     this.hopCount = 0;
     this.hopLog = [];
     this.pendingUserNotice.clear();
@@ -223,7 +223,7 @@ export class AiSession {
    * 
    * @remarks
    * Maps navigation engine output (nodes, edges, detail slots) to the
-   * standard contract consumed by the `enrich_view` tool handler and the React webview.
+   * standard contract consumed by the `present_result` tool handler and the React webview.
    * 
    * @param fullResult - The raw completion result from the State Machine.
    */

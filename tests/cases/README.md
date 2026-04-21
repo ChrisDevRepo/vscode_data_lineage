@@ -47,7 +47,7 @@ The pair `(inline, sliding)` is present for each mode so each run covers both de
 | Memory mode | Two-tier (sliding) / Inline |
 | Scope | N–M nodes |
 | Max hops | N |
-| Required tools | lineage_start_exploration, lineage_submit_findings, lineage_enrich_view |
+| Required tools | lineage_start_exploration, lineage_submit_findings, lineage_present_result |
 | Forbidden tools | _None_ or list |
 | Max total runtime (ms) | N |
 
@@ -67,7 +67,7 @@ _None._ or short description.
 ## Tool surface today (10 tools)
 
 - Stateless: `lineage_get_context`, `lineage_search_objects`, `lineage_get_object_detail`, `lineage_run_bfs_trace`, `lineage_run_analysis`, `lineage_search_ddl`, `lineage_get_ddl_batch`
-- Stateful SM: `lineage_start_exploration` (optional `targetColumns` → column_trace), `lineage_submit_findings`, `lineage_enrich_view`
+- Stateful SM: `lineage_start_exploration` (optional `targetColumns` → column_trace), `lineage_submit_findings`, `lineage_present_result`
 
 No separate `start_column_trace` / `submit_batch_*` / `expand_frontier` — the unified `NavigationEngine` handles both modes behind one tool pair.
 

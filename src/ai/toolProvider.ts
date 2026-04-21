@@ -10,8 +10,8 @@ import {
   runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
   validateToolInput,
   StartExplorationInputSchema,
-  autoFixEnrichView, validateEnrichView, orderAndAssemble,
-  type EnrichViewInput,
+  autoFixPresentResult, validatePresentResult, orderAndAssemble,
+  type PresentResultInput,
 } from './tools';
 import { edgeApiType } from './aiPresenter';
 import { prunePreserveOnly } from './viewPrune';
@@ -301,7 +301,7 @@ class ToolHandler {
     } catch (err) { return this.toolError('submit_findings', err); }
   }
 
-  public async enrichView(input: EnrichViewInput) {
+  public async presentResult(input: PresentResultInput) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const sess = this.getSession();
@@ -314,9 +314,9 @@ class ToolHandler {
       if (input.highlight_groups !== undefined && !Array.isArray(input.highlight_groups)) input.highlight_groups = undefined;
 
       if (!sess.resultGraph) {
-        return this.logAndReturn('enrich_view', {
+        return this.logAndReturn('present_result', {
           success: false,
-          errors: ['No state-machine result available — enrich_view requires a completed blackboard or column_trace exploration.'],
+          errors: ['No state-machine result available — present_result requires a completed blackboard or column_trace exploration.'],
         }, input);
       }
 
@@ -381,10 +381,10 @@ class ToolHandler {
         input.sections = undefined;
       }
 
-      const { input: fixedInput } = autoFixEnrichView(model, input, resolvedNodeIds);
-      const validation = validateEnrichView(fixedInput, resolvedNodeIds, assembledBadges);
+      const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);
+      const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges);
 
-      if (!validation.success) return this.logAndReturn('enrich_view', validation, input);
+      if (!validation.success) return this.logAndReturn('present_result', validation, input);
 
       const aiMetadata: AIViewMetadata = {
         summary: validation.summary,
@@ -410,11 +410,11 @@ class ToolHandler {
         for (const n of validation.notes) existingNotes.set(n.node_id, { nodeId: n.node_id, summary: n.text });
         sess.resultGraph.notes = Array.from(existingNotes.values());
       }
-      sess.lastEnrichViewDescription = validation.description ?? null;
+      sess.lastPresentResultDescription = validation.description ?? null;
 
       this.logger.info(`AI view "${validation.name}" displayed (${validation.node_ids.length} objects)`);
-      return this.logAndReturn('enrich_view', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, input);
-    } catch (err) { return this.toolError('enrich_view', err); }
+      return this.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, input);
+    } catch (err) { return this.toolError('present_result', err); }
   }
 
   public runBfsTrace(input: any) {
@@ -474,7 +474,7 @@ class ToolHandler {
  * Registers all language model tools associated with the `@lineage` chat participant.
  *
  * @remarks
- * This function is the central registration point for the AI toolset. It consolidates
+ * This function is the "central registration point for the AI toolset. It consolidates
  * various lineage operations (searching, tracing, exploring) into a set of VS Code
  * language model tools.
  *
@@ -518,9 +518,9 @@ export function registerAiTools(
       invoke(options, _token) { return handler.submitFindings(options.input); },
     }),
 
-    vscode.lm.registerTool('lineage_enrich_view', {
+    vscode.lm.registerTool('lineage_present_result', {
       prepareInvocation(_options, _token) { return { invocationMessage: 'Creating AI lineage view…' }; },
-      invoke(options, _token) { return handler.enrichView(options.input as EnrichViewInput); },
+      invoke(options, _token) { return handler.presentResult(options.input as PresentResultInput); },
     }),
 
     vscode.lm.registerTool('lineage_run_bfs_trace', {

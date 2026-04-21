@@ -20,9 +20,9 @@ const BLOCK = {
   /** Node classification shared across all modes. */
   verdictCategories:
     'NODE CLASSIFICATION (three categories):\n' +
-    '- relevant (BB) / trace (CT): node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS relevant — even if its connection to the question is indirect.\n' +
-    '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use relevant.\n' +
-    '- irrelevant (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the pipeline → removed from graph.',
+    '- analyze (BB) / trace (CT): node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS analyze-worthy — even if its connection to the mission is indirect.\n' +
+    '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use analyze.\n' +
+    '- prune (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the mission → removed from graph.',
 
   /** Step 2 — write the detail archive. Engine invariants only; CAPTURE rules live in YAML. */
   writeFindings:
@@ -31,11 +31,11 @@ const BLOCK = {
     '  • The archive is the SOLE evidence at synthesis. It is UNBOUNDED.\n' +
     '  • NO NEW FACTS at synthesis — if you don\'t capture it here, it is gone.\n' +
     '  • `mission_brief` (delivered every hop) anchors every relevance decision.\n' +
-    'Aim ≥ 800 chars per relevant node; a thin slot produces a thin synthesis. Self-contained — written to answer the user\'s question.\n' +
+    'Aim ≥ 800 chars per analyzed node; a thin slot produces a thin synthesis. Self-contained — written to answer the user\'s question.\n' +
     'The Capture rules above (Business angle / Technical angle) list what to capture per node. When both angles apply, capture both.\n' +
-    'Also write a specific one-line `summary` — it carries forward via `working_memory.all_summaries` to future hops. Specific > short.\n' +
+    'Also write a specific one-line `summary`. Specific > short.\n' +
     '- pass → `summary` only: what passes through, from where to where.\n' +
-    '- irrelevant → brief `summary` only.',
+    '- prune → brief `summary` only.',
 
   /** Badge + note metadata drive the graph UI. */
   badgeAndNote:
@@ -46,24 +46,24 @@ const BLOCK = {
 
   /** Self-ask — the sub-question is a lens; the mission brief (or user question) is the anchor. */
   selfAsk:
-    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on the `mission_brief` (AI-authored at session start, delivered every hop) — or `working_memory.user_question` if no brief is set. Relevance is judged against the mission, not the sub-question. If the mission names NL filters (e.g. "ignore UDFs and views", "only tables in schema X"), honor them: verdict any neighbor that violates the filter as `irrelevant`, don\'t analyze it, don\'t expand the agenda into it — but if it is a meaningful dependency for the mission, list it in `route_requests` with a sub-question so the engine defers it as a user follow-up. If answering the sub-question produces material that does not serve the mission, omit it.',
+    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on the `mission_brief` (AI-authored at session start, delivered every hop) — or `working_memory.user_question` if no brief is set. Relevance is judged against the mission, not the sub-question. If the mission names NL filters (e.g. "ignore UDFs and views", "only tables in schema X"), honor them: verdict any neighbor that violates the filter as `prune`, don\'t analyze it, don\'t expand the agenda into it — but if it is a meaningful dependency for the mission, list it in `route_requests` with a sub-question so the engine defers it as a user follow-up. If answering the sub-question produces material that does not serve the mission, omit it.',
 
   /** Route grounding — shared. */
   routing:
     'ROUTING: every entry in `route_requests` carries a focused sub-question — anything from a single yes/no ("Does this procedure apply the rule the parent referenced?") to a multi-part investigation ("Which columns X, Y, Z flow through this procedure, how are they transformed, and what conditions filter them?"). Frame the sub-question at the depth the next hop needs to make progress — do not truncate a multi-part investigation into a thin single question. Read neighbor metadata and justify each choice; blind routing is a reasoning failure.\n' +
     'APPROVED SCOPE: `working_memory.approved_border` carries the schemas and depth cap locked at session start. Each neighbor is tagged `in_budget` and `in_approved_scope`. Prefer in-border routes. When a focus node references something out of the border that matters for the question, include it in `route_requests` with its sub-question — the engine defers it to a post-session review list so the user can approve scope extension as a single end-of-session decision. `working_memory.deferred_count` shows the running tally.\n' +
-    'WORKING MEMORY SIGNALS: `depth_budget` is the user-declared depth; `depth_cap` is the engine ceiling (strict = budget, soft = budget+1, silent = budget+2, plus user-approved extensions). `verdict_counts` shows the running R/P/I tally — many relevants and zero irrelevants usually means genuine utility/helper nodes were missed (those take `irrelevant`). `recent_rejections` lists the last five deferred or blocked routes already surfaced by the engine.',
+    'WORKING MEMORY SIGNALS: `depth_budget` is the user-declared depth; `depth_cap` is the engine ceiling (strict = budget, soft = budget+1, silent = budget+2, plus user-approved extensions). `verdict_counts` shows the running A/P/Pr tally — many analyze and zero prunes usually means genuine utility/helper nodes were missed (those take `prune`). `recent_rejections` lists the last five deferred or blocked routes already surfaced by the engine.',
 
   /** Verdict a neighbor — CT modes. */
   verdictNeighbors:
-    'Verdict neighbors via `route_requests` (adds to agenda) or leave unchanged (engine skips). Cascade-prune happens when you verdict a focus node as irrelevant.',
+    'Verdict neighbors via `route_requests` (adds to agenda) or leave unchanged (engine skips). Cascade-prune happens when you verdict a focus node as prune.',
 
   /** Column tracking — CT only. */
   columnTracking:
     'COLUMN TRACKING: for each `route_requests` entry, `columns` must be the names AS THEY APPEAR in the neighbor, not the output alias in the current node.\n' +
     'Read the current node DDL to find the source column reference: `SELECT neighbor.SourceCol AS OutputAlias` → trace SourceCol into that neighbor.\n' +
     'Track renames across hops — each hop may use a different name for the same data.\n' +
-    'SELECTIVITY: trace only columns relevant to the question. When uncertain whether a column carries value to the target: trace. When a column only controls selection: omit.',
+    'SELECTIVITY: trace only columns pertinent to the question. When uncertain whether a column carries value to the target: trace. When a column only controls selection: omit.',
 
   /** Column lineage rule — CT column mode. */
   columnLineageRule:
@@ -72,17 +72,13 @@ const BLOCK = {
   /** Table node guidance — CT modes. */
   tableNodes:
     'TABLE NODES: tables store data, not transform it. Two cases:\n' +
-    '- PHYSICAL SOURCE (terminal): the traced column is a physical column on this table AND no in-DB upstream writer (INSERT/UPDATE/MERGE SP or view) populates it from other objects in scope → verdict = `relevant` (badge_label "Source"). Document the column definition (data type, nullable, constraints) in detail_analysis. This is the terminus of the chain — do not add route_requests.\n' +
+    '- PHYSICAL SOURCE (terminal): the traced column is a physical column on this table AND no in-DB upstream writer (INSERT/UPDATE/MERGE SP or view) populates it from other objects in scope → verdict = `analyze` (badge_label "Source"). Document the column definition (data type, nullable, constraints) in detail_analysis. This is the terminus of the chain — do not add route_requests.\n' +
     '- INTERMEDIATE TABLE: an in-DB stored procedure or ETL view loads the traced column into this table → verdict = `pass`, and ALWAYS add the writer SP/view to route_requests with the column name as it appears in the writer\'s source. Do not stop here — the chain continues through the writer.',
-
-  /** Working memory usage — BB. */
-  workingMemory:
-    'WORKING MEMORY: `working_memory.all_summaries` contains every prior hop\'s one-line summary; `working_memory.pending_questions` lists self-asks you have not yet answered. Read them every hop — they keep cross-hop reasoning grounded.',
 
   /** Loop contract — applies to every mode. */
   completionContract:
-    'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: relevant | pass | irrelevant`. The engine stops presenting when the agenda drains — you shape the agenda: `verdict: "irrelevant"` cascade-prunes the node and its unvisited descendants. Route only neighbors the main user question needs.\n' +
-    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs) take `verdict: "irrelevant"` — removes the subtree quickly.',
+    'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: analyze | pass | prune`. The engine stops presenting when the agenda drains — you shape the agenda: `verdict: "prune"` cascade-prunes the node and its unvisited descendants. Route only neighbors the main user question needs.\n' +
+    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs) take `verdict: "prune"` — removes the subtree quickly.',
 } as const;
 
 
@@ -121,7 +117,7 @@ export function buildNavigationPrompt(mode: SmMode): string {
 
   // blackboard (default)
   return [
-    'EXPLORATION MODE: the engine presents nodes one at a time. Use `working_memory.all_summaries` to carry cross-hop reasoning forward — this persistence is what distinguishes exploration from CT.',
+    'EXPLORATION MODE: Sliding Memory (Isolated Node Analysis). The engine presents nodes one at a time. Use `working_memory.short_term_memory` (incremental loading) to ground your immediate reasoning. You do not have access to the global graph or the full BFS agenda.',
     '',
     BLOCK.completionContract,
     '',
@@ -131,16 +127,15 @@ export function buildNavigationPrompt(mode: SmMode): string {
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
     `3. ${BLOCK.badgeAndNote}`,
-    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them. Cascade-prune happens when you verdict the focus node as `irrelevant` — use it deliberately for helpers and utilities only.',
+    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them. Cascade-prune happens when you verdict the focus node as `prune` — use it deliberately for helpers and utilities only.',
     '',
     BLOCK.selfAsk,
-    BLOCK.workingMemory,
     BLOCK.routing,
   ].join('\n');
 }
 
 
-import type { ClassificationValue } from './classification';
+import { CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
 
 /**
  * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
@@ -167,18 +162,18 @@ export function buildSynthesisReminder(
   technicalSubsectionInstruction?: string,
 ): string {
   const lines = [
-    'SYNTHESIS REMINDER — re-read before generating enrich_view:',
+    'SYNTHESIS REMINDER — re-read before generating present_result:',
     `- User question: "${question}"`,
-    '- Your detail slots are draft section text — assemble into enrich_view sections.',
+    '- Your detail slots are draft section text — assemble into present_result sections.',
     '- Every badged node: 3+ sentences with business meaning + SQL evidence.',
     '- Present at full depth — do not compress or re-summarize.',
-    '- Deferred questions (out-of-approved-scope routes) surface as a "Detailed explanation" chip beneath the chat — focus your writing on the analyzed nodes only; do not list deferred questions in enrich_view or chat prose.',
-    '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.',
+    '- Deferred questions (out-of-approved-scope routes) surface as a "Detailed explanation" chip beneath the chat — focus your writing on the analyzed nodes only; do not list deferred questions in present_result or chat prose.',
+    '- Before writing present_result: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.',
   ];
 
   if ((classification === 'technical' || classification === 'both') && technicalSubsectionInstruction?.trim()) {
     lines.push(
-      `- When you render each section, also include a "#### Technical" subsection with: ${technicalSubsectionInstruction.trim()}`,
+      `- When you render each section, also include a \"#### Technical\" subsection with: ${technicalSubsectionInstruction.trim()}`,
     );
   }
 

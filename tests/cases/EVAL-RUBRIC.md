@@ -19,16 +19,16 @@ All other cases are archived to `tmp/cases-archive/` and can be re-activated whe
 
 ## Memory-Quality Pre-Gate
 
-The `enrich_view` output is assembled from the engine's detail archive. Thin archive → thin output; `enrich_view` polish cannot recover it.
+The `present_result` output is assembled from the engine's detail archive. Thin archive → thin output; `present_result` polish cannot recover it.
 
 Before scoring, audit:
 
 | Metric | Threshold |
 |---|---|
-| Avg `detail_analysis` chars per noted node | ≥ 400 |
+| Avg `detail_analysis` chars per analyzed node | ≥ 400 |
 | Avg `summary` chars per hop | ≥ 40 |
 | Hops with empty `summary` | 0 |
-| `badge_label` present on `relevant` verdicts | 100% |
+| `badge_label` present on `analyze` verdicts | 100% |
 
 Any pre-gate failure → flag `memory-thin`, cap the total score at 6/12.
 
@@ -41,9 +41,9 @@ Any pre-gate failure → flag `memory-thin`, cap the total score at 6/12.
 | 0 | >2 required missing, or hallucinations |
 
 ### 2. Completeness
-| 3 | Scope fully visited, agenda drained; enrich_view has name + summary + ≥1 section + notes on every noted node |
+| 3 | Scope fully visited, agenda drained; present_result has name + summary + ≥1 section + notes on every noted node |
 | 2 | ≥75% scope visited, 1–2 agenda leftovers |
-| 1 | ≥25% of scope missed; enrich_view sparse |
+| 1 | ≥25% of scope missed; present_result sparse |
 | 0 | Partial exploration, stub output |
 
 ### 3. Question-Answering (primary)
@@ -78,13 +78,13 @@ Any pre-gate failure → flag `memory-thin`, cap the total score at 6/12.
 | Gate resolved on sliding cases | `sm_state.phase` remained `awaiting_gate` at end |
 | Agent issued `POST /gate` when gate appeared | Gate emitted but no `/gate` call recorded |
 | Agent never set `complete: true` | Agent-set completion seen in any hop (engine-driven only) |
-| Required nodes present in `detail_slots` or `enrich_view.sections[].node_ids` | Any missing |
+| Required nodes present in `detail_slots` or `present_result.sections[].node_ids` | Any missing |
 
 ## Baseline process
 
 1. **Smoke test** — run `bb-q1-employee` (gated) end-to-end; confirm `phase: exploring` reached and ≥1 hop completed.
 2. **Full baseline run** — sequential execution of all 4 cases into `test-results/eval-runs/baseline-v1/`.
-3. **UAT cross-check** — user manually runs the same 4 questions in real VS Code; compares `enrich_view` against baseline outputs. Any divergence signals framework contamination, not a production bug.
+3. **UAT cross-check** — user manually runs the same 4 questions in real VS Code; compares `present_result` against baseline outputs. Any divergence signals framework contamination, not a production bug.
 4. **Lock baseline** — once UAT parity is demonstrated, the `baseline-v1/` outputs become the anchor for future prompt-iteration runs.
 
 ## Open items
@@ -101,7 +101,7 @@ Captured at `test-results/eval-runs/baseline-v1-2026-04-19/` against `tests/fixt
 |---|---|---|---|---|
 | `bb-inline-q1-vproduct` | EXCELLENT 11/12 | 5 | 5 | inline BB |
 | `bb-q1-employee` | EXCELLENT 11/12 | 12 | 33 | sliding BB, gate resolved via POST /gate |
-| `ct-inline-q1-jobtitle` | PASS 8/12 | 5 | 8 | inline CT — Employee (physical source) counted `pass` not `relevant` → required_coverage 0/1 |
+| `ct-inline-q1-jobtitle` | PASS 8/12 | 5 | 8 | inline CT — Employee (physical source) counted `pass` not `analyze` → required_coverage 0/1 |
 | `ct-q1-totalrevenue` | PARTIAL 7/12 | 8 | 26 | sliding CT, gate resolved — did not reach deepest upstream sources (SAPOrders, OracleOrders, SupplierPrices, MarkupRules), source_coverage 0/4 |
 
-UAT parity cross-checked on `bb-inline-q1-vproduct` 2026-04-19: real VS Code chat produced identical scope/hops/node-order/verdicts/badges. Real-chat detail_analysis ran ~3× richer (sampling variance). `enrich_view` failure in real chat was a v0.9.9 installed-extension bug already fixed on `optimization`. Framework confirmed as faithful simulation.
+UAT parity cross-checked on `bb-inline-q1-vproduct` 2026-04-19: real VS Code chat produced identical scope/hops/node-order/verdicts/badges. Real-chat detail_analysis ran ~3× richer (sampling variance). `present_result` failure in real chat was a v0.9.9 installed-extension bug already fixed on `optimization`. Framework confirmed as faithful simulation.

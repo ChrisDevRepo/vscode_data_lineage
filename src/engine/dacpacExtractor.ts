@@ -168,7 +168,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
  * @param model - The fully extracted DatabaseModel to filter.
  * @param selectedSchemas - A Set of schema names to retain (case-insensitive).
  * @param maxNodes - The maximum number of nodes to return (defaults to DEFAULT_CONFIG.maxNodes).
- * @returns A new DatabaseModel containing only the filtered nodes and relevant edges.
+ * @returns A new DatabaseModel containing only the filtered nodes and associated edges.
  */
 export function filterBySchemas(
   model: DatabaseModel,

@@ -108,7 +108,7 @@ export function createMessageHandlers(
   }
 
   /**
-   * Retrieves the current configuration relevant to the detail view.
+   * Retrieves the current configuration pertinent to the detail view.
    */
   async function getDetailConfig() {
     const cfg = host.getConfiguration();

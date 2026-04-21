@@ -21,7 +21,7 @@ The system automatically chooses the delivery strategy based on the complexity o
 | Mode | Threshold | Context Strategy | Per-Hop Memory | Reasoning Capability |
 | :--- | :--- | :--- | :--- | :--- |
 | **Inline Mode** | Fits budget (< 10 nodes) | **One-Shot**: Full DDL and columns for all nodes are provided simultaneously. | **None** — the AI sees the full picture immediately. | **Holistic**: Turn-zero reasoning and logical grouping. |
-| **SM Mode** | Exceeds budget | **Focus + auto-delivered summaries**: the current node's DDL plus every prior hop's one-line summary. | **`all_summaries`** — cumulative, unbounded, system-managed. | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
+| **SM Mode** | Exceeds budget | **Focus + auto-delivered summaries**: the current node's DDL plus a sliding window of recent node summaries (Hourglass context model). | **`short_term_memory`** — incremental, sliding-window (last 3 nodes). | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
 
 #### Mode contract (who gates what, who decides when done)
 
@@ -35,22 +35,19 @@ The system automatically chooses the delivery strategy based on the complexity o
 The inline contract trusts the AI with a small scope and gives the user a veto on each scope stretch. The SM contract trusts the user with the up-front border and gives the AI a closed loop to drain inside it.
 
 ### Memory Model (SM Mode)
-SM mode preserves the 0.9.8 design: **storage + delivery + execution** only — no filtering, no ranking, no content decisions. Two stores back every session:
+SM mode follows an **"Asymmetric Tiering"** memory pattern to manage context efficiency:
 
 1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical `analysis` string per node, written in `submit_findings.detail_analysis`. Never compressed. **Not shipped per hop.** Exposed at synthesis via `AiMemoryManager.getResult()`.
-2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — the `WorkingMemory` snapshot delivered at every hop:
+2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — a strictly isolated snapshot:
    - `user_question` — echoed verbatim so the root question survives sliding-history eviction.
-   - `all_summaries: Array<{ nodeId, summary }>` — every prior hop's `submit_findings.summary`, in visit order, **unbounded**. No token budget, no path/neighbor prioritization. The model decides which summaries matter for the current hop.
-   - `pending_questions` — self-ask entries the model posted via `route_requests` but has not yet visited.
+   - `short_term_memory: Array<{ nodeId, summary }>` — a **sliding window** (last 3 nodes) of prior hop summaries. Implements incremental loading to prevent global context bloat.
    - `checklist` — `{ current_hop, noted, total, open, coveragePct }` for drain signaling.
 
-No AI-managed narrative string. No `blackboard`. No `local_detail_context` slice. The model reads the snapshot and the focus node's DDL; it writes a fresh analysis + one-line summary; the engine appends the summary to `all_summaries` for the next hop.
-
-**Grounding**: simple per-hop delivery matches the original 0.9.8 behavior and the project's SM-never-truncates principle. Earlier iterations attempted MemGPT-style cumulative narratives and token-budget working sets; both were abandoned because the AI frequently compressed, paraphrased, or lost information when asked to manage memory, and because filtering violated the stored design principle.
+**Mechanical Strictness**: The AI operates like a "horse with blinders." Global state arrays (`agenda`, `visited_nodes`, `all_summaries`, `pending_questions`) are **intentionally excluded** from the payload to prevent token bloat and hallucination. The Detail Archive is captured locally and only surfaces at synthesis.
 
 ### Exploration Modes (unified `NavigationEngine` in `smBase.ts`)
 One `NavigationEngine` class serves two modes, selected at construction by the `SmMode` literal (`'blackboard' | 'column_trace'`):
-- **`blackboard`** — Business Logic Analyst / Default. Used for "explain / summarize / what depends on X" style questions. Carries cross-hop reasoning via `working_memory.all_summaries`.
+- **`blackboard`** — Business Logic Analyst / Default. Used for "explain / summarize / what depends on X" style questions. Carries immediate context via `working_memory.short_term_memory`.
 - **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when `start_exploration` is called with `targetColumns`; adds column-name validation on `route_requests`.
 
 The earlier separate `BlackboardState` / `ColumnTraceState` / `DependencyState` classes were consolidated into this single engine (commit `bf51fa9`, "unified navigation engine"). The `dependency` mode was folded into `blackboard` (commit `a3a75a5`). Routing logic, completion contract, and memory layout are identical — only the route-validation rules differ between modes.
@@ -60,22 +57,22 @@ Completion semantics depend on the execution mode:
 
 | Mode | Trigger | AI action |
 | :--- | :--- | :--- |
-| **Inline mode** (scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`) | AI sets `complete: true` on `submit_findings`. No coverage gate — the AI has the full picture one-shot and decides when the question is answered. | On acceptance, the tool returns `{ ok: true, done: true, result }` and the AI produces the chat answer + `enrich_view`. |
-| **SM sliding-memory mode** (scope exceeds either threshold) | **AI does not decide.** The engine drains the agenda: every item must receive one of the three verdicts — `relevant`, `pass`, `irrelevant`. When the last verdict is dispatched, the engine emits the synthesis trigger and the AI produces the chat answer + `enrich_view`. `complete: true` is **rejected** with `{error:'complete_not_allowed'}` so the AI cannot self-finalize. | Synthesis trigger delivered as a distinct user message; the continuation-phase nav prompt contains no mention of completion. |
-| **MAX_ROUNDS cap** (safety cut-off at `ai.maxRounds`, default 50) | The loop exits without the SM reaching `complete`. The session persists a **partial resultGraph** (flagged `partial: true`, `partialCoverage: {analyzed, total}`) from all nodes analyzed so far. | `enrich_view` / "Show in Graph" still renders the partial result; the UI surfaces a "cap hit" notice. |
+| **Inline mode** (scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`) | AI sets `complete: true` on `submit_findings`. No coverage gate — the AI has the full picture one-shot and decides when the question is answered. | On acceptance, the tool returns `{ ok: true, done: true, result }` and the AI produces the chat answer + `present_result`. |
+| **SM sliding-memory mode** (scope exceeds either threshold) | **AI does not decide.** The engine drains the agenda: every item must receive one of the three verdicts — `analyze`, `pass`, `prune`. When the last verdict is dispatched, the engine emits the synthesis trigger and the AI produces the chat answer + `present_result`. `complete: true` is **rejected** with `{error:'complete_not_allowed'}` so the AI cannot self-finalize. | Synthesis trigger delivered as a distinct user message; the continuation-phase nav prompt contains no mention of completion. |
+| **MAX_ROUNDS cap** (safety cut-off at `ai.maxRounds`, default 50) | The loop exits without the SM reaching `complete`. The session persists a **partial resultGraph** (flagged `partial: true`, `partialCoverage: {analyzed, total}`) from all nodes analyzed so far. | `present_result` / "Show in Graph" still renders the partial result; the UI surfaces a "cap hit" notice. |
 
 Three verdicts (SM mode):
-- `relevant` — full 5-block analysis stored; drives badges/notes.
+- `analyze` — full 5-block analysis stored; drives badges/notes.
 - `pass` — visited, no analysis stored, always accepted. Intended for variant siblings of an already-analyzed archetype (reference the archetype in the blackboard).
-- `irrelevant` — cascade-prune the node + unreachable downstream. May be rejected by the orphan guard (would disconnect an already-analyzed node); fall back to `pass`.
+- `prune` — cascade-prune the node + unreachable downstream. May be rejected by the orphan guard (would disconnect an already-analyzed node); fall back to `pass`.
 
 This replaces the earlier `premature_complete` coverage-floor guard. That guard (removed) refused `complete=true` in SM mode until coverage ≥ 80%, which was unreachable on variant-heavy neighborhoods and created rejection loops. The drain-only contract is always satisfiable (each verdict is a legal move) and the SM — not the AI — decides when the session is over.
 
 ### Repeat-Rejection Belt
-A session-level idempotency counter (`src/ai/repeatRejectGuard.ts → RepeatRejectGuard`) aborts the exploration cleanly if the model sends the same tool call three consecutive times and it fails every time. Any successful call resets the counter. The abort surfaces a typed envelope (`RepeatRejectAbort` in `src/ai/smErrors.ts`) and a user-visible message in chat. This is a belt against any future guard-interaction loop; it is orthogonal to SM semantics and applies to every tool call, not just `submit_findings`. The existing `dataLineageViz.ai.maxRounds` setting (default 50) remains the absolute round-cap.
+ A session-level idempotency counter (`src/ai/repeatRejectGuard.ts → RepeatRejectGuard`) aborts the exploration cleanly if the model sends the same tool call three consecutive times and it fails every time. Any successful call resets the counter. The abort surfaces a typed envelope (`RepeatRejectAbort` in `src/ai/smErrors.ts`) and a user-visible message in chat. This is a belt against any future guard-interaction loop; it is orthogonal to SM semantics and applies to every tool call, not just `submit_findings`. The existing `dataLineageViz.ai.maxRounds` setting (default 50) remains the absolute round-cap.
 
 ### View Refinement: Prune
-`enrich_view` supports pruning nodes from the delivered result graph. Pruning **removes the listed nodes and every edge that touches them** — it does not reconnect edges across pruned nodes. Passthrough-style reconnection was deliberately removed because, for a shared hub `P` in `A→P→B, C→P→D`, it fabricated phantom edges (`A→D`, `C→B`) between otherwise-unrelated lineage siblings.
+`present_result` supports pruning nodes from the delivered result graph. Pruning **removes the listed nodes and every edge that touches them** — it does not reconnect edges across pruned nodes. Passthrough-style reconnection was deliberately removed because, for a shared hub `P` in `A→P→B, C→P→D`, it fabricated phantom edges (`A→D`, `C→B`) between otherwise-unrelated lineage siblings.
 
 ### The Hop Payload
 Every hop, `NavigationEngine.getHopContext()` returns a single JSON object delivered to the model as the tool result. It is self-contained — the agent does not need conversation history to reason about the current hop.
@@ -89,10 +86,10 @@ Every hop, `NavigationEngine.getHopContext()` returns a single JSON object deliv
 | **Local metadata** | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, fks, hasDdl}` — enables grounded routing decisions without fetching |
 | **Sub-goal** | `current_task` | The grounded task driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
 | **User question** | `working_memory.user_question` | The original user question, echoed verbatim every hop |
-| **Auto-delivered memory** | `working_memory.all_summaries` | `Array<{nodeId, summary}>` — every prior hop's one-line summary, in visit order, unbounded |
-| **Pending** | `working_memory.pending_questions` | Neighbors the AI deferred for later hops |
-| **Progress** | `working_memory.checklist` | `{current_hop, noted, total, open, coveragePct}` — `open = total − noted`, the per-hop count of un-analyzed nodes in scope |
-| **The Map** | `working_memory.topological_map` | `{navigation_path, visited_nodes, current_focus, agenda}` — the deterministic structural grounding |
+| Auto-delivered memory | `working_memory.short_term_memory` | `Array<{nodeId, summary}>` — a **sliding window** (last 3 nodes) of prior hop summaries |
+| **Progress** | `working_memory.checklist` | `{current_hop, noted, total, open, coveragePct}` — `open = total − noted` |
+| **The Map** | `working_memory.topological_map` | `{navigation_path, current_focus}` — the deterministic structural grounding |
+
 
 The hop payload is designed to survive sliding-memory wipes: `sm_status`, `agenda_remaining`, and `checklist.open` give the AI the situational awareness it needs to keep draining even when the conversation history has been trimmed to the last turn. Omitting these signals — as earlier iterations did — forces the AI to fall back on acknowledge-the-data prose after each hop, which shows up as a "premature final answer" pattern. The fix is data, not more prose rules.
 
@@ -100,26 +97,26 @@ The user's original question reaches the model via three paths every hop: (1) `w
 
 ### The Three Lifecycle Phases
 1. **Discovery (Initiation)**: The AI maps the starting point and scope. The engine seeds the initial Agenda.
-2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. Each hop it receives `all_summaries`, the Map, the focus DDL, and neighbor metadata.
-3. **Holistic Synthesis & Presentation**: Once the agenda drains, the synthesis phase (`lineageParticipant.ts` active→done transition) injects the full Detail Archive as a fresh user message; the AI produces the chat prose + `enrich_view` sections directly. (`ViewSynthesisService` was inlined in commit `95316fc`.)
+2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. Each hop it receives `short_term_memory`, the Map, the focus DDL, and neighbor metadata.
+3. **Holistic Synthesis & Presentation**: Once the agenda drains, the synthesis phase (`lineageParticipant.ts` active→synthesis transition) injects the full Detail Archive as a fresh user message; the AI produces the chat prose + `present_result` sections directly.
 
-At `start_exploration` time the AI declares its **classification** via the optional `classification` enum parameter (`business` | `technical` | `both`). The value is stored on the session (`AiSession.classification`, Zod-validated at the boundary) and drives which subsections render inside each `enrich_view` section: `business` omits the `#### Technical` block; `technical` treats the body as the technical write-up; `both` emits business body + Technical subsection. Omitting the parameter defaults to `business` (asymmetric conservative default). Inline mode surfaces a one-line banner (`> Starting analyze phase — <kind>-driven.`) at synthesis start; SM mode folds the value into `confirm_sm_start`. See `docs/AI_PROMPTS.md` §6 for the onion-layered document shape.
+At `start_exploration` time the AI declares its **classification** via the optional `classification` enum parameter (`business` | `technical` | `both`). The value is stored on the session (`AiSession.classification`, Zod-validated at the boundary) and drives which subsections render inside each `present_result` section: `business` omits the `#### Technical` block; `technical` treats the body as the technical write-up; `both` emits business body + Technical subsection. Omitting the parameter defaults to `business` (asymmetric conservative default). Inline mode surfaces a one-line banner (`> Starting analyze phase — <kind>-driven.`) at synthesis start; SM mode folds the value into `confirm_sm_start`. See `docs/AI_PROMPTS.md` §6 for the onion-layered document shape.
 
 ### Phase-Boundary Contract for Prompt Authors
 
 - **DISCOVERY → ACTIVE** — triggered by `lineage_start_exploration`. Nav prompt for the chosen mode is injected. `lineage-engine` tool tag replaces `lineage` (so classic tools are hidden). Prompts added in DISCOVERY that mention classic-tool choice are dead weight after this transition — scope them to DISCOVERY only.
 - **ACTIVE hop loop** — `submit_findings` is the only active-phase tool (plus `get_object_detail` for ad-hoc look-up). Nav prompt is re-injected on every sliding-memory wipe (`lineageParticipant.ts:494`).
-- **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. Detail archive is injected as a fresh user message, followed by the synthesis prompt. The synthesis prompt is not preserved through sliding-memory wipes today; if synthesis is reached post-wipe, the rules may be stale (known limitation; re-injection is an active investigation).
+- **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. Detail archive is injected as a fresh user message, followed by the synthesis prompt.
 
 ### Mechanical Map-&-Router enforcement (2026-04-18)
 
 The ACTIVE phase of the chat loop sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`. The AI **cannot** produce free-form text during the hop loop — it must call `submit_findings`. This enforces the Map-&-Router contract ("the engine owns the loop") at the API level rather than relying on prompt discipline.
 
 Consequences:
-- **No self-exit for the AI.** `complete: true` is honored only in inline mode (`_inlineMode === true`); in sliding-memory mode it is silently ignored. Termination is owned by the engine — `getHopContext` sets status to `'complete'` when the agenda is empty, which triggers the `active → done` phase transition.
-- **Speed control via verdicts, not prose.** If the AI judges a branch unworthy, it emits `verdict: "irrelevant"` for each focus node → cascade-prune drains the agenda quickly → synthesis fires. No silent text bail possible.
+- **No self-exit for the AI.** `complete: true` is honored only in inline mode (`_inlineMode === true`); in sliding-memory mode it is silently ignored. Termination is owned by the engine — `getHopContext` sets status to `'complete'` when the agenda is empty, which triggers the `active → synthesis` phase transition.
+- **Speed control via verbs, not adjectives.** If the AI judges a branch unworthy, it emits `verdict: "prune"` for each focus node → cascade-prune drains the agenda quickly → synthesis fires. No silent text bail possible.
 - **ACTIVE tool set is narrowed to `submit_findings` only.** `start_exploration` is dropped from the ACTIVE schema (the parallel-call guard in `toolProvider.ts` remains as defense-in-depth). This both satisfies the "some models support only a single tool under Required" caveat in the VS Code API and removes the AI's temptation to re-enter discovery.
-- **Prompt surfaces contain no exit vocabulary.** `BLOCK.completionContract` in `smPrompts.ts` describes only the loop (call `submit_findings` with a verdict until the engine drains). No mention of `complete: true`, "final answer", or "enrich_view only after" — those would teach the AI a path it cannot take.
+- **Prompt surfaces contain no exit vocabulary.** `BLOCK.completionContract` in `smPrompts.ts` describes only the loop (call `submit_findings` with a verdict until the engine drains). No mention of `complete: true`, "final answer", or "`present_result` only after" — those would teach the AI a path it cannot take.
 
 Reference: VS Code API `LanguageModelChatToolMode.Required` at `node_modules/@types/vscode/index.d.ts:20843`.
 
@@ -129,7 +126,7 @@ Reference: VS Code API `LanguageModelChatToolMode.Required` at `node_modules/@ty
 |---|---|---|---|
 | **Parallel `start_exploration` storm** | After `complete_rejected`, AI emits N parallel `start_exploration` calls (one per unvisited neighbor) instead of continuing `submit_findings`. Wipes the accumulated Detail Archive, forcing synthesis into an empty-evidence state. | `already_started` guard is sequential. Prompt-level "Do NOT call start_exploration" in the `complete_rejected` hint is not reliably binding. Multi-call rounds are unprotected. | Mechanical guard in `toolProvider.ts`: reject calls 2..N of `start_exploration` within one LM round with a structured `{error:'parallel_call_forbidden', hint}` envelope. Prose hints alone do not enforce. |
 | **Utility-proc DDL overflow** | One hop returns 50k-char tool result (e.g., `LogMessage` DDL with verbose boilerplate). Next hop's input jumps from ~7k to ~17k tokens. | `aiPresenter.ts` does not cap DDL length for utility/log procedures. | Per-node DDL length cap (~8k chars) with `{truncated: true, hint: 'Call get_ddl_batch if full DDL needed'}` envelope. |
-| **Synthesis with empty archive** | Final round receives synthesis prompt but no archive slots (because SM was wiped mid-exploration). Output is truncated (<100 tokens) with no `enrich_view`. | Consequence of the parallel-storm failure mode, or any `start_exploration` re-call during ACTIVE phase. | Detect empty-archive synthesis and emit a user-facing warning + re-run suggestion. |
+| **Synthesis with empty archive** | Final round receives synthesis prompt but no archive slots (because SM was wiped mid-exploration). Output is truncated (<100 tokens) with no `present_result`. | Consequence of the parallel-storm failure mode, or any `start_exploration` re-call during ACTIVE phase. | Detect empty-archive synthesis and emit a user-facing warning + re-run suggestion. |
 
 ### State Diagram: AI Navigation Engine
 
@@ -161,8 +158,8 @@ stateDiagram-v2
     state Synthesis {
         [*] --> AggregateFindings
         AggregateFindings --> GenerateReport: Detail Memory Provided
-        GenerateReport --> EnrichVisualization
-        EnrichVisualization --> [*]
+        GenerateReport --> PresentResult
+        PresentResult --> [*]
     }
     
     Synthesis --> [*]
@@ -222,7 +219,7 @@ flowchart TD
     IY --> IA
     IR -- no --> IN[Abort, preserve partial]
     IN --> U
-    IA -->|AI: complete: true| IS[Inline synthesis<br/>enrich_view + chat prose]
+    IA -->|AI: complete: true| IS[Inline synthesis<br/>present_result + chat prose]
     IS --> End[Done]
 ```
 
@@ -317,7 +314,7 @@ sequenceDiagram
 Each hop's `working_memory` carries the diagnostics the AI needs to self-correct:
 - `checklist.rounds_used` — monotonic counter (not countdown — countdowns anchor the model toward premature stopping per s1 / Muennighoff et al. 2025)
 - `checklist.scope_growth` — cumulative auto-expansions
-- `verdict_counts` — running R/P/I tally (flags "many relevants, zero irrelevants" imbalance)
+- `verdict_counts` — running A/P/Pr tally (flags "many analyze, zero prunes" imbalance)
 - `recent_rejections` — last 5 blocked routes, so the same invalid ID isn't re-submitted
 - `active_schemas` — current session allowlist (grows on each consented schema)
 - `depth_cap` — engine-enforced ceiling, always surfaced when a budget is set (removed the old silent-mode gate)
@@ -349,13 +346,12 @@ Grounded in: Anthropic *Effective Context Engineering* (compaction over truncati
 
 ## Cascade-prune guards — content-blind by design (2026-04-18)
 
-Three topological guards govern `irrelevant`-verdict pruning. All are content-blind — they operate on graph reachability, never second-guess the AI's verdict.
+Three topological guards govern `prune`-verdict pruning. All are content-blind — they operate on graph reachability, never second-guess the AI's verdict.
 
 | Guard | Where | Role |
 |---|---|---|
 | `wouldOrphanNotedNode` | Pre-prune ([smBase.ts submitFindings](src/ai/smBase.ts)) | Rejects a prune that would disconnect an already-analyzed (noted) node from the origin. Protects work already done. |
 | `findBridgeNodes` | Post-exploration ([smBase.ts getResult](src/ai/smBase.ts)) | At result-graph assembly, reinserts pruned nodes that would leave the final graph disconnected. Purely a rendering safety net for the user's visualization. |
-| ~~cascade-width > 50%~~ | **Removed 2026-04-18** | Was a numeric heuristic that rejected prunes affecting >half of remaining agenda. Removed: the engine is content-blind, the AI has the only DDL view and already committed a verdict (relevant\|pass\|irrelevant); SM doesn't second-guess that with numbers. If over-pruning shows up in evals, the fix is in the `irrelevant` rubric in [smPrompts.ts BLOCK.verdictCategories](src/ai/smPrompts.ts), not the engine. |
 
 **Principle:** engine guards are topological only. Content judgment lives in the AI + the prompts that frame it.
 
@@ -369,10 +365,10 @@ The `@lineage` exploration loop implements the **Orchestrator-Workers** pattern 
 
 The worker is bounded by **horse-with-blinkers mechanics**:
 - `LanguageModelChatToolMode.Required` in ACTIVE — can't emit free-form text.
-- Tool filter narrows the visible toolset to `submit_findings` only — no `enrich_view`, `run_bfs_trace`, etc.
+- Tool filter narrows the visible toolset to `submit_findings` only — no `present_result`, `run_bfs_trace`, etc.
 - Engine rejects `complete: true` in SM mode — worker can't self-terminate.
 
-**Consent gates are two-turn pauses** (not a sub-loop): engine emits `action_required` envelope → turn ends → user replies yes/no/redirect → next turn resumes. On yes, the participant does NOT mechanically advance the engine — the engine was already primed at gate-emission time (tool called `getHopContext()` before returning the envelope). AI's next `submit_findings` lands on an already-primed engine. **Trust-on-resume** — no runtime coupling between participant state and engine state beyond what the AI sees in its history.
+**Consent gates are two-turn pauses** (not a sub-loop): engine emits `action_required` envelope → turn ends → user replies yes/no/redirect → next turn resumes. On yes, the participant does NOT mechanically advance the engine — the engine was already primed at gate-emission time (tool called `getHopContext()` before returning the envelope). AI's next `submit_findings` land on an already-primed engine. **Trust-on-resume** — no runtime coupling between participant state and engine state beyond what the AI sees in its history.
 
 Design citation: Orchestrator-Workers. Key deviation from autonomous-agent patterns (plain ReAct, AutoGPT): we give up the AI's termination authority in exchange for bounded, auditable completion.
 

@@ -196,13 +196,13 @@ For small scopes (≤10 objects and under token budget).
 #### 2. Deep exploration (SM Mode)
 For larger scopes (>10 objects or exceeding token budget). 
 - **Map & Router Architecture**: The extension manages a **Topological Map** of the trace, while the AI acts as a **Router** that analyzes one object at a time.
-- **Cross-hop continuity via one-liner summaries**: After each hop, the AI's one-line summary is appended to `working_memory.all_summaries` and echoed on every subsequent hop. The AI decides which summaries matter for the current decision.
+- **Incremental context via one-liner summaries**: After each hop, the AI's one-line summary is appended to `working_memory.short_term_memory` and echoed on the next 3 subsequent hops. This "Sliding Memory" ensures local continuity while preventing global context bloat.
 - **Selection-Inference Routing**: Every hop is driven by a specific, AI-generated sub-question. The engine provides neighbor metadata (columns) and validates AI routing requests *before* the visit to prevent hallucinations ("Fail Early").
 
 ### Why this matters?
-In complex ETL pipelines, a column often changes names multiple times. Deep exploration keeps this context across the entire pipeline using a **two-tier memory model**:
-- **Short Memory (In-Context)**: The AI's one-line summary per visited node, shipped every hop as `working_memory.all_summaries`. Tiny per entry; grows linearly with visited count.
-- **Detail Memory (Archive)**: The AI's full technical analysis per node, stored server-side and only delivered in the final synthesis phase when the whole picture is assembled.
+In complex ETL pipelines, a column often changes names multiple times. Deep exploration keeps this context across the entire pipeline using the **Hourglass Context Model** and a **two-tier memory model**:
+- **Short-Term Memory (In-Context)**: A sliding window of the most recent node summaries, shipped every hop as `working_memory.short_term_memory`.
+- **Detail Archive (Long-Term)**: The AI's full technical analysis per node, stored internally and only delivered in the final synthesis phase when the entire investigation is assembled into a report.
 
 ### Tips
 

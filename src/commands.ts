@@ -121,7 +121,7 @@ export function registerCommands(
      *   (`sess.resultGraph` is populated) and the lineage panel exists, just reveal it.
      *   No new chat turn, no AI round-trip, no token cost.
      * - **Slow path**: if no view exists yet (e.g. the user ran a `bfs_trace` but the AI
-     *   never called `enrich_view`), open a fresh `@lineage` chat turn asking the AI to
+     *   never called `present_result`), open a fresh `@lineage` chat turn asking the AI to
      *   synthesize a view from the stored trace results.
      *
      * @param originalPrompt - The user's original question, captured at SM start; used as
@@ -131,8 +131,8 @@ export function registerCommands(
       const sess = getSession();
       const panel = getActivePanel();
       if (sess.resultGraph && panel) {
-        // Always re-post the preview: enrich_view's ai-view-preview is ephemeral.
-        // If it was never sent (enrich_view errored/skipped) or the webview lost state,
+        // Always re-post the preview: present_result's ai-view-preview is ephemeral.
+        // If it was never sent (present_result errored/skipped) or the webview lost state,
         // reveal alone would show a stale/empty panel.
         const rg = sess.resultGraph;
         const badges = (rg.suggested_labels ?? []).map(l => ({ nodeId: l.node_id, text: l.text }));
@@ -145,8 +145,8 @@ export function registerCommands(
           name,
           nodeIds: rg.nodeIds,
           aiMetadata: {
-            summary: sess.lastEnrichViewDescription ? '' : `Lineage trace for: ${trunc(originalPrompt || '', 120)}`,
-            description: sess.lastEnrichViewDescription ?? '',
+            summary: sess.lastPresentResultDescription ? '' : `Lineage trace for: ${trunc(originalPrompt || '', 120)}`,
+            description: sess.lastPresentResultDescription ?? '',
             createdAt: new Date().toISOString(),
             modelName: sess.modelName || 'unknown',
             highlightGroups: [],
