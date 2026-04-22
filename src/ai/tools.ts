@@ -72,6 +72,7 @@ const HopFindingSchema = z.object({
     question: z.string(),
     columns: z.array(z.string()).optional(),
   })).optional(),
+  prune_neighbors: z.array(z.string()).optional(),
   complete: z.boolean().optional(),
   badge_label: z.string().optional(),
   note_caption: z.string().optional(),

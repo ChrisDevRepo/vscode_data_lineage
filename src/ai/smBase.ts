@@ -840,6 +840,16 @@ export class NavigationEngine implements IHopStateMachine {
         }
       }
 
+      // Explicitly prune adjacent neighbors requested by the AI
+      if (finding.prune_neighbors && finding.prune_neighbors.length > 0) {
+        for (const nidRaw of finding.prune_neighbors) {
+          const nid = nidRaw.toLowerCase();
+          if (this.nodeMap.has(nid) && nid !== this.originNodeId) {
+            this.removedSet.add(nid);
+          }
+        }
+      }
+
       if (!isPrune) {
         this.memory.storeDetail(this.nodeMap.get(focusId)!, finding.detail_analysis, finding.summary, {
           badge_label: finding.badge_label,
@@ -853,8 +863,8 @@ export class NavigationEngine implements IHopStateMachine {
 
       this.memory.recordVerdict(finding.verdict);
 
-      if (prunable) {
-        this.removedSet.add(focusId);
+      if (prunable || (finding.prune_neighbors && finding.prune_neighbors.length > 0)) {
+        if (prunable) this.removedSet.add(focusId);
         const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
         const before = this.agenda.length;
         this.agenda = this.agenda.filter(e => reachable.has(e.nodeId));

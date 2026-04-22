@@ -64,6 +64,10 @@ The `NavigationEngine` is a single, unified state machine. It handles both high-
 
 The engine implements **Task Aggregation (Best Practice)**: when multiple reasoning paths converge on the same physical node (e.g., tracing Sales and Email), the engine merges the sub-questions and column lists into a single prioritized agenda entry. This prevents "forgetting" intent during complex graph traversals.
 
+**Agenda Shaping**: The AI manages the Engine's BFS agenda dynamically through two complementary mechanisms in `submit_findings`:
+1.  **Auto-Add (`route_requests`)**: The AI explicitly adds new nodes to the agenda by providing a focused sub-question and optional column list. This is used for discovery beyond the initial BFS depth.
+2.  **Auto-Prune (`prune_neighbors`)**: The AI can remove irrelevant branches from the agenda by providing an array of node IDs. When a View or Procedure's DDL proves that certain joined neighbors do not contribute to the mission (e.g., demographic tables in a column trace for 'JobTitle'), the AI prunes them. Pruning a node automatically **cascade-prunes** its unvisited descendants, ensuring maximum token and hop efficiency.
+
 ### Completion Contract (when SM says "done")
 Completion semantics depend on the execution mode:
 
