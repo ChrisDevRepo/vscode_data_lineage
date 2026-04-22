@@ -173,8 +173,8 @@ export class LineageParticipant {
       const match = registry.find(m => m.id.toLowerCase() === reqId)
                  || registry.find(m => m.id.toLowerCase().includes(reqId))
                  || registry.find(m => reqId.includes(m.id.toLowerCase()))
-                 || registry.find(m => m.vendor === requested.vendor && (m as any).capabilities?.tools)
-                 || registry.find(m => (m as any).capabilities?.tools)
+                 || registry.find(m => m.vendor === requested.vendor && (m as any).capabilities?.toolCalling)
+                 || registry.find(m => (m as any).capabilities?.toolCalling)
                  || registry[0];
 
       if (match) {
@@ -483,11 +483,11 @@ export class LineageParticipant {
          * Pro: Domain-specific JSON compaction (via historyManager.ts) preserves gate payloads while stripping noise.
          * Con: Requires manual tool-loop orchestration (MAX_ROUNDS).
          */
-        const tools = lineageTools.map(t => new vscode.LanguageModelChatTool(
-          t.name, 
-          t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'), 
-          t.inputSchema
-        ));
+        const tools: vscode.LanguageModelChatTool[] = lineageTools.map(t => ({
+          name: t.name, 
+          description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'), 
+          inputSchema: t.inputSchema
+        }));
         const response = await model.sendRequest(messages, { tools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
