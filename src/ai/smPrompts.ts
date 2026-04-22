@@ -50,14 +50,10 @@ const BLOCK = {
 
   /** Route grounding — shared. */
   routing:
-    'ROUTING: every entry in `route_requests` carries a focused sub-question — anything from a single yes/no ("Does this procedure apply the rule the parent referenced?") to a multi-part investigation ("Which columns X, Y, Z flow through this procedure, how are they transformed, and what conditions filter them?"). Frame the sub-question at the depth the next hop needs to make progress — do not truncate a multi-part investigation into a thin single question. Read neighbor metadata and justify each choice; blind routing is a reasoning failure.\n' +
-    'AGENDA SHAPING: You control the engine\'s BFS agenda. Use `route_requests` to auto-add required neighbors. Use `prune_neighbors` (array of node IDs) to aggressively eliminate irrelevant neighbors discovered while reading a View or Procedure\'s SQL. Pruning a node automatically cascade-prunes its unvisited descendants, saving tokens and hops.\n' +
-    'APPROVED SCOPE: `working_memory.approved_border` carries the schemas and depth cap locked at session start. Each neighbor is tagged `in_budget` and `in_approved_scope`. Prefer in-border routes. When a focus node references something out of the border that matters for the question, include it in `route_requests` with its sub-question — the engine defers it to a post-session review list so the user can approve scope extension as a single end-of-session decision. `working_memory.deferred_count` shows the running tally.\n' +
-    'WORKING MEMORY SIGNALS: `depth_budget` is the user-declared depth; `depth_cap` is the engine ceiling (strict = budget, soft = budget+1, silent = budget+2, plus user-approved extensions). `verdict_counts` shows the running A/P/Pr tally — many analyze and zero prunes usually means genuine utility/helper nodes were missed (those take `prune`). `recent_rejections` lists the last five deferred or blocked routes already surfaced by the engine.',
-
-  /** Verdict a neighbor — CT modes. */
-  verdictNeighbors:
-    'Verdict neighbors via `route_requests` (adds to agenda), `prune_neighbors` (removes from agenda), or leave unchanged (engine skips). Cascade-prune happens when you verdict a focus node as prune or explicitly list it in `prune_neighbors`.',
+    'AGENDA MANAGEMENT: You dynamically shape the engine\'s BFS agenda.\n' +
+    '- AUTO-ADD (`route_requests`): Add neighbors ONLY when highly relevant to the `mission_brief`. Provide a focused sub-question (single yes/no or multi-part investigation) framing the next hop. *Guards:* Respect the `in_budget` and `in_approved_scope` neighbor tags. The user\'s schemas and depth cap (`working_memory.approved_border`) are strict boundaries. Out-of-scope routes are either blocked via a consent gate (inline) or deferred to a post-session review list (sliding memory); only route them if they are absolutely critical to answering the mission.\n' +
+    '- AUTO-PRUNE (`prune_neighbors`): Aggressively remove irrelevant neighbors. When reading a View or Procedure\'s SQL, if you see joined tables (e.g. logging, demographic lookups, utility functions) that do not contribute to the mission, list their IDs here. Pruning a node automatically cascade-prunes its unvisited descendants, saving tokens and hops.\n' +
+    'WORKING MEMORY SIGNALS: `depth_budget` is the user-declared depth; `depth_cap` is the engine ceiling. `verdict_counts` shows the running A/P/Pr tally — many analyze and zero prunes usually means genuine utility nodes were missed. `recent_rejections` lists the last five deferred or blocked routes.',
 
   /** Loop contract — applies to every mode. */
   completionContract:

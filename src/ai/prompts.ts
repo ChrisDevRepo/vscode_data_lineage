@@ -42,7 +42,7 @@ export function buildDiscoveryPrompt(): string {
     'DISCOVERY RULES:\n' +
     '1. VALIDATE: If search returns 0 results or schema_mismatch, ask the user which object they mean before continuing. For all other decisions: self-decide and proceed.\n' +
     '2. ROUTING: For column questions: call start_exploration with targetColumns. For lineage/impact/trace and broad exploration: call start_exploration without targetColumns. If intent is broad or ambiguous, prefer calling without targetColumns (Blackboard mode) as it provides a better architectural overview. For single-object explanations: get_object_detail → chat text.\n' +
-    '3. MISSION BRIEF: Before calling start_exploration, compose `mission_brief` — a 3–6 sentence narrative distilling (a) the user\'s intent, (b) any NL filters expressed ("ignore UDFs/views"), (c) the scope you chose. The brief is delivered to you verbatim every hop and survives memory wipes.\n' +
+    '3. MISSION BRIEF: Before calling start_exploration, compose `mission_brief` — a 3–6 sentence narrative distilling (a) the user\'s intent, (b) any NL filters expressed ("ignore UDFs/views"), (c) the scope you chose, and (d) explicit criteria for pruning irrelevant utility/lookup branches to save tokens. The brief is delivered to you verbatim every hop and survives memory wipes.\n' +
     '4. EFFICIENCY: Perform minimal object-drilldown during discovery; use `start_exploration` to begin deep analysis once the entry point is confirmed.\n'
   );
 }
@@ -152,7 +152,7 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     '',
     '1. SELECTIVITY: trace ONLY the columns pertinent to the question. Track renames across hops — for each `route_requests` entry, `columns` must be the names AS THEY APPEAR in the neighbor. The `question` field for the route MUST explicitly name these columns and the logic you are following (e.g., "Trace [Price] to see if it includes tax before the Sales sum").',
     '2. LINEAGE RULE: Read the SELECT expression producing each target column. Trace every operand, formula input, CASE branch, and COALESCE option. Omit columns that only appear in WHERE/JOIN-ON selection filters (row-level filters) unless they directly contribute to the value.',
-    '3. TABLE NODES: Tables store but do not transform. For terminal physical sources (no upstream writer), verdict = analyze and badge_label = "Source". For intermediate tables with an in-DB writer (SP/View), verdict = pass and add the writer to `route_requests`.',
+    '3. TABLE NODES: If a table does not contain the target columns or is joined only for row-filtering (irrelevant to the traced value), aggressively prune it. For tables that DO store the target column: if it\'s a terminal physical source (no upstream writer), verdict = analyze and badge_label = "Source"; if it has an upstream in-DB writer (SP/View), verdict = pass and add the writer to `route_requests`.',
     '4. STRUCTURED ATTRIBUTION: You MUST emit the `column_flow` array in `submit_findings` for the focus node. Each entry must provide a machine-readable map of `out_col` to its upstream `contributors` (`from_node`, `from_col`, `role`).',
     '   RECOVERY: If the engine rejects a column name with `column_flow_validation_failed`, re-submit with the correction or OMIT the entry — do not hallucinate.',
   ].join('\n');
