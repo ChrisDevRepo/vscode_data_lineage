@@ -462,7 +462,7 @@ export class LineageParticipant {
         } catch (err) {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
-        if (!toolCalls.length && responseText.length === 0) {
+        if (!toolCalls.length) {
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);

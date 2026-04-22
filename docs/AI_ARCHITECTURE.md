@@ -18,7 +18,9 @@ As foundational mandates for the AI Assistant:
 - **Tool Mode Logic**: To comply with VS Code API constraints, the participant dynamically selects the `LanguageModelChatToolMode`:
     - **`Required`**: Used ONLY when exactly one tool is provided to the model. This is typical for the initial `discovery` phase or specific slash commands (`/search`, `/trace`).
     - **`Auto`**: Used whenever multiple tools are provided (e.g., during the `active` phase with `submit_findings` and `get_ddl_batch`). This prevents runtime crashes caused by the API's single-tool restriction for `Required` mode.
-- **Termination Guard**: The multi-round tool loop implement in `lineageParticipant.ts` uses a robust termination condition. A turn is only considered a "final answer" if **both** the tool call array is empty **and** the model has produced no markdown response text. This prevents premature exits when models (especially conversational ones like Claude) provide text-only updates between tool rounds.
+- **Termination Guard**: The multi-round tool loop implemented in `lineageParticipant.ts` follows a **strict tool-driven termination** model. A conversational turn is finalized and control is returned to the user whenever the language model requests **zero tools**. 
+    - **Conversational Yielding**: This allows the participant to act as a standard chatbot during the **Discovery** and **Synthesis** phases. If the model answers a question ("What schemas are available?") with markdown text and no tools, the turn ends.
+    - **Infinite Loop Prevention**: The previous "text+tool" hybrid termination condition caused infinite loops by re-invoking the model with an empty `User` message whenever it provided text without tools. The new model treats the absence of tool calls as the explicit signal that the AI has yielded its turn.
 
 ## Architecture/Workflow
 
@@ -106,7 +108,7 @@ The hop payload is designed to survive sliding-memory wipes: `sm_status`, `agend
 The user's original question reaches the model via three paths every hop: (1) `working_memory.user_question` (echoed verbatim by the engine), (2) the VS Code chat-history messages on every LM call, and (3) `current_task` on hop 1 as `"Root Question: <user text>"`. Sliding-history wipes preserve paths (1) and (3) because they live in tool results, not user messages.
 
 ### The Three Lifecycle Phases
-1. **Discovery (Initiation)**: The AI maps the starting point and scope. The engine seeds the initial Agenda.
+1. **Discovery (Initiation)**: A conversational phase where the AI handles ad-hoc user inquiries (search, show, explain). The AI may use search tools to gather context. If the AI provides a text-only response, the turn ends and returns control to the user. A transition to the **Active phase** only occurs if the AI explicitly calls `lineage_start_exploration`.
 2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. Each hop it receives `short_term_memory`, the Map, the focus DDL, and neighbor metadata.
 3. **Holistic Synthesis & Presentation**: Once the agenda drains, the synthesis phase (`lineageParticipant.ts` active→synthesis transition) injects the full Detail Archive as a fresh user message; the AI produces the chat prose + `present_result` sections directly.
 
