@@ -233,11 +233,11 @@ class ToolHandler {
             gate: 'confirm_sm_start',
             classes: ['sliding_memory'],
             nodeIds: [],
-            detail: `Large task — ${initResult.scopeSize} nodes to analyze, budget ~${safeMax} hops.\n` +
-                    `Analysis: ${CLASSIFICATION_LABEL[sess.classification!]}${isCt ? ' (Column Trace)' : ''}\n` +
-                    `Schemas in scope: ${activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
-                    `Depth: ${data.depth ?? 'default'} (${data.depth_enforcement ?? 'silent'} enforcement)\n` +
-                    `Direction: ${direction}`,
+            detail: `### Exploration Plan\n` +
+                    `- **Scope:** ${initResult.scopeSize} nodes identified\n` +
+                    `- **Analysis:** ${CLASSIFICATION_LABEL[sess.classification!]}${isCt ? ' (Column Trace)' : ''}\n` +
+                    `- **Schemas:** ${activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
+                    `- **Configuration:** Depth ${data.depth ?? 'default'} (${data.depth_enforcement ?? 'silent'}), ${direction} direction`,
           });
           return this.logAndReturn('start_exploration', {
             error: 'action_required',

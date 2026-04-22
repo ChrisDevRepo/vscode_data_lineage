@@ -16,6 +16,12 @@
 - **Deferred follow-ups now fire for NL-filtered dependencies** — when the user's question included an NL filter like `ignore UDFs and views`, `@lineage` was silently dropping references to out-of-scope objects instead of deferring them. The "Detailed explanation (N)" chip consequently stayed hidden. `@lineage` now still won't *analyze* filter violators, but if one is a meaningful dependency for the mission it lists it as a deferred follow-up the user can click to review.
 - **Cancellation-aware chat handler** — pressing Stop (or starting a new prompt mid-answer) no longer produces a red `*Error: Response stream has been closed*` bubble in chat. The handler observes VS Code's cancellation signal, exits cleanly as a typed `cancelled` state, and logs a single `Chat response cancelled by user` line instead of escalating to an error. Same behavior when VS Code tears the stream down for any other reason (host reload, etc.).
 
+### Fixed
+- **AI Tool Registry Compliance** — fixed a regression where the AI model would fast-fail (0 tokens) on `/search` and `/trace` commands. Per VS Code API standards, `vscode.lm.tools` are now explicitly mapped to `vscode.LanguageModelChatTool` instances before being passed to the model.
+- **Context Preservation in Hop-by-Hop mode** — fixed a bug where the `HistoryManager` would aggressively compact `action_required` envelopes. This ensures the vital `hop_context` for the first node is preserved across the chat boundary, preventing AI tool hallucinations at the start of an exploration.
+- **Active Phase Tool Surface Alignment** — expanded the active phase tool list to include `lineage_get_ddl_batch`. This allows the AI to fulfill the system prompt mandate of resolving truncated DDLs during autonomous exploration.
+- **Deterministic Command Execution** — enforced `Required` tool mode for `/search` and `/trace` commands to prevent models from returning empty responses instead of invoking the requested lineage tools.
+
 ### Documentation
 - **Two-mode contract documented** — `docs/AI_ARCHITECTURE.md`, `docs-internal/AI_IMPLEMENTATION.md`, and `README.md` now clearly describe the split between inline mode (small scope, AI decides completion via `complete: true`, per-route yes/no when stepping outside your filter schemas) and hop-by-hop SM mode (large scope, user-approved upfront with `confirm_sm_start`, closed-loop with deferred follow-up chips at synthesis). No behavior change — the contract was already in the code since 0.9.9; docs caught up.
 

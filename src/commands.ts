@@ -197,8 +197,9 @@ export function registerCommands(
      * the active exploration loop.
      */
     vscode.commands.registerCommand('dataLineageViz.aiResolveGate', (choice: 'yes' | 'no') => {
-      vscode.commands.executeCommand('workbench.action.chat.sendRequest', {
-        prompt: `@lineage ${choice}`
+      configLogger.info(`AI Gate resolved: choice=${choice}`);
+      vscode.commands.executeCommand('workbench.action.chat.open', {
+        query: `@lineage ${choice}`
       });
     }),
 

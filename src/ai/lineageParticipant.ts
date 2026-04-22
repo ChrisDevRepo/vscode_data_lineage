@@ -287,8 +287,8 @@ export class LineageParticipant {
     let activePhase: 'discover' | 'active' | 'synthesis' = 'discover';
     let lineageTools = vscode.lm.tools.filter(t => {
       if (t.name === 'lineage_submit_findings') return false;
-      if (t.tags.includes('lineage-presentation')) return activePhase === 'synthesis';
-      return t.tags.includes('lineage');
+      if (t.tags?.includes('lineage-presentation')) return activePhase === 'synthesis';
+      return t.tags?.includes('lineage');
     });
     if (request.command === 'trace') {
       effectivePrompt = buildTracePrompt(request.prompt);
@@ -387,10 +387,10 @@ export class LineageParticipant {
 
     if (sess.phase.kind === 'exploring' && sess.stateMachine) {
       activePhase = 'active';
-      lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
+      lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
       systemPrompt = buildStageSystemPrompt('active');
       navPrompt = buildNavigationPrompt(sess.stateMachine.inlineMode, sess.stateMachine.columnAspect?.target_columns);
-      this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings`);
+      this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings, get_ddl_batch`);
     }
 
     const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
@@ -424,13 +424,11 @@ export class LineageParticipant {
     }
 
     const messages: vscode.LanguageModelChatMessage[] = [
-      vscode.LanguageModelChatMessage.User(
-        `# System Instructions\n${systemPrompt}\n\n` +
-        (navPrompt ? `# Navigation State\n${navPrompt}\n\n` : '') +
-        `---\n# User Request\n${effectivePrompt}`
-      ),
+      vscode.LanguageModelChatMessage.User(systemPrompt),
       ...historyMessages,
     ];
+    if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
+    messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
     const toolCallRounds: any[] = [];
     const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
     const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
@@ -467,13 +465,30 @@ export class LineageParticipant {
           this.logger.debug(`Per-round countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
 
-        const toolMode = activePhase === 'active' ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
+        const toolMode = (activePhase === 'active' || request.command === 'search' || request.command === 'trace') ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
         if (activePhase === 'active' && sess.stateMachine) {
           const st = sess.stateMachine.toJSON() as { status?: string; currentFocusNodeId?: string | null; hopCount?: number };
           this.logger.debug(`[Hop ${roundCount}] engine_status=${st.status} focus=${st.currentFocusNodeId ?? '(null)'}`);
         }
 
-        const response = await model.sendRequest(messages, { tools: lineageTools, toolMode }, token);
+        /**
+         * VS Code API Compliance:
+         * We explicitly map LanguageModelToolInformation to LanguageModelChatTool instances.
+         * Using the raw tool information objects from vscode.lm.tools would cause sendRequest to silently 
+         * drop the tools array. 
+         * 
+         * Memory Strategy (Pro/Con):
+         * We use a custom "Sliding Memory" implementation rather than generic utilities like @vscode/chat-extension-utils.
+         * Pro: Authoritative history wipes (messages.length = 0) keep the context window focused and token-efficient.
+         * Pro: Domain-specific JSON compaction (via historyManager.ts) preserves gate payloads while stripping noise.
+         * Con: Requires manual tool-loop orchestration (MAX_ROUNDS).
+         */
+        const tools = lineageTools.map(t => new vscode.LanguageModelChatTool(
+          t.name, 
+          t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'), 
+          t.inputSchema
+        ));
+        const response = await model.sendRequest(messages, { tools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
@@ -608,7 +623,7 @@ export class LineageParticipant {
         const hasStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
         if (hasStart && activePhase === 'discover') {
           activePhase = 'active';
-          lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
+          lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
           this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
           systemPrompt = buildStageSystemPrompt('active');
           const engine = sess.stateMachine;
@@ -626,8 +641,8 @@ export class LineageParticipant {
           activePhase = 'synthesis';
           lineageTools = vscode.lm.tools.filter(t => {
             if (t.name === 'lineage_submit_findings') return false;
-            if (t.tags.includes('lineage-presentation')) return true; // Enabled in synthesis
-            return t.tags.includes('lineage');
+            if (t.tags?.includes('lineage-presentation')) return true; // Enabled in synthesis
+            return t.tags?.includes('lineage');
           });
           this.logger.info(`[Phase] active → synthesis — SM complete, restored ${lineageTools.length} tools including presentation`);
           if (sess.stateMachine.inlineMode && !sess.classification) {
@@ -641,9 +656,8 @@ export class LineageParticipant {
             const beforeCount   = messages.length;
             messages.length = 0;
             messages.push(
-              vscode.LanguageModelChatMessage.User(
-                `# System Instructions\n${systemPrompt}\n\n---\n# User Request\n${effectivePrompt}`
-              ),
+              vscode.LanguageModelChatMessage.User(systemPrompt),
+              vscode.LanguageModelChatMessage.User(effectivePrompt),
               lastAssistant,
               lastResult
             );
@@ -675,14 +689,11 @@ export class LineageParticipant {
             const lastResult = messages[messages.length - 1];
             messages.length = 0;
             messages.push(
-              vscode.LanguageModelChatMessage.User(
-                `# System Instructions\n${systemPrompt}\n\n` +
-                (navPrompt ? `# Navigation State\n${navPrompt}\n\n` : '') +
-                `---\n# User Request\n${effectivePrompt}`
-              ),
-              lastAssistant,
-              lastResult
+              vscode.LanguageModelChatMessage.User(systemPrompt),
+              vscode.LanguageModelChatMessage.User(effectivePrompt)
             );
+            if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
+            messages.push(lastAssistant, lastResult);
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
           } else {
             this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);

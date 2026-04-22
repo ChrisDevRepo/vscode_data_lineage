@@ -330,7 +330,7 @@ The structured `[AI] [Hop N]` debug log emits `archive=<N>` — this is `archive
 
 ### SM closed-loop contract & deferred-questions checkpoint (2026-04-18)
 
-After `confirm_sm_start` is approved, the SM session runs as a closed loop — no mid-session consent gates. The AI's tool surface is a single tool (`lineage_submit_findings`), `LanguageModelChatToolMode.Required` prevents free-form chat, and the engine enforces the border mechanically:
+After `confirm_sm_start` is approved, the SM session runs as a closed loop — no mid-session consent gates. The AI's tool surface is restricted to `lineage_submit_findings` and `lineage_get_ddl_batch` (for resolving truncations). `LanguageModelChatToolMode.Required` prevents free-form chat, and the engine enforces the border mechanically:
 
 - **Approved border** — `working_memory.approved_border = { schemas, depth_cap }` surfaced every hop. Locked at session start; extensions require a new session.
 - **Deferral, not rejection** — when the AI routes to an out-of-border node, the engine calls `deferQuestion({...})` into an internal bucket (single encapsulated mutation point on `NavigationEngine`) and the hop proceeds. In-border routes in the same `route_requests` array are accepted normally.

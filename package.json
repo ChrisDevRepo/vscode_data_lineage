@@ -140,6 +140,10 @@
         "icon": "$(bug)"
       },
       {
+        "command": "dataLineageViz.aiResolveGate",
+        "title": "Data Lineage: Resolve AI Gate"
+      },
+      {
         "command": "dataLineageViz.dumpSmState",
         "title": "Data Lineage: Dump SM State"
       }

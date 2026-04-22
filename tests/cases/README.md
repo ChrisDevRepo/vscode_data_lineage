@@ -67,7 +67,7 @@ _None._ or short description.
 ## Tool surface today (10 tools)
 
 - Stateless: `lineage_get_context`, `lineage_search_objects`, `lineage_get_object_detail`, `lineage_run_bfs_trace`, `lineage_run_analysis`, `lineage_search_ddl`, `lineage_get_ddl_batch`
-- Stateful SM: `lineage_start_exploration` (optional `targetColumns` → column_trace), `lineage_submit_findings`, `lineage_present_result`
+- Stateful SM: `lineage_start_exploration` (optional `targetColumns` → column_trace), `lineage_submit_findings`, `lineage_get_ddl_batch` (active phase), `lineage_present_result` (synthesis phase)
 
 No separate `start_column_trace` / `submit_batch_*` / `expand_frontier` — the unified `NavigationEngine` handles both modes behind one tool pair.
 

@@ -25,8 +25,8 @@ export function compactNoiseResult(toolName: string, resultJson: string): string
   try {
     const parsed = JSON.parse(resultJson);
     const shortName = toolName.replace('lineage_', '');
-    // Error responses
-    if (parsed.error) {
+    // Error responses (excluding action_required which carries gate payload and hop_context)
+    if (parsed.error && parsed.error !== 'action_required' && parsed.error !== 'action_required_pending') {
       return JSON.stringify({ summary: `${shortName} → error: ${parsed.error}` });
     }
     // Validation rejections (success: false with errors array)
