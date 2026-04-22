@@ -180,6 +180,8 @@ export interface HopFinding {
   verdict: Verdict;
   /** List of new nodes the AI wishes to add to the exploration agenda. */
   route_requests?: RouteRequest[];
+  /** List of neighbor node IDs to aggressively prune from the exploration agenda. */
+  prune_neighbors?: string[];
   /** Reserved. The engine owns completion in sliding-memory mode; setting it is rejected. */
   complete?: boolean;
   /** Optional UI label (badge) to apply to this node in the final view. */

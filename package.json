@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": true,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "extensionDependencies": [],
@@ -1049,6 +1049,13 @@
                 ]
               },
               "description": "Grounded routing requests for next hops."
+            },
+            "prune_neighbors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of neighbor node IDs to aggressively prune from the exploration agenda without visiting them. Use when focus-node DDL proves these branches are irrelevant to the mission."
             },
             "complete": {
               "type": "boolean",
