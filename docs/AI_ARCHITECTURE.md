@@ -13,6 +13,13 @@ As foundational mandates for the AI Assistant:
 - **Zod Validation**: IPC bridge validation, tool inputs, and extension host boundaries must strictly use `zod` for strong type safety, runtime validation, and security.
 - **DRY & OOP**: Emphasize explicit composition, reusability, and delegation. The `NavigationEngine` and similar core orchestration systems must serve as the single source of truth for their domains without redundant logic. Do not duplicate logic or introduce anti-patterns to bypass structural designs.
 
+## VS Code API Compliance & AI Tooling
+- **Model Handle Protocol**: The `@lineage` participant strictly uses the `request.model` handle provided by the VS Code Chat API. This ensures that the user's explicit model selection (e.g., GPT-4o, Claude Haiku) is respected. The extension does not perform secondary model discovery or switching, relying on the user-selected model's registered capabilities.
+- **Tool Mode Logic**: To comply with VS Code API constraints, the participant dynamically selects the `LanguageModelChatToolMode`:
+    - **`Required`**: Used ONLY when exactly one tool is provided to the model. This is typical for the initial `discovery` phase or specific slash commands (`/search`, `/trace`).
+    - **`Auto`**: Used whenever multiple tools are provided (e.g., during the `active` phase with `submit_findings` and `get_ddl_batch`). This prevents runtime crashes caused by the API's single-tool restriction for `Required` mode.
+- **Termination Guard**: The multi-round tool loop implement in `lineageParticipant.ts` uses a robust termination condition. A turn is only considered a "final answer" if **both** the tool call array is empty **and** the model has produced no markdown response text. This prevents premature exits when models (especially conversational ones like Claude) provide text-only updates between tool rounds.
+
 ## Architecture/Workflow
 
 ### Execution Model: Inline vs. State Machine (SM)

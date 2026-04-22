@@ -20,14 +20,14 @@ import { PerformanceCollector } from './diagnostics';
 export { classifyGateReply } from './sessionPhase';
 
 /**
- * Extracts key fields from a VS Code language model tool call part.
+ * Normalizes the extraction of key fields from a VS Code language model tool call part.
  *
  * @remarks
- * This helper utility normalizes the extraction of `callId`, `name`, and `input` from various
- * versions or shapes of the tool call part, providing a stable interface for the participant loop.
+ * Provides a stable interface for the participant loop by abstracting the extraction
+ * of `callId`, `name`, and `input` from various versions of the tool call part.
  *
  * @param tc - The tool call part received from the language model response.
- * @returns An object containing the call identifier, tool name, and input arguments.
+ * @returns An object containing the normalized call identifier, tool name, and input arguments.
  */
 export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { callId: string; name: string; input: any } {
   return {
@@ -38,16 +38,14 @@ export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { c
 }
 
 /**
- * Extract the `error` code from a tool result's JSON envelope, or `null` if the result
- * is not an error.
+ * Extracts the error code from a tool result's JSON envelope.
  *
  * @remarks
- * Our tools return `{ error: '<code>', … }` on rejection and anything else on success.
- * Non-JSON text parts or envelopes without an `error` field are treated as success.
- * Shared by the dedup bypass, the repeat-reject detector, and the abort-payload builder.
+ * Inspects the result content for a JSON-formatted error envelope (`{ error: 'code', ... }`).
+ * Returns `null` if the result is successful, absent, or does not contain a valid error code.
  *
- * @param result - The tool result to inspect, or `undefined` if the call produced none.
- * @returns The error code string, or `null` if the result is absent or successful.
+ * @param result - The tool result to inspect.
+ * @returns The error code string, or `null` if the result is successful or invalid.
  */
 export function extractToolErrorCode(result: vscode.LanguageModelToolResult | undefined): string | null {
   if (!result) return null;
@@ -56,35 +54,31 @@ export function extractToolErrorCode(result: vscode.LanguageModelToolResult | un
     try {
       const data = JSON.parse(p.value);
       if (data && typeof data.error !== 'undefined') return String(data.error);
-    } catch { /* non-JSON: not an error envelope, continue scanning */ }
+    } catch { /* Ignore non-JSON parts */ }
   }
   return null;
 }
 
 /**
- * The primary chat participant for the Data Lineage Viz extension.
+ * Orchestrates the interaction between VS Code Chat and the lineage engine.
  *
  * @remarks
- * This class orchestrates the interaction between the VS Code Copilot Chat interface and the
- * underlying lineage engine. It manages the chat request lifecycle, handles tool invocation rounds,
- * performs context eviction to fit token budgets, and implements the "Sliding Memory" protocol
- * for deep lineage exploration.
+ * This class implements the `ChatParticipant` interface, managing the full request lifecycle:
+ * 1. **Discovery**: Intent analysis and initial scope mapping.
+ * 2. **Active**: State machine execution for graph traversal and data collection.
+ * 3. **Synthesis**: Reporting and presentation of findings.
  *
- * The participant operates in three distinct phases:
- * 1. **Discovery**: Identifying user intent and mapping the initial scope.
- * 2. **Active**: Executing a state machine (Blackboard or Column Trace) to traverse the graph.
- * 3. **Done**: Synthesizing findings into a final technical report for the user.
+ * It utilizes a "Sliding Memory" protocol to manage large context windows and implements
+ * multi-round tool execution with repeat-rejection guards.
  */
 export class LineageParticipant {
   private readonly logger: Logger;
 
   /**
-   * Initializes a new instance of the LineageParticipant.
-   *
-   * @param context - The extension context for managing subscriptions and state.
-   * @param getSession - A factory function to retrieve the current active AI session.
-   * @param outputChannel - The log output channel for tracing participant activity.
-   * @param getActivePanel - A function to retrieve the currently active webview panel, if any.
+   * @param context - The extension context for subscription management.
+   * @param getSession - Factory for retrieving the active AI session.
+   * @param outputChannel - Channel for participant activity logs.
+   * @param getActivePanel - Provider for the active webview panel instance.
    */
   constructor(
     private context: vscode.ExtensionContext,
@@ -96,11 +90,11 @@ export class LineageParticipant {
   }
 
   /**
-   * Registers the participant and its associated providers with VS Code.
+   * Registers the chat participant and its associated providers.
    *
    * @remarks
-   * This method sets up the chat participant, its feedback handler, and its followup provider
-   * which suggests context-sensitive actions (like "Show in Graph") based on tool activity.
+   * Configures the participant ID, the main request handler, and the followup provider
+   * for context-aware suggested actions.
    */
   public register() {
     const participant = vscode.chat.createChatParticipant(
@@ -114,11 +108,7 @@ export class LineageParticipant {
         const lastTools: string[] = meta.lastTools ?? [];
         const deferredCount: number = typeof meta.deferredQuestionCount === 'number' ? meta.deferredQuestionCount : 0;
         const followups: vscode.ChatFollowup[] = [];
-        // "Detailed explanation" chip — gated on two conditions:
-        // (a) present_result ran this turn (we have a view to extend, not just chat prose);
-        // (b) the engine has at least one deferred question (there IS something new to analyze).
-        // Click fires `/followup` → handler extends the live SM with the deferred-question
-        // nodes via NavigationEngine.extendScope, reusing the existing detail archive.
+
         const hasPresentResult = lastTools.some((t: string) => t.includes('present_result'));
         if (hasPresentResult && deferredCount > 0) {
           followups.push({
@@ -147,73 +137,22 @@ export class LineageParticipant {
   }
 
   /**
-   * Dynamically resolves a requested model to an officially registered provider instance.
-   * 
-   * @remarks
-   * This method uses a discovery-based approach grounded in VS Code best practices.
-   * It handles ID discrepancies (e.g., missing vendor prefixes) by querying the
-   * system registry and finding the closest registered match that supports tools.
-   *
-   * @param sessId - The active session ID for logging.
-   * @param requested - The model handle provided by the chat participant request.
-   * @returns A registered LanguageModelChat instance, or the original handle as a fallback.
-   */
-  private async resolveRegisteredModel(sessId: string, requested: vscode.LanguageModelChat): Promise<vscode.LanguageModelChat> {
-    try {
-      const registry = await vscode.lm.selectChatModels({});
-      this.logger.debug(`[${sessId}] Registry Discovery: [${trunc(registry.map(m => m.id), 12)}]`);
-      
-      const reqId = requested.id.toLowerCase();
-      // Discovery Priority (respects user choice while ensuring registration):
-      // 1. Exact ID match
-      // 2. Fragment match (agnostic of vendor prefix)
-      // 3. Any model from same vendor with tool support
-      // 4. Any tool-capable model (essential for @lineage engine)
-      // 5. First available registered model
-      const match = registry.find(m => m.id.toLowerCase() === reqId)
-                 || registry.find(m => m.id.toLowerCase().includes(reqId))
-                 || registry.find(m => reqId.includes(m.id.toLowerCase()))
-                 || registry.find(m => m.vendor === requested.vendor && (m as any).capabilities?.toolCalling)
-                 || registry.find(m => (m as any).capabilities?.toolCalling)
-                 || registry[0];
-
-      if (match) {
-        if (match.id !== requested.id) {
-          this.logger.info(`[${sessId}] Model resolved dynamically: ${match.id} (requested: ${requested.id})`);
-        } else {
-          this.logger.debug(`[${sessId}] Model verified in registry: ${match.id}`);
-        }
-        return match;
-      }
-      
-      this.logger.warn(`[${sessId}] No models found in registry. Using request handle as-is.`);
-      return requested;
-    } catch (err) {
-      this.logger.debug(`[${sessId}] Model discovery failed: ${err instanceof Error ? err.message : String(err)}`);
-      return requested;
-    }
-  }
-
-  /**
-   * Routes the "Detailed explanation" chip click into the engine's extend path.
+   * Appends deferred analysis questions to the active exploration agenda.
    *
    * @remarks
-   * Called only from the `/followup` slash command branch. Looks up the engine's deferred
-   * questions (nodes the AI wanted to investigate but were outside the approved scope)
-   * and adds them to the agenda via {@link NavigationEngine.extendScope}. The existing
-   * hop loop then processes them and synthesis patches the view via `present_result.is_update`.
-
+   * Used by the `/followup` command to include nodes that were previously
+   * excluded by scope filters into the next analysis round.
    *
-   * @param sess - The active session; must have `stateMachine.status === 'complete'`.
-   * @param writer - Lifecycle-aware chat writer for a short user-visible progress line.
-   * @returns `true` when at least one node was added to the agenda; `false` otherwise.
+   * @param sess - The active AI session.
+   * @param writer - Interface for writing progress updates to the chat response.
+   * @returns `true` if nodes were added to the agenda, `false` otherwise.
    */
   private tryExtendWithDeferredQuestions(sess: AiSession, writer: ChatResponseWriter): boolean {
     const engine = sess.stateMachine as NavigationEngine | null;
     if (!engine || engine.status !== 'complete' || sess.isStale()) return false;
     const deferred = engine.deferredQuestions ?? [];
     if (deferred.length === 0) return false;
-    // Dedup by nodeId — the engine ring-buffers but a node can be deferred more than once.
+
     const byNode = new Map<string, string>();
     for (const d of deferred) {
       if (!byNode.has(d.nodeId)) byNode.set(d.nodeId, d.question ?? 'User-requested follow-up');
@@ -227,17 +166,17 @@ export class LineageParticipant {
   }
 
   /**
-   * Main entry point for handling chat requests from the user.
+   * Primary request handler for the chat participant.
    *
    * @remarks
-   * This method implements the core agent loop, which includes session rotation, history reconstruction,
-   * dynamic model resolution, multi-round tool execution, and final synthesis.
+   * Implements the core agent loop, managing model resolution, history reconstruction,
+   * context eviction, and multi-round tool execution.
    *
-   * @param request - The user's chat request containing the prompt and model selection.
-   * @param chatContext - The conversation history provided by VS Code.
-   * @param stream - The response stream for delivering markdown and progress updates.
-   * @param token - A cancellation token to stop processing if the user cancels.
-   * @returns A promise that resolves to the chat result metadata.
+   * @param request - The user chat request.
+   * @param chatContext - The active conversation context.
+   * @param stream - Response stream for markdown and tool updates.
+   * @param token - Cancellation token.
+   * @returns The final chat result metadata.
    */
   public async handleChatRequest(
     request: vscode.ChatRequest,
@@ -247,9 +186,9 @@ export class LineageParticipant {
   ): Promise<vscode.ChatResult> {
     const sess = this.getSession();
 
-    // Resolve the model to a registered instance to ensure registration truth and correct maxInputTokens.
-    const model = await this.resolveRegisteredModel(sess.id, request.model);
-    sess.maxInputTokens = model.maxInputTokens || 32768; 
+    // Use the model selected by the user in the Chat UI directly.
+    const model = request.model;
+    sess.maxInputTokens = model.maxInputTokens ?? 32768; 
     sess.modelName = model.name || model.id;
 
     const writer = new ChatResponseWriter(stream, token, this.logger, sess.id);
@@ -465,7 +404,7 @@ export class LineageParticipant {
           this.logger.debug(`Per-round countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
 
-        const toolMode = (activePhase === 'active' || request.command === 'search' || request.command === 'trace') ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
+        const requestedMode = (activePhase === 'active' || request.command === 'search' || request.command === 'trace') ? vscode.LanguageModelChatToolMode.Required : vscode.LanguageModelChatToolMode.Auto;
         if (activePhase === 'active' && sess.stateMachine) {
           const st = sess.stateMachine.toJSON() as { status?: string; currentFocusNodeId?: string | null; hopCount?: number };
           this.logger.debug(`[Hop ${roundCount}] engine_status=${st.status} focus=${st.currentFocusNodeId ?? '(null)'}`);
@@ -488,6 +427,13 @@ export class LineageParticipant {
           description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'), 
           inputSchema: t.inputSchema
         }));
+
+        // FIX: VS Code API only supports 'Required' mode when exactly one tool is provided.
+        // For multiple tools, we must fallback to 'Auto' and rely on the model's capabilities and system prompt.
+        const toolMode = (requestedMode === vscode.LanguageModelChatToolMode.Required && tools.length > 1) 
+          ? vscode.LanguageModelChatToolMode.Auto 
+          : requestedMode;
+
         const response = await model.sendRequest(messages, { tools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
@@ -516,7 +462,7 @@ export class LineageParticipant {
         } catch (err) {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
-        if (!toolCalls.length) {
+        if (!toolCalls.length && responseText.length === 0) {
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
@@ -732,15 +678,18 @@ export class LineageParticipant {
   }
 
   /**
-   * Single source of truth for post-hop-loop cleanup. Each `HopLoopExit` variant owns its own
-   * branch — partial-result storage lives ONLY in `hop_cap` / `aborted` cases.
+   * Performs post-execution cleanup based on the hop loop outcome.
    *
-   * @param exit - The typed outcome of `runHopLoop`.
-   * @param sess - The active session (mutated via `enterGate` / `enterIdle`).
-   * @param writer - Lifecycle-aware chat writer.
-   * @param userPrompt - Verbatim user prompt.
-   * @param roundCount - Number of rounds actually executed.
-   * @param maxRounds - The configured round budget.
+   * @remarks
+   * Handles the persistence of partial results and UI state transitions for all
+   * `HopLoopExit` variants, including gates, completion, and failure modes.
+   *
+   * @param exit - The terminal outcome of the hop loop.
+   * @param sess - The active AI session.
+   * @param writer - Interface for writing the final response components.
+   * @param userPrompt - The original user input prompt.
+   * @param roundCount - Total execution rounds completed.
+   * @param maxRounds - The configured round budget for the session.
    */
   private dispatchExit(exit: HopLoopExit, sess: AiSession, writer: ChatResponseWriter, userPrompt: string, roundCount: number, maxRounds: number): void {
     switch (exit.kind) {
