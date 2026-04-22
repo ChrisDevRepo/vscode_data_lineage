@@ -20,8 +20,8 @@ The system automatically chooses the delivery strategy based on the complexity o
 
 | Mode | Threshold | Context Strategy | Per-Hop Memory | Reasoning Capability |
 | :--- | :--- | :--- | :--- | :--- |
-| **True Inline Mode** | Fits budget (< 10 nodes) AND mode = `blackboard` | **One-Shot**: Full DDL and columns for ALL nodes in the scope are provided simultaneously. | **None** — the AI sees the full graph context immediately. History is not wiped. | **Holistic**: Turn-zero reasoning, logical grouping, and batch submission of findings. |
-| **SM Mode (Sliding Memory)** | Exceeds budget OR mode = `column_trace` | **Focus + auto-delivered summaries**: the current node's DDL plus a sliding window of recent node summaries (Hourglass context model). | **`short_term_memory`** — incremental, sliding-window (last 3 nodes). History is wiped every hop. | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
+| **True Inline Mode** | Fits budget (< 10 nodes) AND no column tracing | **One-Shot**: Full DDL and columns for ALL nodes in the scope are provided simultaneously. | **None** — the AI sees the full graph context immediately. History is not wiped. | **Holistic**: Turn-zero reasoning, logical grouping, and batch submission of findings. |
+| **SM Mode (Sliding Memory)** | Exceeds budget OR column tracing active | **Focus + auto-delivered summaries**: the current node's DDL plus a sliding window of recent node summaries (Hourglass context model). | **`short_term_memory`** — incremental, sliding-window (last 3 nodes). History is wiped every hop. | **Per-hop** local edge reasoning, converges in a final synthesis phase. |
 
 #### Mode contract (who gates what, who decides when done)
 
@@ -32,7 +32,7 @@ The system automatically chooses the delivery strategy based on the complexity o
 | **Termination authority** | **AI-led Batch.** AI submits an array of findings for all nodes via `submit_findings`. It can also set `complete: true` to finalize. | **Engine-led Flow.** AI analyzes nodes one-by-one. Synthesis fires only when the engine drains the agenda. `complete: true` is rejected. |
 | **Scope extension** | AI can request routes outside the filter; stepping outside requires the consent gate. | Approved border is locked. Out-of-border intent is collected for follow-up only. |
 
-True Inline Mode (Blackboard only) simplifies exploration for small graphs by allowing the AI to reason about all nodes at once, while Column Trace is strictly restricted to Sliding Memory to manage its inherent complexity.
+True Inline Mode (Blackboard only) simplifies exploration for small graphs by allowing the AI to reason about all nodes at once, while explorations with an active **Column Aspect** are strictly restricted to Sliding Memory to manage the inherent complexity of column-level attribution.
 
 The inline contract trusts the AI with a small scope and gives the user a veto on each scope stretch. The SM contract trusts the user with the up-front border and gives the AI a closed loop to drain inside it.
 
@@ -42,17 +42,18 @@ SM mode follows an **"Asymmetric Tiering"** memory pattern to manage context eff
 1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical `analysis` string per node, written in `submit_findings.detail_analysis`. Never compressed. **Not shipped per hop.** Exposed at synthesis via `AiMemoryManager.getResult()`.
 2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — a strictly isolated snapshot:
    - `user_question` — echoed verbatim so the root question survives sliding-history eviction.
+   - `column_aspect` — (Conditional) present when `target_columns` are being tracked. Includes `target_columns`, `done_columns`, and `active_columns`.
    - `short_term_memory: Array<{ nodeId, summary }>` — a **sliding window** (last 3 nodes) of prior hop summaries. Implements incremental loading to prevent global context bloat.
    - `checklist` — `{ current_hop, noted, total, open, coveragePct }` for drain signaling.
 
 **Mechanical Strictness**: The AI operates like a "horse with blinders." Global state arrays (`agenda`, `visited_nodes`, `all_summaries`, `pending_questions`) are **intentionally excluded** from the payload to prevent token bloat and hallucination. The Detail Archive is captured locally and only surfaces at synthesis.
 
-### Exploration Modes (unified `NavigationEngine` in `smBase.ts`)
-One `NavigationEngine` class serves two modes, selected at construction by the `SmMode` literal (`'blackboard' | 'column_trace'`):
-- **`blackboard`** — Business Logic Analyst / Default. Used for "explain / summarize / what depends on X" style questions. Carries immediate context via `working_memory.short_term_memory`.
-- **`column_trace`** — Data Lineage Analyst (Column Focus). Activated when `start_exploration` is called with `targetColumns`; adds column-name validation on `route_requests`.
+### Unified Exploration Engine (`src/ai/smBase.ts`)
+The `NavigationEngine` is a single, unified state machine. It handles both high-level architecture investigations and deep column-level lineage via a conditional **Column Aspect**:
+- **Blackboard (Default)** — Business Logic Analyst. Used for "explain / summarize / what depends on X" style questions. Carries immediate context via `working_memory.short_term_memory`.
+- **Column Aspect (Active)** — Data Lineage Analyst (Column Focus). Activated when `start_exploration` is called with `targetColumns`. Adds **Column Validation** on `route_requests` and requires structured **Column Attribution** (`column_flow`) in `submit_findings`.
 
-The earlier separate `BlackboardState` / `ColumnTraceState` / `DependencyState` classes were consolidated into this single engine (commit `bf51fa9`, "unified navigation engine"). The `dependency` mode was folded into `blackboard` (commit `a3a75a5`). Routing logic, completion contract, and memory layout are identical — only the route-validation rules differ between modes.
+The earlier separate `BlackboardState` / `ColumnTraceState` / `DependencyState` classes were consolidated into this single engine. The `column_trace` mode was folded into the unified engine as an aspect (commit `harmonize-ct`, 2026-04-22). Routing logic, completion contract, and memory layout are identical — only the route-validation and metadata-emission rules differ based on aspect activity.
 
 ### Completion Contract (when SM says "done")
 Completion semantics depend on the execution mode:

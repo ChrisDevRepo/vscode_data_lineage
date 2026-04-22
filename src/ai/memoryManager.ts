@@ -220,7 +220,7 @@ export class AiMemoryManager {
         rounds_used: extras.rounds_used,
         scope_growth: extras.scope_growth,
       },
-      verdict_counts: { ...this.verdictCounts },
+      tally: { ...this.verdictCounts },
       recent_rejections: this.recentRejections.slice(),
       active_schemas: extras.active_schemas.slice(),
     };

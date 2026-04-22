@@ -1,4 +1,3 @@
-import type { SmMode } from './smTypes';
 
 /**
  * Token budget — single source of truth for AI delivery-mode decisions.
@@ -107,16 +106,16 @@ export function getSmInlineNodeCap(): number {
  * @remarks
  * Evaluates both the node count of the scope and the estimated token budget.
  * Small, focused Blackboard (BB) scopes use inline delivery for faster analysis, 
- * while larger scopes or Column Trace (CT) investigations fallback to the 
- * sliding memory (hop-by-hop) architecture.
+ * while larger scopes or explorations with active column tracing fallback to 
+ * the sliding memory (hop-by-hop) architecture.
  *
- * @param mode - The exploration mode ('blackboard' or 'column_trace').
+ * @param isColumnAspectActive - True if specific columns are being tracked.
  * @param payloadChars - Character count of the DDL/Metadata payload.
  * @param scopeNodeCount - The total number of nodes in the exploration scope.
- * @returns `true` if it is a blackboard session and both node count and token budget constraints are satisfied.
+ * @returns `true` if it is a blackboard session without column tracing, and constraints are satisfied.
  */
-export function shouldSmInline(mode: SmMode, payloadChars: number, scopeNodeCount: number): boolean {
-  if (mode === 'column_trace') return false; // CT is always sliding-memory for simplification.
+export function shouldSmInline(isColumnAspectActive: boolean, payloadChars: number, scopeNodeCount: number): boolean {
+  if (isColumnAspectActive) return false; // Column tracing is always sliding-memory for precision.
   return scopeNodeCount <= smInlineNodeCap && shouldInline(payloadChars);
 }
 

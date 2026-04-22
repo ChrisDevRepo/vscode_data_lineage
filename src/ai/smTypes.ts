@@ -11,10 +11,6 @@ import type { DetailSlot } from './memoryManager';
 
 
 /**
- * Defines the operational mode of the State Machine (SM) exploration.
- */
-export type SmMode = 'blackboard' | 'column_trace';
-/** 
  * Represents the current lifecycle stage of an SM exploration session.
  */
 export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
@@ -28,6 +24,40 @@ export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
  * The AI's qualitative assessment of a node's relevance to the current lineage investigation.
  */
 export type Verdict = 'analyze' | 'pass' | 'prune';
+
+/**
+ * State and constraints for the column-tracing aspect of an exploration.
+ */
+export interface ColumnAspect {
+  /** Target columns requested at session start. */
+  target_columns: string[];
+  /** Columns that have reached a terminal physical source. */
+  done_columns: string[];
+  /** Columns currently being tracked in the focus node. */
+  active_columns: string[];
+}
+
+/**
+ * Structured attribution of data flow for a specific output column.
+ */
+export interface ColumnFlowEntry {
+  /** Name of the column in the focus node. */
+  out_col: string;
+  /** List of upstream contributors for this column. */
+  contributors: ColumnFlowContributor[];
+}
+
+/**
+ * A single upstream contributor to a column's value.
+ */
+export interface ColumnFlowContributor {
+  /** ID of the neighbor node providing the data. */
+  from_node: string;
+  /** Name of the column in that neighbor. */
+  from_col: string;
+  /** Semantic role of the contribution. */
+  role: 'formula' | 'rename' | 'case' | 'coalesce' | 'join_value' | 'aggregate' | 'filter_only' | 'source';
+}
 
 
 /**
@@ -156,6 +186,8 @@ export interface HopFinding {
   badge_label?: string;
   /** Optional short descriptive text to attach to this node in the final view. */
   note_caption?: string;
+  /** Structured attribution of column-level data flow, present when the column aspect is active. */
+  column_flow?: ColumnFlowEntry[];
 }
 
 /**
@@ -209,7 +241,9 @@ export type SubmitResult =
       /** The value that was actually received. */
       got?: string;
       /** Current state of the state machine. */
-      current_status?: SmStatus
+      current_status?: SmStatus;
+      /** Next-action hint for the AI. */
+      hint?: string;
     };
 
 /**

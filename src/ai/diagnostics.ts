@@ -114,7 +114,7 @@ export class PerformanceCollector {
     const diag: PerformanceDiagnostics = {
       summary: {
         model: sess.modelName || 'unknown',
-        mode: sess.stateMachine?.mode || 'idle',
+        mode: sess.stateMachine ? (sess.stateMachine.columnAspect ? 'column_trace' : 'blackboard') : 'idle',
         totalRounds: this.rounds.length,
         totalLatencyMs: totalLatency,
         totalTokensIn: totalIn,

@@ -601,7 +601,7 @@ Three layers, all plain strings (we do **not** use `@vscode/prompt-tsx` — see 
 
 1. **Base system prompt** — platform + schema + core rules: [src/ai/prompts.ts:22-36](../src/ai/prompts.ts#L22-L36) (`buildSystemPromptBase`), [src/ai/prompts.ts:45-47](../src/ai/prompts.ts#L45-L47) (`buildPlatformContext`), [src/ai/prompts.ts:59-65](../src/ai/prompts.ts#L59-L65) (`buildSchemaContext`).
 2. **Stage-scoped template** — DISCOVER / ACTIVE / SYNTHESIS: [src/ai/lineageParticipant.ts:207-227](../src/ai/lineageParticipant.ts#L207-L227) (`buildStageSystemPrompt`). Injects different parts of `assets/aiOutputTemplates.yaml` per phase.
-3. **Navigation prompt** — per-mode (`blackboard` or `column_trace`): [src/ai/smPrompts.ts](../src/ai/smPrompts.ts) (`buildNavigationPrompt`). Appended when entering ACTIVE phase ([lineageParticipant.ts:470-474](../src/ai/lineageParticipant.ts#L470-L474)) and **must survive the sliding-memory wipe** ([lineageParticipant.ts:537](../src/ai/lineageParticipant.ts#L537)).
+3. **Navigation prompt** — Unified (`Blackboard`) with optional **Column Aspect**: [src/ai/smPrompts.ts](../src/ai/smPrompts.ts) (`buildNavigationPrompt`). Appended when entering ACTIVE phase ([lineageParticipant.ts:470-474](../src/ai/lineageParticipant.ts#L470-L474)) and **must survive the sliding-memory wipe** ([lineageParticipant.ts:537](../src/ai/lineageParticipant.ts#L537)).
 
 Output templates loaded from `assets/aiOutputTemplates.yaml` at activation: [src/extension.ts:165](../src/extension.ts#L165). Override via config key `dataLineageViz.ai.outputTemplateFile`.
 
@@ -632,7 +632,7 @@ For evals we can't use `vscode.lm` (no Copilot Chat host). The bridge at `127.0.
 |---|---|---|
 | `/health` | GET | — (model stats) |
 | `/tools` | GET | `vscode.lm.tools` (names only) |
-| `/prompts` | GET | **production** `system` + `bb_mode` + `ct_mode_columns` + `tool_descriptions` **verbatim** |
+| `/prompts` | GET | **production** `system` + `bb_mode` + `column_aspect` + `tool_descriptions` **verbatim** |
 | `/session` | POST | Opaque session-id, same TTL as in-extension (30 min) |
 | `/filter` | POST | Simulates the UI schema/type filter |
 | `/tool` | POST | `{ tool, input, sessionId }` — 1:1 mirror of `vscode.lm.invokeTool(name, { input })` |

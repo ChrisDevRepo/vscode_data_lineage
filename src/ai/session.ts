@@ -228,7 +228,7 @@ export class AiSession {
    * @param fullResult - The raw completion result from the State Machine.
    */
   public storeBbResult(fullResult: any): void {
-    const sourceMode = this.stateMachine?.mode ?? 'blackboard';
+    const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
     const verdicts: Record<string, NodeRole> = {};
     
     for (const n of fullResult.fullNodes) {

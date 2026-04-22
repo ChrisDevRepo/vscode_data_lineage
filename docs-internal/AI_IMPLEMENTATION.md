@@ -38,7 +38,8 @@ The context lifecycle follows an hourglass shape, but with a wide-center option 
 1. **Discovery (Wide)**: AI sees global stats to map the mission.
 2. **Active (Wide or Narrow)**: 
    - **True Inline (Wide)**: For Blackboard questions below budget, the AI receives all DDL at once. No history wipe.
-   - **Sliding Memory (Narrow)**: For large graphs or Column Trace, the engine physically prunes global arrays and uses a sliding window. History is wiped every hop.
+   - **Sliding Memory (Narrow)**: For large graphs or Column Trace aspect, the engine physically prunes global arrays and uses a sliding window. History is wiped every hop.
+
 3. **Synthesis (Wide)**: Engine "opens the vault," delivering the entire Detail Archive (unbounded characters) for report generation.
 
 ### 2.2 Mechanical Phase Gating

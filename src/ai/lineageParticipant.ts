@@ -173,8 +173,8 @@ export class LineageParticipant {
       const match = registry.find(m => m.id.toLowerCase() === reqId)
                  || registry.find(m => m.id.toLowerCase().includes(reqId))
                  || registry.find(m => reqId.includes(m.id.toLowerCase()))
-                 || registry.find(m => m.vendor === requested.vendor && m.capabilities.tools)
-                 || registry.find(m => m.capabilities.tools)
+                 || registry.find(m => m.vendor === requested.vendor && (m as any).capabilities?.tools)
+                 || registry.find(m => (m as any).capabilities?.tools)
                  || registry[0];
 
       if (match) {
@@ -253,7 +253,7 @@ export class LineageParticipant {
     sess.modelName = model.name || model.id;
 
     const writer = new ChatResponseWriter(stream, token, this.logger, sess.id);
-    const collector = new PerformanceCollector(this.logger, sess.id);
+    const collector = new PerformanceCollector(this.logger);
 
     const aiConfig = vscode.workspace.getConfiguration('dataLineageViz');
     const MAX_ROUNDS = aiConfig.get<number>('ai.maxRounds', 50);
@@ -285,10 +285,9 @@ export class LineageParticipant {
 
     let effectivePrompt = request.prompt;
     let activePhase: 'discover' | 'active' | 'synthesis' = 'discover';
-    const isSynthesis = activePhase === 'synthesis';
     let lineageTools = vscode.lm.tools.filter(t => {
       if (t.name === 'lineage_submit_findings') return false;
-      if (t.tags.includes('lineage-presentation')) return isSynthesis;
+      if (t.tags.includes('lineage-presentation')) return activePhase === 'synthesis';
       return t.tags.includes('lineage');
     });
     if (request.command === 'trace') {
@@ -364,9 +363,8 @@ export class LineageParticipant {
               if (r) {
                 let contentStr = (r.content as any[]).map(c => typeof c.value === 'string' ? c.value : JSON.stringify(c)).join('');
                 const complete = sess.stateMachine?.status === 'complete';
-                const bbComplete = complete && sess.stateMachine?.mode === 'blackboard';
-                const ctComplete = complete && sess.stateMachine?.mode === 'column_trace';
-                const stale = compactStaleHopResult(f.name, contentStr, bbComplete, ctComplete);
+                const isColumnAspectActive = !!sess.stateMachine?.columnAspect;
+                const stale = compactStaleHopResult(f.name, contentStr, complete && !isColumnAspectActive, complete && isColumnAspectActive);
                 const compact = stale ?? compactNoiseResult(f.name, contentStr);
                 resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(compact || contentStr)]));
               }
@@ -403,7 +401,7 @@ export class LineageParticipant {
       activePhase = 'active';
       lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings');
       systemPrompt = buildStageSystemPrompt('active');
-      navPrompt = buildNavigationPrompt(sess.stateMachine.mode, sess.stateMachine.inlineMode);
+      navPrompt = buildNavigationPrompt(sess.stateMachine.inlineMode, sess.stateMachine.columnAspect?.target_columns);
       this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings`);
     }
 
@@ -437,9 +435,14 @@ export class LineageParticipant {
       }
     }
 
-    const messages: vscode.LanguageModelChatMessage[] = [vscode.LanguageModelChatMessage.User(systemPrompt), ...historyMessages];
-    if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
-    messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
+    const messages: vscode.LanguageModelChatMessage[] = [
+      vscode.LanguageModelChatMessage.User(
+        `# System Instructions\n${systemPrompt}\n\n` +
+        (navPrompt ? `# Navigation State\n${navPrompt}\n\n` : '') +
+        `---\n# User Request\n${effectivePrompt}`
+      ),
+      ...historyMessages,
+    ];
     const toolCallRounds: any[] = [];
     const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
     const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
@@ -622,8 +625,12 @@ export class LineageParticipant {
           systemPrompt = buildStageSystemPrompt('active');
           const engine = sess.stateMachine;
           if (engine) {
-            navPrompt = buildNavigationPrompt(engine.mode, engine.inlineMode);
-            messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
+            navPrompt = buildNavigationPrompt(engine.inlineMode, engine.columnAspect?.target_columns);
+            messages.push(
+              vscode.LanguageModelChatMessage.User(
+                `# Navigation State\n${navPrompt}`
+              )
+            );
           }
         }
 
@@ -645,7 +652,13 @@ export class LineageParticipant {
             const lastResult    = messages[messages.length - 1];
             const beforeCount   = messages.length;
             messages.length = 0;
-            messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt), lastAssistant, lastResult);
+            messages.push(
+              vscode.LanguageModelChatMessage.User(
+                `# System Instructions\n${systemPrompt}\n\n---\n# User Request\n${effectivePrompt}`
+              ),
+              lastAssistant,
+              lastResult
+            );
             const archive = sess.memory.getResult();
             const deferred = sess.stateMachine.deferredQuestions;
             this.logger.info(`[Synthesis] Context cleaned: ${beforeCount} → ${messages.length} messages; envelope preserved (${archive.detail_slots.length} slots, ${deferred.length} deferred)`);
@@ -673,9 +686,15 @@ export class LineageParticipant {
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
             messages.length = 0;
-            messages.push(vscode.LanguageModelChatMessage.User(systemPrompt), vscode.LanguageModelChatMessage.User(effectivePrompt));
-            if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
-            messages.push(lastAssistant, lastResult);
+            messages.push(
+              vscode.LanguageModelChatMessage.User(
+                `# System Instructions\n${systemPrompt}\n\n` +
+                (navPrompt ? `# Navigation State\n${navPrompt}\n\n` : '') +
+                `---\n# User Request\n${effectivePrompt}`
+              ),
+              lastAssistant,
+              lastResult
+            );
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
           } else {
             this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
@@ -697,9 +716,9 @@ export class LineageParticipant {
       }
     }
 
-    const smMode = sess.stateMachine?.mode ?? '—';
+    const smStatus = sess.stateMachine ? (sess.stateMachine.columnAspect ? 'Column' : 'BB') : '—';
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
-    this.logger.info(`Summary — model: ${sess.modelName}, mode: ${smMode}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
+    this.logger.info(`Summary — model: ${sess.modelName}, SM: ${smStatus}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
     this.dispatchExit(exit, sess, writer, request.prompt, roundCount, MAX_ROUNDS);
 
     const deferredQuestionCount = (sess.stateMachine?.status === 'complete' ? new Set(sess.stateMachine.deferredQuestions.map(d => d.nodeId)).size : 0);

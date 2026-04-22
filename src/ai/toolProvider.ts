@@ -162,14 +162,13 @@ class ToolHandler {
         exclusionPatterns: filter.exclusionPatterns || [],
       };
 
-      const mode = data.targetColumns ? 'column_trace' : 'blackboard';
       const engineLog = (l: 'info' | 'debug' | 'warn' | 'trace', msg: string) => {
         const line = `[Engine] ${msg}`;
         if (l === 'debug' || l === 'trace') this.logger.debug(line);
         else if (l === 'warn') this.logger.warn(line);
         else this.logger.info(line);
       };
-      const engine = new NavigationEngine(m, g, engineLog, mode, { activeFilter, memory: sess.memory }, sess.columnStore);
+      const engine = new NavigationEngine(m, g, engineLog, { activeFilter, memory: sess.memory }, sess.columnStore);
       
       engine.sessionId = sess.id;
       sess.stateMachine = engine;
@@ -192,7 +191,7 @@ class ToolHandler {
       if ('error' in initResult) return this.logAndReturn('start_exploration', initResult, input);
 
       const scopeDdlChars = engine.estimateScopeDdlChars();
-      const useInline = shouldSmInline(engine.mode, scopeDdlChars, initResult.scopeSize);
+      const useInline = shouldSmInline(!!engine.columnAspect, scopeDdlChars, initResult.scopeSize);
       if (useInline) {
         engine.setInlineMode(true);
         if (!sess.classification) {

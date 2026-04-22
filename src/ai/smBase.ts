@@ -19,7 +19,7 @@ import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFoc
 import { edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
-import type { ActionRequiredGate, ApprovedBorder, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, SmMode, SmResult, SmStatus, SubmitResult } from './smTypes';
+import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, SmResult, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -30,7 +30,7 @@ const RECENT_REJECTION_CAP = 5;
 /** Defensive ceiling on the SM deferred-questions bucket — prevents a pathological session from flooding the final report. */
 const MAX_DEFERRED = 50;
 
-export type { SmMode, SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
+export type { SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
 export type { BoundaryFlag } from './smTypes';
 
 /**
@@ -89,8 +89,8 @@ export interface IHopStateMachine {
   readonly coveragePct: number;
   /** Indicates whether the state machine is operating in inline mode. */
   readonly inlineMode: boolean;
-  /** The exploration mode type. */
-  readonly mode: SmMode;
+  /** The active column-tracing aspect, if any. */
+  readonly columnAspect: ColumnAspect | null;
   /** Out-of-approved-scope routes deferred during the SM session (empty in inline mode). */
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
 
@@ -154,8 +154,6 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly edgeTypeMap: Map<string, string>;
   /** Memory manager for state retention. */
   protected readonly memory: AiMemoryManager;
-  /** The active exploration mode (e.g., 'blackboard', 'column_trace'). */
-  public readonly mode: SmMode;
 
   /** Optional session identifier for tracking logs across rounds. */
   public sessionId?: string;
@@ -163,6 +161,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected _status: SmStatus = 'created';
   /** Indicator for whether inline mode is active. */
   protected _inlineMode = false;
+  /** The active column-tracing aspect, initialized if targetColumns are provided. */
+  protected _columnAspect: ColumnAspect | null = null;
   /** ID of the initial or root node for navigation. */
   protected originNodeId: string | null = null;
   /** Set of node identifiers within the active scope. */
@@ -223,7 +223,6 @@ export class NavigationEngine implements IHopStateMachine {
    * @param model - The database model containing nodes and edges.
    * @param graph - The graphology instance for topological operations.
    * @param log - A logging function for tracing engine activity.
-   * @param mode - The exploration mode to use.
    * @param config - Configuration including optional filters and an existing memory manager.
    * @param store - Optional column store for deep column-level metadata.
    */
@@ -231,7 +230,6 @@ export class NavigationEngine implements IHopStateMachine {
     model: DatabaseModel,
     graph: Graph,
     log: LogFn,
-    mode: SmMode,
     config: {
       activeFilter?: SerializedFilterState | null;
       memory?: AiMemoryManager;
@@ -242,7 +240,6 @@ export class NavigationEngine implements IHopStateMachine {
     this.model = model;
     this.graph = graph;
     this.log = log;
-    this.mode = mode;
     this.store = store ?? null;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
@@ -385,6 +382,11 @@ export class NavigationEngine implements IHopStateMachine {
     return this._status;
   }
 
+  /** Gets the active column-tracing aspect, if any. */
+  public get columnAspect(): ColumnAspect | null {
+    return this._columnAspect;
+  }
+
   /** Gets the size of the active exploration scope. */
   public get scopeSize(): number {
     return this.scopeNodeIds.size;
@@ -449,6 +451,17 @@ export class NavigationEngine implements IHopStateMachine {
     this.depthEnforcement = params.depth_enforcement ?? 'silent';
     this.budgetExpansions = [];
     this.scopeNodeIds = this.computeBfsScope(originNode.id, params.direction || 'bidirectional', params.depth || 5);
+
+    // Initialize column aspect if target columns are provided
+    if (params.targetColumns && params.targetColumns.length > 0) {
+      this._columnAspect = {
+        target_columns: params.targetColumns,
+        done_columns: [],
+        active_columns: params.targetColumns,
+      };
+    } else {
+      this._columnAspect = null;
+    }
 
     const breakdown = { table: 0, view: 0, procedure: 0, function: 0, external: 0 } as Record<string, number>;
     for (const id of this.scopeNodeIds) {
@@ -642,6 +655,9 @@ export class NavigationEngine implements IHopStateMachine {
       };
       (workingMemory as any).approved_border = border;
       (workingMemory as any).deferred_count = this._deferredQuestions.length;
+      if (this._columnAspect) {
+        (workingMemory as any).column_aspect = this._columnAspect;
+      }
     }
 
     this._status = 'awaiting_findings';
@@ -675,7 +691,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const findings = Array.isArray(params) ? params : [params];
-    if (findings.length === 0) return { error: 'empty_submission', hint: 'Provide at least one finding.' };
+    if (findings.length === 0) return { error: 'empty_submission' };
 
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
@@ -773,12 +789,35 @@ export class NavigationEngine implements IHopStateMachine {
             }
           }
           if (req.columns) {
-            if (this.mode !== 'column_trace') {
-              req.columns = undefined;
-            } else {
-              const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-              const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
-              if (invalidCols.length > 0) allInvalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
+            const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+            const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
+            if (invalidCols.length > 0) {
+              allInvalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
+            }
+          }
+        }
+      }
+
+      // Column Aspect Validation: column_flow structured JSON
+      if (this._columnAspect && finding.column_flow) {
+        const focusNode = this.nodeMap.get(focusId)!;
+        const validFocusCols = new Set(getNodeColumns(focusNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+
+        for (const entry of finding.column_flow) {
+          if (!validFocusCols.has(entry.out_col.toLowerCase())) {
+            allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node.` });
+            continue;
+          }
+
+          for (const cont of entry.contributors) {
+            const neighbor = this.nodeMap.get(cont.from_node.toLowerCase());
+            if (!neighbor) {
+              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor node "${cont.from_node}" not found in graph.` });
+              continue;
+            }
+            const validNeighborCols = new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+            if (!validNeighborCols.has(cont.from_col.toLowerCase())) {
+              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
             }
           }
         }
@@ -938,8 +977,8 @@ export class NavigationEngine implements IHopStateMachine {
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const boundary = this.visited.has(nid) ? 'cycle' : 'none';
-      // CT mode tracks column flows; BB mode routes by type/direction/scope only
-      const cols = this.mode !== 'blackboard'
+      // Column aspect active -> surface all available columns for the AI to choose from
+      const cols = this._columnAspect
         ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name)
         : undefined;
       const neighbor: HopNeighbor = {
@@ -1020,7 +1059,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public toJSON(): unknown {
     return {
-      mode: this.mode,
+      columnAspect: this._columnAspect,
       status: this._status,
       hopCount: this.hopCount,
       scopeSize: this.scopeNodeIds.size,

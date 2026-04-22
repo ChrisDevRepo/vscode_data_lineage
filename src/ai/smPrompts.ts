@@ -9,7 +9,7 @@
  * engine handles completion, cascade-prune, and memory delivery.
  */
 
-import type { SmMode } from './smTypes';
+import { buildColumnAspectPrompt } from './prompts';
 
 
 const BLOCK = {
@@ -20,9 +20,9 @@ const BLOCK = {
   /** Node classification shared across all modes. */
   verdictCategories:
     'NODE CLASSIFICATION (three categories):\n' +
-    '- analyze (BB) / trace (CT): node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS analyze-worthy — even if its connection to the mission is indirect.\n' +
+    '- analyze: node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS analyze-worthy — even if its connection to the mission is indirect.\n' +
     '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use analyze.\n' +
-    '- prune (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the mission → removed from graph.',
+    '- prune: node is a utility function (logging, error handling, type conversion) or has zero data relationship to the mission → removed from graph.',
 
   /** Step 2 — write the detail archive. Engine invariants only; CAPTURE rules live in YAML. */
   writeFindings:
@@ -58,23 +58,6 @@ const BLOCK = {
   verdictNeighbors:
     'Verdict neighbors via `route_requests` (adds to agenda) or leave unchanged (engine skips). Cascade-prune happens when you verdict a focus node as prune.',
 
-  /** Column tracking — CT only. */
-  columnTracking:
-    'COLUMN TRACKING: for each `route_requests` entry, `columns` must be the names AS THEY APPEAR in the neighbor, not the output alias in the current node.\n' +
-    'Read the current node DDL to find the source column reference: `SELECT neighbor.SourceCol AS OutputAlias` → trace SourceCol into that neighbor.\n' +
-    'Track renames across hops — each hop may use a different name for the same data.\n' +
-    'SELECTIVITY: trace only columns pertinent to the question. When uncertain whether a column carries value to the target: trace. When a column only controls selection: omit.',
-
-  /** Column lineage rule — CT column mode. */
-  columnLineageRule:
-    'COLUMN LINEAGE RULE: read the SELECT expression that produces the target column in the DDL. Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. Omit columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. Multi-input formulas: trace ALL inputs.',
-
-  /** Table node guidance — CT modes. */
-  tableNodes:
-    'TABLE NODES: tables store data, not transform it. Two cases:\n' +
-    '- PHYSICAL SOURCE (terminal): the traced column is a physical column on this table AND no in-DB upstream writer (INSERT/UPDATE/MERGE SP or view) populates it from other objects in scope → verdict = `analyze` (badge_label "Source"). Document the column definition (data type, nullable, constraints) in detail_analysis. This is the terminus of the chain — do not add route_requests.\n' +
-    '- INTERMEDIATE TABLE: an in-DB stored procedure or ETL view loads the traced column into this table → verdict = `pass`, and ALWAYS add the writer SP/view to route_requests with the column name as it appears in the writer\'s source. Do not stop here — the chain continues through the writer.',
-
   /** Loop contract — applies to every mode. */
   completionContract:
     'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: analyze | pass | prune`. The engine stops presenting when the agenda drains — you shape the agenda: `verdict: "prune"` cascade-prunes the node and its unvisited descendants. Route only neighbors the main user question needs.\n' +
@@ -87,62 +70,35 @@ const BLOCK = {
 
 
 /**
- * Builds the mode-scoped navigation prompt delivered at the active-phase start.
+ * Builds the navigation prompt delivered at the active-phase start.
  *
  * @remarks
- * Replaces the MemGPT-style "autonomous agent" framing with 0.9.8's task framing:
- * the engine presents nodes, the model analyzes them, the engine advances the agenda.
+ * The engine presents nodes, the model analyzes them, the engine advances the agenda.
+ * If `targetColumns` are provided, the Column Aspect instructions are appended.
  *
- * @param mode - The exploration mode (`blackboard` or `column_trace`).
  * @param isInline - Whether the engine is delivering the entire graph context at once.
+ * @param targetColumns - Optional columns being tracked (activates Column Aspect).
  * @returns A markdown string containing classification rules, per-hop workflow, and routing guidance.
  */
-export function buildNavigationPrompt(mode: SmMode, isInline: boolean = false): string {
-  if (mode === 'column_trace') {
-    return [
-      'COLUMN TRACE MODE: the state machine presents nodes one at a time. Analyze each node and trace specific columns across it.',
-      '',
-      BLOCK.completionContract,
-      '',
-      BLOCK.verdictCategories,
-      '',
-      'For each node:',
-      `1. ${BLOCK.readDdl}`,
-      `2. ${BLOCK.writeFindings}`,
-      `3. ${BLOCK.badgeAndNote}`,
-      `4. ${BLOCK.verdictNeighbors}`,
-      '',
-      BLOCK.columnTracking,
-      BLOCK.columnLineageRule,
-      BLOCK.tableNodes,
-      BLOCK.selfAsk,
-      BLOCK.routing,
-    ].join('\n');
-  }
+export function buildNavigationPrompt(isInline: boolean = false, targetColumns?: string[]): string {
+  const isColumnAspectActive = !!(targetColumns && targetColumns.length > 0);
+  const sections: string[] = [];
 
-  // blackboard (default)
   if (isInline) {
-    return [
+    sections.push(
       'EXPLORATION MODE: True Inline (Full Graph provided). Analyze the entire scope in a single batch. You have access to all nodes and their DDL upfront.',
       '',
-      BLOCK.batchCompletionContract,
+      BLOCK.batchCompletionContract
+    );
+  } else {
+    sections.push(
+      'EXPLORATION MODE: Sliding Memory (Isolated Node Analysis). The engine presents nodes one at a time. Use `working_memory.short_term_memory` (incremental loading) to ground your immediate reasoning.',
       '',
-      BLOCK.verdictCategories,
-      '',
-      'Workflow:',
-      '1. Analyze all nodes in the context.',
-      '2. Submit findings for all nodes in an array via `submit_findings`.',
-      '3. If you need to explore outside the current boundaries, request route expansions (which may trigger a gate).',
-      '',
-      BLOCK.selfAsk,
-      BLOCK.routing,
-    ].join('\n');
+      BLOCK.completionContract
+    );
   }
 
-  return [
-    'EXPLORATION MODE: Sliding Memory (Isolated Node Analysis). The engine presents nodes one at a time. Use `working_memory.short_term_memory` (incremental loading) to ground your immediate reasoning. You do not have access to the global graph or the full BFS agenda.',
-    '',
-    BLOCK.completionContract,
+  sections.push(
     '',
     BLOCK.verdictCategories,
     '',
@@ -150,11 +106,17 @@ export function buildNavigationPrompt(mode: SmMode, isInline: boolean = false): 
     `1. ${BLOCK.readDdl}`,
     `2. ${BLOCK.writeFindings}`,
     `3. ${BLOCK.badgeAndNote}`,
-    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them. Cascade-prune happens when you verdict the focus node as `prune` — use it deliberately for helpers and utilities only.',
+    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them.',
     '',
     BLOCK.selfAsk,
-    BLOCK.routing,
-  ].join('\n');
+    BLOCK.routing
+  );
+
+  if (isColumnAspectActive) {
+    sections.push('', buildColumnAspectPrompt(targetColumns!));
+  }
+
+  return sections.join('\n');
 }
 
 

@@ -18,6 +18,7 @@ import {
   type AnalysisType,
 } from '../engine/types';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
+import { ColumnStore } from '../engine/columnStore';
 import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
 import { normalizeBodyScript } from '../utils/sql';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
@@ -74,6 +75,14 @@ const HopFindingSchema = z.object({
   complete: z.boolean().optional(),
   badge_label: z.string().optional(),
   note_caption: z.string().optional(),
+  column_flow: z.array(z.object({
+    out_col: z.string(),
+    contributors: z.array(z.object({
+      from_node: z.string(),
+      from_col: z.string(),
+      role: z.enum(['formula', 'rename', 'case', 'coalesce', 'join_value', 'aggregate', 'filter_only', 'source']),
+    })),
+  })).optional(),
 });
 
 /**
@@ -190,9 +199,9 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
  */
 export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
-  store?: import('../engine/columnStore').ColumnStore,
+  store?: ColumnStore,
 ): ColumnDef[] | undefined {
-  return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
+  return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
 }
 
 /**
@@ -205,9 +214,9 @@ export function getNodeColumns(
  */
 export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,
-  store?: import('../engine/columnStore').ColumnStore,
+  store?: ColumnStore,
 ): string | undefined {
-  const raw = store?.getDdl(nodeId) ?? nodeMap.get(nodeId)?.bodyScript;
+  const raw = (typeof store?.getDdl === 'function' ? store.getDdl(nodeId) : undefined) ?? nodeMap.get(nodeId)?.bodyScript;
   return raw ? normalizeBodyScript(raw) : undefined;
 }
 
@@ -234,7 +243,7 @@ export function buildHopFocusNode(
   node: LineageNode,
   nodeMap: Map<string, LineageNode>,
   unrelatedMap: Map<string, string[]>,
-  store?: import('../engine/columnStore').ColumnStore,
+  store?: ColumnStore,
   ddlKey = 'ddl',
 ): Record<string, unknown> {
   const focusNode: Record<string, unknown> = {
