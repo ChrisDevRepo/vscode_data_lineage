@@ -17,14 +17,20 @@
  * @returns A string containing the foundational system rules.
  */
 export function buildGeneralSystemPrompt(dbPlatform: string, schemas: string[]): string {
-  return (
-    `Database platform: ${dbPlatform}. Use platform-appropriate SQL syntax and capabilities in analysis.\n` +
-    `Working context: user has schema(s) [${schemas.join(', ')}] selected. Default all searches, SQL generation, and analysis to these schemas.\n` +
-    'SQL lineage data provider. Answer ONLY from loaded database model using provided tools.\n\n' +
-    'RULES:\n' +
-    '1. Use only IDs returned by tools. Unknown IDs are rejected by the engine with route_validation_failed.\n' +
-    '2. MATH: Use LaTeX math syntax for formulas in all output — chat text and present_result section text.\n'
-  );
+  return [
+    '# Role: Senior Data Lineage Analyst',
+    'Expertise: SQL metadata and data flow architecture.',
+    '',
+    '## Context',
+    `- Platform: ${dbPlatform}`,
+    `- Active Schemas: [${schemas.join(', ')}]`,
+    'Answer ONLY using the provided database model and tools.',
+    '',
+    '## Core Rules',
+    '1. IDENTITIES: Use only object/column IDs returned by tools.',
+    '2. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for technical expressions.',
+    '3. GROUNDING: Base findings exclusively on explicit DDL evidence.',
+  ].join('\n');
 }
 
 
@@ -38,13 +44,16 @@ export function buildGeneralSystemPrompt(dbPlatform: string, schemas: string[]):
  * @returns A string containing discovery-phase rules.
  */
 export function buildDiscoveryPrompt(): string {
-  return (
-    'DISCOVERY RULES:\n' +
-    '1. VALIDATE: If search returns 0 results or schema_mismatch, ask the user which object they mean before continuing. For all other decisions: self-decide and proceed.\n' +
-    '2. ROUTING: For column questions: call start_exploration with targetColumns. For lineage/impact/trace and broad exploration: call start_exploration without targetColumns. If intent is broad or ambiguous, prefer calling without targetColumns (Blackboard mode) as it provides a better architectural overview. For single-object explanations: get_object_detail → chat text.\n' +
-    '3. MISSION BRIEF: Before calling start_exploration, compose `mission_brief` — a 3–6 sentence narrative distilling (a) the user\'s intent, (b) any NL filters expressed ("ignore UDFs/views"), (c) the scope you chose, and (d) explicit criteria for pruning irrelevant utility/lookup branches to save tokens. The brief is delivered to you verbatim every hop and survives memory wipes.\n' +
-    '4. EFFICIENCY: Perform minimal object-drilldown during discovery; use `start_exploration` to begin deep analysis once the entry point is confirmed.\n'
-  );
+  return [
+    '# Discovery Protocol',
+    '1. VALIDATION: If searches return zero results or schema mismatches, clarify the target object with the user before proceeding.',
+    '2. EXPLORATION STRATEGY:',
+    '   - Column questions: Invoke `start_exploration` with `targetColumns`.',
+    '   - Broad lineage/impact: Invoke `start_exploration` (Blackboard mode) for an architectural overview.',
+    '   - Single-object analysis: Use `get_object_detail` for chat-based explanation.',
+    '3. MISSION BRIEF: Compose a 3–6 sentence narrative distilling intent, filters, scope, and pruning criteria. This is the canonical mission statement delivered every hop.',
+    '4. EFFICIENCY: Use minimal discovery steps; move to `start_exploration` once entry points are confirmed.',
+  ].join('\n');
 }
 
 
@@ -59,17 +68,17 @@ export function buildDiscoveryPrompt(): string {
  * @returns A formatted system instruction for the active phase.
  */
 export function buildActivePhasePrompt(isInline: boolean): string {
-  const deliveryInstruct = isInline
-    ? 'You have received the entire graph context at once. Analyze all presented nodes holistically and submit your findings in a single batch. You do not need to navigate hop-by-hop.'
-    : 'You are currently analyzing nodes one by one in isolation. You do not have access to the full graph or the global BFS agenda.';
+  const mode = isInline 
+    ? 'TRUE INLINE: Analyze all nodes holistically in a single turn.' 
+    : 'SLIDING MEMORY: Analyze nodes sequentially as presented.';
 
-  return (
-    'ACTIVE EXPLORATION RULES:\n' +
-    `${deliveryInstruct}\n` +
-    '1. DETAIL ARCHIVE IS UNBOUNDED. When writing submit_findings.detail_analysis, be thorough — the engine preserves every character verbatim for synthesis. Thin slots produce thin final answers.\n' +
-    '2. Anchor every analysis on the `mission_brief` and the incoming `current_task` (if hop-by-hop) or global intent (if inline).\n' +
-    '3. TRUNCATION: If any node DDL is truncated, you MUST call `lineage_get_ddl_batch` to retrieve the missing logic before committing your verdict.\n'
-  );
+  return [
+    '# Active Exploration Protocol',
+    `Mode: ${mode}`,
+    '1. ARCHIVE: Write unbounded, high-fidelity `detail_analysis`. This is the SOLE evidence for the final report.',
+    '2. ANCHORING: Align every verdict with the <mission_brief> and <current_task>.',
+    '3. COMPLETENESS: If DDL is truncated, use `get_ddl_batch` before finalizing the verdict.',
+  ].join('\n');
 }
 
 
@@ -82,14 +91,14 @@ export function buildActivePhasePrompt(isInline: boolean): string {
  * @returns A string containing synthesis-phase rules.
  */
 export function buildSynthesisPrompt(): string {
-  return (
-    'SYNTHESIS RULES (Reporting):\n' +
-    'You have completed the exploration. You now have access to the full, unbounded Detail Archive. What was not saved there cannot be generated now.\n' +
-    '1. OUTPUT: Call present_result when a graph aids understanding (lineage path, data flow). Chat text for pure explanations, SQL generation, list/compare requests.\n' +
-    '2. VIEW OUTPUT: the present_result tool description carries the sections[] contract. Write sections in the narrative sequence you want the reader to follow; the system numbers sections from your order.\n' +
-    '3. Present at full depth — do not compress or re-summarize the detail archive. Every badged node needs 3+ sentences with business meaning + SQL evidence.\n' +
-    '4. NO ROUTING: Your navigation window is closed. Synthesis is for reporting existing findings. If critical nodes are missing, mention them in the chat prose as areas for follow-up.\n'
-  );
+  return [
+    '# Synthesis Protocol (Reporting)',
+    'The exploration is complete. Generate the final report using the Detail Archive.',
+    '1. OUTPUT: Use `present_result` for data flow and lineage graphs. Use chat text for narratives and SQL.',
+    '2. STRUCTURE: Follow the `sections[]` contract in `present_result`. Sequence findings narratively.',
+    '3. DEPTH: Do not summarize. Every badged node requires business meaning and SQL evidence from the archive.',
+    '4. NO ROUTING: The exploration window is closed. Focus strictly on reporting existing evidence.',
+  ].join('\n');
 }
 
 
@@ -125,14 +134,14 @@ export function buildSearchPrompt(userInput: string): string {
  * @returns A strict instruction string for the AI to cease tool calls.
  */
 export function buildActionRequiredGate(gates: string[]): string {
-  return `STOP: ${gates.join(' | ')} — You MUST address this with the user before calling any more tools.`;
+  return `STOP: ${gates.join(' | ')} — Address this with the user before proceeding with further tool calls.`;
 }
 
 /** 
  * Error hint provided to the AI if it attempts to call tools while a gate is pending.
  */
 export const ACTION_REQUIRED_PENDING_HINT =
-  'You must present the previous action_required message to the user and wait for their response before calling tools.';
+  'Present the previous action_required message to the user and wait for their response before calling tools.';
 
 
 /**
@@ -147,13 +156,14 @@ export const ACTION_REQUIRED_PENDING_HINT =
  */
 export function buildColumnAspectPrompt(targetColumns: string[]): string {
   return [
-    'COLUMN ASPECT RULES (Grounded Tracing):',
-    `Target columns: [${targetColumns.join(', ')}]`,
+    '# Column Tracing Protocol',
+    `Target Columns: [${targetColumns.join(', ')}]`,
     '',
-    '1. SELECTIVITY: trace ONLY the columns pertinent to the question. Track renames across hops — for each `route_requests` entry, `columns` must be the names AS THEY APPEAR in the neighbor. The `question` field for the route MUST explicitly name these columns and the logic you are following (e.g., "Trace [Price] to see if it includes tax before the Sales sum").',
-    '2. LINEAGE RULE: Read the SELECT expression producing each target column. Trace every operand, formula input, CASE branch, and COALESCE option. Omit columns that only appear in WHERE/JOIN-ON selection filters (row-level filters) unless they directly contribute to the value.',
-    '3. TABLE NODES: If a table does not contain the target columns or is joined only for row-filtering (irrelevant to the traced value), aggressively prune it. For tables that DO store the target column: if it\'s a terminal physical source (no upstream writer), verdict = analyze and badge_label = "Source"; if it has an upstream in-DB writer (SP/View), verdict = pass and add the writer to `route_requests`.',
-    '4. STRUCTURED ATTRIBUTION: You MUST emit the `column_flow` array in `submit_findings` for the focus node. Each entry must provide a machine-readable map of `out_col` to its upstream `contributors` (`from_node`, `from_col`, `role`).',
-    '   RECOVERY: If the engine rejects a column name with `column_flow_validation_failed`, re-submit with the correction or OMIT the entry — do not hallucinate.',
+    '1. SELECTIVITY: Trace ONLY target columns. Follow renames across hops using explicit SQL logic.',
+    '2. LOGIC: Analyze SELECT expressions, CASE branches, and COALESCE options. Ignore row-filtering columns (WHERE/JOIN-ON) unless they modify the traced value.',
+    '3. PRUNING: If an object (Table, View, Procedure) does not contain, read, or write target columns, use `verdict=\'prune\'`.',
+    '   - Terminal Source: `verdict=\'analyze\'`, `badge_label=\'Source\'`.',
+    '   - Upstream Writer: `verdict=\'pass\'`, route to writer.',
+    '4. ATTRIBUTION: Emit `column_flow` for every node. If a column name is rejected, correct it or omit—never guess.',
   ].join('\n');
 }

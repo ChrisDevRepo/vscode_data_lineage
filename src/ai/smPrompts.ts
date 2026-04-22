@@ -3,66 +3,49 @@
  *
  * @remarks
  * Composed from shared blocks so guidance that applies to every mode stays in one place.
- * Framing matches the VS Code chat-participant convention: the state machine is a tool the
- * model calls; the model is a domain responder, not a persistent agent. Keep the prompts
- * focused on the task (analyze the focus node, write the archive, route neighbors) — the
- * engine handles completion, cascade-prune, and memory delivery.
+ * Following a hybrid Markdown + XML strategy: Markdown headers provide structural context
+ * for GPT/Gemini, while XML tags protect high-risk dynamic data for Claude precision.
  */
 
 import { buildColumnAspectPrompt } from './prompts';
 
 
 const BLOCK = {
-  /** Step 1 — every hop starts with DDL/column analysis. */
-  readDdl:
-    'Read the focus node DDL/columns carefully.',
+  /** Node classification protocol. */
+  verdictCategories: [
+    '## Verdict Protocol',
+    '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
+    '- pass: Node is pure wire (SELECT *, synonym). No transformation. (Note: Use analyze if ANY logic exists).',
+    '- prune: Utility node (logging/error) OR irrelevant to the mission. (Note: Missing target columns in Column Trace forces a prune).',
+  ].join('\n'),
 
-  /** Node classification shared across all modes. */
-  verdictCategories:
-    'NODE CLASSIFICATION (three categories):\n' +
-    '- analyze: node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS analyze-worthy — even if its connection to the mission is indirect.\n' +
-    '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use analyze.\n' +
-    '- prune: node is a utility function (logging, error handling, type conversion) or has zero data relationship to the mission → removed from graph.',
+  /** Analysis and archive protocol. */
+  writeFindings: [
+    '## Analysis Protocol',
+    '1. READ: Inspect focus node DDL/columns.',
+    '2. CAPTURE: Write thorough `detail_analysis` (≥ 800 chars). Use business and technical angles.',
+    '3. GROUNDING: Base findings only on provided DDL. No guessing.',
+    '4. SUMMARIZE: Provide a concise one-line `summary`.',
+  ].join('\n'),
 
-  /** Step 2 — write the detail archive. Engine invariants only; CAPTURE rules live in YAML. */
-  writeFindings:
-    'Write `detail_analysis` for the focus node.\n' +
-    'CRITICAL invariants (non-negotiable):\n' +
-    '  • The archive is the SOLE evidence at synthesis. It is UNBOUNDED.\n' +
-    '  • NO NEW FACTS at synthesis — if you don\'t capture it here, it is gone.\n' +
-    '  • `mission_brief` (delivered every hop) anchors every relevance decision.\n' +
-    'Aim ≥ 800 chars per analyzed node; a thin slot produces a thin synthesis. Self-contained — written to answer the user\'s question.\n' +
-    'The Capture rules above (Business angle / Technical angle) list what to capture per node. When both angles apply, capture both.\n' +
-    'Also write a specific one-line `summary`. Specific > short.\n' +
-    '- pass → `summary` only: what passes through, from where to where.\n' +
-    '- prune → brief `summary` only.',
+  /** Metadata protocol. */
+  badgeAndNote: [
+    '## Metadata Protocol',
+    '1. BADGE: Assign `badge_label` (2-4 words) for functional roles (Source, Transform, Staging).',
+    '2. NOTE: Write `note_caption` (≤200 chars) for cross-hop delta/reasoning.',
+  ].join('\n'),
 
-  /** Badge + note metadata drive the graph UI. */
-  badgeAndNote:
-    'badge_label (2-4 words, ≤30 chars): semantic ROLE label, e.g. "Source", "Transform", "Staging", "Output", "Validation", "Aggregation". Pick labels that capture the node\'s role in the pipeline — each distinct stage gets a distinct label.\n' +
-    'SELECTIVITY: Only assign badge_label to nodes with distinct functional roles. Passthrough nodes (SELECT *, simple staging, lookup joins) — skip badge_label, they will be mentioned in section text.\n' +
-    'GROUPING: Nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
-    'note_caption (≤200 chars): cross-hop REASONING — what this hop taught you that future hops need. `summary` already captures WHAT the node does; do not restate it. Use note_caption for the delta or for still-open questions.',
+  /** Strategic routing protocol. */
+  routing: [
+    '## Routing Strategy',
+    '1. AUTO-ADD: Route neighbors only if critical to the <mission_brief>. Respect user depth and schema boundaries.',
+    '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant branches (logging, demographics) found in DDL.',
+    '3. ANCHORING: Relevance is judged against the mission, not the sub-question.',
+  ].join('\n'),
 
-  /** Self-ask — the sub-question is a lens; the mission brief (or user question) is the anchor. */
-  selfAsk:
-    'The `current_task` field narrows this hop\'s attention. Anchor every verdict and every detail slot on the `mission_brief` (AI-authored at session start, delivered every hop) — or `working_memory.user_question` if no brief is set. Relevance is judged against the mission, not the sub-question. If the mission names NL filters (e.g. "ignore UDFs and views", "only tables in schema X"), honor them: verdict any neighbor that violates the filter as `prune`, don\'t analyze it, don\'t expand the agenda into it — but if it is a meaningful dependency for the mission, list it in `route_requests` with a sub-question so the engine defers it as a user follow-up. If answering the sub-question produces material that does not serve the mission, omit it.',
-
-  /** Route grounding — shared. */
-  routing:
-    'AGENDA MANAGEMENT: You dynamically shape the engine\'s BFS agenda.\n' +
-    '- AUTO-ADD (`route_requests`): Add neighbors ONLY when highly relevant to the `mission_brief`. Provide a focused sub-question (single yes/no or multi-part investigation) framing the next hop. *Guards:* Respect the `in_budget` and `in_approved_scope` neighbor tags. The user\'s schemas and depth cap (`working_memory.approved_border`) are strict boundaries. Out-of-scope routes are either blocked via a consent gate (inline) or deferred to a post-session review list (sliding memory); only route them if they are absolutely critical to answering the mission.\n' +
-    '- AUTO-PRUNE (`prune_neighbors`): Aggressively remove irrelevant neighbors. When reading a View or Procedure\'s SQL, if you see joined tables (e.g. logging, demographic lookups, utility functions) that do not contribute to the mission, list their IDs here. Pruning a node automatically cascade-prunes its unvisited descendants, saving tokens and hops.\n' +
-    'WORKING MEMORY SIGNALS: `depth_budget` is the user-declared depth; `depth_cap` is the engine ceiling. `verdict_counts` shows the running A/P/Pr tally — many analyze and zero prunes usually means genuine utility nodes were missed. `recent_rejections` lists the last five deferred or blocked routes.',
-
-  /** Loop contract — applies to every mode. */
-  completionContract:
-    'The engine drives the loop. Every hop, call `submit_findings` for the presented focus node with `verdict: analyze | pass | prune`. The engine stops presenting when the agenda drains — you shape the agenda: `verdict: "prune"` cascade-prunes the node and its unvisited descendants. Route only neighbors the main user question needs.\n' +
-    'Utility / logging / helper nodes (generic math helpers, log writers, identity UDFs) take `verdict: "prune"` — removes the subtree quickly.',
-
-  /** Batch contract for True Inline mode. */
-  batchCompletionContract:
-    'You have received the entire graph context at once. Call `submit_findings` with an ARRAY of findings for all presented nodes in a single turn. For each node, provide its verdict and analysis. You can also request new routes (expansions) in the same turn. The engine will process the entire batch and either finalize the exploration or pause if a user-confirmation gate is triggered.',
+  /** Inline batch protocol. */
+  batchCompletionContract: 
+    'Analyze the provided graph context holistically. Submit findings for all nodes in a single turn. You may request expansions (route_requests) in the same Turn.',
 } as const;
 
 
@@ -75,37 +58,26 @@ const BLOCK = {
  *
  * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @param targetColumns - Optional columns being tracked (activates Column Aspect).
- * @returns A markdown string containing classification rules, per-hop workflow, and routing guidance.
+ * @returns A formatted string containing classification rules, per-hop workflow, and routing guidance.
  */
 export function buildNavigationPrompt(isInline: boolean = false, targetColumns?: string[]): string {
   const isColumnAspectActive = !!(targetColumns && targetColumns.length > 0);
   const sections: string[] = [];
 
+  const mode = isInline ? 'TRUE INLINE' : 'SLIDING MEMORY';
+  sections.push(`# Exploration Mode: ${mode}`);
+
   if (isInline) {
-    sections.push(
-      'EXPLORATION MODE: True Inline (Full Graph provided). Analyze the entire scope in a single batch. You have access to all nodes and their DDL upfront.',
-      '',
-      BLOCK.batchCompletionContract
-    );
-  } else {
-    sections.push(
-      'EXPLORATION MODE: Sliding Memory (Isolated Node Analysis). The engine presents nodes one at a time. Use `working_memory.short_term_memory` (incremental loading) to ground your immediate reasoning.',
-      '',
-      BLOCK.completionContract
-    );
+    sections.push('', BLOCK.batchCompletionContract);
   }
 
   sections.push(
     '',
     BLOCK.verdictCategories,
     '',
-    'For each node:',
-    `1. ${BLOCK.readDdl}`,
-    `2. ${BLOCK.writeFindings}`,
-    `3. ${BLOCK.badgeAndNote}`,
-    '4. Add neighbors to `route_requests` with a specific sub-question when you want to investigate them.',
+    BLOCK.writeFindings,
+    BLOCK.badgeAndNote,
     '',
-    BLOCK.selfAsk,
     BLOCK.routing
   );
 
@@ -123,20 +95,8 @@ import { CLASSIFICATION_LABEL, type ClassificationValue } from './classification
  * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
  *
  * @remarks
- * Main's 0.9.8 pattern: instructions at end of context improve compliance ~30% (Anthropic
- * long-context guidance). The reminder re-asserts depth and grounding at the highest-attention
- * slot — the last key of the JSON that carries the archive + skeleton. Pairs with the
- * completion envelope preservation in `lineageParticipant.ts` / `toolProvider.ts`.
- *
- * When `classification` is `technical` or `both`, the Technical-subsection
- * instruction is appended as an extra bullet so the AI emits a `#### Technical`
- * block per section.
- *
- * @param question - The user's original question, used to re-anchor synthesis on intent.
- * @param classification - Resolved mission type; drives technical-subsection emission.
- * @param technicalSubsectionInstruction - Full YAML `technical_subsection.instruction` text.
- * Required when classification is `technical` or `both`; ignored when `business`.
- * @returns A short reminder string injected as `synthesis_reminder` in the completion result.
+ * Follows Anthropic long-context guidance: instructions at the highest-attention slot
+ * improve compliance.
  */
 export function buildSynthesisReminder(
   question: string,
@@ -144,18 +104,16 @@ export function buildSynthesisReminder(
   technicalSubsectionInstruction?: string,
 ): string {
   const lines = [
-    'SYNTHESIS REMINDER — re-read before generating present_result:',
-    `- User question: "${question}"`,
-    '- Your detail slots are draft section text — assemble into present_result sections.',
-    '- Every badged node: 3+ sentences with business meaning + SQL evidence.',
-    '- Present at full depth — do not compress or re-summarize.',
-    '- Deferred questions (out-of-approved-scope routes) surface as a "Detailed explanation" chip beneath the chat — focus your writing on the analyzed nodes only; do not list deferred questions in present_result or chat prose.',
-    '- Before writing present_result: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.',
+    '## Synthesis Reminder',
+    `- Question: "${question}"`,
+    '- Target: High-fidelity `present_result` sections.',
+    '- Requirement: 3+ sentences per badged node with SQL evidence.',
+    '- Fallback: Cite missing nodes in chat prose, do not omit analyzed evidence.',
   ];
 
   if ((classification === 'technical' || classification === 'both') && technicalSubsectionInstruction?.trim()) {
     lines.push(
-      `- When you render each section, also include a \"#### Technical\" subsection with: ${technicalSubsectionInstruction.trim()}`,
+      `### Technical Instruction\n${technicalSubsectionInstruction.trim()}`,
     );
   }
 

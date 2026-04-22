@@ -812,7 +812,7 @@ export class NavigationEngine implements IHopStateMachine {
 
         for (const entry of finding.column_flow) {
           if (!validFocusCols.has(entry.out_col.toLowerCase())) {
-            allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node.` });
+            allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='prune'.` });
             continue;
           }
 
