@@ -469,10 +469,6 @@
           {
             "name": "search",
             "description": "Search for database objects by name or schema"
-          },
-          {
-            "name": "followup",
-            "description": "Extend the last exploration with the AI's deferred follow-up questions"
           }
         ],
         "disambiguation": [

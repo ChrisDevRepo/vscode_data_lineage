@@ -26,8 +26,8 @@ export interface ResultGraph {
   edges: [string, string, string][];
   /** Maps node IDs to their semantic roles in the result set. */
   verdicts: Record<string, NodeRole>;
-  /** The exploration mode that generated this graph. */
-  source: 'column_trace' | 'blackboard';
+  /** The exploration mode and origin context that generated this graph. */
+  source: string;
   /** The starting node ID of the exploration; used for topological sorting. */
   originNodeId?: string;
   /** Summary notes linked to specific nodes for auto-populating reports. */

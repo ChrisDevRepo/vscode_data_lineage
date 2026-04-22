@@ -294,18 +294,6 @@ export class LineageParticipant {
       effectivePrompt = buildTracePrompt(request.prompt);
     } else if (request.command === 'search') {
       effectivePrompt = buildSearchPrompt(request.prompt);
-    } else if (request.command === 'followup') {
-      if (request.prompt === 'Show the full description' && sess.lastPresentResultDescription) {
-        writer.markdown(sess.lastPresentResultDescription);
-        return {};
-      }
-      const extended = this.tryExtendWithDeferredQuestions(sess, writer);
-      if (extended) {
-        sess.enterExploring();
-        effectivePrompt = 'Continue the hop-by-hop analysis — call submit_findings for the newly-added focus node. Merge findings into the existing archive and update the view via is_update:true.';
-      } else {
-        effectivePrompt = 'Explain the lineage in more detail — drill into the most load-bearing nodes of the last exploration.';
-      }
     }
 
     if (sess.phase.kind === 'awaiting_gate') {

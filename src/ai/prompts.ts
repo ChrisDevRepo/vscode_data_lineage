@@ -41,7 +41,7 @@ export function buildDiscoveryPrompt(): string {
   return (
     'DISCOVERY RULES:\n' +
     '1. VALIDATE: If search returns 0 results or schema_mismatch, ask the user which object they mean before continuing. For all other decisions: self-decide and proceed.\n' +
-    '2. ROUTING: For column questions: call start_exploration with targetColumns. For lineage/impact/trace and broad exploration: call start_exploration without targetColumns. For single-object explanations: get_object_detail → chat text.\n' +
+    '2. ROUTING: For column questions: call start_exploration with targetColumns. For lineage/impact/trace and broad exploration: call start_exploration without targetColumns. If intent is broad or ambiguous, prefer calling without targetColumns (Blackboard mode) as it provides a better architectural overview. For single-object explanations: get_object_detail → chat text.\n' +
     '3. MISSION BRIEF: Before calling start_exploration, compose `mission_brief` — a 3–6 sentence narrative distilling (a) the user\'s intent, (b) any NL filters expressed ("ignore UDFs/views"), (c) the scope you chose. The brief is delivered to you verbatim every hop and survives memory wipes.\n' +
     '4. EFFICIENCY: Perform minimal object-drilldown during discovery; use `start_exploration` to begin deep analysis once the entry point is confirmed.\n'
   );

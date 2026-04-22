@@ -25,7 +25,7 @@ const graph = makeGraph(nodes, edges);
 
 // Status check
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   assert(engine.status === 'created', 'status created');
 
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
@@ -45,7 +45,7 @@ const graph = makeGraph(nodes, edges);
 
 // Tally tracking
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   engine.getHopContext();
@@ -61,7 +61,7 @@ const graph = makeGraph(nodes, edges);
 
 // Path grounding
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   const ctx1 = engine.getHopContext();

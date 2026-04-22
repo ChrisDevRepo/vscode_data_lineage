@@ -141,8 +141,8 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
 
         return respond(res, 200, {
           system,
-          ct_mode_columns: buildNavigationPrompt('column_trace'),
-          bb_mode: buildNavigationPrompt('blackboard'),
+          column_aspect: buildNavigationPrompt(false, ['SAMPLE_COL']),
+          bb_mode: buildNavigationPrompt(false),
           tool_descriptions: toolDescs,
         });
       }

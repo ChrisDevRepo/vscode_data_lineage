@@ -27,8 +27,6 @@ const SOFT_DEPTH_HEADROOM = 1;
 const SILENT_DEPTH_HEADROOM = 2;
 /** Ring-buffer size for `recent_rejections` surfaced in working memory. */
 const RECENT_REJECTION_CAP = 5;
-/** Defensive ceiling on the SM deferred-questions bucket — prevents a pathological session from flooding the final report. */
-const MAX_DEFERRED = 50;
 
 export type { SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
 export type { BoundaryFlag } from './smTypes';
@@ -154,6 +152,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly edgeTypeMap: Map<string, string>;
   /** Memory manager for state retention. */
   protected readonly memory: AiMemoryManager;
+  /** Ceiling on the SM deferred-questions bucket — aligns with VS Code maxRounds setting. */
+  protected readonly maxDeferred: number;
 
   /** Optional session identifier for tracking logs across rounds. */
   public sessionId?: string;
@@ -234,6 +234,7 @@ export class NavigationEngine implements IHopStateMachine {
       activeFilter?: SerializedFilterState | null;
       memory?: AiMemoryManager;
       qualityGuards?: boolean;
+      maxDeferred?: number;
     },
     store?: ColumnStore | null,
   ) {
@@ -244,6 +245,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.memory = config.memory ?? new AiMemoryManager();
+    this.maxDeferred = config.maxDeferred ?? 50;
     if (config.qualityGuards === false) {
       this.qualityGuards = false;
     }
@@ -321,8 +323,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
       return existing;
     }
-    if (this._deferredQuestions.length >= MAX_DEFERRED) {
-      this.log('warn', `[deferQuestion] MAX_DEFERRED=${MAX_DEFERRED} reached; dropping ${entry.nodeId}`);
+    if (this._deferredQuestions.length >= this.maxDeferred) {
+      this.log('warn', `[deferQuestion] maxDeferred=${this.maxDeferred} reached; dropping ${entry.nodeId}`);
       return -1;
     }
     this._deferredQuestions.push(entry);

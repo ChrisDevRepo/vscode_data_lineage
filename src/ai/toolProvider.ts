@@ -162,13 +162,16 @@ class ToolHandler {
         exclusionPatterns: filter.exclusionPatterns || [],
       };
 
+      const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
+      const maxRounds = aiCfg.get<number>('maxRounds', 50);
+
       const engineLog = (l: 'info' | 'debug' | 'warn' | 'trace', msg: string) => {
         const line = `[Engine] ${msg}`;
         if (l === 'debug' || l === 'trace') this.logger.debug(line);
         else if (l === 'warn') this.logger.warn(line);
         else this.logger.info(line);
       };
-      const engine = new NavigationEngine(m, g, engineLog, { activeFilter, memory: sess.memory }, sess.columnStore);
+      const engine = new NavigationEngine(m, g, engineLog, { activeFilter, memory: sess.memory, maxDeferred: maxRounds }, sess.columnStore);
       
       engine.sessionId = sess.id;
       sess.stateMachine = engine;
@@ -225,12 +228,13 @@ class ToolHandler {
           }
           const hopCtx = engine.getHopContext();
           const direction = data.direction || 'bidirectional';
+          const isCt = !!engine.columnAspect;
           const gate = PendingGateSchema.parse({
             gate: 'confirm_sm_start',
             classes: ['sliding_memory'],
             nodeIds: [],
             detail: `Large task — ${initResult.scopeSize} nodes to analyze, budget ~${safeMax} hops.\n` +
-                    `Analysis: ${CLASSIFICATION_LABEL[sess.classification!]}\n` +
+                    `Analysis: ${CLASSIFICATION_LABEL[sess.classification!]}${isCt ? ' (Column Trace)' : ''}\n` +
                     `Schemas in scope: ${activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
                     `Depth: ${data.depth ?? 'default'} (${data.depth_enforcement ?? 'silent'} enforcement)\n` +
                     `Direction: ${direction}`,

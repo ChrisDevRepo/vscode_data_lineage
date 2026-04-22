@@ -41,7 +41,7 @@ const graph = makeGraph(nodes, edges);
 
 // Test 1: Cascade prune
 {
-  const engine = new NavigationEngine(model, graph, (l, m) => console.log(`[Engine ${l}] ${m}`), 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, (l, m) => console.log(`[Engine ${l}] ${m}`), {});
   
   engine.init({
     origin: 'origin',
@@ -121,7 +121,7 @@ const graph = makeGraph(nodes, edges);
 
 // Test 2: Origin cannot be marked prune
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'origin test', direction: 'downstream', depth: 5 });
 
   const ctx = engine.getHopContext();

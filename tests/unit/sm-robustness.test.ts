@@ -25,7 +25,7 @@ const graph = makeGraph(nodes, edges);
 
 // Status check
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   assert(engine.status === 'created', 'status created');
 
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
@@ -45,7 +45,7 @@ const graph = makeGraph(nodes, edges);
 
 // Tally tracking
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   engine.getHopContext();
@@ -71,7 +71,7 @@ const graph = makeGraph(nodes, edges);
 
 // Path grounding
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   const ctx1 = engine.getHopContext();
@@ -85,7 +85,7 @@ const graph = makeGraph(nodes, edges);
 
 // Inline mode completion contract
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.setInlineMode(true);
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
@@ -104,7 +104,7 @@ const graph = makeGraph(nodes, edges);
 
 // SM mode completion contract: reject complete=true
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.setInlineMode(false);
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
@@ -123,7 +123,7 @@ const graph = makeGraph(nodes, edges);
 
 // Route rejections are recorded and surfaced
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   engine.getHopContext();
@@ -143,7 +143,7 @@ const graph = makeGraph(nodes, edges);
 
 // Diagnostics archive counter
 {
-  const engine = new NavigationEngine(model, graph, () => {}, 'blackboard', {});
+  const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   engine.getHopContext();
