@@ -150,7 +150,7 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     'COLUMN ASPECT RULES (Grounded Tracing):',
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    '1. SELECTIVITY: trace ONLY the columns pertinent to the question. Track renames across hops — for each `route_requests` entry, `columns` must be the names AS THEY APPEAR in the neighbor, not the output alias in the current node.',
+    '1. SELECTIVITY: trace ONLY the columns pertinent to the question. Track renames across hops — for each `route_requests` entry, `columns` must be the names AS THEY APPEAR in the neighbor. The `question` field for the route MUST explicitly name these columns and the logic you are following (e.g., "Trace [Price] to see if it includes tax before the Sales sum").',
     '2. LINEAGE RULE: Read the SELECT expression producing each target column. Trace every operand, formula input, CASE branch, and COALESCE option. Omit columns that only appear in WHERE/JOIN-ON selection filters (row-level filters) unless they directly contribute to the value.',
     '3. TABLE NODES: Tables store but do not transform. For terminal physical sources (no upstream writer), verdict = analyze and badge_label = "Source". For intermediate tables with an in-DB writer (SP/View), verdict = pass and add the writer to `route_requests`.',
     '4. STRUCTURED ATTRIBUTION: You MUST emit the `column_flow` array in `submit_findings` for the focus node. Each entry must provide a machine-readable map of `out_col` to its upstream `contributors` (`from_node`, `from_col`, `role`).',

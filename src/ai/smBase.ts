@@ -620,6 +620,11 @@ export class NavigationEngine implements IHopStateMachine {
     this.hopCount++;
     this.currentFocusNodeId = entry.nodeId;
 
+    // Synchronize the Column Aspect to only show columns relevant to this specific path
+    if (this._columnAspect) {
+      this._columnAspect.active_columns = entry.activeColumns || [];
+    }
+
     const node = this.nodeMap.get(entry.nodeId)!;
     const focusNode = buildHopFocusNode(node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
 
@@ -838,7 +843,8 @@ export class NavigationEngine implements IHopStateMachine {
       if (!isPrune) {
         this.memory.storeDetail(this.nodeMap.get(focusId)!, finding.detail_analysis, finding.summary, {
           badge_label: finding.badge_label,
-          note_caption: finding.note_caption
+          note_caption: finding.note_caption,
+          reason_for_visit: this._inlineMode ? 'True Inline Analysis' : (this.agenda.find(e => e.nodeId === focusId)?.question || 'Historical path investigation')
         }, this._inlineMode);
         this.lastHopDetailChars = finding.detail_analysis?.length ?? 0;
         this.lastHopSummaryChars = finding.summary?.length ?? 0;
@@ -860,7 +866,19 @@ export class NavigationEngine implements IHopStateMachine {
         for (const req of finding.route_requests) {
           const nid = req.nodeId.toLowerCase();
           if (!acceptedNids.has(nid)) continue;
-          if (!this.visited.has(nid) && !this.agendaIds.has(nid) && !this.removedSet.has(nid)) {
+
+          const existingEntry = this.agenda.find(e => e.nodeId === nid);
+          if (existingEntry) {
+            // BEST PRACTICE: Task Aggregation
+            // If the node is already queued, merge the new question and columns 
+            // so the AI addresses both reasons for the visit.
+            if (!existingEntry.question.includes(req.question)) {
+              existingEntry.question += ` | ${req.question}`;
+            }
+            if (req.columns) {
+              existingEntry.activeColumns = Array.from(new Set([...(existingEntry.activeColumns || []), ...req.columns]));
+            }
+          } else if (!this.visited.has(nid) && !this.removedSet.has(nid)) {
             this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
             this.agendaIds.add(nid);
             this.lastRoutedNew++;

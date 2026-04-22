@@ -11,6 +11,7 @@ The manager holds a map of `DetailSlot` per visited node. This is the **Long-Ter
 | :--- | :--- | :--- | :--- |
 | **`DetailSlot.analysis`** | AI submits via `submit_findings.detail_analysis` | **Synthesis Only** — never delivered during hops. | High-fidelity technical documentation. |
 | **`DetailSlot.summary`** | AI submits via `submit_findings.summary` | **Every Hop** (as part of a sliding window) | Local continuity & rename tracking. |
+| **`DetailSlot.reason_for_visit`** | Engine manages via Agenda | **Synthesis Only** | Provides "Human Intent" traceability for why a node was analyzed. |
 
 ### 1.2 Working Set (The Sliding Window)
 Every navigation hop in **Sliding Memory Mode**, the manager emits a `WorkingMemory` snapshot. To prevent **Context Poisoning** and token bloat, the snapshot uses a **Sliding Window** (Narrow Context).
@@ -60,6 +61,7 @@ The `NavigationEngine` performs "Fail Early" validation:
 - Prevents `prune` verdicts that would orphan noted work (`wouldOrphanNotedNode`).
 - Detects parallel `start_exploration` storms via `parallel_call_forbidden`.
 - **Batch Submission**: Supports `submit_findings` with an array of findings for True Inline mode.
+- **Task Aggregation**: Merges multiple routes to the same node into a single entry with concatenated questions and unioned column lists. Prevents "forgetting" intent when paths converge.
 
 ---
 

@@ -39,7 +39,7 @@ The inline contract trusts the AI with a small scope and gives the user a veto o
 ### Memory Model (SM Mode)
 SM mode follows an **"Asymmetric Tiering"** memory pattern to manage context efficiency:
 
-1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical `analysis` string per node, written in `submit_findings.detail_analysis`. Never compressed. **Not shipped per hop.** Exposed at synthesis via `AiMemoryManager.getResult()`.
+1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical `analysis` string per node, written in `submit_findings.detail_analysis`. Never compressed. **Not shipped per hop.** Includes the `reason_for_visit` (concatenated intent questions) to maintain "Human Reasoning" traceability. Exposed at synthesis via `AiMemoryManager.getResult()`.
 2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — a strictly isolated snapshot:
    - `user_question` — echoed verbatim so the root question survives sliding-history eviction.
    - `column_aspect` — (Conditional) present when `target_columns` are being tracked. Includes `target_columns`, `done_columns`, and `active_columns`.
@@ -53,7 +53,7 @@ The `NavigationEngine` is a single, unified state machine. It handles both high-
 - **Blackboard (Default)** — Business Logic Analyst. Used for "explain / summarize / what depends on X" style questions. Carries immediate context via `working_memory.short_term_memory`.
 - **Column Aspect (Active)** — Data Lineage Analyst (Column Focus). Activated when `start_exploration` is called with `targetColumns`. Adds **Column Validation** on `route_requests` and requires structured **Column Attribution** (`column_flow`) in `submit_findings`.
 
-The earlier separate `BlackboardState` / `ColumnTraceState` / `DependencyState` classes were consolidated into this single engine. The `column_trace` mode was folded into the unified engine as an aspect (commit `harmonize-ct`, 2026-04-22). Routing logic, completion contract, and memory layout are identical — only the route-validation and metadata-emission rules differ based on aspect activity.
+The engine implements **Task Aggregation (Best Practice)**: when multiple reasoning paths converge on the same physical node (e.g., tracing Sales and Email), the engine merges the sub-questions and column lists into a single prioritized agenda entry. This prevents "forgetting" intent during complex graph traversals.
 
 ### Completion Contract (when SM says "done")
 Completion semantics depend on the execution mode:
@@ -414,9 +414,14 @@ Single `dispatchExit` switch owns all post-loop cleanup. Each variant's cleanup 
 
 `lineage_start_exploration` emits `action_required{gate:'confirm_sm_start'}` when sliding-memory mode is needed (non-inline session, scope fits budget). The tool returns the envelope; `HopLoopExit.gate` carries it; `dispatchExit` transitions to `awaiting_gate`; the participant surfaces the scope + depth + budget summary in chat. On `yes` the engine is live and resumes directly (no re-init). On `redirect` the session resets and the new question flows through normal discovery.
 
-### Why buttons are not used for the gate reply
+### Interactive Chat Buttons (The Gate Resolved)
 
-Per [`docs-internal/VS_CODE_CHAT_API.md`](../docs-internal/VS_CODE_CHAT_API.md) §4 + §12: `stream.button` dispatches commands (no back-channel into the running turn); `stream.confirmation` is deliberately unused (no destructive side-effects in this extension); turns are strictly one-shot. Text-reply yes/no/redirect is the only clean path — and `redirect` couldn't be carried by a 2-button surface anyway. The gate protocol stores everything a future command handler would need (`PendingGate.gate` + `.classes`), so adding buttons later is additive.
+As of April 2026, all "Human-in-the-loop" gates use interactive buttons via the `stream.button` API. This replaces the legacy natural language classification pattern with a deterministic command-based approach.
+
+- **Approve & Proceed**: Triggers `dataLineageViz.aiResolveGate` with a `yes` argument, programmatically resuming the exploration turn.
+- **Decline**: Triggers `dataLineageViz.aiResolveGate` with a `no` argument, cleanly returning the session to `idle`.
+
+This shift ensures 100% reliability in state machine transitions and keeps the AI conversation history clean of verbose user confirmations.
 
 ## References
 - [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)

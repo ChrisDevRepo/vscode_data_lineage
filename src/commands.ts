@@ -191,6 +191,17 @@ export function registerCommands(
       });
     }),
 
+    /**
+     * Internal command invoked by 'Approve' / 'Decline' buttons in a chat gate.
+     * Programmatically sends the response to the chat participant to resume or cancel
+     * the active exploration loop.
+     */
+    vscode.commands.registerCommand('dataLineageViz.aiResolveGate', (choice: 'yes' | 'no') => {
+      vscode.commands.executeCommand('workbench.action.chat.sendRequest', {
+        prompt: `@lineage ${choice}`
+      });
+    }),
+
     // --- UI Controls ---
     vscode.commands.registerCommand('dataLineageViz.toggleOverviewMode', () => {
       const panel = getActivePanel();

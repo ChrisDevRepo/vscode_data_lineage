@@ -204,7 +204,7 @@ export function findBridgeNodes(
           bridgeNodes.push({
             id: nodeId,
             schema: (attrs.schema as string) ?? '',
-            name: nodeId.replace(/^\[.*?\]\.\[/, '').replace(/\]$/, ''), // extract name from [schema].[name]
+            name: (attrs.name as string) ?? nodeId.split('.').pop()?.replace(/[\[\]]/g, '') ?? nodeId,
             type: (attrs.type as string) ?? 'unknown',
           });
         }

@@ -736,7 +736,20 @@ export class LineageParticipant {
       case 'gate': {
         sess.enterGate(exit.gate);
         const title = exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : exit.gate.gate === 'confirm_scope_extension' ? 'Scope extension available' : 'Scope expansion requested';
-        writer.markdown(`\n\n---\n**${title}**\n\n${exit.gate.detail}\n\nReply \`yes\` to proceed, \`no\` to pause, or ask a different question to redirect.\n\n---\n`);
+        writer.markdown(`\n\n---\n**${title}**\n\n${exit.gate.detail}\n\n`);
+        
+        writer.button({
+          command: 'dataLineageViz.aiResolveGate',
+          title: '$(check) Approve & Proceed',
+          arguments: ['yes']
+        });
+        
+        writer.button({
+          command: 'dataLineageViz.aiResolveGate',
+          title: '$(close) Decline',
+          arguments: ['no']
+        });
+
         this.logger.info(`[Gate] ${exit.gate.gate} — classes=[${exit.gate.classes.join(', ')}] nodes=${exit.gate.nodeIds.length}`);
         return;
       }

@@ -37,6 +37,8 @@ export interface DetailSlot {
   badge_label?: string;
   /** Optional caption shown under the node in the graph. */
   note_caption?: string;
+  /** The specific reason or question that triggered the analysis of this node. */
+  reason_for_visit?: string;
 }
 
 
@@ -170,7 +172,7 @@ export class AiMemoryManager {
     node: LineageNode,
     analysis: string,
     summary: string,
-    meta?: { badge_label?: string; note_caption?: string },
+    meta?: { badge_label?: string; note_caption?: string; reason_for_visit?: string },
     inlineMode = false,
   ): void {
     this.detailSlots.set(node.id, {
@@ -182,6 +184,7 @@ export class AiMemoryManager {
       summary: inlineMode ? '' : summary,
       badge_label: meta?.badge_label,
       note_caption: meta?.note_caption,
+      reason_for_visit: meta?.reason_for_visit,
     });
   }
 

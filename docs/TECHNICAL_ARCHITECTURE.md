@@ -42,19 +42,27 @@ Stored procedures use a highly optimized, multi-pass regex engine (`src/engine/s
 
 ## 4. AI Assistant Architecture (`@lineage`)
 
-The extension integrates with VS Code Copilot Chat (`https://code.visualstudio.com/api/extension-guides/ai/chat`) using an autonomous **"Map & Router"** architecture. It implements a custom imperative loop instead of using `@vscode/prompt-tsx` to allow for aggressive context cleaning and sliding memory survival during deep graph traces.
+The extension integrates with VS Code Copilot Chat using an autonomous **"Map & Router"** architecture. It implements a custom imperative loop to allow for aggressive context cleaning and sliding memory survival during deep graph traces.
 
-### 4.1 The Three Chat Phases
-1. **Discovery**: The user invokes the participant. The AI maps the starting point, intents, and scope, seeding the initial topological Agenda.
-2. **Analysis (The Hop Loop)**: Active traversal. The AI navigates the graph hop-by-hop. In each round it receives the focus node's DDL, the Map, neighbor Metadata, and `working_memory.short_term_memory` (sliding window of recent findings), then executes tools (via `vscode.lm.invokeTool`).
-3. **Holistic Synthesis**: Once the agenda is empty, the AI evaluates the entire Detail Memory to deduce final business logic and generate a visually enriched report (`present_result`).
+### 4.1 The Three Chat Phases (Hourglass Flow)
+1. **Discovery (Wide)**: Identifying user intent and mapping the initial scope. The AI seeds the topological Agenda.
+2. **Active Phase (Narrow/Sliding or Wide/Inline)**:
+   - **Sliding Memory Mode**: Hop-by-hop traversal. The AI receives the focus node's DDL, a sliding window of recent node summaries, and neighbor metadata.
+   - **True Inline Mode**: For small graphs (< 10 nodes), the entire scope is delivered in a single batch for holistic reasoning.
+3. **Holistic Synthesis (Wide)**: Once the agenda is empty, the AI evaluates the entire Detail Archive to generate a visually enriched report (`present_result`).
 
 ### 4.2 State Machine & Memory Management
-To support deep 30-hop lineages within limited token budgets, the system uses a **two-tier memory model**:
-- **NavigationEngine (`smBase.ts`)**: Consolidates all traversal modes (Blackboard, Column Trace). Following our foundational **DRY and OOP mandates**, it serves as the single source of truth for its domain. Developers must use explicit composition and delegation, avoiding redundant logic or anti-patterns that bypass its structural design. It guards routing by strictly validating requested node/column routes against the actual schema metadata.
-- **Short Memory (`short_term_memory`)**: After each hop, the AI's one-line summary is appended to `working_memory.short_term_memory: Array<{nodeId, summary}>` and echoed every subsequent hop. Implements incremental loading (sliding window) to prevent context bloat.
-- **Detail Memory (Evidence Archive)**: Full technical analysis per node, stored in `AiMemoryManager.detailSlots`. **Not shipped per hop** — delivered to the AI only in Phase 3 (Synthesis) via `getResult()`. This is the architectural reason synthesis can hit a context ceiling on very large graphs (see `CLAUDE.md` § "Known pain points").
-- **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis`) modeled as a TypeScript discriminated union with exhaustive `switch` dispatch. Hop-loop exits are themselves typed (`HopLoopExit`), so each outcome (complete / gate / budget-cap / abort / error) owns its cleanup branch — no post-hoc guards. Canonical example of the "state management" rule in `.claude/rules/code-quality.md`.
+To support deep lineages within limited token budgets, the system uses **Asymmetric Tiering**:
+- **NavigationEngine (`smBase.ts`)**: The core state machine and single source of truth for traversal logic. It implements `IHopStateMachine` and manages the topological map (Visited, Current, Agenda).
+- **Short-Term Memory**: Sliding window of recent node summaries (last 3 hops) echoed every hop to maintain local context.
+- **Detail Archive (Evidence Archive)**: Full technical analysis per node. Delivered to the AI ONLY in the Synthesis phase to prevent context bloat during the active loop.
+- **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis`) modeled as a discriminated union for exhaustive handling.
+
+### 4.3 Pipelined Model Architecture
+To maximize quality and performance, responsibilities are split:
+- **Smart Tier (Reasoning)**: Core analysis, node verdicting, and routing logic.
+- **Fast Tier (Packaging)**: Repetitive structural tasks like JSON packaging, progress formatting, and `present_result` assembly.
+- **UX Transparency**: `surfaceProse = false` during the active phase ensures clean chat output while delivering real-time feedback via the `ChatResponseWriter.progress` channel.
 
 ## 5. Testing & Verification Strategy
 - **Deterministic Core**: Tests focus on pure logic (`npm run test:unit`). Hook tests live in `tests/unit/hooks/`.
