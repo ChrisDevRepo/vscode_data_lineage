@@ -414,14 +414,14 @@ Single `dispatchExit` switch owns all post-loop cleanup. Each variant's cleanup 
 
 `lineage_start_exploration` emits `action_required{gate:'confirm_sm_start'}` when sliding-memory mode is needed (non-inline session, scope fits budget). The tool returns the envelope; `HopLoopExit.gate` carries it; `dispatchExit` transitions to `awaiting_gate`; the participant surfaces the scope + depth + budget summary in chat. On `yes` the engine is live and resumes directly (no re-init). On `redirect` the session resets and the new question flows through normal discovery.
 
-### Interactive Chat Buttons (The Gate Resolved)
+### Dual UX Strategy (Chat vs. React)
 
-As of April 2026, all "Human-in-the-loop" gates use interactive buttons via the `stream.button` API. This replaces the legacy natural language classification pattern with a deterministic command-based approach.
+To maintain architectural clarity and reliable state transitions, the system follows a strict separation of concerns for interactive elements:
 
-- **Approve & Proceed**: Triggers `dataLineageViz.aiResolveGate` with a `yes` argument, programmatically resuming the exploration turn.
-- **Decline**: Triggers `dataLineageViz.aiResolveGate` with a `no` argument, cleanly returning the session to `idle`.
+1.  **Chat Participant (Agentic Control)**: All "Human-in-the-loop" decisions (e.g., *Approve Scope expansion*, *Show in Graph*) use **interactive buttons in the Chat thread**. These are rendered via the `stream.button` API. This is the only way to deterministically resume or branch the AI reasoning loop.
+2.  **React Webview (Graph Interaction)**: All standard graph manipulations (e.g., *Export to Draw.io*, *Interactive Tracing*, *Schema Filtering*) use **React components** within the webview. These are user-led actions that do not interact with the active agentic loop.
 
-This shift ensures 100% reliability in state machine transitions and keeps the AI conversation history clean of verbose user confirmations.
+**Note**: There are no buttons in the React UI for controlling the AI exploration state machine.
 
 ## References
 - [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)
