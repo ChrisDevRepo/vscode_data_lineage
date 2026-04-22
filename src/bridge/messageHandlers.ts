@@ -280,7 +280,7 @@ export function createMessageHandlers(
           const schemas = project.connection.schemas;
           
           if (schemas && schemas.length > 0) {
-            host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${schemas.join(', ')}`);
+            host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });

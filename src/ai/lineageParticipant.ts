@@ -161,7 +161,7 @@ export class LineageParticipant {
   private async resolveRegisteredModel(sessId: string, requested: vscode.LanguageModelChat): Promise<vscode.LanguageModelChat> {
     try {
       const registry = await vscode.lm.selectChatModels({});
-      this.logger.debug(`[${sessId}] Registry Discovery: [${registry.map(m => m.id).join(', ')}]`);
+      this.logger.debug(`[${sessId}] Registry Discovery: [${trunc(registry.map(m => m.id), 12)}]`);
       
       const reqId = requested.id.toLowerCase();
       // Discovery Priority (respects user choice while ensuring registration):
@@ -283,6 +283,7 @@ export class LineageParticipant {
     sess.touch();
     this.logger.info(`[${sess.id}] Session start — model=${model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
+    let effectivePrompt = request.prompt;
     let activePhase: 'discover' | 'active' | 'synthesis' = 'discover';
     const isSynthesis = activePhase === 'synthesis';
     let lineageTools = vscode.lm.tools.filter(t => {

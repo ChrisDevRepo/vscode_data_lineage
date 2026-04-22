@@ -1540,18 +1540,6 @@ export function getDdlBatch(
   return { results, total: results.length };
 }
 
-export type PresentResultRequest = {
-  success: true;
-  name: string;
-  node_ids: string[];
-  summary: string;
-  description?: string;
-  layout_direction: 'LR' | 'TB';
-  highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
-  badges: Array<{ node_id: string; text: string }>;
-  notes: Array<{ node_id: string; text: string }>;
-};
-
 /**
  * Structural summary of the final presentation result.
  */

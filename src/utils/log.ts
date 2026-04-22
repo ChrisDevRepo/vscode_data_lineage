@@ -139,14 +139,18 @@ export class Logger {
 }
 
 /**
- * Truncates a string for log previews, appending a length suffix if truncated.
+ * Truncates a string or an array of items for log previews.
  *
- * @param s - The input string.
- * @param max - The maximum number of characters before truncation.
- * @returns The truncated string with ellipses and overflow count.
+ * @param val - The input string or array.
+ * @param max - The maximum length (for string) or items (for array).
+ * @returns The truncated value with overflow count.
  */
-export function trunc(s: string, max: number): string {
-  return s.length <= max ? s : `${s.slice(0, max)}\u2026 [+${s.length - max} chars]`;
+export function trunc(val: string | any[], max: number): string {
+  if (Array.isArray(val)) {
+    if (val.length <= max) return val.join(', ');
+    return `${val.slice(0, max).join(', ')} \u2026 [+${val.length - max} more]`;
+  }
+  return val.length <= max ? val : `${val.slice(0, max)}\u2026 [+${val.length - max} chars]`;
 }
 
 /**
