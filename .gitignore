@@ -39,8 +39,8 @@ nul
 GEMINI.md
 
 # Internal Developer Docs
-docs-internal/
-**/docs-internal/**
+*internal*/
+**/*internal*/**
 
 # Verification scripts and artifacts
 scripts/
