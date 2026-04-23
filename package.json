@@ -1214,7 +1214,7 @@
     "@floating-ui/react": "^0.27.19",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.4.0",
-    "fast-xml-parser": "^5.5.9",
+    "fast-xml-parser": "^5.7.0",
     "graphology": "^0.25.4",
     "graphology-components": "^1.5.4",
     "graphology-shortest-path": "^2.1.0",
