@@ -52,7 +52,7 @@ The `clean_sql` rule uses a single-pass combined regex where brackets, strings, 
 
 ### Built-in Rules Summary
 There are 17 built-in rules covering scenarios like:
-- **Sources**: `extract_sources_ansi`, `extract_tsql_apply`, `extract_merge_using`
+- **Sources**: `extract_sources_ansi`, `extract_sources_tsql_apply`, `extract_merge_using`
 - **Targets**: `extract_targets_dml`, `extract_update_alias_target`, `extract_select_into`
 - **Execution**: `extract_sp_calls`
 - **External Refs**: `extract_openrowset`, `extract_bulk_from`

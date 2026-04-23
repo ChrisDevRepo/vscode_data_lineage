@@ -193,7 +193,7 @@ When you ask `@lineage` a question, it chooses between two analysis modes based 
 For small scopes (≤10 objects and under token budget). 
 - **One-Shot**: The AI receives all SQL at once and reasons about everything in a single pass.
 - **Holistic**: Best for straightforward questions like *"what reads from the Employee table?"*.
-- **Integrated**: Uses the same Map and Verification logic as deep exploration, but without the round-trip overhead of sliding memory.
+- **Integrated**: Uses the same Map & Router logic as deep exploration, but without the round-trip overhead of sliding memory.
 
 #### 2. Deep exploration (SM Mode)
 For larger scopes (>10 objects or exceeding token budget). 

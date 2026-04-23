@@ -38,7 +38,7 @@ The system automatically chooses the delivery strategy based on the complexity o
 | :--- | :--- | :--- |
 | **Session-entry yes/no gate** | **None.** Small scope runs immediately. | **`confirm_sm_start`** — engine surfaces planned scope (nodes, schemas, depth, budget) and pauses for user approval before hop 1. |
 | **Out-of-filter / out-of-depth route mid-session** | **Consent gate.** Engine emits `action_required`; participant halts, asks yes/no. Resumes turn after approval. | **Silent deferral.** Engine calls `deferQuestion({...})`; the hop loop keeps running. Deferred entries surface post-synthesis. |
-| **Termination authority** | **AI-led Batch.** AI submits an array of findings for all nodes via `submit_findings`. It can also set `complete: true` to finalize. | **Engine-led Flow.** AI analyzes nodes one-by-one. Synthesis fires only when the engine drains the agenda. `complete: true` is rejected. |
+| **Termination authority** | **AI-led Batch.** AI submits an array of findings for all nodes via `submit_findings`. It can also set `complete: true` to finalize. | **Engine-led Flow.** AI analyzes nodes one-by-one. Synthesis fires only when the engine drains the agenda. `complete: true` is silently ignored. |
 | **Scope extension** | AI can request routes outside the filter; stepping outside requires the consent gate. | Approved border is locked. Out-of-border intent is collected for follow-up only. |
 
 True Inline Mode (Blackboard only) simplifies exploration for small graphs by allowing the AI to reason about all nodes at once, while explorations with an active **Column Aspect** are strictly restricted to Sliding Memory to manage the inherent complexity of column-level attribution.
@@ -76,8 +76,8 @@ Completion semantics depend on the execution mode:
 | Mode | Trigger | AI action |
 | :--- | :--- | :--- |
 | **Inline mode** (scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`) | AI sets `complete: true` on `submit_findings`. No coverage gate — the AI has the full picture one-shot and decides when the question is answered. | On acceptance, the tool returns `{ ok: true, done: true, result }` and the AI produces the chat answer + `present_result`. |
-| **SM sliding-memory mode** (scope exceeds either threshold) | **AI does not decide.** The engine drains the agenda: every item must receive one of the three verdicts — `analyze`, `pass`, `prune`. When the last verdict is dispatched, the engine emits the synthesis trigger and the AI produces the chat answer + `present_result`. `complete: true` is **rejected** with `{error:'complete_not_allowed'}` so the AI cannot self-finalize. | Synthesis trigger delivered as a distinct user message; the continuation-phase nav prompt contains no mention of completion. |
-| **MAX_ROUNDS cap** (safety cut-off at `ai.maxRounds`, default 50) | The loop exits without the SM reaching `complete`. The session persists a **partial resultGraph** (flagged `partial: true`, `partialCoverage: {analyzed, total}`) from all nodes analyzed so far. | `present_result` / "Show in Graph" still renders the partial result; the UI surfaces a "cap hit" notice. |
+| **SM sliding-memory mode** (scope exceeds either threshold) | **AI does not decide.** The engine drains the agenda: every item must receive one of the three verdicts — `analyze`, `pass`, `prune`. When the last verdict is dispatched, the engine emits the synthesis trigger and the AI produces the chat answer + `present_result`. `complete: true` is **silently ignored** — the engine's termination contract is unchanged, but submission is no longer an error. | Synthesis trigger delivered as a distinct user message; the continuation-phase nav prompt contains no mention of completion. |
+| **MAX_ROUNDS cap** (safety cut-off at `ai.maxRounds`, default 50) | The loop exits without the SM reaching `complete`. **All-or-nothing by design:** the partial archive is discarded (`sess.memory.reset()`) and an actionable rerun message is rendered. No partial graph is shown — missing nodes could invert the picture. | User sees: "Exploration incomplete — hit the N-round safety cap with X node(s) pending" plus concrete narrowing options (reduce depth, filter schemas, narrower origin, raise `ai.maxRounds`). |
 
 Three verdicts (SM mode):
 - `analyze` — full 5-block analysis stored; drives badges/notes.
@@ -128,47 +128,26 @@ At `start_exploration` time the AI declares its **classification** via the optio
 
 ### Prompt Assembly Architecture
 
-The system prompt is assembled by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
+The system prompt is assembled by `buildStageSystemPrompt` ([`src/ai/lineageParticipant.ts:309-353`](../src/ai/lineageParticipant.ts#L309-L353)) by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
 
 ```
-buildBaseBlock(platform, schemas)          ← role + core rules        [always]
-  + buildPhaseBlock(phase, isInline)       ← phase protocol            [always]
-  + buildToolUsageBlock()                  ← submit/prune/route usage  [active only]
-  + buildModeBlock(isInline, columnAspect) ← BB or CT mode block       [active only]
-  + resolveStagePrompt(yaml, phase, cls)   ← YAML capture/render rules [always, gated by classification]
-  + buildMissionBlock(brief, q, task)      ← <mission_brief>/<current_task> XML [active + synthesis]
-  + buildMemoryBlock(stm, tally, hop, n)   ← <short_term_memory> XML   [SM active only]
-```
-
-**Hybrid format rule** — structural sections use Markdown headers; dynamic per-hop data uses XML tags so the model can locate them precisely:
-- `<mission_brief>` — filled from `engine.memory.getMissionBrief()`
-- `<current_task>` — filled from `engine.getCurrentTask()`
-- `<short_term_memory>` — filled from `engine.memory.getShortTermMemory()`
-- `<column_state>` — filled from `engine.columnAspect` (CT only, inside `buildModeBlock`)
-
-These XML tags align with the placeholder names already used in rules (e.g. "Align every verdict with `<mission_brief>`") so the filled tags are immediately recognisable to the model.
-
-**YAML drives content, not structure.** `assets/aiOutputTemplates.yaml` controls what the AI writes into `detail_analysis` per hop (`*_capture` keys) and how the final document renders (`*_subsection` keys). It does not define the prompt structure or the delivery mechanism — that is `templateRenderer.ts` + the builder functions above.
-
-### Prompt Assembly Architecture
-
-The system prompt is assembled by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
-
-```
-buildBaseBlock(platform, schemas)          ← role + core rules        [always]
-  + buildPhaseBlock(phase, isInline)       ← phase protocol            [always]
-  + buildToolUsageBlock()                  ← submit/prune/route usage  [active only]
-  + buildModeBlock(isInline, columnAspect) ← BB or CT mode block       [active only]
-  + resolveStagePrompt(yaml, phase, cls)   ← YAML capture/render rules [always, gated by classification]
-  + buildMissionBlock(brief, q, task)      ← <mission_brief>/<current_task> XML [active + synthesis]
-  + buildMemoryBlock(stm, tally, hop, n)   ← <short_term_memory> XML   [SM active only]
+buildGeneralSystemPrompt(platform, schemas)               ← global invariants            [always]
+  + buildDiscoveryPrompt() | buildActivePhasePrompt(isInline) | buildSynthesisPrompt()
+                                                          ← phase protocol               [phase-specific]
+  + buildToolUsageBlock()                                 ← submit/prune/route usage     [active only]
+  + buildModeBlock(isInline, targetColumns?)              ← BB or CT mode block          [active only]
+  + buildColumnAspectPrompt(targetColumns)                ← <column_state> XML           [CT active only]
+  + resolveStagePrompt(yaml, phase, classification)       ← YAML capture/render rules    [stage + classification gated]
+  + buildMissionBriefBlock(brief, question)               ← <mission_brief> XML, session-stable [active + synthesis]
+  + buildCurrentTaskBlock(currentTask)                    ← <current_task> XML, per-hop dynamic [active + synthesis]
+  + buildMemoryBlock(stm, tally, hop, n)                  ← <short_term_memory> XML      [SM active only]
 ```
 
 **Hybrid format rule** — structural sections use Markdown headers; dynamic per-hop data uses XML tags so the model can locate them precisely:
 - `<mission_brief>` — filled from `engine.memory.getMissionBrief()`
 - `<current_task>` — filled from `engine.getCurrentTask()`
 - `<short_term_memory>` — filled from `engine.memory.getShortTermMemory()`
-- `<column_state>` — filled from `engine.columnAspect` (CT only, inside `buildModeBlock`)
+- `<column_state>` — filled from `engine.columnAspect` via `buildColumnAspectPrompt` (CT only)
 
 These XML tags align with the placeholder names already used in rules (e.g. "Align every verdict with `<mission_brief>`") so the filled tags are immediately recognisable to the model.
 
@@ -297,7 +276,7 @@ flowchart TD
     IS --> End[Done]
 ```
 
-**SM mode** — session-entry gate locks the contract; no mid-session gates after approval. The engine owns termination and out-of-border routes are collected into a deferred bucket surfaced at synthesis.
+**SM mode** — session-entry gate locks the contract; no mid-session gates after approval. The engine owns termination. Out-of-border routes are collected into a deferred bucket surfaced at synthesis as follow-up offers, and reported back to the AI per-route via `route_outcomes[]` so the AI can distinguish accepted vs deferred in its own analysis.
 
 ```mermaid
 flowchart TD
@@ -312,7 +291,7 @@ flowchart TD
     UC -- yes --> SA[ACTIVE: SM hop loop<br/>LanguageModelChatToolMode.Required]
     SA -->|submit_findings| SV{Route validation}
     SV -- in approved border --> SA
-    SV -- out of border --> SD[deferQuestion — silent,<br/>hop continues]
+    SV -- out of border --> SD[deferQuestion<br/>+ route_outcomes[deferred:true]]
     SD --> SA
     SA -->|engine drains agenda| SS[SM synthesis<br/>+ Unanswered section<br/>+ /followup chips]
     SS --> End[Done]
@@ -369,10 +348,10 @@ sequenceDiagram
         Note over User: Turn ends. User reads and types reply.
         User->>Participant: "yes"
         Participant->>Participant: sess.enterExploring() — engine already primed
-        Note right of AI: Hop loop runs. Any out-of-border route hits deferQuestion silently.
+        Note right of AI: Hop loop runs. Out-of-border routes are deferred for post-synthesis follow-up offers.
         AI->>Engine: submit_findings (drain...)
         Engine->>Engine: deferQuestion({...}) on out-of-border targets
-        Engine-->>AI: hop_context + approved_border + deferred_count
+        Engine-->>AI: hop_context + approved_border + deferred_count + route_outcomes[accepted|deferred]
         Engine->>Participant: agenda drained → synthesis trigger
         Participant->>AI: Detail archive + DEFERRED QUESTIONS block + synthesis prompt
         AI->>User: Final report with "Unanswered (out of approved scope)" section
@@ -395,9 +374,9 @@ Each hop's `working_memory` carries the diagnostics the AI needs to self-correct
 
 Per-neighbor flags: `in_budget`, `in_approved_scope`, `would_trigger_action_required` — the AI knows before routing whether it will trip the gate (inline mode) or be deferred (SM mode).
 
-### Log telemetry: `archive=<N>` is a counter, not a payload
+### Log telemetry: `authored=<N>` is a counter, not a payload
 
-The structured `[AI] [Hop N]` debug log emits `archive=<N>` — this is `archiveChars`, a scalar counter on `NavigationEngine` (`smBase.ts:210`, incremented at `:793` by `detailChars + summaryChars` per successful hop). It tracks the cumulative character count the AI has **authored** across all hops (every `submit_findings.detail_analysis` + `.summary` written so far). It is **not** the size of any payload shipped to the model. `DetailSlot.analysis` text is never on the wire during hops — it only leaves memory at synthesis via `AiMemoryManager.getResult()`. So a log line with `archive=87000` on hop 22 means "the AI has written ~87 KB of analysis+summary text total," while the hop-22 input to the model is bounded to ~15–20 KB by the sliding-memory wipe (see §Memory Model). Readers of the debug log should not conflate the archive counter with per-hop context size.
+The structured `[AI] [Hop N]` debug log emits `authored=<N>` — a scalar counter on `NavigationEngine.archiveChars` (incremented by `detailChars + summaryChars` per successful hop). It tracks the cumulative character count the AI has **authored** across all hops (every `submit_findings.detail_analysis` + `.summary` written so far). It is **not** the size of any payload shipped to the model. `DetailSlot.analysis` text is never on the wire during hops — it only leaves memory at synthesis via `AiMemoryManager.getResult()`. So a log line with `authored=87000` on hop 22 means "the AI has written ~87 KB of analysis+summary text total," while the hop-22 input to the model is bounded to ~15–20 KB by the sliding-memory wipe (see §Memory Model). Readers of the debug log should not conflate this counter with per-hop context size.
 
 ### SM closed-loop contract & deferred-questions checkpoint (2026-04-18)
 
@@ -410,6 +389,17 @@ After `confirm_sm_start` is approved, the SM session runs as a closed loop — n
 - **Post-synthesis checkpoint** — when the session completes with a non-empty deferred list, the participant streams a concluding summary of deferred entries so the user can decide to follow up in a new question. The gate literal `confirm_scope_extension` is reserved in `PendingGateSchema` for future one-click re-spawn flows.
 
 Grounded in: Anthropic *Effective Context Engineering* (compaction over truncation), Reflexion / ReAct (self-reflective deferral in the reasoning trace), MemGPT (hierarchical memory preservation), and HITL-batching (two checkpoints — entry and optional exit — rather than many mid-flight).
+
+### Prompt caching — out of our hands
+
+The VS Code Chat Participant API ([code.visualstudio.com/api/extension-guides/ai/chat](https://code.visualstudio.com/api/extension-guides/ai/chat)) is a UI-host surface: it exposes message roles, tool registration, streaming, and participant lifecycle — nothing about token caching. `vscode.lm.sendRequest` does not carry `cache_control` blocks, cache keys, or prefix hints; those are model-provider concepts that VS Code cannot plumb through without Copilot exposing them.
+
+What actually caches, today, in a live extension:
+- **Azure OpenAI / OpenAI (GPT-4o+)** — the service auto-caches identical prompt prefixes. TTL 5–10 min idle, pricing discount on cached input tokens. No extension action required; we just need to keep byte-identical prefixes across turns to benefit.
+- **Anthropic Claude via `vscode.lm`** — their `cache_control` block mechanism requires the caller to mark cacheable segments in the message payload. `vscode.lm` has no API to set it, so Claude requests through VS Code run without extension-managed caching.
+- **Copilot-routed models** — Copilot may interpose its own caching layer; opaque to us.
+
+**Implication for this codebase:** do not write code that assumes it can set cache_control or measure cache hits — it can't. The architectural win is structural: keep the stable system prompt byte-identical across hops, isolate dynamic memory/task in a separate message slot, and let the model provider's own auto-cache kick in where it exists. This is §3.10 in the Tier 4 plan — useful, but not a correctness issue.
 
 ### Design citations
 
@@ -440,7 +430,7 @@ The `@lineage` exploration loop implements the **Orchestrator-Workers** pattern 
 The worker is bounded by **horse-with-blinkers mechanics**:
 - `LanguageModelChatToolMode.Required` in ACTIVE — can't emit free-form text.
 - Tool filter narrows the visible toolset to `submit_findings` only — no `present_result`, `lineage_get_neighborhood`, `lineage_detect_graph_patterns`, etc.
-- Engine rejects `complete: true` in SM mode — worker can't self-terminate.
+- Engine silently ignores `complete: true` in SM mode — worker can't self-terminate, but submitting it is not an error.
 
 **Consent gates are two-turn pauses** (not a sub-loop): engine emits `action_required` envelope → turn ends → user replies yes/no/redirect → next turn resumes. On yes, the participant does NOT mechanically advance the engine — the engine was already primed at gate-emission time (tool called `getHopContext()` before returning the envelope). AI's next `submit_findings` land on an already-primed engine. **Trust-on-resume** — no runtime coupling between participant state and engine state beyond what the AI sees in its history.
 
@@ -464,7 +454,7 @@ stateDiagram-v2
     awaiting_gate --> idle: user reply: no\n(paused, no partial stored)
     awaiting_gate --> idle: user reply: redirect\n(resetExploration → new question flows through)
     exploring --> idle: HopLoopExit.final_answer\n(SM complete OR discovery final)
-    exploring --> idle: HopLoopExit.hop_cap\n(store partial, "incomplete" notice)
+    exploring --> idle: HopLoopExit.hop_cap\n(discard archive, actionable rerun notice)
     exploring --> idle: HopLoopExit.aborted\n(repeat-reject guard, store partial)
     exploring --> idle: HopLoopExit.error\n(uncaught exception)
 ```
@@ -477,7 +467,7 @@ Single `dispatchExit` switch owns all post-loop cleanup. Each variant's cleanup 
 |---|---|---|
 | `final_answer` | AI produced chat response with no tool calls (SM complete or discovery final) | `sess.enterIdle()` → optional "Show in Graph" button if SM completed |
 | `gate` | Tool result carried `action_required` envelope (Zod-validated) | `sess.enterGate(gate)` → stream consent question. **No** partial storage, **no** "incomplete" notice |
-| `hop_cap` | `MAX_ROUNDS` reached without completion | `storeBbResultPartial()` if slots exist → `sess.enterIdle()` → "incomplete" notice → "Show Partial Graph" |
+| `hop_cap` | `MAX_ROUNDS` reached without completion | `sess.memory.reset()` → `sess.enterIdle()` → actionable rerun notice (no partial graph — all-or-nothing by design) |
 | `aborted` | Repeat-reject guard tripped | `storeBbResultPartial()` if slots exist → `sess.enterIdle()` |
 | `error` | Uncaught exception | `sess.enterIdle()` → error message |
 
@@ -496,5 +486,5 @@ To maintain architectural clarity and reliable state transitions, the system fol
 
 ## References
 - [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)
-- Internal developer documentation: `docs-internal/AI_IMPLEMENTATION.md`
+- Internal developer documentation: `docs-internal/DEVELOPER_GUIDE.md` §8 "Prompt System Architecture"
 

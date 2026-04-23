@@ -18,7 +18,7 @@ Built by `buildGeneralSystemPrompt()` in `src/ai/prompts.ts`. Injected into ever
 Built by `buildDiscoveryPrompt()` in `src/ai/prompts.ts`. Used when the AI is searching for objects or defining the `mission_brief`. Includes the rules for `start_exploration` and the "Budget: 50 rounds" constraint. This phase also applies when the AI is idle between explorations.
 
 ### 1.3 Active Phase / Navigation Prompt
-Built by `buildActivePhasePrompt(isInline)` (general active rules) and `buildNavigationPrompt(mode, isInline)` (mode-specific workflow). 
+Built by `buildActivePhasePrompt(isInline)` (general active rules) and `buildModeBlock(isInline, targetColumns?)` in `src/ai/smPrompts.ts` (mode-specific workflow: BB when no target columns, CT when target columns are set). 
 The engine chooses one of two delivery strategies:
 
 - **True Inline Mode (Blackboard only):**

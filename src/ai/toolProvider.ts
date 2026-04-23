@@ -290,7 +290,7 @@ class ToolHandler {
       const diag = engine.getHopDiagnostics();
       this.logger.debug(
         `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} ` +
-        `detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
+        `detail=${diag.detailChars} summary=${diag.summaryChars} authored=${diag.archiveChars} ` +
         `routed=${diag.routedNew}/${diag.routedRejected} agenda=${diag.agendaRemaining}`
       );
 

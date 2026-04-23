@@ -23,8 +23,8 @@
 import * as vscode from 'vscode';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import type { AiSession } from '../../../../src/ai/session';
-import { buildSystemPromptBase } from '../../../../src/ai/prompts';
-import { buildNavigationPrompt } from '../../../../src/ai/smPrompts';
+import { buildGeneralSystemPrompt } from '../../../../src/ai/prompts';
+import { buildModeBlock } from '../../../../src/ai/smPrompts';
 import { PendingGateSchema } from '../../../../src/ai/sessionPhase';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -110,18 +110,20 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
       // GET /prompts — system + mode prompts + tool descriptions
       if (method === 'GET' && url.startsWith('/prompts')) {
         const sess = getSession();
-        const schemaCtx = (sess.filter?.schemas?.length ?? 0) > 0
-          ? `Working context: user has schema(s) [${sess.filter!.schemas.join(', ')}] selected.\n` +
-            `Default all searches, SQL generation, and analysis to these schemas.\n` +
-            `If answering the question requires objects from other schemas, ask the user first.\n\n`
-          : '';
-        const tpl = sess.outputTemplates;
-        const system = schemaCtx + buildSystemPromptBase(25) +
-          `   summary: ${tpl.summary}\n` +
-          `   sections: ${tpl.sections}\n` +
-          `   notes: ${tpl.notes}\n` +
-          `   highlights: ${tpl.highlights}\n` +
-          `   description (fallback): ${tpl.description}`;
+        const m = sess.model;
+        const dbPlatform = m?.dbPlatform || 'SQL Server';
+        const filterSchemas = sess.filter?.schemas ?? [];
+        const totalSchemaCount = m?.schemas.length ?? 0;
+        const totalNodes = m?.nodes.length ?? 0;
+        const visibleNodes = filterSchemas.length > 0 && m
+          ? m.nodes.filter(n => (filterSchemas as string[]).includes(n.schema)).length
+          : totalNodes;
+        // Eval agents drive the active exploration phase — the harness never
+        // sees discovery or synthesis. The phase label in the system prompt
+        // mirrors what production injects via buildStageSystemPrompt('active').
+        const system = buildGeneralSystemPrompt(
+          'active', dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes,
+        );
 
         // Tool descriptions + inputSchema from registered tools. Real VS Code chat
         // sees both because `vscode.lm.registerTool` registers the schema with
@@ -141,8 +143,8 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
 
         return respond(res, 200, {
           system,
-          column_aspect: buildNavigationPrompt(false, ['SAMPLE_COL']),
-          bb_mode: buildNavigationPrompt(false),
+          ct_mode_columns: buildModeBlock(false, ['SAMPLE_COL']),
+          bb_mode: buildModeBlock(false),
           tool_descriptions: toolDescs,
         });
       }

@@ -15,17 +15,30 @@ const BLOCK = {
   verdictCategories: [
     '## Verdict Protocol',
     '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
-    '- pass: Node is pure wire (SELECT *, synonym). No transformation. (Note: Use analyze if ANY logic exists).',
-    '- prune: Utility node (logging/error) OR irrelevant to the mission. (Note: Missing target columns in Column Trace forces a prune).',
+    '- pass: Node is pure wire (SELECT *, synonym). No transformation. (Use analyze if ANY logic exists.)',
+    '- prune: Utility node (logging/error) or irrelevant to the mission.',
   ].join('\n'),
 
   /** Analysis and archive protocol. */
   writeFindings: [
     '## Analysis Protocol',
-    '1. READ: Inspect focus node DDL/columns.',
-    '2. CAPTURE: Write thorough `detail_analysis` (≥ 800 chars). Use business and technical angles.',
-    '3. GROUNDING: Base findings only on provided DDL. No guessing.',
-    '4. SUMMARIZE: Provide a concise one-line `summary`.',
+    '',
+    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
+    '',
+    'For every node with verdict=`analyze`, structure `detail_analysis` with these sections (headings required):',
+    '',
+    '### Purpose',
+    'One sentence naming the node\'s specific role — not "stores data" but "computes revenue at INSERT" or "historizes price changes into SCD rows".',
+    '',
+    '### Columns / logic',
+    '- Column mappings: use a markdown table | from | to | rule | example |',
+    '- Transform logic: numbered 1./2./3. steps, each with the SQL expression that drives it',
+    '- Quote key SQL expressions in ```sql code fences (the expression, not the full statement)',
+    '',
+    '### Data risks / invariants',
+    '1–2 sentences on anything that would surprise a reader — nullability traps, implicit coercions, ordering assumptions, idempotency concerns.',
+    '',
+    '`summary` — one line, ~100–300 chars, plain prose digest of Purpose.',
   ].join('\n'),
 
   /** Metadata protocol. */
@@ -41,6 +54,7 @@ const BLOCK = {
     '1. AUTO-ADD: Route neighbors only if critical to the <mission_brief>. Respect user depth and schema boundaries.',
     '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant table/view/function branches (logging, demographics) found in DDL. See Pruning Protocol below for procedures.',
     '3. ANCHORING: Relevance is judged against the mission, not the sub-question.',
+    '4. OUT-OF-SCOPE ROUTES: Routing mission-relevant neighbors outside the approved schemas or depth cap is encouraged. They are deferred and surfaced as post-synthesis follow-up offers. Check `route_outcomes[]` in each tool result to confirm which routes were accepted vs deferred.',
   ].join('\n'),
 
   /**

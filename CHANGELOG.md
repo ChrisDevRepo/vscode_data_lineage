@@ -1,54 +1,29 @@
 # Changelog
 
-## [Unreleased] - optimization branch
+## [0.9.9] - 2026-04-23
 
 ### Added
-- **Dynamic AI Model Resolution** — `@lineage` now verifies model registration via `vscode.lm.selectChatModels` at the start of every session. This resolves "Chat provider not registered" errors (common in Copilot Free) by dynamically mapping the user's selection to an officially registered provider instance.
-- **Preserved Conversation History** — Removed active context eviction. History is now 100% preserved regardless of length. Token budget monitoring is purely informational (logged to Debug), ensuring the assistant never "forgets" previous turns due to incorrect model limits.
-- **"Show full description" chip** — after every `@lineage` response that produced a graph view, a second chat chip renders the full AI description 1:1 inline. No re-analysis, no extra LM call — the description is captured when the view is created and replayed verbatim on click. Complements the existing "Detailed explanation (N)" chip (which extends the scope via deferred questions).
-- **Metadata band above sections** — every `present_result` description now starts with an `**In:** … / **Out:** … / **Loading Pattern:** …` banner between the intro and the first section. In/Out are direct graph neighbors of the origin (object-level, not column-level). Loading Pattern is AI-inferred and only appears when the origin is a stored procedure — views and UDFs skip the line. Empty neighbor sets render as `(none — root node)` / `(none — terminal node)`.
-- **Per-section object table** — when a section groups two or more nodes under one label, the render layer prepends a `| Object | In | Out |` table showing each node's direct graph neighbors. Clarifies variant-sibling families at a glance. Single-object sections skip the table — redundant with the badge + section title.
-- **Technical subsection (classification-driven)** — when the session is classified as `technical` or `both`, each `present_result` section includes a `#### Technical` block: SQL code snippets (not full statements), LaTeX formulas, variant delta-mode wording, performance observations (Hash/Nested Loop joins, Cartesian warnings, DISTINCT/OR antipatterns, distribution hints). NO NEW FACTS — archive stays the sole evidence. Column I/O tables, nullability/precision prose, and full SQL statements remain out of scope.
-- **Mission-type classification gate** — at the active→synthesis transition `@lineage` infers the mission type (`business` | `technical` | `both`) from the user's question and mission brief. Inline mode streams a one-line banner (`> Starting analyze phase — <kind>-driven.`); SM mode folds the signal into the existing `confirm_sm_start` messaging. No chip, no user override — re-ask the question for a different angle.
-- **YAML-driven capture rules** — `aiOutputTemplates.yaml` now drives both what the AI writes into `detail_analysis` per hop (capture phase) AND how the final present_result document renders (synthesis phase). Four new keys split the work by phase: `business_capture` + `technical_capture` fire at the active hop loop (capture rules); `business_subsection` + `technical_subsection` fire at synthesis (render rules). Users edit the YAML to change either what gets archived or how it gets rendered; edits to capture keys flow end-to-end because the archive is the sole evidence at synthesis. `BLOCK.writeFindings` in `smPrompts.ts` slimmed to engine invariants only (archive is sole evidence, NO NEW FACTS, mission_brief anchor, pass/irrelevant verdict shortcuts). Content rules (formulas, column renames, SQL snippets, DDL observations, join types, antipatterns, distribution hints) moved to the YAML capture keys.
+- **Scope confirmation before long explorations** — `@lineage` shows the planned scope (nodes, schemas, depth) and asks for approval. Reply `yes` to proceed, `no` to pause, or ask a different question to redirect.
+- **Natural-language scope hints** — Phrases like "direct neighbors", "one level", or "ignore UDFs and views" are honored as actual scope rules, not just prompt prose.
+- **Mission briefing** — `@lineage` writes a short plan (intent, scope, filters) at the start of each exploration. Stays anchored across long multi-hop sessions.
+- **Deferred follow-ups** — References that fall outside the approved scope are surfaced as one-click chips below the response. Click to investigate that specific object.
+- **Incremental view updates** — Ask `@lineage` to add or remove specific tables in an existing view without restarting the analysis.
+- **Show-full-description chip** — Every `@lineage` response that produced a graph view includes a chip that replays the full AI description inline. No re-analysis, no extra API call.
+- **Loading Pattern line** — Reports for stored procedures now start with a one-line `**Loading Pattern:**` summary (full / incremental / SCD2 / MERGE / etc.). Views and functions skip the line.
+- **Business vs technical reports** — `@lineage` infers whether your question is business-oriented, technical, or both, and shapes the report accordingly. Technical reports add a `#### Technical` subsection per section with SQL snippets, formulas, and performance observations.
+- **Customizable AI output templates** — `aiOutputTemplates.yaml` now drives both what `@lineage` captures per node AND how the final report renders. Edit either side; changes flow through.
+- **Better compatibility with Copilot Free** — `@lineage` resolves the active chat model dynamically, fixing "Chat provider not registered" errors.
 
 ### Changed
-- **Deferred follow-ups now fire for NL-filtered dependencies** — when the user's question included an NL filter like `ignore UDFs and views`, `@lineage` was silently dropping references to out-of-scope objects instead of deferring them. The "Detailed explanation (N)" chip consequently stayed hidden. `@lineage` now still won't *analyze* filter violators, but if one is a meaningful dependency for the mission it lists it as a deferred follow-up the user can click to review.
-- **Cancellation-aware chat handler** — pressing Stop (or starting a new prompt mid-answer) no longer produces a red `*Error: Response stream has been closed*` bubble in chat. The handler observes VS Code's cancellation signal, exits cleanly as a typed `cancelled` state, and logs a single `Chat response cancelled by user` line instead of escalating to an error. Same behavior when VS Code tears the stream down for any other reason (host reload, etc.).
+- **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
+- **30-minute AI session timeout** — Idle exploration sessions expire automatically. Starting a new exploration discards any old in-progress one with a brief in-chat notice — no blocking dialog.
+- **Cleaner cancellation** — Pressing Stop mid-response no longer produces a red "stream closed" error. The handler exits cleanly.
 
 ### Fixed
-- **AI Tool Registry Compliance** — fixed a regression where the AI model would fast-fail (0 tokens) on `/search` and `/trace` commands. Per VS Code API standards, `vscode.lm.tools` are now explicitly mapped to `vscode.LanguageModelChatTool` instances before being passed to the model.
-- **Context Preservation in Hop-by-Hop mode** — fixed a bug where the `HistoryManager` would aggressively compact `action_required` envelopes. This ensures the vital `hop_context` for the first node is preserved across the chat boundary, preventing AI tool hallucinations at the start of an exploration.
-- **Active Phase Tool Surface Alignment** — expanded the active phase tool list to include `lineage_get_ddl_batch`. This allows the AI to fulfill the system prompt mandate of resolving truncated DDLs during autonomous exploration.
-- **Deterministic Command Execution** — enforced `Required` tool mode for `/search` and `/trace` commands to prevent models from returning empty responses instead of invoking the requested lineage tools.
-
-### Documentation
-- **Two-mode contract documented** — `docs/AI_ARCHITECTURE.md`, `docs-internal/AI_IMPLEMENTATION.md`, and `README.md` now clearly describe the split between inline mode (small scope, AI decides completion via `complete: true`, per-route yes/no when stepping outside your filter schemas) and hop-by-hop SM mode (large scope, user-approved upfront with `confirm_sm_start`, closed-loop with deferred follow-up chips at synthesis). No behavior change — the contract was already in the code since 0.9.9; docs caught up.
-
-### Internal
-- `src/ai/chatResponseWriter.ts` — new `ChatResponseWriter` class owns the `ChatResponseStream` + `CancellationToken` lifecycle; encapsulates `open | cancelled | closed` states as a discriminated union; every `stream.markdown / progress / button` call in `lineageParticipant.ts` routes through it. `HopLoopExit` extended with a first-class `cancelled` variant so `dispatchExit` handles user-cancel via exhaustive switch, not caught exceptions.
-- `AiSession.lastPresentResultDescription` — stores the last successful present_result description for the "Show full description" chip. Cleared on `resetExploration()`.
-- `AiSession.classification` — mission-type field (`business | technical | both`), Zod-validated at `setClassification()`. Cleared on `resetExploration()`.
-- `src/ai/templateRenderer.ts` — graph-topology projection helpers (`renderMetadataBand`, `renderSectionObjectTable`, `shouldEmitLoadingPattern`). Pure projection; no content decisions.
-- `src/ai/classification.ts` — `ClassificationSchema` (Zod enum), `inferClassificationFromText()` heuristic, `CLASSIFICATION_BANNER` text lookup.
-- Five new `aiOutputTemplates.yaml` keys: `loading_pattern`, `business_capture`, `business_subsection`, `technical_capture`, `technical_subsection` — phase-pure instruction blocks. `*_capture` ship at ACTIVE (capture rules); `*_subsection` ship at SYNTHESIS (render rules). Each key declares its `stages:` list as informational; canonical routing lives in `STAGE_BY_KEY` in `src/ai/templateRenderer.ts`. Overlays that contradict canonical routing are logged and ignored; fallback on malformed user YAML shows a VS Code notification and reverts to shipped defaults.
-- Branch workflow — `restore-0.9.8-quality` frozen on remote as `baseline1`; `optimization` forked from it for ongoing work.
-- Local-only dev tool: `.claude/skills/iteration-review/SKILL.md` — automates the UAT baseline-vs-iteration comparison (content quality first, tokens/duration second). Not shipped (`.claude/` is gitignored).
-
-## [0.9.9] - 2026-04-18
-
-### Added
-- **Scope budget + consent gate** — Before long explorations, `@lineage` surfaces the planned scope (nodes, schemas, depth) and asks for confirmation. Reply `yes` to proceed, `no` to pause, or ask a different question to redirect.
-- **Natural-language depth handling** — "direct neighbors", "one level", or explicit type filters ("ignore UDFs and views") are honored structurally at the engine level, not just as prose hints.
-- **Mission briefing** — When exploration starts, `@lineage` writes a short plan (intent, scope, filters) that survives context wipes on long multi-hop sessions.
-- **Deferred follow-ups** — When `@lineage` encounters references outside the approved scope, it surfaces them as clickable follow-up chips below the response. One click investigates the specific object.
-- **Incremental AI view updates** — Ask the AI to add or remove specific tables in an existing view without restarting the analysis.
-
-### Changed
-- **Modernized logging engine** — OOP architecture; preserves all existing diagnostics.
-- **Modular extension bridge** — UI-bridge logic decomposed into specialized modules for easier maintenance.
-- **AI session management** — 30-minute session timeout with automatic cleanup; starting a new exploration while a previous one runs discards the old findings with an in-chat notice (no blocking dialogs).
-
+- **`/search` and `/trace` returning empty** — Slash commands now reliably invoke their lineage tools instead of fast-failing with zero tokens.
+- **Lost first-node context after consent** — The first node's context is now preserved across the consent boundary, preventing tool hallucinations at the start of an exploration.
+- **Truncated DDL during AI exploration** — `@lineage` can now resolve full DDL on demand during multi-hop traces.
+- **Out-of-scope deferred follow-ups** — Dependencies hidden by a natural-language filter (e.g. "ignore UDFs") are offered as deferred follow-up chips instead of being silently dropped.
 
 ## [0.9.8] - 2026-04-12
 

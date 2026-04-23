@@ -140,9 +140,23 @@ export interface ActionRequiredGate {
 }
 
 /**
+ * Enriched-node shape built by `buildHopFocusNode` and shipped to the AI as JSON.
+ * Always a plain object; the keys present depend on node type (DDL vs columns) and
+ * whether the DDL was truncated.
+ */
+export type HopFocusNode = Record<string, unknown>;
+
+/**
  * Encapsulates all information delivered to the AI for a single navigation hop.
+ *
+ * @remarks
+ * `mode` is stamped once at `start_exploration` based on the two metrics (scope node
+ * count + token budget) and never flips. CT is always `sm`. Consumers can narrow
+ * `focus_node` by reading `mode` (or by `Array.isArray(focus_node)`).
  */
 export interface HopContext {
+  /** Execution mode — decided once at engine init. `inline` ships a batch; `sm` ships one node per hop. */
+  mode?: 'inline' | 'sm';
   /** Set to `true` if there are no more nodes to visit in the agenda. */
   done?: boolean;
   /** Explicit engine status, delivered every hop. */
@@ -151,8 +165,8 @@ export interface HopContext {
   hop?: number;
   /** Count of nodes still on the agenda. */
   agenda_remaining?: number;
-  /** The node currently being analyzed (type varies by implementation). */
-  focus_node?: unknown;
+  /** The node(s) currently being analyzed. Single object in SM mode; array in inline (batch) mode. */
+  focus_node?: HopFocusNode | HopFocusNode[];
   /** List of immediate neighbors available for further exploration. */
   neighbors?: HopNeighbor[];
   /** The specific sub-goal guiding this hop. */
@@ -210,9 +224,29 @@ export interface RouteRequest {
   columns?: string[];
 }
 
-/** 
+/**
+ * Per-route outcome in a successful `submitFindings` return.
+ *
+ * @remarks
+ * Reported to the AI so it can distinguish accepted routes (added to agenda)
+ * from deferred routes (queued for post-synthesis follow-up offer). The AI
+ * should only reference `accepted: true` nodes in its detail_analysis; deferred
+ * nodes should be mentioned once as 'available for follow-up' at most.
+ */
+export interface RouteOutcome {
+  /** Node id of the route request (verbatim from submission, not lowercased). */
+  nodeId: string;
+  /** True when added to the agenda for exploration. */
+  accepted: boolean;
+  /** True when queued as a post-synthesis follow-up offer (SM mode, out of scope). */
+  deferred?: boolean;
+  /** Reason for deferral: 'schema', 'depth', or 'schema_and_depth'. */
+  reason?: 'schema' | 'depth' | 'schema_and_depth';
+}
+
+/**
  * The outcome of a `submitFindings` operation.
- * 
+ *
  * @remarks
  * If `error` is present, it indicates a validation failure (e.g., invalid node ID)
  * that the AI should attempt to self-correct.
@@ -223,6 +257,8 @@ export type SubmitResult =
       ok: true;
       /** Number of agenda items cascade-removed because the focus was marked prune. */
       cascaded_count?: number;
+      /** Per-route disposition for every entry in the submitted `route_requests` (accepted vs deferred). */
+      route_outcomes?: RouteOutcome[];
       /**
        * Signals the engine has auto-completed. Present when:
        * (a) the session is in inline mode and `complete=true` was submitted, or

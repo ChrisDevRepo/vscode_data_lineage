@@ -10,7 +10,7 @@ Multi-tier test infrastructure for the Data Lineage VS Code extension. Tests are
 | **Unit (Baseline)**| `tests/unit/*-aw.test.ts` | `tsx` | High-fidelity verification vs. frozen snapshots | CI, regression |
 | **Integration** | `tests/integration/` | `tsx` | Live SQL Server pipeline (.env required) | Local only |
 | **E2E** | `tests/e2e/` | `@vscode/test-electron` | VS Code integration smoke tests | Local only |
-| **Eval (AI)** | `tests/eval/` + `test-internal/ai-test-server.ts` | `tsx` + Haiku agent | 4-case baseline via HTTP bridge (POST /gate for `confirm_sm_start`) | Local only |
+| **Eval (AI)** | `tests/eval/` + `tests/e2e/suite/eval/toolProxy.ts` | `@vscode/test-electron` + Haiku agent | 4-case baseline via in-extension-host HTTP bridge (POST /gate for `confirm_sm_start`) | Local only |
 
 ## Folder layout
 
@@ -33,7 +33,6 @@ tests/
 │   ├── navigation-engine.test.ts          # NavigationEngine lifecycle + memory
 │   ├── navigation-engine-cascade.test.ts  # Cascade-prune guard logic
 │   ├── sm-robustness.test.ts              # SM scope robustness + present_result prune regression
-│   ├── working-set.test.ts                # PathFrame + BranchLocal selection per hop
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
 │   └── hooks/                             # React hook unit tests (vitest)
@@ -64,7 +63,7 @@ tests/
     └── suite/                             # Integration smoke tests (non-eval)
 ```
 
-The HTTP bridge that evals talk to (`test-internal/ai-test-server.ts`) exposes `lineage_*` tools, `/session`, `/filter`, and `/gate` (resolves the `confirm_sm_start` gate — harness equivalent of the user typing "yes"/"no" in chat). See `.claude/skills/eval-loop/SKILL.md` for the full flow.
+The HTTP bridge that evals talk to (`tests/e2e/suite/eval/toolProxy.ts`) is loaded inside the real VS Code extension host by `tests/e2e/suite/eval/eval.test.ts` (launched via `npm run test:eval` → `@vscode/test-electron`). It exposes `lineage_*` tools, `/session`, `/filter`, and `/gate` (resolves the `confirm_sm_start` gate — harness equivalent of the user clicking the Approve/Decline chat button). See `.claude/skills/eval-loop/SKILL.md` for the full flow.
 
 ## Snapshot Baseline Pattern
 

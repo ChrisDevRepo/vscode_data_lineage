@@ -55,7 +55,7 @@ The extension integrates with VS Code Copilot Chat using an autonomous **"Map & 
 To support deep lineages within limited token budgets, the system uses **Asymmetric Tiering**:
 - **NavigationEngine (`smBase.ts`)**: The core state machine and single source of truth for traversal logic. It implements `IHopStateMachine` and manages the topological map (Visited, Current, Agenda).
 - **Short-Term Memory**: Sliding window of recent node summaries (last 3 hops) echoed every hop to maintain local context.
-- **Detail Archive (Evidence Archive)**: Full technical analysis per node. Delivered to the AI ONLY in the Synthesis phase to prevent context bloat during the active loop.
+- **Detail Archive**: Full technical analysis per node. Delivered to the AI ONLY in the Synthesis phase to prevent context bloat during the active loop.
 - **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis`) modeled as a discriminated union for exhaustive handling.
 
 ### 4.3 Pipelined Model Architecture

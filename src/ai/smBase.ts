@@ -19,7 +19,7 @@ import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFoc
 import { edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
-import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, SmResult, SmStatus, SubmitResult } from './smTypes';
+import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, SmResult, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -133,6 +133,9 @@ export interface IHopStateMachine {
 
   /** Current hop index (1-based; 0 before the first hop). */
   readonly currentHop: number;
+
+  /** Snapshot of per-hop diagnostics (focus, depth, routing counts, tally). */
+  getHopDiagnostics(): DiagnosticsSnapshot;
 }
 
 /**
@@ -618,10 +621,11 @@ export class NavigationEngine implements IHopStateMachine {
 
       this._status = 'awaiting_findings';
       return {
+        mode: 'inline' as const,
         sm_status: 'awaiting_findings' as const,
         hop: this.hopCount,
         agenda_remaining: 0,
-        focus_node: nodes, // Array of nodes in inline mode
+        focus_node: nodes,
         working_memory: workingMemory,
       };
     }
@@ -699,6 +703,7 @@ export class NavigationEngine implements IHopStateMachine {
     this._lastCurrentTask = entry.question;
     this._status = 'awaiting_findings';
     return {
+      mode: 'sm' as const,
       sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
       agenda_remaining: this.agenda.length,
@@ -740,6 +745,7 @@ export class NavigationEngine implements IHopStateMachine {
     const gateDetails: string[] = [];
     let gateHasSchema = false;
     let gateHasDepth = false;
+    const routeOutcomes: RouteOutcome[] = [];
 
     for (const finding of findings) {
       const focusId = finding.focus_node_id?.toLowerCase();
@@ -748,10 +754,6 @@ export class NavigationEngine implements IHopStateMachine {
       }
       if (!focusId || !this.nodeMap.has(focusId)) {
         return { error: 'invalid_focus_node', got: focusId };
-      }
-
-      if (finding.complete && !this._inlineMode) {
-        return { error: 'complete_not_allowed', hint: 'The engine decides when the exploration is complete in Sliding Memory mode. Do not set complete: true.' } as any;
       }
 
       const acceptedNids = new Set<string>();
@@ -804,21 +806,25 @@ export class NavigationEngine implements IHopStateMachine {
                 }
               }
             } else {
+              const deferReason: 'schema' | 'depth' | 'schema_and_depth' =
+                schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth';
               this.deferQuestion({
                 nodeId: req.nodeId,
                 schema: nNode.schema,
                 fromFocusNodeId: focusId,
                 question: req.question ?? '',
-                reason: schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth',
+                reason: deferReason,
                 depth: candidateDepth,
                 atHop: this.hopCount,
               });
               this.lastRoutedDeferred++;
+              routeOutcomes.push({ nodeId: req.nodeId, accepted: false, deferred: true, reason: deferReason });
             }
             continue;
           }
 
           acceptedNids.add(nid);
+          routeOutcomes.push({ nodeId: req.nodeId, accepted: true });
           if (!this.scopeNodeIds.has(nid)) {
             this.scopeNodeIds.add(nid);
             const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
@@ -952,13 +958,16 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     this._status = 'exploring';
+    const outcomes = routeOutcomes.length > 0 ? { route_outcomes: routeOutcomes } : {};
     if (forceComplete) {
       this._status = 'complete';
       this.logLabelDiversity();
-      return { ok: true, done: true, result: this.getResult() };
+      return { ok: true, done: true, result: this.getResult(), ...outcomes };
     }
 
-    return totalCascadedCount > 0 ? { ok: true, cascaded_count: totalCascadedCount } : { ok: true };
+    return totalCascadedCount > 0
+      ? { ok: true, cascaded_count: totalCascadedCount, ...outcomes }
+      : { ok: true, ...outcomes };
   }
 
   /**

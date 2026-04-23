@@ -1114,7 +1114,6 @@
     "test:hooks": "vitest run --config vitest.config.ts",
     "test:snapshot": "tsx tests/unit/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx tests/unit/snapshot-aw-baseline.ts --update",
-    "test:eval:server": "tsx test-internal/ai-test-server.ts",
     "package": "npx @vscode/vsce package"
   },
   "dependencies": {

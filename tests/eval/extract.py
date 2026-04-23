@@ -1,12 +1,23 @@
 import json
 import os
+import subprocess
 import sys
-import re
 from datetime import datetime
 from collections import Counter
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
 
-# Usage: python extract.py <test_merged.json> [output.md]
-# Extracts per-hop metrics and builds a human-readable evaluation report.
+# Usage: python extract.py <test-id> <session-id>
+# Fetches SM state from http://127.0.0.1:3271/session/<session-id>/state,
+# merges with <run-dir>/<test-id>.agent.json metadata, scores via
+# score_and_build_md, and writes <test-id>.md + snapshots/<test-id>/*.json
+# under the run directory (resolved from $EVAL_RUN_ID or by walking
+# test-results/eval-runs/*/).
+
+PROXY = "http://127.0.0.1:3271"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+RUNS_ROOT = PROJECT_ROOT / "test-results" / "eval-runs"
 
 def parse_case(test_id: str) -> dict:
     """Extract metadata from test ID (e.g. bb-q1-employee)."""
@@ -124,38 +135,153 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str) -> tuple[str, 
 
     return "\n".join(lines), summary_row
 
+def _fetch_sm_state(session_id: str) -> dict:
+    url = f"{PROXY}/session/{session_id}/state"
+    try:
+        with urlopen(url, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except URLError as e:
+        print(
+            f"[extract] ERROR: cannot reach proxy at {url}: {e}\n"
+            f"[extract] Hint: start the eval proxy with 'npm run test:eval' and keep it running.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
+def _resolve_run_dir(test_id: str, session_id: str) -> Path:
+    env_run_id = os.environ.get("EVAL_RUN_ID")
+    if env_run_id:
+        candidate = RUNS_ROOT / env_run_id
+        if (candidate / f"{test_id}.agent.json").exists():
+            return candidate
+    if RUNS_ROOT.exists():
+        for run_dir in sorted(RUNS_ROOT.iterdir(), reverse=True):
+            if not run_dir.is_dir():
+                continue
+            agent_path = run_dir / f"{test_id}.agent.json"
+            if not agent_path.exists():
+                continue
+            try:
+                meta = json.loads(agent_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if meta.get("session_id") == session_id:
+                return run_dir
+    print(
+        f"[extract] ERROR: no run-dir found for test_id={test_id} session_id={session_id}.\n"
+        f"[extract] Set $EVAL_RUN_ID or ensure {test_id}.agent.json exists under {RUNS_ROOT}.",
+        file=sys.stderr,
+    )
+    sys.exit(3)
+
+
+def _git_head() -> str:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5, cwd=str(PROJECT_ROOT),
+        )
+        return out.stdout.strip() or "HEAD"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return "HEAD"
+
+
+def _write_snapshots(run_dir: Path, test_id: str, state: dict) -> None:
+    snap_dir = run_dir / "snapshots" / test_id
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    sm = state.get("sm_state") or {}
+    trimmed = {
+        "status": sm.get("status"),
+        "phase": sm.get("phase"),
+        "hopCount": sm.get("hopCount"),
+        "scopeSize": sm.get("scopeSize"),
+        "scopeNodeIds": sm.get("scopeNodeIds"),
+        "columnAspect": sm.get("columnAspect"),
+        "verdictCounts": sm.get("verdictCounts"),
+    }
+    (snap_dir / "sm-state-trimmed.json").write_text(
+        json.dumps(trimmed, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    hl = state.get("hop_log") or []
+    hop_timing = [
+        {
+            "hop": i + 1,
+            "tool": h.get("tool"),
+            "focus_node_id": (h.get("input") or {}).get("focus_node_id"),
+            "duration_ms": (h.get("_meta") or {}).get("durationMs"),
+        }
+        for i, h in enumerate(hl)
+    ]
+    (snap_dir / "hop-timing.json").write_text(
+        json.dumps(hop_timing, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    errors = [
+        {
+            "hop": i + 1,
+            "tool": h.get("tool"),
+            "error": (h.get("result") or {}).get("error"),
+        }
+        for i, h in enumerate(hl)
+        if isinstance(h.get("result"), dict) and h["result"].get("error")
+    ]
+    (snap_dir / "errors.json").write_text(
+        json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    presents = [h for h in hl if h.get("tool") == "present_result"]
+    enrich_audit = {
+        "called": bool(presents),
+        "calls": [
+            {
+                "hop": i + 1,
+                "name": (p.get("input") or {}).get("name"),
+                "section_count": len((p.get("input") or {}).get("sections") or []),
+            }
+            for i, p in enumerate(presents)
+        ],
+    }
+    (snap_dir / "enrich-view-audit.json").write_text(
+        json.dumps(enrich_audit, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python extract.py <merged_results.json> [output.md]")
+    if len(sys.argv) < 3:
+        print("Usage: python extract.py <test-id> <session-id>", file=sys.stderr)
         sys.exit(1)
 
-    json_path = sys.argv[1]
-    md_path = sys.argv[2] if len(sys.argv) > 2 else "eval_report.md"
+    test_id = sys.argv[1]
+    session_id = sys.argv[2]
+    run_dir = _resolve_run_dir(test_id, session_id)
 
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    state = _fetch_sm_state(session_id)
 
-    # If data is a list of results (many tests)
-    if isinstance(data, list):
-        full_report = []
-        summary_rows = []
-        for test_merged in data:
-            tid = test_merged.get("test_id", "unknown")
-            report, row = score_and_build_md(tid, test_merged, "HEAD")
-            full_report.append(report)
-            summary_rows.append(row)
-        
-        # Build summary table
-        st = ["# Global Eval Summary", ""]
-        st.append("| ID | Mode | Hops | Nodes | A/P/Pr | SQL% | Present |")
-        st.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
-        for r in summary_rows:
-            st.append(f"| {r['id']} | {r['mode']} | {r['hops']} | {r['nodes']} | {r['analyze']}/{r['pass']}/{r['prune']} | {r['sql_pct']}% | {r['present_result_called']} |")
-        
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write("\n\n".join(st) + "\n\n" + "\n\n".join(full_report))
-    else:
-        tid = data.get("test_id", "unknown")
-        report, _ = score_and_build_md(tid, data, "HEAD")
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(report)
+    agent_meta_path = run_dir / f"{test_id}.agent.json"
+    try:
+        agent_meta = json.loads(agent_meta_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        agent_meta = {}
+
+    merged = {
+        "test_id": test_id,
+        "session_id": session_id,
+        "agent_meta": agent_meta,
+        "sm_state": state.get("sm_state") or {},
+        "hop_log": state.get("hop_log") or [],
+        "session_hop_log": state.get("session_hop_log") or [],
+        "result_graph": state.get("result_graph") or {},
+    }
+
+    (run_dir / f"{test_id}.json").write_text(
+        json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    report, _ = score_and_build_md(test_id, merged, _git_head())
+    (run_dir / f"{test_id}.md").write_text(report, encoding="utf-8")
+
+    _write_snapshots(run_dir, test_id, state)
+
+    print(f"[extract] wrote {test_id}.md + snapshots under {run_dir}")

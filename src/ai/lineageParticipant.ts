@@ -5,7 +5,7 @@ import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import {
   buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
-  buildToolUsageBlock, buildMissionBlock, buildMemoryBlock,
+  buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
 import { buildModeBlock } from './smPrompts';
@@ -306,7 +306,9 @@ export class LineageParticipant {
       }
     }
 
-      const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
+      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis'; text: string } | null = null;
+      const buildStablePart = (phase: 'discover' | 'active' | 'synthesis'): string => {
+        if (cachedStablePart && cachedStablePart.phase === phase) return cachedStablePart.text;
         const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
         const filterSchemas = sess.filter?.schemas || [];
         const totalSchemaCount = sess.model!.schemas.length;
@@ -316,7 +318,7 @@ export class LineageParticipant {
           ? sess.model!.nodes.filter(n => (activeFilter.schemas as string[]).includes(n.schema)).length
           : totalNodes;
         const engine = sess.stateMachine;
-        const base = buildGeneralSystemPrompt(dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes);
+        const base = buildGeneralSystemPrompt(phase, dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes);
 
         let phaseSpecific = '';
         if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
@@ -337,28 +339,43 @@ export class LineageParticipant {
         parts.push(stageBlock);
 
         if ((phase === 'active' || phase === 'synthesis') && engine) {
-          const brief = sess.memory.getMissionBrief();
-          const currentTask = engine.getCurrentTask();
-          const missionBlock = buildMissionBlock(brief, sess.memory.getUserQuestion() || '', currentTask);
-          if (missionBlock) parts.push(missionBlock);
+          const missionBriefBlock = buildMissionBriefBlock(sess.memory.getMissionBrief(), sess.memory.getUserQuestion() || '');
+          if (missionBriefBlock) parts.push(missionBriefBlock);
         }
 
-        if (phase === 'active' && engine && !engine.inlineMode) {
+        const text = parts.filter(Boolean).join('\n');
+        cachedStablePart = { phase, text };
+        return text;
+      };
+
+      const buildDynamicPart = (phase: 'discover' | 'active' | 'synthesis'): string => {
+        const engine = sess.stateMachine;
+        if (!engine || phase === 'discover') return '';
+        const dynamic: string[] = [];
+        const currentTaskBlock = buildCurrentTaskBlock(engine.getCurrentTask());
+        if (currentTaskBlock) dynamic.push(currentTaskBlock);
+        if (phase === 'active' && !engine.inlineMode) {
           const stm = sess.memory.getShortTermMemory();
           const tally = sess.memory.getVerdictCounts();
-          parts.push(buildMemoryBlock(stm, tally, engine.currentHop, engine.scopeSize));
+          dynamic.push(buildMemoryBlock(stm, tally, engine.currentHop, engine.scopeSize));
         }
-
-        return parts.filter(Boolean).join('\n');
+        return dynamic.filter(Boolean).join('\n');
       };
-    let systemPrompt = buildStageSystemPrompt('discover');
 
-    if (sess.phase.kind === 'exploring' && sess.stateMachine) {
+      const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
+        const stable = buildStablePart(phase);
+        const dynamic = buildDynamicPart(phase);
+        return dynamic ? `${stable}\n${dynamic}` : stable;
+      };
+
+      const invalidateStablePart = () => { cachedStablePart = null; };
+    const resumingInActive = sess.phase.kind === 'exploring' && !!sess.stateMachine;
+    if (resumingInActive) {
       activePhase = 'active';
       lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
-      systemPrompt = buildStageSystemPrompt('active');
       this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings, get_ddl_batch`);
     }
+    let systemPrompt = buildStageSystemPrompt(resumingInActive ? 'active' : 'discover');
 
     const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
       const parts: string[] = [];
@@ -399,6 +416,7 @@ export class LineageParticipant {
     const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
     const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
     let roundCount = 0;
+    let consecutiveErrorRounds = 0;
     let totalToolCallsMade = 0;
     let totalOutputTokens = 0;
     let peakRoundInputTokens = 0;
@@ -599,6 +617,7 @@ export class LineageParticipant {
           activePhase = 'active';
           lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
           this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
+          invalidateStablePart();
           systemPrompt = buildStageSystemPrompt('active');
           messages[0] = vscode.LanguageModelChatMessage.User(systemPrompt);
         }
@@ -611,10 +630,10 @@ export class LineageParticipant {
             return t.tags?.includes('lineage');
           });
           this.logger.info(`[Phase] active → synthesis — SM complete, restored ${lineageTools.length} tools including presentation`);
-          if (sess.stateMachine.inlineMode && !sess.classification) {
-            sess.setClassification('business');
-            writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification!]}\n\n`);
+          if (sess.stateMachine.inlineMode && sess.classification) {
+            writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification]}\n\n`);
           }
+          invalidateStablePart();
           systemPrompt = buildStageSystemPrompt('synthesis');
           if (!sess.stateMachine.inlineMode) {
             const lastAssistant = messages[messages.length - 2];
@@ -651,6 +670,7 @@ export class LineageParticipant {
             } catch {}
           }
           if (!anyError) {
+            consecutiveErrorRounds = 0;
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
             // Rebuild system prompt on every wipe so <current_task> and <short_term_memory> stay current.
@@ -663,7 +683,26 @@ export class LineageParticipant {
             messages.push(lastAssistant, lastResult);
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
           } else {
-            this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
+            consecutiveErrorRounds++;
+            if (consecutiveErrorRounds >= 3) {
+              // Bounded error-preserve: after 3 consecutive error rounds, force a wipe
+              // that keeps only the last error result so the AI still sees what broke
+              // but the history does not grow unbounded within MAX_ROUNDS.
+              const lastAssistant = messages[messages.length - 2];
+              const lastResult = messages[messages.length - 1];
+              systemPrompt = buildStageSystemPrompt('active');
+              messages.length = 0;
+              messages.push(
+                vscode.LanguageModelChatMessage.User(systemPrompt),
+                vscode.LanguageModelChatMessage.User(effectivePrompt),
+                lastAssistant,
+                lastResult,
+              );
+              this.logger.warn(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
+              consecutiveErrorRounds = 0;
+            } else {
+              this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction (${consecutiveErrorRounds}/3)`);
+            }
           }
         }
       }
@@ -748,11 +787,27 @@ export class LineageParticipant {
         this.logger.info(`[${sess.id}] Exit cancelled — session returned to idle`);
         return;
       }
-      case 'hop_cap':
+      case 'hop_cap': {
+        const remaining = sess.stateMachine?.getHopDiagnostics().agendaRemaining ?? 0;
+        sess.memory.reset();
+        sess.enterIdle();
+        this.logger.warn(`Exit hop_cap: hit ${maxRounds}-round cap with ${remaining} agenda items pending — archive discarded`);
+        writer.markdown([
+          ``,
+          `⚠ **Exploration incomplete.** Hit the ${maxRounds}-round safety cap with ${remaining} node(s) still pending.`,
+          ``,
+          `The scope is too broad for a single run. Narrow it and try again:`,
+          `- Reduce depth: \`/trace [object] depth=1\` or \`depth=2\``,
+          `- Filter schemas in the panel before re-asking`,
+          `- Pick a narrower starting node (e.g. a fact table instead of a mart view)`,
+          `- Or raise \`dataLineageViz.ai.maxRounds\` in settings`,
+        ].join('\n'));
+        return;
+      }
       case 'aborted':
       case 'error': {
         sess.enterIdle();
-        const msg = exit.kind === 'hop_cap' ? `Exploration stopped — hit the ${maxRounds}-round safety cap before the agenda drained. Rerun with a narrower scope or raise 'dataLineageViz.ai.maxRounds'.` : exit.kind === 'aborted' ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.` : exit.message;
+        const msg = exit.kind === 'aborted' ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.` : exit.message;
         this.logger.warn(`Exit ${exit.kind}: ${msg}`);
         writer.markdown(`\n\n*Error: ${msg}*`);
         return;

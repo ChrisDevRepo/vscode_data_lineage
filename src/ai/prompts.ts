@@ -24,6 +24,7 @@
  * @returns The assembled base system prompt string.
  */
 export function buildGeneralSystemPrompt(
+  phase: 'discover' | 'active' | 'synthesis',
   dbPlatform: string,
   filterSchemas: string[],
   totalSchemaCount: number,
@@ -34,6 +35,7 @@ export function buildGeneralSystemPrompt(
   const schemasLine = isFiltered
     ? `- Schemas: ${filterSchemas.join(', ')} (${filterSchemas.length} of ${totalSchemaCount} schemas)`
     : `- Schemas: All (${totalSchemaCount} schemas)`;
+  const phaseLabel = { discover: 'DISCOVERY', active: 'ACTIVE EXPLORATION', synthesis: 'SYNTHESIS' }[phase];
 
   return [
     '# Data Lineage Assistant',
@@ -42,19 +44,14 @@ export function buildGeneralSystemPrompt(
     'The extension loads a SQL database object dependency graph — tables, views, stored procedures,',
     'and functions — and lets developers and data engineers explore it through chat.',
     '',
-    'You work in two phases:',
-    '- DISCOVERY (now active): answer questions directly using tools, respond in chat.',
-    '- ACTIVE EXPLORATION: entered when you call `lineage_start_exploration`. A hop-by-hop',
-    '  engine takes over and the user sees an Approve / Decline gate before it starts.',
+    `Current phase: ${phaseLabel}.`,
+    '',
+    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
     schemasLine,
     `- Visible objects: ${visibleNodes} of ${totalNodes}`,
-    '',
-    '## Core rules',
-    '1. Ground every answer in explicit tool results — no invented objects, columns, or relationships.',
-    '2. Use only object IDs returned by tools, never guess or construct identifiers.',
   ].join('\n');
 }
 
@@ -76,25 +73,29 @@ export function buildDiscoveryPrompt(): string {
     '',
     'The graph shows objects in the active filter schemas. When a search returns 0 results inside the filter:',
     '1. Check the `in_user_filter: false` field in the tool result hint.',
-    '2. If the object exists outside the filter, automatically include that schema in your next search and answer directly.',
-    '3. Do NOT ask for permission to include schemas explicitly mentioned or found during search.',
+    '2. If the object exists outside the filter, include that schema in your next search automatically and answer directly. (No permission prompt needed — the filter is a display preference, not a boundary.)',
     '',
     '## Search strategy',
     '',
     '1. Use `lineage_search_objects` to resolve starting nodes. If the user provides `[Schema].[Object]`, pass the name to `query` and the schema to `schemas[]`.',
     '2. If `lineage_search_objects` returns no matches, try `lineage_search_ddl` for partial body matches before informing the user.',
     '',
-    '## Graph exploration (CRITICAL)',
+    '## Graph exploration',
     '',
-    'If the user request contains terms like "viz", "visualize", "graph", "dependencies", "trace", "lineage", or asks how objects tie together:',
-    '1. You MUST transition to the active exploration phase by calling `lineage_start_exploration`.',
-    '2. NEVER attempt to answer these questions directly in the discovery phase.',
+    'For any question about graph structure, lineage, dependencies, tracing, or how objects tie together (terms like "viz", "visualize", "graph", "dependencies", "trace", "lineage"), call `lineage_start_exploration`. The hop-by-hop engine produces these reports; answering directly from discovery would invent paths.',
     '',
     'Before calling `lineage_start_exploration`, resolve the exact starting node ID using `search_objects`.',
     'If the search returns multiple candidates, present them to the user and ask them to select one.',
     '',
     'Direction: infer from the question; default to upstream when the intent is unclear.',
     'Depth: start shallow (1-2) on large models.',
+    '',
+    '## Mission classification',
+    '',
+    'When you call `lineage_start_exploration`, set `classification` based on the user request:',
+    '- `business` (default) — the user asks about data meaning, lineage, dependencies, what columns mean, or what data feeds what. Use this unless the user clearly signals otherwise.',
+    '- `technical` — the user explicitly asks for SQL, implementation, code, expressions, joins, or "how is this computed".',
+    '- `both` — the user explicitly asks for both business and technical angles.',
     '',
     '## Slash commands',
     '',
@@ -127,10 +128,14 @@ export function buildActivePhasePrompt(isInline: boolean): string {
   return [
     '# Active Exploration Protocol',
     `Mode: ${mode}`,
-    '1. ARCHIVE: Write unbounded, high-fidelity `detail_analysis`. This is the SOLE evidence for the final report.',
+    '',
+    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
+    '',
+    '1. ARCHIVE → DEPTH: Your `detail_analysis` is the sole input to the final report. Write at full depth because there is no follow-up pass.',
     '2. ANCHORING: Align every verdict with the <mission_brief> and <current_task>.',
     '3. COMPLETENESS: If DDL is truncated, use `get_ddl_batch` before finalizing the verdict.',
     '4. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for transform expressions and calculations.',
+    '5. ROUTE OUTCOMES: Each `submit_findings` tool result carries `route_outcomes[]`. Reference only nodes with `accepted: true` in your detail_analysis. Nodes with `deferred: true` are available as post-synthesis follow-up offers — mention each at most once as "available for follow-up", do not analyze their internals.',
   ].join('\n');
 }
 
@@ -149,8 +154,8 @@ export function buildSynthesisPrompt(): string {
     'The exploration is complete. Generate the final report using the Detail Archive.',
     '1. OUTPUT: Use `present_result` for data flow and lineage graphs. Use chat text for narratives and SQL.',
     '2. STRUCTURE: Follow the `sections[]` contract in `present_result`. Sequence findings narratively.',
-    '3. DEPTH: Do not summarize. Every badged node requires business meaning and SQL evidence from the archive.',
-    '4. NO ROUTING: The exploration window is closed. Focus strictly on reporting existing evidence.',
+    '3. DEPTH: Write full-depth analysis for every badged node — business meaning and SQL evidence lifted from the archive.',
+    '4. REPORTING SCOPE: The exploration window is closed. Focus strictly on reporting existing evidence; routing is no longer available.',
   ].join('\n');
 }
 
@@ -209,15 +214,22 @@ export const ACTION_REQUIRED_PENDING_HINT =
  */
 export function buildColumnAspectPrompt(targetColumns: string[]): string {
   return [
-    '# Column Tracing Protocol',
-    `Target Columns: [${targetColumns.join(', ')}]`,
+    '# Column Trace Protocol',
+    `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    '1. SELECTIVITY: Trace ONLY target columns. Follow renames across hops using explicit SQL logic.',
-    '2. LOGIC: Analyze SELECT expressions, CASE branches, and COALESCE options. Ignore row-filtering columns (WHERE/JOIN-ON) unless they modify the traced value.',
-    '3. PRUNING: If an object (Table, View, Procedure) does not contain, read, or write target columns, use `verdict=\'prune\'`.',
-    '   - Terminal Source: `verdict=\'analyze\'`, `badge_label=\'Source\'`.',
-    '   - Upstream Writer: `verdict=\'pass\'`, route to writer.',
-    '4. ATTRIBUTION: Emit `column_flow` for every node. Map each `out_col` to its upstream `contributors` (providing `from_node`, `from_col`, and `role`). Never guess names.',
+    '## Layered pruning',
+    'When Column Trace is active, two filters apply in order:',
+    '1. **Mechanical column filter (first):** if a node does not contain, read, or write any target column, prune it. This is a structural check, not a judgment call.',
+    '2. **Mission filter (second, for nodes that pass the column filter):** apply the standard mission-relevance pruning rules.',
+    '',
+    '## Tracing rules',
+    '- Trace only the listed target columns. Follow renames across hops using SQL evidence.',
+    '- Analyze transform logic (SELECT expressions, CASE, COALESCE). Ignore row-filtering (WHERE / JOIN-ON) unless it modifies the traced value.',
+    '- Terminal source (column originates here, no upstream writer): `verdict=analyze`, `badge_label=Source`.',
+    '- Upstream writer exists but not yet visited: `verdict=pass`, route to the writer.',
+    '',
+    '## Attribution',
+    'For every node with `verdict=analyze`, emit `column_flow`. Map each `out_col` to its upstream `contributors` with `from_node`, `from_col`, `role`. Use only column names present in the node DDL.',
   ].join('\n');
 }
 
@@ -231,39 +243,56 @@ export function buildToolUsageBlock(): string {
   return [
     '## Tool Constraints',
     '',
-    '1. Ground every finding in tool results. Never invent columns or objects.',
-    '2. Use `lineage_submit_findings` to process focus nodes. Be thorough in `detail_analysis`.',
-    '3. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags.',
-    '4. Engine Control: The engine owns the loop. Do NOT attempt to complete the session yourself. Continue submitting findings until the engine signals it is done.',
+    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
+    '',
+    '1. Use `lineage_submit_findings` to process focus nodes. Write full-depth `detail_analysis` per the required-section template in the stage rules.',
+    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. Inspect `route_outcomes[]` in each tool result to see which routes were accepted vs deferred.',
+    '3. Routing out-of-scope neighbors is encouraged when mission-relevant — they become post-synthesis follow-up offers to the user.',
   ].join('\n');
 }
 
 
 /**
- * Renders the `<mission_brief>` and `<current_task>` XML blocks for the active and synthesis phases.
+ * Renders the `<mission_brief>` XML block — **session-stable** content.
+ *
+ * @remarks
+ * Mission brief is set once at `start_exploration` and never changes during a
+ * session. Placing it in the stable prefix lets the service-side prompt cache
+ * cover it across every hop of the active/synthesis phase.
  *
  * @param brief - The AI-composed mission statement; may be empty before the first `start_exploration`.
  * @param question - The user's original question, used as fallback text when `brief` is absent.
- * @param currentTask - The sub-question assigned to the current focus node.
- * @returns Filled XML blocks, or an empty string when both `brief` and `question` are absent.
+ * @returns Filled mission-brief XML block, or an empty string when both `brief` and `question` are absent.
  */
-export function buildMissionBlock(brief: string, question: string, currentTask: string): string {
+export function buildMissionBriefBlock(brief: string, question: string): string {
   const missionText = brief || question;
   if (!missionText) return '';
-  const lines: string[] = [
+  return [
     '## Mission Context',
     '<mission_brief>',
     missionText,
     '</mission_brief>',
-  ];
-  if (currentTask) {
-    lines.push(
-      '<current_task>',
-      currentTask,
-      '</current_task>',
-    );
-  }
-  return lines.join('\n');
+  ].join('\n');
+}
+
+/**
+ * Renders the `<current_task>` XML block — **per-hop dynamic** content.
+ *
+ * @remarks
+ * Current task is the sub-question assigned to the focus node of the present
+ * hop. It changes every hop in SM mode, so it lives in the dynamic suffix of
+ * the system prompt, not in the cacheable stable prefix.
+ *
+ * @param currentTask - The sub-question assigned to the current focus node.
+ * @returns The `<current_task>` XML block, or an empty string if `currentTask` is absent.
+ */
+export function buildCurrentTaskBlock(currentTask: string): string {
+  if (!currentTask) return '';
+  return [
+    '<current_task>',
+    currentTask,
+    '</current_task>',
+  ].join('\n');
 }
 
 
@@ -278,20 +307,19 @@ export function buildMissionBlock(brief: string, question: string, currentTask: 
  */
 export function buildMemoryBlock(
   stm: Array<{ nodeId: string; summary: string }>,
-  tally: { analyze: number; pass: number; prune: number },
+  _tally: { analyze: number; pass: number; prune: number },
   hop: number,
   total: number,
 ): string {
   const stmText = stm.length > 0
     ? stm.map(s => `- ${s.nodeId}: ${s.summary}`).join('\n')
     : 'No nodes visited yet.';
-  const tallyLine = `Tally [Hop ${hop}/${total}]: analyze=${tally.analyze} pass=${tally.pass} prune=${tally.prune}`;
   return [
     '## Working Memory',
+    `Hop ${hop} of ${total} scope nodes.`,
+    '',
     '<short_term_memory>',
     stmText,
     '</short_term_memory>',
-    '',
-    tallyLine,
   ].join('\n');
 }

@@ -1,8 +1,6 @@
 # Public Test Suite
 
-> **Migration in progress:** A new unified test structure is being built at `tests/` (see `tests/README.md`). Unit tests here will migrate to `tests/unit/`, e2e tests to `tests/e2e/`, fixtures to `tests/fixtures/`.
->
-> Old files remain in place during migration. For the AI eval-loop, use the new tool proxy at `tests/e2e/suite/eval/toolProxy.ts` (replaces `test-internal/ai-test-server.ts`).
+> The AI eval-loop uses the in-extension-host tool proxy at `tests/e2e/suite/eval/toolProxy.ts`, launched via `npm run test:eval` (`@vscode/test-electron`). See `tests/README.md` for the full test-tier overview.
 
 The project uses a multi-layered public testing approach to ensure stability across the parsing engine, graph topology, and the VS Code integration.
 

@@ -28,3 +28,8 @@ These instructions are foundational mandates for the AI assistant operating in t
 - **JSDoc Usage**: Provide professional JSDoc for all exports. Focus inline comments on *why* or complex business rules, not the *what*.
 - **VS Code Configuration**: Add new settings to `package.json` under `contributes.configuration` and retrieve them using `vscode.workspace.getConfiguration()`.
 
+
+## Documentation & Engineering Integrity
+- **Code-First Truth Model**: The codebase is the single source of truth. Documentation MUST be reconciled against real code behavior. Never assume existing docs are accurate.
+- **Internal vs. External Segregation**: Maintain strict segregation between user-facing guides and internal developer-facing docs (e.g., docs-internal/).
+- **Stability-First Policy**: Prioritize Stability > Performance > Features. Changes to critical paths (parsers, state machines) require zero-regression validation against baselines.
