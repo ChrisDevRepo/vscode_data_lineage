@@ -39,8 +39,23 @@ const BLOCK = {
   routing: [
     '## Routing Strategy',
     '1. AUTO-ADD: Route neighbors only if critical to the <mission_brief>. Respect user depth and schema boundaries.',
-    '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant branches (logging, demographics) found in DDL.',
+    '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant table/view/function branches (logging, demographics) found in DDL. See Pruning Protocol below for procedures.',
     '3. ANCHORING: Relevance is judged against the mission, not the sub-question.',
+  ].join('\n'),
+
+  /**
+   * Two-kind pruning protocol: structural objects (column-check first) vs. procedures (route first).
+   *
+   * @remarks
+   * Structural objects expose columns without a hop visit — `lineage_get_object_detail` returns
+   * `columns:[{n,t,...}]` immediately. Procedures hide all logic behind DDL that only arrives at
+   * hop time, so pre-pruning them is always premature.
+   */
+  pruningProtocol: [
+    '## Pruning — When to Prune',
+    'Prune irrelevant nodes. Relevance is judged against the `<mission_brief>`.',
+    '- **table / view / function**: if columns are not explicit in the focus DDL, call `lineage_get_object_detail({id:"dbo.FactSales"})` first. Response includes `columns:[{n:"SalesAmount",...}]`.',
+    '- **procedure**: columns are only visible at the hop. Route with `question="Prune candidate — [reason]"` to decide after reading the DDL.',
   ].join('\n'),
 
   /** Inline batch protocol. */
@@ -78,7 +93,9 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
     BLOCK.writeFindings,
     BLOCK.badgeAndNote,
     '',
-    BLOCK.routing
+    BLOCK.routing,
+    '',
+    BLOCK.pruningProtocol
   );
 
   if (isColumnAspectActive) {

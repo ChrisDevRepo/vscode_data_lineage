@@ -247,6 +247,14 @@ One `AiSession` per extension instance.
 ### Column validation scope
 `submit_findings.route_requests[].columns` is validated against the target node's columns **only in `column_trace` mode**. In `blackboard` mode the field is silently dropped (it has no semantic meaning there) — the AI cannot trigger a `route_validation_failed` error by copying source-node column names onto a target UDF or proc.
 
+### Two-Kind Pruning Protocol
+The navigation prompt enforces two distinct pruning strategies based on node type (see `BLOCK.pruningProtocol` in `src/ai/smPrompts.ts`):
+
+- **table / view / function**: Column definitions are available without visiting the node. When the focus DDL does not explicitly enumerate the columns read from a neighbor, the AI calls `lineage_get_object_detail` to inspect `columns[].n` before adding the node to `prune_neighbors`.
+- **procedure**: DDL only arrives when the node becomes the focus of a hop. Pre-pruning is therefore always premature — the AI routes to the SP with `question="Prune candidate — [reason]"` and submits `verdict=prune` at that hop after reading the DDL.
+
+`HopNeighbor.cols` is populated only in Column Trace mode. In Blackboard mode, column lookup for pruning decisions uses `lineage_get_object_detail` on-demand.
+
 ## Scope Budget Enforcement (2026-04-18)
 
 Two complementary guards keep the exploration loop inside the user's declared scope:
