@@ -10,19 +10,19 @@ When a graph exceeds a configurable node threshold, the extension auto-activates
 
 - Double-click any schema bubble to drill into its objects and connected neighbors
 - Toggle manually via the toolbar or the `Toggle Schema Overview Mode` command
-- Configure: `overview.enabled`, `overview.threshold` in VS Code Settings
+- Configure: `dataLineageViz.overview.enabled`, `dataLineageViz.overview.threshold` in VS Code Settings
 
 ### Rendering Limits
 
-The extension separates **data loading** (`maxNodes`) from **graph rendering** (`renderLimit`). This allows `@lineage` AI tools and BFS to query the full loaded model while the GUI stays responsive.
+The extension separates **data loading** (`dataLineageViz.maxNodes`) from **graph rendering** (`dataLineageViz.renderLimit`). This allows `@lineage` AI tools and BFS to query the full loaded model while the GUI stays responsive.
 
 | Setting | Default | Controls |
 |---------|---------|----------|
-| `maxNodes` | 750 (up to 10000) | Objects loaded from dacpac / database |
-| `renderLimit` | 750 (up to 5000) | Nodes the GUI will layout and render |
-| `overview.threshold` | 150 | Auto-activates schema overview |
+| `dataLineageViz.maxNodes` | 750 (up to 10000) | Objects loaded from dacpac / database |
+| `dataLineageViz.renderLimit` | 750 (up to 5000) | Nodes the GUI will layout and render |
+| `dataLineageViz.overview.threshold` | 150 | Auto-activates schema overview |
 
-When `renderLimit` is exceeded, the graph shows a "limit reached" message instead of rendering. The full lineage model, DDL, and AI chat remain fully functional — only the visual graph is gated.
+When `dataLineageViz.renderLimit` is exceeded, the graph shows a "limit reached" message instead of rendering. The full lineage model, DDL, and AI chat remain fully functional — only the visual graph is gated.
 
 ---
 
@@ -75,7 +75,7 @@ Patterns are matched against `schema.name` (case-insensitive).
 Right-click any node and select **Trace Levels** to explore upstream (inputs) and downstream (outputs) dependencies. The graph filters to show only the traced subgraph.
 
 - Adjust trace depth with the level controls
-- Default depth is configurable: `trace.defaultUpstreamLevels`, `trace.defaultDownstreamLevels`
+- Default depth is configurable: `dataLineageViz.trace.defaultUpstreamLevels`, `dataLineageViz.trace.defaultDownstreamLevels`
 - Press <kbd>Esc</kbd> to exit trace mode
 
 ### Find Path
@@ -123,9 +123,9 @@ To ensure reliability, all structural graph algorithms (Cycles, Hubs, Pathfindin
 
 Click any group in the pattern sidebar to zoom into that subset. Thresholds are configurable:
 
-- `analysis.hubMinDegree` — minimum connections to qualify as a hub
-- `analysis.islandMaxSize` — maximum component size to qualify as an island
-- `analysis.longestPathMinNodes` — minimum chain length to report
+- `dataLineageViz.analysis.hubMinDegree` — minimum connections to qualify as a hub
+- `dataLineageViz.analysis.islandMaxSize` — maximum component size to qualify as an island
+- `dataLineageViz.analysis.longestPathMinNodes` — minimum chain length to report
 
 ---
 
@@ -146,7 +146,7 @@ On-demand column statistics via a **separate database connection**. Profiling ru
 - **Quick** — row count, null count, distinct count per column
 - **Standard** — adds AVG, STDEV, min/max values, zero/empty counts
 
-Standard mode can be disabled via `tableStatistics.standardModeEnabled`.
+Standard mode can be disabled via `dataLineageViz.tableStatistics.standardModeEnabled`.
 
 ### Safety for large databases
 
@@ -159,17 +159,19 @@ Standard mode can be disabled via `tableStatistics.standardModeEnabled`.
 
 | Setting | Purpose |
 |---------|---------|
-| `tableStatistics.enabled` | Enable/disable the profiling UI |
-| `tableStatistics.standardModeEnabled` | Allow Standard mode (heavier queries) |
-| `tableStatistics.excludeExternalTables` | Skip external tables |
-| `tableStatistics.queryTimeout` | Timeout per profiling query |
-| `tableStatistics.sampleThreshold` | Row count above which sampling activates |
-| `tableStatistics.sampleSize` | Number of rows to sample |
+| `dataLineageViz.tableStatistics.enabled` | Enable/disable the profiling UI |
+| `dataLineageViz.tableStatistics.standardModeEnabled` | Allow Standard mode (heavier queries) |
+| `dataLineageViz.tableStatistics.excludeExternalTables` | Skip external tables |
+| `dataLineageViz.tableStatistics.queryTimeout` | Timeout per profiling query |
+| `dataLineageViz.tableStatistics.sampleThreshold` | Row count above which sampling activates |
+| `dataLineageViz.tableStatistics.sampleSize` | Number of rows to sample |
+| `dataLineageViz.tableStatistics.useApproxDistinct` | Use APPROX_COUNT_DISTINCT (Fabric/Synapse) |
+| `dataLineageViz.tableStatistics.maxColumns` | Limit columns profiled per table |
 
 ### Permissions
 
 - `SELECT` on profiled tables
-- `VIEW SERVER STATE` at server level (for row counts via `sys.dm_db_partition_stats`)
+- `VIEW DEFINITION` or `db_datareader` (for row counts via `sys.partitions`)
 
 ---
 
@@ -218,6 +220,38 @@ In complex ETL pipelines, a column often changes names multiple times. Deep expl
 - [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) extension
 - VS Code 1.95+
 
+---
+
+## Advanced Settings
+
+For power users and complex environments. Search "dataLineageViz" in VS Code Settings (`Ctrl+,`) to configure.
+
+### Import & SQL Parsing
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `dataLineageViz.excludePatterns` | `[]` | Permanent regex/wildcard patterns to skip objects at load time. |
+| `dataLineageViz.externalRefs.enabled` | `true` | Detect virtual nodes for OPENROWSET and cross-DB 3-part names. |
+| `dataLineageViz.parseRulesFile` | `""` | Path to a custom YAML file for the SQL parser. |
+| `dataLineageViz.dmvQueriesFile` | `""` | Path to custom DMV queries. See [DMV Queries](DMV_QUERIES.md). |
+| `dataLineageViz.dmvQueryTimeout` | `30` | Seconds to wait for metadata catalog queries. |
+
+### UI & Layout
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `dataLineageViz.layout.direction` | `LR` | Graph flow direction: `LR` (Left-to-Right) or `TB` (Top-to-Bottom). |
+| `dataLineageViz.layout.edgeStyle` | `smoothstep` | Line style: `smoothstep`, `step`, `straight`, or `bezier`. |
+| `dataLineageViz.layout.minimapEnabled` | `true` | Show a navigation minimap in the corner. |
+| `dataLineageViz.layout.rankSeparation` | `100` | Vertical/Horizontal distance between graph layers. |
+
+### @lineage AI (Advanced)
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `dataLineageViz.ai.enabled` | `true` | Enable/disable the @lineage participant and tools. |
+| `dataLineageViz.ai.maxRounds` | `50` | Safety cap on the number of tool turns per investigation. |
+| `dataLineageViz.ai.inlineTokenBudget` | `10000` | Max chars of DDL for "one-shot" analysis before switching to hop-by-hop. |
+| `dataLineageViz.ai.inlineNodeCap` | `10` | Max nodes for "one-shot" analysis. |
+| `dataLineageViz.ai.outputTemplateFile` | `""` | Path to custom YAML output templates. |
+
 ### Disable
 
-Set `ai.enabled` to `false` in VS Code Settings to remove the `@lineage` participant and all AI tools.
+Set `dataLineageViz.ai.enabled` to `false` in VS Code Settings to remove the `@lineage` participant and all AI tools.
