@@ -60,7 +60,7 @@ const BLOCK = {
  * @param targetColumns - Optional columns being tracked (activates Column Aspect).
  * @returns A formatted string containing classification rules, per-hop workflow, and routing guidance.
  */
-export function buildNavigationPrompt(isInline: boolean = false, targetColumns?: string[]): string {
+export function buildModeBlock(isInline: boolean = false, targetColumns?: string[]): string {
   const isColumnAspectActive = !!(targetColumns && targetColumns.length > 0);
   const sections: string[] = [];
 

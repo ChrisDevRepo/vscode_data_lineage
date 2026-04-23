@@ -54,9 +54,15 @@ For configuration, settings reference, and advanced customization (parse rules, 
 
 ## Limitations
 
-- Column-level lineage via `@lineage /trace` (AI-assisted, requires GitHub Copilot)
-- Static analysis — dynamic SQL (`EXEC(@sql)`) not detected
-- Fully-qualified names only — unqualified references are excluded
+**Scope — intra-database DDL only.** This extension traces dependencies between SQL objects (tables, views, stored procedures, functions) that exist within the loaded database model. It reads DDL and compile-time SQL references — it does not model data movement *outside* the database. The following are out of scope:
+
+- **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source is not visible. The extension sees the target tables as leaf nodes, not the pipelines that populate them.
+- **Cross-database or cross-server data flow** — dependencies that cross a database or server boundary are surfaced only when the SQL body contains a fully-qualified four-part or three-part name; the remote side is shown as an external reference node, not as a fully traced sub-graph.
+- **Runtime data manipulation** — DML executed outside stored procedures (e.g. application-layer INSERTs, bulk loads, CDC consumers) leaves no DDL footprint and is therefore not detected.
+- **Dynamic SQL** — statements constructed at runtime (`EXEC(@sql)`, `sp_executesql`) cannot be analyzed statically and are excluded.
+- **Unqualified references** — object references without a schema prefix are excluded.
+
+If your lineage question spans ingestion pipelines or cross-system data flow, this tool covers only the intra-database leg of that journey.
 
 ## FAQ
 

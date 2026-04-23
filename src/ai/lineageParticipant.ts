@@ -5,9 +5,10 @@ import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import {
   buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
+  buildToolUsageBlock, buildMissionBlock, buildMemoryBlock,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
-import { buildNavigationPrompt } from './smPrompts';
+import { buildModeBlock } from './smPrompts';
 import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
@@ -308,27 +309,48 @@ export class LineageParticipant {
       const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
         const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
         const schemas = sess.filter?.schemas || [];
+        const engine = sess.stateMachine;
         const base = buildGeneralSystemPrompt(dbPlatform, schemas);
 
         let phaseSpecific = '';
         if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
         else if (phase === 'active') {
-          const isInline = sess.stateMachine?.inlineMode ?? false;
+          const isInline = engine?.inlineMode ?? false;
           phaseSpecific = buildActivePhasePrompt(isInline);
         }
         else if (phase === 'synthesis') phaseSpecific = buildSynthesisPrompt();
 
         const stageBlock = resolveStagePrompt(sess.outputTemplates, phase, sess.classification);
-        return [base, phaseSpecific, stageBlock].filter(Boolean).join('\n');
+        const parts: string[] = [base, phaseSpecific];
+
+        if (phase === 'active' && engine) {
+          parts.push(buildToolUsageBlock());
+          parts.push(buildModeBlock(engine.inlineMode, engine.columnAspect?.target_columns));
+        }
+
+        parts.push(stageBlock);
+
+        if ((phase === 'active' || phase === 'synthesis') && engine) {
+          const brief = sess.memory.getMissionBrief();
+          const currentTask = engine.getCurrentTask();
+          const missionBlock = buildMissionBlock(brief, sess.memory.getUserQuestion() || '', currentTask);
+          if (missionBlock) parts.push(missionBlock);
+        }
+
+        if (phase === 'active' && engine && !engine.inlineMode) {
+          const stm = sess.memory.getShortTermMemory();
+          const tally = sess.memory.getVerdictCounts();
+          parts.push(buildMemoryBlock(stm, tally, engine.currentHop, engine.scopeSize));
+        }
+
+        return parts.filter(Boolean).join('\n');
       };
     let systemPrompt = buildStageSystemPrompt('discover');
-    let navPrompt = '';
 
     if (sess.phase.kind === 'exploring' && sess.stateMachine) {
       activePhase = 'active';
       lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
       systemPrompt = buildStageSystemPrompt('active');
-      navPrompt = buildNavigationPrompt(sess.stateMachine.inlineMode, sess.stateMachine.columnAspect?.target_columns);
       this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings, get_ddl_batch`);
     }
 
@@ -366,7 +388,6 @@ export class LineageParticipant {
       vscode.LanguageModelChatMessage.User(systemPrompt),
       ...historyMessages,
     ];
-    if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
     messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
     const toolCallRounds: any[] = [];
     const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
@@ -572,15 +593,7 @@ export class LineageParticipant {
           lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
           this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
           systemPrompt = buildStageSystemPrompt('active');
-          const engine = sess.stateMachine;
-          if (engine) {
-            navPrompt = buildNavigationPrompt(engine.inlineMode, engine.columnAspect?.target_columns);
-            messages.push(
-              vscode.LanguageModelChatMessage.User(
-                `# Navigation State\n${navPrompt}`
-              )
-            );
-          }
+          messages[0] = vscode.LanguageModelChatMessage.User(systemPrompt);
         }
 
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
@@ -633,14 +646,15 @@ export class LineageParticipant {
           if (!anyError) {
             const lastAssistant = messages[messages.length - 2];
             const lastResult = messages[messages.length - 1];
+            // Rebuild system prompt on every wipe so <current_task> and <short_term_memory> stay current.
+            systemPrompt = buildStageSystemPrompt('active');
             messages.length = 0;
             messages.push(
               vscode.LanguageModelChatMessage.User(systemPrompt),
               vscode.LanguageModelChatMessage.User(effectivePrompt)
             );
-            if (navPrompt) messages.push(vscode.LanguageModelChatMessage.User(navPrompt));
             messages.push(lastAssistant, lastResult);
-            this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok; navPrompt preserved)`);
+            this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
           } else {
             this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction`);
           }

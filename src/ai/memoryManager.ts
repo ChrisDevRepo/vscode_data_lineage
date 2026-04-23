@@ -53,8 +53,6 @@ export interface DetailSlot {
 export interface WorkingMemory {
   /** The user's original question, echoed verbatim every hop. */
   user_question: string;
-  /** Sliding window of recent node summaries (incremental loading). */
-  short_term_memory: Array<{ nodeId: string; summary: string }>;
   /** Progress metrics for this session. */
   checklist: {
     /** Current hop index (1-based). */
@@ -72,8 +70,6 @@ export interface WorkingMemory {
     /** Cumulative count of soft/silent-mode scope expansions. */
     scope_growth: number;
   };
-  /** Running verdict distribution across the whole session. Helps the AI spot imbalance (e.g. 30 analyze, 0 prune). */
-  tally: { analyze: number; pass: number; prune: number };
 
   /** Recent route rejections — prevents the AI from repeating the same invalid or blocked route. Capped at 5 entries. */
   recent_rejections: Array<{ nodeId: string; reason: string; atHop: number }>;
@@ -193,7 +189,7 @@ export class AiMemoryManager {
    *
    * @param hopCount - Hop index (1-based) supplied by the engine.
    * @param scopeSize - Total number of nodes in the exploration scope.
-   * @returns A `WorkingMemory` snapshot with `user_question`, `short_term_memory` (sliding window), and progress metrics.
+   * @returns A `WorkingMemory` snapshot with `user_question`, checklist metrics, and route rejection history.
    */
   public getWorkingMemory(
     hopCount: number,
@@ -207,13 +203,9 @@ export class AiMemoryManager {
   ): WorkingMemory {
     const noted = this.detailSlots.size;
     const coveragePct = scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
-    const short_term_memory = Array.from(this.detailSlots.values())
-      .slice(-3) // Last 3 summaries (sliding window)
-      .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
 
     const memory: WorkingMemory = {
       user_question: this.userQuestion,
-      short_term_memory,
       checklist: {
         current_hop: hopCount,
         noted,
@@ -223,7 +215,6 @@ export class AiMemoryManager {
         rounds_used: extras.rounds_used,
         scope_growth: extras.scope_growth,
       },
-      tally: { ...this.verdictCounts },
       recent_rejections: this.recentRejections.slice(),
       active_schemas: extras.active_schemas.slice(),
     };
@@ -265,5 +256,18 @@ export class AiMemoryManager {
   /** Cloned verdict tally for diagnostics / logging. */
   public getVerdictCounts(): { analyze: number; pass: number; prune: number } {
     return { ...this.verdictCounts };
+  }
+
+  /**
+   * Returns the last 3 node summaries for injection into the system prompt `<short_term_memory>` block.
+   *
+   * @remarks
+   * Same sliding window used by `getWorkingMemory` — exposed separately so prompt builders
+   * can access it without constructing the full working-memory envelope.
+   */
+  public getShortTermMemory(): Array<{ nodeId: string; summary: string }> {
+    return Array.from(this.detailSlots.values())
+      .slice(-3)
+      .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
   }
 }

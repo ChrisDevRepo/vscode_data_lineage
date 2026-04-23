@@ -167,3 +167,76 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     '4. ATTRIBUTION: Emit `column_flow` for every node. If a column name is rejected, correct it or omit—never guess.',
   ].join('\n');
 }
+
+
+/**
+ * Constructs the Tool Usage block for the active phase.
+ *
+ * @returns A string containing the mechanical `submit_findings` and `get_ddl_batch` constraints.
+ */
+export function buildToolUsageBlock(): string {
+  return [
+    '## Tool Constraints',
+    '- Call `submit_findings` exactly once per hop after reading the focus node.',
+    '- Use `get_ddl_batch` only when the focus node DDL appears truncated.',
+    '- Do not route to nodes outside the `approved_border` without a gate.',
+  ].join('\n');
+}
+
+
+/**
+ * Renders the `<mission_brief>` and `<current_task>` XML blocks for the active and synthesis phases.
+ *
+ * @param brief - The AI-composed mission statement; may be empty before the first `start_exploration`.
+ * @param question - The user's original question, used as fallback text when `brief` is absent.
+ * @param currentTask - The sub-question assigned to the current focus node.
+ * @returns Filled XML blocks, or an empty string when both `brief` and `question` are absent.
+ */
+export function buildMissionBlock(brief: string, question: string, currentTask: string): string {
+  const missionText = brief || question;
+  if (!missionText) return '';
+  const lines: string[] = [
+    '## Mission Context',
+    '<mission_brief>',
+    missionText,
+    '</mission_brief>',
+  ];
+  if (currentTask) {
+    lines.push(
+      '<current_task>',
+      currentTask,
+      '</current_task>',
+    );
+  }
+  return lines.join('\n');
+}
+
+
+/**
+ * Renders the `<short_term_memory>` XML block and the tally line for SM active hops.
+ *
+ * @param stm - Sliding window of the last 3 node summaries.
+ * @param tally - Running verdict counts for the session.
+ * @param hop - Current 1-based hop index.
+ * @param total - Total nodes in scope.
+ * @returns A string containing the memory block and tally line.
+ */
+export function buildMemoryBlock(
+  stm: Array<{ nodeId: string; summary: string }>,
+  tally: { analyze: number; pass: number; prune: number },
+  hop: number,
+  total: number,
+): string {
+  const stmText = stm.length > 0
+    ? stm.map(s => `- ${s.nodeId}: ${s.summary}`).join('\n')
+    : 'No nodes visited yet.';
+  const tallyLine = `Tally [Hop ${hop}/${total}]: analyze=${tally.analyze} pass=${tally.pass} prune=${tally.prune}`;
+  return [
+    '## Working Memory',
+    '<short_term_memory>',
+    stmText,
+    '</short_term_memory>',
+    '',
+    tallyLine,
+  ].join('\n');
+}

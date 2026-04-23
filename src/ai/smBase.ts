@@ -127,6 +127,12 @@ export interface IHopStateMachine {
    * @returns The serialized state object.
    */
   toJSON(): unknown;
+
+  /** The sub-question assigned to the current focus node; empty when no hop is in progress. */
+  getCurrentTask(): string;
+
+  /** Current hop index (1-based; 0 before the first hop). */
+  readonly currentHop: number;
 }
 
 /**
@@ -405,6 +411,32 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Returns the sub-question assigned to the current focus node.
+   *
+   * @remarks
+   * Used by prompt builders to populate the `<current_task>` block in the system
+   * prompt so the AI sees its per-node assignment as structured text rather than
+   * buried JSON. Returns an empty string when no hop is in progress.
+   */
+  public getCurrentTask(): string {
+    if (!this.currentFocusNodeId) return '';
+    const entry = this.visited.has(this.currentFocusNodeId)
+      ? undefined
+      : this.agenda.find(e => e.nodeId === this.currentFocusNodeId);
+    // After a node enters focus it's already in visited; find the stored question
+    // from the most-recently committed agenda entry via the hop context's last value.
+    return entry?.question ?? this._lastCurrentTask ?? '';
+  }
+
+  /** Current hop index exposed for prompt builders (read-only alias of the protected `hopCount` field). */
+  public get currentHop(): number {
+    return this.hopCount;
+  }
+
+  /** Stores the current-task question at the moment a hop context is delivered. */
+  private _lastCurrentTask = '';
+
+  /**
    * Toggles the inline operating mode.
    *
    * @param val - Boolean flag to activate inline mode.
@@ -540,8 +572,6 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns Context data mapped for the AI router.
    */
   public getHopContext(): HopContext {
-    const brief = this.memory.getMissionBrief();
-    
     if (this._inlineMode) {
       // TRUE INLINE MODE: Drain the entire agenda into a single batch delivery.
       const batchEntries: AgendaEntry[] = [];
@@ -593,7 +623,6 @@ export class NavigationEngine implements IHopStateMachine {
         agenda_remaining: 0,
         focus_node: nodes, // Array of nodes in inline mode
         working_memory: workingMemory,
-        ...(brief ? { mission_brief: brief } : {}),
       };
     }
 
@@ -667,6 +696,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    this._lastCurrentTask = entry.question;
     this._status = 'awaiting_findings';
     return {
       sm_status: 'awaiting_findings' as const,
@@ -674,9 +704,7 @@ export class NavigationEngine implements IHopStateMachine {
       agenda_remaining: this.agenda.length,
       focus_node: focusNode,
       neighbors: this.buildNeighborList(entry.nodeId),
-      current_task: entry.question,
       working_memory: workingMemory,
-      ...(brief ? { mission_brief: brief } : {}),
     };
   }
 

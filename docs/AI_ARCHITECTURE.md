@@ -52,10 +52,10 @@ SM mode follows an **"Asymmetric Tiering"** memory pattern to manage context eff
 2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — a strictly isolated snapshot:
    - `user_question` — echoed verbatim so the root question survives sliding-history eviction.
    - `column_aspect` — (Conditional) present when `target_columns` are being tracked. Includes `target_columns`, `done_columns`, and `active_columns`.
-   - `short_term_memory: Array<{ nodeId, summary }>` — a **sliding window** (last 3 nodes) of prior hop summaries. Implements incremental loading to prevent global context bloat.
+   - `short_term_memory: Array<{ nodeId, summary }>` — a **sliding window** (last 3 nodes) of prior hop summaries. In SM mode this is rendered as a `<short_term_memory>` XML block **inside the system prompt** (`buildMemoryBlock`), not in the tool result JSON. Implements incremental loading to prevent global context bloat.
    - `checklist` — `{ current_hop, noted, total, open, coveragePct }` for drain signaling.
 
-**Mechanical Strictness**: The AI operates like a "horse with blinders." Global state arrays (`agenda`, `visited_nodes`, `all_summaries`, `pending_questions`) are **intentionally excluded** from the payload to prevent token bloat and hallucination. The Detail Archive is captured locally and only surfaces at synthesis.
+**Mechanical Strictness**: The AI operates like a "horse with blinders." Global state arrays (`agenda`, `visited_nodes`, `pending_questions`) are **intentionally excluded** from the payload to prevent token bloat and hallucination. The Detail Archive is captured locally and only surfaces at synthesis. Anchoring context (`mission_brief`, `current_task`, `short_term_memory`) lives in the system prompt, not the JSON payload, so it survives the sliding wipe as part of message reconstruction rather than relying on JSON parsing.
 
 ### Unified Exploration Engine (`src/ai/smBase.ts`)
 The `NavigationEngine` is a single, unified state machine. It handles both high-level architecture investigations and deep column-level lineage via a conditional **Column Aspect**:
@@ -120,9 +120,57 @@ At `start_exploration` time the AI declares its **classification** via the optio
 
 ### Phase-Boundary Contract for Prompt Authors
 
-- **DISCOVERY → ACTIVE** — triggered by `lineage_start_exploration`. Nav prompt for the chosen mode is injected. `lineage-engine` tool tag replaces `lineage` (so classic tools are hidden). Prompts added in DISCOVERY that mention classic-tool choice are dead weight after this transition — scope them to DISCOVERY only.
-- **ACTIVE hop loop** — `submit_findings` is the only active-phase tool (plus `get_object_detail` for ad-hoc look-up). Nav prompt is re-injected on every sliding-memory wipe (`lineageParticipant.ts:494`).
-- **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. Detail archive is injected as a fresh user message, followed by the synthesis prompt.
+- **DISCOVERY → ACTIVE** — triggered by `lineage_start_exploration`. `buildStageSystemPrompt('active')` replaces `buildStageSystemPrompt('discover')`. The mode block (`buildModeBlock`) for BB or CT is included in the system prompt. Tool set narrows to `submit_findings` + `get_ddl_batch`. There is no separate `navPrompt` User message.
+- **ACTIVE hop loop** — `submit_findings` is the only active-phase tool (plus `get_ddl_batch` for ad-hoc DDL fetch). On every sliding-memory wipe the full system prompt is rebuilt from scratch: base + active protocol + tool usage + mode block + YAML capture rules + `<mission_brief>` + `<current_task>` + `<short_term_memory>` + tally line. All anchoring context is in message 0, not in the JSON payload.
+- **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. `buildStageSystemPrompt('synthesis')` is used; it includes the YAML render rules + `<mission_brief>` but omits the mode block and `<short_term_memory>` (synthesis reads the archive, not the sliding window).
+
+### Prompt Assembly Architecture
+
+The system prompt is assembled by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
+
+```
+buildBaseBlock(platform, schemas)          ← role + core rules        [always]
+  + buildPhaseBlock(phase, isInline)       ← phase protocol            [always]
+  + buildToolUsageBlock()                  ← submit/prune/route usage  [active only]
+  + buildModeBlock(isInline, columnAspect) ← BB or CT mode block       [active only]
+  + resolveStagePrompt(yaml, phase, cls)   ← YAML capture/render rules [always, gated by classification]
+  + buildMissionBlock(brief, q, task)      ← <mission_brief>/<current_task> XML [active + synthesis]
+  + buildMemoryBlock(stm, tally, hop, n)   ← <short_term_memory> XML   [SM active only]
+```
+
+**Hybrid format rule** — structural sections use Markdown headers; dynamic per-hop data uses XML tags so the model can locate them precisely:
+- `<mission_brief>` — filled from `engine.memory.getMissionBrief()`
+- `<current_task>` — filled from `engine.getCurrentTask()`
+- `<short_term_memory>` — filled from `engine.memory.getShortTermMemory()`
+- `<column_state>` — filled from `engine.columnAspect` (CT only, inside `buildModeBlock`)
+
+These XML tags align with the placeholder names already used in rules (e.g. "Align every verdict with `<mission_brief>`") so the filled tags are immediately recognisable to the model.
+
+**YAML drives content, not structure.** `assets/aiOutputTemplates.yaml` controls what the AI writes into `detail_analysis` per hop (`*_capture` keys) and how the final document renders (`*_subsection` keys). It does not define the prompt structure or the delivery mechanism — that is `templateRenderer.ts` + the builder functions above.
+
+### Prompt Assembly Architecture
+
+The system prompt is assembled by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
+
+```
+buildBaseBlock(platform, schemas)          ← role + core rules        [always]
+  + buildPhaseBlock(phase, isInline)       ← phase protocol            [always]
+  + buildToolUsageBlock()                  ← submit/prune/route usage  [active only]
+  + buildModeBlock(isInline, columnAspect) ← BB or CT mode block       [active only]
+  + resolveStagePrompt(yaml, phase, cls)   ← YAML capture/render rules [always, gated by classification]
+  + buildMissionBlock(brief, q, task)      ← <mission_brief>/<current_task> XML [active + synthesis]
+  + buildMemoryBlock(stm, tally, hop, n)   ← <short_term_memory> XML   [SM active only]
+```
+
+**Hybrid format rule** — structural sections use Markdown headers; dynamic per-hop data uses XML tags so the model can locate them precisely:
+- `<mission_brief>` — filled from `engine.memory.getMissionBrief()`
+- `<current_task>` — filled from `engine.getCurrentTask()`
+- `<short_term_memory>` — filled from `engine.memory.getShortTermMemory()`
+- `<column_state>` — filled from `engine.columnAspect` (CT only, inside `buildModeBlock`)
+
+These XML tags align with the placeholder names already used in rules (e.g. "Align every verdict with `<mission_brief>`") so the filled tags are immediately recognisable to the model.
+
+**YAML drives content, not structure.** `assets/aiOutputTemplates.yaml` controls what the AI writes into `detail_analysis` per hop (`*_capture` keys) and how the final document renders (`*_subsection` keys). It does not define the prompt structure or the delivery mechanism — that is `templateRenderer.ts` + the builder functions above.
 
 ### Mechanical Map-&-Router enforcement (2026-04-18)
 
