@@ -750,6 +750,10 @@ export class NavigationEngine implements IHopStateMachine {
         return { error: 'invalid_focus_node', got: focusId };
       }
 
+      if (finding.complete && !this._inlineMode) {
+        return { error: 'complete_not_allowed', hint: 'The engine decides when the exploration is complete in Sliding Memory mode. Do not set complete: true.' } as any;
+      }
+
       const acceptedNids = new Set<string>();
       if (finding.route_requests) {
         const depthCap = this.computeDepthCap();
@@ -823,7 +827,7 @@ export class NavigationEngine implements IHopStateMachine {
               this.budgetExpansions.push({ nodeId: nid, depth: focusDepth + 1, atHop: this.hopCount });
             }
           }
-          if (req.columns) {
+          if (req.columns && this._columnAspect) {
             const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
             const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
             if (invalidCols.length > 0) {

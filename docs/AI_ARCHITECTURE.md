@@ -69,6 +69,8 @@ The engine implements **Task Aggregation (Best Practice)**: when multiple reason
 2.  **Auto-Prune (`prune_neighbors`)**: The AI can remove irrelevant branches from the agenda by providing an array of node IDs. When a View or Procedure's DDL proves that certain joined neighbors do not contribute to the mission (e.g., demographic tables in a column trace for 'JobTitle'), the AI prunes them. Pruning a node automatically **cascade-prunes** its unvisited descendants, ensuring maximum token and hop efficiency.
 
 ### Completion Contract (when SM says "done")
+
+Completion semantics depend on the execution mode. The engine implements a **Proactive Agenda-Drain Exit**: if a finding (especially a prune verdict) results in an empty agenda, the engine immediately transitions to the complete status and returns the result, saving an unnecessary LLM turn.
 Completion semantics depend on the execution mode:
 
 | Mode | Trigger | AI action |
@@ -495,3 +497,4 @@ To maintain architectural clarity and reliable state transitions, the system fol
 ## References
 - [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)
 - Internal developer documentation: `docs-internal/AI_IMPLEMENTATION.md`
+

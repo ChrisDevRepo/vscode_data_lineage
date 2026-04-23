@@ -217,7 +217,7 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     '3. PRUNING: If an object (Table, View, Procedure) does not contain, read, or write target columns, use `verdict=\'prune\'`.',
     '   - Terminal Source: `verdict=\'analyze\'`, `badge_label=\'Source\'`.',
     '   - Upstream Writer: `verdict=\'pass\'`, route to writer.',
-    '4. ATTRIBUTION: Emit `column_flow` for every node. If a column name is rejected, correct it or omit—never guess.',
+    '4. ATTRIBUTION: Emit `column_flow` for every node. Map each `out_col` to its upstream `contributors` (providing `from_node`, `from_col`, and `role`). Never guess names.',
   ].join('\n');
 }
 
@@ -234,7 +234,7 @@ export function buildToolUsageBlock(): string {
     '1. Ground every finding in tool results. Never invent columns or objects.',
     '2. Use `lineage_submit_findings` to process focus nodes. Be thorough in `detail_analysis`.',
     '3. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags.',
-    '4. Completion: The engine detects completion. Once all nodes are processed, your LAST action MUST be calling `lineage_present_result`.',
+    '4. Engine Control: The engine owns the loop. Do NOT attempt to complete the session yourself. Continue submitting findings until the engine signals it is done.',
   ].join('\n');
 }
 

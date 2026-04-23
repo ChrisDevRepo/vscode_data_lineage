@@ -59,8 +59,12 @@ const BLOCK = {
   ].join('\n'),
 
   /** Inline batch protocol. */
-  batchCompletionContract: 
-    'Analyze the provided graph context holistically. Submit findings for all nodes in a single turn. You may request expansions (route_requests) in the same Turn.',
+  batchCompletionContract: [
+    '## Inline Batch Protocol',
+    'Analyze the provided graph context holistically.',
+    '1. BATCH SUBMISSION: Submit your findings as a JSON ARRAY of finding objects (one per node) in a single `submit_findings` turn.',
+    '2. COMPLETION: If no further expansions (`route_requests`) are needed, set `"complete": true` inside your final finding object to finish the exploration.',
+  ].join('\n'),
 } as const;
 
 

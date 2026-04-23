@@ -3,6 +3,7 @@
 These instructions are foundational mandates for the AI assistant operating in this workspace.
 
 ## Architectural Grounding
+- **Orchestrator-Worker Pattern**: Strictly adhere to the Orchestrator-Worker pattern. The Engine (Orchestrator) maintains absolute control over loop termination and navigation validation. The AI (Worker) must never be prompted with Orchestrator-level exit vocabulary (e.g., 'call present_result') during the active loop.
 - **Map & Router Architecture**: The AI interacts with the graph using a deterministic "Grounded Router". Hallucinations are prevented by validating all route requests against actual database metadata before execution (e.g. `src/ai/smBase.ts`).
 - **State Machine Modes**: The exploration engine orchestrates autonomous reasoning using a unified state machine. Blackboard mode supports **True Inline Mode** for small graphs (batch analysis, full context) and **Sliding Memory Mode** for large ones. When the **Column Aspect** is active (column tracing), the engine is strictly **Sliding Memory** (hop-by-hop) to ensure precise attribution.
 - **Hourglass Context Model**: The prompt architecture follows an "Hourglass" flow: Wide Discovery → Active Phase (Wide/True Inline or Narrow/Sliding Memory) → Wide Synthesis.
@@ -26,3 +27,4 @@ These instructions are foundational mandates for the AI assistant operating in t
 - **DRY & OOP**: Emphasize explicit composition, reusability, and delegation. The `NavigationEngine` should be the single source of truth for its domain. Do not duplicate logic or introduce anti-patterns.
 - **JSDoc Usage**: Provide professional JSDoc for all exports. Focus inline comments on *why* or complex business rules, not the *what*.
 - **VS Code Configuration**: Add new settings to `package.json` under `contributes.configuration` and retrieve them using `vscode.workspace.getConfiguration()`.
+
