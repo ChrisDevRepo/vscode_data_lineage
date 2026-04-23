@@ -308,9 +308,15 @@ export class LineageParticipant {
 
       const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
         const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
-        const schemas = sess.filter?.schemas || [];
+        const filterSchemas = sess.filter?.schemas || [];
+        const totalSchemaCount = sess.model!.schemas.length;
+        const totalNodes = sess.model!.nodes.length;
+        const activeFilter = sess.filter;
+        const visibleNodes = activeFilter?.schemas && activeFilter.schemas.length > 0
+          ? sess.model!.nodes.filter(n => (activeFilter.schemas as string[]).includes(n.schema)).length
+          : totalNodes;
         const engine = sess.stateMachine;
-        const base = buildGeneralSystemPrompt(dbPlatform, schemas);
+        const base = buildGeneralSystemPrompt(dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes);
 
         let phaseSpecific = '';
         if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
@@ -488,6 +494,7 @@ export class LineageParticipant {
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
           drainPendingUserNotices();
+          toolCallRounds.push({ response: responseText, toolCalls: [] });
           return { kind: 'final_answer' };
         }
 

@@ -437,7 +437,7 @@ The `@lineage` exploration loop implements the **Orchestrator-Workers** pattern 
 
 The worker is bounded by **horse-with-blinkers mechanics**:
 - `LanguageModelChatToolMode.Required` in ACTIVE — can't emit free-form text.
-- Tool filter narrows the visible toolset to `submit_findings` only — no `present_result`, `run_bfs_trace`, etc.
+- Tool filter narrows the visible toolset to `submit_findings` only — no `present_result`, `lineage_get_neighborhood`, `lineage_detect_graph_patterns`, etc.
 - Engine rejects `complete: true` in SM mode — worker can't self-terminate.
 
 **Consent gates are two-turn pauses** (not a sub-loop): engine emits `action_required` envelope → turn ends → user replies yes/no/redirect → next turn resumes. On yes, the participant does NOT mechanically advance the engine — the engine was already primed at gate-emission time (tool called `getHopContext()` before returning the envelope). AI's next `submit_findings` land on an already-primed engine. **Trust-on-resume** — no runtime coupling between participant state and engine state beyond what the AI sees in its history.

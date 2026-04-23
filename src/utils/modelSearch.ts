@@ -98,12 +98,12 @@ export function searchCatalog(
   // Substring mode (default): case-insensitive, starts-with ranked first
   const lower = query.toLowerCase();
   const matches = filtered
-    .map(n => ({ node: n, lower: n.name.toLowerCase() }))
-    .filter(m => m.lower.includes(lower));
+    .map(n => ({ node: n, nameLower: n.name.toLowerCase(), idLower: n.id.toLowerCase() }))
+    .filter(m => m.nameLower.includes(lower) || m.idLower.includes(lower));
 
   matches.sort((a, b) => {
-    const aStarts = a.lower.startsWith(lower);
-    const bStarts = b.lower.startsWith(lower);
+    const aStarts = a.nameLower.startsWith(lower) || a.idLower.startsWith(lower);
+    const bStarts = b.nameLower.startsWith(lower) || b.idLower.startsWith(lower);
     if (aStarts && !bStarts) return -1;
     if (!aStarts && bStarts) return 1;
     return a.node.name.localeCompare(b.node.name);

@@ -35,7 +35,7 @@ assert(registeredTools.includes('lineage_present_result'), 'lineage_present_resu
 assert(!registeredTools.includes('lineage_enrich_view'), 'legacy lineage_enrich_view is GONE');
 
 console.log('\n── Required Core Tools ──');
-const required = ['lineage_get_context', 'lineage_search_objects', 'lineage_run_bfs_trace', 'lineage_start_exploration', 'lineage_submit_findings', 'lineage_present_result'];
+const required = ['lineage_get_context', 'lineage_search_objects', 'lineage_get_neighborhood', 'lineage_detect_graph_patterns', 'lineage_start_exploration', 'lineage_submit_findings', 'lineage_present_result'];
 for (const name of required) {
   assert(registeredTools.includes(name), `"${name}" is registered`);
 }

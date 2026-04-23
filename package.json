@@ -496,7 +496,7 @@
         "toolReferenceName": "lineage_get_context",
         "displayName": "Get Lineage Context",
         "userDescription": "Shows what is currently loaded and visible in the lineage graph.",
-        "modelDescription": "Returns schemas, stats, active filter, saved views. If objects[] present: full dataset with DDL, columns, FKs, edges — answer directly. Otherwise: use schema names in other tools' schemas[] filters.",
+        "modelDescription": "Returns the current database context including loaded schemas, stats, and active UI filters.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -513,8 +513,8 @@
         "name": "lineage_search_objects",
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
-        "userDescription": "Search for database objects by name.",
-        "modelDescription": "Search objects by name or column name (substring or mode='regex' for multi-pattern). Returns IDs for BFS/detail. Results with match='column' matched a column inside the object, not the object name. Use schemas[] to narrow scope. For DDL body content search, use search_ddl instead. If 0 results: try search_ddl for DDL body matches before telling the user nothing was found. If 0 results with schemas[]: check schema_mismatch field — object may exist in another schema.",
+        "userDescription": "Search for database objects by name or column.",
+        "modelDescription": "Search database objects by name or column name using substring or regex matching. Returns object IDs and metadata.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -527,7 +527,7 @@
           "properties": {
             "query": {
               "type": "string",
-              "description": "Name to search for (max 200 chars)"
+              "description": "Object name or column name to search for (max 200 chars). Do not include schema prefixes like '[dbo].' here."
             },
             "types": {
               "type": "array",
@@ -541,14 +541,14 @@
                   "external"
                 ]
               },
-              "description": "Include only these object types. Omit for all."
+              "description": "Include only these object types."
             },
             "schemas": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Include only these schemas. Omit for all."
+              "description": "Restrict search to these schemas."
             },
             "mode": {
               "type": "string",
@@ -556,7 +556,7 @@
                 "substring",
                 "regex"
               ],
-              "description": "substring (default) or regex for multi-pattern ('rev|gl.*cog')"
+              "description": "Search mode: 'substring' (default) or 'regex'."
             }
           },
           "required": [
@@ -569,7 +569,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Full metadata for ONE object: columns, FKs, neighbors (up/dn), DDL. Use for single-object questions ('what does spX do?'). For multi-object lineage, use run_bfs_trace instead.",
+        "modelDescription": "Returns full metadata for a single object, including columns, foreign keys, DDL, and immediate neighbors.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -582,7 +582,7 @@
           "properties": {
             "id": {
               "type": "string",
-              "description": "Exact object ID from lineage_search_objects (e.g. '[dbo].[FactSales]')"
+              "description": "Exact object ID (e.g. '[dbo].[FactSales]')."
             }
           },
           "required": [
@@ -591,11 +591,11 @@
         }
       },
       {
-        "name": "lineage_run_bfs_trace",
-        "toolReferenceName": "lineage_run_bfs_trace",
-        "displayName": "Trace Lineage",
-        "userDescription": "Trace data lineage upstream and/or downstream from an object.",
-        "modelDescription": "Scope discovery tool — use to understand graph size and shape before deciding on approach. Two modes:\n- Level mode (default): id + upstream_hops + downstream_hops → explore by depth\n- Path mode: id + target → all nodes on paths between start and end\nReturns nodes with DDL, columns, and edges. BFS is for discovery only; for annotated output (present_result), follow BFS with start_exploration — present_result requires a completed state-machine result.\nUse schemas[] on large models.",
+        "name": "lineage_get_neighborhood",
+        "toolReferenceName": "lineage_get_neighborhood",
+        "displayName": "Get Neighborhood",
+        "userDescription": "Fetch the surrounding dependency graph for an object.",
+        "modelDescription": "Returns the upstream and/or downstream neighbors for a starting object within a specified depth.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -607,7 +607,7 @@
           "properties": {
             "id": {
               "type": "string",
-              "description": "Exact object ID to trace from"
+              "description": "Starting object ID."
             },
             "upstream_hops": {
               "type": "number",
@@ -629,18 +629,18 @@
                   "external"
                 ]
               },
-              "description": "Include only these node types. Omit for all."
+              "description": "Include only these node types."
             },
             "schemas": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Include only nodes in these schemas. Omit for all."
+              "description": "Include only nodes in these schemas."
             },
             "include_ddl": {
               "type": "boolean",
-              "description": "Include DDL/columns in results (default true). Set false for structure-only overview."
+              "description": "Include DDL/columns in results (default true)."
             },
             "target": {
               "type": "string",
@@ -653,11 +653,11 @@
         }
       },
       {
-        "name": "lineage_run_analysis",
-        "toolReferenceName": "lineage_run_analysis",
-        "displayName": "Run Graph Analysis",
-        "userDescription": "Run structural analysis on the loaded lineage graph.",
-        "modelDescription": "Graph-wide structural analysis. Use for: 'most connected objects' or 'biggest nodes' (type=hubs), 'isolated tables with no dependencies' (type=orphans), 'deepest dependency chains' or 'longest paths' (type=longest-path), 'circular dependencies' (type=cycles), 'disconnected groups' (type=islands), 'external or cross-database references' (type=external-refs). Returns ranked groups of node IDs with summary.",
+        "name": "lineage_detect_graph_patterns",
+        "toolReferenceName": "lineage_detect_graph_patterns",
+        "displayName": "Detect Graph Patterns",
+        "userDescription": "Find structural patterns like hubs, cycles, or orphans in the graph.",
+        "modelDescription": "Analyzes the entire graph for specific structural patterns such as hubs, islands, orphans, longest paths, cycles, or external references.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -677,15 +677,16 @@
                 "longest-path",
                 "cycles",
                 "external-refs"
-              ]
+              ],
+              "description": "Type of pattern to detect."
             },
             "min_degree": {
               "type": "number",
-              "description": "Hubs only: minimum degree to qualify as hub. Default from config."
+              "description": "Hubs only: minimum degree."
             },
             "max_size": {
               "type": "number",
-              "description": "Islands only: maximum component size to include. Default from config."
+              "description": "Islands only: maximum component size."
             }
           },
           "required": [
@@ -698,7 +699,7 @@
         "toolReferenceName": "lineage_search_ddl",
         "displayName": "Search DDL",
         "userDescription": "Search SQL body scripts for a text pattern.",
-        "modelDescription": "Regex search across SP/view/function DDL bodies. Returns matching lines with context. Use for pattern-based DDL search; for simple keyword name search use search_objects instead.",
+        "modelDescription": "Performs a regex search across view, procedure, and function DDL bodies. Returns matching lines with context.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -711,7 +712,7 @@
           "properties": {
             "query": {
               "type": "string",
-              "description": "Text or regex to search in DDL body scripts (max 200 chars)"
+              "description": "Regex pattern to search for in DDL bodies."
             },
             "types": {
               "type": "array",
@@ -723,7 +724,7 @@
                   "function"
                 ]
               },
-              "description": "Limit search to these object types. Default: all DDL-bearing types."
+              "description": "Limit search to these object types."
             }
           },
           "required": [
@@ -735,8 +736,8 @@
         "name": "lineage_present_result",
         "toolReferenceName": "lineage_present_result",
         "displayName": "Present Result",
-        "userDescription": "Authors the final presentation layer (report) for the lineage exploration.",
-        "modelDescription": "Call this as your LAST tool action — after start_exploration completes (SM or inline). Do NOT call in discovery or active phases. This tool requires a completed exploration result.\n\nREQUIRED fields:\n- name: short title for the graph\n- summary: one-sentence digest (shown in panel header)\n- description: 2–4 sentence executive summary of the full analysis — what the graph shows and key business insights. Shown in collapsible top panel. REQUIRED when NOT using sections[].\n\nFIELDS:\n- sections[] is the core for node grouping — each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label = primary key AND chip shown on nodes. The completion result includes suggested_sections — use this as your starting structure. System numbers labels in YOUR WRITTEN ORDER. \n- Passthrough nodes: mention in section text only — omit from node_ids. \n- Reference other groups by label name ('reads from **Source**'), never by number. \n- notes caption individual nodes (node_id KEY, one line visible, rest on hover via \\n). \n- Use prune_node_ids to remove nodes that do not serve the mission report. \n- At least one of sections[] OR description is REQUIRED.",
+        "userDescription": "Generate a final report and visualization for the exploration.",
+        "modelDescription": "Authors the presentation layer (report) for an exploration result. Groups nodes into sections and provides an executive summary.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage-presentation"
@@ -749,33 +750,33 @@
             "name": {
               "type": "string",
               "maxLength": 60,
-              "description": "Display name for the view (max 60 chars). Derive it from the ORIGINAL user question — the subject and focus of the analysis — not from conversational confirmation text like 'yes' or 'ok'. Pattern: '[Subject] — [Focus]'. GOOD: 'CadenceWorker — Direct Neighbor Business Logic'. BAD: 'yes', 'ok', or the literal user turn text from a gate resume."
+              "description": "Title for the report (max 60 chars)."
             },
             "summary": {
               "type": "string",
               "maxLength": 300,
-              "description": "One-line graph purpose for the info card. This is the card headline, not the analysis — the per-node text inside sections[] is where depth goes."
+              "description": "One-line digest for the info card."
             },
             "title": {
               "type": "string",
               "maxLength": 80,
-              "description": "Optional. Doc heading (≤80 chars) rendered as # at the top of the description panel. Name the analysis subject and its key finding: '[Subject] — [computation, pattern, or finding]'. GOOD: 'TotalRevenue — Qty × UnitPrice, 6-hop chain to FactSalesReport'. Omit if graph name is sufficient."
+              "description": "Optional. Heading for the description panel."
             },
             "intro": {
               "type": "string",
-              "description": "Optional. 2–4 sentence paragraph rendered BEFORE the numbered ## sections. Set context: what is computed, where data originates, key structural pre-conditions. No bullets, no headings. Do NOT repeat section content. Omit if sections are self-explanatory."
+              "description": "Optional. Context paragraph shown before sections."
             },
             "closing": {
               "type": "string",
               "maxLength": 400,
-              "description": "Optional. 1–2 sentences rendered AFTER the sections behind a --- divider. Use ONLY for a cross-cutting risk or design note that spans the whole graph. Prefix risks with ⚠️. GOOD: '⚠️ If vwPriceList returns NULL, TotalRevenue = Qty × 0.' Omit if nothing material to add."
+              "description": "Optional. Closing note or risk assessment."
             },
             "prune_node_ids": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Node IDs to remove from the stored result graph."
+              "description": "Nodes to remove from the final visualization."
             },
             "layout_direction": {
               "type": "string",
@@ -783,17 +784,16 @@
                 "LR",
                 "TB"
               ],
-              "description": "Graph layout direction — LR for sequential flows, TB for hierarchies (default TB)"
+              "description": "Graph layout: Left-to-Right or Top-to-Bottom."
             },
             "highlight_groups": {
               "type": "array",
-              "description": "Glow on 2-3 critical nodes only.",
+              "description": "Optional. Highlight groups for critical nodes.",
               "items": {
                 "type": "object",
                 "properties": {
                   "label": {
-                    "type": "string",
-                    "description": "Short group label"
+                    "type": "string"
                   },
                   "color": {
                     "type": "string",
@@ -810,8 +810,7 @@
                     "type": "array",
                     "items": {
                       "type": "string"
-                    },
-                    "description": "Node IDs in this group"
+                    }
                   }
                 },
                 "required": [
@@ -823,24 +822,23 @@
             },
             "sections": {
               "type": "array",
-              "description": "Document sections — one entry per logical group. Each section is a (label KEY, node_ids[] 1..N, text 1..1) tuple. label is the PRIMARY KEY and the badge chip text shown on every node in node_ids. System numbers sections in YOUR WRITTEN ORDER. Reference other groups by label name ('reads from **Source**'), never by number.",
+              "description": "Report sections grouping nodes with explanatory text.",
               "items": {
                 "type": "object",
                 "properties": {
                   "label": {
                     "type": "string",
-                    "description": "Section title and badge chip text."
+                    "description": "Section title and node badge."
                   },
                   "node_ids": {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    },
-                    "description": "Nodes associated with this section."
+                    }
                   },
                   "text": {
                     "type": "string",
-                    "description": "Markdown description for this label group (1..1 per label). Explain what you found: formulas, column mappings, logic, risks. Supported: **bold**, `code`, tables, LaTeX math."
+                    "description": "Markdown analysis for this group."
                   }
                 },
                 "required": [
@@ -851,7 +849,7 @@
             },
             "notes": {
               "type": "array",
-              "description": "Annotations below nodes.",
+              "description": "Optional annotations for specific nodes.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -860,8 +858,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "maxLength": 400,
-                    "description": "First line = title. Rest = hover detail."
+                    "description": "Note text (max 400 chars)."
                   }
                 },
                 "required": [
@@ -872,7 +869,7 @@
             },
             "is_update": {
               "type": "boolean",
-              "description": "Set true to patch an existing view instead of creating a new one."
+              "description": "Set true to update an existing view."
             }
           },
           "required": [
@@ -884,9 +881,9 @@
       {
         "name": "lineage_get_ddl_batch",
         "toolReferenceName": "lineage_get_ddl_batch",
-        "displayName": "Get DDL for Multiple Objects",
-        "userDescription": "Get DDL body scripts for multiple objects in one call.",
-        "modelDescription": "Batch DDL fetch for known IDs. Use ONLY for objects not already in a BFS result — BFS includes DDL by default.",
+        "displayName": "Get Batch DDL",
+        "userDescription": "Fetch SQL body scripts for multiple objects at once.",
+        "modelDescription": "Returns the DDL body scripts and column definitions for a list of object IDs.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -901,7 +898,7 @@
               "items": {
                 "type": "string"
               },
-              "description": "Exact object IDs to fetch DDL for (max 20)."
+              "description": "Array of exact object IDs (max 20)."
             }
           },
           "required": [
@@ -915,7 +912,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
-        "modelDescription": "Start a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking. If targetColumns provided, the engine constrains navigation to relevant column paths. If question only, it runs free-form Blackboard exploration.\n\nSCOPE PARAMETERS: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. See the `depth_enforcement` parameter description for the 3-case mapping (strict / soft / silent). Honor user NL filters in `excludeTypes`: 'ignore UDFs/functions' → excludeTypes:['function']; 'ignore views' → excludeTypes:['view']; 'only tables' → excludeTypes:['view','procedure','function']. On wide graphs start with a small `depth` (1–2); sliding-memory sessions lock the scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session.\n\nReturns: first hop context with Topological Map, current Incremental Blackboard, Focus DDL, and Neighbor Metadata (Columns).\n\nUse Selection-Inference Routing: read neighbor metadata — including `in_budget` and `in_approved_scope` — and generate a sub-question for each relevant neighbor. Out-of-approved-scope neighbors may still be routed; the engine defers them for post-session review.",
+        "modelDescription": "Starts a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -925,11 +922,11 @@
           "properties": {
             "question": {
               "type": "string",
-              "description": "The user's exploration question"
+              "description": "The user's exploration question."
             },
             "origin": {
               "type": "string",
-              "description": "Starting node ID. Engine runs depth-limited BFS from here to seed the exploration agenda."
+              "description": "Starting node ID (e.g. '[dbo].[FactSales]')."
             },
             "targetColumns": {
               "type": "array",
@@ -949,37 +946,51 @@
             },
             "depth": {
               "type": "number",
-              "description": "Initial BFS depth from origin (default 5). On large graphs prefer a small value (1–2) with depth_enforcement='silent' to start cautious and auto-expand."
+              "description": "Initial BFS depth from origin (default 5)."
             },
             "depth_enforcement": {
               "type": "string",
-              "enum": ["strict", "soft", "silent"],
-              "description": "How to treat the depth budget. Pick based on the user's intent: (1) 'strict' when the user set depth via the /depth slash command OR used an unambiguous NL phrase like 'direct neighbors', 'one level', 'immediate neighbors', 'just the upstream' — the engine hard-caps out-of-budget routes (inline sessions ask via a consent gate; sliding-memory sessions defer the route for post-session review). (2) 'soft' when the user used a vague phrase like 'nearby', 'surrounding', 'next level' — the engine allows one extra depth level of auto-expansion then caps further requests. (3) 'silent' when the user did NOT mention depth at all and you chose a cautious starting depth — the engine allows up to two extra depth levels of auto-expansion then caps. Default is 'silent'."
+              "enum": [
+                "strict",
+                "soft",
+                "silent"
+              ],
+              "description": "How to treat the depth budget: 'strict' (hard cap), 'soft' (+1 depth expansion allowed), or 'silent' (+2 depth allowed). Default 'silent'."
             },
             "schemas": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Optional: override active filter to search specific schemas."
+              "description": "Optional. Override active filter to search specific schemas."
             },
             "mission_brief": {
               "type": "string",
               "maxLength": 1500,
-              "description": "A 3-6 sentence natural-language briefing you (the AI) compose after discovery, distilling: (a) the user's intent in your own words, (b) any NL filters the user expressed ('ignore UDFs and views', 'only tables', 'only schema X'), (c) the scope you chose (schemas, depth, enforcement, direction) and why, and (d) explicit criteria for when to use prune_neighbors to eliminate irrelevant tables or utility branches to save tokens. This brief is the canonical mission statement delivered every hop. Write it so a future you (post-wipe) can act correctly with no other context."
+              "description": "A 3-6 sentence natural-language briefing distilling user intent, NL filters, scope choices, and pruning criteria."
             },
             "excludeTypes": {
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["table", "view", "procedure", "function", "external"]
+                "enum": [
+                  "table",
+                  "view",
+                  "procedure",
+                  "function",
+                  "external"
+                ]
               },
-              "description": "Optional. Object types to prune from the exploration scope before the first hop. Map user NL filters: 'ignore UDFs'/'ignore functions' → ['function']; 'ignore views' → ['view']; 'only tables' → ['view','procedure','function']. Excluded nodes never enter the agenda or neighbor list — the AI cannot accidentally analyze them."
+              "description": "Optional. Object types to prune from the exploration scope."
             },
             "classification": {
               "type": "string",
-              "enum": ["business", "technical", "both"],
-              "description": "Declare the analysis angle from the user's question. business: user asks WHAT the data means — business rules, formulas, column meaning, impact, documentation. technical: user explicitly asks HOW the pipeline runs — performance, SQL patterns, join strategies, execution, optimization. both: user explicitly asks for both business meaning AND technical detail in the same question. Omit when uncertain — engine defaults to business."
+              "enum": [
+                "business",
+                "technical",
+                "both"
+              ],
+              "description": "Declare the analysis angle (business rules, technical performance, or both). Defaults to business."
             }
           },
           "required": [
@@ -994,7 +1005,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
         "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
-        "modelDescription": "Submit analysis of the current exploration hop and receive the next hop's data.\n\nFields:\n- detail_analysis: Full technical write-up for this node — business purpose, transform expressions, column I/O, relationships, risks. The archive is the sole evidence used at synthesis; it is unbounded and preserved verbatim. Write thoroughly — thin analysis produces thin synthesis.\n- summary: Specific one-line digest for this hop. Carries forward to future hops as context.\n- verdict: analyze | pass | prune.\n    - 'analyze' → stores findings, drives badges/notes. If a stored procedure modifies data relevant to the mission, it is analyze-worthy. (Note: In Column Trace mode, missing target columns override this and force a prune).\n    - 'pass' → visited, no analysis stored, always accepted. Use for variant siblings of an already-analyzed archetype.\n    - 'prune' → cascade-prunes (utility/logging/generic helpers/irrelevant branches). May be rejected by orphan/cascade guards; fall back to 'pass'.\n\nLabels (required for 'analyze' and 'pass' — the presented view has no badges/notes without them):\n- badge_label: 2-4 word semantic role tag (Source / Transform / Transform Variant / Staging / Output / Validation / Aggregation, or a domain-specific role the DDL suggests).\n- note_caption: One-line what-this-does caption shown on the graph node.\n\nAGENDA MANAGEMENT:\n- route_requests: Array of { nodeId, question, columns? }. Add neighbors ONLY when highly relevant to the mission. Frame the next hop with a sub-question. *Guards:* Respect the in_budget and in_approved_scope neighbor tags; out-of-scope routes will be blocked or deferred unless critical.\n- prune_neighbors: Array of node IDs to aggressively prune from the exploration agenda without visiting them. Use when focus-node DDL proves these branches are irrelevant to the mission. Pruning cascade-prunes unvisited descendants.",
+        "modelDescription": "Submits analysis for the current focus node and requests the next hop's data. Includes routing requests for neighbors and pruning instructions.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -1008,11 +1019,11 @@
             },
             "detail_analysis": {
               "type": "string",
-              "description": "Full per-node analysis. Archive is unbounded — write at the depth the node's complexity warrants; quote SQL verbatim."
+              "description": "Full per-node analysis. Quote SQL verbatim. Use Markdown."
             },
             "summary": {
               "type": "string",
-              "description": "Specific one-line digest for this hop."
+              "description": "One-line digest of findings for this hop."
             },
             "verdict": {
               "type": "string",
@@ -1020,7 +1031,8 @@
                 "analyze",
                 "pass",
                 "prune"
-              ]
+              ],
+              "description": "Action for focus node: 'analyze' (store findings), 'pass' (mark visited), or 'prune' (block branch)."
             },
             "route_requests": {
               "type": "array",
@@ -1033,14 +1045,14 @@
                   },
                   "question": {
                     "type": "string",
-                    "description": "Focused sub-question for this neighbor — single yes/no or multi-part investigation, whichever depth the next hop needs."
+                    "description": "Sub-question for the next hop."
                   },
                   "columns": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "For column tracking: specific input columns to follow."
+                    "description": "Specific columns to follow in next hop."
                   }
                 },
                 "required": [
@@ -1048,28 +1060,24 @@
                   "question"
                 ]
               },
-              "description": "Grounded routing requests for next hops."
+              "description": "Routing requests for next hops."
             },
             "prune_neighbors": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Array of neighbor node IDs to aggressively prune from the exploration agenda without visiting them. Use when focus-node DDL proves these branches are irrelevant to the mission."
-            },
-            "complete": {
-              "type": "boolean",
-              "description": "Reserved. The engine handles completion automatically — leave unset."
+              "description": "Neighbor node IDs to aggressively prune from the agenda."
             },
             "badge_label": {
               "type": "string",
               "maxLength": 30,
-              "description": "Short semantic role (2-4 words) for enriched view badge."
+              "description": "Short semantic role (2-4 words) for node badge (e.g. 'Source', 'Transformation')."
             },
             "note_caption": {
               "type": "string",
               "maxLength": 200,
-              "description": "One-line caption for the node note (max 200 chars). Must differ from `summary`: `summary` is WHAT the node does (one-line role); `note_caption` is the cross-hop REASONING — what this hop taught you that future hops need (e.g. 'Same skeleton as the prior variant; delta: department+function match instead of global match')."
+              "description": "One-line technical reasoning caption shown on the node."
             }
           },
           "required": [

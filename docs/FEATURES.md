@@ -104,7 +104,7 @@ For **tables, views, external tables, and table-valued functions**, the detail p
 
 ---
 
-## Graph Analysis
+## Detect Graph Patterns
 
 Six analysis modes are available from the toolbar dropdown:
 
@@ -121,7 +121,7 @@ Six analysis modes are available from the toolbar dropdown:
 
 To ensure reliability, all structural graph algorithms (Cycles, Hubs, Pathfinding) are verified against a high-fidelity reference model. This helps maintain logical accuracy even on massive, enterprise-scale databases.
 
-Click any group in the analysis sidebar to zoom into that subset. Thresholds are configurable:
+Click any group in the pattern sidebar to zoom into that subset. Thresholds are configurable:
 
 - `analysis.hubMinDegree` — minimum connections to qualify as a hub
 - `analysis.islandMaxSize` — maximum component size to qualify as an island

@@ -433,8 +433,8 @@ class ToolHandler {
       if (!this.isAiEnabled()) return this.disabled();
       const { id, upstream_hops, downstream_hops, types, schemas, include_ddl, target } = input;
       const result = runBfsTrace(this.requireModel(), this.requireGraph(), id, upstream_hops ?? 3, downstream_hops ?? 3, types, schemas, include_ddl ?? true, this.getSession().columnStore, target);
-      return this.logAndReturn('run_bfs_trace', result, input);
-    } catch (err) { return this.toolError('run_bfs_trace', err); }
+      return this.logAndReturn('get_neighborhood', result, input);
+    } catch (err) { return this.toolError('get_neighborhood', err); }
   }
 
   public getObjectDetail(input: any) {
@@ -457,8 +457,8 @@ class ToolHandler {
       const resolvedMinDegree = min_degree ?? anaCfg.get<number>('analysis.hubMinDegree');
       const resolvedMaxSize   = max_size   ?? anaCfg.get<number>('analysis.islandMaxSize');
       const resolvedLongestPath = anaCfg.get<number>('analysis.longestPathMinNodes');
-      return this.logAndReturn('run_analysis', runAnalysis(this.requireModel(), this.requireGraph(), type as AnalysisType, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
-    } catch (err) { return this.toolError('run_analysis', err); }
+      return this.logAndReturn('detect_graph_patterns', runAnalysis(this.requireModel(), this.requireGraph(), type as AnalysisType, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
+    } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
 
   public searchDdl(input: any) {
@@ -537,8 +537,8 @@ export function registerAiTools(
       invoke(options, _token) { return handler.presentResult(options.input as PresentResultInput); },
     }),
 
-    vscode.lm.registerTool('lineage_run_bfs_trace', {
-      prepareInvocation(options, _token) { return { invocationMessage: 'Running structural trace…' }; },
+    vscode.lm.registerTool('lineage_get_neighborhood', {
+      prepareInvocation(options, _token) { return { invocationMessage: 'Previewing neighborhood…' }; },
       invoke(options, _token) { return handler.runBfsTrace(options.input); },
     }),
 
@@ -547,8 +547,8 @@ export function registerAiTools(
       invoke(options, _token) { return handler.getObjectDetail(options.input); },
     }),
 
-    vscode.lm.registerTool('lineage_run_analysis', {
-      prepareInvocation(options, _token) { return { invocationMessage: `Running analysis: ${(options.input as any).type}…` }; },
+    vscode.lm.registerTool('lineage_detect_graph_patterns', {
+      prepareInvocation(options, _token) { return { invocationMessage: `Detecting graph patterns: ${(options.input as any).type}…` }; },
       invoke(options, _token) { return handler.runAnalysis(options.input); },
     }),
 

@@ -10,52 +10,101 @@
 
 /**
  * Constructs the base system prompt used to govern AI behavior across all phases.
- * 
+ *
  * @remarks
- * Contains global invariants: platform rules, schema context, and basic tool constraints.
- * 
- * @returns A string containing the foundational system rules.
+ * Contains the role definition, injected app context (platform, schemas, node counts),
+ * and core grounding rules. LaTeX is intentionally absent — it is only relevant during
+ * active exploration where math expressions appear in SQL transform analysis.
+ *
+ * @param dbPlatform - Human-readable database platform string from the loaded model.
+ * @param filterSchemas - Schema names currently active in the user's filter.
+ * @param totalSchemaCount - Total number of schemas in the loaded model.
+ * @param visibleNodes - Number of nodes visible under the active filter.
+ * @param totalNodes - Total number of nodes in the loaded model.
+ * @returns The assembled base system prompt string.
  */
-export function buildGeneralSystemPrompt(dbPlatform: string, schemas: string[]): string {
+export function buildGeneralSystemPrompt(
+  dbPlatform: string,
+  filterSchemas: string[],
+  totalSchemaCount: number,
+  visibleNodes: number,
+  totalNodes: number,
+): string {
+  const isFiltered = filterSchemas.length > 0 && filterSchemas.length < totalSchemaCount;
+  const schemasLine = isFiltered
+    ? `- Schemas: ${filterSchemas.join(', ')} (${filterSchemas.length} of ${totalSchemaCount} schemas)`
+    : `- Schemas: All (${totalSchemaCount} schemas)`;
+
   return [
-    '# Role: Senior Data Lineage Analyst',
-    'Expertise: SQL metadata and data flow architecture.',
+    '# Data Lineage Assistant',
+    '',
+    'You are the @lineage assistant inside the Data Lineage Viz extension for Visual Studio Code.',
+    'The extension loads a SQL database object dependency graph — tables, views, stored procedures,',
+    'and functions — and lets developers and data engineers explore it through chat.',
+    '',
+    'You work in two phases:',
+    '- DISCOVERY (now active): answer questions directly using tools, respond in chat.',
+    '- ACTIVE EXPLORATION: entered when you call `lineage_start_exploration`. A hop-by-hop',
+    '  engine takes over and the user sees an Approve / Decline gate before it starts.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
-    `- Active Schemas: [${schemas.join(', ')}]`,
-    'Answer ONLY using the provided database model and tools.',
+    schemasLine,
+    `- Visible objects: ${visibleNodes} of ${totalNodes}`,
     '',
-    '## Core Rules',
-    '1. IDENTITIES: Use only object/column IDs returned by tools.',
-    '2. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for technical expressions.',
-    '3. GROUNDING: Base findings exclusively on explicit DDL evidence.',
+    '## Core rules',
+    '1. Ground every answer in explicit tool results — no invented objects, columns, or relationships.',
+    '2. Use only object IDs returned by tools, never guess or construct identifiers.',
   ].join('\n');
 }
 
 
 /**
  * Constructs the prompt for the Discovery/Idle phase.
- * 
+ *
  * @remarks
- * Used when the AI is searching for entry points or answering follow-up questions.
- * Includes routing rules for start_exploration.
- * 
- * @returns A string containing discovery-phase rules.
+ * Covers filter-scope rules, not-found response patterns, graph exploration gate
+ * (direction, depth, scope preview), column tracing routing, exclusion handling,
+ * slash command mapping, and response format constraints.
+ * Tool parameter routing is owned by each tool's modelDescription — not repeated here.
+ *
+ * @returns The assembled discovery-phase prompt string.
  */
 export function buildDiscoveryPrompt(): string {
   return [
-    '# Discovery Protocol',
-    '1. VALIDATION: If the entry point cannot be resolved in the active filter:',
-    '   - Schema mismatch (search returns schema_correction): reply with exactly one sentence — "Found [object] in [schema] — should I analyze it there?"',
-    '   - Not found anywhere: reply with exactly one sentence — "No match for \'[query]\' in the loaded model."',
-    '   No additional text. Wait for the user to reply before calling any further tools.',
-    '2. EXPLORATION STRATEGY:',
-    '   - Column questions: Invoke `start_exploration` with `targetColumns`.',
-    '   - Broad lineage/impact: Invoke `start_exploration` (Blackboard mode) for an architectural overview.',
-    '   - Single-object analysis: Use `get_object_detail` for chat-based explanation.',
-    '3. MISSION BRIEF: Compose a 3–6 sentence narrative distilling intent, filters, scope, and pruning criteria. This is the canonical mission statement delivered every hop.',
-    '4. EFFICIENCY: Use minimal discovery steps; move to `start_exploration` once entry points are confirmed.',
+    '## Filter scope',
+    '',
+    'The graph shows objects in the active filter schemas. When a search returns 0 results inside the filter:',
+    '1. Check the `in_user_filter: false` field in the tool result hint.',
+    '2. If the object exists outside the filter, automatically include that schema in your next search and answer directly.',
+    '3. Do NOT ask for permission to include schemas explicitly mentioned or found during search.',
+    '',
+    '## Search strategy',
+    '',
+    '1. Use `lineage_search_objects` to resolve starting nodes. If the user provides `[Schema].[Object]`, pass the name to `query` and the schema to `schemas[]`.',
+    '2. If `lineage_search_objects` returns no matches, try `lineage_search_ddl` for partial body matches before informing the user.',
+    '',
+    '## Graph exploration (CRITICAL)',
+    '',
+    'If the user request contains terms like "viz", "visualize", "graph", "dependencies", "trace", "lineage", or asks how objects tie together:',
+    '1. You MUST transition to the active exploration phase by calling `lineage_start_exploration`.',
+    '2. NEVER attempt to answer these questions directly in the discovery phase.',
+    '',
+    'Before calling `lineage_start_exploration`, resolve the exact starting node ID using `search_objects`.',
+    'If the search returns multiple candidates, present them to the user and ask them to select one.',
+    '',
+    'Direction: infer from the question; default to upstream when the intent is unclear.',
+    'Depth: start shallow (1-2) on large models.',
+    '',
+    '## Slash commands',
+    '',
+    '`/trace [object]` — resolve the starting node, infer direction and depth, then call `lineage_start_exploration`.',
+    '',
+    '`/search [term]` — call `search_objects` scoped to the active filter schemas and present results as a table.',
+    '',
+    '## Response format',
+    '',
+    'Markdown only. Match response length to the question.',
   ].join('\n');
 }
 
@@ -81,6 +130,7 @@ export function buildActivePhasePrompt(isInline: boolean): string {
     '1. ARCHIVE: Write unbounded, high-fidelity `detail_analysis`. This is the SOLE evidence for the final report.',
     '2. ANCHORING: Align every verdict with the <mission_brief> and <current_task>.',
     '3. COMPLETENESS: If DDL is truncated, use `get_ddl_batch` before finalizing the verdict.',
+    '4. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for transform expressions and calculations.',
   ].join('\n');
 }
 
@@ -180,9 +230,11 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
 export function buildToolUsageBlock(): string {
   return [
     '## Tool Constraints',
-    '- Call `submit_findings` exactly once per hop after reading the focus node.',
-    '- Use `get_ddl_batch` only when the focus node DDL appears truncated.',
-    '- Do not route to nodes outside the `approved_border` without a gate.',
+    '',
+    '1. Ground every finding in tool results. Never invent columns or objects.',
+    '2. Use `lineage_submit_findings` to process focus nodes. Be thorough in `detail_analysis`.',
+    '3. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags.',
+    '4. Completion: The engine detects completion. Once all nodes are processed, your LAST action MUST be calling `lineage_present_result`.',
   ].join('\n');
 }
 

@@ -45,7 +45,7 @@
 # ── Card + top of the document ───────────────────────────────────────────────
 
 summary:
-  stages: [discover, synthesis]
+  stages: [synthesis]
   instruction: >
     One-line graph purpose, ~120 chars (max 300). A short teaser, not the
     analysis. Don't compress analysis depth to fit this line — detailed
@@ -123,7 +123,7 @@ closing:
 # ── Fallback body when sections[] is absent ──────────────────────────────────
 
 description:
-  stages: [discover, synthesis]
+  stages: [synthesis]
   instruction: >
     Used only when sections[] is not provided. Prefer sections[] for
     structured output. If used: write the full documentation at archive
