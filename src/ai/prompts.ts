@@ -46,7 +46,10 @@ export function buildGeneralSystemPrompt(dbPlatform: string, schemas: string[]):
 export function buildDiscoveryPrompt(): string {
   return [
     '# Discovery Protocol',
-    '1. VALIDATION: If searches return zero results or schema mismatches, clarify the target object with the user before proceeding.',
+    '1. VALIDATION: If the entry point cannot be resolved in the active filter:',
+    '   - Schema mismatch (search returns schema_correction): reply with exactly one sentence — "Found [object] in [schema] — should I analyze it there?"',
+    '   - Not found anywhere: reply with exactly one sentence — "No match for \'[query]\' in the loaded model."',
+    '   No additional text. Wait for the user to reply before calling any further tools.',
     '2. EXPLORATION STRATEGY:',
     '   - Column questions: Invoke `start_exploration` with `targetColumns`.',
     '   - Broad lineage/impact: Invoke `start_exploration` (Blackboard mode) for an architectural overview.',
