@@ -15,6 +15,7 @@ import { NavigationEngine } from './smBase';
 import { RepeatRejectGuard } from './repeatRejectGuard';
 import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
 import { CLASSIFICATION_BANNER } from './classification';
+import { filterLmTools, activeModeOf } from './toolPolicy';
 import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
 import { PerformanceCollector } from './diagnostics';
@@ -225,11 +226,7 @@ export class LineageParticipant {
 
     let effectivePrompt = request.prompt;
     let activePhase: 'discover' | 'active' | 'synthesis' = 'discover';
-    let lineageTools = vscode.lm.tools.filter(t => {
-      if (t.name === 'lineage_submit_findings') return false;
-      if (t.tags?.includes('lineage-presentation')) return activePhase === 'synthesis';
-      return t.tags?.includes('lineage');
-    });
+    let lineageTools = filterLmTools(vscode.lm.tools, { kind: 'discover' });
     if (request.command === 'trace') {
       effectivePrompt = buildTracePrompt(request.prompt);
     } else if (request.command === 'search') {
@@ -372,8 +369,10 @@ export class LineageParticipant {
     const resumingInActive = sess.phase.kind === 'exploring' && !!sess.stateMachine;
     if (resumingInActive) {
       activePhase = 'active';
-      lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
-      this.logger.info(`[Phase] idle → active (gate-resume) — tools: submit_findings, get_ddl_batch`);
+      const engine = sess.stateMachine!;
+      const mode = activeModeOf(engine.inlineMode === true, engine.columnAspect !== null);
+      lineageTools = filterLmTools(vscode.lm.tools, { kind: 'active', mode });
+      this.logger.info(`[Phase] idle → active (gate-resume) — mode=${mode} tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
     }
     let systemPrompt = buildStageSystemPrompt(resumingInActive ? 'active' : 'discover');
 
@@ -615,8 +614,10 @@ export class LineageParticipant {
         const hasStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
         if (hasStart && activePhase === 'discover') {
           activePhase = 'active';
-          lineageTools = vscode.lm.tools.filter(t => t.name === 'lineage_submit_findings' || t.name === 'lineage_get_ddl_batch');
-          this.logger.info(`[Phase] discover → active — tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
+          const engine = sess.stateMachine!;
+          const mode = activeModeOf(engine.inlineMode === true, engine.columnAspect !== null);
+          lineageTools = filterLmTools(vscode.lm.tools, { kind: 'active', mode });
+          this.logger.info(`[Phase] discover → active — mode=${mode} tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
           invalidateStablePart();
           systemPrompt = buildStageSystemPrompt('active');
           messages[0] = vscode.LanguageModelChatMessage.User(systemPrompt);
@@ -624,11 +625,7 @@ export class LineageParticipant {
 
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
           activePhase = 'synthesis';
-          lineageTools = vscode.lm.tools.filter(t => {
-            if (t.name === 'lineage_submit_findings') return false;
-            if (t.tags?.includes('lineage-presentation')) return true; // Enabled in synthesis
-            return t.tags?.includes('lineage');
-          });
+          lineageTools = filterLmTools(vscode.lm.tools, { kind: 'synthesis' });
           this.logger.info(`[Phase] active → synthesis — SM complete, restored ${lineageTools.length} tools including presentation`);
           if (sess.stateMachine.inlineMode && sess.classification) {
             writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification]}\n\n`);

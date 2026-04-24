@@ -236,8 +236,8 @@ export function getNodeDdl(
  * @returns A record containing the focus node's metadata.
  */
 /** Per-node DDL character cap for hop focus delivery. Verbose utility/log procs (LogMessage etc.)
- *  can balloon a hop payload 5x+; cap them and instruct the AI to fetch the full DDL on-demand
- *  via get_ddl_batch if the context is insufficient. */
+ *  can balloon a hop payload 5x+; cap them and let the AI write its verdict from the truncated
+ *  portion. In inline mode the AI can refetch via get_ddl_batch; in SM the truncation is terminal. */
 const HOP_DDL_CHAR_CAP = 8000;
 
 export function buildHopFocusNode(
@@ -257,7 +257,7 @@ export function buildHopFocusNode(
       focusNode[ddlKey] = ddl.slice(0, HOP_DDL_CHAR_CAP) + '\n-- …DDL truncated…';
       focusNode.ddl_truncated = true;
       focusNode.ddl_original_chars = ddl.length;
-      focusNode.ddl_hint = `DDL truncated at ${HOP_DDL_CHAR_CAP} chars (original ${ddl.length}). Call get_ddl_batch with this node id if the truncated portion is material to the analysis.`;
+      focusNode.ddl_hint = `DDL truncated at ${HOP_DDL_CHAR_CAP} chars (original ${ddl.length}). Write your verdict from the visible portion; note the truncation in detail_analysis if material.`;
     } else {
       focusNode[ddlKey] = ddl;
     }
@@ -870,7 +870,7 @@ export function runBfsTrace(
         ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
     }
 
-    // Exceeds budget — return without DDL, hint to use follow-up tools or start_trace
+    // Exceeds budget — return structure without DDL. Scope this large belongs in start_exploration.
     const nodesLight = filteredIds.map(nid =>
       attachDdl(buildNodeBase(nid), nodeMap.get(nid), false, undefined, store));
     return {
@@ -882,7 +882,6 @@ export function runBfsTrace(
       total_edges: allEdges.length,
       scope_ddl_chars: totalChars,
       budget_tokens: getEffectiveBudget(),
-      ai_hint: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_exploration for hop-by-hop analysis. Do NOT ask the user — pick the best approach.',
       ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }),
     };
   }

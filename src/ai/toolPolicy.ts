@@ -1,0 +1,117 @@
+/**
+ * Canonical tool × phase policy for the @lineage chat participant.
+ *
+ * Single source of truth for which LM tools are exposed in which phase / mode.
+ * Keeps the tool-set rules out of the participant's request loop (where the
+ * same filter expression was duplicated across four call sites).
+ *
+ * @remarks
+ * Policy:
+ *
+ * | Stage                     | Tools                                                                                            |
+ * |---------------------------|--------------------------------------------------------------------------------------------------|
+ * | `discover`                | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, start_exploration |
+ * | `active` (inline_bb)      | submit_findings, get_ddl_batch                                                                   |
+ * | `active` (sm_bb / sm_ct)  | submit_findings, get_object_detail                                                               |
+ * | `synthesis`               | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, present_result |
+ *
+ * Deliberately excluded from every LM phase: `lineage_get_neighborhood` — it
+ * overlaps `start_exploration` (BFS + DDL without engine supervision) and
+ * drove the 2026-04-24 DISCOVERY-routing regression. The tool remains registered
+ * so panel / webview / engine callers that invoke it directly are unaffected.
+ */
+
+/** Mode variant of the ACTIVE phase. */
+export type ActiveMode = 'inline_bb' | 'sm_bb' | 'sm_ct';
+
+/**
+ * Discriminated stage descriptor passed to {@link getAllowedLmToolNames} /
+ * {@link filterLmTools}. `active` requires `mode` at compile time — callers
+ * cannot forget it.
+ */
+export type LmStage =
+  /** Idle / ad-hoc question answering. No state machine active. */
+  | { kind: 'discover' }
+  /** Hop loop. `mode` scopes the tool set to inline BB, SM BB, or SM CT. */
+  | { kind: 'active'; mode: ActiveMode }
+  /** Post-agenda-drain report authoring. */
+  | { kind: 'synthesis' };
+
+/** Tools visible when the session is idle or answering ad-hoc questions. */
+const DISCOVERY_TOOLS: readonly string[] = [
+  'lineage_get_context',
+  'lineage_search_objects',
+  'lineage_search_ddl',
+  'lineage_get_object_detail',
+  'lineage_detect_graph_patterns',
+  'lineage_start_exploration',
+];
+
+/** Tools visible when authoring the final report. */
+const SYNTHESIS_TOOLS: readonly string[] = [
+  'lineage_get_context',
+  'lineage_search_objects',
+  'lineage_search_ddl',
+  'lineage_get_object_detail',
+  'lineage_detect_graph_patterns',
+  'lineage_present_result',
+];
+
+/**
+ * Exhaustiveness helper — forces the compiler to flag an un-handled `kind`
+ * when a new variant is added to {@link LmStage}.
+ */
+function assertNever(x: never): never {
+  throw new Error(`toolPolicy: unhandled LmStage variant: ${JSON.stringify(x)}`);
+}
+
+/**
+ * Returns the set of LM tool names allowed in the given stage.
+ *
+ * @param stage - Discriminated stage descriptor. For ACTIVE, `mode` selects
+ *   the tool scope (inline BB vs SM BB/CT).
+ */
+export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
+  switch (stage.kind) {
+    case 'discover':
+      return new Set(DISCOVERY_TOOLS);
+    case 'synthesis':
+      return new Set(SYNTHESIS_TOOLS);
+    case 'active': {
+      const tools: string[] = ['lineage_submit_findings'];
+      if (stage.mode === 'inline_bb') {
+        tools.push('lineage_get_ddl_batch');
+      } else {
+        tools.push('lineage_get_object_detail');
+      }
+      return new Set(tools);
+    }
+    default:
+      return assertNever(stage);
+  }
+}
+
+/**
+ * Derives the ACTIVE-mode tag from the navigation engine's state flags.
+ *
+ * @param inlineMode - `engine.inlineMode` — true iff the engine is in True Inline mode.
+ * @param hasColumnAspect - Whether `engine.columnAspect !== null` (column-trace mode).
+ */
+export function activeModeOf(inlineMode: boolean, hasColumnAspect: boolean): ActiveMode {
+  if (inlineMode) return 'inline_bb';
+  return hasColumnAspect ? 'sm_ct' : 'sm_bb';
+}
+
+/**
+ * Filters a list of registered LM tools down to the set allowed in the given stage.
+ *
+ * @param allTools - `vscode.lm.tools` or any equivalent list with a `.name` property.
+ * @param stage - Discriminated stage descriptor.
+ */
+export function filterLmTools<T extends { name: string }>(
+  allTools: readonly T[],
+  stage: LmStage,
+): T[] {
+  const allowed = getAllowedLmToolNames(stage);
+  return allTools.filter(t => allowed.has(t.name));
+}
