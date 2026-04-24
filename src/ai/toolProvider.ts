@@ -164,16 +164,13 @@ class ToolHandler {
         exclusionPatterns: filter.exclusionPatterns || [],
       };
 
-      const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-      const maxRounds = aiCfg.get<number>('maxRounds', 50);
-
       const engineLog = (l: 'info' | 'debug' | 'warn' | 'trace', msg: string) => {
         const line = `[Engine] ${msg}`;
         if (l === 'debug' || l === 'trace') this.logger.debug(line);
         else if (l === 'warn') this.logger.warn(line);
         else this.logger.info(line);
       };
-      const engine = new NavigationEngine(m, g, engineLog, { activeFilter, memory: sess.memory, maxDeferred: maxRounds }, sess.columnStore);
+      const engine = new NavigationEngine(m, g, engineLog, { activeFilter, memory: sess.memory }, sess.columnStore);
       
       engine.sessionId = sess.id;
       sess.stateMachine = engine;

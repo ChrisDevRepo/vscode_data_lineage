@@ -749,15 +749,15 @@ export class LineageParticipant {
             writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
           }
           // Out-of-scope routes proposed during the hop loop were deferred, not dropped.
-          // Surface them as a single inline button so the user can open a QuickPick and
-          // continue exploration in a fresh `@lineage` turn.
+          // Surface them as a single inline button; clicking pre-fills the chat input
+          // with the full list so the user picks their own next move — no auto-task.
           const deferred = sess.stateMachine!.deferredQuestions;
           if (deferred.length > 0) {
             const unique = new Map<string, (typeof deferred)[number]>();
             for (const d of deferred) if (!unique.has(d.nodeId)) unique.set(d.nodeId, d);
             writer.button({
               command: 'dataLineageViz.showDeferredQuestions',
-              title: `$(question) Explore ${unique.size} deferred question${unique.size === 1 ? '' : 's'}`,
+              title: `$(question) Show ${unique.size} deferred question${unique.size === 1 ? '' : 's'}`,
               arguments: [Array.from(unique.values())],
             });
           }

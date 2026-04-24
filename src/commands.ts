@@ -3,7 +3,7 @@ import * as path from 'path';
 import { z } from 'zod';
 import { type AiSession } from './ai/session';
 import { DeferredQuestionSchema } from './ai/smTypes';
-import { buildDeferredQuestionPrompt } from './ai/prompts';
+import { buildDeferredQuestionsPrompt } from './ai/prompts';
 import { getActivePanel } from './panelProvider';
 import { Logger, trunc } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
@@ -15,7 +15,7 @@ import { searchCatalog, type SearchableNode } from './utils/modelSearch';
  * The command is invoked from a `stream.button` in a chat response and from
  * test harnesses, both of which cross a trust boundary. Validate the full
  * payload with Zod so a malformed entry surfaces as a diagnostic rather than
- * an exception during QuickPick construction.
+ * an exception during prompt construction.
  */
 const DeferredQuestionArgSchema = z.array(DeferredQuestionSchema).min(1);
 
@@ -179,16 +179,16 @@ export function registerCommands(
     }),
 
     /**
-     * Opens a QuickPick listing deferred (out-of-approved-scope) sub-questions the
-     * engine collected during an SM session. Selecting one opens a new chat turn
-     * asking `@lineage` to investigate the specific node; its schema is surfaced so
-     * the user can widen scope.
+     * Pre-fills the chat input with the full list of deferred (out-of-approved-scope)
+     * sub-questions the engine collected during an SM session. The user trims the list
+     * to whatever they want to pursue and sends manually — the command starts no task.
      *
      * @remarks
      * Invoked from the `stream.button` emitted after a successful synthesis
-     * (see `LineageParticipant.dispatchExit`) and potentially from integration
-     * tests. The argument is validated via {@link DeferredQuestionArgSchema};
-     * a malformed payload is logged and silently skipped rather than throwing.
+     * (see `LineageParticipant.dispatchExit`). The argument is validated via
+     * {@link DeferredQuestionArgSchema}; a malformed payload is logged and silently
+     * skipped rather than throwing. Uses `workbench.action.chat.open` with
+     * `isPartialQuery: true` so the input text is not auto-submitted.
      */
     vscode.commands.registerCommand('dataLineageViz.showDeferredQuestions', async (raw: unknown) => {
       const parsed = DeferredQuestionArgSchema.safeParse(raw);
@@ -196,21 +196,11 @@ export function registerCommands(
         aiLogger.warn(`showDeferredQuestions: ignoring malformed argument — ${parsed.error.issues.map(i => i.message).join('; ')}`);
         return;
       }
-      const entries = parsed.data;
-      const items = entries.map(d => ({
-        label: `$(question) ${d.nodeId}`,
-        description: d.schema ? `schema: ${d.schema}` : undefined,
-        detail: d.question ? `${d.question}  — referenced from ${d.fromFocusNodeId}` : `(no sub-question recorded) — referenced from ${d.fromFocusNodeId}`,
-        data: d,
-      }));
-      const picked = await vscode.window.showQuickPick(items, {
-        matchOnDescription: true,
-        matchOnDetail: true,
-        placeHolder: `${entries.length} deferred question${entries.length === 1 ? '' : 's'} — pick one to investigate`,
-      });
-      if (!picked) return;
-      vscode.commands.executeCommand('workbench.action.chat.open', {
-        query: buildDeferredQuestionPrompt(picked.data),
+      // Pre-fill the chat input with the full list. `isPartialQuery: true` keeps it unsent
+      // so the user can trim to one question and decide when to send — no auto-task.
+      await vscode.commands.executeCommand('workbench.action.chat.open', {
+        query: buildDeferredQuestionsPrompt(parsed.data),
+        isPartialQuery: true,
       });
     }),
 

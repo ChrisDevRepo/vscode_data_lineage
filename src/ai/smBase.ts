@@ -161,8 +161,6 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly edgeTypeMap: Map<string, string>;
   /** Memory manager for state retention. */
   protected readonly memory: AiMemoryManager;
-  /** Ceiling on the SM deferred-questions bucket — aligns with VS Code maxRounds setting. */
-  protected readonly maxDeferred: number;
 
   /** Optional session identifier for tracking logs across rounds. */
   public sessionId?: string;
@@ -200,6 +198,9 @@ export class NavigationEngine implements IHopStateMachine {
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
   /** Flag for enabling detail-length and premature-completion guards. */
   protected qualityGuards = true;
+
+  /** Exploration direction set by `init`; consulted by `enqueueHop` when contracting reference nodes. */
+  protected _direction: 'upstream' | 'downstream' | 'bidirectional' = 'bidirectional';
 
   /** Schemas (lower-cased) in the user's active filter — the initial allowlist for route validation. */
   protected userSchemas: Set<string> = new Set();
@@ -246,7 +247,6 @@ export class NavigationEngine implements IHopStateMachine {
       activeFilter?: SerializedFilterState | null;
       memory?: AiMemoryManager;
       qualityGuards?: boolean;
-      maxDeferred?: number;
     },
     store?: ColumnStore | null,
   ) {
@@ -257,7 +257,6 @@ export class NavigationEngine implements IHopStateMachine {
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.memory = config.memory ?? new AiMemoryManager();
-    this.maxDeferred = config.maxDeferred ?? 50;
     if (config.qualityGuards === false) {
       this.qualityGuards = false;
     }
@@ -317,14 +316,13 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * Deduplicates on `(nodeId, fromFocusNodeId)`: a later deferral for the same pair
-   * replaces the earlier one (latest `atHop` and `question` win). Hard-capped at
-   * {@link MAX_DEFERRED}; beyond the cap new entries are dropped and a log line is
-   * emitted. Also records a rejection in memory so `recent_rejections` reflects the
-   * same event — DRY with the inline gate path.
+   * replaces the earlier one (latest `atHop` and `question` win). Otherwise appends
+   * unconditionally — no ceiling. Also records a rejection in memory so
+   * `recent_rejections` reflects the same event — DRY with the inline gate path.
    *
    * @param entry - Fully-populated deferral record. Internal callers pass typed values;
    *   the participant boundary validates external payloads via `DeferredQuestionSchema`.
-   * @returns The index of the stored entry (new or replaced), or `-1` if dropped at the ceiling.
+   * @returns The index of the stored entry (new or replaced).
    */
   protected deferQuestion(entry: DeferredQuestion): number {
     const existing = this._deferredQuestions.findIndex(
@@ -334,10 +332,6 @@ export class NavigationEngine implements IHopStateMachine {
       this._deferredQuestions[existing] = entry;
       this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
       return existing;
-    }
-    if (this._deferredQuestions.length >= this.maxDeferred) {
-      this.log('warn', `[deferQuestion] maxDeferred=${this.maxDeferred} reached; dropping ${entry.nodeId}`);
-      return -1;
     }
     this._deferredQuestions.push(entry);
     this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
@@ -532,21 +526,12 @@ export class NavigationEngine implements IHopStateMachine {
     const excluded = Array.from(this.excludedTypes).join(',') || 'none';
     this.log('debug', `[BFS] origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excluded}]`);
 
-    // Bipartite agenda rule: only bodied nodes (view / procedure / function) take a hop.
-    // Tables and other body-less nodes stay in scope (routable, inspectable via get_neighbor_columns)
-    // but never the focus of an analysis hop — they have structure, not logic.
-    if (SCRIPT_TYPES.has(originNode.type)) {
-      this.agenda.push({
-        nodeId: originNode.id,
-        question: `Root Question: ${params.question}`,
-        priority: 3,
-        depth: 0,
-        activeColumns: params.targetColumns
-      });
-      this.agendaIds.add(originNode.id);
-    }
-
-    this.seedAgenda(originNode.id, params.direction || 'bidirectional', params.targetColumns);
+    this._direction = params.direction || 'bidirectional';
+    // Bipartite agenda rule: `enqueueHop` is the only code path that writes to the agenda.
+    // It pushes bodied nodes directly and contracts body-less nodes through to their bodied
+    // neighbors in the current exploration direction. Invariant holds by construction.
+    this.enqueueHop(originNode.id, `Root Question: ${params.question}`, 0, 3, params.targetColumns);
+    this.seedAgenda(originNode.id, this._direction, params.targetColumns);
     this._status = 'initialized';
 
     return {

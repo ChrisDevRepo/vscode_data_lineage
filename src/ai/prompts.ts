@@ -209,22 +209,28 @@ export function buildTracePrompt(userInput: string): string {
 }
 
 /**
- * Builds the chat prompt used when the user picks a deferred (out-of-scope)
- * question from the post-synthesis QuickPick.
+ * Builds the chat-input pre-fill used when the user clicks the post-synthesis
+ * "Show N deferred question(s)" button.
  *
  * @remarks
- * Kept here (and not inline in {@link ../commands.ts}) so every caller renders
- * the same phrasing — the prompt is the only place the AI learns the target
- * schema needs to be included in scope, so drift here silently changes
- * exploration behavior.
+ * Renders EVERY deferred question as a numbered markdown list with schema, source
+ * focus node, and defer reason so the user can scan them in the chat input,
+ * keep the line(s) they want to pursue, delete the rest, and send. The button
+ * command passes this text via `workbench.action.chat.open` with
+ * `isPartialQuery: true`, so nothing is submitted until the user presses Enter.
  *
- * @param entry - A validated deferred-question entry from the engine.
- * @returns The chat-line string to pass to `workbench.action.chat.open`.
+ * @param entries - Validated deferred-question entries from the engine.
+ * @returns The multiline string to pre-fill into the chat input.
  */
-export function buildDeferredQuestionPrompt(entry: DeferredQuestion): string {
-  const question = entry.question ? entry.question : `Investigate ${entry.nodeId}`;
-  const schemaHint = entry.schema ? ` — include schema '${entry.schema}' in the scope` : '';
-  return `@lineage Investigate ${entry.nodeId}: ${question}${schemaHint}.`;
+export function buildDeferredQuestionsPrompt(entries: ReadonlyArray<DeferredQuestion>): string {
+  const header = `@lineage I'd like to follow up on these deferred out-of-scope questions from the previous exploration. Keep the line(s) you want to investigate, delete the rest, then send:`;
+  const lines = entries.map((d, i) => {
+    const question = d.question?.trim() || `Investigate ${d.nodeId}`;
+    const schema = d.schema ? ` [schema: ${d.schema}]` : '';
+    const from = ` (from ${d.fromFocusNodeId}, reason: ${d.reason})`;
+    return `${i + 1}. ${d.nodeId}${schema} — ${question}${from}`;
+  });
+  return `${header}\n\n${lines.join('\n')}`;
 }
 
 /** 
