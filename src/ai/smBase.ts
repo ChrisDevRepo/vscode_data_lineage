@@ -889,22 +889,14 @@ export class NavigationEngine implements IHopStateMachine {
           const nid = req.nodeId.toLowerCase();
           if (!acceptedNids.has(nid)) continue;
 
-          const existingEntry = this.agenda.find(e => e.nodeId === nid);
-          if (existingEntry) {
-            // BEST PRACTICE: Task Aggregation
-            // If the node is already queued, merge the new question and columns 
-            // so the AI addresses both reasons for the visit.
-            if (!existingEntry.question.includes(req.question)) {
-              existingEntry.question += ` | ${req.question}`;
-            }
-            if (req.columns) {
-              existingEntry.activeColumns = Array.from(new Set([...(existingEntry.activeColumns || []), ...req.columns]));
-            }
-          } else if (!this.visited.has(nid) && !this.removedSet.has(nid)) {
-            this.agenda.push({ nodeId: nid, question: req.question, priority: 2, depth: 0, activeColumns: req.columns });
-            this.agendaIds.add(nid);
-            this.lastRoutedNew++;
-          }
+          // Route enqueue funnels through the bipartite rule. For bodied targets
+          // the funnel merges into existing entries (task aggregation) or pushes
+          // a new entry. For non-bodied targets (tables, externals) it contracts
+          // the edge and forwards the proc's authored question to the target's
+          // bodied neighbors in the exploration direction.
+          const agendaSizeBefore = this.agenda.length;
+          this.enqueueHop(nid, req.question, 0, 2, req.columns);
+          this.lastRoutedNew += Math.max(0, this.agenda.length - agendaSizeBefore);
         }
       }
 
@@ -1002,13 +994,68 @@ export class NavigationEngine implements IHopStateMachine {
   private seedAgenda(originId: string, direction: string, targetCols?: string[]): void {
     const neighbors = direction === 'upstream' ? this.graph.inNeighbors(originId) : direction === 'downstream' ? this.graph.outNeighbors(originId) : this.graph.neighbors(originId);
     for (const nid of neighbors as string[]) {
-      if (!this.scopeNodeIds.has(nid) || this.agendaIds.has(nid)) continue;
-      // Bipartite agenda rule (see init): skip body-less nodes. They stay in scope
-      // but are not hop targets — procs / views / bodied UDFs carry the analysis work.
-      const neighbor = this.nodeMap.get(nid);
-      if (!neighbor || !SCRIPT_TYPES.has(neighbor.type)) continue;
-      this.agenda.push({ nodeId: nid, question: `Analyze relationship to ${originId}`, priority: 0, depth: 1, activeColumns: targetCols });
-      this.agendaIds.add(nid);
+      this.enqueueHop(nid, `Analyze relationship to ${originId}`, 1, 0, targetCols);
+    }
+  }
+
+  /**
+   * Single funnel for all writes to the agenda.
+   *
+   * @remarks
+   * Enforces the **bipartite agenda rule** by construction: only bodied nodes
+   * (view / procedure / function) enter the agenda. Non-bodied nodes (tables,
+   * externals) are *contracted* — the authored question flows through them to
+   * their bodied neighbors in the current exploration direction, preserving the
+   * caller's intent.
+   *
+   * Cycle guard: `visitedRefs` prevents infinite recursion on graphs with
+   * reference-to-reference edges (e.g. a table that references another table).
+   *
+   * @param targetId - Node to enqueue (or contract).
+   * @param question - Authored reason / sub-question for the visit. Preserved verbatim when forwarded.
+   * @param depth - Topological depth relative to origin.
+   * @param priority - Agenda priority (0 = BFS, 2 = routed, 3 = origin).
+   * @param columns - Optional columns of interest (column-trace mode).
+   * @param visitedRefs - Internal cycle guard for the recursive contraction step.
+   */
+  private enqueueHop(
+    targetId: string,
+    question: string,
+    depth: number,
+    priority: number,
+    columns?: string[],
+    visitedRefs: Set<string> = new Set(),
+  ): void {
+    if (!this.scopeNodeIds.has(targetId) && priority !== 3) return;
+    if (this.visited.has(targetId) || this.removedSet.has(targetId)) return;
+    const node = this.nodeMap.get(targetId);
+    if (!node) return;
+
+    if (SCRIPT_TYPES.has(node.type)) {
+      // Bodied node — push directly (or merge into existing entry).
+      const existing = this.agenda.find(e => e.nodeId === targetId);
+      if (existing) {
+        if (!existing.question.includes(question)) existing.question += ` | ${question}`;
+        if (columns) existing.activeColumns = Array.from(new Set([...(existing.activeColumns ?? []), ...columns]));
+        return;
+      }
+      this.agenda.push({ nodeId: targetId, question, priority, depth, activeColumns: columns });
+      this.agendaIds.add(targetId);
+      return;
+    }
+
+    // Non-bodied (table, external). Contract the edge: forward the authored
+    // question to the target's bodied neighbors in the exploration direction.
+    if (visitedRefs.has(targetId)) return;
+    visitedRefs.add(targetId);
+    const dir = this._direction;
+    const next = dir === 'upstream'
+      ? (this.graph.inNeighbors(targetId) as string[])
+      : dir === 'downstream'
+        ? (this.graph.outNeighbors(targetId) as string[])
+        : (this.graph.neighbors(targetId) as string[]);
+    for (const nid of next) {
+      this.enqueueHop(nid, question, depth + 1, priority, columns, visitedRefs);
     }
   }
 

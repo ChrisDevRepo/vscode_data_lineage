@@ -8,6 +8,26 @@ This guide is for Super Power Users who want to understand the conceptual framew
 - **The Router (Semantic)**: Managed by the AI. It analyzes the DDL of the current node to answer a specific **Sub-Question**, updates the **Blackboard**, and requests the next **Route** to relevant neighbors.
 - **Selection-Inference Validation**: Ensures the AI only requests routes to valid, existing columns and nodes.
 
+## Bipartite Analysis Model
+
+The analysis engine treats the data-lineage graph as a **bipartite work graph**: only bodied nodes (views, procedures, functions with a body) carry logic that the AI can analyze. Tables have structure (columns, FKs) but no body — they are **pipes**, not work.
+
+- **Agenda** — only bodied nodes. Each hop analyzes one body.
+- **Scope** — every reachable node including tables. Tables remain routable, referenceable, and inspectable via `get_neighbor_columns`.
+- **Edge contraction** — when a bodied node routes to a table, the authored question flows *through* the table to the table's bodied neighbors in the exploration direction. The proc's intent reaches the real consumers unchanged.
+
+### Walkthrough — `sp → table → {viewA, viewB}` (downstream)
+
+1. `sp` analyzes. `route_requests: [{nodeId: table, question: "how are col1/col2 consumed downstream?"}]`.
+2. Engine sees the target is a table. It forwards sp's question verbatim to the table's downstream bodied neighbors: `viewA` and `viewB`.
+3. `viewA` and `viewB` each land on the agenda with sp's authored question.
+4. The AI analyzes each from its own body, answering sp's question with real evidence.
+5. Table never appears as a hop focus. Zero invented prose, zero lost intent.
+
+This pattern mirrors Petri nets (transitions fire, places are passive), Weiser's program slicing (slice at statements, not variables), and Dennis's bipartite dataflow graphs (actors compute, links carry values).
+
+The invariant is enforced by a single funnel — `enqueueHop` in [`src/ai/smBase.ts`](../src/ai/smBase.ts) — which is the only code path that writes to the agenda. By construction, a non-bodied node can never become a hop target.
+
 ## Engineering Standards
 As foundational mandates for the AI Assistant:
 - **Zod Validation**: IPC bridge validation, tool inputs, and extension host boundaries must strictly use `zod` for strong type safety, runtime validation, and security.
