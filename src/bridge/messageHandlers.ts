@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as os from 'os';
 import { type AiSession } from '../ai/session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { type BridgeHost } from './host';
@@ -402,6 +403,7 @@ export function createMessageHandlers(
       const sess = getSession();
       sess.filter = msg.filter;
       sess.views = msg.savedViews;
+      sess.traceState = msg.traceState;
     },
     'db-connect': () => {
       host.log('info', 'Bridge', 'Database connect requested');
@@ -747,6 +749,26 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add('ENVIRONMENT');
   add(`  Extension:    ${version}`);
   add(`  VS Code:      ${vscode.version}`);
+  add(`  OS:           ${os.type()} ${os.release()} (${os.arch()})`);
+  add('');
+  add('SETTINGS (dataLineageViz.*)');
+  try {
+    const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+    // Using JSON.stringify on the config object directly often results in empty objects in VS Code's proxy objects.
+    // We'll manually pull the core sections for the dump.
+    const dumpCfg = {
+      maxNodes: cfg.get('maxNodes'),
+      renderLimit: cfg.get('renderLimit'),
+      layout: cfg.get('layout'),
+      trace: cfg.get('trace'),
+      analysis: cfg.get('analysis'),
+      externalRefs: cfg.get('externalRefs'),
+      overview: cfg.get('overview'),
+    };
+    add(JSON.stringify(dumpCfg, null, 2));
+  } catch (err) {
+    add(`  Error reading settings: ${err}`);
+  }
   add('');
   add('DATA SOURCE');
   if (!sess.model) {
@@ -758,6 +780,12 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add(`  Nodes:        ${sess.model.nodes.length}`);
     add(`  Edges:        ${sess.model.edges.length}`);
   }
+  add('');
+  add('GUI STATE');
+  add('  Filter:');
+  add(sess.filter ? JSON.stringify(sess.filter, null, 2).split('\n').map(l => `    ${l}`).join('\n') : '    (none)');
+  add('  Trace:');
+  add(sess.traceState ? JSON.stringify(sess.traceState, null, 2).split('\n').map(l => `    ${l}`).join('\n') : '    (none)');
   add('');
   add('AI SESSION');
   add(`  Session ID:     ${sess.id}`);

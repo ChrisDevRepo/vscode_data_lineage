@@ -33,6 +33,8 @@ export class AiSession {
   public filter: SerializedFilterState | null = null;
   /** List of saved filter profiles (views) for the current project. */
   public views: FilterProfile[] = [];
+  /** The current trace/analysis state of the GUI. */
+  public traceState: any = null;
   /** Human-readable name of the active project. */
   public projectName: string | null = null;
   /** Persistent identifier for the current project. */

@@ -294,7 +294,7 @@ export const WebviewToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('load-demo') }),
   z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
   z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
-  z.object({ type: z.literal('filter-changed'), filter: z.any(), savedViews: z.any(), filteredCount: z.number().optional(), renderLimitHit: z.number().optional() }),
+  z.object({ type: z.literal('filter-changed'), filter: z.any(), savedViews: z.any(), traceState: z.any().optional(), filteredCount: z.number().optional(), renderLimitHit: z.number().optional() }),
   z.object({ type: z.literal('db-connect') }),
   z.object({ type: z.literal('check-mssql') }),
   z.object({ type: z.literal('save-view'), projectId: z.string(), profile: z.any() }),

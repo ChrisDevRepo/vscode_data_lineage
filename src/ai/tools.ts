@@ -157,7 +157,7 @@ export function validateToolInput(
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
 const COLUMN_SEARCH_LIMIT = 50;
-const PRESENT_RESULT_NAME_MAX_LENGTH = 60;
+const PRESENT_RESULT_NAME_MAX_LENGTH = 200;
 const PRESENT_RESULT_SUMMARY_HARD_LIMIT = 300;
 
 /**

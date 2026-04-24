@@ -1049,9 +1049,18 @@ export function App() {
   useEffect(() => {
     if (!model) return;
     const { searchTerm: _, ...filterForHost } = serializeFilter(filter);
-    vscodeApi.postMessage({ type: 'filter-changed', filter: filterForHost, savedViews: filterProfiles, filteredCount, renderLimitHit });
+    const traceForHost = {
+      mode: trace.mode,
+      selectedNodeId: trace.selectedNodeId,
+      targetNodeId: trace.targetNodeId,
+      upstreamLevels: trace.upstreamLevels,
+      downstreamLevels: trace.downstreamLevels,
+      analysisType: trace.analysisType,
+      autoPromoted: trace.autoPromoted,
+    };
+    vscodeApi.postMessage({ type: 'filter-changed', filter: filterForHost, savedViews: filterProfiles, traceState: traceForHost, filteredCount, renderLimitHit });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKeyForHost, filterProfiles, model, vscodeApi]);
+  }, [filterKeyForHost, filterProfiles, model, vscodeApi, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted]);
 
   const isViewModified = useMemo(() => {
     if (!activeViewId) return false;

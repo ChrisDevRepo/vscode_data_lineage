@@ -5,7 +5,7 @@ import { type AiSession } from './ai/session';
 import { DeferredQuestionSchema } from './ai/smTypes';
 import { buildDeferredQuestionsPrompt } from './ai/prompts';
 import { getActivePanel } from './panelProvider';
-import { Logger, trunc } from './utils/log';
+import { Logger } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 
 /**
@@ -153,13 +153,15 @@ export function registerCommands(
         const notes = (rg.notes ?? [])
           .filter(n => n.summary)
           .map(n => ({ nodeId: n.nodeId, text: n.summary }));
-        const name = trunc(originalPrompt || 'AI Lineage View', 80);
+        const name = (originalPrompt || 'AI Lineage View').length > 200 
+          ? (originalPrompt || 'AI Lineage View').slice(0, 200) + '\u2026'
+          : (originalPrompt || 'AI Lineage View');
         panel.webview.postMessage({
           type: 'ai-view-preview',
           name,
           nodeIds: rg.nodeIds,
           aiMetadata: {
-            summary: sess.lastPresentResultDescription ? '' : `Lineage trace for: ${trunc(originalPrompt || '', 120)}`,
+            summary: sess.lastPresentResultDescription ? '' : `Lineage trace for: ${originalPrompt}`,
             description: sess.lastPresentResultDescription ?? '',
             createdAt: new Date().toISOString(),
             modelName: sess.modelName || 'unknown',
@@ -172,7 +174,7 @@ export function registerCommands(
         panel.reveal(vscode.ViewColumn.One);
         return;
       }
-      const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${trunc(originalPrompt || '', 60)}"`;
+      const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${originalPrompt}"`;
       vscode.commands.executeCommand('workbench.action.chat.open', {
         query: `@lineage ${viewPrompt}`,
       });
