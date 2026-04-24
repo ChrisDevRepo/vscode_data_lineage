@@ -11,8 +11,8 @@
  * | Stage                     | Tools                                                                                            |
  * |---------------------------|--------------------------------------------------------------------------------------------------|
  * | `discover`                | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, start_exploration |
- * | `active` (inline_bb)      | submit_findings, get_ddl_batch                                                                   |
- * | `active` (sm_bb / sm_ct)  | submit_findings, get_object_detail                                                               |
+ * | `active` (inline_bb)      | submit_findings                                                                                  |
+ * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, present_result |
  *
  * Deliberately excluded from every LM phase: `lineage_get_neighborhood` — it
@@ -79,10 +79,10 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
       return new Set(SYNTHESIS_TOOLS);
     case 'active': {
       const tools: string[] = ['lineage_submit_findings'];
-      if (stage.mode === 'inline_bb') {
-        tools.push('lineage_get_ddl_batch');
-      } else {
-        tools.push('lineage_get_object_detail');
+      // Inline BB ships full scope DDL up front via start_exploration → no DDL-fetch tool needed.
+      // SM BB/CT expose get_neighbor_columns for structural-metadata pruning decisions (no DDL).
+      if (stage.mode !== 'inline_bb') {
+        tools.push('lineage_get_neighbor_columns');
       }
       return new Set(tools);
     }

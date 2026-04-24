@@ -149,9 +149,8 @@ export function buildActivePhasePrompt(isInline: boolean): string {
     '',
     '1. ARCHIVE → DEPTH: Your `detail_analysis` is the sole input to the final report. Write at full depth because there is no follow-up pass.',
     '2. ANCHORING: Align every verdict with the <mission_brief> and <current_task>.',
-    '3. COMPLETENESS: If DDL is truncated, use `get_ddl_batch` before finalizing the verdict.',
-    '4. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for transform expressions and calculations.',
-    '5. ROUTE OUTCOMES: Each `submit_findings` tool result carries `route_outcomes[]`. Reference only nodes with `accepted: true` in your detail_analysis. Nodes with `deferred: true` are available as post-synthesis follow-up offers — mention each at most once as "available for follow-up", do not analyze their internals.',
+    '3. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for transform expressions and calculations.',
+    '4. ROUTE OUTCOMES: Each `submit_findings` tool result carries `route_outcomes[]`. Reference only nodes with `accepted: true` in your detail_analysis. Nodes with `deferred: true` are available as post-synthesis follow-up offers — mention each at most once as "available for follow-up", do not analyze their internals.',
   ].join('\n');
 }
 
@@ -253,7 +252,7 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
 /**
  * Constructs the Tool Usage block for the active phase.
  *
- * @returns A string containing the mechanical `submit_findings` and `get_ddl_batch` constraints.
+ * @returns A string containing the mechanical `submit_findings` routing and pruning constraints.
  */
 export function buildToolUsageBlock(): string {
   return [
@@ -337,5 +336,46 @@ export function buildMemoryBlock(
     '<short_term_memory>',
     stmText,
     '</short_term_memory>',
+  ].join('\n');
+}
+
+
+/**
+ * Renders the `<mission_state>` protocol envelope — ACK/WAIT contract between SM
+ * (server) and the AI (client).
+ *
+ * @remarks
+ * Defense-in-depth narrative companion to the mechanical `toolMode.Required`
+ * enforcement. Spells out to the AI, on every hop, which tool-call shapes are
+ * legal and that free-form text is outside protocol. The numeric `hop` and
+ * `agendaRemaining` values are informational; the authoritative session-end
+ * signal is always from the engine (`sm_status === 'complete'`), not from a
+ * model-side interpretation of the envelope.
+ *
+ * Included only in SM active hops (inline-BB is one-shot and does not need the
+ * ACK framing; DISCOVERY and SYNTHESIS use their own protocols).
+ *
+ * @param hop - Current 1-based hop index.
+ * @param total - Total nodes in the BFS scope.
+ * @param agendaRemaining - Nodes still awaiting analysis.
+ * @param legalTools - Names of tools the AI may call this turn (without the `lineage_` prefix).
+ * @returns A string containing the `<mission_state>` block.
+ */
+export function buildMissionStateBlock(
+  hop: number,
+  total: number,
+  agendaRemaining: number,
+  legalTools: readonly string[],
+): string {
+  return [
+    '<mission_state>',
+    `  hop: ${hop} / ${total}`,
+    `  agenda_remaining: ${agendaRemaining}`,
+    `  engine_status: awaiting_findings`,
+    `  expected_reply: submit_findings`,
+    `  legal_replies: [${legalTools.join(', ')}]`,
+    `  session_ends_when: the engine reports sm_status == "complete"`,
+    `  free_text: outside protocol — session continues until the engine terminates it`,
+    '</mission_state>',
   ].join('\n');
 }

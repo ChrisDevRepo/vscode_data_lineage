@@ -60,9 +60,27 @@ VALIDATE_PY = EVAL_DIR / "validate.py"
 
 
 def parse_case(test_id: str) -> dict:
+    """Locate <test-id>.md across the baseline + ad-hoc search roots.
+
+    Order:
+      1. tests/cases/<id>.md                       — locked baseline (committed)
+      2. tests/cases/*/<id>.md                     — nested baseline folders
+      3. test-results/cases/**/<id>.md             — ad-hoc probes (gitignored)
+    """
     path = CASES_DIR / f"{test_id}.md"
     if not path.exists():
-        raise FileNotFoundError(f"Test case not found: {path}")
+        ad_hoc_root = PROJECT_ROOT / "test-results" / "cases"
+        candidates = list(CASES_DIR.glob(f"*/{test_id}.md"))
+        if ad_hoc_root.exists():
+            candidates.extend(ad_hoc_root.rglob(f"{test_id}.md"))
+        if len(candidates) == 1:
+            path = candidates[0]
+        elif len(candidates) > 1:
+            raise FileNotFoundError(
+                f"Ambiguous test-id {test_id}: found in {[str(p) for p in candidates]}"
+            )
+        else:
+            raise FileNotFoundError(f"Test case not found: {path}")
     text = path.read_text(encoding="utf-8", errors="replace")
     question = ""
     followups: list[str] = []

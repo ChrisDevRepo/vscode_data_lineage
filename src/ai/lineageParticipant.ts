@@ -5,7 +5,7 @@ import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import {
   buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
-  buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock,
+  buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
 import { buildModeBlock } from './smPrompts';
@@ -15,7 +15,7 @@ import { NavigationEngine } from './smBase';
 import { RepeatRejectGuard } from './repeatRejectGuard';
 import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
 import { CLASSIFICATION_BANNER } from './classification';
-import { filterLmTools, activeModeOf } from './toolPolicy';
+import { filterLmTools, activeModeOf, getAllowedLmToolNames } from './toolPolicy';
 import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
 import { PerformanceCollector } from './diagnostics';
@@ -355,6 +355,13 @@ export class LineageParticipant {
           const stm = sess.memory.getShortTermMemory();
           const tally = sess.memory.getVerdictCounts();
           dynamic.push(buildMemoryBlock(stm, tally, engine.currentHop, engine.scopeSize));
+          // Protocol envelope (ACK/WAIT contract) — ships on every SM active hop so the AI
+          // sees the legal-reply shape and session-termination rule in structured form.
+          const mode = activeModeOf(false, engine.columnAspect !== null);
+          const legalTools = [...getAllowedLmToolNames({ kind: 'active', mode })]
+            .map(n => n.replace(/^lineage_/, ''));
+          const agendaRemaining = Math.max(0, engine.scopeSize - engine.currentHop);
+          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.scopeSize, agendaRemaining, legalTools));
         }
         return dynamic.filter(Boolean).join('\n');
       };
@@ -507,6 +514,24 @@ export class LineageParticipant {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
         if (!toolCalls.length) {
+          // SM-ACK/WAIT protocol guard: in SM active mode while the engine is still awaiting
+          // findings, a toolless response violates the session contract (`toolMode.Required`
+          // can fall back to Auto when tools.length > 1, so the API cannot enforce this on
+          // its own). Inject a corrective user message and continue the loop; the existing
+          // MAX_ROUNDS cap is the safety net for repeated drift.
+          const engine = sess.stateMachine;
+          const engineAwaiting =
+            !!engine && !engine.inlineMode && (engine.toJSON() as { status?: string }).status === 'awaiting_findings';
+          if (activePhase === 'active' && engineAwaiting) {
+            this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — SM self-terminate blocked; injecting corrective prompt`);
+            if (assistantParts.length > 0) {
+              messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
+            }
+            messages.push(vscode.LanguageModelChatMessage.User(
+              'Free-form responses are outside protocol in SLIDING MEMORY mode. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
+            ));
+            continue;
+          }
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);

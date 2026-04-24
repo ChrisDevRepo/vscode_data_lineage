@@ -235,11 +235,6 @@ export function getNodeDdl(
  * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
  * @returns A record containing the focus node's metadata.
  */
-/** Per-node DDL character cap for hop focus delivery. Verbose utility/log procs (LogMessage etc.)
- *  can balloon a hop payload 5x+; cap them and let the AI write its verdict from the truncated
- *  portion. In inline mode the AI can refetch via get_ddl_batch; in SM the truncation is terminal. */
-const HOP_DDL_CHAR_CAP = 8000;
-
 export function buildHopFocusNode(
   node: LineageNode,
   nodeMap: Map<string, LineageNode>,
@@ -253,14 +248,7 @@ export function buildHopFocusNode(
   const ddl = getNodeDdl(node.id, nodeMap, store);
   const cols = getNodeColumns(node.id, nodeMap, store);
   if (SCRIPT_TYPES.has(node.type) && ddl) {
-    if (ddl.length > HOP_DDL_CHAR_CAP) {
-      focusNode[ddlKey] = ddl.slice(0, HOP_DDL_CHAR_CAP) + '\n-- …DDL truncated…';
-      focusNode.ddl_truncated = true;
-      focusNode.ddl_original_chars = ddl.length;
-      focusNode.ddl_hint = `DDL truncated at ${HOP_DDL_CHAR_CAP} chars (original ${ddl.length}). Write your verdict from the visible portion; note the truncation in detail_analysis if material.`;
-    } else {
-      focusNode[ddlKey] = ddl;
-    }
+    focusNode[ddlKey] = ddl;
   } else if (cols?.length) {
     focusNode.cols = cols.map(c => presentColumnCompact(c));
   }
@@ -587,6 +575,76 @@ export function getObjectDetail(
 
   // Never truncate DDL — zero-truncation guarantee
   return { ...base, ddl, unresolved_refs };
+}
+
+
+/**
+ * Zod schema for `get_neighbor_columns` tool input.
+ *
+ * @remarks
+ * Parsed at the boundary so malformed payloads (e.g. missing `ids`, empty array)
+ * produce a structured validation error instead of crashing the handler.
+ */
+export const GetNeighborColumnsInputSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1),
+});
+
+export type GetNeighborColumnsInput = z.infer<typeof GetNeighborColumnsInputSchema>;
+
+/**
+ * Returns structural metadata (columns + foreign keys) for one or more neighbor nodes.
+ *
+ * @remarks
+ * SM ACTIVE pruning-verification affordance. When a focus procedure's DDL uses a
+ * wildcard reference (e.g. `SELECT * FROM dbo.FactSales`), the AI cannot see the
+ * neighbor's columns from the focus body alone; this tool lets it inspect them
+ * to decide whether the neighbor carries mission-relevant data (prune vs. keep).
+ *
+ * **Scope:** structural metadata only — columns with type/nullability, foreign-key
+ * definitions. Deliberately does **not** return DDL bodies; DDL is reserved for
+ * DISCOVERY (`get_object_detail`) and SYNTHESIS (`get_object_detail`) phases. In
+ * SM hop-by-hop the only DDL the AI sees is the focus node's `bb_ddl`, delivered
+ * by `buildHopFocusNode`.
+ *
+ * **Engine-side validation (caller's responsibility):** ids must be direct
+ * neighbors of the current focus node AND within the active BFS scope. See
+ * `NavigationEngine.validateNeighborIds`.
+ *
+ * @param model - Loaded database model.
+ * @param ids - Node ids to inspect (pre-validated by the engine).
+ * @param store - Optional column store for high-fidelity column data.
+ * @returns `{ results: [...], total }` — one row per input id, columns and FKs only.
+ */
+export function getNeighborColumns(
+  model: DatabaseModel,
+  ids: string[],
+  store?: ColumnStore,
+): object {
+  const nodeMap = buildNodeMap(model);
+  const results = ids.map(id => {
+    const node = nodeMap.get(id);
+    if (!node) {
+      return { id, error: 'not_found' as const };
+    }
+    const cols = getNodeColumns(id, nodeMap, store);
+    const foreignKeys = node.fks?.map(fk => ({
+      name:        fk.name,
+      columns:     fk.columns,
+      ref_schema:  fk.refSchema,
+      ref_table:   fk.refTable,
+      ref_columns: fk.refColumns,
+      on_delete:   fk.onDelete,
+    }));
+    return strip({
+      id:           node.id,
+      schema:       node.schema,
+      name:         node.name,
+      type:         node.type,
+      columns:      cols?.length ? cols.map(c => presentColumn(c)) : undefined,
+      foreign_keys: foreignKeys?.length ? foreignKeys : undefined,
+    } as Record<string, unknown>);
+  });
+  return { results, total: results.length };
 }
 
 // Two modes:
@@ -1510,43 +1568,6 @@ export function validatePresentResult(
     badges: assembledBadges ?? [],
     notes: input.notes ?? [],
   };
-}
-
-/**
- * Retrieves DDL for a batch of object IDs.
- *
- * @remarks
- * This is a high-performance batch retrieval tool. It ensures the AI can retrieve
- * multiple DDL scripts in a single turn without hitting the per-message token cap
- * (if individual scripts are small) or requiring multiple tool calls.
- *
- * @param model - The database model.
- * @param ids - The list of object IDs.
- * @param store - Optional column store for high-fidelity DDL.
- * @returns A list of DDL results, including object types.
- */
-export function getDdlBatch(
-  model: DatabaseModel,
-  ids: string[],
-  store?: import('../engine/columnStore').ColumnStore,
-): object {
-  const nodeMap = buildNodeMap(model);
-
-  // Never truncate — return full DDL for all requested IDs
-  const results = ids.map(id => {
-    const node = nodeMap.get(id);
-    if (!node) {
-      return strip({ id, error: 'not_found' } as Record<string, unknown>);
-    }
-    const rawDdl = store?.getDdl(id) ?? node.bodyScript;
-    if (!rawDdl) {
-      return strip({ id, t: node.type } as Record<string, unknown>);
-    }
-    const ddl = normalizeBodyScript(rawDdl);
-    return strip({ id, t: node.type, ddl } as Record<string, unknown>);
-  });
-
-  return { results, total: results.length };
 }
 
 /**

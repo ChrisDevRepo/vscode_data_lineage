@@ -66,8 +66,8 @@ _None._ or short description.
 
 ## Tool surface today (10 tools)
 
-- Stateless: `lineage_get_context`, `lineage_search_objects`, `lineage_get_object_detail`, `lineage_get_neighborhood`, `lineage_detect_graph_patterns`, `lineage_search_ddl`, `lineage_get_ddl_batch`
-- Stateful SM: `lineage_start_exploration` (optional `targetColumns` → column_trace), `lineage_submit_findings`, `lineage_get_ddl_batch` (active phase), `lineage_present_result` (synthesis phase)
+- Stateless (DISCOVERY + SYNTHESIS): `lineage_get_context`, `lineage_search_objects`, `lineage_get_object_detail` (includes DDL), `lineage_get_neighborhood` (not LM-visible — panel/engine only), `lineage_detect_graph_patterns`, `lineage_search_ddl`
+- Stateful SM: `lineage_start_exploration` (optional `targetColumns` → column_trace), `lineage_submit_findings`, `lineage_get_neighbor_columns` (active phase — structural pruning lookup, no DDL), `lineage_present_result` (synthesis phase)
 
 No separate `start_column_trace` / `submit_batch_*` / `expand_frontier` — the unified `NavigationEngine` handles both modes behind one tool pair.
 

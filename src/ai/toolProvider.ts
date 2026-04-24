@@ -7,10 +7,12 @@ import {
   suggestNarrowerDepth,
   shouldSmInline,
   getContext, searchObjects, getObjectDetail,
-  runBfsTrace, runAnalysis, searchDdl, getDdlBatch,
+  runBfsTrace, runAnalysis, searchDdl,
+  getNeighborColumns,
   validateToolInput,
   StartExplorationInputSchema,
   SubmitFindingsInputSchema,
+  GetNeighborColumnsInputSchema,
   autoFixPresentResult, validatePresentResult, orderAndAssemble,
   type PresentResultInput,
 } from './tools';
@@ -471,14 +473,51 @@ class ToolHandler {
     } catch (err) { return this.toolError('search_ddl', err); }
   }
 
-  public getDdlBatch(input: any) {
+  /**
+   * SM ACTIVE pruning-verification affordance. Returns columns + FKs (no DDL)
+   * for direct neighbors of the current focus node, bounded by the active scope.
+   *
+   * @remarks
+   * Structural contract: ids must be direct neighbors of the current focus AND
+   * within the active BFS scope. `NavigationEngine.validateNeighborIds` enforces
+   * both conditions and returns a structured error on violation — the tool is
+   * never a backdoor for out-of-scope exploration.
+   */
+  public getNeighborColumns(input: any) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
-      const { ids } = input;
-      if (!Array.isArray(ids)) return this.toolResult({ error: 'invalid_input', message: 'ids must be an array' });
-      return this.logAndReturn('get_ddl_batch', getDdlBatch(this.requireModel(), ids, this.getSession().columnStore), input);
-    } catch (err) { return this.toolError('get_ddl_batch', err); }
+      const sess = this.getSession();
+      const engine = sess.stateMachine as NavigationEngine | null;
+      if (!engine) {
+        return this.logAndReturn('get_neighbor_columns', {
+          error: 'no_active_session',
+          hint: 'This tool is only available during an active SM exploration. Call start_exploration first.',
+        }, input);
+      }
+
+      const parsed = GetNeighborColumnsInputSchema.safeParse(input);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        const field = issue?.path?.join('.') || '(root)';
+        return this.logAndReturn('get_neighbor_columns', {
+          error: 'invalid_input',
+          hint: `Invalid get_neighbor_columns input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: ids (non-empty array of node IDs).`,
+        }, input);
+      }
+
+      const invalidIds = engine.validateNeighborIds(parsed.data.ids);
+      if (invalidIds.length > 0) {
+        return this.logAndReturn('get_neighbor_columns', {
+          error: 'out_of_scope_or_not_neighbor',
+          invalid_ids: invalidIds,
+          hint: `These ids are not direct neighbors of the current focus node and/or not in the active scope: ${invalidIds.join(', ')}. This tool only inspects direct neighbors for pruning verification.`,
+        }, input);
+      }
+
+      return this.logAndReturn('get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
+    } catch (err) { return this.toolError('get_neighbor_columns', err); }
   }
+
 }
 
 /**
@@ -557,9 +596,12 @@ export function registerAiTools(
       invoke(options, _token) { return handler.searchDdl(options.input); },
     }),
 
-    vscode.lm.registerTool('lineage_get_ddl_batch', {
-      prepareInvocation(options, _token) { return { invocationMessage: `Fetching DDL for ${(options.input as any).ids?.length ?? 0} objects…` }; },
-      invoke(options, _token) { return handler.getDdlBatch(options.input); },
+    vscode.lm.registerTool('lineage_get_neighbor_columns', {
+      prepareInvocation(options, _token) {
+        const n = (options.input as any)?.ids?.length ?? 0;
+        return { invocationMessage: `Inspecting ${n} neighbor${n === 1 ? '' : 's'} for pruning…` };
+      },
+      invoke(options, _token) { return handler.getNeighborColumns(options.input); },
     }),
   ];
 }

@@ -61,14 +61,14 @@ const BLOCK = {
    * Two-kind pruning protocol: structural objects (column-check first) vs. procedures (route first).
    *
    * @remarks
-   * Structural objects expose columns without a hop visit — `lineage_get_object_detail` returns
-   * `columns:[{n,t,...}]` immediately. Procedures hide all logic behind DDL that only arrives at
-   * hop time, so pre-pruning them is always premature.
+   * Structural objects expose columns without a hop visit — `lineage_get_neighbor_columns` returns
+   * `columns:[{n,t,...}]` for one or many neighbors in a single call, with no DDL. Procedures hide
+   * all logic behind DDL that only arrives at hop time, so pre-pruning them is always premature.
    */
   pruningProtocol: [
     '## Pruning — When to Prune',
     'Prune irrelevant nodes. Relevance is judged against the `<mission_brief>`.',
-    '- **table / view / function**: if columns are not explicit in the focus DDL, call `lineage_get_object_detail({id:"dbo.FactSales"})` first. Response includes `columns:[{n:"SalesAmount",...}]`.',
+    '- **table / view / function**: if columns are not explicit in the focus DDL, call `lineage_get_neighbor_columns({ids:["[dbo].[FactSales]"]})` first. Response includes `columns:[{n:"SalesAmount",...}]` and any foreign keys. Ids must be direct neighbors of the current focus.',
     '- **procedure**: columns are only visible at the hop. Route with `question="Prune candidate — [reason]"` to decide after reading the DDL.',
   ].join('\n'),
 

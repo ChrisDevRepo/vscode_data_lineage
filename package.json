@@ -569,7 +569,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Returns full metadata for a single object, including columns, foreign keys, DDL, and immediate neighbors.",
+        "modelDescription": "Returns full metadata for a single object, including columns, foreign keys, DDL, and immediate neighbors. DISCOVERY and SYNTHESIS phases only — during active SM exploration, use lineage_get_neighbor_columns instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -587,6 +587,34 @@
           },
           "required": [
             "id"
+          ]
+        }
+      },
+      {
+        "name": "lineage_get_neighbor_columns",
+        "toolReferenceName": "lineage_get_neighbor_columns",
+        "displayName": "Get Neighbor Columns",
+        "userDescription": "Inspect a neighbor's columns for pruning decisions during active SM exploration.",
+        "modelDescription": "Returns structural metadata (columns, types, nullability, foreign keys) for one or more direct neighbors of the current focus node. Use during active SM exploration to decide whether to prune a neighbor (e.g. when the focus DDL uses 'SELECT *' and you need the neighbor's column list). NEVER returns DDL bodies. Ids must be direct neighbors of the current focus and within the active BFS scope.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "lineage"
+        ],
+        "icon": "$(symbol-field)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "One or more direct-neighbor node IDs to inspect (e.g. ['[dbo].[FactSales]'])."
+            }
+          },
+          "required": [
+            "ids"
           ]
         }
       },
@@ -875,34 +903,6 @@
           "required": [
             "name",
             "summary"
-          ]
-        }
-      },
-      {
-        "name": "lineage_get_ddl_batch",
-        "toolReferenceName": "lineage_get_ddl_batch",
-        "displayName": "Get Batch DDL",
-        "userDescription": "Fetch SQL body scripts for multiple objects at once.",
-        "modelDescription": "Returns the DDL body scripts and column definitions for a list of object IDs.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(file-code)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "ids": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Array of exact object IDs (max 20)."
-            }
-          },
-          "required": [
-            "ids"
           ]
         }
       },

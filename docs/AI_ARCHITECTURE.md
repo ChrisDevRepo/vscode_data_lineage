@@ -16,11 +16,13 @@ As foundational mandates for the AI Assistant:
 ## VS Code API Compliance & AI Tooling
 - **Model Handle Protocol**: The `@lineage` participant strictly uses the `request.model` handle provided by the VS Code Chat API. This ensures that the user's explicit model selection (e.g., GPT-4o, Claude Haiku) is respected. The extension does not perform secondary model discovery or switching, relying on the user-selected model's registered capabilities.
 - **Tool Mode Logic**: To comply with VS Code API constraints, the participant dynamically selects the `LanguageModelChatToolMode`:
-    - **`Required`**: Used ONLY when exactly one tool is provided to the model. This is typical for the initial `discovery` phase or specific slash commands (`/search`, `/trace`).
-    - **`Auto`**: Used whenever multiple tools are provided (e.g., during the `active` phase with `submit_findings` and `get_object_detail`). This prevents runtime crashes caused by the API's single-tool restriction for `Required` mode.
-- **Termination Guard**: The multi-round tool loop implemented in `lineageParticipant.ts` follows a **strict tool-driven termination** model. A conversational turn is finalized and control is returned to the user whenever the language model requests **zero tools**.
-    - **Conversational Yielding**: This allows the participant to act as a standard chatbot during the **Discovery** and **Synthesis** phases. If the model answers a question ("What schemas are available?") with markdown text and no tools, the turn ends.
-    - **Infinite Loop Prevention**: The previous "text+tool" hybrid termination condition caused infinite loops by re-invoking the model with an empty `User` message whenever it provided text without tools. The new model treats the absence of tool calls as the explicit signal that the AI has yielded its turn.
+    - **`Required`**: Used during ACTIVE phase and for `/search`/`/trace` commands. Requests the model to always call a tool. VS Code's API may downgrade `Required` to `Auto` when more than one tool is exposed — the SM ACK/WAIT guard (see below) covers that gap.
+    - **`Auto`**: Used in DISCOVERY and SYNTHESIS (conversational phases) so the model can answer directly without a tool call.
+- **SM ACK/WAIT Contract**: SM hop-by-hop runs as a server–client protocol. The engine (server) is the sole authority over session termination; the AI (client) must reply with a legal tool call on every hop until the engine reports `sm_status == "complete"`. Three enforcement layers:
+    - **Mechanical (primary)**: a minimal tool palette keeps `toolMode.Required` effective — SM ACTIVE exposes only `submit_findings` and `get_neighbor_columns`.
+    - **Structural (defense-in-depth)**: if the provider ignores `Required` and emits free text, the hop loop injects a corrective user message and continues (bounded by `MAX_ROUNDS`).
+    - **Narrative (transparency)**: every SM hop ships a `<mission_state>` block in the dynamic prompt suffix stating `expected_reply`, `legal_replies`, and `session_ends_when`.
+- **Termination Guard**: In DISCOVERY / SYNTHESIS a toolless response ends the turn (standard chat yield). In SM ACTIVE a toolless response is treated as a protocol violation and triggers the inject-retry guard above.
 
 ## Tools
 
@@ -31,11 +33,11 @@ The participant exposes a phase-scoped tool surface. `src/ai/toolPolicy.ts` is t
 | `get_context` | ✓ | — | — | ✓ | Schemas, stats, active filter, saved views |
 | `search_objects` | ✓ | — | — | ✓ | Resolve name / column name → ID; list candidates |
 | `search_ddl` | ✓ | — | — | ✓ | Regex over SP / view / function DDL bodies |
-| `get_object_detail` | ✓ | — | ✓ | ✓ | Full metadata + DDL for ONE object; `up[]` / `dn[]` cover "direct neighbors of X" without analysis. SM uses it on-demand for neighbor columns (two-kind pruning + route-add decisions). |
+| `get_object_detail` | ✓ | — | — | ✓ | Full metadata + DDL + neighbors for ONE object. Verbatim-quoting use cases (DISCOVERY exploration, SYNTHESIS polish). Not exposed in SM ACTIVE — SM uses `get_neighbor_columns` for structural pruning inspections. |
+| `get_neighbor_columns` | — | — | ✓ | — | Structural metadata (columns + types + nullability + foreign keys) for one or more direct neighbors of the current focus. **Never returns DDL.** Used to decide whether to prune a neighbor when the focus DDL uses `SELECT *`. Ids must be direct neighbors of focus AND in scope (enforced by `NavigationEngine.validateNeighborIds`). |
 | `detect_graph_patterns` | ✓ | — | — | ✓ | Graph-wide structural analysis (hubs / orphans / cycles / islands / longest-path / external-refs) |
-| `get_ddl_batch` | — | ✓ | — | — | DDL for a small known-ID list; only visible in inline BB as a safety net when scope DDL was budget-capped. SM delivers focus DDL per hop, no refetch needed. |
 | `start_exploration` | ✓ | — | — | ✓ (re-entry) | Hand off to the state machine (Blackboard or Column-Trace) |
-| `submit_findings` | — | ✓ | ✓ | — | Submit hop analysis + route next hops + prune. ACTIVE-only; required mode. |
+| `submit_findings` | — | ✓ | ✓ | — | Submit hop analysis + route next hops + prune. ACTIVE-only; `Required` mode. |
 | `present_result` | — | — | — | ✓ | Author the final enrich-view report (sections, summary, highlights) |
 
 **Not LM-visible in any phase:** `lineage_get_neighborhood`. Tool remains registered so panel / webview / engine consumers can still call it directly, but the language model never sees it — its BFS + DDL shape overlaps `start_exploration` without engine supervision (no archive, no gate, no verdicts).
@@ -142,8 +144,8 @@ At `start_exploration` time the AI declares its **classification** via the optio
 
 ### Phase-Boundary Contract for Prompt Authors
 
-- **DISCOVERY → ACTIVE** — triggered by `lineage_start_exploration`. `buildStageSystemPrompt('active')` replaces `buildStageSystemPrompt('discover')`. The mode block (`buildModeBlock`) for BB or CT is included in the system prompt. Tool set narrows to `submit_findings` + `get_ddl_batch`. There is no separate `navPrompt` User message.
-- **ACTIVE hop loop** — `submit_findings` is the only active-phase tool (plus `get_ddl_batch` for ad-hoc DDL fetch). On every sliding-memory wipe the full system prompt is rebuilt from scratch: base + active protocol + tool usage + mode block + YAML capture rules + `<mission_brief>` + `<current_task>` + `<short_term_memory>` + tally line. All anchoring context is in message 0, not in the JSON payload.
+- **DISCOVERY → ACTIVE** — triggered by `lineage_start_exploration`. `buildStageSystemPrompt('active')` replaces `buildStageSystemPrompt('discover')`. The mode block (`buildModeBlock`) for BB or CT is included in the system prompt. Tool set narrows per mode: inline BB exposes only `submit_findings`; SM BB / SM CT expose `submit_findings` + `get_neighbor_columns`. There is no separate `navPrompt` User message.
+- **ACTIVE hop loop** — in SM the AI submits hop-by-hop via `submit_findings` and may call `get_neighbor_columns` for pruning-decision column lookups on direct neighbors of the current focus (no DDL). On every sliding-memory wipe the full system prompt is rebuilt from scratch: base + active protocol + tool usage + mode block + YAML capture rules + `<mission_brief>` + `<current_task>` + `<short_term_memory>` + `<mission_state>` (ACK/WAIT envelope). All anchoring context is in message 0, not in the JSON payload.
 - **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. `buildStageSystemPrompt('synthesis')` is used; it includes the YAML render rules + `<mission_brief>` but omits the mode block and `<short_term_memory>` (synthesis reads the archive, not the sliding window).
 
 ### Prompt Assembly Architecture
@@ -190,7 +192,7 @@ Reference: VS Code API `LanguageModelChatToolMode.Required` at `node_modules/@ty
 | Mode | Symptom | Root cause | Mitigation |
 |---|---|---|---|
 | **Parallel `start_exploration` storm** | After `complete_rejected`, AI emits N parallel `start_exploration` calls (one per unvisited neighbor) instead of continuing `submit_findings`. Wipes the accumulated Detail Archive, forcing synthesis into an empty-evidence state. | `already_started` guard is sequential. Prompt-level "Do NOT call start_exploration" in the `complete_rejected` hint is not reliably binding. Multi-call rounds are unprotected. | Mechanical guard in `toolProvider.ts`: reject calls 2..N of `start_exploration` within one LM round with a structured `{error:'parallel_call_forbidden', hint}` envelope. Prose hints alone do not enforce. |
-| **Utility-proc DDL overflow** | One hop returns 50k-char tool result (e.g., `LogMessage` DDL with verbose boilerplate). Next hop's input jumps from ~7k to ~17k tokens. | `aiPresenter.ts` does not cap DDL length for utility/log procedures. | Per-node DDL length cap (~8k chars) with `{truncated: true, hint: 'Call get_ddl_batch if full DDL needed'}` envelope. |
+| **Utility-proc DDL overflow** | One hop returns 50k-char tool result (e.g., `LogMessage` DDL with verbose boilerplate). Next hop's input jumps from ~7k to ~17k tokens. | `aiPresenter.ts` does not cap DDL length for utility/log procedures. | Full DDL is shipped per hop (no truncation, no refetch — simpler contract). If a mega-proc (> 500K chars) pushes the envelope past the provider limit, the natural token-limit error surfaces to the user; mitigate by pruning via `prune_neighbors` or refining the start-exploration scope. |
 | **Synthesis with empty archive** | Final round receives synthesis prompt but no archive slots (because SM was wiped mid-exploration). Output is truncated (<100 tokens) with no `present_result`. | Consequence of the parallel-storm failure mode, or any `start_exploration` re-call during ACTIVE phase. | Detect empty-archive synthesis and emit a user-facing warning + re-run suggestion. |
 
 ### State Diagram: AI Navigation Engine
@@ -267,10 +269,10 @@ One `AiSession` per extension instance.
 ### Two-Kind Pruning Protocol
 The navigation prompt enforces two distinct pruning strategies based on node type (see `BLOCK.pruningProtocol` in `src/ai/smPrompts.ts`):
 
-- **table / view / function**: Column definitions are available without visiting the node. When the focus DDL does not explicitly enumerate the columns read from a neighbor, the AI calls `lineage_get_object_detail` to inspect `columns[].n` before adding the node to `prune_neighbors`.
+- **table / view / function**: Column definitions are available without visiting the node. When the focus DDL does not explicitly enumerate the columns read from a neighbor, the AI calls `lineage_get_neighbor_columns({ids: [...]})` to inspect `columns[].n` before adding the node to `prune_neighbors`. The tool scopes to direct neighbors of the current focus and returns columns + foreign keys only (no DDL).
 - **procedure**: DDL only arrives when the node becomes the focus of a hop. Pre-pruning is therefore always premature — the AI routes to the SP with `question="Prune candidate — [reason]"` and submits `verdict=prune` at that hop after reading the DDL.
 
-`HopNeighbor.cols` is populated only in Column Trace mode. In Blackboard mode, column lookup for pruning decisions uses `lineage_get_object_detail` on-demand.
+`HopNeighbor.cols` is populated only in Column Trace mode. In Blackboard mode, column lookup for pruning decisions uses `lineage_get_neighbor_columns` on-demand.
 
 ## Scope Budget Enforcement (2026-04-18)
 
@@ -416,7 +418,7 @@ The structured `[AI] [Hop N]` debug log emits `authored=<N>` — a scalar counte
 
 ### SM closed-loop contract & deferred-questions checkpoint (2026-04-18)
 
-After `confirm_sm_start` is approved, the SM session runs as a closed loop — no mid-session consent gates. The AI's tool surface is restricted to `lineage_submit_findings` and `lineage_get_ddl_batch` (for resolving truncations). `LanguageModelChatToolMode.Required` prevents free-form chat, and the engine enforces the border mechanically:
+After `confirm_sm_start` is approved, the SM session runs as a closed loop — no mid-session consent gates. The AI's tool surface is restricted to `lineage_submit_findings` (primary) and `lineage_get_neighbor_columns` (structural pruning lookups, no DDL). `LanguageModelChatToolMode.Required` is requested; if the VS Code API downgrades to `Auto` (multi-tool) the SM ACK/WAIT guard injects a corrective message on any free-text round. The engine enforces the border mechanically:
 
 - **Approved border** — `working_memory.approved_border = { schemas, depth_cap }` surfaced every hop. Locked at session start; extensions require a new session.
 - **Deferral, not rejection** — when the AI routes to an out-of-border node, the engine calls `deferQuestion({...})` into an internal bucket (single encapsulated mutation point on `NavigationEngine`) and the hop proceeds. In-border routes in the same `route_requests` array are accepted normally.

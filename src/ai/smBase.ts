@@ -414,6 +414,27 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Validates that the given node ids are legitimate targets for neighbor-column
+   * inspection (the `get_neighbor_columns` tool).
+   *
+   * @remarks
+   * Enforces the mechanical contract that pruning verification only inspects
+   * **direct neighbors of the current focus node that are also within the active
+   * BFS scope.** Out-of-scope ids or non-neighbor ids are returned as the
+   * "invalid" subset so the caller can emit a structured error. This keeps the
+   * tool from becoming a backdoor for out-of-scope exploration.
+   *
+   * @param ids - Candidate neighbor ids supplied by the AI.
+   * @returns Subset of `ids` that fail the scope+neighbor check; empty array iff all pass.
+   */
+  public validateNeighborIds(ids: string[]): string[] {
+    const focusId = this.currentFocusNodeId ?? '';
+    const neighborIndex = this.model.neighborIndex[focusId] ?? { in: [], out: [] };
+    const directNeighbors = new Set<string>([...neighborIndex.in, ...neighborIndex.out]);
+    return ids.filter(id => !this.scopeNodeIds.has(id) || !directNeighbors.has(id));
+  }
+
+  /**
    * Returns the sub-question assigned to the current focus node.
    *
    * @remarks
