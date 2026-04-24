@@ -20,7 +20,9 @@ resetCounters();
 // origin -> util_log -> util_a -> util_b (utility path, to be pruned)
 // origin -> util_log -> core_a (cross-path edge)
 const nodes: LineageNode[] = [
-  { id: 'origin',   schema: 'dbo', name: 'origin',   type: 'table' },
+  // Bodied origin (procedure) — required by the bipartite agenda rule:
+  // only SCRIPT_TYPES (view/procedure/function) take hops.
+  { id: 'origin',   schema: 'dbo', name: 'origin',   type: 'procedure' },
   { id: 'core_a',   schema: 'dbo', name: 'core_a',   type: 'view' },
   { id: 'core_b',   schema: 'dbo', name: 'core_b',   type: 'view' },
   { id: 'util_log', schema: 'dbo', name: 'util_log', type: 'procedure' },

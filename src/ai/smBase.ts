@@ -15,7 +15,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../engine/types';
 import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode } from './tools';
+import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from './tools';
 import { edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
@@ -186,6 +186,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected agendaIds = new Set<string>();
   /** Identifier of the node currently in focus. */
   protected currentFocusNodeId: string | null = null;
+  /** Agenda-entry `question` captured at dequeue so it survives the splice and can label the slot. */
+  protected currentFocusQuestion: string | null = null;
   /** Total number of hops executed. */
   protected hopCount = 0;
   /** Breadth-first search depth for nodes from the origin. */
@@ -529,14 +531,19 @@ export class NavigationEngine implements IHopStateMachine {
     const excluded = Array.from(this.excludedTypes).join(',') || 'none';
     this.log('debug', `[BFS] origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excluded}]`);
 
-    this.agenda.push({
-      nodeId: originNode.id,
-      question: `Root Question: ${params.question}`,
-      priority: 3,
-      depth: 0,
-      activeColumns: params.targetColumns
-    });
-    this.agendaIds.add(originNode.id);
+    // Bipartite agenda rule: only bodied nodes (view / procedure / function) take a hop.
+    // Tables and other body-less nodes stay in scope (routable, inspectable via get_neighbor_columns)
+    // but never the focus of an analysis hop — they have structure, not logic.
+    if (SCRIPT_TYPES.has(originNode.type)) {
+      this.agenda.push({
+        nodeId: originNode.id,
+        question: `Root Question: ${params.question}`,
+        priority: 3,
+        depth: 0,
+        activeColumns: params.targetColumns
+      });
+      this.agendaIds.add(originNode.id);
+    }
 
     this.seedAgenda(originNode.id, params.direction || 'bidirectional', params.targetColumns);
     this._status = 'initialized';
@@ -617,7 +624,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.hopCount++;
       // In inline mode, focus is the batch of nodes. We pick the first as the primary "focus" for state-machine
       // consistency, but the AI receives the full list.
-      this.currentFocusNodeId = batchEntries[0].nodeId; 
+      this.currentFocusNodeId = batchEntries[0].nodeId;
+      this.currentFocusQuestion = batchEntries[0].question ?? null;
 
       const nodes = batchEntries.map(e => {
         const n = this.nodeMap.get(e.nodeId)!;
@@ -673,6 +681,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.visited.add(entry.nodeId);
     this.hopCount++;
     this.currentFocusNodeId = entry.nodeId;
+    this.currentFocusQuestion = entry.question ?? null;
 
     // Synchronize the Column Aspect to only show columns relevant to this specific path
     if (this._columnAspect) {
@@ -913,7 +922,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.memory.storeDetail(this.nodeMap.get(focusId)!, finding.detail_analysis, finding.summary, {
           badge_label: finding.badge_label,
           note_caption: finding.note_caption,
-          reason_for_visit: this._inlineMode ? 'True Inline Analysis' : (this.agenda.find(e => e.nodeId === focusId)?.question || 'Historical path investigation')
+          reason_for_visit: this._inlineMode ? 'True Inline Analysis' : (this.currentFocusQuestion || 'Historical path investigation')
         }, this._inlineMode);
         this.lastHopDetailChars = finding.detail_analysis?.length ?? 0;
         this.lastHopSummaryChars = finding.summary?.length ?? 0;
@@ -1049,10 +1058,13 @@ export class NavigationEngine implements IHopStateMachine {
   private seedAgenda(originId: string, direction: string, targetCols?: string[]): void {
     const neighbors = direction === 'upstream' ? this.graph.inNeighbors(originId) : direction === 'downstream' ? this.graph.outNeighbors(originId) : this.graph.neighbors(originId);
     for (const nid of neighbors as string[]) {
-      if (this.scopeNodeIds.has(nid) && !this.agendaIds.has(nid)) {
-        this.agenda.push({ nodeId: nid, question: `Analyze relationship to ${originId}`, priority: 0, depth: 1, activeColumns: targetCols });
-        this.agendaIds.add(nid);
-      }
+      if (!this.scopeNodeIds.has(nid) || this.agendaIds.has(nid)) continue;
+      // Bipartite agenda rule (see init): skip body-less nodes. They stay in scope
+      // but are not hop targets — procs / views / bodied UDFs carry the analysis work.
+      const neighbor = this.nodeMap.get(nid);
+      if (!neighbor || !SCRIPT_TYPES.has(neighbor.type)) continue;
+      this.agenda.push({ nodeId: nid, question: `Analyze relationship to ${originId}`, priority: 0, depth: 1, activeColumns: targetCols });
+      this.agendaIds.add(nid);
     }
   }
 

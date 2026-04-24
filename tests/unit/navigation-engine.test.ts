@@ -12,7 +12,9 @@ console.log('='.repeat(40));
 resetCounters();
 
 const nodes: LineageNode[] = [
-  { id: 'origin', schema: 'dbo', name: 'origin', type: 'table' },
+  // Bodied origin (procedure) — required by the bipartite agenda rule:
+  // only SCRIPT_TYPES (view/procedure/function) take hops.
+  { id: 'origin', schema: 'dbo', name: 'origin', type: 'procedure' },
   { id: 'child_a', schema: 'dbo', name: 'child_a', type: 'view' },
   { id: 'child_b', schema: 'dbo', name: 'child_b', type: 'view' },
 ];
