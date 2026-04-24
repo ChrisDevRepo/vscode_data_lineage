@@ -35,7 +35,7 @@ Trace object dependencies and create bookmarked graph views. The AI assistant ca
 `@lineage` adapts to the size of the question:
 
 - **Small scopes run inline.** The AI sees all relevant DDL at once and answers directly. If a relevant dependency falls outside your filter schemas, it pauses and asks you to approve extending the scope for this session.
-- **Large scopes run hop-by-hop.** Before the first hop the assistant shows you the planned scope (nodes, schemas, depth, budget) and asks for confirmation. Once approved, the contract is locked — anything outside that agreed border is collected as clickable follow-up chips instead of silently pulled in. You stay in control of the budget.
+- **Large scopes run hop-by-hop.** Before the first hop the assistant shows you the planned scope (nodes, schemas, depth, budget) and asks for confirmation. Once approved, the contract is locked.
 
 Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
 
@@ -54,7 +54,7 @@ For configuration, settings reference, and advanced customization (parse rules, 
 
 ## Limitations
 
-**Scope — intra-database DDL only.** This extension traces dependencies between SQL objects (tables, views, stored procedures, functions) that exist within the loaded database model. It reads DDL and compile-time SQL references — it does not model data movement *outside* the database. The following are out of scope:
+**Scope — intra-database DDL only.** The following are out of scope:
 
 - **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source is not visible. The extension sees the target tables as leaf nodes, not the pipelines that populate them.
 - **Cross-database or cross-server data flow** — dependencies that cross a database or server boundary are surfaced only when the SQL body contains a fully-qualified four-part or three-part name; the remote side is shown as an external reference node, not as a fully traced sub-graph.

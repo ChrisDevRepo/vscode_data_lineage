@@ -2,6 +2,19 @@
 
 This document is the definitive technical reference for the Data Lineage Viz extension. It covers every major architectural component, engineering process, and mandatory coding standard.
 
+> **Related documents:** [`AI_ARCHITECTURE.md`](AI_ARCHITECTURE.md) — AI engine behavior, phases, state machines. [`AI_PROMPTS.md`](AI_PROMPTS.md) — prompt-builder hierarchy, YAML rules.
+
+## Table of contents
+
+1. [Core Engineering Mandates](#1-core-engineering-mandates-the-stability-first-policy)
+2. [Data Ingestion: Dual Import Strategies](#2-data-ingestion-dual-import-strategies)
+3. [SQL Parsing: The Regex Pipeline](#3-sql-parsing-the-regex-pipeline)
+4. [The Bridge: IPC & Zod Validation](#4-the-bridge-ipc--zod-validation)
+5. [UI & State Management](#5-ui--state-management)
+6. [Testing & AI Verification](#6-testing--ai-verification)
+7. [Developer Hygiene](#7-developer-hygiene)
+8. [Prompt System Architecture](#8-prompt-system-architecture)
+
 ---
 
 ## 1. Core Engineering Mandates (The "Stability-First" Policy)
@@ -29,6 +42,22 @@ This document is the definitive technical reference for the Data Lineage Viz ext
 
 Both strategies produce the same `DatabaseModel` structure.
 
+```mermaid
+flowchart LR
+    DP[.dacpac file] -->|dacpacExtractor.ts<br/>unzip + model.xml| MX[model.xml]
+    MX --> PARSE[Regex parser<br/>sqlBodyParser.ts]
+    SRV[(SQL Server<br/>DMVs)] -->|dmvExtractor.ts<br/>Phase 1: catalog| CAT[Catalog metadata]
+    SRV -->|dmvExtractor.ts<br/>Phase 2: DDL + columns| DDL[DDL + columns]
+    CAT --> MERGE[Merge + normalize]
+    DDL --> MERGE
+    MERGE --> PARSE
+    PARSE --> DM[DatabaseModel<br/>shared schema]
+    DM --> GB[graphBuilder.ts]
+    GB --> G[Directed graph<br/>graphology]
+```
+
+Two inputs, one output. The parser has no awareness of which input source produced the SQL body — same regex pipeline, same edge-direction inference, same YAML rules. Testing uses DACPAC fixtures; production extensions use whichever is available.
+
 ### 2.1 DACPAC Extraction (`dacpacExtractor.ts`)
 - **Mechanism**: Unzips `.dacpac` and parses `model.xml`.
 - **Constraint**: Only **AdventureWorks** sample dacpacs are allowed in the public `tests/fixtures/` folder. **NEVER** commit customer dacpacs.
@@ -43,6 +72,19 @@ Both strategies produce the same `DatabaseModel` structure.
 ---
 
 ## 3. SQL Parsing: The Regex Pipeline
+
+```mermaid
+flowchart LR
+    IN[Raw SQL body] --> C1[Strip block comments<br/>stack-based, nested-safe]
+    C1 --> C2[Strip line comments]
+    C2 --> C3[Neutralize string literals<br/>replace content with '''']
+    C3 --> C4[Lowercase identifiers<br/>schemaKey]
+    C4 --> RE[Rule execution<br/>regex patterns from<br/>defaultParseRules.yaml]
+    RE --> SUP[Metadata suppression<br/>sqlMetadata.ts<br/>CLR methods, system schemas]
+    SUP --> CAP[Normalized captures<br/>object refs + edge direction]
+```
+
+Each stage has a single responsibility. YAML rules only run against cleansed input, which is why false positives from strings and comments are impossible by construction. Metadata suppression is the last gate — bracket-quoted identifiers bypass CLR-method filtering (intent signal).
 
 ### 3.1 Metadata-Driven Extraction
 - **Rules**: Extraction logic is stored in `assets/defaultParseRules.yaml`.
@@ -60,6 +102,19 @@ Both strategies produce the same `DatabaseModel` structure.
 ---
 
 ## 4. The Bridge: IPC & Zod Validation
+
+```mermaid
+flowchart LR
+    WV[Webview<br/>React app] -->|postMessage| BR[Bridge boundary]
+    BR -->|Zod<br/>bridgeContract.ts| BH[BridgeHost interface<br/>host.ts]
+    BH --> EXT[Extension host<br/>panelProvider.ts]
+    EXT -->|postMessage| BR2[Bridge boundary]
+    BR2 -->|Zod parse| WV
+    style BR fill:#fde,stroke:#c69,stroke-width:2px
+    style BR2 fill:#fde,stroke:#c69,stroke-width:2px
+```
+
+Every `postMessage` hits the Zod cage exactly once in each direction. Inner layers consume parsed types; no re-validation. `BridgeHost` decouples communication from VS Code so the extension logic can be unit-tested in Node.js without a webview.
 
 ### 4.1 Type Safety (`bridgeContract.ts`)
 - **Mandate**: 100% of messages sent via `postMessage` must be validated against a Zod schema.
@@ -85,12 +140,22 @@ Both strategies produce the same `DatabaseModel` structure.
     - `aiPreview`: Transient state for AI-curated views before they are committed to the `projectStore`.
 - **Constraint**: Avoid "prop drilling" by utilizing `VsCodeContext` for global singletons.
 
+```mermaid
+stateDiagram-v2
+    [*] --> load: workspace opened
+    load --> analyze: DatabaseModel ready
+    analyze --> render: graph built
+    render --> render: filter / zoom / theme change
+    render --> load: user opens new dacpac
+    render --> [*]: panel closed
+```
+
 ### 5.2 CSS Variables
 - **Mandate**: Never hardcode hex/rgb colors in components.
 - **System**: VS Code Tokens (`--vscode-*`) → Extension Aliases (`--ln-*`) in `src/index.css`.
 - **Testing**: Every UI change must be verified in **Light**, **Dark**, and **High Contrast** themes.
 
-### 5.2 Metadata-Driven AI Overlays
+### 5.3 Metadata-Driven AI Overlays
 - **Logic**: The presentation of AI findings (sections, badges, descriptions) AND what the AI captures per hop are both driven by `assets/aiOutputTemplates.yaml`.
 - **Customization**: Users override both capture and render behaviour without touching the state-machine code. Override path: VS Code setting `dataLineageViz.ai.outputTemplateFile`. Users read the YAML's `stages:` field on each key to understand where that key's instruction is injected.
 - **Naming convention: phase-pure keys.** `*_capture` keys fire at ACTIVE; `*_subsection` keys fire at SYNTHESIS. No dual-stage preambles, no `CAPTURE (active phase)` / `RENDER (synthesis phase)` labels inside instruction text. The AI reads clean, phase-specific guidance without meta about phases it isn't in.
@@ -107,6 +172,28 @@ Both strategies produce the same `DatabaseModel` structure.
 ---
 
 ## 6. Testing & AI Verification
+
+```mermaid
+flowchart TB
+    subgraph TOP[Eval Suite — slow, LLM-driven]
+        E[npm run test:eval<br/>Role-based scenarios<br/>Real Copilot Chat]
+    end
+    subgraph MID[Integration — medium, VS Code runtime]
+        I1[vscode-test<br/>clean instance]
+        I2[ai-integration.test.ts<br/>vscode.lm.invokeTool<br/>SM logic, no UI]
+    end
+    subgraph BOT[Unit — fast, deterministic]
+        U1[npm test<br/>parser, graph, DMV,<br/>AI tools, SM robustness]
+        U2[npm run test:unit:ai<br/>heavy AI tool tests]
+        U3[npm run test:snapshot<br/>parser baseline vs<br/>aw-baseline.tsv]
+    end
+    BOT --> MID --> TOP
+    style BOT fill:#cfe8cf,stroke:#2a7
+    style MID fill:#fde9b0,stroke:#c93
+    style TOP fill:#fcc,stroke:#c33
+```
+
+Run bottom-up. A parser change: `test:snapshot` first (blocks on regression). An engine change: `test:unit:ai`. A multi-tool flow change: integration. A prompt-wording change: eval.
 
 ### 6.1 Internal AI Integration Suite (The New "Eval Loop")
 - **Architecture**: AI correctness is validated using `vscode-test` calling real Copilot Chat tools.
@@ -136,6 +223,33 @@ Both strategies produce the same `DatabaseModel` structure.
 ### 8.1 Builder Function Hierarchy
 
 All prompt text is assembled by composing pure functions. Each function owns exactly one concern.
+
+```mermaid
+flowchart TB
+    START([buildStageSystemPrompt<br/>phase, isInline, targetCols, classification]) --> BG[buildGeneralSystemPrompt<br/>always fires]
+    BG --> PH{phase?}
+    PH -->|discover| BD[buildDiscoveryPrompt]
+    PH -->|active| BA[buildActivePhasePrompt<br/>isInline]
+    PH -->|synthesis| BS[buildSynthesisPrompt]
+    PH -->|completed| BF[buildFollowUpPrompt]
+    BA --> BTU[buildToolUsageBlock]
+    BTU --> BMB[buildModeBlock<br/>BB vs CT]
+    BMB --> CT{targetCols?}
+    CT -->|yes| BCA[buildColumnAspectPrompt]
+    CT -->|no| RS
+    BCA --> RS[resolveStagePrompt<br/>YAML *_capture / *_subsection<br/>classification-gated]
+    BD --> RS
+    BS --> RS
+    BF --> RS
+    RS --> MB[buildMissionBlock<br/>active + synthesis + completed]
+    MB --> MEM{SM active?}
+    MEM -->|yes| BMEM[buildMemoryBlock<br/>&lt;short_term_memory&gt;]
+    MEM -->|no| END([system prompt ready])
+    BMEM --> END
+```
+
+The composition order is fixed — builders later in the pipeline see all earlier output. Adding a builder means inserting at the correct position; adding a phase means extending the `{phase?}` decision.
+
 
 | Function | File | Fires when | Concern |
 |---|---|---|---|
@@ -201,15 +315,9 @@ Remaining in JSON: `sm_status`, `hop`, `agenda_remaining`, `focus_node` (DDL), `
 
 ### 8.5 Agenda Composition — Bipartite Rule
 
-The analysis agenda (what the AI hops through) is **not** the same set as the BFS scope (what the AI may reference). Scope is strictly larger — it contains passive nodes (tables, externals) that the AI can inspect or prune, but never hop on.
+Canonical specification lives in [AI_ARCHITECTURE.md → Bipartite Analysis Model](AI_ARCHITECTURE.md#bipartite-analysis-model). Summary for prompt authors: the agenda contains only bodied nodes (view / proc / function); tables are routable + inspectable but never a hop focus; `NavigationEngine.enqueueHop` in [`src/ai/smBase.ts`](../src/ai/smBase.ts) is the single funnel that enforces this. The consequence for `<current_task>` — inherited intent through edge contraction — is why no "table-hop" prompt variant exists.
 
-**Single funnel:** all agenda writes go through `NavigationEngine.enqueueHop` in [`src/ai/smBase.ts`](../src/ai/smBase.ts). There are three callers — origin init, `seedAgenda`, and `submitFindings` route enqueue — and none of them bypasses the funnel. The bipartite invariant (`agenda.every(e => SCRIPT_TYPES.has(e.type))`) holds by construction.
-
-**Edge contraction:** when `enqueueHop` is called with a non-bodied target (a table or external), it does not push. Instead it forwards the authored question verbatim to the target's bodied neighbors in the current exploration direction (`this._direction`, set at `init`). The caller's routing intent flows *through* the passive node to the real analysis targets. A cycle guard prevents infinite recursion on reference-to-reference chains.
-
-**Why this matters for prompts.** `<current_task>` is rendered from the agenda entry's `question` field. When a proc routes to a table, the table's bodied neighbors inherit the proc's question verbatim — so Hop N+1's `<current_task>` carries the authored intent from Hop N without the prompt having to explain the forwarding. The prompt template does not need a "table-hop" variant because tables never become focus.
-
-**Test coverage:** [`tests/unit/navigation-engine-bipartite.test.ts`](../tests/unit/navigation-engine-bipartite.test.ts).
+Test coverage: [`tests/unit/navigation-engine-bipartite.test.ts`](../tests/unit/navigation-engine-bipartite.test.ts).
 
 ### 8.6 Adding or Changing Prompts
 
@@ -220,21 +328,16 @@ Key rules:
 
 ### 8.7 Completed Phase — Follow-Up Protocol & Supplement Flow
 
-After synthesis emits, `dispatchExit('final_answer')` (when `sess.stateMachine?.status === 'complete'`) calls `sess.enterCompleted()`. Two INFO logs fire: `[Phase] synthesis → completed — archive slots=N, deferred=M` and an immediately-following DEBUG `[Phase] follow-up ready — …`. Archive, engine, classification, mission brief, and deferred-question bucket survive on the session singleton.
+Canonical state-machine specification: [AI_ARCHITECTURE.md → Phase-Boundary Contract for Prompt Authors](AI_ARCHITECTURE.md#phase-boundary-contract-for-prompt-authors) and [The Four Lifecycle Phases](AI_ARCHITECTURE.md#the-four-lifecycle-phases). What remains here is implementation detail for the engineering audience:
 
-**Next-turn routing.** `handleChatRequest` detects `sess.phase.kind === 'completed' && chatContext.history.length > 0` and sets `activePhase = 'completed'`. Tool set is filtered to the `completed` kind in `toolPolicy.ts`: `present_result`, `get_object_detail`, `search_ddl`, `search_objects`, `start_exploration`. The system prompt is built with `buildFollowUpPrompt()` + the synthesis-stage YAML block (same formatting contract) + `<mission_brief>`.
+**Transition trigger.** `dispatchExit('final_answer')` (when `sess.stateMachine?.status === 'complete'`) calls `sess.enterCompleted()`. Two log lines fire: INFO `[Phase] synthesis → completed — archive slots=N, deferred=M` + DEBUG `[Phase] follow-up ready — …`.
 
-**Archive delivery in the follow-up turn.** No new read accessor on `AiMemoryManager`. The prior `submit_findings` tool_result, containing `detail_slots[]`, rides into the next turn via VS Code's automatic `chatContext.history` replay — `historyManager` compacts stale hop results but preserves the final synthesis result. The AI addresses the archive directly from the replayed tool_result.
+**Next-turn routing.** `handleChatRequest` detects `sess.phase.kind === 'completed' && chatContext.history.length > 0` and sets `activePhase = 'completed'`. Tool filter in `toolPolicy.ts` exposes: `present_result`, `get_object_detail`, `search_ddl`, `search_objects`, `start_exploration`. Prompt = `buildFollowUpPrompt()` + synthesis-stage YAML + `<mission_brief>`.
 
-**Supplement-agenda flow.** When the AI calls `lineage_start_exploration({ supplement: { nodeIds: […] } })` from the `completed` phase, the handler:
+**Archive delivery.** No new accessor on `AiMemoryManager`. The prior `submit_findings` tool_result (containing `detail_slots[]`) rides into the next turn via `chatContext.history` replay — `historyManager` compacts stale hop results but preserves the final synthesis result.
 
-1. Validates the prior engine exists and has `status === 'complete'` — otherwise returns `supplement_requires_complete_engine`.
-2. Calls `engine.supplementAgenda(nodeIds)` on `NavigationEngine`. The engine: (a) pushes ids through `enqueueHop` so the bipartite rule still holds (body-less ids contract through to bodied neighbors), (b) forces `_inlineMode = true`, (c) flips `_status` from `complete` to `awaiting_findings`. Unknown ids are reported in the returned `{ agendaed, contracted, skipped }` counts rather than raising.
-3. Calls `sess.enterExploring()` and logs `[Phase] completed → exploring (supplement) — nodeIds=N agendaed=A contracted=C skipped=S`.
-4. Returns the first hop context. The normal hop loop + synthesis drain the supplement and re-emit `present_result` with the enlarged scope. New `storeDetail` calls merge into the existing `AiMemoryManager.detailSlots` (no reset).
+**Supplement-agenda flow (`supplement: { nodeIds }`).** Handler: (1) validates `status === 'complete'` — else returns `supplement_requires_complete_engine`; (2) calls `engine.supplementAgenda(nodeIds)` — ids flow through `enqueueHop` (bipartite rule holds, body-less ids contract), `_inlineMode = true`, `_status` flips to `awaiting_findings`; unknown ids returned in `{ agendaed, contracted, skipped }`; (3) `sess.enterExploring()`; (4) returns first hop context. New `storeDetail` calls merge into existing `detailSlots` (no reset). Bypasses `confirm_sm_start` by design — user consented to the parent.
 
-**Supplement bypasses `confirm_sm_start`.** The gate check at `startExploration` only fires when `origin` is present (the fresh-exploration path). Supplement paths short-circuit before the gate logic because the user has already consented to the parent exploration.
+**Fresh `start_exploration` from completed** logs `[Phase] completed → discover`, calls `sess.resetExploration()`, proceeds on the normal fresh-SM path.
 
-**Fresh exploration from `completed`.** If the AI decides the user's refinement is actually a new trace (new origin, new direction), it calls `start_exploration` with an `origin` — the handler detects `sess.phase.kind === 'completed' && prior.status === 'complete'`, logs `[Phase] completed → discover`, calls `sess.resetExploration()`, and proceeds on the normal fresh-SM path (including the `confirm_sm_start` gate).
-
-**Test coverage:** [`tests/unit/navigation-engine-supplement.test.ts`](../tests/unit/navigation-engine-supplement.test.ts) — 21 assertions covering status guards, unknown-id skipping, bodied-id enqueuing, inline-mode forcing, and archive merge without reset.
+Test coverage: [`tests/unit/navigation-engine-supplement.test.ts`](../tests/unit/navigation-engine-supplement.test.ts) — 21 assertions.

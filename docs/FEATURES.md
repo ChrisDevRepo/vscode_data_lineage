@@ -209,9 +209,7 @@ In complex ETL pipelines, a column often changes names multiple times. Deep expl
 ### Tips
 
 - **AI column-level analysis.** With Copilot Chat, the `@lineage` AI assistant can attempt to trace column mappings, join paths, and formulas from your loaded metadata. Always verify against your database.
-- **Session isolation.** Starting a new chat window correctly resets the assistant's state. To start a fresh investigation, press `Ctrl+L`.
-- **Incremental Updates.** You can ask the AI to add or remove specific nodes from an existing graph view without restarting the entire analysis.
-- **Ask the AI to create a view.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph view with annotated nodes, saved as a bookmark.
+- **Ask the AI to build a graph.** Say *"show me the full lineage for dbo.udfLeadingZeros in the app"* — it builds a filtered graph with annotated nodes, saved as a bookmark.
 - **The assistant is context-aware.** It knows what filters are active and which schemas are visible. Ask *"what's filtered out?"*.
 - **Customize output.** Command Palette → *Create AI Output Templates* to tailor the AI response format.
 

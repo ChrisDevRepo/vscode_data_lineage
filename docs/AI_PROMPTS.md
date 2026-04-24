@@ -67,7 +67,7 @@ Every prompt surface has a stage (DISCOVERY / ACTIVE / SYNTHESIS / ALL). Before 
 
 Do not duplicate across surfaces. The general system prompt is sent on every turn — anything repeated in nav or tool description is triple-billed. If a rule belongs in a tool description, keep it there; the tool is visible at every call that matters.
 
-### 1.6 Per-Phase Template Scope — stage routing
+### 1.7 Per-Phase Template Scope — stage routing
 
 `aiOutputTemplates.yaml` has 14 keys. Each declares a `stages:` field listing which phases inject it into the AI system prompt. The authoritative routing lives in code (`STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)) — the YAML `stages:` field is informational for power-user readers; overlays that contradict the canonical routing are logged and ignored.
 

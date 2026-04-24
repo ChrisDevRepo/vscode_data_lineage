@@ -1,12 +1,114 @@
 # AI Assistant Architecture — "Grounded Router"
 
+> **Related documents:** [`AI_PROMPTS.md`](AI_PROMPTS.md) — prompt-builder hierarchy, YAML capture/render rules. [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) — broader engineering reference (ingestion, parsing, bridge, UI, testing).
+
+## Read this first by role
+
+| If you are… | Start with |
+|---|---|
+| New contributor wanting a mental model | [System journey](#system-journey-at-a-glance) → [Component map](#component-map) → [Four Lifecycle Phases](#the-four-lifecycle-phases) |
+| Prompt author / AI-behaviour tuning | [Tools](#tools) → [Mode contract](#mode-contract-who-gates-what-who-decides-when-done) → [Prompt Assembly Architecture](#prompt-assembly-architecture) → [`AI_PROMPTS.md`](AI_PROMPTS.md) |
+| Debugging a hop-loop issue | [The Hop Payload](#the-hop-payload) → [Known Failure Modes](#known-failure-modes-observed-in-production-logs) → [Session FSM](#session-fsm--typed-exit-dispatch) |
+| Reviewing an architecture change | [Overview](#overview) → [Bipartite Analysis Model](#bipartite-analysis-model) → [Completion Contract](#completion-contract-when-sm-says-done) → [State Diagram](#state-diagram-ai-navigation-engine) |
+
+## Table of contents
+
+- [Overview](#overview)
+- [System journey at a glance](#system-journey-at-a-glance)
+- [Key Concepts](#key-concepts)
+- [Component map](#component-map)
+- [Bipartite Analysis Model](#bipartite-analysis-model)
+- [Engineering Standards](#engineering-standards)
+- [VS Code API Compliance & AI Tooling](#vs-code-api-compliance--ai-tooling)
+- [Tools](#tools)
+- [Class D / Class S Routing Contract](#class-d--class-s-routing-contract)
+- [AI Anti-patterns](#ai-anti-patterns)
+- [Architecture / Workflow](#architectureworkflow) — execution model, memory, completion, hop payload, phases, state diagram
+- [Detailed Specs](#detailed-specs) — navigation engine, session model, pruning protocol
+- [Scope Budget Enforcement](#scope-budget-enforcement)
+- [Cascade-prune guards](#cascade-prune-guards--content-blind-by-design)
+- [Trust + Blinkers model](#trust--blinkers-model)
+- [Session FSM & Typed Exit Dispatch](#session-fsm--typed-exit-dispatch)
+- [Glossary](#glossary)
+- [References](#references)
+
 ## Overview
 This guide is for Super Power Users who want to understand the conceptual framework behind the `@lineage` participant. The `@lineage` AI participant bridges deterministic graph traversal with semantic reasoning. It implements an autonomous **"Map & Router"** architecture where the extension host manages the topological state and the AI performs the semantic analysis.
+
+## System journey at a glance
+
+One turn of a `@lineage` question, end to end. Each phase has a different owner of termination authority — **AI** in Discovery, **AI** in Inline, **Engine** in SM, **AI** in Synthesis.
+
+```mermaid
+flowchart LR
+    U[User question] --> D[DISCOVERY<br/>AI searches, classifies<br/>Class D ↔ Class S]
+    D -->|Class D| R1[Direct chat answer]
+    D -->|Class S| M{Scope<br/>≤10 nodes<br/>≤10k tokens?}
+    M -->|Yes| IN[INLINE<br/>One-shot, AI sees full scope<br/>AI ends via complete:true]
+    M -->|No| GG[Gate: confirm_sm_start<br/>User approves scope]
+    GG -->|yes| SM[SM HOP LOOP<br/>AI hops 1 node/turn<br/>Engine drains agenda]
+    GG -->|no| U
+    IN --> SY[SYNTHESIS<br/>AI reads full archive<br/>present_result]
+    SM --> SY
+    SY --> C[COMPLETED<br/>Follow-up: text edits,<br/>prunes, supplement]
+    C -.->|fresh question| U
+    C -.->|supplement| SM
+```
 
 ## Key Concepts
 - **The Map (Deterministic)**: Managed by the extension host (`NavigationEngine`). It tracks `Visited Nodes`, the `Active Agenda`, and provides **Metadata (Column Lists)** for all neighbors.
 - **The Router (Semantic)**: Managed by the AI. It analyzes the DDL of the current node to answer a specific **Sub-Question**, updates the **Blackboard**, and requests the next **Route** to relevant neighbors.
 - **Selection-Inference Validation**: Ensures the AI only requests routes to valid, existing columns and nodes.
+
+```mermaid
+flowchart LR
+    subgraph MAP[The Map — NavigationEngine — deterministic]
+        direction TB
+        M1[agenda + visited set]
+        M2[neighbor metadata<br/>cols / FKs / hasDdl]
+        M3[consent gates<br/>action_required]
+        M4[route + column validation]
+    end
+    subgraph ROUTER[The Router — AI — semantic]
+        direction TB
+        R1[read focus DDL]
+        R2[write detail_analysis +<br/>summary to archive]
+        R3[verdict: analyze / pass / prune]
+        R4[route_requests with sub-question]
+    end
+    MAP -->|getHopContext| ROUTER
+    ROUTER -->|submit_findings| MAP
+```
+
+The Map never reasons about content. The Router never mutates state directly. The two boundaries (`getHopContext` downstream, `submit_findings` upstream) are the only coupling.
+
+## Component map
+
+Five modules own the AI participant surface. Each arrow is a typed contract — crossing the arrow means crossing a Zod boundary or a VS Code API.
+
+```mermaid
+graph TB
+    subgraph VSCode[VS Code runtime]
+        CP[Chat surface<br/>vscode.lm / ChatResponseStream]
+        WV[Webview panel<br/>postMessage]
+    end
+    subgraph Extension[Extension host]
+        LP[lineageParticipant.ts<br/>Turn handler, phase dispatch]
+        TP[toolProvider.ts<br/>Tool registration + Zod]
+        NE[NavigationEngine<br/>src/ai/smBase.ts<br/>Map owner, agenda, gates]
+        MM[AiMemoryManager<br/>Detail archive + sliding memory]
+        PP[panelProvider.ts<br/>Webview bridge]
+    end
+    CP <-->|sendRequest / tool result| LP
+    LP -->|buildStageSystemPrompt| CP
+    LP -->|dispatch by phase| TP
+    TP -->|invokeTool| NE
+    NE -->|getHopContext / archiveChars| MM
+    NE -->|emit result graph| PP
+    PP <-->|bridgeContract Zod| WV
+```
+
+**Contract directions:** Chat surface → participant (user/AI messages), participant → tool provider (phase filter), tool provider → engine (`submit_findings`, `get_neighbor_columns`), engine → memory (per-hop slot write), engine → panel (final `resultGraph`). The webview never talks directly to the engine.
 
 ## Bipartite Analysis Model
 
@@ -17,6 +119,21 @@ The analysis engine treats the data-lineage graph as a **bipartite work graph**:
 - **Edge contraction** — when a bodied node routes to a table, the authored question flows *through* the table to the table's bodied neighbors in the exploration direction. The proc's intent reaches the real consumers unchanged.
 
 ### Walkthrough — `sp → table → {viewA, viewB}` (downstream)
+
+```mermaid
+graph LR
+    SP([sp<br/>procedure, bodied]):::bodied
+    T[table<br/>passive pipe]:::passive
+    VA([viewA<br/>view, bodied]):::bodied
+    VB([viewB<br/>view, bodied]):::bodied
+    SP -->|route_request<br/>question: 'how are col1/col2 consumed?'| T
+    T -.->|edge contraction<br/>question forwarded verbatim| VA
+    T -.->|edge contraction<br/>question forwarded verbatim| VB
+    classDef bodied fill:#cfe8cf,stroke:#2a7,stroke-width:2px
+    classDef passive fill:#f4f0d8,stroke:#a93,stroke-dasharray:4 3
+```
+
+Table is never a hop focus — its box has a dashed border. Dashed arrows are the contraction path; the AI never sees a "table hop" and never writes invented prose about the table.
 
 1. `sp` analyzes. `route_requests: [{nodeId: table, question: "how are col1/col2 consumed downstream?"}]`.
 2. Engine sees the target is a table. It forwards sp's question verbatim to the table's downstream bodied neighbors: `viewA` and `viewB`.
@@ -63,6 +180,44 @@ As foundational mandates for the AI Assistant:
 ## Tools
 
 The participant exposes a phase-scoped tool surface. `src/ai/toolPolicy.ts` is the single source of truth — one table, one filter helper, used at every phase transition.
+
+```mermaid
+graph TB
+    subgraph DISC[Discovery — Auto mode, wide tool palette]
+        D1[get_context]
+        D2[search_objects]
+        D3[search_ddl]
+        D4[get_object_detail]
+        D5[detect_graph_patterns]
+        D6[start_exploration]
+    end
+    subgraph ACT[ACTIVE — Required mode, narrow palette]
+        A1[submit_findings]
+        A2[get_neighbor_columns<br/>SM only]
+    end
+    subgraph SYN[Synthesis — Auto, wide + report]
+        Y1[get_context]
+        Y2[search_objects]
+        Y3[search_ddl]
+        Y4[get_object_detail]
+        Y5[detect_graph_patterns]
+        Y6[present_result]
+    end
+    subgraph COMP[Completed / follow-up — Auto]
+        C1[search_objects]
+        C2[search_ddl]
+        C3[get_object_detail]
+        C4[start_exploration<br/>supplement]
+        C5[present_result]
+    end
+    DISC -->|start_exploration| ACT
+    ACT -->|agenda drained| SYN
+    SYN -->|final_answer| COMP
+    COMP -.->|supplement| ACT
+    COMP -.->|fresh origin| DISC
+```
+
+Narrow ACTIVE palette is what lets `toolMode.Required` stay effective — multi-tool Required downgrades to Auto on some providers. See [SM ACK/WAIT Contract](#vs-code-api-compliance--ai-tooling).
 
 | Tool | Discovery | ACTIVE (inline BB) | ACTIVE (SM BB + SM CT) | Synthesis | Completed (follow-up) | Purpose |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
@@ -122,6 +277,33 @@ The inline contract trusts the AI with a small scope and gives the user a veto o
 
 ### Memory Model (SM Mode)
 SM mode follows an **"Asymmetric Tiering"** memory pattern to manage context efficiency:
+
+```mermaid
+flowchart LR
+    subgraph DA[Detail Archive — monotonic, never shipped mid-loop]
+        direction LR
+        S1[Slot 1<br/>hop 1 analysis]
+        S2[Slot 2<br/>hop 2 analysis]
+        S3[Slot 3<br/>hop 3 analysis]
+        S4[Slot 4<br/>hop 4 analysis]
+        SN[Slot N<br/>hop N analysis]
+        S1 --> S2 --> S3 --> S4 --> SN
+    end
+    subgraph WM[Working Memory — shipped every hop]
+        direction LR
+        W1[user_question]
+        W2["&lt;short_term_memory&gt;<br/>last 3 summaries"]
+        W3[current_task]
+        W4[checklist]
+    end
+    H1[Hop 1] -.writes.-> S1
+    H2[Hop 2] -.writes.-> S2
+    HN[Hop N] -.writes.-> SN
+    WM -..->|wiped every hop| CUT[✂ sliding-wipe scissor]
+    DA -->|lifted at synthesis<br/>AiMemoryManager.getResult| SYN[Synthesis turn]
+```
+
+The archive grows monotonically but never ships mid-loop; working memory is wiped after every successful hop. This is why synthesis sees full evidence but hop-N's context stays bounded.
 
 1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical `analysis` string per node, written in `submit_findings.detail_analysis`. Never compressed. **Not shipped per hop.** Includes the `reason_for_visit` (concatenated intent questions) to maintain "Human Reasoning" traceability. Exposed at synthesis via `AiMemoryManager.getResult()`.
 2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — a strictly isolated snapshot:
@@ -232,15 +414,14 @@ These XML tags align with the placeholder names already used in rules (e.g. "Ali
 
 **YAML drives content, not structure.** `assets/aiOutputTemplates.yaml` controls what the AI writes into `detail_analysis` per hop (`*_capture` keys) and how the final document renders (`*_subsection` keys). It does not define the prompt structure or the delivery mechanism — that is `templateRenderer.ts` + the builder functions above.
 
-### Mechanical Map-&-Router enforcement (2026-04-18)
+### Mechanical Map-&-Router enforcement
 
-The ACTIVE phase of the chat loop sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`. The AI **cannot** produce free-form text during the hop loop — it must call `submit_findings`. This enforces the Map-&-Router contract ("the engine owns the loop") at the API level rather than relying on prompt discipline.
+The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`. The AI cannot emit free-form text during the hop loop — it must call `submit_findings`. This enforces the Map-&-Router contract at the API level rather than relying on prompt discipline.
 
-Consequences:
-- **No self-exit for the AI.** `complete: true` is honored only in inline mode (`_inlineMode === true`); in sliding-memory mode it is silently ignored. Termination is owned by the engine — `getHopContext` sets status to `'complete'` when the agenda is empty, which triggers the `active → synthesis` phase transition.
-- **Speed control via verbs, not adjectives.** If the AI judges a branch unworthy, it emits `verdict: "prune"` for each focus node → cascade-prune drains the agenda quickly → synthesis fires. No silent text bail possible.
-- **ACTIVE tool set is narrowed to `submit_findings` only.** `start_exploration` is dropped from the ACTIVE schema (the parallel-call guard in `toolProvider.ts` remains as defense-in-depth). This both satisfies the "some models support only a single tool under Required" caveat in the VS Code API and removes the AI's temptation to re-enter discovery.
-- **Prompt surfaces contain no exit vocabulary.** `BLOCK.completionContract` in `smPrompts.ts` describes only the loop (call `submit_findings` with a verdict until the engine drains). No mention of `complete: true`, "final answer", or "`present_result` only after" — those would teach the AI a path it cannot take.
+Consequences (full termination semantics in [Completion Contract](#completion-contract-when-sm-says-done)):
+- **Speed control via verbs, not adjectives.** `verdict: "prune"` drains the agenda quickly → synthesis fires. No silent text bail possible.
+- **ACTIVE tool set narrowed to `submit_findings` only.** `start_exploration` dropped from the ACTIVE schema (parallel-call guard in `toolProvider.ts` remains as defense-in-depth). Satisfies the "some models support only a single tool under Required" caveat.
+- **Prompt surfaces contain no exit vocabulary.** `BLOCK.completionContract` in `smPrompts.ts` describes only the loop — no `complete: true`, no "final answer" language that would teach a path the AI cannot take.
 
 Reference: VS Code API [`LanguageModelChatToolMode`](https://code.visualstudio.com/api/references/vscode-api#LanguageModelChatToolMode).
 
@@ -331,7 +512,7 @@ The navigation prompt enforces two distinct pruning strategies based on node typ
 
 `HopNeighbor.cols` is populated only in Column Trace mode. In Blackboard mode, column lookup for pruning decisions uses `lineage_get_neighbor_columns` on-demand.
 
-## Scope Budget Enforcement (2026-04-18)
+## Scope Budget Enforcement
 
 Two complementary guards keep the exploration loop inside the user's declared scope:
 
@@ -473,7 +654,7 @@ Per-neighbor flags: `in_budget`, `in_approved_scope`, `would_trigger_action_requ
 
 The structured `[AI] [Hop N]` debug log emits `authored=<N>` — a scalar counter on `NavigationEngine.archiveChars` (incremented by `detailChars + summaryChars` per successful hop). It tracks the cumulative character count the AI has **authored** across all hops (every `submit_findings.detail_analysis` + `.summary` written so far). It is **not** the size of any payload shipped to the model. `DetailSlot.analysis` text is never on the wire during hops — it only leaves memory at synthesis via `AiMemoryManager.getResult()`. So a log line with `authored=87000` on hop 22 means "the AI has written ~87 KB of analysis+summary text total," while the hop-22 input to the model is bounded to ~15–20 KB by the sliding-memory wipe (see §Memory Model). Readers of the debug log should not conflate this counter with per-hop context size.
 
-### SM closed-loop contract & deferred-questions checkpoint (2026-04-18)
+### SM closed-loop contract & deferred-questions checkpoint
 
 After `confirm_sm_start` is approved, the SM session runs as a closed loop — no mid-session consent gates. The AI's tool surface is restricted to `lineage_submit_findings` (primary) and `lineage_get_neighbor_columns` (structural pruning lookups, no DDL). `LanguageModelChatToolMode.Required` is requested; if the VS Code API downgrades to `Auto` (multi-tool) the SM ACK/WAIT guard injects a corrective message on any free-text round. The engine enforces the border mechanically:
 
@@ -503,7 +684,7 @@ What actually caches, today, in a live extension:
 - **s1 / Budget Forcing (Muennighoff et al., 2025)** — exposing a budget can cause premature stopping. Use monotonic `used` counters, not `remaining` countdowns. [arxiv.org/abs/2501.19393](https://arxiv.org/abs/2501.19393)
 - **$47k Agent Loop (Nov 2025)** — preflight budget checks prevent loops that can't finish. [relayplane.com/blog/agent-runaway-costs-2026](https://relayplane.com/blog/agent-runaway-costs-2026)
 
-## Cascade-prune guards — content-blind by design (2026-04-18)
+## Cascade-prune guards — content-blind by design
 
 Two topological guards govern `prune`-verdict pruning. All are content-blind — they operate on graph reachability, never second-guess the AI's verdict.
 
@@ -513,26 +694,26 @@ Two topological guards govern `prune`-verdict pruning. All are content-blind —
 
 **Principle:** engine guards are topological only. Content judgment lives in the AI + the prompts that frame it.
 
-## Trust + Blinkers model (2026-04-18 iteration 3)
+## Trust + Blinkers model
 
 The `@lineage` exploration loop implements the **Orchestrator-Workers** pattern (Anthropic, [*Building Effective Agents*](https://www.anthropic.com/research/building-effective-agents), Dec 2024):
 
-- **Orchestrator** — `NavigationEngine`. Decomposes the user question into hop-sized work items (focus nodes), presents them one at a time via `getHopContext()`, decides termination (agenda drained, gate emitted, or MAX_ROUNDS).
-- **Worker** — the AI at each hop. Reads DDL, emits a verdict + optional route requests via `submit_findings`. That's the entire job.
+- **Orchestrator** — `NavigationEngine`. Decomposes the user question into hop-sized work items, presents them one at a time via `getHopContext()`, decides termination (agenda drained, gate emitted, or `MAX_ROUNDS`).
+- **Worker** — the AI at each hop. Reads DDL, emits a verdict + optional route requests via `submit_findings`.
 - **Aggregator** — synthesis phase, which lifts the detail archive into the final report.
 
 The worker is bounded by **horse-with-blinkers mechanics**:
-- `LanguageModelChatToolMode.Required` in ACTIVE — can't emit free-form text.
-- Tool filter narrows the visible toolset to `submit_findings` only — no `present_result`, `lineage_get_neighborhood`, `lineage_detect_graph_patterns`, etc.
-- Engine silently ignores `complete: true` in SM mode — worker can't self-terminate, but submitting it is not an error.
+- `LanguageModelChatToolMode.Required` in ACTIVE — cannot emit free-form text.
+- Tool filter narrows the visible toolset to `submit_findings` only — see [Tools](#tools) for the per-phase palette.
+- Engine termination authority — see [Completion Contract](#completion-contract-when-sm-says-done).
 
-**Consent gates are two-turn pauses** (not a sub-loop): engine emits `action_required` envelope → turn ends → user replies yes/no/redirect → next turn resumes. On yes, the participant does NOT mechanically advance the engine — the engine was already primed at gate-emission time (tool called `getHopContext()` before returning the envelope). AI's next `submit_findings` land on an already-primed engine. **Trust-on-resume** — no runtime coupling between participant state and engine state beyond what the AI sees in its history.
+**Consent gates are two-turn pauses** (not a sub-loop): engine emits `action_required` envelope → turn ends → user replies yes/no/redirect → next turn resumes. On yes, the participant does NOT mechanically advance the engine — the engine was already primed at gate-emission time (tool called `getHopContext()` before returning the envelope). AI's next `submit_findings` lands on an already-primed engine. **Trust-on-resume** — no runtime coupling between participant state and engine state beyond what the AI sees in its history.
 
 Design citation: Orchestrator-Workers. Key deviation from autonomous-agent patterns (plain ReAct, AutoGPT): we give up the AI's termination authority in exchange for bounded, auditable completion.
 
-## Session FSM & Typed Exit Dispatch (2026-04-18 iteration 2)
+## Session FSM & Typed Exit Dispatch
 
-Follow-up to the scope-budget bundle. The mid-exploration consent gate above worked, but the turn handler had four implicit exit reasons (final_answer / gate / budget / error) with only one return path — so post-loop partial-result storage ran after any exit, including a paused gate. Fix: promote session state to a typed discriminated union; make every hop-loop exit typed; dispatch on the kind.
+Session state is a typed discriminated union; every hop-loop exit is typed; one `dispatchExit` switch owns all post-loop cleanup. This guarantees exhaustiveness at compile time and prevents "paused gate rendered as incomplete" regressions structurally.
 
 ### Phases (`SessionPhase`)
 
@@ -577,6 +758,27 @@ To maintain architectural clarity and reliable state transitions, the system fol
 2.  **React Webview (Graph Interaction)**: All standard graph manipulations (e.g., *Export to Draw.io*, *Interactive Tracing*, *Schema Filtering*) use **React components** within the webview. These are user-led actions that do not interact with the active agentic loop.
 
 **Note**: There are no buttons in the React UI for controlling the AI exploration state machine.
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| **Map** | Deterministic state owned by `NavigationEngine`: agenda, visited set, neighbor metadata, gates. |
+| **Router** | Semantic decisions made by the AI: sub-question, verdict, route requests, prune judgments. |
+| **Class D** | Direct answer via discovery tools — one isolated object or graph-wide metadata. No "flow" narration allowed. |
+| **Class S** | State-machine exploration via `start_exploration` — anything spanning ≥ 2 connected objects. |
+| **BB** (Blackboard) | Default nav mode. Business-logic analyst view. Used when no target columns are specified. |
+| **CT** (Column Trace) | Nav mode activated when `targetColumns` are set. Adds column-validation and `column_flow` attribution. |
+| **Inline mode** | One-shot execution for scopes ≤ 10 nodes AND ≤ 10k tokens. AI sees all DDL at once; AI may self-terminate with `complete: true`. |
+| **SM mode** (Sliding Memory) | Hop-by-hop execution for larger scopes. Memory is wiped each hop; engine owns termination. |
+| **Bodied node** | View / procedure / function — nodes that carry SQL logic. Only these enter the agenda as hop focuses. |
+| **Edge contraction** | When routing lands on a table, the authored question flows through to the table's bodied neighbors. Tables never become hop focuses (except the origin). |
+| **Origin exception** | The starting point is pushed onto the agenda even when not bodied, using a reduced `structural_summary` template. |
+| **Blinkers** | Mechanical restrictions on the AI worker: `toolMode.Required`, tool-palette filter, no self-termination in SM. |
+| **`action_required`** | Engine envelope that emits a consent gate to the user. Turn ends; user reply resumes or aborts the loop. |
+| **Deferred question** | In SM mode, an out-of-border route that is collected silently and surfaced at synthesis rather than gated mid-loop. |
+| **Detail Archive** | Per-node full `analysis` text, written at each hop, shipped only at synthesis via `AiMemoryManager.getResult()`. |
+| **Working Memory** | Per-hop isolated snapshot shipped every hop — user_question, `<short_term_memory>` (last 3 summaries), current_task, checklist. |
 
 ## References
 - Prompt system detail — see [`AI_PROMPTS.md`](AI_PROMPTS.md) for the builder hierarchy, YAML capture/render rules, and prompt-change workflow.
