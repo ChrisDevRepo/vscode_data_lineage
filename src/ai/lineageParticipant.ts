@@ -471,7 +471,10 @@ export class LineageParticipant {
           inputSchema: t.inputSchema
         }));
 
-        const toolMode = requestedMode;
+        // Required is only valid with exactly one tool; fall back to Auto for multi-tool sets.
+        const toolMode = (requestedMode === vscode.LanguageModelChatToolMode.Required && tools.length > 1)
+          ? vscode.LanguageModelChatToolMode.Auto
+          : requestedMode;
 
         const response = await model.sendRequest(messages, { tools, toolMode }, token);
         const assistantParts: any[] = [];
