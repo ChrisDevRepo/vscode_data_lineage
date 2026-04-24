@@ -223,7 +223,10 @@ export class LineageParticipant {
             }
           }
           sess.enterExploring();
-          effectivePrompt = 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
+          const focusId = engine?.currentFocus;
+          effectivePrompt = focusId
+            ? `User approved. Current focus for hop 1 is ${focusId}. Call submit_findings for this node.`
+            : 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
           const engine = sess.stateMachine as NavigationEngine | null;
           if (engine) {
@@ -278,9 +281,11 @@ export class LineageParticipant {
       }
     }
 
-      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; text: string } | null = null;
+      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; isStructuralFocus: boolean; text: string } | null = null;
       const buildStablePart = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
-        if (cachedStablePart && cachedStablePart.phase === phase) return cachedStablePart.text;
+        const engine = sess.stateMachine;
+        const isStructuralFocus = phase === 'active' && !!engine?.isCurrentFocusStructural;
+        if (cachedStablePart && cachedStablePart.phase === phase && cachedStablePart.isStructuralFocus === isStructuralFocus) return cachedStablePart.text;
         const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
         const filterSchemas = sess.filter?.schemas || [];
         const totalSchemaCount = sess.model!.schemas.length;
@@ -289,7 +294,6 @@ export class LineageParticipant {
         const visibleNodes = activeFilter?.schemas && activeFilter.schemas.length > 0
           ? sess.model!.nodes.filter(n => (activeFilter.schemas as string[]).includes(n.schema)).length
           : totalNodes;
-        const engine = sess.stateMachine;
         const base = buildGeneralSystemPrompt(phase, dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes);
 
         let phaseSpecific = '';
@@ -304,7 +308,7 @@ export class LineageParticipant {
         // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
         // re-renders keep the same formatting contract.
         const templatesPhase = phase === 'completed' ? 'synthesis' : phase;
-        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification);
+        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, isStructuralFocus);
         const parts: string[] = [base, phaseSpecific];
 
         if (phase === 'active' && engine) {
@@ -320,7 +324,7 @@ export class LineageParticipant {
         }
 
         const text = parts.filter(Boolean).join('\n');
-        cachedStablePart = { phase, text };
+        cachedStablePart = { phase, isStructuralFocus, text };
         return text;
       };
 
@@ -340,7 +344,7 @@ export class LineageParticipant {
           const legalTools = [...getAllowedLmToolNames({ kind: 'active', mode })]
             .map(n => n.replace(/^lineage_/, ''));
           const agendaRemaining = Math.max(0, engine.scopeSize - engine.currentHop);
-          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.scopeSize, agendaRemaining, legalTools));
+          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.scopeSize, agendaRemaining, legalTools, engine.currentFocus));
         }
         return dynamic.filter(Boolean).join('\n');
       };
@@ -525,16 +529,28 @@ export class LineageParticipant {
           }
           // Synthesis guard: if the AI wrote prose instead of calling present_result, inject a
           // corrective and retry. Capped at 2 attempts; on the third miss it falls through to
-          // final_answer so the user is not left hanging indefinitely.
+          // final_answer so the user is not left hanging indefinitely. Trim the conversation to
+          // the minimum required to complete the synthesis call — system prompt, user question,
+          // and the last tool_result carrying the archive — so retry cost does not compound.
           if (activePhase === 'synthesis' && synthCorrectiveCount < 2) {
             synthCorrectiveCount++;
             this.logger.debug(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting corrective prompt (attempt ${synthCorrectiveCount})`);
-            if (assistantParts.length > 0) {
-              messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
-            }
-            messages.push(vscode.LanguageModelChatMessage.User(
-              'Call `lineage_present_result` now. Do not output the result as prose — structured tool output is required.'
+            const systemMsg = messages[0];
+            const userQuestionMsg = messages[1];
+            const lastToolResultIdx = (() => {
+              for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].content.some(p => p instanceof vscode.LanguageModelToolResultPart)) return i;
+              }
+              return -1;
+            })();
+            const essentials: vscode.LanguageModelChatMessage[] = [systemMsg];
+            if (userQuestionMsg) essentials.push(userQuestionMsg);
+            if (lastToolResultIdx > 1) essentials.push(messages[lastToolResultIdx]);
+            essentials.push(vscode.LanguageModelChatMessage.User(
+              'Call `lineage_present_result` now with the archive in the last tool_result. Structured tool output is required — do not emit prose.'
             ));
+            messages.length = 0;
+            messages.push(...essentials);
             continue;
           }
           const msFinal = Date.now() - tRoundStart;

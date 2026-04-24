@@ -1,10 +1,9 @@
 /**
- * AI prompt constants — extracted from extension.ts for maintainability.
+ * AI prompt builders for the `@lineage` chat participant.
  *
- * Each constant is a complete prompt string injected at a specific point
- * in the chat loop. See ai/prompt-changelog.md for change history.
- *
- * Navigation Mode prompts are in smPrompts.ts (Universal Markdown blocks).
+ * Each exported function returns a complete prompt string injected at a
+ * specific point in the chat loop. Navigation-mode prompts live in
+ * `smPrompts.ts` (Universal Markdown blocks).
  */
 
 import type { DeferredQuestion } from './smTypes';
@@ -169,8 +168,6 @@ export function buildActivePhasePrompt(isInline: boolean): string {
   return [
     '# Active Exploration Protocol',
     `Mode: ${mode}`,
-    '',
-    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
     '',
     '1. ARCHIVE → DEPTH: Your `detail_analysis` is the sole input to the final report. Write at full depth because there is no follow-up pass.',
     '2. ANCHORING: Align every verdict with the <mission_brief> and <current_task>.',
@@ -355,11 +352,8 @@ export function buildToolUsageBlock(): string {
   return [
     '## Tool Constraints',
     '',
-    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
-    '',
     '1. Use `lineage_submit_findings` to process focus nodes. Write full-depth `detail_analysis` per the required-section template in the stage rules.',
-    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags.',
-    `3. ${OUT_OF_SCOPE_CONTRACT}`,
+    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
   ].join('\n');
 }
 
@@ -395,16 +389,29 @@ export function buildMissionBriefBlock(brief: string, question: string): string 
  * hop. It changes every hop in SM mode, so it lives in the dynamic suffix of
  * the system prompt, not in the cacheable stable prefix.
  *
- * @param currentTask - The sub-question assigned to the current focus node.
- * @returns The `<current_task>` XML block, or an empty string if `currentTask` is absent.
+ * The input string arrives pipe-concatenated (funnel appends each routed
+ * question with ` | `) with the leading segment tagged `Root Question: <q>`.
+ * This renderer splits those segments into structured XML so the AI can
+ * distinguish the invariant root question from the sub-question to answer
+ * THIS hop — removing ambiguity about which segment is active.
+ *
+ * @param currentTask - Pipe-concatenated questions from the engine agenda.
+ * @returns Structured `<current_task>` XML block, or an empty string if `currentTask` is absent.
  */
 export function buildCurrentTaskBlock(currentTask: string): string {
   if (!currentTask) return '';
-  return [
-    '<current_task>',
-    currentTask,
-    '</current_task>',
-  ].join('\n');
+  const parts = currentTask.split(/\s*\|\s*/).map(p => p.trim()).filter(Boolean);
+  const rootMatch = parts[0]?.match(/^Root Question:\s*(.*)$/i);
+  const rootQuestion = rootMatch ? rootMatch[1].trim() : null;
+  const tail = rootMatch ? parts.slice(1) : parts;
+  const subQuestion = tail.length > 0 ? tail[tail.length - 1] : '';
+  const preceding = tail.length > 1 ? tail.slice(0, -1) : [];
+  const lines = ['<current_task>'];
+  if (rootQuestion) lines.push(`  <root_question>${rootQuestion}</root_question>`);
+  if (preceding.length > 0) lines.push(`  <preceding_questions>\n    - ${preceding.join('\n    - ')}\n  </preceding_questions>`);
+  if (subQuestion) lines.push(`  <sub_question>${subQuestion}</sub_question>`);
+  lines.push('</current_task>');
+  return lines.join('\n');
 }
 
 
@@ -456,6 +463,7 @@ export function buildMemoryBlock(
  * @param total - Total nodes in the BFS scope.
  * @param agendaRemaining - Nodes still awaiting analysis.
  * @param legalTools - Names of tools the AI may call this turn (without the `lineage_` prefix).
+ * @param focusNodeId - The node the AI must analyse this hop — surfaced in prose so the AI can match tool-result JSON, especially on hop 1 when no prior tool_result exists.
  * @returns A string containing the `<mission_state>` block.
  */
 export function buildMissionStateBlock(
@@ -463,9 +471,11 @@ export function buildMissionStateBlock(
   total: number,
   agendaRemaining: number,
   legalTools: readonly string[],
+  focusNodeId: string | null,
 ): string {
-  return [
-    '<mission_state>',
+  const lines = ['<mission_state>'];
+  if (focusNodeId) lines.push(`  focus_node_id: ${focusNodeId}`);
+  lines.push(
     `  hop: ${hop} / ${total}`,
     `  agenda_remaining: ${agendaRemaining}`,
     `  engine_status: awaiting_findings`,
@@ -474,5 +484,6 @@ export function buildMissionStateBlock(
     `  session_ends_when: the engine reports sm_status == "complete"`,
     `  free_text: outside protocol — session continues until the engine terminates it`,
     '</mission_state>',
-  ].join('\n');
+  );
+  return lines.join('\n');
 }

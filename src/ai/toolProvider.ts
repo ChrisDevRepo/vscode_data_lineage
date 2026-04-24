@@ -323,6 +323,17 @@ class ToolHandler {
         }, input);
       }
 
+      // Identifier-match guard: detect slot-hijack where the AI's detail_analysis opens by naming a different scope node than the declared focus. SM mode only (single-entry) — inline batch arrays skip this check.
+      if (!Array.isArray(parsed.data)) {
+        const hijackedBy = engine.detectFocusSubjectMismatch(parsed.data.focus_node_id, parsed.data.detail_analysis ?? '');
+        if (hijackedBy) {
+          return this.logAndReturn('submit_findings', {
+            error: 'focus_subject_mismatch',
+            hint: `detail_analysis opens by naming \`${hijackedBy}\`, but focus_node_id is ${parsed.data.focus_node_id}. Rewrite the analysis so it describes the focus node.`,
+          }, input);
+        }
+      }
+
       const result = engine.submitFindings(parsed.data);
       if ('error' in result) return this.logAndReturn('submit_findings', result, input);
 

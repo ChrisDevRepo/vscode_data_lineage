@@ -90,6 +90,7 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
   technical_capture:    ['active'],
   technical_subsection: ['synthesis'],
   general:              ['active', 'synthesis'],
+  structural_summary:   ['active'],
 };
 
 /**
@@ -142,6 +143,7 @@ const KEY_TITLE: Readonly<Record<keyof AiOutputTemplates, string>> = {
   technical_capture:    'Technical angle',
   technical_subsection: 'Technical section block',
   general:              'General guidance',
+  structural_summary:   'Structural summary (non-code focus)',
 };
 
 /**
@@ -161,18 +163,34 @@ const KEY_TITLE: Readonly<Record<keyof AiOutputTemplates, string>> = {
  * one-liner is emitted before the section blocks. This is injected by the
  * code path rather than the YAML because the value is code-resolved.
  *
+ * When `isStructuralFocus` is `true` (ACTIVE phase only), the `structural_summary`
+ * template replaces the business / technical capture blocks: the starting
+ * point is a non-bodied node, so the reduced template keeps the hop to
+ * structural facts and forbids invented behaviour.
+ *
  * @param templates - The loaded AI output templates (instruction strings).
  * @param phase - The current conversation phase.
  * @param classification - Optional mission-type signal; gates subsection firing.
+ * @param isStructuralFocus - When `true` the reduced template swaps in; ACTIVE phase only.
  * @returns A markdown block ready to append to the phase-appropriate system prompt.
  */
 export function resolveStagePrompt(
   templates: AiOutputTemplates,
   phase: TemplateStage,
   classification: ClassificationValue | undefined,
+  isStructuralFocus: boolean = false,
 ): string {
+  const structuralMode = isStructuralFocus && phase === 'active';
   const keys = (Object.keys(STAGE_BY_KEY) as (keyof AiOutputTemplates)[])
     .filter(key => STAGE_BY_KEY[key].includes(phase))
+    .filter(key => {
+      if (structuralMode) {
+        // Reduced template swaps business/technical capture for structural_summary;
+        // keep shared `general` guidance (unbounded depth, table rule, ⚠️ inline).
+        return key === 'structural_summary' || key === 'general';
+      }
+      return key !== 'structural_summary';
+    })
     .filter(key => {
       const gate = CLASSIFICATION_GATED[key];
       if (!gate) return true;

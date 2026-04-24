@@ -55,6 +55,13 @@ export interface AgendaEntry {
   depth: number;
   /** Specific columns of interest for this node (primarily used in Column Trace mode). */
   activeColumns?: string[];
+  /**
+   * Set when the user's starting point is a non-bodied node (table, external).
+   * The funnel lifts the bipartite contraction for the origin push so the starting
+   * point gets its own agenda slot with a reduced-template prompt (`structural_summary`).
+   * Middle tables (priority 2 routed calls) stay contracted and never get this flag.
+   */
+  isStructuralFocus?: boolean;
 }
 
 /**
@@ -91,6 +98,21 @@ export interface IHopStateMachine {
   readonly columnAspect: ColumnAspect | null;
   /** Out-of-approved-scope routes deferred during the SM session (empty in inline mode). */
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
+  /** Current focus node id (node the AI must analyse this hop) — null before the first hop. */
+  readonly currentFocus: string | null;
+
+  /** `true` when the current focus is the user's non-bodied starting point — the prompt builder swaps in the reduced `structural_summary` template. */
+  readonly isCurrentFocusStructural: boolean;
+
+  /**
+   * Detects a slot-hijack attempt — when the AI's authored `detail_analysis` opens
+   * by naming a different scope node than the declared `focus_node_id`.
+   *
+   * @param focusNodeId - The declared focus from `submit_findings`.
+   * @param detailAnalysis - The authored markdown analysis.
+   * @returns The mismatched scope-node id, or `null` when no mismatch is detected.
+   */
+  detectFocusSubjectMismatch(focusNodeId: string, detailAnalysis: string): string | null;
 
   /**
    * Toggles the inline operating mode.
@@ -204,6 +226,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected currentFocusNodeId: string | null = null;
   /** Agenda-entry `question` captured at dequeue so it survives the splice and can label the slot. */
   protected currentFocusQuestion: string | null = null;
+  /** Mirror of `AgendaEntry.isStructuralFocus` captured at dequeue so the prompt builder can select the reduced template. */
+  protected currentFocusIsStructural = false;
   /** Total number of hops executed. */
   protected hopCount = 0;
   /** Breadth-first search depth for nodes from the origin. */
@@ -472,6 +496,48 @@ export class NavigationEngine implements IHopStateMachine {
     return this.hopCount;
   }
 
+  /** Current focus node id exposed for prompt builders — populates the `focus_node_id` line in `<mission_state>` so the AI sees its target in prose, not only in tool-result JSON. `null` before the first hop. */
+  public get currentFocus(): string | null {
+    return this.currentFocusNodeId;
+  }
+
+  /** `true` when the current focus is the user's non-bodied starting point — the prompt builder swaps in the `structural_summary` reduced template. */
+  public get isCurrentFocusStructural(): boolean {
+    return this.currentFocusIsStructural;
+  }
+
+  /**
+   * Detects a slot-hijack attempt where `detail_analysis` opens by naming a **different** scope node than the declared `focus_node_id`.
+   *
+   * @remarks
+   * Mechanical identifier-match contract — does NOT judge content quality. Returns `null` when:
+   * - No backticked identifier appears in the opening (first 200 chars).
+   * - The first identifier matches the focus (normalised).
+   * - The first identifier is not a known scope node (columns, external refs, SQL keywords pass through).
+   *
+   * Returns the mismatched scope-node id when the AI authored analysis about a different scope node. Normalisation strips square brackets + schema prefix and lower-cases.
+   *
+   * @param focusNodeId - The declared focus from `submit_findings.focus_node_id`.
+   * @param detailAnalysis - The authored markdown analysis.
+   * @returns The mismatched scope node id, or `null` when no mismatch.
+   */
+  public detectFocusSubjectMismatch(focusNodeId: string, detailAnalysis: string): string | null {
+    const opening = detailAnalysis.slice(0, 200);
+    const m = opening.match(/`([^`\n]+)`/);
+    if (!m) return null;
+    const norm = (s: string): string => {
+      const tail = s.replace(/[\[\]]/g, '').split('.').pop();
+      return tail ? tail.trim().toLowerCase() : '';
+    };
+    const mentioned = norm(m[1]);
+    if (!mentioned) return null;
+    if (mentioned === norm(focusNodeId)) return null;
+    for (const id of this.scopeNodeIds) {
+      if (norm(id) === mentioned) return id;
+    }
+    return null;
+  }
+
   /** Stores the current-task question at the moment a hop context is delivered. */
   private _lastCurrentTask = '';
 
@@ -646,6 +712,7 @@ export class NavigationEngine implements IHopStateMachine {
       // consistency, but the AI receives the full list.
       this.currentFocusNodeId = batchEntries[0].nodeId;
       this.currentFocusQuestion = batchEntries[0].question ?? null;
+      this.currentFocusIsStructural = batchEntries[0].isStructuralFocus ?? false;
 
       const nodes = batchEntries.map(e => {
         const n = this.nodeMap.get(e.nodeId)!;
@@ -702,6 +769,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.hopCount++;
     this.currentFocusNodeId = entry.nodeId;
     this.currentFocusQuestion = entry.question ?? null;
+    this.currentFocusIsStructural = entry.isStructuralFocus ?? false;
 
     // Synchronize the Column Aspect to only show columns relevant to this specific path
     if (this._columnAspect) {
@@ -971,8 +1039,26 @@ export class NavigationEngine implements IHopStateMachine {
           // the edge and forwards the proc's authored question to the target's
           // bodied neighbors in the exploration direction.
           const agendaSizeBefore = this.agenda.length;
+          const targetNode = this.nodeMap.get(nid);
+          const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
+          const wasAlreadyVisited = this.visited.has(nid);
           this.enqueueHop(nid, req.question, 0, 2, req.columns);
-          this.lastRoutedNew += Math.max(0, this.agenda.length - agendaSizeBefore);
+          const added = this.agenda.length - agendaSizeBefore;
+          this.lastRoutedNew += Math.max(0, added);
+
+          // Transparency: if the route passed acceptance checks but contraction
+          // dropped the forward (non-bodied target with no bodied neighbour in
+          // scope), downgrade the previously-pushed `accepted: true` to a
+          // deferred outcome so the AI can distinguish "accepted and routed"
+          // from "accepted but no new hop enqueued".
+          if (added === 0 && !targetIsBodied && !wasAlreadyVisited) {
+            for (let i = routeOutcomes.length - 1; i >= 0; i--) {
+              if (routeOutcomes[i].nodeId === req.nodeId && routeOutcomes[i].accepted) {
+                routeOutcomes[i] = { nodeId: req.nodeId, accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' };
+                break;
+              }
+            }
+          }
         }
       }
 
@@ -1116,6 +1202,17 @@ export class NavigationEngine implements IHopStateMachine {
         return;
       }
       this.agenda.push({ nodeId: targetId, question, priority, depth, activeColumns: columns });
+      this.agendaIds.add(targetId);
+      return;
+    }
+
+    // Origin push for a non-bodied starting point: give it its own slot with
+    // `isStructuralFocus` so the prompt builder swaps in the reduced
+    // `structural_summary` template. Middle tables (priority 2 routed calls)
+    // stay contracted — the AI's routing intent still passes through them to
+    // their bodied neighbours via the block below.
+    if (priority === 3) {
+      this.agenda.push({ nodeId: targetId, question, priority, depth, activeColumns: columns, isStructuralFocus: true });
       this.agendaIds.add(targetId);
       return;
     }

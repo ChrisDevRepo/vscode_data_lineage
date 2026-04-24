@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **`@lineage` is clearer about its current focus.** The hop prompt now states the focus node id in plain text (in `<mission_state>` and in the gate-resume message), so the AI reliably identifies its analysis target on hop 1 — eliminating the first-hop waste where the AI inspected the origin table instead of the seeded procedure.
+- **Starting-point table summaries.** When you ask about a table as your starting point, `@lineage` now produces one clean dossier slot for it — Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys — instead of folding the table into a neighbouring procedure's analysis. Mid-graph tables are unchanged (still contracted through to the procedures around them).
+- **Synthesis rendering rules.** The intro paragraph is now narrative prose only (no column dumps). Sibling procedures sharing the same shape (e.g. multiple EV cases, multiple allocation rules) render as one comparison table with the shared formula hoisted above — not one bullet per variant. Every ⚠️ invariant from every slot is preserved (no merging across variants). Section headers use plain `##` — no auto-numbered prefix.
+- **Authoring hygiene.** Procedure analysis names only columns the procedure reads or writes. Neighbour tables' full schemas belong in catalog inspection output, not in a procedure's slot. Soft authoring aim is 800–2 000 chars per `Columns / logic` section — split into sub-sections rather than prose-extending a single section.
+- **Cheaper synthesis retry.** When the synthesis free-text guard fires, the retry re-sends a minimal prompt (plus the essential system / user / tool-result messages) instead of the full stable prefix — cuts retry cost significantly.
+
+### Fixed
+- **Slot hijack on first hop.** If the AI's `submit_findings` was rejected with `focus_mismatch`, it could retry by just swapping the `focus_node_id` field while keeping the original (wrong-subject) analysis body. The analysis would then end up stored under an unrelated node. `submit_findings` now rejects with `focus_subject_mismatch` when the authored analysis opens by naming a different scope node than the declared focus — identifier-match contract, not content judgement.
+- **Silent route drops.** Routes that passed acceptance but produced no new hop (table whose contracted forward fell outside scope) no longer silently report `accepted: true`. The route_outcome is downgraded to `{ accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' }` so the AI can tell routed-and-enqueued apart from routed-but-dropped.
+- **Prompt duplication.** The "Grounding rule" sentence was repeated four times across the active-phase prompt; the out-of-scope routing paragraph was repeated three times. Both are now stated once in their canonical surface.
+
 ## [0.9.9] - 2026-04-23
 
 ### Added

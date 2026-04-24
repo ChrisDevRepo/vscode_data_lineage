@@ -101,6 +101,16 @@ export interface AiOutputTemplates {
    * Fires once — avoids duplication when classification is `both`.
    */
   general: string;
+  /**
+   * Reduced-template capture rules for a non-bodied starting point — fires at
+   * ACTIVE only when the agenda entry carries `isStructuralFocus: true` (user
+   * pointed their analysis at a table or other non-code node). Swaps in
+   * **instead of** the business/technical capture blocks so the AI writes a
+   * clean structural summary (purpose, columns, upstream sources, downstream
+   * consumers, grain/keys) rather than inventing transform logic the body
+   * does not contain.
+   */
+  structural_summary: string;
 }
 
 /**
@@ -124,6 +134,7 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   technical_capture: '',
   technical_subsection: '',
   general: '',
+  structural_summary: '',
 };
 
 /** 

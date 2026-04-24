@@ -242,8 +242,12 @@ export interface RouteOutcome {
   accepted: boolean;
   /** True when queued as a post-synthesis follow-up offer (SM mode, out of scope). */
   deferred?: boolean;
-  /** Reason for deferral: 'schema', 'depth', or 'schema_and_depth'. */
-  reason?: 'schema' | 'depth' | 'schema_and_depth';
+  /**
+   * Reason for deferral:
+   * - `schema` / `depth` / `schema_and_depth` — route target is outside the approved border; user will see it as a follow-up offer.
+   * - `depth_contracted_beyond_budget` — route target was a non-bodied node (table) whose bipartite contraction reached bodied neighbours that fell outside the active BFS scope, so no hop was enqueued. The route is structurally valid but produced no new agenda item.
+   */
+  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget';
 }
 
 /**

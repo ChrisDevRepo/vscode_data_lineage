@@ -26,7 +26,23 @@ The analysis engine treats the data-lineage graph as a **bipartite work graph**:
 
 This pattern mirrors Petri nets (transitions fire, places are passive), Weiser's program slicing (slice at statements, not variables), and Dennis's bipartite dataflow graphs (actors compute, links carry values).
 
-The invariant is enforced by a single funnel — `enqueueHop` in [`src/ai/smBase.ts`](../src/ai/smBase.ts) — which is the only code path that writes to the agenda. By construction, a non-bodied node can never become a hop target.
+The invariant is enforced by a single funnel — `enqueueHop` in [`src/ai/smBase.ts`](../src/ai/smBase.ts) — which is the only code path that writes to the agenda. By construction, a non-bodied node never becomes a hop target *except at the user's starting point* (see next section).
+
+### Exception — starting-point table summary
+
+When the user points their analysis at a non-bodied node (a table, typically), contracting the origin would leave the question without a dedicated slot for the node the user actually asked about. The final report would then either (a) lose the table-centric dossier entirely, or (b) have it crammed into a neighbouring procedure's slot where it doesn't belong.
+
+So `enqueueHop` lifts the contraction **for the origin push only** (`priority === 3`): the starting point is pushed onto the agenda with `isStructuralFocus: true`. For that single hop the prompt builder swaps the normal `business_capture` / `technical_capture` capture blocks for a reduced `structural_summary` YAML template whose required sections are:
+
+- **Purpose** — one sentence naming the role of this node in the pipeline.
+- **Columns** — `| Column | Type | Role / ⚠️ |` table from `lineage_get_neighbor_columns`.
+- **Upstream sources** — adjacent procedures / views that write to this node.
+- **Downstream consumers** — adjacent procedures / views that read from it.
+- **Grain / keys** — primary key + common join keys from FKs.
+
+Transform formulas, CASE logic, and business rules are banned in this template — tables have no body, so any such prose would be invented. The surrounding procedures are analysed in their own hops with the standard template; the starting-point summary points at them rather than replicating their logic.
+
+**Middle tables remain contracted.** The exception applies *only* to the origin push. Route requests pointing at mid-graph tables (priority 2) flow through the standard contraction path unchanged.
 
 ## Engineering Standards
 As foundational mandates for the AI Assistant:
