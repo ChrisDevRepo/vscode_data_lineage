@@ -28,7 +28,6 @@ export const PendingGateSchema = z.object({
     'schema_out_of_filter',
     'depth_cap_exceeded',
     'schema_and_depth',
-    'confirm_scope_extension',
   ]),
   classes: z.array(z.string()),
   nodeIds: z.array(z.string()),

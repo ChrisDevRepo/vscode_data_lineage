@@ -222,7 +222,8 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Out-of-approved-scope routes captured during an SM session. Single encapsulated
    * bucket — all mutations flow through {@link deferQuestion}. Surfaced at synthesis
-   * and seeded into the optional `confirm_scope_extension` envelope.
+   * (as the "Unanswered" section) and to the user post-turn via the
+   * `dataLineageViz.showDeferredQuestions` button.
    */
   private readonly _deferredQuestions: DeferredQuestion[] = [];
 
@@ -301,9 +302,9 @@ export class NavigationEngine implements IHopStateMachine {
    * Read-only view of the SM deferred-questions bucket.
    *
    * @remarks
-   * Consumed at synthesis (rendered as the "Unanswered" section) and when priming the
-   * post-synthesis `confirm_scope_extension` envelope. Callers cannot mutate the bucket
-   * through this accessor.
+   * Consumed at synthesis (rendered as the "Unanswered" section) and surfaced
+   * post-turn through the `dataLineageViz.showDeferredQuestions` button. Callers
+   * cannot mutate the bucket through this accessor.
    */
   public get deferredQuestions(): ReadonlyArray<DeferredQuestion> {
     return this._deferredQuestions;

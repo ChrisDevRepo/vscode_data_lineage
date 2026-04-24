@@ -7,7 +7,7 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for Claude precision.
  */
 
-import { buildColumnAspectPrompt } from './prompts';
+import { buildColumnAspectPrompt, OUT_OF_SCOPE_CONTRACT } from './prompts';
 
 
 const BLOCK = {
@@ -54,7 +54,7 @@ const BLOCK = {
     '1. AUTO-ADD: Route neighbors only if critical to the <mission_brief>. Respect user depth and schema boundaries.',
     '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant table/view/function branches (logging, demographics) found in DDL. See Pruning Protocol below for procedures.',
     '3. ANCHORING: Relevance is judged against the mission, not the sub-question.',
-    '4. OUT-OF-SCOPE ROUTES: Routing mission-relevant neighbors outside the approved schemas or depth cap is encouraged. They are deferred and surfaced as post-synthesis follow-up offers. Check `route_outcomes[]` in each tool result to confirm which routes were accepted vs deferred.',
+    `4. OUT-OF-SCOPE ROUTES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n'),
 
   /**
