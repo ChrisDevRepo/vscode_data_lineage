@@ -196,6 +196,7 @@ export function buildSynthesisPrompt(): string {
     '# Synthesis Protocol',
     'The archive is closed; routing is no longer available. The original question is above',
     '(first User message). The archive is in the last tool_result (`result.detail_slots[]`).',
+    'If the tool_result contains `deferred_questions[]`, these are objects found during BFS that were skipped because they fell outside the approved schema/depth border.',
     '',
     'Work in this order:',
     '1. READ the archive. Every slot already has full-depth analysis — do not rewrite it, reuse it.',
@@ -253,28 +254,32 @@ export function buildTracePrompt(userInput: string): string {
 }
 
 /**
+ * User-facing label for the follow-up recommendation pill.
+ * This string is also used as the trigger for internal prompt expansion.
+ */
+export const RECOMMEND_FOLLOWUPS_TRIGGER = 'Follow-up: Explore related objects…';
+
+/**
  * Builds the chat-input pre-fill used when the user clicks the post-synthesis
- * "Show N deferred question(s)" button.
+ * "Explore related objects" button.
  *
  * @remarks
- * Renders EVERY deferred question as a numbered markdown list with schema, source
- * focus node, and defer reason so the user can scan them in the chat input,
- * keep the line(s) they want to pursue, delete the rest, and send. The button
- * command passes this text via `workbench.action.chat.open` with
- * `isPartialQuery: true`, so nothing is submitted until the user presses Enter.
+ * Rather than forcing the user to manually edit a raw list of deferred nodes,
+ * this prompt instructs the AI to summarize the out-of-scope discoveries and
+ * suggest 2-3 specific, actionable follow-up queries based on the graph structure.
+ * The raw deferred list is passed in an XML block for the AI's context.
  *
  * @param entries - Validated deferred-question entries from the engine.
- * @returns The multiline string to pre-fill into the chat input.
+ * @returns The multiline prompt string to pre-fill into the chat input.
  */
 export function buildDeferredQuestionsPrompt(entries: ReadonlyArray<DeferredQuestion>): string {
-  const header = `@lineage Add the following deferred node(s) to the existing analysis — keep the line(s) you want, delete the rest, then send. Extend the archive via \`lineage_start_exploration\` with \`supplement:{nodeIds:[...]}\`; do not start a fresh exploration.`;
-  const lines = entries.map((d, i) => {
-    const question = d.question?.trim() || `Investigate ${d.nodeId}`;
+  const header = `Based on the graph we just explored, we found some related objects that were skipped because they were out of scope. Please summarize these skipped objects and, for the most mission-relevant ones, explain WHY I should analyze them (what specific value do they add to the story we just mapped?). Recommend 2-3 specific follow-up questions I could ask, using your knowledge of the BFS archive to justify the reasoning.`;
+  const lines = entries.map((d) => {
     const schema = d.schema ? ` [schema: ${d.schema}]` : '';
     const from = ` (from ${d.fromFocusNodeId}, reason: ${d.reason})`;
-    return `${i + 1}. ${d.nodeId}${schema} — ${question}${from}`;
+    return `- ${d.nodeId}${schema}${from}`;
   });
-  return `${header}\n\n${lines.join('\n')}`;
+  return `${header}\n\n<skipped_objects>\n${lines.join('\n')}\n</skipped_objects>`;
 }
 
 /** 

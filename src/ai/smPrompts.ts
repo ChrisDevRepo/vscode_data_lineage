@@ -58,18 +58,18 @@ const BLOCK = {
   ].join('\n'),
 
   /**
-   * Two-kind pruning protocol: structural objects (column-check first) vs. procedures (route first).
+   * Two-kind pruning protocol: structural neighbors (direct inspection) vs. procedures (hop-based).
    *
    * @remarks
-   * Structural objects expose columns without a hop visit — `lineage_get_neighbor_columns` returns
-   * `columns:[{n,t,...}]` for one or many neighbors in a single call, with no DDL. Procedures hide
-   * all logic behind DDL that only arrives at hop time, so pre-pruning them is always premature.
+   * Structural neighbors (tables, views, functions) expose their column schema and foreign keys
+   * through `lineage_get_neighbor_columns` without requiring a dedicated hop. Procedures
+   * keep their logic within a DDL body that is only accessible when the node is in focus.
    */
   pruningProtocol: [
     '## Pruning — When to Prune',
-    'Prune irrelevant nodes. Relevance is judged against the `<mission_brief>`.',
-    '- **table / view / function**: if columns are not explicit in the focus DDL, call `lineage_get_neighbor_columns({ids:["[dbo].[FactSales]"]})` first. Response includes `columns:[{n:"SalesAmount",...}]` and any foreign keys. Ids must be direct neighbors of the current focus.',
-    '- **procedure**: columns are only visible at the hop. Route with `question="Prune candidate — [reason]"` to decide after reading the DDL.',
+    'Prune nodes that do not contribute to the `<mission_brief>`.',
+    '- **Structural neighbors**: For tables, views, or functions, call `lineage_get_neighbor_columns({ids:["..."]})` to inspect the schema and foreign keys before deciding to prune. This tool provides metadata for direct neighbors of the focus node.',
+    '- **Procedures**: Since DDL is only visible at the hop, route to the procedure with a specific question (e.g., `question="Prune candidate — [reason]"`) to verify its relevance before pruning.',
   ].join('\n'),
 
   /** Inline batch protocol. */

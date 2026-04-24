@@ -489,12 +489,11 @@ What actually caches, today, in a live extension:
 
 ## Cascade-prune guards — content-blind by design (2026-04-18)
 
-Three topological guards govern `prune`-verdict pruning. All are content-blind — they operate on graph reachability, never second-guess the AI's verdict.
+Two topological guards govern `prune`-verdict pruning. All are content-blind — they operate on graph reachability, never second-guess the AI's verdict.
 
 | Guard | Where | Role |
 |---|---|---|
 | `wouldOrphanNotedNode` | Pre-prune ([smBase.ts submitFindings](src/ai/smBase.ts)) | Rejects a prune that would disconnect an already-analyzed (noted) node from the origin. Protects work already done. |
-| `findBridgeNodes` | Post-exploration ([smBase.ts getResult](src/ai/smBase.ts)) | At result-graph assembly, reinserts pruned nodes that would leave the final graph disconnected. Purely a rendering safety net for the user's visualization. |
 
 **Principle:** engine guards are topological only. Content judgment lives in the AI + the prompts that frame it.
 

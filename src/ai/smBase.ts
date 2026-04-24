@@ -17,7 +17,7 @@ import type { ColumnStore } from '../engine/columnStore';
 import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from './tools';
 import { edgeApiType } from './aiPresenter';
-import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
+import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
 import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
@@ -1186,17 +1186,17 @@ export class NavigationEngine implements IHopStateMachine {
     const mem = this.memory.getResult();
     const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
     
-    const edges: Array<[string, string, string]> = [];
+    // The final graph consists of all nodes in the background scope that are still
+    // reachable from the origin after pruning. This naturally includes passive
+    // tables that the engine contracted over.
+    const finalNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
+
+    const finalEdges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
-      if (this.scopeNodeIds.has(e.source) && this.scopeNodeIds.has(e.target)
-          && !this.removedSet.has(e.source) && !this.removedSet.has(e.target)) {
-        edges.push([e.source, e.target, edgeApiType(e.type)]);
+      if (finalNodeIds.has(e.source) && finalNodeIds.has(e.target)) {
+        finalEdges.push([e.source, e.target, edgeApiType(e.type)]);
       }
     }
-
-    const bridge = findBridgeNodes(this.graph, notedIds, edges, this.edgeTypeMap);
-    const finalEdges = [...edges, ...bridge.bridgeEdges];
-    const finalNodeIds = new Set([...Array.from(notedIds), ...bridge.bridgeNodes.map(n => n.id), this.originNodeId!]);
 
     const depthMap = bfsDepthMap(finalEdges, this.originNodeId!);
     const sortedIds = Array.from(finalNodeIds).sort((a, b) => (depthMap.get(a) ?? 999) - (depthMap.get(b) ?? 999));

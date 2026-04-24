@@ -98,8 +98,6 @@ sections:
       Focused questions (≤10 nodes): 2–4 sections.
       Broad explorations (10–20 nodes): 4–8 sections.
       Full pipeline documentation (20+ nodes): up to 10–12 sections.
-      Passthrough nodes: mention in one sentence inside the containing
-      section; do not put them in node_ids or give them their own section.
       Use `suggested_sections` from the completion result as your starting
       structure.
 

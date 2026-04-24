@@ -6,6 +6,7 @@ import {
   buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
+  buildDeferredQuestionsPrompt, RECOMMEND_FOLLOWUPS_TRIGGER,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
 import { buildModeBlock } from './smPrompts';
@@ -95,10 +96,10 @@ export class LineageParticipant {
    * Registers the chat participant and its feedback listener.
    *
    * @remarks
-   * Deferred out-of-scope questions are surfaced as a `stream.button` next to
-   * "Show in Graph" (see {@link dispatchExit} `final_answer`), not via a
-   * `followupProvider` — a single, inline affordance keeps the contract tight
-   * and avoids dangling slash commands.
+   * Suggested follow-up actions (like exploring deferred nodes) are surfaced via 
+   * a `followupProvider` as standard VS Code chat pills. This maintains a clean
+   * UX while inviting the user to deepen the analysis. Deterministic UI actions
+   * (like "Show in Graph") remain as `stream.button` in the response stream.
    */
   public register() {
     const participant = vscode.chat.createChatParticipant(
@@ -110,6 +111,20 @@ export class LineageParticipant {
       const kind = feedback.kind === vscode.ChatResultFeedbackKind.Helpful ? 'helpful' : 'unhelpful';
       this.logger.info(`Feedback: ${kind}`);
     });
+
+    participant.followupProvider = {
+      provideFollowups: (result, context, token) => {
+        const sess = this.getSession();
+        const hasDeferred = sess.phase.kind === 'completed' && sess.stateMachine && sess.stateMachine.deferredQuestions.length > 0;
+        if (hasDeferred) {
+          return [{
+            prompt: RECOMMEND_FOLLOWUPS_TRIGGER,
+            label: vscode.l10n.t('Follow-up: Explore related objects…')
+          }];
+        }
+        return [];
+      }
+    };
 
     this.context.subscriptions.push(participant);
   }
@@ -172,6 +187,12 @@ export class LineageParticipant {
     this.logger.info(`[${sess.id}] Session start — model=${model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
     let effectivePrompt = request.prompt;
+    if (effectivePrompt === RECOMMEND_FOLLOWUPS_TRIGGER) {
+      const deferred = sess.stateMachine?.deferredQuestions || [];
+      effectivePrompt = buildDeferredQuestionsPrompt(deferred);
+      this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
+    }
+
     let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
     let lineageTools = filterLmTools(vscode.lm.tools, { kind: 'discover' });
     if (request.command === 'trace') {
@@ -195,6 +216,12 @@ export class LineageParticipant {
         this.logger.info(`[Gate] ${gate.gate} — user redirected`);
       } else {
         if (gate.gate === 'confirm_sm_start') {
+          const engine = sess.stateMachine as NavigationEngine | null;
+          if (engine) {
+            for (const cls of gate.classes) {
+              if (cls.startsWith('schema:')) engine.extendAllowedSchemas(cls.slice('schema:'.length));
+            }
+          }
           sess.enterExploring();
           effectivePrompt = 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
@@ -621,8 +648,30 @@ export class LineageParticipant {
           systemPrompt = buildStageSystemPrompt('synthesis');
           if (!sess.stateMachine.inlineMode) {
             const lastAssistant = messages[messages.length - 2];
-            const lastResult    = messages[messages.length - 1];
-            const beforeCount   = messages.length;
+            let lastResult = messages[messages.length - 1];
+
+            const archive = sess.memory.getResult();
+            const deferred = sess.stateMachine.deferredQuestions;
+
+            // Inject deferred questions into the final tool result so Synthesis AI can see them.
+            if (lastResult.content.some(p => p instanceof vscode.LanguageModelToolResultPart)) {
+              const parts = lastResult.content.map(p => {
+                if (p instanceof vscode.LanguageModelToolResultPart) {
+                  const textPart = p.content.find(cp => cp instanceof vscode.LanguageModelTextPart) as vscode.LanguageModelTextPart | undefined;
+                  if (textPart) {
+                    try {
+                      const val = JSON.parse(textPart.value);
+                      val.deferred_questions = deferred;
+                      return new vscode.LanguageModelToolResultPart(p.callId, [new vscode.LanguageModelTextPart(JSON.stringify(val))]);
+                    } catch { }
+                  }
+                }
+                return p;
+              }) as vscode.LanguageModelToolResultPart[];
+              lastResult = new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, parts);
+            }
+
+            const beforeCount = messages.length;
             messages.length = 0;
             messages.push(
               vscode.LanguageModelChatMessage.User(systemPrompt),
@@ -630,8 +679,6 @@ export class LineageParticipant {
               lastAssistant,
               lastResult
             );
-            const archive = sess.memory.getResult();
-            const deferred = sess.stateMachine.deferredQuestions;
             this.logger.info(`[Synthesis] Context cleaned: ${beforeCount} → ${messages.length} messages; envelope preserved (${archive.detail_slots.length} slots, ${deferred.length} deferred)`);
           }
         }
@@ -765,21 +812,6 @@ export class LineageParticipant {
             const originalQ = sess.memory.getUserQuestion() || userPrompt;
             writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
           }
-          // Out-of-scope routes proposed during the hop loop were deferred, not dropped.
-          // Surface them as a single inline button; clicking opens a QuickPick that
-          // supplements the existing archive (reuses the engine) rather than starting
-          // a fresh exploration.
-          const deferred = sess.stateMachine!.deferredQuestions;
-          if (deferred.length > 0) {
-            const unique = new Map<string, (typeof deferred)[number]>();
-            for (const d of deferred) if (!unique.has(d.nodeId)) unique.set(d.nodeId, d);
-            writer.button({
-              command: 'dataLineageViz.showDeferredQuestions',
-              title: `$(question) Show ${unique.size} deferred question${unique.size === 1 ? '' : 's'}`,
-              arguments: [Array.from(unique.values())],
-            });
-          }
-          writer.markdown('\n\n> Ask a follow-up to refine the answer, edit section text, or prune/add nodes. This uses the same archive — no new exploration runs. To start over, ask a fresh question.\n\n');
         } else {
           sess.enterIdle();
         }
