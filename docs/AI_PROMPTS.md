@@ -37,7 +37,16 @@ Built by `buildSynthesisPrompt()` in `src/ai/prompts.ts`. Hyper-focused on gener
 - **Long-term Memory Access:** The AI regains access to the full, unbounded Detail Archive generated during the active phase.
 - **No Routing Noise:** Discovery routing instructions are omitted during report generation to maximize reasoning tokens for the final output. Routing capabilities return only when the session transitions back to the Idle state.
 
-### 1.5 Stage-Placement Invariants
+### 1.5 Post-Synthesis Follow-up (closing-circle loop)
+After synthesis completes, `sess.resultGraph` remains attached to the session. Inside the same chat thread it persists for the life of the session; a cross-thread graft window (`RESULT_GRAFT_WINDOW_MS = 5 min` in `src/ai/lineageParticipant.ts`) additionally preserves the graph when VS Code rotates to a fresh empty-history chat thread. Three follow-up branches:
+
+- **Extend scope** — chip-based actions ("add schema X", "extend depth", "include one more hop") re-enter the state machine with an extended border; the archive is preserved and the hop loop picks up where it left off.
+- **Re-render only** — description / label edits run `present_result` again without touching the agenda.
+- **Fresh question** — a clearly unrelated prompt rotates the session and returns to Discovery. Asking a fresh question in the same thread is poor practice but the engine handles it.
+
+Tools visible in this phase mirror the Discovery set plus `present_result`; the 4-phase state diagram in `docs/AI_ARCHITECTURE.md` shows the transitions.
+
+### 1.6 Stage-Placement Invariants
 
 Every prompt surface has a stage (DISCOVERY / ACTIVE / SYNTHESIS / ALL). Before adding a rule, decide the stage:
 

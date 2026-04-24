@@ -17,10 +17,30 @@ As foundational mandates for the AI Assistant:
 - **Model Handle Protocol**: The `@lineage` participant strictly uses the `request.model` handle provided by the VS Code Chat API. This ensures that the user's explicit model selection (e.g., GPT-4o, Claude Haiku) is respected. The extension does not perform secondary model discovery or switching, relying on the user-selected model's registered capabilities.
 - **Tool Mode Logic**: To comply with VS Code API constraints, the participant dynamically selects the `LanguageModelChatToolMode`:
     - **`Required`**: Used ONLY when exactly one tool is provided to the model. This is typical for the initial `discovery` phase or specific slash commands (`/search`, `/trace`).
-    - **`Auto`**: Used whenever multiple tools are provided (e.g., during the `active` phase with `submit_findings` and `get_ddl_batch`). This prevents runtime crashes caused by the API's single-tool restriction for `Required` mode.
-- **Termination Guard**: The multi-round tool loop implemented in `lineageParticipant.ts` follows a **strict tool-driven termination** model. A conversational turn is finalized and control is returned to the user whenever the language model requests **zero tools**. 
+    - **`Auto`**: Used whenever multiple tools are provided (e.g., during the `active` phase with `submit_findings` and `get_object_detail`). This prevents runtime crashes caused by the API's single-tool restriction for `Required` mode.
+- **Termination Guard**: The multi-round tool loop implemented in `lineageParticipant.ts` follows a **strict tool-driven termination** model. A conversational turn is finalized and control is returned to the user whenever the language model requests **zero tools**.
     - **Conversational Yielding**: This allows the participant to act as a standard chatbot during the **Discovery** and **Synthesis** phases. If the model answers a question ("What schemas are available?") with markdown text and no tools, the turn ends.
     - **Infinite Loop Prevention**: The previous "text+tool" hybrid termination condition caused infinite loops by re-invoking the model with an empty `User` message whenever it provided text without tools. The new model treats the absence of tool calls as the explicit signal that the AI has yielded its turn.
+
+## Tools
+
+The participant exposes a phase-scoped tool surface. `src/ai/toolPolicy.ts` is the single source of truth — one table, one filter helper, used at every phase transition.
+
+| Tool | Discovery | ACTIVE (inline BB) | ACTIVE (SM BB + SM CT) | Synthesis | Purpose |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| `get_context` | ✓ | — | — | ✓ | Schemas, stats, active filter, saved views |
+| `search_objects` | ✓ | — | — | ✓ | Resolve name / column name → ID; list candidates |
+| `search_ddl` | ✓ | — | — | ✓ | Regex over SP / view / function DDL bodies |
+| `get_object_detail` | ✓ | — | ✓ | ✓ | Full metadata + DDL for ONE object; `up[]` / `dn[]` cover "direct neighbors of X" without analysis. SM uses it on-demand for neighbor columns (two-kind pruning + route-add decisions). |
+| `detect_graph_patterns` | ✓ | — | — | ✓ | Graph-wide structural analysis (hubs / orphans / cycles / islands / longest-path / external-refs) |
+| `get_ddl_batch` | — | ✓ | — | — | DDL for a small known-ID list; only visible in inline BB as a safety net when scope DDL was budget-capped. SM delivers focus DDL per hop, no refetch needed. |
+| `start_exploration` | ✓ | — | — | ✓ (re-entry) | Hand off to the state machine (Blackboard or Column-Trace) |
+| `submit_findings` | — | ✓ | ✓ | — | Submit hop analysis + route next hops + prune. ACTIVE-only; required mode. |
+| `present_result` | — | — | — | ✓ | Author the final enrich-view report (sections, summary, highlights) |
+
+**Not LM-visible in any phase:** `lineage_get_neighborhood`. Tool remains registered so panel / webview / engine consumers can still call it directly, but the language model never sees it — its BFS + DDL shape overlaps `start_exploration` without engine supervision (no archive, no gate, no verdicts).
+
+**Class D / Class S routing** (lives in `buildDiscoveryPrompt()`): every user question lands in exactly one class — Class D = one named object or graph-wide metadata → chat answer from discovery tools; Class S = ≥ 2 connected objects + analysis request → `start_exploration`. See `docs/AI_PROMPTS.md` § 3 and `docs-internal/AI_TOOLS_REFERENCE.md` for the full contract + few-shot examples.
 
 ## Architecture/Workflow
 
@@ -178,15 +198,19 @@ Reference: VS Code API `LanguageModelChatToolMode.Required` at `node_modules/@ty
 ```mermaid
 stateDiagram-v2
     [*] --> Discovery
-    
+
     state Discovery {
-        [*] --> InitializeMap
-        InitializeMap --> SeedAgenda
-        SeedAgenda --> [*]
+        [*] --> ClassifyQuestion
+        ClassifyQuestion --> ClassD: one object OR graph-wide metadata
+        ClassifyQuestion --> ClassS: 2+ connected objects + analysis
+        ClassD --> [*]: chat answer
+        ClassS --> SeedAgenda
+        SeedAgenda --> [*]: start_exploration
     }
-    
-    Discovery --> Analysis
-    
+
+    Discovery --> Analysis: Class S
+    Discovery --> Discovery: Class D direct answer
+
     state Analysis {
         [*] --> EvaluateAgenda
         EvaluateAgenda --> FetchContext: Pop Agenda Item
@@ -197,17 +221,29 @@ stateDiagram-v2
         UpdateMemory --> EvaluateAgenda
         EvaluateAgenda --> [*]: Agenda Empty
     }
-    
-    Analysis --> Synthesis
-    
+
+    Analysis --> Synthesis: agenda drained
+
     state Synthesis {
         [*] --> AggregateFindings
         AggregateFindings --> GenerateReport: Detail Memory Provided
         GenerateReport --> PresentResult
         PresentResult --> [*]
     }
-    
-    Synthesis --> [*]
+
+    Synthesis --> ResultReady: present_result
+
+    state ResultReady {
+        [*] --> Graph
+        Graph --> ExtendScope: follow-up chip (add schema, extend depth)
+        Graph --> RerenderOnly: description / label edit
+        Graph --> [*]: session reset (new chat thread > 5 min old)
+    }
+
+    ResultReady --> Analysis: ExtendScope — SM re-enters with extended border
+    ResultReady --> Synthesis: RerenderOnly — re-run present_result
+    ResultReady --> Discovery: fresh question wipes resultGraph
+    Discovery --> [*]
 ```
 
 ## Detailed Specs
