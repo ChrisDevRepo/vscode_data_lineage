@@ -23,9 +23,10 @@ These instructions are foundational mandates for the AI assistant operating in t
 
 ## Engineering Standards
 - **Tool Registry Pattern**: Avoid "God Functions" in tool registration. Follow the `ToolHandler` pattern by separating VS Code tool registration from implementation logic. Delegate all business logic to a specialized handler class.
+- **Strong Type Boundary**: Strictly avoid the use of `any` at core architectural boundaries (e.g., SM results, session storage, tool inputs). All payloads crossing the Engine ↔ AI Participant or Extension ↔ Webview boundaries must use concrete TypeScript interfaces or `zod` schemas (e.g., `SmResult`, `SmState`, `ResultGraph`).
 - **Zod Validation**: IPC bridge validation, tool inputs, and extension host boundaries must strictly use `zod` for strong type safety, runtime validation, and security.
 - **DRY & OOP**: Emphasize explicit composition, reusability, and delegation. The `NavigationEngine` should be the single source of truth for its domain. Do not duplicate logic or introduce anti-patterns.
-- **JSDoc Usage**: Provide professional JSDoc for all exports. Focus inline comments on *why* or complex business rules, not the *what*.
+- **State-of-the-Art JSDoc**: Provide professional, detailed JSDoc for all exported symbols. Focus on the "why" and high-level architectural purpose. Parameters and return types must be fully documented. Inline comments must be reserved for explaining complex business logic or complex React patterns, never for "chatty" or obvious descriptions.
 - **VS Code Configuration**: Add new settings to `package.json` under `contributes.configuration` and retrieve them using `vscode.workspace.getConfiguration()`.
 
 

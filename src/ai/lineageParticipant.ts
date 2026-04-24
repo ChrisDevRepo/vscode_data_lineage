@@ -185,6 +185,7 @@ export class LineageParticipant {
       const answer = classifyGateReply(request.prompt);
       if (answer === 'no') {
         sess.enterIdle();
+        sess.resetExploration();
         writer.markdown(`\n\n> Exploration paused — scope held to the declared filter. Ask a refined question to restart with a different scope.\n\n`);
         this.logger.info(`[Gate] ${gate.gate} — user declined`);
         return {};

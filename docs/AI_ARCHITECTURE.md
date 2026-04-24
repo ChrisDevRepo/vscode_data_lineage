@@ -62,7 +62,24 @@ The participant exposes a phase-scoped tool surface. `src/ai/toolPolicy.ts` is t
 
 **Not LM-visible in any phase:** `lineage_get_neighborhood`. Tool remains registered so panel / webview / engine consumers can still call it directly, but the language model never sees it — its BFS + DDL shape overlaps `start_exploration` without engine supervision (no archive, no gate, no verdicts).
 
-**Class D / Class S routing** (lives in `buildDiscoveryPrompt()`): every user question lands in exactly one class — Class D = one named object or graph-wide metadata → chat answer from discovery tools; Class S = ≥ 2 connected objects + analysis request → `start_exploration`. See `docs/AI_PROMPTS.md` § 3 and `docs-internal/AI_TOOLS_REFERENCE.md` for the full contract + few-shot examples.
+## Class D / Class S Routing Contract
+
+Verbatim routing contract used by the participant:
+- **Class D — Direct**: One named object in isolation OR graph-wide metadata. Answered directly via chat using discovery tools (e.g., `get_object_detail`, `detect_graph_patterns`). **Constraint:** Never used to narrate a "flow", "lineage", or "join path" across multiple neighbors, even if the DDL is available.
+- **Class S — State Machine**: Analysis, narrative, or visualization of a relationship spanning ≥ 2 connected objects. Routes to `lineage_start_exploration` for stateful traversal. **Mandate:** Any request for a "lineage graph", "annotated trace", or to "explain the joins/pipeline" must use Class S.
+- **Tiebreaker**: When ambiguous, prefer Class S.
+
+## AI Anti-patterns
+
+To maintain stability and reasoning quality, the following patterns are discouraged or mechanically blocked:
+
+| Anti-pattern | Why it fails | Correct path |
+|---|---|---|
+| Chaining `get_object_detail` for lineage | Produces shallow metadata dumps without engine supervision or memory tracking. | Use `start_exploration` (Class S). |
+| Short-circuiting to Class D prose | Violates the routing mandate for "lineage graph" and "join analysis" requests. | Strictly follow Class S routing for relationships. |
+| Parallel `start_exploration` calls | Causes race conditions in the serial guard and destroys accumulated findings. | The engine returns `parallel_call_forbidden` (code-level guard). |
+| `start_exploration` while active | Wipes the live archive and resets progress. | Use `submit_findings`; engine returns `already_started`. |
+| SM round with no tool call | Violates the ACK/WAIT contract — SM owns termination. | Loop guard injects a corrective user message and continues. |
 
 ## Architecture/Workflow
 
@@ -78,10 +95,10 @@ The system automatically chooses the delivery strategy based on the complexity o
 
 | Contract dimension | True Inline Mode | SM Mode (hop-by-hop) |
 | :--- | :--- | :--- |
-| **Session-entry yes/no gate** | **None.** Small scope runs immediately. | **`confirm_sm_start`** — engine surfaces planned scope (nodes, schemas, depth, budget) and pauses for user approval before hop 1. |
+| **Session-entry yes/no gate** | **None.** Small scope runs immediately. | **`confirm_sm_start`** — engine performs a BFS to find the true lineage size and discovered schemas. The gate surfaces the planned scope (nodes, **all discovered schemas**, depth, budget). Declining the gate resets the engine to allow a fresh start. |
 | **Out-of-filter / out-of-depth route mid-session** | **Consent gate.** Engine emits `action_required`; participant halts, asks yes/no. Resumes turn after approval. | **Silent deferral.** Engine calls `deferQuestion({...})`; the hop loop keeps running. Deferred entries surface post-synthesis. |
 | **Termination authority** | **AI-led Batch.** AI submits an array of findings for all nodes via `submit_findings`. It can also set `complete: true` to finalize. | **Engine-led Flow.** AI analyzes nodes one-by-one. Synthesis fires only when the engine drains the agenda. `complete: true` is silently ignored. |
-| **Scope extension** | AI can request routes outside the filter; stepping outside requires the consent gate. | Approved border is locked. Out-of-border intent is collected for follow-up only. |
+| **Scope extension** | AI can request routes outside the filter; stepping outside requires the consent gate. | Approved border is locked at confirmation. Gate approval automatically expands the engine's allowed schemas to include all discovered ones. |
 
 True Inline Mode (Blackboard only) simplifies exploration for small graphs by allowing the AI to reason about all nodes at once, while explorations with an active **Column Aspect** are strictly restricted to Sliding Memory to manage the inherent complexity of column-level attribution.
 
@@ -129,7 +146,7 @@ Three verdicts (SM mode):
 This replaces the earlier `premature_complete` coverage-floor guard. That guard (removed) refused `complete=true` in SM mode until coverage ≥ 80%, which was unreachable on variant-heavy neighborhoods and created rejection loops. The drain-only contract is always satisfiable (each verdict is a legal move) and the SM — not the AI — decides when the session is over.
 
 ### Repeat-Rejection Belt
- A session-level idempotency counter (`src/ai/repeatRejectGuard.ts → RepeatRejectGuard`) aborts the exploration cleanly if the model sends the same tool call three consecutive times and it fails every time. Any successful call resets the counter. The abort surfaces a typed envelope (`RepeatRejectAbort` in `src/ai/smErrors.ts`) and a user-visible message in chat. This is a belt against any future guard-interaction loop; it is orthogonal to SM semantics and applies to every tool call, not just `submit_findings`. The existing `dataLineageViz.ai.maxRounds` setting (default 50) remains the absolute round-cap.
+ A session-level idempotency counter ([`src/ai/repeatRejectGuard.ts`](../src/ai/repeatRejectGuard.ts) → `RepeatRejectGuard`) aborts the exploration cleanly if the model sends the same tool call three consecutive times and it fails every time. Any successful call resets the counter. The abort surfaces through the typed `HopLoopExit.aborted` variant (see [`src/ai/sessionPhase.ts`](../src/ai/sessionPhase.ts)) with the tool-result envelope `{ error: 'session_aborted_repeat_reject' }` and a user-visible message in chat. This is a belt against any future guard-interaction loop; it is orthogonal to SM semantics and applies to every tool call, not just `submit_findings`. The existing `dataLineageViz.ai.maxRounds` setting (default 50) remains the absolute round-cap.
 
 ### View Refinement: Prune
 `present_result` supports pruning nodes from the delivered result graph. Pruning **removes the listed nodes and every edge that touches them** — it does not reconnect edges across pruned nodes. Passthrough-style reconnection was deliberately removed because, for a shared hub `P` in `A→P→B, C→P→D`, it fabricated phantom edges (`A→D`, `C→B`) between otherwise-unrelated lineage siblings.
@@ -174,7 +191,7 @@ At `start_exploration` time the AI declares its **classification** via the optio
 
 ### Prompt Assembly Architecture
 
-The system prompt is assembled by `buildStageSystemPrompt` ([`src/ai/lineageParticipant.ts:309-353`](../src/ai/lineageParticipant.ts#L309-L353)) by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
+The system prompt is assembled by `buildStageSystemPrompt` ([`src/ai/lineageParticipant.ts:320`](../src/ai/lineageParticipant.ts#L320)) by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
 
 ```
 buildGeneralSystemPrompt(platform, schemas, phase)        ← global invariants + phase label [always]
@@ -209,7 +226,7 @@ Consequences:
 - **ACTIVE tool set is narrowed to `submit_findings` only.** `start_exploration` is dropped from the ACTIVE schema (the parallel-call guard in `toolProvider.ts` remains as defense-in-depth). This both satisfies the "some models support only a single tool under Required" caveat in the VS Code API and removes the AI's temptation to re-enter discovery.
 - **Prompt surfaces contain no exit vocabulary.** `BLOCK.completionContract` in `smPrompts.ts` describes only the loop (call `submit_findings` with a verdict until the engine drains). No mention of `complete: true`, "final answer", or "`present_result` only after" — those would teach the AI a path it cannot take.
 
-Reference: VS Code API `LanguageModelChatToolMode.Required` at `node_modules/@types/vscode/index.d.ts:20843`.
+Reference: VS Code API [`LanguageModelChatToolMode`](https://code.visualstudio.com/api/references/vscode-api#LanguageModelChatToolMode).
 
 ### Known Failure Modes (observed in production logs)
 
@@ -547,6 +564,6 @@ To maintain architectural clarity and reliable state transitions, the system fol
 **Note**: There are no buttons in the React UI for controlling the AI exploration state machine.
 
 ## References
-- [Graph BFS Standard References](https://en.wikipedia.org/wiki/Breadth-first_search)
-- Internal developer documentation: `docs-internal/DEVELOPER_GUIDE.md` §8 "Prompt System Architecture"
+- Prompt system detail — see [`AI_PROMPTS.md`](AI_PROMPTS.md) for the builder hierarchy, YAML capture/render rules, and prompt-change workflow.
+- Contributor setup and testing — see [`../CONTRIBUTING.md`](../CONTRIBUTING.md) and [`TESTING.md`](TESTING.md).
 

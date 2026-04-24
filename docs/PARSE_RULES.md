@@ -65,4 +65,5 @@ When regex misses a dependency but XML `BodyDependencies` has it, the extension 
 
 ## References
 - [Microsoft SQL Server Documentation](https://learn.microsoft.com/en-us/sql/t-sql/language-reference)
-- Internal implementation details: `docs-internal/DEVELOPER_GUIDE.md`
+- Implementation: [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts) — regex rule runner + edge-direction XML fallback.
+- Architecture overview: [`TECHNICAL_ARCHITECTURE.md`](TECHNICAL_ARCHITECTURE.md).

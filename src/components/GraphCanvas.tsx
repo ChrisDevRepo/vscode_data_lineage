@@ -431,7 +431,6 @@ export function GraphCanvas({
           { zoom: 0.8, duration: FIT_VIEW_DURATION }
         );
       } else {
-        log(`[Filter] zoomToNode: "${nodeId}" — no position (layout pending?)`);
         notifyUser(`Could not focus "${nodeId}". The node may have been filtered out during a view transition.`);
       }
     });
@@ -445,7 +444,6 @@ export function GraphCanvas({
       : flowNodes.find(n => n.data.label === name);
 
     if (foundNode) {
-      log(`[Filter] Quick Jump: "${label}" → found ${foundNode.id}`);
       onNodeClick(foundNode.id);
       zoomToNode(foundNode.id);
       return;
@@ -459,7 +457,6 @@ export function GraphCanvas({
         ? model.nodes.find(n => n.name === name && n.schema === schema)
         : model.nodes.find(n => n.name === name);
       if (modelNode) {
-        log(`[Filter] Quick Jump: "${label}" → drilling into schema "${modelNode.schema}" from overview`);
         pendingZoomRef.current = modelNode.id;
         pendingClickRef.current = { id: modelNode.id };
         pendingZoomSetAt.current = Date.now();
@@ -467,7 +464,6 @@ export function GraphCanvas({
         if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
         pendingZoomTimerRef.current = window.setTimeout(() => {
           if (pendingZoomRef.current) {
-            log(`[Filter] pendingZoom: "${pendingZoomRef.current}" not found after ${PENDING_ZOOM_TIMEOUT_MS}ms (active timeout)`);
             notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
             pendingZoomRef.current = null;
             pendingClickRef.current = null;
@@ -475,11 +471,9 @@ export function GraphCanvas({
         }, PENDING_ZOOM_TIMEOUT_MS);
         onSchemaNodeDoubleClick?.(modelNode.schema);
       } else {
-        log(`[Filter] Quick Jump: "${label}" → not found in model (${model.nodes.length} nodes)`);
         notifyUser(`"${label}" was not found in the loaded model.`);
       }
     } else {
-      log(`[Filter] Quick Jump: "${label}" → not found in ${flowNodes.length} visible nodes`);
       notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
   }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick, log]);
@@ -520,7 +514,6 @@ export function GraphCanvas({
       const elapsed = Date.now() - pendingZoomSetAt.current;
       if (!nodeExists) {
         if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
-          log(`[Filter] pendingZoom: "${zoomTarget}" not found after ${elapsed}ms, expiring (node may have been filtered out)`);
           notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter to include it.`);
           pendingZoomRef.current = null;
           pendingClickRef.current = null;

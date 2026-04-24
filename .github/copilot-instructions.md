@@ -1,56 +1,58 @@
-# Copilot Instructions - Data Lineage Viz
+# Copilot instructions — Data Lineage Viz
 
-These instructions guide GitHub Copilot in generating code and solving problems within the Data Lineage Viz extension.
+Guidance for GitHub Copilot / Copilot Chat when editing in this repo. These apply in addition to any user prompt.
 
-## 1. Project Context
-VS Code extension for visualizing SQL database object dependencies from `.dacpac` files or database import (via MSSQL extension API). It uses a React + ReactFlow frontend, Graphology for graph data, and Dagre for layout.
+## What this repo is
 
-**For complete technical architecture, data contracts, and AI implementation details, you MUST refer to:**
-- `docs/TECHNICAL_ARCHITECTURE.md` (High-level architecture, IPC messaging, SQL parsing engine, State Machine, Memory)
-- `docs-internal/DEVELOPER_GUIDE.md` (Developer workflows, YAML loading)
-- `docs/AI_ARCHITECTURE.md` (Navigation Engine, Chat Phases)
+A VS Code extension (`data-lineage-viz`, publisher `datahelper-chwagner`) that parses SQL Server dacpacs or live-DB metadata into a directed dependency graph and renders it with React + React Flow. A chat participant (`@lineage`) walks the graph hop-by-hop via the VS Code Language Model API to answer lineage questions grounded in the user's schema.
 
-## 2. Code Rules & Anti-Patterns
-- **TypeScript strict mode** must be enforced.
-- **Never hardcode CSS colors**: Always use `var(--ln-*)` or `var(--vscode-*)` custom properties.
-- **Graph Traversal**: Use Graphology `bfsFromNode`. **No manual BFS implementations**. BFS must be pure (no business logic/semantic filtering inside BFS callbacks).
-- **Bidirectional Edges**: Table→SP (read) and SP→Table (write). React Flow merges them into ⇄ display via `buildFlowEdges()`.
-- **Settings Prefix**: `dataLineageViz`.
+For the full architecture, read [`docs/TECHNICAL_ARCHITECTURE.md`](../docs/TECHNICAL_ARCHITECTURE.md) and [`docs/AI_ARCHITECTURE.md`](../docs/AI_ARCHITECTURE.md) before generating non-trivial code. Prompt engineering belongs in [`docs/AI_PROMPTS.md`](../docs/AI_PROMPTS.md).
 
-### React Anti-Patterns — NEVER Introduce
-| Anti-Pattern | Why It Breaks |
+## Code navigation
+
+| Task | Read |
 |---|---|
-| `forEach` calling state setter + rebuild | N rapid graph rebuilds crash the app |
-| Ref mutation inside `useMemo` | Interrupted renders leave stale refs |
-| `React.memo` on components with 10+ object/array props | Shallow compare always fails |
-| `useEffect` watching state set in same handler | Effect fires with stale graph |
+| Parser rule changes | [`docs/PARSE_RULES.md`](../docs/PARSE_RULES.md), `src/engine/sqlBodyParser.ts`, `assets/defaultParseRules.yaml` |
+| AI chat participant | `src/ai/lineageParticipant.ts`, `src/ai/smBase.ts`, `src/ai/toolProvider.ts` |
+| Prompt builders | `src/ai/prompts.ts`, `src/ai/smPrompts.ts`, `src/ai/templateRenderer.ts` |
+| Webview bridge | `src/panelProvider.ts`, `src/engine/shared/bridgeContract.ts` |
+| Database import | `src/engine/dacpacExtractor.ts`, `src/engine/dmvExtractor.ts`, `assets/dmvQueries.yaml` |
+| Testing strategy | [`docs/TESTING.md`](../docs/TESTING.md) |
 
-## 3. Testing Mandates
-- **Deterministic Focus**: Write tests exclusively for the **deterministic core** (SQL parsing, graph topology, BFS, state machine contracts) in `tests/unit/`.
-- **Snapshot Baselines**: Changes to `sqlBodyParser.ts` or `defaultParseRules.yaml` **MUST** include a run of `npm run test:snapshot` and commit an updated `tests/fixtures/aw-baseline.tsv`.
+## Conventions this repo enforces
+
+- **TypeScript strict mode is non-negotiable.** Run `npx tsc --noEmit` after any structural change.
+- **Discriminated unions over boolean flag piles.** See `src/ai/sessionPhase.ts` (`SessionPhase`, `HopLoopExit`) for the canonical pattern; exhaustive `switch` on the `kind` field.
+- **Zod at the boundary.** Every untrusted payload (webview → extension messages, AI tool results, user YAML overlays) parses through a Zod schema at the edge. Inner layers consume the parsed type — no re-validation.
+- **Mechanical enforcement over prompt language.** If an invariant matters to the AI, enforce it in code (tool mode, parallel-call guard, route validation) — don't rely on prompt prose.
+- **Command and setting prefix**: `dataLineageViz.*` for both. Register commands in `package.json` → `contributes.commands`; settings in `contributes.configuration.properties`.
+- **No hardcoded CSS colors.** Use `var(--ln-*)` or `var(--vscode-*)` custom properties. Node-type colors are fixed in `src/utils/schemaColors.ts`; schema colors come from `getSchemaColor()`. Never define either elsewhere.
+- **Graph traversal**: use `graphology.bfsFromNode` — never a hand-rolled BFS. No semantic filtering inside BFS callbacks; filter the result set afterward.
+- **Bidirectional edges** are stored as two antiparallel directed edges. `buildFlowEdges()` merges them into a ⇄ display edge in React Flow — that is a rendering concern, not a model concern.
+
+## Patterns to avoid in the React webview
+
+| Anti-pattern | Why |
+|---|---|
+| `forEach` calling a state setter + graph rebuild | N synchronous rebuilds freeze the UI |
+| Ref mutation inside `useMemo` | Interrupted renders leave stale refs |
+| `React.memo` on components with 10+ object/array props | Shallow compare always fails — no win |
+| `useEffect` depending on state set inside the same handler | Effect fires with pre-update value |
+
+## No silent failures
+
+Every `catch` in the extension host must log via `logError()` / `logWarn()` from `src/utils/log.ts`. The webview has global `unhandledrejection` and `error` handlers in `src/index.tsx`. `.catch(() => {})` is never acceptable.
+
+## Parser rule changes need a snapshot run
+
+After any edit to `assets/defaultParseRules.yaml`:
 
 ```bash
-npm test                  # full unit suite (tsx)
-npm run test:hooks        # React hooks (vitest)
-npm run test:unit:ai      # AI tools + NavigationEngine + cascade-prune
-npm run test:snapshot     # parser baseline regression check
+npm run test:snapshot            # must stay green — zero lost dependencies allowed
 ```
 
-### 3.1 AI Eval Integrity — Hard Rule
-The AI eval framework (`tests/eval/`) measures the real behavior of the `@lineage` chat participant. The eval agent receives ONLY what the real VS Code chat delivers to the language model: the user's question, the system + navigation prompts + tool descriptions from `GET /prompts`, and the HTTP transport to the in-extension `toolProxy`.
+A lost dependency is a regression. A gained dependency needs a one-line justification in the commit message before running `npm run test:snapshot:update`.
 
-**Forbidden in the eval-agent prompt:** any behavior hint, structural template, density target, terminology rule, error-recovery coaching, "keep calling submit_findings" reminder, corrected example, or re-emphasis of production-prompt rules. If the production prompt can't drive the behavior, that IS the finding — fix it upstream via `/prompt-change`, never patch it in the harness.
+## Testing
 
-**Only entry point:** spawn eval agents via `python tests/eval/run.py <test-id>`. The runner loads a constant template, populates three placeholders (`QUESTION`, `FOLLOWUPS`, `SESSION_ID`), lints the populated prompt against a forbidden-tokens blocklist (`tests/eval/validate.py`), and fails-closed if any blocked token is present. Direct `Agent(model: "haiku")` invocations for eval purposes are a policy violation.
-
-Harness contamination is worse than overfitting: overfitting tunes to the wrong data, harness cheating tunes to fiction. See `.claude/rules/eval-validity.md` for the full rule.
-
-## 4. No Silent Failures
-- **Extension host**: Every `catch` block MUST log via `logError()`/`logWarn()` from `src/utils/log.ts`.
-- **Webview**: Global `unhandledrejection` and `error` handlers in `index.tsx`.
-- Never `.catch(() => {})`.
-
-## 5. Message Passing (Extension <-> Webview)
-Key IPC messages strictly validated by **Zod** schemas:
-- `ready`, `dacpac-data`, `show-detail`, `update-detail`, `close-detail`, `detail-update`, `detail-closed`, `themeChanged`, `filter-changed`.
-- All requests conform to shared types defined in the source (refer to `src/engine/shared/bridgeContract.ts`).
+See [`docs/TESTING.md`](../docs/TESTING.md). Minimum before pushing: `npm test`.

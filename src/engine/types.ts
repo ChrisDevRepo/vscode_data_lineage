@@ -1,84 +1,175 @@
 
 export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
 
+/**
+ * Represents a single node in the lineage graph.
+ * 
+ * @remarks
+ * A node can represent a physical table, a view, a procedure, or a virtual object 
+ * like a cross-database reference or an external file.
+ */
 export interface LineageNode {
-  id: string;            // "[schema].[name]" (2-part local), "[db].[schema].[name]" (3-part cross-DB), "[__ext__].[hash]" (file)
-  schema: string;        // "dbo", "SalesLT", etc. — empty string for virtual nodes (file/db)
-  name: string;          // object name without brackets/schema
-  fullName: string;      // "[schema].[name]" as in dacpac
-  type: ObjectType;
-  hasDdl?: boolean;       // true when ColumnStore holds DDL for this node
-  bodyScript?: string;   // SQL body for SPs/Views/UDFs — populated during extraction, moved to ColumnStore after model build
-  hasColumns?: boolean;  // true when ColumnStore holds columns for this node
-  columns?: ColumnDef[]; // column metadata — populated during extraction, moved to ColumnStore after model build
-  fks?: ForeignKeyInfo[];// FK constraints (tables/externals only)
-  externalType?: 'et' | 'file' | 'db'; // set for type === 'external'
-  externalUrl?: string;       // full URL for file virtual nodes (tooltip)
-  externalDatabase?: string;  // DB name for cross-DB virtual nodes (tooltip)
-}
-
-export interface LineageEdge {
-  source: string;        // node id (the dependency)
-  target: string;        // node id (the dependent object)
-  type: 'body' | 'exec'; // body = FROM/JOIN ref, exec = EXEC call
-}
-
-export interface SchemaInfo {
+  /** 
+   * Unique identifier for the node. 
+   * Format: `[schema].[name]` (local), `[db].[schema].[name]` (cross-DB), or `[__ext__].[hash]` (file).
+   */
+  id: string;
+  /** SQL schema name (e.g., "dbo", "SalesLT"). Empty for virtual nodes. */
+  schema: string;
+  /** Short object name without delimiters or schema. */
   name: string;
+  /** Full schema-qualified name as found in the source (e.g., `[dbo].[Table]`). */
+  fullName: string;
+  /** The specific type of the database object. */
+  type: ObjectType;
+  /** True if the ColumnStore contains DDL source for this node. */
+  hasDdl?: boolean;
+  /** 
+   * Raw SQL body script. 
+   * Temporarily held during extraction before being moved to persistent storage.
+   */
+  bodyScript?: string;
+  /** True if the ColumnStore contains column metadata for this node. */
+  hasColumns?: boolean;
+  /** 
+   * List of column definitions. 
+   * Temporarily held during extraction before being moved to persistent storage.
+   */
+  columns?: ColumnDef[];
+  /** Foreign key constraints (applicable to tables and external tables). */
+  fks?: ForeignKeyInfo[];
+  /** Sub-classification for external objects. */
+  externalType?: 'et' | 'file' | 'db';
+  /** Full URL for file-based virtual nodes, shown in UI tooltips. */
+  externalUrl?: string;
+  /** Database name for cross-database virtual nodes, shown in UI tooltips. */
+  externalDatabase?: string;
+}
+
+/**
+ * Represents a directed dependency between two nodes in the graph.
+ */
+export interface LineageEdge {
+  /** The identifier of the source node (the object being depended upon). */
+  source: string;
+  /** The identifier of the target node (the dependent object). */
+  target: string;
+  /** 
+   * The type of dependency:
+   * - `body`: Referenced in a FROM, JOIN, or DML statement.
+   * - `exec`: Referenced in an EXEC/EXECUTE call.
+   */
+  type: 'body' | 'exec';
+}
+
+/**
+ * Summary information for a single SQL schema.
+ */
+export interface SchemaInfo {
+  /** The schema name. */
+  name: string;
+  /** Total number of nodes belonging to this schema in the current model. */
   nodeCount: number;
+  /** Breakdown of object counts grouped by their type. */
   types: Record<ObjectType, number>;
 }
 
+/**
+ * Detailed parsing metrics for a single scripted object (procedure, view, function).
+ */
 export interface SpParseDetail {
-  name: string;             // schema.object
-  inCount: number;          // resolved source refs
-  outCount: number;         // resolved target/exec refs
-  inRefs?: string[];        // resolved source ref names (regex-matched)
-  outRefs?: string[];       // resolved target/exec ref names (regex-matched)
-  unrelated: string[];      // schema-qualified refs not in catalog
-  skippedRefs?: string[];   // unqualified refs (no dot) skipped before catalog lookup
-  excluded?: string[];      // refs removed by exclusion patterns
+  /** Full schema-qualified name of the object. */
+  name: string;
+  /** Count of successfully resolved source (read) references. */
+  inCount: number;
+  /** Count of successfully resolved target (write/exec) references. */
+  outCount: number;
+  /** List of resolved source reference names. */
+  inRefs?: string[];
+  /** List of resolved target/exec reference names. */
+  outRefs?: string[];
+  /** References that were schema-qualified but not found in the active catalog. */
+  unrelated: string[];
+  /** Unqualified references that were skipped before catalog resolution. */
+  skippedRefs?: string[];
+  /** References that were explicitly removed by user-defined exclusion patterns. */
+  excluded?: string[];
 }
-
-export interface ParseStats {
-  parsedRefs: number;       // total refs found by regex
-  resolvedEdges: number;    // matched dacpac catalog
-  droppedRefs: string[];    // not in catalog, not external (CTEs, ghost refs)
-  spDetails: SpParseDetail[];  // per-SP breakdown
-}
-
-/** Per-object display entry — covers ALL known objects including cross-schema ones. */
-export type CatalogEntry = { schema: string; name: string; type: ObjectType; externalType?: 'et' | 'file' | 'db' };
 
 /**
- * O(1) neighbor lookup keyed by node ID.
- * Built once in buildModel() from model.edges.
- * Plain Record (not Map) so it survives JSON serialization across postMessage.
- * `in`  = upstream   nodes (data flows INTO this node)
- * `out` = downstream nodes (data flows OUT of this node)
+ * Aggregated statistics for the model construction and parsing phase.
+ */
+export interface ParseStats {
+  /** Total number of potential object references discovered by regex. */
+  parsedRefs: number;
+  /** Number of references successfully matched against the source catalog. */
+  resolvedEdges: number;
+  /** References discovered but dropped (e.g., CTEs, internal aliases). */
+  droppedRefs: string[];
+  /** Detailed breakdown for each analyzed script. */
+  spDetails: SpParseDetail[];
+}
+
+/** 
+ * Lightweight entry for the global object catalog. 
+ */
+export type CatalogEntry = { 
+  /** SQL schema name. */
+  schema: string; 
+  /** Short object name. */
+  name: string; 
+  /** Object classification. */
+  type: ObjectType; 
+  /** External classification if applicable. */
+  externalType?: 'et' | 'file' | 'db' 
+};
+
+/**
+ * O(1) adjacency list for graph navigation.
+ * 
+ * @remarks
+ * Keyed by node ID. Maps to upstream (`in`) and downstream (`out`) neighbors.
+ * Used for high-performance interactive tracing and pathfinding.
  */
 export type NeighborIndex = Record<string, { in: string[]; out: string[] }>;
 
+/**
+ * The unified database model representing all nodes, edges, and metadata.
+ */
 export interface DatabaseModel {
+  /** All objects (nodes) included in the model. */
   nodes: LineageNode[];
+  /** All discovered dependencies (edges). */
   edges: LineageEdge[];
+  /** Summary of schemas found in the model. */
   schemas: SchemaInfo[];
-  /**
-   * Display catalog covering all known objects (including cross-schema ones not
-   * visible in the current graph). Keyed by normalized node ID "[schema].[name]".
+  /** 
+   * Global catalog of all known objects, including those not in the current graph. 
+   * Keyed by normalized node ID.
    */
   catalog: Record<string, CatalogEntry>;
-  /** O(1) in/out neighbor lookup derived from model.edges. */
+  /** High-performance neighbor lookup index. */
   neighborIndex: NeighborIndex;
+  /** Metrics and details from the parsing phase. */
   parseStats?: ParseStats;
+  /** Non-critical messages or issues encountered during model build. */
   warnings?: string[];
-  /** Human-readable database platform string, e.g. "Azure SQL Database" or "SQL Server 2022". */
+  /** 
+   * Description of the source database platform. 
+   * (e.g., "Azure SQL Database", "SQL Server 2022").
+   */
   dbPlatform?: string;
 }
 
+/**
+ * Metadata for a schema-level preview used in the project wizard.
+ */
 export interface SchemaPreview {
+  /** Summary of all schemas available in the source. */
   schemas: SchemaInfo[];
+  /** Total count of objects found across all schemas. */
   totalObjects: number;
+  /** Warnings generated during the preview extraction. */
   warnings?: string[];
 }
 

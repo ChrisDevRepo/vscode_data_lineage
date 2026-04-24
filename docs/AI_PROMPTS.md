@@ -15,7 +15,14 @@ The prompt architecture follows an "Hourglass" model to manage context efficienc
 Built by `buildGeneralSystemPrompt()` in `src/ai/prompts.ts`. Injected into every turn. Contains global invariants: platform rules, schema context, and LaTeX guidance.
 
 ### 1.2 Discovery Phase Prompt
-Built by `buildDiscoveryPrompt()` in `src/ai/prompts.ts`. Used when the AI is searching for objects or defining the `mission_brief`. Includes the rules for `start_exploration` and the "Budget: 50 rounds" constraint. This phase also applies when the AI is idle between explorations.
+Built by `buildDiscoveryPrompt()` in `src/ai/prompts.ts`. Used when the AI is searching for objects or defining the `mission_brief`. Includes the rules for `start_exploration` and the "Budget: 50 rounds" constraint.
+
+**Routing Mandate:**
+- **Class D (Direct)**: Isolation ONLY. Metadata lookups (DDL, columns, existence). **Constraint:** Strictly forbidden from narrating "flow", "lineage", or "join paths", even if the information is present in a single object's DDL.
+- **Class S (State Machine)**: Relationship-driven. Analysis of joins, pipelines, or multi-object paths. **Mandate:** Any request for a "lineage graph", "annotated trace", or "join explanation" must trigger `start_exploration`.
+- **Tiebreaker**: Prefer Class S when ambiguous.
+
+This phase also applies when the AI is idle between explorations. In the follow-up state (`completed`), the prompt transitions to the **Follow-Up Protocol**, which encourages reusing the existing archive for refinements.
 
 ### 1.3 Active Phase / Navigation Prompt
 Built by `buildActivePhasePrompt(isInline)` (general active rules) and `buildModeBlock(isInline, targetColumns?)` in `src/ai/smPrompts.ts` (mode-specific workflow: BB when no target columns, CT when target columns are set). 
@@ -44,7 +51,7 @@ After synthesis completes, `sess.resultGraph` remains attached to the session. I
 - **Re-render only** — description / label edits run `present_result` again without touching the agenda.
 - **Fresh question** — a clearly unrelated prompt rotates the session and returns to Discovery. Asking a fresh question in the same thread is poor practice but the engine handles it.
 
-Tools visible in this phase mirror the Discovery set plus `present_result`; the 4-phase state diagram in `docs/AI_ARCHITECTURE.md` shows the transitions.
+Tools visible in this phase mirror the Discovery set plus `present_result`; the 4-phase state diagram in [`AI_ARCHITECTURE.md`](AI_ARCHITECTURE.md) shows the transitions.
 
 ### 1.6 Stage-Placement Invariants
 

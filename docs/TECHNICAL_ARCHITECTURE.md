@@ -6,16 +6,85 @@ This document provides a comprehensive technical overview of the Data Lineage Vi
 ## 1. High-Level Component Architecture
 The extension follows a standard VS Code architecture separating the backend host from the frontend UI.
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant Participant as @lineage Participant
+    participant SM as NavigationEngine
+    participant LM as Language Model
+    participant Webview as React Webview (UI)
+
+    Note over User, Webview: Phase 1: Discovery (Class D or Class S routing)
+    User->>Participant: question
+    Participant->>LM: buildDiscoveryPrompt() + discovery tool set
+    alt Class D — single object or graph-wide metadata
+        LM->>Participant: search_objects / get_object_detail / search_ddl / ...
+        Participant->>User: chat answer (turn ends)
+    else Class S — 2+ connected objects + analysis
+        LM->>Participant: start_exploration
+        Participant->>SM: init(Brief, Origin)
+        SM-->>Participant: {ok, scopeSize, scopeSchemas}
+        Participant->>User: stream.button(Approve/Decline/Redirect)
+        alt Decline or Redirect
+            User->>Participant: Click Decline/Redirect
+            Participant->>SM: resetExploration()
+            Participant->>User: "Paused" or fresh start
+        else Approve
+            User->>Participant: Click Approve
+            Participant->>SM: enterExploring()
+        end
+    end
+
+    Note over User, Webview: Phase 2: Active Loop (ReAct Pattern)
+    loop until Agenda Empty
+        Participant->>SM: getHopContext()
+        Participant->>LM: submit_findings (+ get_neighbor_columns in SM for neighbor columns)
+        LM->>SM: verdict + route
+
+        alt Gate Trigger (HITL)
+            SM-->>Participant: action_required
+            Participant->>User: stream.button(Approve/Decline)
+            User->>Participant: Click Button
+        end
+    end
+
+    Note over User, Webview: Phase 3: Synthesis
+    Participant->>SM: getResult()
+    Participant->>LM: present_result
+    Participant->>Webview: postMessage(ai-view-activate)
+    Webview->>User: Render Result Graph
+```
+
 | Component | Runtime | Bundler | Entry | Output |
 | --- | --- | --- | --- | --- |
 | **Extension Host** | Node.js | esbuild | `src/extension.ts` | `out/extension.js` (CJS) |
 | **Webview (UI)** | Browser | Vite | `src/index.tsx` | `dist/assets/index.js` (ESM) |
 
-- **`src/engine/`**: Core logic (DACPAC extraction, database import, SQL parsing, graph building).
-- **`src/components/`**: React UI (ReactFlow canvas, toolbar, filters, modals).
-- **`src/ai/`**: The Copilot Chat participant, tools, state machine, and memory managers.
+## 2. AI Architecture Patterns
 
-## 2. Data Contracts & IPC Messaging
+### 2.1 Hourglass Context Model (Asymmetric Tiering)
+To maintain reasoning quality across deep lineage traversals, the system implements an **Asymmetric Memory Tiering** model.  
+
+| Tier | Lifecycle | Delivery | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Short-Term Memory** | Sliding Window | Every Hop | Maintained via summary injection (last 3 nodes). |
+| **Detail Archive** | Unbounded | **Synthesis Only** | High-fidelity analysis per node. |
+
+This model directly mitigates the "Lost in the Middle" phenomenon where LLM performance degrades when relevant information is buried in a long context. By hiding the `Detail Archive` until the final synthesis, we ensure the model's attention remains focused on the immediate topological neighbors.
+
+### 2.2 NavigationEngine: The Grounded Router
+The `NavigationEngine` acts as the **Orchestrator** while the LLM acts as the **Worker**. It follows the Orchestrator-Worker pattern where the engine owns the loop termination and topological authority, preventing agentic drift. The hop-loop implements a Reasoning + Acting (ReAct) pattern where the engine provides the "Observation" (DDL + Map) and the AI provides the "Action" (Verdict + Routing).
+
+## 3. Deterministic Safety Guards
+
+### 3.1 Input Hardening (Zod)
+All tool boundaries use strict **Zod** schema validation. This ensures that even if a model hallucinates a parameter, the engine rejects it at the entry point with a structured recovery hint.
+
+### 3.2 Topological Integrity
+- **`wouldOrphanNotedNode`**: A graph-check guard that prevents the AI from pruning a branch that contains already-analyzed nodes.
+- **`RepeatRejectGuard`**: An idempotency counter that aborts sessions if the model repeats the same failing tool call 3 times.
+
+## 4. Data Contracts & IPC Messaging
 
 ### Data Ingestion Contracts
 The extension imports SQL schemas via two distinct sources, both normalizing into a shared `DatabaseModel` contract (`src/engine/types.ts`):

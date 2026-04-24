@@ -499,7 +499,7 @@ export class NavigationEngine implements IHopStateMachine {
     depth_enforcement?: 'strict' | 'soft' | 'silent';
     excludeTypes?: string[];
     mission_brief?: string;
-  }): { ok: true; scopeSize: number; agendaSize: number } | { error: string; hint?: string } {
+  }): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | { error: string; hint?: string } {
     this.visited.clear();
     this.agenda = [];
     this.agendaIds.clear();
@@ -537,9 +537,14 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const breakdown = { table: 0, view: 0, procedure: 0, function: 0, external: 0 } as Record<string, number>;
+    const scopeSchemas = new Set<string>();
     for (const id of this.scopeNodeIds) {
-      const t = this.nodeMap.get(id)?.type?.toLowerCase() ?? 'external';
-      breakdown[t] = (breakdown[t] ?? 0) + 1;
+      const n = this.nodeMap.get(id);
+      if (n) {
+        scopeSchemas.add(n.schema);
+        const t = n.type?.toLowerCase() ?? 'external';
+        breakdown[t] = (breakdown[t] ?? 0) + 1;
+      }
     }
     const excluded = Array.from(this.excludedTypes).join(',') || 'none';
     this.log('debug', `[BFS] origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excluded}]`);
@@ -556,6 +561,7 @@ export class NavigationEngine implements IHopStateMachine {
       ok: true,
       scopeSize: this.scopeNodeIds.size,
       agendaSize: this.agenda.length,
+      scopeSchemas: Array.from(scopeSchemas).sort(),
     };
   }
 

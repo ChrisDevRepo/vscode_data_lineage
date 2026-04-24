@@ -166,6 +166,7 @@ Returns FK, UQ, and CK constraint metadata via `UNION ALL`, distinguished by `co
 | `referencing_name` | string | Name of the object that references |
 | `referenced_schema` | string | Schema of the referenced object |
 | `referenced_name` | string | Name of the referenced object |
+| `referenced_database` | string/null | Database name for cross-database references. Used to build `[db].[schema].[object]` identifiers. |
 
 ## What You Can Customize
 

@@ -262,14 +262,25 @@ class ToolHandler {
           const hopCtx = engine.getHopContext();
           const direction = data.direction || 'bidirectional';
           const isCt = !!engine.columnAspect;
+
+          const classes = ['sliding_memory'];
+          if (initResult.scopeSchemas) {
+            const filterSet = new Set((activeFilter.schemas || []).map(s => s.toLowerCase()));
+            for (const s of initResult.scopeSchemas) {
+              if (filterSet.size > 0 && !filterSet.has(s.toLowerCase())) {
+                classes.push(`schema:${s.toLowerCase()}`);
+              }
+            }
+          }
+
           const gate = PendingGateSchema.parse({
             gate: 'confirm_sm_start',
-            classes: ['sliding_memory'],
+            classes,
             nodeIds: [],
             detail: `### Exploration Plan\n` +
                     `- **Scope:** ${initResult.scopeSize} nodes identified\n` +
                     `- **Analysis:** ${CLASSIFICATION_LABEL[sess.classification!]}${isCt ? ' (Column Trace)' : ''}\n` +
-                    `- **Schemas:** ${activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
+                    `- **Schemas:** ${initResult.scopeSchemas?.join(', ') || activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
                     `- **Configuration:** Depth ${data.depth ?? 'default'} (${data.depth_enforcement ?? 'silent'}), ${direction} direction`,
           });
           return this.logAndReturn('start_exploration', {

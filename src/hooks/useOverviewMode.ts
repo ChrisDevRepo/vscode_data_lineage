@@ -97,7 +97,6 @@ export function useOverviewMode({
       prevSchemasKey.current = schemasKey;
       if (drillDownInProgress.current) {
         drillDownInProgress.current = false;
-        log(`[Filter] Schema changed (drill-down) — userChoseMode preserved`);
       } else {
         userChoseMode.current = false;
         setEnteredFocusFromOverview(false);

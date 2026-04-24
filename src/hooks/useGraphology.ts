@@ -63,11 +63,7 @@ export function useGraphology(): UseGraphologyReturn {
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false): number => {
     const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
-    const removed = model.nodes.length - filtered.nodes.length;
-    if (removed > 0) {
-      log(`[Filter] Schema: ${model.nodes.length} → ${filtered.nodes.length} nodes (${removed} removed, maxNodes=${config.maxNodes})`);
-    }
-
+    
     // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
       n.externalType === 'file' || n.externalType === 'db';
@@ -117,13 +113,9 @@ export function useGraphology(): UseGraphologyReturn {
       return count;
     }
 
-    // Full mode — dagre runs. Log only when layout is slow enough to matter.
+    // Full mode — dagre runs.
     const t0 = performance.now();
     const result = buildGraph(allowlistFiltered, config);
-    const ms = performance.now() - t0;
-    if (ms > 100) {
-      log(`[Filter] Layout: dagre complete — ${result.flowNodes.length} nodes, ${result.flowEdges.length} edges (${ms.toFixed(0)}ms)`);
-    }
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
