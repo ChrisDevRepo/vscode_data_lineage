@@ -47,7 +47,7 @@ export const OUT_OF_SCOPE_CONTRACT: string =
  * @returns The assembled base system prompt string.
  */
 export function buildGeneralSystemPrompt(
-  phase: 'discover' | 'active' | 'synthesis',
+  phase: 'discover' | 'active' | 'synthesis' | 'completed',
   dbPlatform: string,
   filterSchemas: string[],
   totalSchemaCount: number,
@@ -58,7 +58,7 @@ export function buildGeneralSystemPrompt(
   const schemasLine = isFiltered
     ? `- Schemas: ${filterSchemas.join(', ')} (${filterSchemas.length} of ${totalSchemaCount} schemas)`
     : `- Schemas: All (${totalSchemaCount} schemas)`;
-  const phaseLabel = { discover: 'DISCOVERY', active: 'ACTIVE EXPLORATION', synthesis: 'SYNTHESIS' }[phase];
+  const phaseLabel = { discover: 'DISCOVERY', active: 'ACTIVE EXPLORATION', synthesis: 'SYNTHESIS', completed: 'FOLLOW-UP' }[phase];
 
   return [
     '# Data Lineage Assistant',
@@ -180,20 +180,62 @@ export function buildActivePhasePrompt(isInline: boolean): string {
 
 /**
  * Constructs the prompt for the Synthesis (Reporting) phase.
- * 
+ *
  * @remarks
- * Hyper-focused on generating the high-quality final report using the detail archive.
- * 
- * @returns A string containing synthesis-phase rules.
+ * Expresses the final report as a four-step *process* (READ → ANSWER → GROUP → WRITE) so
+ * the model reasons about the big-picture answer and role-based grouping before emitting
+ * `present_result`, instead of jumping straight into per-slot enumeration. The anti-preamble
+ * line is a direct application of Anthropic's long-context guidance.
+ *
+ * @returns A string containing the synthesis-phase protocol.
  */
 export function buildSynthesisPrompt(): string {
   return [
-    '# Synthesis Protocol (Reporting)',
-    'The exploration is complete. Generate the final report using the Detail Archive.',
-    '1. OUTPUT: Use `present_result` for data flow and lineage graphs. Use chat text for narratives and SQL.',
-    '2. STRUCTURE: Follow the `sections[]` contract in `present_result`. Sequence findings narratively.',
-    '3. DEPTH: Write full-depth analysis for every badged node — business meaning and SQL evidence lifted from the archive.',
-    '4. REPORTING SCOPE: The exploration window is closed. Focus strictly on reporting existing evidence; routing is no longer available.',
+    '# Synthesis Protocol',
+    'The archive is closed; routing is no longer available. The original question is above',
+    '(first User message). The archive is in the last tool_result (`result.detail_slots[]`).',
+    '',
+    'Work in this order:',
+    '1. READ the archive. Every slot already has full-depth analysis — do not rewrite it, reuse it.',
+    '2. ANSWER first. State in one or two sentences how the pipeline in the archive answers the',
+    "   user's question. This becomes `intro` in `present_result`. Do not start with \"Based on…\".",
+    '3. GROUP slots by data-flow role. Nodes that serve the same role (same stage, same pattern)',
+    '   share one section; use `suggested_sections` as the starting skeleton. Sibling variants',
+    '   (same SP pattern, differing only in target columns) live in one section with a one-line',
+    '   distinction per variant. Distinct logic always gets its own section.',
+    '4. WRITE `present_result`. Follow the dependency chain in one direction. Lift business rules',
+    '   and SQL expressions verbatim from `slot.analysis`. Keep per-slot depth intact.',
+  ].join('\n');
+}
+
+
+/**
+ * Constructs the prompt for the Follow-Up phase (post-synthesis refinement).
+ *
+ * @remarks
+ * Fires when `sess.phase.kind === 'completed'` on a subsequent user turn. The archive rides
+ * into context via VS Code's history replay (prior tool_result is compacted and replayed);
+ * no new read tool is needed. Tells the model to refine the existing answer — text edits,
+ * prunes, deferred-question supplements — without starting a fresh exploration.
+ *
+ * @returns A string containing the follow-up-phase protocol.
+ */
+export function buildFollowUpPrompt(): string {
+  return [
+    '# Follow-Up Protocol',
+    'The exploration is complete. The archive is in the prior tool result (above).',
+    'Handle refinement requests without starting a new exploration:',
+    '- Text changes, relabels, section reorders → call `lineage_present_result` again with the',
+    '  modified `sections[]`, `highlights`, or `notes` payload. No new analysis is needed.',
+    '- Prune a node from the visualization → re-render via `lineage_present_result` with the',
+    '  node removed from `nodes[]`. The archive slot is not deleted.',
+    '- Add a node the user just asked about and that is in `deferred_questions` → use',
+    '  `lineage_start_exploration` with the `supplement` flag (see tool description) to run a',
+    '  tiny targeted pass for that node only; the result merges into the archive; then re-render.',
+    '- Catalog lookups for a node already in the archive or elsewhere → `lineage_get_object_detail`',
+    '  or `lineage_search_ddl`.',
+    'If the user asks a genuinely new trace (new origin, new direction, new scope),',
+    'tell them in one sentence to start a fresh question.',
   ].join('\n');
 }
 
@@ -223,7 +265,7 @@ export function buildTracePrompt(userInput: string): string {
  * @returns The multiline string to pre-fill into the chat input.
  */
 export function buildDeferredQuestionsPrompt(entries: ReadonlyArray<DeferredQuestion>): string {
-  const header = `@lineage I'd like to follow up on these deferred out-of-scope questions from the previous exploration. Keep the line(s) you want to investigate, delete the rest, then send:`;
+  const header = `@lineage Add the following deferred node(s) to the existing analysis — keep the line(s) you want, delete the rest, then send. Extend the archive via \`lineage_start_exploration\` with \`supplement:{nodeIds:[...]}\`; do not start a fresh exploration.`;
   const lines = entries.map((d, i) => {
     const question = d.question?.trim() || `Investigate ${d.nodeId}`;
     const schema = d.schema ? ` [schema: ${d.schema}]` : '';

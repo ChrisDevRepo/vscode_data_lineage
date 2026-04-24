@@ -15,6 +15,8 @@
 - **Better compatibility with Copilot Free** — `@lineage` resolves the active chat model dynamically, fixing "Chat provider not registered" errors.
 
 ### Changed
+- **Ask follow-ups after the report** — once `@lineage` finishes, you can keep asking: tweak a label, drop a node from the graph, or add a deferred node. Refinements edit the existing report instead of starting over.
+- **Reports answer the question first** — every `@lineage` report opens with a one-sentence answer to the original question, then groups related objects together before diving into per-object detail.
 - **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
 - **30-minute AI session timeout** — Idle exploration sessions expire automatically. Starting a new exploration discards any old in-progress one with a brief in-chat notice — no blocking dialog.
 - **Cleaner cancellation** — Pressing Stop mid-response no longer produces a red "stream closed" error. The handler exits cleanly.

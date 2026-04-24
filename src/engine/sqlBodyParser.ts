@@ -243,13 +243,13 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
  * Clears all active parsing rules from memory.
  * 
  * @remarks
- * Used during teardown or when switching project configurations. 
- * The extension host is responsible for providing a new configuration after resetting.
- */
-export function resetRules(): void {
-  activeRules = [];
-}
-
+ /**
+  * Used during teardown or when switching project configurations.
+  * The extension host is responsible for providing a new configuration after resetting.
+  */
+ function resetRules(): void {
+   activeRules = [];
+ }
 /**
  * Find the base table a CTE references via paren-balanced body detection.
  * 

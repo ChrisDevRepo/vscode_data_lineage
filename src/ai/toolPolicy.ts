@@ -14,6 +14,7 @@
  * | `active` (inline_bb)      | submit_findings                                                                                  |
  * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, present_result |
+ * | `completed`               | present_result, get_object_detail, search_ddl, search_objects, start_exploration (supplement-only) |
  *
  * Deliberately excluded from every LM phase: `lineage_get_neighborhood` — it
  * overlaps `start_exploration` (BFS + DDL without engine supervision) and
@@ -35,7 +36,9 @@ export type LmStage =
   /** Hop loop. `mode` scopes the tool set to inline BB, SM BB, or SM CT. */
   | { kind: 'active'; mode: ActiveMode }
   /** Post-agenda-drain report authoring. */
-  | { kind: 'synthesis' };
+  | { kind: 'synthesis' }
+  /** Post-synthesis follow-up: refinement (text edits, prunes, deferred-question supplement). */
+  | { kind: 'completed' };
 
 /** Tools visible when the session is idle or answering ad-hoc questions. */
 const DISCOVERY_TOOLS: readonly string[] = [
@@ -58,6 +61,24 @@ const SYNTHESIS_TOOLS: readonly string[] = [
 ];
 
 /**
+ * Tools visible in the post-synthesis follow-up phase.
+ *
+ * @remarks
+ * The follow-up phase handles refinement without a fresh exploration: text edits
+ * and prunes re-render via `present_result`; deferred-question adds go through
+ * `start_exploration` with its `supplement` field (see {@link StartExplorationInputSchema}).
+ * Catalog-lookup tools stay available for "what does node X do" questions the user
+ * may ask after reading the report.
+ */
+const COMPLETED_TOOLS: readonly string[] = [
+  'lineage_present_result',
+  'lineage_get_object_detail',
+  'lineage_search_ddl',
+  'lineage_search_objects',
+  'lineage_start_exploration',
+];
+
+/**
  * Exhaustiveness helper — forces the compiler to flag an un-handled `kind`
  * when a new variant is added to {@link LmStage}.
  */
@@ -77,6 +98,8 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
       return new Set(DISCOVERY_TOOLS);
     case 'synthesis':
       return new Set(SYNTHESIS_TOOLS);
+    case 'completed':
+      return new Set(COMPLETED_TOOLS);
     case 'active': {
       const tools: string[] = ['lineage_submit_findings'];
       // Inline BB ships full scope DDL up front via start_exploration → no DDL-fetch tool needed.

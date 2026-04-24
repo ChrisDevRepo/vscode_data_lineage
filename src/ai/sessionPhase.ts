@@ -50,6 +50,9 @@ export type PendingGate = z.infer<typeof PendingGateSchema>;
  * - `awaiting_gate` — engine paused on a consent gate; next turn resolves the user's reply (yes / no / redirect).
  * - `exploring` — engine is running hops; next turn continues or completes.
  * - `synthesis` — engine completed, final report being produced.
+ * - `completed` — synthesis turn finished, archive survives on the session singleton. Next turn is a refinement
+ *   (text edit, node prune, deferred-question supplement) handled by the follow-up protocol without starting a
+ *   fresh exploration.
  */
 export type SessionPhase =
   /** No exploration active. Next turn goes through discovery. */
@@ -59,7 +62,9 @@ export type SessionPhase =
   /** Engine is in the hop loop; next turn resumes or finishes. */
   | { kind: 'exploring' }
   /** Engine completed; synthesis prose is being produced. */
-  | { kind: 'synthesis' };
+  | { kind: 'synthesis' }
+  /** Synthesis turn finished; archive is frozen but addressable. Follow-up turns route through the follow-up protocol. */
+  | { kind: 'completed' };
 
 /**
  * Mutually-exclusive outcomes of one hop-loop invocation. Drives the single dispatch

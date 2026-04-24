@@ -44,9 +44,16 @@ type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
  * Zod schema for `start_exploration` tool input. Parsed at the boundary so malformed
  * payloads (e.g. missing `origin`) produce a structured `missing_field` error instead
  * of crashing `NavigationEngine.init` on `.toLowerCase()` of undefined.
+ *
+ * @remarks
+ * Either `origin` (fresh exploration) or `supplement.nodeIds` (post-synthesis add) must
+ * be present. Supplement mode reuses the existing `NavigationEngine` / archive: the
+ * supplied node ids are appended to the agenda, the engine is driven one-shot in inline
+ * mode, and new `DetailSlot` entries merge into the existing archive. Used by the
+ * follow-up phase (see `buildFollowUpPrompt`) for deferred-question continuation.
  */
 export const StartExplorationInputSchema = z.object({
-  origin: z.string().min(1),
+  origin: z.string().min(1).optional(),
   question: z.string().optional(),
   targetColumns: z.array(z.string()).optional(),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
@@ -55,7 +62,19 @@ export const StartExplorationInputSchema = z.object({
   excludeTypes: z.array(z.string()).optional(),
   mission_brief: z.string().optional(),
   classification: z.enum(['business', 'technical', 'both']).optional(),
-});
+  /**
+   * Post-synthesis supplement: extend the existing archive with analysis for these
+   * additional node ids. Runs the engine in inline one-shot mode; slots merge into
+   * the existing `AiMemoryManager`. No `origin` needed — the existing exploration is
+   * the origin. Fails if no completed engine is attached to the session.
+   */
+  supplement: z.object({
+    nodeIds: z.array(z.string().min(1)).min(1),
+  }).optional(),
+}).refine(
+  (data) => !!data.origin || !!data.supplement,
+  { message: "Either 'origin' (fresh exploration) or 'supplement.nodeIds' (post-synthesis add) must be provided." },
+);
 
 export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
 

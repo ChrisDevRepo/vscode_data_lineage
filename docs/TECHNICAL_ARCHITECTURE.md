@@ -44,19 +44,21 @@ Stored procedures use a highly optimized, multi-pass regex engine (`src/engine/s
 
 The extension integrates with VS Code Copilot Chat using an autonomous **"Map & Router"** architecture. It implements a custom imperative loop to allow for aggressive context cleaning and sliding memory survival during deep graph traces.
 
-### 4.1 The Three Chat Phases (Hourglass Flow)
+### 4.1 The Four Chat Phases (Hourglass Flow + Follow-Up)
 1. **Discovery (Wide)**: Identifying user intent and mapping the initial scope. The AI seeds the topological Agenda.
 2. **Active Phase (Narrow/Sliding or Wide/Inline)**:
    - **Sliding Memory Mode**: Hop-by-hop traversal. The AI receives the focus node's DDL, a sliding window of recent node summaries, and neighbor metadata.
    - **True Inline Mode**: For small graphs (< 10 nodes), the entire scope is delivered in a single batch for holistic reasoning.
-3. **Holistic Synthesis (Wide)**: Once the agenda is empty, the AI evaluates the entire Detail Archive to generate a visually enriched report (`present_result`).
+3. **Holistic Synthesis (Wide)**: Once the agenda is empty, the AI evaluates the entire Detail Archive to generate a visually enriched report (`present_result`). The synthesis prompt frames the work as a process — READ the archive → ANSWER the original question in 1–2 sentences → GROUP slots by data-flow role → WRITE `present_result`.
+4. **Follow-Up (Completed)**: After the report renders, the session enters the `completed` phase. The engine, archive, and classification persist on the session singleton. Refinement turns (text edits, node prunes, deferred-question adds) run against the existing archive: text changes and prunes re-render via `present_result`; "add node X" goes through `lineage_start_exploration` with a `supplement: { nodeIds }` field that extends the archive in one inline pass without resetting it. A genuinely new trace (new origin / direction) resets the session back to discovery.
 
 ### 4.2 State Machine & Memory Management
 To support deep lineages within limited token budgets, the system uses **Asymmetric Tiering**:
 - **NavigationEngine (`smBase.ts`)**: The core state machine and single source of truth for traversal logic. It implements `IHopStateMachine` and manages the topological map (Visited, Current, Agenda).
 - **Short-Term Memory**: Sliding window of recent node summaries (last 3 hops) echoed every hop to maintain local context.
 - **Detail Archive**: Full technical analysis per node. Delivered to the AI ONLY in the Synthesis phase to prevent context bloat during the active loop.
-- **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis`) modeled as a discriminated union for exhaustive handling.
+- **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis | completed`) modeled as a discriminated union for exhaustive handling. `completed` is the post-synthesis refinement phase.
+- **Supplement extension (`NavigationEngine.supplementAgenda`)**: In the `completed` phase, calling `lineage_start_exploration({ supplement: { nodeIds } })` reuses the existing engine: status flips from `complete` back to `awaiting_findings`, inline mode is forced on, new slots merge into the existing `AiMemoryManager`, and the hop loop + synthesis re-emit `present_result` with the enlarged scope. No new engine, no new memory, no scope re-declaration.
 
 ### 4.3 Pipelined Model Architecture
 To maximize quality and performance, responsibilities are split:

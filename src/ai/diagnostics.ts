@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AiSession } from './session';
 import { Logger } from '../utils/log';
+import type { SmState } from './smTypes';
 
 /**
  * Telemetry data for a single agentic loop iteration (hop).
@@ -111,6 +112,8 @@ export class PerformanceCollector {
       ? `${((peakInput / sess.maxInputTokens) * 100).toFixed(0)}%`
       : '0%';
 
+    const smState: SmState | null = sess.stateMachine ? sess.stateMachine.toJSON() : null;
+
     const diag: PerformanceDiagnostics = {
       summary: {
         model: sess.modelName || 'unknown',
@@ -125,7 +128,7 @@ export class PerformanceCollector {
       system: {
         evictionEvents: this.evictionCount,
         detailArchiveSlots: sess.memory.slotCount,
-        finalAgendaSize: sess.stateMachine?.toJSON() ? (sess.stateMachine.toJSON() as any).agendaSize : 0
+        finalAgendaSize: smState?.agendaSize ?? 0
       }
     };
 

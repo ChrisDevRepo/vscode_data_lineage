@@ -120,10 +120,36 @@ class ToolHandler {
         const field = issue?.path?.join('.') || '(root)';
         return this.logAndReturn('start_exploration', {
           error: 'missing_field',
-          hint: `Invalid start_exploration input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: origin (non-empty string). Optional: question, direction, depth, depth_enforcement, excludeTypes, mission_brief, targetColumns.`,
+          hint: `Invalid start_exploration input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: origin (non-empty string) OR supplement.nodeIds (post-synthesis add). Optional: question, direction, depth, depth_enforcement, excludeTypes, mission_brief, targetColumns.`,
         }, input);
       }
       const data = parsed.data;
+
+      // Post-synthesis supplement path: reuse the existing engine, extend the agenda,
+      // run one-shot inline. Merges new slots into the existing archive — no reset.
+      if (data.supplement) {
+        const priorEngine = sess.stateMachine as NavigationEngine | null;
+        if (!priorEngine || priorEngine.status !== 'complete') {
+          return this.logAndReturn('start_exploration', {
+            error: 'supplement_requires_complete_engine',
+            hint: `supplement requires a completed prior exploration. Current engine status: ${priorEngine?.status ?? 'none'}. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').`,
+          }, input);
+        }
+        const res = priorEngine.supplementAgenda(data.supplement.nodeIds);
+        if ('error' in res) return this.logAndReturn('start_exploration', res, input);
+        sess.enterExploring();
+        this.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds.length} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}`);
+        const hopCtx = priorEngine.getHopContext();
+        return this.logAndReturn('start_exploration', { ok: true, supplement: res, ...hopCtx }, input);
+      }
+
+      // Fresh exploration path: origin is required.
+      if (!data.origin) {
+        return this.logAndReturn('start_exploration', {
+          error: 'missing_field',
+          hint: "Field 'origin' is required for a fresh exploration. Supply 'supplement.nodeIds' only when extending a completed prior exploration (follow-up phase).",
+        }, input);
+      }
 
       sess.resetIfStale();
 
@@ -138,6 +164,14 @@ class ToolHandler {
 
       const prior = sess.stateMachine as NavigationEngine | null;
       const priorLive = !!prior && prior.status !== 'complete';
+      // Fresh exploration from the completed (follow-up) phase: the AI has decided the
+      // question is a genuinely new trace, not a refinement. Discard the prior archive
+      // so the confirm_sm_start gate can fire and the new run starts clean.
+      if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
+        this.logger.info(`[${sess.id}] [Phase] completed → discover — fresh start_exploration (origin=${data.origin}); prior archive discarded`);
+        sess.resetExploration();
+        sess.startExplorationRoundId = sess.currentRoundId;
+      }
       if (priorLive && prior!.sessionId && prior!.sessionId !== sess.id) {
         sess.pendingUserNotice.add('A previous exploration was still running when you started this one. Its in-memory findings were discarded.');
         sess.resetExploration();

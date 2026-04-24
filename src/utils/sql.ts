@@ -7,7 +7,7 @@
  * @internal This is not a user-facing setting. It serves as the single source of truth 
  * for future case-sensitivity support.
  */
-export const CASE_MODE: 'CI' | 'CS' = 'CI';
+const CASE_MODE: 'CI' | 'CS' = 'CI';
 
 /** 
  * Computes a canonical comparison key for a SQL schema or object name.
@@ -144,7 +144,7 @@ export function compileExclusionPattern(pattern: string): RegExp {
  * @param pattern - The SQL LIKE pattern string.
  * @returns A compiled `RegExp` object anchored to the start and end of the string.
  */
-export function compileSqlLikePattern(pattern: string): RegExp {
+function compileSqlLikePattern(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   const regexStr = escaped.replace(/%/g, '.*');
   return new RegExp(`^${regexStr}$`, 'i');
@@ -156,7 +156,7 @@ export function compileSqlLikePattern(pattern: string): RegExp {
  * @param patterns - The list of patterns to compile.
  * @returns An array of `RegExp` objects, or `null` if the input is empty or undefined.
  */
-export function compileSqlLikePatterns(patterns: string[] | undefined): RegExp[] | null {
+function compileSqlLikePatterns(patterns: string[] | undefined): RegExp[] | null {
   if (!patterns || patterns.length === 0) return null;
   return patterns.map(p => compileSqlLikePattern(p));
 }
@@ -168,7 +168,7 @@ export function compileSqlLikePatterns(patterns: string[] | undefined): RegExp[]
  * @param matchers - The array of compiled `RegExp` objects to test against.
  * @returns `true` if at least one matcher matches the value; otherwise `false`.
  */
-export function matchesAnySqlLike(value: string, matchers: RegExp[]): boolean {
+function matchesAnySqlLike(value: string, matchers: RegExp[]): boolean {
   return matchers.some(r => r.test(value));
 }
 

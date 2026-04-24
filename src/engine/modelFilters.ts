@@ -1,12 +1,23 @@
+/**
+ * @module ModelFilters
+ * Provides utility functions for filtering the `DatabaseModel` based on various criteria.
+ *
+ * These filters are used to refine the visual graph by:
+ * - Applying exclusion patterns (regex) to hide specific objects or schemas.
+ * - Removing isolated nodes that have no connections.
+ * - Enforcing node allowlists (typically used during focused tracing or selection).
+ */
+
 import { DatabaseModel } from './types';
 import { compileExclusionPattern } from '../utils/sql';
 
 /**
- * Applies regex-based exclusion patterns to filter nodes by their schema or name.
+ * Filters the model by removing nodes that match any of the provided regex exclusion patterns.
+ * Matches are performed against both the `schema.name` format and the `fullName`.
  * 
  * @param model - The database model to filter.
- * @param patterns - A list of regex strings to match against object names.
- * @returns A filtered database model.
+ * @param patterns - A list of regex strings defining the exclusion rules.
+ * @returns A new DatabaseModel instance with matching nodes and their associated edges removed.
  */
 export function applyExclusionFilter(model: DatabaseModel, patterns: string[]): DatabaseModel {
   if (!patterns || patterns.length === 0) return model;
@@ -16,6 +27,7 @@ export function applyExclusionFilter(model: DatabaseModel, patterns: string[]): 
     try {
       regexes.push(compileExclusionPattern(p));
     } catch (err) {
+      // Warnings are logged to the console; invalid patterns are safely ignored.
       console.warn(`[Exclusion] Skipping invalid pattern: ${p}`, err);
     }
   }
@@ -32,11 +44,11 @@ export function applyExclusionFilter(model: DatabaseModel, patterns: string[]): 
 }
 
 /**
- * Removes "isolated" nodes (nodes with zero edges) from the model.
+ * Filters the model by removing isolated nodes (nodes with a total degree of zero).
  * 
  * @param model - The database model to filter.
- * @param hideIsolated - Whether to perform the removal.
- * @returns A filtered database model.
+ * @param hideIsolated - If `true`, isolation filtering is applied.
+ * @returns A filtered DatabaseModel instance.
  */
 export function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean): DatabaseModel {
   if (!hideIsolated) return model;
@@ -55,11 +67,11 @@ export function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean
 }
 
 /**
- * Enforces an allowlist of specific node IDs, dropping all others.
+ * Filters the model to include only nodes explicitly present in the provided allowlist.
  * 
  * @param model - The database model to filter.
- * @param allowlist - A set of node IDs permitted to remain.
- * @returns A filtered database model.
+ * @param allowlist - A set of node IDs to retain.
+ * @returns A filtered DatabaseModel instance.
  */
 export function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
   if (!allowlist || allowlist.size === 0) return model;

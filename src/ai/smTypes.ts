@@ -421,6 +421,40 @@ export interface ApprovedBorder {
 }
 
 /**
+ * Serialized state of the state machine, used for telemetry, debugging, and persistence.
+ */
+export interface SmState {
+  /** The current aspect mode (e.g. column tracing). */
+  columnAspect: ColumnAspect | null;
+  /** The current lifecycle status. */
+  status: SmStatus;
+  /** Total number of hops completed in this session. */
+  hopCount: number;
+  /** Total number of nodes within the discovered exploration scope. */
+  scopeSize: number;
+  /** List of all node IDs currently in the exploration scope. */
+  scopeNodeIds: string[];
+  /** Whether the session is operating in True Inline mode. */
+  inlineMode: boolean;
+  /** Set of node IDs already visited by the engine. */
+  visited: string[];
+  /** Set of node IDs explicitly pruned from the exploration. */
+  removedSet: string[];
+  /** Current number of nodes waiting on the agenda. */
+  agendaSize: number;
+  /** The list of upcoming tasks on the engine's agenda. */
+  agenda: Array<{
+    nodeId: string;
+    priority: number;
+    question: string;
+  }>;
+  /** ID of the node currently under analysis, if any. */
+  currentFocusNodeId: string | null;
+  /** Serialized snapshot of the associated memory manager. */
+  memory: any; // Ideally this would be a proper MemoryState interface
+}
+
+/**
  * Log entry representing a single tool invocation within the SM lifecycle.
  */
 export interface HopLogEntry {

@@ -19,7 +19,7 @@ import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFoc
 import { edgeApiType } from './aiPresenter';
 import { findBridgeNodes, bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
-import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, SmResult, SmStatus, SubmitResult } from './smTypes';
+import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -126,7 +126,7 @@ export interface IHopStateMachine {
    *
    * @returns The serialized state object.
    */
-  toJSON(): unknown;
+  toJSON(): SmState;
 
   /** The sub-question assigned to the current focus node; empty when no hop is in progress. */
   getCurrentTask(): string;
@@ -136,6 +136,24 @@ export interface IHopStateMachine {
 
   /** Snapshot of per-hop diagnostics (focus, depth, routing counts, tally). */
   getHopDiagnostics(): DiagnosticsSnapshot;
+
+  /**
+   * Extends a completed exploration with additional nodes for analysis.
+   *
+   * @remarks
+   * Used by the follow-up phase (post-synthesis). Only callable when
+   * `status === 'complete'` and at least one bodied id is supplied. The engine
+   * re-enters `awaiting_findings`, `inlineMode` is forced to `true` so the
+   * subsequent loop runs one-shot, and new `DetailSlot` entries merge into the
+   * existing `AiMemoryManager` without resetting prior analysis.
+   *
+   * @param nodeIds - Node ids to append to the agenda. Non-bodied (table, external)
+   *   ids follow the existing bipartite contraction rule (`enqueueHop`) — they
+   *   forward the authored question to bodied neighbors rather than landing on
+   *   the agenda themselves. Ids outside the graph are dropped.
+   * @returns Counts of ids that were agendaed, contracted, or skipped (unknown / duplicate).
+   */
+  supplementAgenda(nodeIds: string[]): { ok: true; agendaed: number; contracted: number; skipped: number } | { error: string; hint?: string };
 }
 
 /**
@@ -539,6 +557,58 @@ export class NavigationEngine implements IHopStateMachine {
       scopeSize: this.scopeNodeIds.size,
       agendaSize: this.agenda.length,
     };
+  }
+
+  /**
+   * Extends a completed exploration with additional nodes for analysis.
+   *
+   * @remarks
+   * Only callable when `status === 'complete'`. Re-enters `awaiting_findings`, forces
+   * inline mode (supplements are small by construction), and appends ids via
+   * {@link enqueueHop} so the bipartite rule still holds: bodied nodes land on the
+   * agenda, non-bodied contract through to their bodied neighbors in the exploration
+   * direction. Prior `DetailSlot` entries survive — new slots merge in.
+   *
+   * Unknown ids are reported in the `skipped` count, not raised as errors, so a
+   * partial supplement still proceeds.
+   *
+   * @param nodeIds - Ids to append to the agenda.
+   * @returns Counts of agendaed / contracted / skipped, or a structured error.
+   */
+  public supplementAgenda(nodeIds: string[]): { ok: true; agendaed: number; contracted: number; skipped: number } | { error: string; hint?: string } {
+    if (this._status !== 'complete') {
+      return {
+        error: 'supplement_requires_complete_engine',
+        hint: `supplementAgenda is only valid after the prior exploration has completed (status === 'complete'). Current status: ${this._status}.`,
+      };
+    }
+    if (!Array.isArray(nodeIds) || nodeIds.length === 0) {
+      return { error: 'supplement_empty', hint: 'supplementAgenda requires at least one node id.' };
+    }
+
+    const agendaBefore = this.agenda.length;
+    let skipped = 0;
+    for (const raw of nodeIds) {
+      const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      if (!id) { skipped++; continue; }
+      if (!this.scopeNodeIds.has(id)) this.scopeNodeIds.add(id);
+      // Reset visited guard so the supplemented id can be analyzed even if it was
+      // passed-through during the parent exploration.
+      if (this.visited.has(id)) this.visited.delete(id);
+      const existingDepth = this.depthFromOrigin.get(id);
+      const depth = typeof existingDepth === 'number' ? existingDepth : 0;
+      this.enqueueHop(id, `Supplement: investigate ${id} on user follow-up`, depth, 3);
+    }
+
+    const agendaed = this.agenda.length - agendaBefore;
+    const contracted = nodeIds.length - agendaed - skipped;
+
+    this._inlineMode = true;
+    this._status = 'awaiting_findings';
+
+    this.log('info', `[Supplement] added ${nodeIds.length} requested ids → agendaed=${agendaed} contracted=${contracted} skipped=${skipped}; inlineMode=true, status=awaiting_findings`);
+
+    return { ok: true, agendaed, contracted, skipped };
   }
 
   /**
@@ -1152,7 +1222,7 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @returns Plain object suitable for JSON output routines.
    */
-  public toJSON(): unknown {
+  public toJSON(): SmState {
     return {
       columnAspect: this._columnAspect,
       status: this._status,

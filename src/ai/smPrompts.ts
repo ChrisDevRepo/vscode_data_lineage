@@ -131,16 +131,20 @@ import { CLASSIFICATION_LABEL, type ClassificationValue } from './classification
  *
  * @remarks
  * Follows Anthropic long-context guidance: instructions at the highest-attention slot
- * improve compliance.
+ * improve compliance. The user question itself is NOT restated here — it already sits at
+ * msg [1] of the synthesis envelope as the original user prompt, so a duplicate here
+ * would add tokens without improving anchoring.
+ *
+ * @param _question - Kept in the signature for backward-compatible callsites but no
+ *   longer emitted in the reminder body.
  */
 export function buildSynthesisReminder(
-  question: string,
+  _question: string,
   classification?: ClassificationValue,
   technicalSubsectionInstruction?: string,
 ): string {
   const lines = [
     '## Synthesis Reminder',
-    `- Question: "${question}"`,
     '- Target: High-fidelity `present_result` sections.',
     '- Requirement: 3+ sentences per badged node with SQL evidence.',
     '- Fallback: Cite missing nodes in chat prose, do not omit analyzed evidence.',

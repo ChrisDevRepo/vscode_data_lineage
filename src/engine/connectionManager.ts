@@ -1,47 +1,65 @@
+/**
+ * @module ConnectionManager
+ * Handles database connectivity, DMV query management, and integration with the `ms-mssql.mssql` extension.
+ *
+ * This module provides the infrastructure for:
+ * - Loading and validating DMV (Dynamic Management View) queries from built-in or custom sources.
+ * - Orchestrating connections via the MSSQL extension's connection picker.
+ * - Executing queries with automated timeout handling and placeholder expansion.
+ * - Retrieving server metadata and managing connection lifecycles.
+ */
+
 import * as vscode from 'vscode';
-import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult, IServerInfo } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 
+/**
+ * The unique identifier for the Microsoft MSSQL extension.
+ */
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
 /**
- * Represents a Dynamic Management View (DMV) query to be executed.
+ * Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server.
  */
 export interface DmvQuery {
-  /** The unique name of the query. */
+  /** 
+   * The unique name/key of the query. 
+   * Known keys: 'schema-preview', 'all-objects', 'nodes', 'columns', 'dependencies'.
+   */
   name: string;
-  /** A brief description of what the query extracts. */
+  /** A human-readable description of the query's purpose. */
   description: string;
-  /** The SQL statement to execute. */
+  /** The raw SQL statement to execute. */
   sql: string;
   /** 
    * The execution phase of the query.
-   * `1` indicates Phase 1 (unfiltered execution).
-   * `2` indicates Phase 2 (execution with `{{SCHEMAS}}` expanded).
+   * `1`: Preliminary phase (unfiltered).
+   * `2`: Main extraction phase (typically filters by schema).
+   * @default 2
    */
   phase?: number;
 }
 
 /**
- * Configuration structure for defining multiple DMV queries.
+ * Root configuration structure for DMV query definition files.
  */
 export interface DmvQueriesConfig {
-  /** The version of the DMV queries configuration. */
+  /** Schema version of the configuration file. */
   version: number;
-  /** An array of DMV queries. */
+  /** The collection of queries defined in the file. */
   queries: DmvQuery[];
 }
 
 /**
- * Loads DMV queries from the workspace configuration or falls back to built-in defaults.
+ * Loads DMV queries by checking the workspace configuration for a custom path, 
+ * falling back to built-in defaults if necessary.
  * 
  * @param outputChannel - The VS Code output channel for logging.
- * @param extensionUri - The base URI of the extension.
- * @returns A promise that resolves to an array of valid DMV queries.
+ * @param extensionUri - The base URI of the extension for resolving built-in assets.
+ * @returns A promise resolving to an array of validated DMV queries.
  */
 export async function loadDmvQueries(
   outputChannel: vscode.LogOutputChannel,
@@ -99,11 +117,12 @@ export async function loadDmvQueries(
 }
 
 /**
- * Loads the built-in DMV queries shipped with the extension.
+ * Loads the built-in DMV queries from the extension's `assets` directory.
  * 
  * @param outputChannel - The VS Code output channel for logging.
  * @param extensionUri - The base URI of the extension.
- * @returns A promise that resolves to an array of valid built-in DMV queries.
+ * @returns A promise resolving to the built-in DMV queries.
+ * @throws If the built-in configuration file is missing or corrupted.
  */
 async function loadBuiltInDmvQueries(
   outputChannel: vscode.LogOutputChannel,
@@ -124,10 +143,11 @@ async function loadBuiltInDmvQueries(
 }
 
 /**
- * Retrieves the MSSQL extension API, ensuring it is installed and activated.
+ * Accesses the MSSQL extension API, ensuring the extension is installed and activated.
  * 
  * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise that resolves to the MSSQL extension API.
+ * @returns A promise resolving to the `IExtension` exports.
+ * @throws If the MSSQL extension is not installed.
  */
 async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExtension> {
   const logger = Logger.create(outputChannel, 'DB');
@@ -143,10 +163,11 @@ async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExt
 }
 
 /**
- * Retrieves the connection sharing service API from the MSSQL extension.
+ * Retrieves the connection sharing service from the MSSQL extension.
  * 
  * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise that resolves to the connection sharing service API.
+ * @returns A promise resolving to the `IConnectionSharingService`.
+ * @throws If the MSSQL extension version does not support connection sharing.
  */
 async function getConnectionSharingApi(
   outputChannel: vscode.LogOutputChannel,
@@ -159,11 +180,10 @@ async function getConnectionSharingApi(
 }
 
 /**
- * Shows the MSSQL extension's native connection picker, connects to the selected database,
- * and returns the connection details.
+ * Triggers the native MSSQL connection picker and initiates a connection.
  * 
  * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise resolving to the connection URI and info, or `undefined` if the user cancels.
+ * @returns Connection URI and metadata, or `undefined` if the user cancels.
  */
 export async function promptForConnection(
   outputChannel: vscode.LogOutputChannel,
@@ -185,10 +205,10 @@ export async function promptForConnection(
 }
 
 /**
- * Strips sensitive fields such as passwords and connection strings from connection information.
+ * Sanitizes connection info by removing secrets (passwords and raw connection strings).
  * 
- * @param info - The original connection info containing potentially sensitive data.
- * @returns A new object with the `password` and `connectionString` fields removed.
+ * @param info - The raw connection information.
+ * @returns A sanitized clone of the connection information.
  */
 export function stripSensitiveFields(info: IConnectionInfo): Omit<IConnectionInfo, 'password' | 'connectionString'> {
   const { password: _pw, connectionString: _cs, ...safe } = info;
@@ -196,11 +216,12 @@ export function stripSensitiveFields(info: IConnectionInfo): Omit<IConnectionInf
 }
 
 /**
- * Connects directly using the provided connection information, bypassing the connection picker.
+ * Attempts a direct reconnection using existing credentials. 
+ * Falls back to the picker if direct connection fails.
  * 
- * @param connectionInfo - The connection information to use for connecting.
+ * @param connectionInfo - The existing connection credentials.
  * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise resolving to the connection URI and info, or `undefined` on failure.
+ * @returns Connection details on success, or `undefined` on failure.
  */
 export async function connectDirect(
   connectionInfo: IConnectionInfo,
@@ -221,14 +242,13 @@ export async function connectDirect(
 }
 
 /**
- * Wraps a promise with a timeout. If the promise does not resolve within the specified
- * duration, it rejects with the provided timeout message.
+ * Utility to wrap an asynchronous operation with a timeout constraint.
  * 
- * @template T - The expected return type of the promise.
- * @param promise - The promise to wrap.
- * @param ms - The timeout duration in milliseconds.
- * @param timeoutMessage - The error message to use if the timeout is reached.
- * @returns A promise that resolves with the result of the original promise, or rejects on timeout.
+ * @template T - The return type of the promise.
+ * @param promise - The promise to monitor.
+ * @param ms - Timeout duration in milliseconds.
+ * @param timeoutMessage - Message for the thrown error upon timeout.
+ * @returns A promise that resolves with the original value or rejects on timeout.
  */
 export function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
   let handle: ReturnType<typeof setTimeout>;
@@ -241,14 +261,14 @@ export function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMess
 }
 
 /**
- * Executes a series of DMV queries against a connected database sequentially.
+ * Executes a batch of DMV queries sequentially.
  * 
  * @param connectionUri - The active connection URI.
- * @param queries - An array of DMV queries to execute.
- * @param outputChannel - The VS Code output channel for logging.
- * @param onProgress - Optional callback invoked before each query execution to report progress.
- * @param queryTimeoutMs - Optional timeout in milliseconds for each query execution.
- * @returns A promise resolving to a map linking query names to their execution results.
+ * @param queries - List of queries to execute.
+ * @param outputChannel - Logger output channel.
+ * @param onProgress - Optional callback for tracking execution progress.
+ * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
+ * @returns A map of query names to their execution results.
  */
 export async function executeDmvQueries(
   connectionUri: string,
@@ -285,16 +305,15 @@ export async function executeDmvQueries(
 }
 
 /**
- * Executes Phase 2 DMV queries with `{{SCHEMAS}}` placeholder expansion.
- * Skips queries marked as Phase 1.
+ * Executes Phase 2 queries with `{{SCHEMAS}}` substitution.
  * 
  * @param connectionUri - The active connection URI.
- * @param queries - An array of DMV queries to filter and execute.
- * @param schemas - An array of schema names to substitute in place of `{{SCHEMAS}}`.
- * @param outputChannel - The VS Code output channel for logging.
- * @param onProgress - Optional callback invoked before each query execution to report progress.
- * @param queryTimeoutMs - Optional timeout in milliseconds for each query execution.
- * @returns A promise resolving to a map linking query names to their execution results.
+ * @param queries - Candidate queries to filter and execute.
+ * @param schemas - Schema names for placeholder replacement.
+ * @param outputChannel - Logger output channel.
+ * @param onProgress - Progress tracking callback.
+ * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
+ * @returns Results for the executed Phase 2 queries.
  */
 export async function executeDmvQueriesFiltered(
   connectionUri: string,
@@ -340,11 +359,11 @@ export async function executeDmvQueriesFiltered(
 }
 
 /**
- * Retrieves server information (such as version and edition) for a connected database.
+ * Retrieves server-level metadata (version, edition, etc.) from the connection.
  * 
  * @param connectionUri - The active connection URI.
  * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise resolving to the server information.
+ * @returns Server info metadata.
  */
 export async function getServerInfo(
   connectionUri: string,
@@ -355,12 +374,12 @@ export async function getServerInfo(
 }
 
 /**
- * Executes a single SQL query against a connected database.
+ * Executes a single SQL command without batching or placeholders.
  * 
  * @param connectionUri - The active connection URI.
- * @param sql - The SQL statement to execute.
- * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise resolving to the result of the executed query.
+ * @param sql - The SQL script to execute.
+ * @param outputChannel - Logger output channel.
+ * @returns The query execution result.
  */
 export async function executeSimpleQuery(
   connectionUri: string,
@@ -372,11 +391,10 @@ export async function executeSimpleQuery(
 }
 
 /**
- * Disconnects from the connected database.
+ * Gracefully terminates the database connection.
  * 
- * @param connectionUri - The URI of the connection to disconnect.
- * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise that resolves once the database is disconnected.
+ * @param connectionUri - The connection URI to close.
+ * @param outputChannel - Logger output channel.
  */
 export async function disconnectDatabase(
   connectionUri: string,

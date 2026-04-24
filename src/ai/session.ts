@@ -5,7 +5,7 @@ import { ColumnStore } from '../engine/columnStore';
 import { AiMemoryManager } from './memoryManager';
 import { type ResultGraph, type AiOutputTemplates, EMPTY_AI_TEMPLATES, type SessionSummary, type NodeRole } from './types';
 import type { IHopStateMachine } from './smBase';
-import type { HopLogEntry } from './smTypes';
+import type { HopLogEntry, SmResult } from './smTypes';
 import type { SessionPhase, PendingGate } from './sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from './classification';
 
@@ -213,6 +213,16 @@ export class AiSession {
   }
 
   /**
+   * Transitions the session into `completed` — synthesis finished, archive survives
+   * on the session singleton. Next user turn routes through the follow-up protocol
+   * (refinement without a fresh exploration). Call only when
+   * `stateMachine?.status === 'complete'`.
+   */
+  public enterCompleted(): void {
+    this.phase = { kind: 'completed' };
+  }
+
+  /**
    * Rotates the session identifier and resets the start timer.
    */
   public regenerateSessionId(): void {
@@ -230,7 +240,7 @@ export class AiSession {
    * 
    * @param fullResult - The raw completion result from the State Machine.
    */
-  public storeBbResult(fullResult: any): void {
+  public storeBbResult(fullResult: SmResult): void {
     const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
     const verdicts: Record<string, NodeRole> = {};
     
@@ -239,21 +249,21 @@ export class AiSession {
     }
 
     this.resultGraph = {
-      nodeIds: fullResult.fullNodes.map((n: any) => n.id),
+      nodeIds: fullResult.fullNodes.map(n => n.id),
       edges: fullResult.edges,
       verdicts,
       source: sourceMode,
       originNodeId: fullResult.originNodeId,
-      notes: (fullResult.detail_slots || []).map((s: any) => ({
+      notes: (fullResult.detail_slots || []).map(s => ({
         nodeId: s.nodeId,
         summary: s.note_caption || s.summary || ''
       })),
       suggested_labels: (fullResult.detail_slots || [])
-        .filter((s: any) => s.badge_label)
-        .map((s: any) => ({ node_id: s.nodeId, text: s.badge_label })),
+        .filter(s => s.badge_label)
+        .map(s => ({ node_id: s.nodeId, text: s.badge_label! })),
       suggested_notes: (fullResult.detail_slots || [])
-        .filter((s: any) => s.note_caption)
-        .map((s: any) => ({ node_id: s.nodeId, text: s.note_caption })),
+        .filter(s => s.note_caption)
+        .map(s => ({ node_id: s.nodeId, text: s.note_caption! })),
       suggested_sections: fullResult.suggested_sections,
     };
   }

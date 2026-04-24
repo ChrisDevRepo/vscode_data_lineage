@@ -3,7 +3,7 @@ import { AiSession } from './session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
 import {
-  buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt,
+  buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
   ACTION_REQUIRED_PENDING_HINT
@@ -31,11 +31,11 @@ export { classifyGateReply } from './sessionPhase';
  * @param tc - The tool call part received from the language model response.
  * @returns An object containing the normalized call identifier, tool name, and input arguments.
  */
-export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { callId: string; name: string; input: any } {
+export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { callId: string; name: string; input: Record<string, unknown> } {
   return {
     callId: tc.callId,
     name: tc.name,
-    input: tc.input,
+    input: tc.input as Record<string, unknown>,
   };
 }
 
@@ -172,7 +172,7 @@ export class LineageParticipant {
     this.logger.info(`[${sess.id}] Session start — model=${model.id}, prompt="${trunc(request.prompt, 200)}"`);
 
     let effectivePrompt = request.prompt;
-    let activePhase: 'discover' | 'active' | 'synthesis' = 'discover';
+    let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
     let lineageTools = filterLmTools(vscode.lm.tools, { kind: 'discover' });
     if (request.command === 'trace') {
       effectivePrompt = buildTracePrompt(request.prompt);
@@ -250,8 +250,8 @@ export class LineageParticipant {
       }
     }
 
-      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis'; text: string } | null = null;
-      const buildStablePart = (phase: 'discover' | 'active' | 'synthesis'): string => {
+      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; text: string } | null = null;
+      const buildStablePart = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
         if (cachedStablePart && cachedStablePart.phase === phase) return cachedStablePart.text;
         const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
         const filterSchemas = sess.filter?.schemas || [];
@@ -271,8 +271,12 @@ export class LineageParticipant {
           phaseSpecific = buildActivePhasePrompt(isInline);
         }
         else if (phase === 'synthesis') phaseSpecific = buildSynthesisPrompt();
+        else if (phase === 'completed') phaseSpecific = buildFollowUpPrompt();
 
-        const stageBlock = resolveStagePrompt(sess.outputTemplates, phase, sess.classification);
+        // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
+        // re-renders keep the same formatting contract.
+        const templatesPhase = phase === 'completed' ? 'synthesis' : phase;
+        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification);
         const parts: string[] = [base, phaseSpecific];
 
         if (phase === 'active' && engine) {
@@ -282,7 +286,7 @@ export class LineageParticipant {
 
         parts.push(stageBlock);
 
-        if ((phase === 'active' || phase === 'synthesis') && engine) {
+        if ((phase === 'active' || phase === 'synthesis' || phase === 'completed') && engine) {
           const missionBriefBlock = buildMissionBriefBlock(sess.memory.getMissionBrief(), sess.memory.getUserQuestion() || '');
           if (missionBriefBlock) parts.push(missionBriefBlock);
         }
@@ -292,7 +296,7 @@ export class LineageParticipant {
         return text;
       };
 
-      const buildDynamicPart = (phase: 'discover' | 'active' | 'synthesis'): string => {
+      const buildDynamicPart = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
         const engine = sess.stateMachine;
         if (!engine || phase === 'discover') return '';
         const dynamic: string[] = [];
@@ -313,7 +317,7 @@ export class LineageParticipant {
         return dynamic.filter(Boolean).join('\n');
       };
 
-      const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis'): string => {
+      const buildStageSystemPrompt = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
         const stable = buildStablePart(phase);
         const dynamic = buildDynamicPart(phase);
         return dynamic ? `${stable}\n${dynamic}` : stable;
@@ -321,14 +325,24 @@ export class LineageParticipant {
 
       const invalidateStablePart = () => { cachedStablePart = null; };
     const resumingInActive = sess.phase.kind === 'exploring' && !!sess.stateMachine;
+    const resumingInCompleted =
+      sess.phase.kind === 'completed' &&
+      !!sess.stateMachine &&
+      sess.stateMachine.status === 'complete' &&
+      chatContext.history.length > 0;
     if (resumingInActive) {
       activePhase = 'active';
       const engine = sess.stateMachine!;
       const mode = activeModeOf(engine.inlineMode === true, engine.columnAspect !== null);
       lineageTools = filterLmTools(vscode.lm.tools, { kind: 'active', mode });
       this.logger.info(`[Phase] idle → active (gate-resume) — mode=${mode} tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
+    } else if (resumingInCompleted) {
+      activePhase = 'completed';
+      lineageTools = filterLmTools(vscode.lm.tools, { kind: 'completed' });
+      this.logger.info(`[Phase] completed → follow-up — archive slots=${sess.memory.slotCount}, tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
+      this.logger.debug(`[Phase] follow-up entry — mission="${trunc(sess.memory.getMissionBrief() || sess.memory.getUserQuestion(), 200)}", classification=${sess.classification ?? '(none)'}`);
     }
-    let systemPrompt = buildStageSystemPrompt(resumingInActive ? 'active' : 'discover');
+    let systemPrompt = buildStageSystemPrompt(activePhase);
 
     const serializeMessages = (msgs: vscode.LanguageModelChatMessage[]): string => {
       const parts: string[] = [];
@@ -742,15 +756,18 @@ export class LineageParticipant {
       }
       case 'final_answer': {
         const smComplete = sess.stateMachine?.status === 'complete';
-        sess.enterIdle();
         if (smComplete) {
+          sess.enterCompleted();
+          this.logger.info(`[${sess.id}] [Phase] synthesis → completed — archive slots=${sess.memory.slotCount}, deferred=${sess.stateMachine!.deferredQuestions.length}`);
+          this.logger.debug(`[${sess.id}] [Phase] follow-up ready — next turn refines via present_result / supplement; no fresh exploration unless the user asks a new trace.`);
           if (this.getActivePanel()) {
             const originalQ = sess.memory.getUserQuestion() || userPrompt;
             writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
           }
           // Out-of-scope routes proposed during the hop loop were deferred, not dropped.
-          // Surface them as a single inline button; clicking pre-fills the chat input
-          // with the full list so the user picks their own next move — no auto-task.
+          // Surface them as a single inline button; clicking opens a QuickPick that
+          // supplements the existing archive (reuses the engine) rather than starting
+          // a fresh exploration.
           const deferred = sess.stateMachine!.deferredQuestions;
           if (deferred.length > 0) {
             const unique = new Map<string, (typeof deferred)[number]>();
@@ -761,6 +778,9 @@ export class LineageParticipant {
               arguments: [Array.from(unique.values())],
             });
           }
+          writer.markdown('\n\n> Ask a follow-up to refine the answer, edit section text, or prune/add nodes. This uses the same archive — no new exploration runs. To start over, ask a fresh question.\n\n');
+        } else {
+          sess.enterIdle();
         }
         return;
       }

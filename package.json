@@ -912,7 +912,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
-        "modelDescription": "Starts a hop-by-hop exploration across database objects (Blackboard, or Column-Trace when `targetColumns` is set). Scope parameters: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. Honor NL filters: 'ignore UDFs/functions' → `excludeTypes:['function']`; 'ignore views' → `['view']`; 'only tables' → `['view','procedure','function']`. On wide graphs start `depth` shallow (1-2); sliding-memory sessions lock scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session. Compose `mission_brief` (3-6 sentences) capturing user intent, NL filters, name-based exclusions, and chosen scope — delivered verbatim every hop and surviving memory wipes.",
+        "modelDescription": "Starts a hop-by-hop exploration across database objects (Blackboard, or Column-Trace when `targetColumns` is set). Scope parameters: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. Honor NL filters: 'ignore UDFs/functions' → `excludeTypes:['function']`; 'ignore views' → `['view']`; 'only tables' → `['view','procedure','function']`. On wide graphs start `depth` shallow (1-2); sliding-memory sessions lock scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session. Compose `mission_brief` (3-6 sentences) capturing user intent, NL filters, name-based exclusions, and chosen scope — delivered verbatim every hop and surviving memory wipes. POST-SYNTHESIS SUPPLEMENT: in the follow-up phase, call with only `supplement:{nodeIds:[...]}` (no `origin` required) to extend the existing archive with one-shot inline analysis for those ids. The prior engine, memory, and filter state are reused — new slots merge into the archive; a fresh re-render via `lineage_present_result` follows. Use this path for deferred-question continuations and user-requested 'add node X' refinements.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -991,11 +991,23 @@
                 "both"
               ],
               "description": "Declare the analysis angle (business rules, technical performance, or both). Defaults to business."
+            },
+            "supplement": {
+              "type": "object",
+              "description": "Post-synthesis supplement. Supply only in the follow-up phase to extend the existing archive with additional ids. When present, `origin` may be omitted. Runs the existing engine one-shot in inline mode; new slots merge into the archive.",
+              "properties": {
+                "nodeIds": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "minItems": 1,
+                  "description": "Node ids to add to the existing exploration (typically picked from `deferred_questions`)."
+                }
+              },
+              "required": ["nodeIds"]
             }
           },
           "required": [
-            "question",
-            "origin"
+            "question"
           ]
         }
       },
@@ -1100,7 +1112,7 @@
     "watch:ext": "node esbuild.config.mjs --watch",
     "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/sm-robustness.test.ts && tsx tests/unit/templateRenderer.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/session-stale.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts",
     "test:unit": "npm run test",
-    "test:unit:ai": "tsx tests/unit/ai-tools.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts",
+    "test:unit:ai": "tsx tests/unit/ai-tools.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts",
     "test:dacpac": "tsx tests/unit/dacpacExtractor.test.ts",
     "test:graph": "tsx tests/unit/graphBuilder.test.ts",
     "test:parser": "tsx tests/unit/parser-edge-cases.test.ts",

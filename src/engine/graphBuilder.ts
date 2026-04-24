@@ -1,3 +1,16 @@
+/**
+ * @module GraphBuilder
+ * Orchestrates the transformation of the DatabaseModel into renderable React Flow graphs.
+ *
+ * This module is responsible for:
+ * - Building the underlying `graphology` computational graph.
+ * - Implementing spatial layout algorithms (Dagre, Grid) for node positioning.
+ * - Managing complex graph operations like tracing (upstream/downstream), pathfinding, and cycle detection.
+ * - Converting computational graphs into React Flow nodes and edges with specialized styling.
+ * - Handling bidirectional edge consolidation and canonical direction selection.
+ * - Building schema-level overview graphs for macro-lineage visualization.
+ */
+
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 import { bidirectional } from 'graphology-shortest-path';
@@ -7,54 +20,29 @@ import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeD
 import { getSchemaColor } from '../utils/schemaColors';
 import { notifyUser } from '../utils/notify';
 
-/**
- * Width of a standard graph node in pixels.
- */
+/** Width of a standard graph node in pixels. */
 export const NODE_WIDTH = 220;
-
-/**
- * Height of a standard graph node in pixels.
- */
+/** Height of a standard graph node in pixels. */
 export const NODE_HEIGHT = 80;
-
-/**
- * Width of a schema-level node in pixels.
- */
+/** Width of a schema-level node in pixels. */
 export const SCHEMA_NODE_WIDTH = 200;
-
-/**
- * Height of a schema-level node in pixels.
- */
+/** Height of a schema-level node in pixels. */
 export const SCHEMA_NODE_HEIGHT = 80;
 
-/**
- * Typed tuple for React Flow edge label background padding.
- */
+/** Typed tuple for React Flow edge label background padding. */
 const LABEL_BG_PAD: [number, number] = [4, 4];
-
-/**
- * Default column count for grid-based analysis layouts.
- */
+/** Default column count for grid-based analysis layouts. */
 const GRID_DEFAULT_COLS = 4;
-
-/**
- * Padding between nodes in grid layout (px).
- */
+/** Padding between nodes in grid layout (px). */
 const GRID_CELL_PADDING = 40;
 
 /**
  * Collects edges between traced nodes with direction-aware filtering.
- * When only one direction is active (the other is 0), edges are filtered
- * to only show data flow in the requested direction using BFS depth:
- *   - Upstream only: include edge A→B if A.upDepth >= B.upDepth (toward origin)
- *   - Downstream only: include edge A→B if B.downDepth >= A.downDepth (away from origin)
- * When both directions are active, ALL edges between traced nodes are shown.
- * Uses >= (not >) to include same-depth cross-edges.
- *
- * @param graph - The underlying computational graph instance.
+ * 
+ * @param graph - The underlying computational graph.
  * @param nodeIds - Set of node identifiers within the trace scope.
- * @param upDepth - Mapping of node identifiers to their upstream depth relative to the origin.
- * @param downDepth - Mapping of node identifiers to their downstream depth relative to the origin.
+ * @param upDepth - Upstream depth mapping.
+ * @param downDepth - Downstream depth mapping.
  * @returns A set of edge identifiers that conform to the tracing directionality.
  */
 function collectTraceEdges(
@@ -64,20 +52,18 @@ function collectTraceEdges(
   downDepth: Map<string, number>
 ): Set<string> {
   const edgeIds = new Set<string>();
-  const hasUp = upDepth.size > 1;   // more than just origin
+  const hasUp = upDepth.size > 1;
   const hasDown = downDepth.size > 1;
 
   graph.forEachEdge((edge, _attrs, source, target) => {
     if (!nodeIds.has(source) || !nodeIds.has(target)) return;
 
     if (hasUp && hasDown) {
-      // Both directions active: show all edges between traced nodes
       edgeIds.add(edge);
       return;
     }
 
     if (hasUp) {
-      // Upstream only: edge flows toward origin when source is further from origin
       const sD = upDepth.get(source);
       const tD = upDepth.get(target);
       if (sD !== undefined && tD !== undefined && sD >= tD) {
@@ -87,7 +73,6 @@ function collectTraceEdges(
     }
 
     if (hasDown) {
-      // Downstream only: edge flows away from origin when target is further
       const sD = downDepth.get(source);
       const tD = downDepth.get(target);
       if (sD !== undefined && tD !== undefined && tD >= sD) {
@@ -100,24 +85,22 @@ function collectTraceEdges(
 }
 
 /**
- * Represents the structured result of graph compilation, including React Flow
- * compatibility arrays and the underlying computational graph instance.
+ * Represents the structured result of graph compilation.
  */
 export interface GraphResult {
-  /** Array of nodes formatted for React Flow rendering. */
+  /** Nodes formatted for React Flow. */
   flowNodes: FlowNode[];
-  /** Array of edges formatted for React Flow rendering. */
+  /** Edges formatted for React Flow. */
   flowEdges: FlowEdge[];
-  /** The underlying graphology computational graph instance. */
+  /** Underlying computational graph. */
   graph: Graph;
 }
 
 /**
- * Builds a directed graphology computational graph from a database model.
- * Instantiates nodes and edges, ensuring structural integrity and deduplication.
- *
- * @param model - The database model containing structural node and edge definitions.
- * @returns A directed `Graph` instance populated with the model's structural data.
+ * Builds a directed graphology graph from a database model.
+ * 
+ * @param model - The database model definitions.
+ * @returns A populated graph instance.
  */
 export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
@@ -136,13 +119,7 @@ export function buildGraphologyGraph(model: DatabaseModel): Graph {
 }
 
 /**
- * Converts a unified model, graphology graph, and spatial coordinates into React Flow arrays.
- *
- * @param model - The relational database model.
- * @param graph - The computational graph instance.
- * @param positions - Spatial layout positioning mapped by node ID.
- * @param config - The extension configuration governing styling choices.
- * @returns A comprehensive `GraphResult` ready for renderer consumption.
+ * Converts internal model and graph state into React Flow structures.
  */
 function toFlowResult(
   model: DatabaseModel,
@@ -173,12 +150,11 @@ function toFlowResult(
 }
 
 /**
- * Compiles a database model into a React Flow compatible graph layout.
- * Generates spatial positions using Dagre and prepares renderable nodes and edges.
- *
- * @param model - The relational database model to visualize.
- * @param config - Extension configuration providing layout parameters. Defaults to `DEFAULT_CONFIG`.
- * @returns A complete `GraphResult` encompassing both rendering arrays and computational state.
+ * Fully builds and layouts a graph for visualization.
+ * 
+ * @param model - Database model to visualize.
+ * @param config - Extension configuration.
+ * @returns Complete graph result.
  */
 export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
   const graph = buildGraphologyGraph(model);
@@ -187,12 +163,11 @@ export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAU
 }
 
 /**
- * Compiles a database model into a React Flow graph without executing spatial positioning algorithms.
- * Optimizes performance for extensive graphs that exceed threshold constraints.
- *
- * @param model - The relational database model.
- * @param config - Extension configuration parameters. Defaults to `DEFAULT_CONFIG`.
- * @returns A `GraphResult` maintaining structural data with default zeroed coordinates.
+ * Builds a graph without executing layout algorithms, preserving default positions.
+ * 
+ * @param model - Database model to visualize.
+ * @param config - Extension configuration.
+ * @returns Complete graph result with zeroed positions.
  */
 export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
   const graph = buildGraphologyGraph(model);
@@ -200,13 +175,12 @@ export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig
 }
 
 /**
- * Performs a comprehensive Breadth-First Search (BFS) traversal to map dependencies
- * outward from a central origin across targeted structural dimensions.
- *
- * @param graph - The underlying graphology instance.
- * @param nodeId - The node identifier forming the traversal origin.
- * @param mode - Directions to trace: `'upstream'`, `'downstream'`, or `'both'`.
- * @returns Resolved sets indicating traversed node identifiers and correlating edge flow identifiers.
+ * Traces a node's lineage (upstream/downstream) through the graph.
+ * 
+ * @param graph - computational graph.
+ * @param nodeId - Origin node ID.
+ * @param mode - Trace direction.
+ * @returns Nodes and edges in the trace.
  */
 export function traceNode(
   graph: Graph,
@@ -239,14 +213,7 @@ export function traceNode(
 }
 
 /**
- * Traces a computational graph while strictly enforcing designated algorithmic hop limitations.
- * Incorporates specific branch halting via callback returns based on upstream and downstream bounds.
- *
- * @param graph - The directed graphology computational graph.
- * @param nodeId - The origin node identifier.
- * @param upstreamLevels - Maximum permitted inbound traversal depth.
- * @param downstreamLevels - Maximum permitted outbound traversal depth.
- * @returns Constrained sets of connected node and corresponding edge identifiers.
+ * Traces a node's lineage with specific level limits.
  */
 export function traceNodeWithLevels(
   graph: Graph,
@@ -264,7 +231,7 @@ export function traceNodeWithLevels(
 
   if (upstreamLevels > 0) {
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      if (depth > upstreamLevels) return true; // stop exploring
+      if (depth > upstreamLevels) return true;
       nodeIds.add(node);
       upDepth.set(node, depth);
     }, { mode: 'inbound' });
@@ -272,7 +239,7 @@ export function traceNodeWithLevels(
 
   if (downstreamLevels > 0) {
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      if (depth > downstreamLevels) return true; // stop exploring
+      if (depth > downstreamLevels) return true;
       nodeIds.add(node);
       downDepth.set(node, depth);
     }, { mode: 'outbound' });
@@ -283,13 +250,7 @@ export function traceNodeWithLevels(
 }
 
 /**
- * Identifies the shortest topological directed path coupling a source and a target node.
- * Evaluates source-to-target routing first, resorting to target-to-source if disconnected.
- *
- * @param graph - The directed computational graph.
- * @param sourceId - Starting node identifier.
- * @param targetId - Goal node identifier.
- * @returns Evaluated collections of intermediary nodes and edge identifiers defining the path, or null if unreachable.
+ * Calculates the shortest path between two nodes.
  */
 export function computeShortestPath(
   graph: Graph,
@@ -314,11 +275,7 @@ export function computeShortestPath(
 }
 
 /**
- * Constructs mapping coordinates using a uniform grid distribution.
- *
- * @param nodeIds - Array of identifier keys to place within the grid.
- * @param cols - Maximum column width before wrapping row logic. Defaults to `GRID_DEFAULT_COLS`.
- * @returns Spatial coordinate mapping correlating nodes to `x`/`y` planes.
+ * Lays out nodes in a uniform grid.
  */
 function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
@@ -331,17 +288,7 @@ function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<st
 }
 
 /**
- * Projects a constrained trace state across a broader React Flow canvas element matrix.
- * Modifies node highlights, filters untraced components, synthesizes graph gaps conditionally,
- * and enacts secondary layout computations based on the resolved subgraph topology.
- *
- * @param flowNodes - Primary array of visual graph nodes.
- * @param flowEdges - Primary array of visual graph edges.
- * @param trace - The tracing context metadata detailing active search parameters and matches.
- * @param config - Extension context preferences and visual settings. Defaults to `DEFAULT_CONFIG`.
- * @param model - Original underlying structural database model mapping.
- * @param synthesizeOutOfFilter - Flag allowing reconstruction of elements filtered out of view but active within trace logic.
- * @returns The dynamically updated nodes and edges, complemented potentially by a standalone trace subgraph.
+ * Applies active trace state to the visual graph, filtering and re-layouting as needed.
  */
 export function applyTraceToFlow(
   flowNodes: FlowNode[],
@@ -355,22 +302,20 @@ export function applyTraceToFlow(
     return { nodes: flowNodes, edges: flowEdges };
   }
   if (trace.tracedNodeIds.size === 0) {
-    const msg = `[Trace] applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode} — returning unchanged`;
+    const msg = `[Trace] applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode}`;
     window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
-    notifyUser('Trace produced no results. The traced nodes may have been removed or filtered out.');
+    notifyUser('Trace produced no results.');
     return { nodes: flowNodes, edges: flowEdges };
   }
 
-  // FILTER nodes to only show traced subset
   const filteredNodes = flowNodes.filter((n) => trace.tracedNodeIds.has(n.id));
 
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
-    const msg = `[Trace] applyTraceToFlow: 0 of ${flowNodes.length} flowNodes matched ${trace.tracedNodeIds.size} tracedNodeIds (mode=${trace.mode})`;
+    const msg = `[Trace] applyTraceToFlow: 0 match for ${trace.tracedNodeIds.size} ids (mode=${trace.mode})`;
     window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
-    notifyUser('Traced nodes are not visible in the current view. Adjust your schema or type filters to include them.');
+    notifyUser('Traced nodes are not visible in the current view.');
   }
 
-  // Synthesize FlowNodes for path/unfiltered-trace nodes outside the current filter
   if (filteredNodes.length < trace.tracedNodeIds.size && (trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
     const flowNodeIdSet = new Set(filteredNodes.map(n => n.id));
     const modelNodeMap = new Map(model.nodes.map(n => [n.id, n]));
@@ -397,22 +342,10 @@ export function applyTraceToFlow(
         },
       });
     }
-  } else if (filteredNodes.length < trace.tracedNodeIds.size) {
-    const flowNodeIdSet = new Set(flowNodes.map(n => n.id));
-    const missing = [...trace.tracedNodeIds].filter(id => !flowNodeIdSet.has(id));
-    if (missing.length > 0) {
-      window.vscode?.postMessage({ type: 'log', text:
-        `[Trace] Gap: BFS found ${trace.tracedNodeIds.size}, view has ${filteredNodes.length}. ` +
-        `Missing: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` (+${missing.length - 5} more)` : ''}`
-      });
-    }
   }
 
-  // FILTER edges to only show traced subset
   const filteredEdges = flowEdges.filter((e) => {
-    // Check if edge is in traced set
     let traced = trace.tracedEdgeIds.has(e.id);
-    // Bidirectional edges use ↔ ID; check both directions
     if (!traced && e.id.includes('↔')) {
       const [a, b] = e.id.split('↔');
       traced = trace.tracedEdgeIds.has(`${a}→${b}`) || trace.tracedEdgeIds.has(`${b}→${a}`);
@@ -439,7 +372,6 @@ export function applyTraceToFlow(
     }
   }
 
-  // Recalculate in/out degree for synthesized nodes from the final edge set
   if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
     const synthesizedIds = new Set(
       filteredNodes.filter(n => n.data.inDegree === 0 && n.data.outDegree === 0).map(n => n.id)
@@ -459,8 +391,6 @@ export function applyTraceToFlow(
     }
   }
 
-  // Build graphology graph for the traced subgraph when synthesis added out-of-filter nodes.
-  // Reuses buildGraphologyGraph to honor the same attribute/edge contract as buildGraph().
   let traceGraph: Graph | undefined;
   if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
     const nodeIdSet = new Set(filteredNodes.map(n => n.id));
@@ -472,7 +402,6 @@ export function applyTraceToFlow(
     traceGraph = buildGraphologyGraph(traceModel);
   }
 
-  // RELAYOUT the traced subset — dispatch layout by analysis type
   let positions: Map<string, { x: number; y: number }>;
   if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {
     positions = gridLayout(filteredNodes.map(n => n.id));
@@ -508,9 +437,6 @@ export function applyTraceToFlow(
   return { nodes, edges, graph: traceGraph };
 }
 
-/**
- * Structural bounds interface for layout algorithms traversing partial node clusters.
- */
 interface LayoutInput {
   nodeIds: string[];
   edges: Array<{ source: string; target: string }>;
@@ -518,19 +444,9 @@ interface LayoutInput {
   ranker?: string;
 }
 
-// LRU layout cache — avoids recomputing dagre for identical node/edge/config sets
 const LAYOUT_CACHE_SIZE = 12;
 const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
 
-/**
- * Derives an LRU caching identifier based upon the topology and spatial bounds of the network.
- *
- * @param nodeIds - Correlating identifier strings.
- * @param edges - Linking directional mappings.
- * @param config - Instantiated style configurations affecting layout geometry.
- * @param ranker - Optional network ranking parameter influencing algorithm weighting.
- * @returns Deterministic cache identifier hash key.
- */
 function layoutCacheKey(nodeIds: string[], edges: Array<{ source: string; target: string }>, config: ExtensionConfig, ranker?: string): string {
   const sortedNodes = [...nodeIds].sort();
   const sortedEdges = edges.map(e => `${e.source}→${e.target}`).sort();
@@ -538,18 +454,12 @@ function layoutCacheKey(nodeIds: string[], edges: Array<{ source: string; target
 }
 
 /**
- * Executes core Dagre ranking layout computations, assigning x and y coordinates 
- * resolving directional interdependencies against topological complexity.
- * Utilizes deterministic LRU caching to reduce redundant re-evaluations.
- *
- * @param layoutInput - Structured wrapper specifying constraints alongside ranker flags.
- * @returns Evaluated positional Map tying identifiers to computed vector coordinates.
+ * Computes spatial positions using the Dagre layout engine with LRU caching.
  */
 function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<string, { x: number; y: number }> {
   const key = layoutCacheKey(nodeIds, edges, config, ranker);
   const cached = layoutCache.find(e => e.key === key);
   if (cached) {
-    // Move to front (most recently used)
     layoutCache.splice(layoutCache.indexOf(cached), 1);
     layoutCache.unshift(cached);
     return cached.positions;
@@ -577,7 +487,6 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
     if (n) positions.set(id, { x: n.x - NODE_WIDTH / 2, y: n.y - NODE_HEIGHT / 2 });
   }
 
-  // Store in cache (evict oldest if full)
   layoutCache.unshift({ key, positions });
   if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
 
@@ -585,11 +494,7 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
 }
 
 /**
- * Evaluates core compositional structure counts regarding instantiated structural elements.
- * Calculates graph scale statistics measuring bounds logic points.
- *
- * @param graph - Focused computational topology.
- * @returns Structured payload enumerating scale constraints including total nodes, edges, root nodes, and leaf nodes.
+ * Calculates graph metrics for diagnostic purposes.
  */
 export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } {
   let rootNodes = 0;
@@ -609,14 +514,7 @@ export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges:
 }
 
 /**
- * Canonicalizes directional relationships evaluating logical write operations.
- * Defaults toward procedural or functional objects sourcing into table or view equivalents.
- * Reverts toward alphabetic prioritization fallback protocols.
- *
- * @param graph - Graphology mapping establishing typed relationships.
- * @param a - First boundary key limit.
- * @param b - Second boundary key limit.
- * @returns Ordered tuple projecting preferred canonical dependency.
+ * Selects a canonical direction for a bidirectional edge pair, favoring data flows (transformers → sinks).
  */
 function canonicalDirection(graph: Graph, a: string, b: string): [string, string] {
   const aType = graph.getNodeAttributes(a).type;
@@ -624,26 +522,19 @@ function canonicalDirection(graph: Graph, a: string, b: string): [string, string
   const aIsTransformer = aType === 'procedure' || aType === 'function';
   const bIsTransformer = bType === 'procedure' || bType === 'function';
 
-  if (aIsTransformer && !bIsTransformer) return [a, b]; // a (proc) → b (table)
-  if (bIsTransformer && !aIsTransformer) return [b, a]; // b (proc) → a (table)
-  return a < b ? [a, b] : [b, a];                       // fallback: alphabetical
+  if (aIsTransformer && !bIsTransformer) return [a, b];
+  if (bIsTransformer && !aIsTransformer) return [b, a];
+  return a < b ? [a, b] : [b, a];
 }
 
 /**
- * Formats relational models into renderable edge pathways.
- * Distinguishes bidirectional logic merging loops toward canonical structures.
- *
- * @param model - Structural mappings containing base edges.
- * @param graph - Linked topology indicating active bounds logic relationships.
- * @param config - Visual parameters assigning edge stroke patterns. Defaults to `DEFAULT_CONFIG`.
- * @returns Iterated array elements formatted explicitly for graph flow structures.
+ * Transforms relational model edges into React Flow edges, handling bidirectionality.
  */
 function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
   const valid = model.edges.filter(
     (e) => graph.hasNode(e.source) && graph.hasNode(e.target)
   );
 
-  // Detect bidirectional pairs using graphology's hasEdge
   const consumed = new Set<string>();
   const result: FlowEdge[] = [];
 
@@ -654,8 +545,6 @@ function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionCon
     if (consumed.has(fwd)) continue;
 
     if (graph.hasEdge(edge.target, edge.source) && !consumed.has(rev)) {
-      // Bidirectional — single edge with markers on both ends
-      // Use write direction (proc→table) so layout places target on output side
       const [canonSource, canonTarget] = canonicalDirection(graph, edge.source, edge.target);
       consumed.add(fwd);
       consumed.add(rev);
@@ -676,7 +565,6 @@ function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionCon
         markerStart: { type: 'arrow' as const, width: 16, height: 16, color: 'var(--ln-edge-color)' },
       });
     } else {
-      // Unidirectional
       consumed.add(fwd);
       result.push({
         id: fwd,
@@ -696,18 +584,12 @@ function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionCon
 }
 
 /**
- * Aggregates object-level edges to schema-level edge occurrences spanning relational systems.
- * Consolidates bidirectionality mapping procedural logic explicitly weighting structures.
- *
- * @param model - Ground structure containing object linkages.
- * @param visibleSchemas - Filter bounds distinguishing targeted structures.
- * @returns Matrix enumerating canonical flow mapping weights mapped sequentially.
+ * Aggregates object edges into schema-to-schema weights.
  */
 export function buildSchemaEdges(
   model: DatabaseModel,
   visibleSchemas: Set<string>
 ): Map<string, Map<string, number>> {
-  // First pass: count raw directed schema→schema edge occurrences
   const raw = new Map<string, Map<string, number>>();
   const nodeSchemaMap = new Map<string, string>();
   const nodeTypeMap = new Map<string, string>();
@@ -721,19 +603,17 @@ export function buildSchemaEdges(
     const tgtSchema = nodeSchemaMap.get(e.target);
     if (!srcSchema || !tgtSchema) continue;
     if (!visibleSchemas.has(srcSchema) && !visibleSchemas.has(tgtSchema)) continue;
-    if (srcSchema === tgtSchema) continue; // same-schema edges not shown in overview
+    if (srcSchema === tgtSchema) continue;
 
     if (!raw.has(srcSchema)) raw.set(srcSchema, new Map());
     raw.get(srcSchema)!.set(tgtSchema, (raw.get(srcSchema)!.get(tgtSchema) ?? 0) + 1);
   }
 
-  // Pre-compute which schemas contain procedures/functions (for canonical direction selection)
   const schemaProcSet = new Set<string>();
   for (const n of model.nodes) {
     if (n.type === 'procedure' || n.type === 'function') schemaProcSet.add(n.schema);
   }
 
-  // Second pass: merge bidirectional pairs into canonical direction
   const result = new Map<string, Map<string, number>>();
   const consumed = new Set<string>();
 
@@ -744,7 +624,6 @@ export function buildSchemaEdges(
 
       const revCount = raw.get(tgt)?.get(src) ?? 0;
       if (revCount > 0) {
-        // Bidirectional — pick canonical direction: procedure/function schema on source side
         const srcHasProc = schemaProcSet.has(src);
         const tgtHasProc = schemaProcSet.has(tgt);
         let canonSrc = src;
@@ -768,11 +647,7 @@ export function buildSchemaEdges(
 }
 
 /**
- * Dynamically computes mathematical logarithmic scale strokes corresponding
- * visually against overarching complexity mapped paths.
- *
- * @param count - Integer frequency sum marking flow weight boundaries.
- * @returns Correlating render dimensions adjusting width mapping structures alongside bounds opacity.
+ * Calculates visual stroke properties based on schema-to-schema connection count.
  */
 function schemaEdgeStroke(count: number): { strokeWidth: number; opacity: number } {
   const t = Math.min(Math.log2(Math.max(count, 1)) / 6, 1);
@@ -780,12 +655,11 @@ function schemaEdgeStroke(count: number): { strokeWidth: number; opacity: number
 }
 
 /**
- * Analyzes relational structures determining React Flow macro architecture nodes alongside consolidated paths.
- * Establishes spacing logic optimizing broader conceptual overviews.
- *
- * @param model - Active bounds network limiting system links.
- * @param visibleSchemas - Filter subset maintaining isolated architectural rendering rules.
- * @returns React Flow elements array explicitly targeting system schemas.
+ * Builds the macro-level schema overview graph.
+ * 
+ * @param model - Complete database model.
+ * @param visibleSchemas - Filtered set of schemas to display.
+ * @returns React Flow nodes and edges for the schema overview.
  */
 export function buildSchemaGraph(
   model: DatabaseModel,
@@ -793,7 +667,6 @@ export function buildSchemaGraph(
 ): { nodes: FlowNode<SchemaNodeData>[]; edges: FlowEdge[] } {
   const schemaEdgeCounts = buildSchemaEdges(model, visibleSchemas);
 
-  // Build schema → object count + type breakdown
   const schemaMeta = new Map<string, { count: number; types: Partial<Record<string, number>> }>();
   for (const n of model.nodes) {
     if (!visibleSchemas.has(n.schema)) continue;
@@ -803,7 +676,6 @@ export function buildSchemaGraph(
     meta.types[n.type] = (meta.types[n.type] ?? 0) + 1;
   }
 
-  // Dagre layout for schema nodes — wider spacing than object graph
   const schemaIdSet = new Set([...visibleSchemas].filter(s => schemaMeta.has(s)));
   const schemaIds = [...schemaIdSet];
   const edgesForLayout: Array<{ source: string; target: string }> = [];
@@ -875,21 +747,14 @@ export function buildSchemaGraph(
 }
 
 /**
- * Computes logical hierarchy configurations directing placement rules onto computational graphs.
- * Distinguishes directional components mapped effectively assigning ranking criteria mapping coordinates.
- *
- * @param graph - Initialized structure evaluating boundaries mappings.
- * @param config - Architectural styling values limiting topological complexity bounds. Defaults to `DEFAULT_CONFIG`.
- * @returns Resulting node mappings binding spatial placement values against specific keys.
+ * Computes spatial layout for the object graph.
  */
 function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): Map<string, { x: number; y: number }> {
-  // Collect edges, deduplicating bidirectional pairs to canonical order
   const seen = new Set<string>();
   const edges: Array<{ source: string; target: string }> = [];
 
   graph.forEachEdge((_edge, _attrs, source, target) => {
     if (graph.hasEdge(target, source)) {
-      // Bidirectional — write direction (proc→table) consistent with buildFlowEdges
       const [s, t] = canonicalDirection(graph, source, target);
       const key = `${s}→${t}`;
       if (!seen.has(key)) { seen.add(key); edges.push({ source: s, target: t }); }

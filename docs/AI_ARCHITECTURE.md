@@ -48,17 +48,17 @@ As foundational mandates for the AI Assistant:
 
 The participant exposes a phase-scoped tool surface. `src/ai/toolPolicy.ts` is the single source of truth — one table, one filter helper, used at every phase transition.
 
-| Tool | Discovery | ACTIVE (inline BB) | ACTIVE (SM BB + SM CT) | Synthesis | Purpose |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| `get_context` | ✓ | — | — | ✓ | Schemas, stats, active filter, saved views |
-| `search_objects` | ✓ | — | — | ✓ | Resolve name / column name → ID; list candidates |
-| `search_ddl` | ✓ | — | — | ✓ | Regex over SP / view / function DDL bodies |
-| `get_object_detail` | ✓ | — | — | ✓ | Full metadata + DDL + neighbors for ONE object. Verbatim-quoting use cases (DISCOVERY exploration, SYNTHESIS polish). Not exposed in SM ACTIVE — SM uses `get_neighbor_columns` for structural pruning inspections. |
-| `get_neighbor_columns` | — | — | ✓ | — | Structural metadata (columns + types + nullability + foreign keys) for one or more direct neighbors of the current focus. **Never returns DDL.** Used to decide whether to prune a neighbor when the focus DDL uses `SELECT *`. Ids must be direct neighbors of focus AND in scope (enforced by `NavigationEngine.validateNeighborIds`). |
-| `detect_graph_patterns` | ✓ | — | — | ✓ | Graph-wide structural analysis (hubs / orphans / cycles / islands / longest-path / external-refs) |
-| `start_exploration` | ✓ | — | — | ✓ (re-entry) | Hand off to the state machine (Blackboard or Column-Trace) |
-| `submit_findings` | — | ✓ | ✓ | — | Submit hop analysis + route next hops + prune. ACTIVE-only; `Required` mode. |
-| `present_result` | — | — | — | ✓ | Author the final enrich-view report (sections, summary, highlights) |
+| Tool | Discovery | ACTIVE (inline BB) | ACTIVE (SM BB + SM CT) | Synthesis | Completed (follow-up) | Purpose |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| `get_context` | ✓ | — | — | ✓ | — | Schemas, stats, active filter, saved views |
+| `search_objects` | ✓ | — | — | ✓ | ✓ | Resolve name / column name → ID; list candidates |
+| `search_ddl` | ✓ | — | — | ✓ | ✓ | Regex over SP / view / function DDL bodies |
+| `get_object_detail` | ✓ | — | — | ✓ | ✓ | Full metadata + DDL + neighbors for ONE object. Verbatim-quoting use cases (DISCOVERY exploration, SYNTHESIS polish). Not exposed in SM ACTIVE — SM uses `get_neighbor_columns` for structural pruning inspections. |
+| `get_neighbor_columns` | — | — | ✓ | — | — | Structural metadata (columns + types + nullability + foreign keys) for one or more direct neighbors of the current focus. **Never returns DDL.** Used to decide whether to prune a neighbor when the focus DDL uses `SELECT *`. Ids must be direct neighbors of focus AND in scope (enforced by `NavigationEngine.validateNeighborIds`). |
+| `detect_graph_patterns` | ✓ | — | — | ✓ | — | Graph-wide structural analysis (hubs / orphans / cycles / islands / longest-path / external-refs) |
+| `start_exploration` | ✓ | — | — | — | ✓ (supplement) | Hand off to the state machine (Blackboard or Column-Trace). In the follow-up phase, expected shape is `{ supplement: { nodeIds } }` — extends the existing archive one-shot in inline mode. A fresh `{ origin }` call is allowed and resets the session back to discovery. |
+| `submit_findings` | — | ✓ | ✓ | — | — | Submit hop analysis + route next hops + prune. ACTIVE-only; `Required` mode. |
+| `present_result` | — | — | — | ✓ | ✓ | Author the final enrich-view report (sections, summary, highlights). Re-callable in the follow-up phase for text edits, relabels, and node prunes. |
 
 **Not LM-visible in any phase:** `lineage_get_neighborhood`. Tool remains registered so panel / webview / engine consumers can still call it directly, but the language model never sees it — its BFS + DDL shape overlaps `start_exploration` without engine supervision (no archive, no gate, no verdicts).
 
@@ -155,10 +155,11 @@ The hop payload is designed to survive sliding-memory wipes: `sm_status`, `agend
 
 The user's original question reaches the model via three paths every hop: (1) `working_memory.user_question` (echoed verbatim by the engine), (2) the VS Code chat-history messages on every LM call, and (3) `current_task` on hop 1 as `"Root Question: <user text>"`. Sliding-history wipes preserve paths (1) and (3) because they live in tool results, not user messages.
 
-### The Three Lifecycle Phases
+### The Four Lifecycle Phases
 1. **Discovery (Initiation)**: A conversational phase where the AI handles ad-hoc user inquiries (search, show, explain). The AI may use search tools to gather context. If the AI provides a text-only response, the turn ends and returns control to the user. A transition to the **Active phase** only occurs if the AI explicitly calls `lineage_start_exploration`.
 2. **Analysis (The Hop Loop)**: The AI navigates the graph hop-by-hop. Each hop it receives `short_term_memory`, the Map, the focus DDL, and neighbor metadata.
-3. **Holistic Synthesis & Presentation**: Once the agenda drains, the synthesis phase (`lineageParticipant.ts` active→synthesis transition) injects the full Detail Archive as a fresh user message; the AI produces the chat prose + `present_result` sections directly.
+3. **Holistic Synthesis & Presentation**: Once the agenda drains, the synthesis phase fires in a single LM turn. The prompt frames synthesis as a four-step process — **READ the archive → ANSWER the original question in one or two sentences → GROUP slots by data-flow role → WRITE `present_result`**. Step 2 becomes the `intro` (big-picture answer); step 3 groups sibling variants into one section with per-variant distinction lines rather than compressing per-slot depth.
+4. **Follow-Up (Completed)**: After synthesis emits, the session phase transitions to `completed`. The engine, archive, and classification survive on the session singleton. Subsequent user turns route through the follow-up protocol (`buildFollowUpPrompt`): text edits, section relabels, and node prunes re-render via `present_result`; "add node X" requests go through `lineage_start_exploration` with a new `supplement: { nodeIds: […] }` field, which extends the existing archive one-shot in inline mode — no fresh exploration, no scope re-declaration. A genuinely new trace (new origin / direction) resets the session back to discovery.
 
 At `start_exploration` time the AI declares its **classification** via the optional `classification` enum parameter (`business` | `technical` | `both`). The value is stored on the session (`AiSession.classification`, Zod-validated at the boundary) and drives which subsections render inside each `present_result` section: `business` omits the `#### Technical` block; `technical` treats the body as the technical write-up; `both` emits business body + Technical subsection. Omitting the parameter defaults to `business` (asymmetric conservative default). Inline mode surfaces a one-line banner (`> Starting analyze phase — <kind>-driven.`) at synthesis start; SM mode folds the value into `confirm_sm_start`. See `docs/AI_PROMPTS.md` §6 for the onion-layered document shape.
 
@@ -166,21 +167,24 @@ At `start_exploration` time the AI declares its **classification** via the optio
 
 - **DISCOVERY → ACTIVE** — triggered by `lineage_start_exploration`. `buildStageSystemPrompt('active')` replaces `buildStageSystemPrompt('discover')`. The mode block (`buildModeBlock`) for BB or CT is included in the system prompt. Tool set narrows per mode: inline BB exposes only `submit_findings`; SM BB / SM CT expose `submit_findings` + `get_neighbor_columns`. There is no separate `navPrompt` User message.
 - **ACTIVE hop loop** — in SM the AI submits hop-by-hop via `submit_findings` and may call `get_neighbor_columns` for pruning-decision column lookups on direct neighbors of the current focus (no DDL). On every sliding-memory wipe the full system prompt is rebuilt from scratch: base + active protocol + tool usage + mode block + YAML capture rules + `<mission_brief>` + `<current_task>` + `<short_term_memory>` + `<mission_state>` (ACK/WAIT envelope). All anchoring context is in message 0, not in the JSON payload.
-- **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. `buildStageSystemPrompt('synthesis')` is used; it includes the YAML render rules + `<mission_brief>` but omits the mode block and `<short_term_memory>` (synthesis reads the archive, not the sliding window).
+- **ACTIVE → SYNTHESIS** — triggered when the engine drains the agenda. `buildStageSystemPrompt('synthesis')` is used; it includes the YAML render rules + `<mission_brief>` but omits the mode block and `<short_term_memory>` (synthesis reads the archive, not the sliding window). The synthesis protocol itself is a four-step process (READ → ANSWER → GROUP → WRITE) that forces a big-picture answer before per-section enumeration.
+- **SYNTHESIS → COMPLETED** — triggered when the synthesis turn returns `final_answer` with `engine.status === 'complete'`. `sess.enterCompleted()` flips the phase; the archive, engine, and classification persist. The next user turn is routed with `buildStageSystemPrompt('completed')`, which swaps `buildSynthesisPrompt` out for `buildFollowUpPrompt` but keeps the synthesis-stage YAML (so `present_result` re-renders obey the same formatting contract). Tool set is `present_result`, `get_object_detail`, `search_ddl`, `search_objects`, and `start_exploration` (supplement-only use is the intended path).
+- **COMPLETED → EXPLORING (supplement)** — triggered when the AI calls `lineage_start_exploration({ supplement: { nodeIds } })`. The handler reuses the existing `NavigationEngine` via `engine.supplementAgenda(nodeIds)`: status returns to `awaiting_findings`, inline mode is forced on, and the standard hop loop + synthesis drain the supplement and re-emit `present_result` with the enlarged scope. `confirm_sm_start` is bypassed by design — the user already consented to the parent exploration.
+- **COMPLETED → DISCOVERY (fresh question)** — when the AI calls `start_exploration` with an `origin` (no supplement) from `completed`, the handler logs `[Phase] completed → discover`, calls `sess.resetExploration()`, and proceeds on the normal fresh-SM path so `confirm_sm_start` fires.
 
 ### Prompt Assembly Architecture
 
 The system prompt is assembled by `buildStageSystemPrompt` ([`src/ai/lineageParticipant.ts:309-353`](../src/ai/lineageParticipant.ts#L309-L353)) by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
 
 ```
-buildGeneralSystemPrompt(platform, schemas)               ← global invariants            [always]
-  + buildDiscoveryPrompt() | buildActivePhasePrompt(isInline) | buildSynthesisPrompt()
+buildGeneralSystemPrompt(platform, schemas, phase)        ← global invariants + phase label [always]
+  + buildDiscoveryPrompt() | buildActivePhasePrompt(isInline) | buildSynthesisPrompt() | buildFollowUpPrompt()
                                                           ← phase protocol               [phase-specific]
   + buildToolUsageBlock()                                 ← submit/prune/route usage     [active only]
   + buildModeBlock(isInline, targetColumns?)              ← BB or CT mode block          [active only]
   + buildColumnAspectPrompt(targetColumns)                ← <column_state> XML           [CT active only]
-  + resolveStagePrompt(yaml, phase, classification)       ← YAML capture/render rules    [stage + classification gated]
-  + buildMissionBriefBlock(brief, question)               ← <mission_brief> XML, session-stable [active + synthesis]
+  + resolveStagePrompt(yaml, phase, classification)       ← YAML capture/render rules    [stage + classification gated; completed reuses synthesis YAML]
+  + buildMissionBriefBlock(brief, question)               ← <mission_brief> XML, session-stable [active + synthesis + completed]
   + buildCurrentTaskBlock(currentTask)                    ← <current_task> XML, per-hop dynamic [active + synthesis]
   + buildMemoryBlock(stm, tally, hop, n)                  ← <short_term_memory> XML      [SM active only]
 ```

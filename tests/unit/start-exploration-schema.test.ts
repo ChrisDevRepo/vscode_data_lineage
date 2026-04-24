@@ -73,10 +73,13 @@ async function runTests() {
   } as any);
   assert(!incident.success, 'incident payload (no origin) rejected cleanly — no crash');
   if (!incident.success) {
-    const issue = incident.error.issues[0];
+    // Schema accepts either `origin` (fresh exploration) or `supplement.nodeIds`
+    // (post-synthesis follow-up). A payload missing both is rejected at the root
+    // via a refine; the message names both options so the AI can self-correct.
+    const msg = incident.error.issues.map(i => i.message).join(' | ');
     assert(
-      issue.path.includes('origin'),
-      `first issue identifies origin field (got: ${issue.path.join('.')})`,
+      /origin/i.test(msg) && /supplement/i.test(msg),
+      `rejection message names both 'origin' and 'supplement' (got: ${msg})`,
     );
   }
 

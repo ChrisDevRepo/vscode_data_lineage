@@ -1,34 +1,46 @@
 /**
- * ColumnStore — extension-host-side storage for column metadata and DDL.
+ * @module ColumnStore
+ * Provides extension-host-side storage for column metadata and DDL scripts.
  *
- * Keeps columns and DDL OFF the webview model, loaded on-demand for:
- *  - Detail panel (click → columns/DDL)
- *  - AI tools (getObjectDetail, column-trace state machine)
- *  - Detail search sidebar (column name + DDL regex search)
+ * This store is designed to keep heavy metadata (columns and DDL) off the main webview model
+ * to maintain performance. It serves as a just-in-time data source for:
+ * - The Detail panel (fetching columns/DDL on click).
+ * - AI reasoning tools (getObjectDetail, column tracing state machine).
+ * - Advanced search features (DDL regex search).
  *
- * Two-level keyed lookup: object ID → column name → full ColumnDef metadata.
- * Reverse index for O(1) column-name lookups (column-trace auto-discover).
- *
- * Built once per model load in modelBuilder. Cleared on model reload.
+ * The store uses a two-level keyed lookup (Object ID -> Column Name) and maintains
+ * a reverse index for efficient column-to-object discovery.
  */
 
 import type { ColumnDef } from './types';
 
+/**
+ * Manages the lifecycle and retrieval of column definitions and DDL scripts.
+ * Built once per model load and cleared on reload to prevent memory leaks.
+ */
 export class ColumnStore {
-  /** Primary: nodeId → ordered columns (preserves ordinal). */
+  /**
+   * Primary storage mapping node unique identifiers to their ordered column definitions.
+   * Preserves ordinal position from the source metadata.
+   */
   private readonly cols = new Map<string, ColumnDef[]>();
 
-  /** DDL: nodeId → bodyScript string. */
+  /**
+   * Storage mapping node unique identifiers to their raw DDL (bodyScript) strings.
+   */
   private readonly ddl = new Map<string, string>();
 
-  /** Reverse: lowercase column name → set of nodeIds containing it. */
+  /**
+   * Reverse index mapping lowercase column names to a set of node identifiers containing them.
+   * Enables O(1) discovery for column-level tracing.
+   */
   private readonly nameIdx = new Map<string, Set<string>>();
 
   /**
-   * Store columns for an object. Builds the reverse name index.
+   * Stores columns for a specific object and updates the reverse name index.
    *
-   * @param nodeId - The unique identifier of the node (schema.object).
-   * @param columns - Array of column definitions to store.
+   * @param nodeId - The unique identifier of the node (e.g., 'schema.object').
+   * @param columns - Array of column definitions to persist.
    */
   setColumns(nodeId: string, columns: ColumnDef[]): void {
     this.cols.set(nodeId, columns);
@@ -44,41 +56,41 @@ export class ColumnStore {
   }
 
   /**
-   * Get all columns for an object (ordered).
+   * Retrieves all ordered columns for a specific object.
    *
    * @param nodeId - The unique identifier of the node.
-   * @returns Array of column definitions, or undefined if not found.
+   * @returns An array of column definitions, or `undefined` if the node is not in the store.
    */
   getColumns(nodeId: string): ColumnDef[] | undefined {
     return this.cols.get(nodeId);
   }
 
   /**
-   * Check if an object has columns stored.
+   * Checks if an object has columns registered in the store.
    *
    * @param nodeId - The unique identifier of the node.
-   * @returns True if columns exist for the node.
+   * @returns `true` if columns exist; otherwise `false`.
    */
   hasColumns(nodeId: string): boolean {
     return this.cols.has(nodeId);
   }
 
   /**
-   * Find all objects containing a column name — O(1) via reverse index.
+   * Discovers all objects containing a specific column name using the reverse index.
    *
-   * @param name - The column name to search for.
-   * @returns Array of node IDs that contain the column.
+   * @param name - The column name to search for (case-insensitive).
+   * @returns An array of node IDs that contain the specified column.
    */
   findByColumnName(name: string): string[] {
     return [...(this.nameIdx.get(name.toLowerCase()) ?? [])];
   }
 
   /**
-   * Get a specific column on a specific object (case-insensitive).
+   * Retrieves a specific column definition from an object.
    *
    * @param nodeId - The unique identifier of the node.
-   * @param colName - The name of the column.
-   * @returns The column definition, or undefined if not found.
+   * @param colName - The name of the column (case-insensitive).
+   * @returns The matching column definition, or `undefined` if not found.
    */
   getColumn(nodeId: string, colName: string): ColumnDef | undefined {
     const lower = colName.toLowerCase();
@@ -86,48 +98,49 @@ export class ColumnStore {
   }
 
   /**
-   * All column names on an object (original casing).
-   * Useful for reject/retry valid lists.
+   * Retrieves only the names of all columns for a specific object in their original casing.
+   * Useful for presenting valid options to the AI or user.
    *
    * @param nodeId - The unique identifier of the node.
-   * @returns Array of column names.
+   * @returns An array of column name strings.
    */
   getColumnNames(nodeId: string): string[] {
     return this.cols.get(nodeId)?.map(c => c.name) ?? [];
   }
 
   /**
-   * Store DDL (bodyScript) for an object.
+   * Stores the raw DDL (bodyScript) for a specific object.
    *
    * @param nodeId - The unique identifier of the node.
-   * @param body - The raw DDL string.
+   * @param body - The raw SQL DDL string.
    */
   setDdl(nodeId: string, body: string): void {
     this.ddl.set(nodeId, body);
   }
 
   /**
-   * Get DDL for an object.
+   * Retrieves the DDL script for a specific object.
    *
    * @param nodeId - The unique identifier of the node.
-   * @returns The DDL string, or undefined if not found.
+   * @returns The raw SQL DDL string, or `undefined` if not stored.
    */
   getDdl(nodeId: string): string | undefined {
     return this.ddl.get(nodeId);
   }
 
   /**
-   * Check if an object has DDL stored.
+   * Checks if an object has a DDL script registered in the store.
    *
    * @param nodeId - The unique identifier of the node.
-   * @returns True if DDL exists for the node.
+   * @returns `true` if DDL exists; otherwise `false`.
    */
   hasDdl(nodeId: string): boolean {
     return this.ddl.has(nodeId);
   }
 
   /**
-   * Clear all data. Called on model reload to release memory.
+   * Clears all internal maps to release memory.
+   * Should be called during model reload or extension shutdown.
    */
   clear(): void {
     this.cols.clear();
@@ -136,9 +149,9 @@ export class ColumnStore {
   }
 
   /**
-   * Stats for logging and diagnostic purposes.
+   * Returns sizing metrics for logging and memory diagnostics.
    *
-   * @returns Object containing sizing metrics.
+   * @returns An object containing the number of objects, total columns, and DDL scripts stored.
    */
   get size(): { objects: number; totalColumns: number; ddlCount: number } {
     let totalColumns = 0;
