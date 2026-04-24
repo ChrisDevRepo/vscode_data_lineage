@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { type AiSession } from '../ai/session';
-import { Logger, trunc, sanitizeForLog } from '../utils/log';
+import { Logger, trunc, sanitizeForLog, logRaw } from '../utils/log';
 import { type BridgeHost } from './host';
 import {
   type DatabaseModel, type XmlElement, type LineageNode, type ColumnDef, type ParseStats
@@ -25,6 +25,21 @@ import {
 } from '../engine/projectStore';
 import { buildBareGraph } from '../ai/graphUtils';
 import { populateColumnStore } from '../engine/modelBuilder';
+import {
+  DetailPanelToExtensionMsgSchema,
+  type MainPanelToExtensionMsg,
+} from '../engine/shared/bridgeContract';
+import { summarizeZodError } from './host';
+
+/**
+ * Maps each main-panel message type to a handler whose `msg` parameter is
+ * narrowed to the matching variant of {@link MainPanelToExtensionMsg}.
+ */
+export type WebviewMessageHandlers = {
+  [K in MainPanelToExtensionMsg['type']]: (
+    msg: Extract<MainPanelToExtensionMsg, { type: K }>,
+  ) => Promise<void> | void;
+};
 
 declare const __BUILD_TIMESTAMP__: string;
 
@@ -37,8 +52,8 @@ export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
  * Represents a bundle of message handlers and their associated cleanup logic.
  */
 export interface MessageHandlerBundle {
-  /** Map of message types to their asynchronous handler functions. */
-  handlers: Record<string, (msg: any) => Promise<void> | void>;
+  /** Map of message types to their per-variant handler functions. */
+  handlers: WebviewMessageHandlers;
   /** Cleanup function to release resources (e.g., database connections) when the panel is disposed. */
   cleanup: () => Promise<void>;
 }
@@ -127,7 +142,7 @@ export function createMessageHandlers(
     return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
   }
 
-  const handlers: Record<string, (msg: any) => Promise<void> | void> = {
+  const handlers: WebviewMessageHandlers = {
     'ready': async () => {
       host.log('info', 'Bridge', 'Webview ready');
       if (loadDemoFlag) {
@@ -156,16 +171,6 @@ export function createMessageHandlers(
         host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
       }
     },
-    'detail-ready': async (msg) => {
-      if (detailPanel && lastDetailNode) {
-        detailPanel.webview.postMessage({ 
-          type: 'detail-update', 
-          node: enrichNodeForDetail(lastDetailNode), 
-          findQuery: msg.findQuery,
-          config: await getDetailConfig()
-        });
-      }
-    },
     'show-detail': async (msg) => {
       host.log('debug', 'Bridge', `show-detail: ${msg.node?.id || '(no node)'}`);
       if (msg.node) lastDetailNode = msg.node;
@@ -181,12 +186,18 @@ export function createMessageHandlers(
         });
         setDetailPanel(detailPanel);
         
-        detailPanel.webview.onDidReceiveMessage(async (m) => {
+        detailPanel.webview.onDidReceiveMessage(async (rawM) => {
+          const parsed = DetailPanelToExtensionMsgSchema.safeParse(rawM);
+          if (!parsed.success) {
+            host.log('warn', 'Bridge', `Rejected malformed detail-panel message (type=${rawM?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
+            return;
+          }
+          const m = parsed.data;
           if (m.type === 'detail-ready') {
             if (lastDetailNode) {
-              detailPanel?.webview.postMessage({ 
-                type: 'detail-update', 
-                node: enrichNodeForDetail(lastDetailNode), 
+              detailPanel?.webview.postMessage({
+                type: 'detail-update',
+                node: enrichNodeForDetail(lastDetailNode),
                 findQuery: m.findQuery || msg.findQuery,
                 config: await getDetailConfig()
               });
@@ -475,10 +486,7 @@ export function createMessageHandlers(
       const level = msg.level ?? 'debug';
       const hasPrefix = /^\s*\[[A-Za-z][A-Za-z0-9]*\]/.test(text);
       if (hasPrefix) {
-        if (level === 'info') outputChannel.info(text);
-        else if (level === 'warn') outputChannel.warn(text);
-        else if (level === 'error') outputChannel.error(text);
-        else outputChannel.debug(text);
+        logRaw(outputChannel, level, text);
       } else {
         host.log(level, 'Bridge', text);
       }
@@ -491,6 +499,9 @@ export function createMessageHandlers(
       const text = typeof msg.text === 'string' ? msg.text : '';
       host.log('debug', 'Bridge', `show-warning: ${text}`);
       vscode.window.showWarningMessage(`Data Lineage: ${text}`);
+    },
+    'overview-mode-changed': (msg) => {
+      host.log('debug', 'Bridge', `overview-mode-changed: mode=${msg.mode} enteredFocusFromOverview=${msg.enteredFocusFromOverview ?? false}`);
     },
   };
 

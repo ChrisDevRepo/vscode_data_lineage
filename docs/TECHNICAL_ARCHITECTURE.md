@@ -99,7 +99,7 @@ Communication between the Extension Host and Webview is strictly validated to pr
 - **Typed Results**: All engine operations return a `Result<T, E>` pattern to avoid silent failures. The use of `any` is strictly forbidden in parser and extractor outputs.
 - **Key Messages**: `dacpac-model`, `db-model`, `table-stats-request`, `ai-view-activate`.
 
-## 3. SQL Parsing Engine
+## 5. SQL Parsing Engine
 Stored procedures use a highly optimized, multi-pass regex engine (`src/engine/sqlBodyParser.ts`) to avoid the overhead of heavy AST libraries.
 
 1. **Pre-Processing (The Cleansing Pipeline)**:
@@ -109,11 +109,11 @@ Stored procedures use a highly optimized, multi-pass regex engine (`src/engine/s
 2. **Extraction Rules**: Metadata-driven rules (`assets/defaultParseRules.yaml`) extract `source`, `target`, `exec`, and `external_ref` edges.
 3. **Normalization**: Strips delimiters and prefixes, enforcing a consistent `[schema].[object]` format.
 
-## 4. AI Assistant Architecture (`@lineage`)
+## 6. AI Assistant Architecture (`@lineage`)
 
 The extension integrates with VS Code Copilot Chat using an autonomous **"Map & Router"** architecture. It implements a custom imperative loop to allow for aggressive context cleaning and sliding memory survival during deep graph traces.
 
-### 4.1 The Four Chat Phases (Hourglass Flow + Follow-Up)
+### 6.1 The Four Chat Phases (Hourglass Flow + Follow-Up)
 1. **Discovery (Wide)**: Identifying user intent and mapping the initial scope. The AI seeds the topological Agenda.
 2. **Active Phase (Narrow/Sliding or Wide/Inline)**:
    - **Sliding Memory Mode**: Hop-by-hop traversal. The AI receives the focus node's DDL, a sliding window of recent node summaries, and neighbor metadata.
@@ -121,7 +121,7 @@ The extension integrates with VS Code Copilot Chat using an autonomous **"Map & 
 3. **Holistic Synthesis (Wide)**: Once the agenda is empty, the AI evaluates the entire Detail Archive to generate a visually enriched report (`present_result`). The synthesis prompt frames the work as a process — READ the archive → ANSWER the original question in 1–2 sentences → GROUP slots by data-flow role → WRITE `present_result`.
 4. **Follow-Up (Completed)**: After the report renders, the session enters the `completed` phase. The engine, archive, and classification persist on the session singleton. Refinement turns (text edits, node prunes, deferred-question adds) run against the existing archive: text changes and prunes re-render via `present_result`; "add node X" goes through `lineage_start_exploration` with a `supplement: { nodeIds }` field that extends the archive in one inline pass without resetting it. A genuinely new trace (new origin / direction) resets the session back to discovery.
 
-### 4.2 State Machine & Memory Management
+### 6.2 State Machine & Memory Management
 To support deep lineages within limited token budgets, the system uses **Asymmetric Tiering**:
 - **NavigationEngine (`smBase.ts`)**: The core state machine and single source of truth for traversal logic. It implements `IHopStateMachine` and manages the topological map (Visited, Current, Agenda).
 - **Short-Term Memory**: Sliding window of recent node summaries (last 3 hops) echoed every hop to maintain local context.
@@ -129,13 +129,12 @@ To support deep lineages within limited token budgets, the system uses **Asymmet
 - **Session FSM (`sessionPhase.ts`)**: Turn-level state (`idle | awaiting_gate | exploring | synthesis | completed`) modeled as a discriminated union for exhaustive handling. `completed` is the post-synthesis refinement phase.
 - **Supplement extension (`NavigationEngine.supplementAgenda`)**: In the `completed` phase, calling `lineage_start_exploration({ supplement: { nodeIds } })` reuses the existing engine: status flips from `complete` back to `awaiting_findings`, inline mode is forced on, new slots merge into the existing `AiMemoryManager`, and the hop loop + synthesis re-emit `present_result` with the enlarged scope. No new engine, no new memory, no scope re-declaration.
 
-### 4.3 Pipelined Model Architecture
+### 6.3 Pipelined Model Architecture
 To maximize quality and performance, responsibilities are split:
 - **Smart Tier (Reasoning)**: Core analysis, node verdicting, and routing logic.
 - **Fast Tier (Packaging)**: Repetitive structural tasks like JSON packaging, progress formatting, and `present_result` assembly.
 - **UX Transparency**: `surfaceProse = false` during the active phase ensures clean chat output while delivering real-time feedback via the `ChatResponseWriter.progress` channel.
 
-## 5. Testing & Verification Strategy
-- **Deterministic Core**: Tests focus on pure logic (`npm run test:unit`). Hook tests live in `tests/unit/hooks/`.
-- **Snapshot Baselines**: Parser and graph building algorithms use frozen JSON baselines (`tests/fixtures/`) to prevent regressions.
-- **AI Tool Proxy**: AI evaluation runs via a local proxy server inside the extension host to test tool dispatch deterministically.
+## 7. Testing & Verification Strategy
+
+See [`TESTING.md`](TESTING.md) — canonical tier table, commands, fixture policy, and snapshot-baseline protocol.

@@ -1,8 +1,8 @@
-# Public Test Suite
+# Unit tests
 
-> The AI eval-loop uses the in-extension-host tool proxy at `tests/e2e/suite/eval/toolProxy.ts`, launched via `npm run test:eval` (`@vscode/test-electron`). See `tests/README.md` for the full test-tier overview.
+> Canonical test strategy and commands: [`../../docs/TESTING.md`](../../docs/TESTING.md). This file covers only folder-specific notes for `tests/unit/`.
 
-The project uses a multi-layered public testing approach to ensure stability across the parsing engine, graph topology, and the VS Code integration.
+The project uses a multi-layered testing approach to ensure stability across the parsing engine, graph topology, and the VS Code integration.
 
 ## Running Tests
 

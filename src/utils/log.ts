@@ -139,6 +139,27 @@ export class Logger {
 }
 
 /**
+ * Emits already-prefixed text verbatim at the given level.
+ *
+ * @remarks
+ * For text that carries its own `[Category]` prefix (e.g. webview log messages
+ * relayed through the bridge). Avoids double-tagging. All other callers should
+ * use {@link logInfo} / {@link logDebug} / {@link logWarn} / {@link logError}.
+ */
+export function logRaw(
+  ch: LogOutputChannel,
+  level: 'info' | 'debug' | 'warn' | 'error',
+  text: string,
+): void {
+  switch (level) {
+    case 'info':  ch.info(text);  return;
+    case 'warn':  ch.warn(text);  return;
+    case 'error': ch.error(text); return;
+    case 'debug': ch.debug(text); return;
+  }
+}
+
+/**
  * Truncates a string or an array of items for log previews.
  *
  * @param val - The input string or array.

@@ -4,7 +4,9 @@ import { Logger } from './utils/log';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
+import { summarizeZodError } from './bridge/host';
 import { createMessageHandlers, PROJECT_STORE_KEY } from './bridge/messageHandlers';
+import { MainPanelToExtensionMsgSchema, type MainPanelToExtensionMsg } from './engine/shared/bridgeContract';
 
 let activePanel: vscode.WebviewPanel | undefined;
 
@@ -105,12 +107,14 @@ export function openPanel(
   });
 
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
-    const handler = handlers[rawMsg.type];
-    if (handler) {
-      await handler(rawMsg);
-    } else {
-      bridgeLogger.warn(`No handler for message type: ${rawMsg.type}`);
+    const parsed = MainPanelToExtensionMsgSchema.safeParse(rawMsg);
+    if (!parsed.success) {
+      bridgeLogger.warn(`Rejected malformed webview message (type=${rawMsg?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
+      return;
     }
+    const msg = parsed.data;
+    const handler = handlers[msg.type] as (m: MainPanelToExtensionMsg) => Promise<void> | void;
+    await handler(msg);
   }, undefined, context.subscriptions);
 }
 

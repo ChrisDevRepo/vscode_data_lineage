@@ -1,8 +1,6 @@
 # Test Cases — Baseline-v1
 
-Four cases drive the current baseline. See `EVAL-RUBRIC.md` for scoring and `.claude/skills/eval-loop/SKILL.md` for orchestration.
-
-Archived cases live in `tmp/cases-archive/` and are out of scope until UAT parity is proven.
+Four cases drive the current baseline. See `EVAL-RUBRIC.md` for scoring.
 
 ## Baseline suite
 
@@ -92,5 +90,4 @@ In real chat, the user replies "yes"/"no". In the eval bridge, the agent posts t
 1. Copy the closest existing case.
 2. Rename the file and the `# {test-id}` heading.
 3. Fill in `Classification` + `Expected Outcome` + `Required Nodes`.
-4. Verify ground truth against the fixture (`tests/fixtures/AdventureWorks2025_AI.dacpac`) by querying via the bridge.
-5. Run `python tests/eval/run.py <test-id> <run-id>` and inspect the generated prompt + extracted report.
+4. Verify ground truth against the fixture (`tests/fixtures/AdventureWorks2025_AI.dacpac`).

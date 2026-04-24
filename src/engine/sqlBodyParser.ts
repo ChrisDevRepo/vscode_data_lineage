@@ -241,15 +241,14 @@ export function loadRules(config: ParseRulesConfig): LoadRulesResult {
 
 /**
  * Clears all active parsing rules from memory.
- * 
+ *
  * @remarks
- /**
-  * Used during teardown or when switching project configurations.
-  * The extension host is responsible for providing a new configuration after resetting.
-  */
- function resetRules(): void {
-   activeRules = [];
- }
+ * Used during teardown or when switching project configurations. The extension host is
+ * responsible for providing a new configuration after resetting.
+ */
+function resetRules(): void {
+  activeRules = [];
+}
 /**
  * Find the base table a CTE references via paren-balanced body detection.
  * 
@@ -509,7 +508,6 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>): void {
       continue;
     }
     if (++iterations > MAX_MATCHES_PER_RULE) {
-      console.warn(`[Parser] Regex iteration limit (${MAX_MATCHES_PER_RULE}) exceeded`);
       break;
     }
 

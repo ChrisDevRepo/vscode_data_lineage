@@ -1,16 +1,6 @@
-# Testing Framework
+# Tests
 
-*This guide is for Developers maintaining the extension. For user-facing feature documentation, see `docs/`.*
-
-Multi-tier test infrastructure for the Data Lineage VS Code extension. Tests are organized by environment requirement and verification method.
-
-| Tier | Location | Runner | Purpose | When |
-|------|----------|--------|---------|------|
-| **Unit (Logic)** | `tests/unit/*.test.ts` | `tsx` | Pure deterministic logic (parsing, algorithms) | CI, pre-commit |
-| **Unit (Baseline)**| `tests/unit/*-aw.test.ts` | `tsx` | High-fidelity verification vs. frozen snapshots | CI, regression |
-| **Integration** | `tests/integration/` | `tsx` | Live SQL Server pipeline (.env required) | Local only |
-| **E2E** | `tests/e2e/` | `@vscode/test-electron` | VS Code integration smoke tests | Local only |
-| **Eval (AI)** | `tests/eval/` + `tests/e2e/suite/eval/toolProxy.ts` | `@vscode/test-electron` + Haiku agent | 4-case baseline via in-extension-host HTTP bridge (POST /gate for `confirm_sm_start`) | Local only |
+**Full testing strategy, tier commands, fixture policy, and snapshot-baseline protocol live in [`../docs/TESTING.md`](../docs/TESTING.md).** This README covers only folder-specific notes.
 
 ## Folder layout
 
@@ -32,6 +22,8 @@ tests/
 │   ├── ai-tool-registration.test.ts       # manifest ↔ registration guard
 │   ├── navigation-engine.test.ts          # NavigationEngine lifecycle + memory
 │   ├── navigation-engine-cascade.test.ts  # Cascade-prune guard logic
+│   ├── navigation-engine-bipartite.test.ts # Bipartite agenda rule
+│   ├── navigation-engine-supplement.test.ts # Supplement-agenda flow
 │   ├── sm-robustness.test.ts              # SM scope robustness + present_result prune regression
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
@@ -39,59 +31,27 @@ tests/
 │
 ├── fixtures/                              # Static test data (committed)
 │   ├── AdventureWorks2025_AI.dacpac       # Primary test fixture
-│   ├── graph-baseline-aw.json             # Frozen ground-truth (Verified with NetworkX)
+│   ├── graph-baseline-aw.json             # Frozen ground-truth
 │   └── aw-baseline.tsv                    # Parser snapshot baseline
 │
 ├── integration/                           # Live SQL Server tests (.env required)
 │   └── integration-db.test.ts             # DB pipeline tests
 │
-├── cases/                                 # 4-case baseline (see tests/cases/README.md)
-│   ├── EVAL-RUBRIC.md                     # Interim scoring rubric
-│   ├── bb-inline-q1-vproduct.md
-│   ├── bb-q1-employee.md
-│   ├── ct-inline-q1-jobtitle.md
-│   ├── ct-q1-totalrevenue.md
-│   (18 archived cases live in tmp/cases-archive/ — gitignored, parked for post-UAT phase)
-│
-├── eval/                                  # Eval runner (entry point: run.py)
-│   ├── agent-prompt.template.txt
-│   ├── run.py
-│   ├── validate.py
-│   └── extract.py
-│
 └── e2e/                                   # Runs inside VS Code extension host
-    └── suite/                             # Integration smoke tests (non-eval)
+    └── suite/                             # Integration smoke tests
 ```
 
-The HTTP bridge that evals talk to (`tests/e2e/suite/eval/toolProxy.ts`) is loaded inside the real VS Code extension host by `tests/e2e/suite/eval/eval.test.ts` (launched via `npm run test:eval` → `@vscode/test-electron`). It exposes `lineage_*` tools, `/session`, `/filter`, and `/gate` (resolves the `confirm_sm_start` gate — harness equivalent of the user clicking the Approve/Decline chat button). See `.claude/skills/eval-loop/SKILL.md` for the full flow.
+## Snapshot baseline pattern
 
-## Snapshot Baseline Pattern
+To ensure accuracy without complex external dependencies in the main pipeline:
 
-To ensure accuracy without complex external dependencies (like Python/NetworkX) in the main pipeline, we use the **Snapshot Baseline Pattern**:
+1. **Establish**: One-time verification using an external reference implementation.
+2. **Snapshot**: Capture verified results into a static JSON / TSV fixture (`tests/fixtures/`).
+3. **Assert**: TypeScript tests load the snapshot and compare internal engine results.
+4. **Refresh**: Only re-run external verification if core graph invariants change significantly.
 
-1.  **Establish**: One-time verification using an external "Gold Standard" library (e.g., NetworkX).
-2.  **Snapshot**: Capture verified results into a static JSON fixture (`tests/fixtures/graph-baseline-aw.json`).
-3.  **Assert**: TypeScript tests (`graph-analysis-aw.test.ts`) load the snapshot and compare internal engine results.
-4.  **Refresh**: Only re-run external verification if core graph invariants change significantly.
+## Related
 
-## Running tests
-
-```bash
-# Full unit suite
-npm test                    
-
-# Focused analysis tests
-npm run test:analysis       # Logic + AW Baseline
-
-# AI behavior tests
-npm run test:unit:ai        
-
-# Integration (requires .env)
-npm run test:integration    
-```
-
-## Related documentation
-
-- `docs/AI_ARCHITECTURE.md` — unified NavigationEngine + two-tier memory technical spec
-- `docs/FEATURES.md` — User-facing feature guide with algorithmic verification notes
-- `tests/cases/EVAL-RUBRIC.md` — AI grading rubric
+- [`../docs/TESTING.md`](../docs/TESTING.md) — canonical test strategy
+- [`../docs/AI_ARCHITECTURE.md`](../docs/AI_ARCHITECTURE.md) — NavigationEngine spec
+- [`../docs/FEATURES.md`](../docs/FEATURES.md) — user-facing feature guide

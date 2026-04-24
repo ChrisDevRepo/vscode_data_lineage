@@ -213,7 +213,17 @@ export function traceNode(
 }
 
 /**
- * Traces a node's lineage with specific level limits.
+ * Traces a node's lineage with separate upstream and downstream depth caps.
+ *
+ * @remarks
+ * BFS is run per direction; a depth value of `0` for either argument suppresses
+ * traversal in that direction entirely.
+ *
+ * @param graph - The graphology computational graph.
+ * @param nodeId - Origin node for the trace.
+ * @param upstreamLevels - Maximum hop depth in the inbound direction.
+ * @param downstreamLevels - Maximum hop depth in the outbound direction.
+ * @returns The set of reachable node ids and the edges connecting them.
  */
 export function traceNodeWithLevels(
   graph: Graph,
@@ -250,7 +260,14 @@ export function traceNodeWithLevels(
 }
 
 /**
- * Calculates the shortest path between two nodes.
+ * Calculates the shortest directed path between two nodes, retrying in reverse
+ * if the forward direction yields no path.
+ *
+ * @param graph - The graphology computational graph.
+ * @param sourceId - Path start node.
+ * @param targetId - Path end node.
+ * @returns The set of node and edge ids on the shortest path, or `null` if
+ *   either endpoint is unknown or no path exists in either direction.
  */
 export function computeShortestPath(
   graph: Graph,
@@ -287,6 +304,139 @@ function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<st
   return positions;
 }
 
+/** Emits a `[Trace] <msg>` log line through the webview→host bridge at `warn` level. */
+function logTraceWarn(msg: string): void {
+  window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Trace] ${msg}` });
+}
+
+/** Trace modes that trigger synthesis of out-of-filter nodes and edges into the visible set. */
+function isSynthesizingMode(trace: TraceState, synthesizeOutOfFilter?: boolean): boolean {
+  return trace.mode === 'path-applied' || !!synthesizeOutOfFilter;
+}
+
+/**
+ * Projects the full flow onto the traced node / edge sets.
+ *
+ * @remarks
+ * Handles bidirectional-edge aliasing (`A↔B` matches either `A→B` or `B→A`).
+ */
+function projectFlowToTrace(
+  flowNodes: FlowNode[],
+  flowEdges: FlowEdge[],
+  trace: TraceState,
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const nodes = flowNodes.filter((n) => trace.tracedNodeIds.has(n.id));
+  const edges = flowEdges.filter((e) => {
+    if (trace.tracedEdgeIds.has(e.id)) return true;
+    if (e.id.includes('↔')) {
+      const [a, b] = e.id.split('↔');
+      return trace.tracedEdgeIds.has(`${a}→${b}`) || trace.tracedEdgeIds.has(`${b}→${a}`);
+    }
+    return false;
+  });
+  return { nodes, edges };
+}
+
+/**
+ * Adds traced nodes / edges that are not in the visible flow back into the scope.
+ *
+ * @remarks
+ * Used for `path-applied` and explicit out-of-filter synthesis. Mutates the passed
+ * arrays in place so that subsequent layout and degree recomputation observe the
+ * full trace scope.
+ */
+function synthesizeMissingTraceScope(
+  filteredNodes: FlowNode[],
+  filteredEdges: FlowEdge[],
+  trace: TraceState,
+  config: ExtensionConfig,
+  model: DatabaseModel,
+): void {
+  const flowNodeIdSet = new Set(filteredNodes.map((n) => n.id));
+  const modelNodeMap = new Map(model.nodes.map((n) => [n.id, n]));
+  for (const id of trace.tracedNodeIds) {
+    if (flowNodeIdSet.has(id)) continue;
+    const mn = modelNodeMap.get(id);
+    if (!mn) continue;
+    filteredNodes.push({
+      id: mn.id,
+      type: 'lineageNode',
+      position: { x: 0, y: 0 },
+      draggable: true,
+      selectable: true,
+      data: {
+        label: mn.name,
+        schema: mn.schema,
+        fullName: mn.fullName,
+        objectType: mn.type,
+        inDegree: 0,
+        outDegree: 0,
+        ...(mn.externalType && { externalType: mn.externalType }),
+        ...(mn.externalUrl && { externalUrl: mn.externalUrl }),
+        ...(mn.externalDatabase && { externalDatabase: mn.externalDatabase }),
+      },
+    });
+  }
+
+  const existingEdgeIds = new Set(filteredEdges.map((e) => e.id));
+  for (const edgeId of trace.tracedEdgeIds) {
+    if (existingEdgeIds.has(edgeId)) continue;
+    const [src, tgt] = edgeId.split('→');
+    if (!src || !tgt) continue;
+    if (existingEdgeIds.has(`${src}↔${tgt}`) || existingEdgeIds.has(`${tgt}↔${src}`)) continue;
+    filteredEdges.push({
+      id: edgeId,
+      source: src,
+      target: tgt,
+      type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+      style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.2 },
+    });
+  }
+}
+
+/**
+ * Recomputes `inDegree` / `outDegree` for nodes that were synthesized with zero degree.
+ *
+ * @remarks
+ * Only touches nodes whose original degree was 0/0, so nodes carried over from the
+ * visible flow retain their full-graph degree.
+ */
+function recomputeSynthesizedDegrees(filteredNodes: FlowNode[], filteredEdges: FlowEdge[]): void {
+  const synthesizedIds = new Set(
+    filteredNodes.filter((n) => n.data.inDegree === 0 && n.data.outDegree === 0).map((n) => n.id),
+  );
+  if (synthesizedIds.size === 0) return;
+
+  const inCount = new Map<string, number>();
+  const outCount = new Map<string, number>();
+  for (const e of filteredEdges) {
+    if (synthesizedIds.has(e.target)) inCount.set(e.target, (inCount.get(e.target) ?? 0) + 1);
+    if (synthesizedIds.has(e.source)) outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1);
+  }
+  for (const n of filteredNodes) {
+    if (!synthesizedIds.has(n.id)) continue;
+    n.data.inDegree = inCount.get(n.id) ?? 0;
+    n.data.outDegree = outCount.get(n.id) ?? 0;
+  }
+}
+
+/** Picks the trace-scope layout: grid for orphan analysis, Dagre otherwise. */
+function layoutTraceFlow(
+  filteredNodes: FlowNode[],
+  filteredEdges: FlowEdge[],
+  trace: TraceState,
+  config: ExtensionConfig,
+): Map<string, { x: number; y: number }> {
+  if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {
+    return gridLayout(filteredNodes.map((n) => n.id));
+  }
+  return dagreLayout({
+    nodeIds: filteredNodes.map((n) => n.id),
+    edges: filteredEdges.map((e) => ({ source: e.source, target: e.target })),
+    config,
+  });
+}
+
 /**
  * Applies active trace state to the visual graph, filtering and re-layouting as needed.
  */
@@ -302,116 +452,37 @@ export function applyTraceToFlow(
     return { nodes: flowNodes, edges: flowEdges };
   }
   if (trace.tracedNodeIds.size === 0) {
-    const msg = `[Trace] applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode}`;
-    window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
+    logTraceWarn(`applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode}`);
     notifyUser('Trace produced no results.');
     return { nodes: flowNodes, edges: flowEdges };
   }
 
-  const filteredNodes = flowNodes.filter((n) => trace.tracedNodeIds.has(n.id));
+  const { nodes: filteredNodes, edges: filteredEdges } = projectFlowToTrace(flowNodes, flowEdges, trace);
 
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
-    const msg = `[Trace] applyTraceToFlow: 0 match for ${trace.tracedNodeIds.size} ids (mode=${trace.mode})`;
-    window.vscode?.postMessage({ type: 'log', level: 'warn', text: msg });
+    logTraceWarn(`applyTraceToFlow: 0 match for ${trace.tracedNodeIds.size} ids (mode=${trace.mode})`);
     notifyUser('Traced nodes are not visible in the current view.');
   }
 
-  if (filteredNodes.length < trace.tracedNodeIds.size && (trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
-    const flowNodeIdSet = new Set(filteredNodes.map(n => n.id));
-    const modelNodeMap = new Map(model.nodes.map(n => [n.id, n]));
-    for (const id of trace.tracedNodeIds) {
-      if (flowNodeIdSet.has(id)) continue;
-      const mn = modelNodeMap.get(id);
-      if (!mn) continue;
-      filteredNodes.push({
-        id: mn.id,
-        type: 'lineageNode',
-        position: { x: 0, y: 0 },
-        draggable: true,
-        selectable: true,
-        data: {
-          label: mn.name,
-          schema: mn.schema,
-          fullName: mn.fullName,
-          objectType: mn.type,
-          inDegree: 0,
-          outDegree: 0,
-          ...(mn.externalType && { externalType: mn.externalType }),
-          ...(mn.externalUrl && { externalUrl: mn.externalUrl }),
-          ...(mn.externalDatabase && { externalDatabase: mn.externalDatabase }),
-        },
-      });
-    }
+  const synth = isSynthesizingMode(trace, synthesizeOutOfFilter);
+  if (synth && model && filteredNodes.length < trace.tracedNodeIds.size) {
+    synthesizeMissingTraceScope(filteredNodes, filteredEdges, trace, config, model);
   }
-
-  const filteredEdges = flowEdges.filter((e) => {
-    let traced = trace.tracedEdgeIds.has(e.id);
-    if (!traced && e.id.includes('↔')) {
-      const [a, b] = e.id.split('↔');
-      traced = trace.tracedEdgeIds.has(`${a}→${b}`) || trace.tracedEdgeIds.has(`${b}→${a}`);
-    }
-    return traced;
-  });
-
-  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
-    const existingEdgeIds = new Set(filteredEdges.map(e => e.id));
-    for (const edgeId of trace.tracedEdgeIds) {
-      if (existingEdgeIds.has(edgeId)) continue;
-      const [src, tgt] = edgeId.split('→');
-      if (!src || !tgt) continue;
-      const bidir = `${src}↔${tgt}`;
-      const bidirRev = `${tgt}↔${src}`;
-      if (existingEdgeIds.has(bidir) || existingEdgeIds.has(bidirRev)) continue;
-      filteredEdges.push({
-        id: edgeId,
-        source: src,
-        target: tgt,
-        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
-        style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.2 },
-      });
-    }
-  }
-
-  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
-    const synthesizedIds = new Set(
-      filteredNodes.filter(n => n.data.inDegree === 0 && n.data.outDegree === 0).map(n => n.id)
-    );
-    if (synthesizedIds.size > 0) {
-      const inCount = new Map<string, number>();
-      const outCount = new Map<string, number>();
-      for (const e of filteredEdges) {
-        if (synthesizedIds.has(e.target)) inCount.set(e.target, (inCount.get(e.target) ?? 0) + 1);
-        if (synthesizedIds.has(e.source)) outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1);
-      }
-      for (const n of filteredNodes) {
-        if (!synthesizedIds.has(n.id)) continue;
-        n.data.inDegree = inCount.get(n.id) ?? 0;
-        n.data.outDegree = outCount.get(n.id) ?? 0;
-      }
-    }
+  if (synth && model) {
+    recomputeSynthesizedDegrees(filteredNodes, filteredEdges);
   }
 
   let traceGraph: Graph | undefined;
-  if ((trace.mode === 'path-applied' || synthesizeOutOfFilter) && model) {
-    const nodeIdSet = new Set(filteredNodes.map(n => n.id));
-    const traceModel: DatabaseModel = {
+  if (synth && model) {
+    const nodeIdSet = new Set(filteredNodes.map((n) => n.id));
+    traceGraph = buildGraphologyGraph({
       ...model,
-      nodes: model.nodes.filter(n => nodeIdSet.has(n.id)),
-      edges: model.edges.filter(e => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)),
-    };
-    traceGraph = buildGraphologyGraph(traceModel);
-  }
-
-  let positions: Map<string, { x: number; y: number }>;
-  if (trace.mode === 'analysis' && trace.analysisType === 'orphans') {
-    positions = gridLayout(filteredNodes.map(n => n.id));
-  } else {
-    positions = dagreLayout({
-      nodeIds: filteredNodes.map(n => n.id),
-      edges: filteredEdges.map(e => ({ source: e.source, target: e.target })),
-      config,
+      nodes: model.nodes.filter((n) => nodeIdSet.has(n.id)),
+      edges: model.edges.filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)),
     });
   }
+
+  const positions = layoutTraceFlow(filteredNodes, filteredEdges, trace, config);
 
   const nodes = filteredNodes.map((n) => ({
     ...n,
@@ -421,18 +492,11 @@ export function applyTraceToFlow(
       highlighted: n.id === trace.selectedNodeId
         ? true
         : n.id === trace.targetNodeId
-          ? 'yellow' as const
+          ? ('yellow' as const)
           : false,
     },
   }));
-
-  const edges = filteredEdges.map((e) => ({
-    ...e,
-    style: {
-      ...e.style,
-      strokeWidth: 1.8,
-    },
-  }));
+  const edges = filteredEdges.map((e) => ({ ...e, style: { ...e.style, strokeWidth: 1.8 } }));
 
   return { nodes, edges, graph: traceGraph };
 }

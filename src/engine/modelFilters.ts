@@ -14,12 +14,18 @@ import { compileExclusionPattern } from '../utils/sql';
 /**
  * Filters the model by removing nodes that match any of the provided regex exclusion patterns.
  * Matches are performed against both the `schema.name` format and the `fullName`.
- * 
+ *
  * @param model - The database model to filter.
  * @param patterns - A list of regex strings defining the exclusion rules.
+ * @param onInvalidPattern - Optional callback invoked for each unparseable pattern so the
+ *   caller can surface the error via its own logger or UI. Invalid patterns are skipped.
  * @returns A new DatabaseModel instance with matching nodes and their associated edges removed.
  */
-export function applyExclusionFilter(model: DatabaseModel, patterns: string[]): DatabaseModel {
+export function applyExclusionFilter(
+  model: DatabaseModel,
+  patterns: string[],
+  onInvalidPattern?: (pattern: string, err: unknown) => void,
+): DatabaseModel {
   if (!patterns || patterns.length === 0) return model;
 
   const regexes: RegExp[] = [];
@@ -27,8 +33,7 @@ export function applyExclusionFilter(model: DatabaseModel, patterns: string[]): 
     try {
       regexes.push(compileExclusionPattern(p));
     } catch (err) {
-      // Warnings are logged to the console; invalid patterns are safely ignored.
-      console.warn(`[Exclusion] Skipping invalid pattern: ${p}`, err);
+      onInvalidPattern?.(p, err);
     }
   }
 

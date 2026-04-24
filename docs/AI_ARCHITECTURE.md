@@ -290,18 +290,18 @@ stateDiagram-v2
         PresentResult --> [*]
     }
 
-    Synthesis --> ResultReady: present_result
+    Synthesis --> Completed: present_result
 
-    state ResultReady {
+    state Completed {
         [*] --> Graph
         Graph --> ExtendScope: follow-up chip (add schema, extend depth)
         Graph --> RerenderOnly: description / label edit
         Graph --> [*]: session reset (new chat thread > 5 min old)
     }
 
-    ResultReady --> Analysis: ExtendScope — SM re-enters with extended border
-    ResultReady --> Synthesis: RerenderOnly — re-run present_result
-    ResultReady --> Discovery: fresh question wipes resultGraph
+    Completed --> Analysis: ExtendScope — SM re-enters with extended border
+    Completed --> Synthesis: RerenderOnly — re-run present_result
+    Completed --> Discovery: fresh question wipes resultGraph
     Discovery --> [*]
 ```
 

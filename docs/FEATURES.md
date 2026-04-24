@@ -233,7 +233,7 @@ For power users and complex environments. Search "dataLineageViz" in VS Code Set
 | `dataLineageViz.externalRefs.enabled` | `true` | Detect virtual nodes for OPENROWSET and cross-DB 3-part names. |
 | `dataLineageViz.parseRulesFile` | `""` | Path to a custom YAML file for the SQL parser. |
 | `dataLineageViz.dmvQueriesFile` | `""` | Path to custom DMV queries. See [DMV Queries](DMV_QUERIES.md). |
-| `dataLineageViz.dmvQueryTimeout` | `30` | Seconds to wait for metadata catalog queries. |
+| `dataLineageViz.dmvQueryTimeout` | `120` | Seconds to wait for metadata catalog queries. |
 
 ### UI & Layout
 | Setting | Default | Purpose |

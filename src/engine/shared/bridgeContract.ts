@@ -28,23 +28,22 @@ import { z } from 'zod';
 export const ObjectTypeSchema = z.enum(['table', 'view', 'procedure', 'function', 'external']);
 
 /**
- * Zod schema defining the structure of a column definition within a database object.
- * 
+ * Zod schema mirroring the runtime {@link import('../types').ColumnDef} shape.
+ *
  * @remarks
- * Contains the column's name, data type, and optional constraints such as primary/foreign keys.
- * 
- * @property {string} name - The identifier of the column.
- * @property {string} type - The SQL data type (e.g., 'nvarchar(max)', 'int').
- * @property {boolean} [isPrimaryKey] - Whether this column is part of the primary key.
- * @property {boolean} [isForeignKey] - Whether this column is a foreign key to another table.
- * @property {boolean} [isNullable] - Whether the column allows NULL values.
+ * Field names and types must stay aligned with `engine/types.ts#ColumnDef`.
+ * `nullable` and `extra` are string columns carrying raw metadata from the
+ * dacpac / DMV extractors; primary-key participation is signalled by
+ * `pkOrdinal`, not a boolean.
  */
 export const ColumnDefSchema = z.object({
   name: z.string(),
   type: z.string(),
-  isPrimaryKey: z.boolean().optional(),
-  isForeignKey: z.boolean().optional(),
-  isNullable: z.boolean().optional(),
+  nullable: z.string(),
+  extra: z.string(),
+  unique: z.string().optional(),
+  check: z.string().optional(),
+  pkOrdinal: z.number().optional(),
 });
 
 /**
@@ -66,6 +65,7 @@ export const LineageNodeSchema = z.object({
   id: z.string(),
   name: z.string(),
   schema: z.string(),
+  fullName: z.string(),
   type: ObjectTypeSchema,
   isVirtual: z.boolean().optional(),
   isExternal: z.boolean().optional(),
@@ -276,15 +276,16 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
 export type ExtensionToWebviewMsg = z.infer<typeof ExtensionToWebviewMsgSchema>;
 
 /**
- * Zod schema representing the complete discriminated union of message types
- * sent from the React Webview back to the VS Code Extension Host.
- * 
+ * Zod schema for messages sent from the primary lineage-graph webview to the
+ * extension host.
+ *
  * @remarks
- * All incoming communication from the webview is validated against this schema.
+ * The detail-panel webview runs in a separate process and uses its own schema
+ * ({@link DetailPanelToExtensionMsgSchema}). Keeping the two unions separate
+ * lets each dispatcher exhaustively handle its own variants.
  */
-export const WebviewToExtensionMsgSchema = z.discriminatedUnion('type', [
+export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
-  z.object({ type: z.literal('detail-ready'), findQuery: z.string().optional() }),
   z.object({ type: z.literal('show-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('open-dacpac') }),
@@ -306,16 +307,41 @@ export const WebviewToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-external'), url: z.string() }),
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
-  z.object({ type: z.literal('overview-mode-changed'), mode: z.enum(['full', 'overview']) }),
+  z.object({
+    type: z.literal('overview-mode-changed'),
+    mode: z.enum(['full', 'overview']),
+    enteredFocusFromOverview: z.boolean().optional(),
+  }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'error', 'debug']).optional(), text: z.string() }),
   z.object({ type: z.literal('error'), error: z.string() }),
-  z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.any(), columns: z.array(z.any()) }),
-  z.object({ type: z.literal('close-detail') }),
   z.object({ type: z.literal('show-warning'), text: z.string() }),
 ]);
 
+/** Messages sent from the main lineage-graph webview to the extension host. */
+export type MainPanelToExtensionMsg = z.infer<typeof MainPanelToExtensionMsgSchema>;
+
 /**
- * TypeScript type inferred from the WebviewToExtensionMsgSchema.
- * Represents all valid messages sent from the Webview to the Extension Host.
+ * Zod schema for messages sent from the detail-panel webview to the extension
+ * host.
  */
+export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('detail-ready'), findQuery: z.string().optional() }),
+  z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.any(), columns: z.array(z.any()) }),
+  z.object({ type: z.literal('close-detail') }),
+]);
+
+/** Messages sent from the detail-panel webview to the extension host. */
+export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsgSchema>;
+
+/**
+ * Legacy full union of every webview→extension message type across both
+ * webviews. Prefer {@link MainPanelToExtensionMsgSchema} or
+ * {@link DetailPanelToExtensionMsgSchema} for boundary validation.
+ */
+export const WebviewToExtensionMsgSchema = z.discriminatedUnion('type', [
+  ...MainPanelToExtensionMsgSchema.options,
+  ...DetailPanelToExtensionMsgSchema.options,
+]);
+
+/** Inferred type of the legacy combined webview→extension union. */
 export type WebviewToExtensionMsg = z.infer<typeof WebviewToExtensionMsgSchema>;

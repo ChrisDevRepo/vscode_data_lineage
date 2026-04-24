@@ -78,7 +78,11 @@ export function useGraphology(): UseGraphologyReturn {
     const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
     const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 
-    const exclusionFiltered = applyExclusionFilter({ ...filtered, nodes: fusedNodes, edges: fusedEdges }, filter.exclusionPatterns);
+    const exclusionFiltered = applyExclusionFilter(
+      { ...filtered, nodes: fusedNodes, edges: fusedEdges },
+      filter.exclusionPatterns,
+      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`, 'debug'),
+    );
     const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
 

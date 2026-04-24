@@ -156,8 +156,11 @@ export function validateToolInput(
 
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
+/** Hard cap on `search_columns` results — prevents unbounded enumeration on wide schemas. */
 const COLUMN_SEARCH_LIMIT = 50;
+/** Char cap on the AI-supplied `name` field in `present_result` — guards against pathological prompt injection or runaway labels. */
 const PRESENT_RESULT_NAME_MAX_LENGTH = 200;
+/** Char cap on the AI-supplied `summary` field in `present_result` — keeps the badge readable in the chat stream. */
 const PRESENT_RESULT_SUMMARY_HARD_LIMIT = 300;
 
 /**

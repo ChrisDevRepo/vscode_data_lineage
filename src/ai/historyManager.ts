@@ -37,8 +37,7 @@ export function compactNoiseResult(toolName: string, resultJson: string): string
     if (parsed.results && Array.isArray(parsed.results) && parsed.results.length === 0) {
       return JSON.stringify({ summary: `${shortName} → 0 matches` });
     }
-  } catch (e) {
-    if (!(e instanceof SyntaxError)) console.debug('[AI] compactNoiseResult unexpected error:', e);
+  } catch {
     /* not JSON — keep as-is */
   }
   return null;
@@ -86,8 +85,7 @@ export function compactStaleHopResult(
       compacted: true,
       summary: `${shortName} → ${node ? node + ' · ' : ''}${hop ? 'hop ' + hop + ' · ' : ''}${status}`,
     });
-  } catch (e) {
-    if (!(e instanceof SyntaxError)) console.debug('[AI] compactStaleHopResult unexpected error:', e);
+  } catch {
     return JSON.stringify({ compacted: true, summary: `${shortName} → (compacted)` });
   }
 }
