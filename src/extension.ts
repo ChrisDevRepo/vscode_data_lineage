@@ -277,8 +277,15 @@ async function loadParseRules(
   }
 
   const result = loadRules(config);
-  for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
+  const sess = getSession();
   if (result.usedDefaults) {
+    sess.parseRulesLabel = 'built-in rules (fallback)';
+  } else {
+    sess.parseRulesLabel = source === 'custom' ? `custom (${path.basename(customPath)})` : 'built-in rules';
+  }
+
+  for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
+  if (result.loaded === 0 && result.skipped.length > 0) {
     logger.warn(`Fallback parse rules ${source} → empty: reason=no valid rules in config`);
     vscode.window.showWarningMessage('Data Lineage: Parse rules config invalid — check Output channel.');
   } else {

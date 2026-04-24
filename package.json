@@ -998,12 +998,17 @@
               "properties": {
                 "nodeIds": {
                   "type": "array",
-                  "items": { "type": "string", "minLength": 1 },
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
                   "minItems": 1,
                   "description": "Node ids to add to the existing exploration (typically picked from `deferred_questions`)."
                 }
               },
-              "required": ["nodeIds"]
+              "required": [
+                "nodeIds"
+              ]
             }
           },
           "required": [
@@ -1133,7 +1138,7 @@
     "@floating-ui/react": "^0.27.19",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.4.0",
-    "fast-xml-parser": "^5.5.9",
+    "fast-xml-parser": "^5.7.1",
     "graphology": "^0.25.4",
     "graphology-components": "^1.5.4",
     "graphology-shortest-path": "^2.1.0",
@@ -1179,7 +1184,7 @@
     "vitest": "^3.2.4"
   },
   "overrides": {
-    "dompurify": "^3.4.0",
+    "dompurify": "^3.4.1",
     "serialize-javascript": "^7.0.5",
     "picomatch": "4.0.4"
   }

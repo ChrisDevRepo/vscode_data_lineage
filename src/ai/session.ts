@@ -33,8 +33,22 @@ export class AiSession {
   public filter: SerializedFilterState | null = null;
   /** List of saved filter profiles (views) for the current project. */
   public views: FilterProfile[] = [];
-  /** The current trace/analysis state of the GUI. */
+  /** Unified GUI state snapshot for debugging. */
+  public uiState: any = null;
+  /** Snapshot of the trace mode and interactive state. */
   public traceState: any = null;
+  /** Current graph rendering mode: 'full' or 'overview'. */
+  public graphMode: 'full' | 'overview' = 'full';
+  /** Total count of nodes after all active filters are applied (from webview). */
+  public filteredCount = 0;
+  /** >0 when the render limit was exceeded (from webview). */
+  public renderLimitHit = 0;
+  /** Friendly label for the currently loaded parse rules. */
+  public parseRulesLabel = 'built-in rules';
+  /** Human-readable label for the data source origin (filename or server/db). */
+  public sourceLabel = 'N/A';
+  /** Statistics from the last SQL parsing run. */
+  public parseStats: { resolvedEdges: number; parsedRefs: number; droppedRefs: number } | null = null;
   /** Human-readable name of the active project. */
   public projectName: string | null = null;
   /** Persistent identifier for the current project. */

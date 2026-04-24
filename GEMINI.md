@@ -1,4 +1,4 @@
-# Data Lineage Viz - AI Assistant Mandates
+﻿# Data Lineage Viz - AI Assistant Mandates
 
 These instructions are foundational mandates for the AI assistant operating in this workspace.
 
@@ -29,8 +29,14 @@ These instructions are foundational mandates for the AI assistant operating in t
 - **State-of-the-Art JSDoc**: Provide professional, detailed JSDoc for all exported symbols. Focus on the "why" and high-level architectural purpose. Parameters and return types must be fully documented. Inline comments must be reserved for explaining complex business logic or complex React patterns, never for "chatty" or obvious descriptions.
 - **VS Code Configuration**: Add new settings to `package.json` under `contributes.configuration` and retrieve them using `vscode.workspace.getConfiguration()`.
 
-
 ## Documentation & Engineering Integrity
 - **Code-First Truth Model**: The codebase is the single source of truth. Documentation MUST be reconciled against real code behavior. Never assume existing docs are accurate.
 - **Internal vs. External Segregation**: Maintain strict segregation between user-facing guides and internal developer-facing docs (e.g., docs-internal/).
 - **Stability-First Policy**: Prioritize Stability > Performance > Features. Changes to critical paths (parsers, state machines) require zero-regression validation against baselines.
+
+## Supply Chain & Security Integrity
+- **Dependency Overrides Protocol**: Use the `overrides` field in `package.json` as a surgical, non-hacky intervention for critical supply chain issues.
+  - **Security First**: Mandatory for fixing critical transitive vulnerabilities (XSS, Prototype Pollution) where upstream maintainers are lagging.
+  - **Stability First**: Every override must be validated against the full test suite to ensure API compatibility.
+  - **Product Integrity**: Use overrides to ensure the VSIX passes enterprise security scanners (Snyk, BlackDuck) and maintains user trust.
+  - **No Ghosts**: Overrides must be documented and reviewed every 3-6 months. Remove them once the parent library natively updates to a safe version.
