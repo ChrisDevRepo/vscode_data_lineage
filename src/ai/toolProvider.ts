@@ -466,6 +466,8 @@ class ToolHandler {
         sess.resultGraph.notes = Array.from(existingNotes.values());
       }
       sess.lastPresentResultDescription = validation.description ?? null;
+      // Signal the button gate in dispatchExit that a graph was built this turn.
+      sess.presentResultCalledThisTurn = true;
 
       this.logger.info(`AI view "${validation.name}" displayed (${validation.node_ids.length} objects)`);
       return this.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, input);

@@ -418,7 +418,10 @@ export class LineageParticipant {
     let totalRoundInputTokens = 0;
 
     const runHopLoop = async (): Promise<HopLoopExit> => {
+      // Reset per-turn presentation flag so the button gate reflects THIS turn only.
+      sess.presentResultCalledThisTurn = false;
       let actionRequiredPending = false;
+      let synthCorrectiveCount = 0;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
       let lastProgressLine = '';
@@ -468,11 +471,7 @@ export class LineageParticipant {
           inputSchema: t.inputSchema
         }));
 
-        // FIX: VS Code API only supports 'Required' mode when exactly one tool is provided.
-        // For multiple tools, we must fallback to 'Auto' and rely on the model's capabilities and system prompt.
-        const toolMode = (requestedMode === vscode.LanguageModelChatToolMode.Required && tools.length > 1) 
-          ? vscode.LanguageModelChatToolMode.Auto 
-          : requestedMode;
+        const toolMode = requestedMode;
 
         const response = await model.sendRequest(messages, { tools, toolMode }, token);
         const assistantParts: any[] = [];
@@ -518,6 +517,20 @@ export class LineageParticipant {
             }
             messages.push(vscode.LanguageModelChatMessage.User(
               'Free-form responses are outside protocol in SLIDING MEMORY mode. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
+            ));
+            continue;
+          }
+          // Synthesis guard: if the AI wrote prose instead of calling present_result, inject a
+          // corrective and retry. Capped at 2 attempts; on the third miss it falls through to
+          // final_answer so the user is not left hanging indefinitely.
+          if (activePhase === 'synthesis' && synthCorrectiveCount < 2) {
+            synthCorrectiveCount++;
+            this.logger.debug(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting corrective prompt (attempt ${synthCorrectiveCount})`);
+            if (assistantParts.length > 0) {
+              messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
+            }
+            messages.push(vscode.LanguageModelChatMessage.User(
+              'Call `lineage_present_result` now. Do not output the result as prose — structured tool output is required.'
             ));
             continue;
           }
@@ -808,7 +821,9 @@ export class LineageParticipant {
           sess.enterCompleted();
           this.logger.info(`[${sess.id}] [Phase] synthesis → completed — archive slots=${sess.memory.slotCount}, deferred=${sess.stateMachine!.deferredQuestions.length}`);
           this.logger.debug(`[${sess.id}] [Phase] follow-up ready — next turn refines via present_result / supplement; no fresh exploration unless the user asks a new trace.`);
-          if (this.getActivePanel()) {
+          // Only show the graph button when present_result was actually invoked this turn —
+          // prevents a stale/empty button when synthesis exited via the corrective fallback.
+          if (this.getActivePanel() && sess.presentResultCalledThisTurn) {
             const originalQ = sess.memory.getUserQuestion() || userPrompt;
             writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
           }

@@ -69,6 +69,15 @@ export class AiSession {
    */
   public lastPresentResultDescription: string | null = null;
   /**
+   * `true` when `present_result` was successfully invoked in the current `runHopLoop` turn.
+   *
+   * @remarks
+   * Reset to `false` at the start of every `runHopLoop` call. Set to `true` by the
+   * `present_result` tool handler on success. The `dispatchExit` button gate reads this
+   * flag so the "Show in Graph" button only appears when a graph was actually built.
+   */
+  public presentResultCalledThisTurn = false;
+  /**
    * Mission-type classification inferred at end of discovery.
    *
    * @remarks
@@ -217,6 +226,7 @@ export class AiSession {
    */
   public enterExploring(): void {
     this.phase = { kind: 'exploring' };
+    this.presentResultCalledThisTurn = false;
   }
 
   /**
