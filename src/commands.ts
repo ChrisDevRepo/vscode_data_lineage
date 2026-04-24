@@ -1,9 +1,23 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { z } from 'zod';
 import { type AiSession } from './ai/session';
+import { DeferredQuestionSchema } from './ai/smTypes';
+import { buildDeferredQuestionPrompt } from './ai/prompts';
 import { getActivePanel } from './panelProvider';
 import { Logger, trunc } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
+
+/**
+ * Runtime schema for the `dataLineageViz.showDeferredQuestions` command argument.
+ *
+ * @remarks
+ * The command is invoked from a `stream.button` in a chat response and from
+ * test harnesses, both of which cross a trust boundary. Validate the full
+ * payload with Zod so a malformed entry surfaces as a diagnostic rather than
+ * an exception during QuickPick construction.
+ */
+const DeferredQuestionArgSchema = z.array(DeferredQuestionSchema).min(1);
 
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
@@ -165,12 +179,24 @@ export function registerCommands(
     }),
 
     /**
-     * Opens a QuickPick listing deferred (out-of-approved-scope) sub-questions the engine
-     * collected during an SM session. Selecting one opens a new chat turn asking @lineage
-     * to investigate the specific node — its schema is surfaced so the user can widen scope.
+     * Opens a QuickPick listing deferred (out-of-approved-scope) sub-questions the
+     * engine collected during an SM session. Selecting one opens a new chat turn
+     * asking `@lineage` to investigate the specific node; its schema is surfaced so
+     * the user can widen scope.
+     *
+     * @remarks
+     * Invoked from the `stream.button` emitted after a successful synthesis
+     * (see `LineageParticipant.dispatchExit`) and potentially from integration
+     * tests. The argument is validated via {@link DeferredQuestionArgSchema};
+     * a malformed payload is logged and silently skipped rather than throwing.
      */
-    vscode.commands.registerCommand('dataLineageViz.showDeferredQuestions', async (entries: Array<{ nodeId: string; question: string; fromFocusNodeId: string; schema?: string }>) => {
-      if (!Array.isArray(entries) || entries.length === 0) return;
+    vscode.commands.registerCommand('dataLineageViz.showDeferredQuestions', async (raw: unknown) => {
+      const parsed = DeferredQuestionArgSchema.safeParse(raw);
+      if (!parsed.success) {
+        aiLogger.warn(`showDeferredQuestions: ignoring malformed argument — ${parsed.error.issues.map(i => i.message).join('; ')}`);
+        return;
+      }
+      const entries = parsed.data;
       const items = entries.map(d => ({
         label: `$(question) ${d.nodeId}`,
         description: d.schema ? `schema: ${d.schema}` : undefined,
@@ -183,11 +209,8 @@ export function registerCommands(
         placeHolder: `${entries.length} deferred question${entries.length === 1 ? '' : 's'} — pick one to investigate`,
       });
       if (!picked) return;
-      const d = picked.data;
-      const schemaHint = d.schema ? ` — include schema '${d.schema}' in the scope` : '';
-      const q = d.question ? d.question : `Investigate ${d.nodeId}`;
       vscode.commands.executeCommand('workbench.action.chat.open', {
-        query: `@lineage Investigate ${d.nodeId}: ${q}${schemaHint}.`,
+        query: buildDeferredQuestionPrompt(picked.data),
       });
     }),
 

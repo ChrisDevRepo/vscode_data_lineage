@@ -126,9 +126,11 @@ export interface ActionRequiredGate {
    * @remarks
    * - `confirm_sm_start` — session-entry consent (SM mode).
    * - `schema_out_of_filter` / `depth_cap_exceeded` / `schema_and_depth` — inline-mode mid-session expansion.
-   * - `confirm_scope_extension` — optional post-synthesis offer when deferred questions accumulated.
+   *
+   * SM-mode out-of-scope exploration is surfaced as a post-synthesis button
+   * (`dataLineageViz.showDeferredQuestions`), not as a gate.
    */
-  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth' | 'confirm_sm_start' | 'confirm_scope_extension';
+  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth' | 'confirm_sm_start';
   /** The specific class being requested (e.g. "schema:dbo" or "depth:+1"). Confirmations cache per-class. */
   classes: string[];
   /** Human-readable question rendered in chat, ready for yes/no reply. */
@@ -374,7 +376,7 @@ export interface SmResult {
  * Produced by the engine when a `submit_findings` route targets a node whose schema is
  * outside `approved_border.schemas` or whose depth exceeds `approved_border.depth_cap`.
  * Surfaced to the AI at synthesis (rendered as an "Unanswered" section) and to the user
- * as an optional `confirm_scope_extension` checkpoint post-session. Never silently
+ * post-turn via the `dataLineageViz.showDeferredQuestions` button. Never silently
  * dropped — this is the scope-gap audit trail that keeps SM closed-loop honest.
  */
 export interface DeferredQuestion {
@@ -396,8 +398,9 @@ export interface DeferredQuestion {
 
 /**
  * Runtime schema for {@link DeferredQuestion}. Parses untrusted payloads crossing the
- * engine → participant boundary (synthesis memory, `confirm_scope_extension` envelope).
- * Inner layers consume the typed interface without re-validation.
+ * engine → participant → command boundary (synthesis memory and the
+ * `dataLineageViz.showDeferredQuestions` command argument). Inner layers consume the
+ * typed interface without re-validation.
  */
 export const DeferredQuestionSchema = z.object({
   nodeId: z.string(),

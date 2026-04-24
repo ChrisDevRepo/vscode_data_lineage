@@ -92,11 +92,13 @@ export class LineageParticipant {
   }
 
   /**
-   * Registers the chat participant and its associated providers.
+   * Registers the chat participant and its feedback listener.
    *
    * @remarks
-   * Configures the participant ID, the main request handler, and the followup provider
-   * for context-aware suggested actions.
+   * Deferred out-of-scope questions are surfaced as a `stream.button` next to
+   * "Show in Graph" (see {@link dispatchExit} `final_answer`), not via a
+   * `followupProvider` — a single, inline affordance keeps the contract tight
+   * and avoids dangling slash commands.
    */
   public register() {
     const participant = vscode.chat.createChatParticipant(
@@ -104,67 +106,12 @@ export class LineageParticipant {
       this.handleChatRequest.bind(this)
     );
 
-    participant.followupProvider = {
-      provideFollowups(result) {
-        const meta = (result.metadata as any) ?? {};
-        const lastTools: string[] = meta.lastTools ?? [];
-        const deferredCount: number = typeof meta.deferredQuestionCount === 'number' ? meta.deferredQuestionCount : 0;
-        const followups: vscode.ChatFollowup[] = [];
-
-        const hasPresentResult = lastTools.some((t: string) => t.includes('present_result'));
-        if (hasPresentResult && deferredCount > 0) {
-          followups.push({
-            prompt: 'Explain the lineage in more detail',
-            label: `Detailed explanation (${deferredCount})`,
-            command: 'followup',
-          });
-        }
-        if (hasPresentResult) {
-          followups.push({
-            prompt: 'Show the full description',
-            label: 'Show full description',
-            command: 'followup',
-          });
-        }
-        return followups;
-      }
-    };
-
     participant.onDidReceiveFeedback((feedback: vscode.ChatResultFeedback) => {
       const kind = feedback.kind === vscode.ChatResultFeedbackKind.Helpful ? 'helpful' : 'unhelpful';
       this.logger.info(`Feedback: ${kind}`);
     });
 
     this.context.subscriptions.push(participant);
-  }
-
-  /**
-   * Appends deferred analysis questions to the active exploration agenda.
-   *
-   * @remarks
-   * Used by the `/followup` command to include nodes that were previously
-   * excluded by scope filters into the next analysis round.
-   *
-   * @param sess - The active AI session.
-   * @param writer - Interface for writing progress updates to the chat response.
-   * @returns `true` if nodes were added to the agenda, `false` otherwise.
-   */
-  private tryExtendWithDeferredQuestions(sess: AiSession, writer: ChatResponseWriter): boolean {
-    const engine = sess.stateMachine as NavigationEngine | null;
-    if (!engine || engine.status !== 'complete' || sess.isStale()) return false;
-    const deferred = engine.deferredQuestions ?? [];
-    if (deferred.length === 0) return false;
-
-    const byNode = new Map<string, string>();
-    for (const d of deferred) {
-      if (!byNode.has(d.nodeId)) byNode.set(d.nodeId, d.question ?? 'User-requested follow-up');
-    }
-    const nodeIds = Array.from(byNode.keys());
-    const question = `Extended scope: ${byNode.size} deferred question(s) requested by user`;
-    const result = engine.extendScope(nodeIds, question);
-    if (result.added === 0) return false;
-    writer.markdown(`\n\n> Extending analysis — ${result.added} new node(s), reusing ${sess.memory.slotCount} existing finding(s).\n\n`);
-    return true;
   }
 
   /**
@@ -748,12 +695,10 @@ export class LineageParticipant {
     this.logger.info(`Summary — model: ${sess.modelName}, SM: ${smStatus}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
     this.dispatchExit(exit, sess, writer, request.prompt, roundCount, MAX_ROUNDS);
 
-    const deferredQuestionCount = (sess.stateMachine?.status === 'complete' ? new Set(sess.stateMachine.deferredQuestions.map(d => d.nodeId)).size : 0);
     return {
       metadata: {
         toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults },
         lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [],
-        deferredQuestionCount,
         performanceDiagnostics: collector.finalize(sess, peakRoundInputTokens)
       },
     };
@@ -777,7 +722,7 @@ export class LineageParticipant {
     switch (exit.kind) {
       case 'gate': {
         sess.enterGate(exit.gate);
-        const title = exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : exit.gate.gate === 'confirm_scope_extension' ? 'Scope extension available' : 'Scope expansion requested';
+        const title = exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : 'Scope expansion requested';
         writer.markdown(`\n\n---\n**${title}**\n\n${exit.gate.detail}\n\n`);
         
         writer.button({
@@ -798,9 +743,24 @@ export class LineageParticipant {
       case 'final_answer': {
         const smComplete = sess.stateMachine?.status === 'complete';
         sess.enterIdle();
-        if (this.getActivePanel() && smComplete) {
-          const originalQ = sess.memory.getUserQuestion() || userPrompt;
-          writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
+        if (smComplete) {
+          if (this.getActivePanel()) {
+            const originalQ = sess.memory.getUserQuestion() || userPrompt;
+            writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
+          }
+          // Out-of-scope routes proposed during the hop loop were deferred, not dropped.
+          // Surface them as a single inline button so the user can open a QuickPick and
+          // continue exploration in a fresh `@lineage` turn.
+          const deferred = sess.stateMachine!.deferredQuestions;
+          if (deferred.length > 0) {
+            const unique = new Map<string, (typeof deferred)[number]>();
+            for (const d of deferred) if (!unique.has(d.nodeId)) unique.set(d.nodeId, d);
+            writer.button({
+              command: 'dataLineageViz.showDeferredQuestions',
+              title: `$(question) Explore ${unique.size} deferred question${unique.size === 1 ? '' : 's'}`,
+              arguments: [Array.from(unique.values())],
+            });
+          }
         }
         return;
       }

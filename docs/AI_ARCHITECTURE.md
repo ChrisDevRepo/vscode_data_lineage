@@ -331,7 +331,7 @@ flowchart TD
     SV -- in approved border --> SA
     SV -- out of border --> SD[deferQuestion<br/>+ route_outcomes[deferred:true]]
     SD --> SA
-    SA -->|engine drains agenda| SS[SM synthesis<br/>+ Unanswered section<br/>+ /followup chips]
+    SA -->|engine drains agenda| SS[SM synthesis<br/>+ Unanswered section<br/>+ deferred-questions button]
     SS --> End[Done]
 ```
 
@@ -393,7 +393,7 @@ sequenceDiagram
         Engine->>Participant: agenda drained → synthesis trigger
         Participant->>AI: Detail archive + DEFERRED QUESTIONS block + synthesis prompt
         AI->>User: Final report with "Unanswered (out of approved scope)" section
-        Participant->>User: /followup chips for each deferred entry
+        Participant->>User: stream.button → dataLineageViz.showDeferredQuestions (QuickPick)
     else scope too big
         Engine-->>AI: {error: 'scope_exceeds_budget', safe_depth_hint}
         AI->>User: Ask to narrow or raise ai.maxRounds
@@ -424,7 +424,7 @@ After `confirm_sm_start` is approved, the SM session runs as a closed loop — n
 - **Deferral, not rejection** — when the AI routes to an out-of-border node, the engine calls `deferQuestion({...})` into an internal bucket (single encapsulated mutation point on `NavigationEngine`) and the hop proceeds. In-border routes in the same `route_requests` array are accepted normally.
 - **Visibility every hop** — `working_memory.deferred_count` shows the running tally. The structured `[AI] [Hop N]` log line carries `routed=<new>/<rejected>/<deferred>` and `deferred_queued=<N>`.
 - **Synthesis surfaces the gap** — the Detail Archive is accompanied by a `DEFERRED QUESTIONS` block listing `(nodeId, schema, question, fromFocusNode, reason)` per entry. The synthesis prompt instructs the AI to render an "Unanswered (out of approved scope)" section at the tail of the report.
-- **Post-synthesis checkpoint** — when the session completes with a non-empty deferred list, the participant streams a concluding summary of deferred entries so the user can decide to follow up in a new question. The gate literal `confirm_scope_extension` is reserved in `PendingGateSchema` for future one-click re-spawn flows.
+- **Post-synthesis checkpoint** — when the session completes with a non-empty deferred list, the participant emits a `stream.button` next to "Show in Graph" that invokes `dataLineageViz.showDeferredQuestions`. Clicking opens a QuickPick of the deduplicated entries; selecting one starts a fresh `@lineage` turn with a schema-widening hint. The entries crossing the boundary are validated by `DeferredQuestionSchema` (Zod).
 
 Grounded in: Anthropic *Effective Context Engineering* (compaction over truncation), Reflexion / ReAct (self-reflective deferral in the reasoning trace), MemGPT (hierarchical memory preservation), and HITL-batching (two checkpoints — entry and optional exit — rather than many mid-flight).
 

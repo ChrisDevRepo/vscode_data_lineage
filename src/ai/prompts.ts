@@ -7,6 +7,29 @@
  * Navigation Mode prompts are in smPrompts.ts (Universal Markdown blocks).
  */
 
+import type { DeferredQuestion } from './smTypes';
+
+
+/**
+ * Single-source contract describing how the AI must treat neighbors that fall
+ * outside the session's approved schemas or depth cap.
+ *
+ * @remarks
+ * Referenced from every prompt block that discusses routing (active-phase tool
+ * usage, SM mode routing). Keeping the text in one place prevents wording
+ * drift across model families and preserves the stable prompt prefix for
+ * Anthropic prompt caching.
+ *
+ * The contract:
+ * 1. Out-of-scope routing is *encouraged* when mission-relevant — the engine defers it.
+ * 2. Deferred routes are surfaced post-synthesis as an inline UI affordance.
+ * 3. Per-route disposition is reported back via `route_outcomes[]`.
+ * 4. In the detail analysis, deferred nodes are mentioned at most once as
+ *    "available for follow-up"; their internals are not analyzed.
+ */
+export const OUT_OF_SCOPE_CONTRACT: string =
+  'Out-of-scope routes (schema or depth beyond the approved border) are encouraged when mission-relevant. The engine defers them and surfaces them to the user post-synthesis as an inline follow-up affordance. Each `submit_findings` tool result reports `route_outcomes[]`; reference only nodes with `accepted: true` in `detail_analysis`, and mention nodes with `deferred: true` at most once as "available for follow-up" (do not analyze their internals).';
+
 
 /**
  * Constructs the base system prompt used to govern AI behavior across all phases.
@@ -137,8 +160,8 @@ export function buildDiscoveryPrompt(): string {
  * @returns A formatted system instruction for the active phase.
  */
 export function buildActivePhasePrompt(isInline: boolean): string {
-  const mode = isInline 
-    ? 'TRUE INLINE: Analyze all nodes holistically in a single turn.' 
+  const mode = isInline
+    ? 'TRUE INLINE: Analyze all nodes holistically in a single turn.'
     : 'SLIDING MEMORY: Analyze nodes sequentially as presented.';
 
   return [
@@ -150,7 +173,7 @@ export function buildActivePhasePrompt(isInline: boolean): string {
     '1. ARCHIVE → DEPTH: Your `detail_analysis` is the sole input to the final report. Write at full depth because there is no follow-up pass.',
     '2. ANCHORING: Align every verdict with the <mission_brief> and <current_task>.',
     '3. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for transform expressions and calculations.',
-    '4. ROUTE OUTCOMES: Each `submit_findings` tool result carries `route_outcomes[]`. Reference only nodes with `accepted: true` in your detail_analysis. Nodes with `deferred: true` are available as post-synthesis follow-up offers — mention each at most once as "available for follow-up", do not analyze their internals.',
+    `4. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');
 }
 
@@ -175,14 +198,33 @@ export function buildSynthesisPrompt(): string {
 }
 
 
-/** 
+/**
  * Transforms raw user input into a structured lineage tracing request.
- * 
+ *
  * @param userInput - The entity or relationship the user wants to trace.
  * @returns A formatted prompt for the `/trace` command.
  */
 export function buildTracePrompt(userInput: string): string {
   return `Trace the data lineage for: ${userInput}.`;
+}
+
+/**
+ * Builds the chat prompt used when the user picks a deferred (out-of-scope)
+ * question from the post-synthesis QuickPick.
+ *
+ * @remarks
+ * Kept here (and not inline in {@link ../commands.ts}) so every caller renders
+ * the same phrasing — the prompt is the only place the AI learns the target
+ * schema needs to be included in scope, so drift here silently changes
+ * exploration behavior.
+ *
+ * @param entry - A validated deferred-question entry from the engine.
+ * @returns The chat-line string to pass to `workbench.action.chat.open`.
+ */
+export function buildDeferredQuestionPrompt(entry: DeferredQuestion): string {
+  const question = entry.question ? entry.question : `Investigate ${entry.nodeId}`;
+  const schemaHint = entry.schema ? ` — include schema '${entry.schema}' in the scope` : '';
+  return `@lineage Investigate ${entry.nodeId}: ${question}${schemaHint}.`;
 }
 
 /** 
@@ -261,8 +303,8 @@ export function buildToolUsageBlock(): string {
     '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
     '',
     '1. Use `lineage_submit_findings` to process focus nodes. Write full-depth `detail_analysis` per the required-section template in the stage rules.',
-    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. Inspect `route_outcomes[]` in each tool result to see which routes were accepted vs deferred.',
-    '3. Routing out-of-scope neighbors is encouraged when mission-relevant — they become post-synthesis follow-up offers to the user.',
+    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags.',
+    `3. ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');
 }
 

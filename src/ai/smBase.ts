@@ -224,7 +224,8 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Out-of-approved-scope routes captured during an SM session. Single encapsulated
    * bucket — all mutations flow through {@link deferQuestion}. Surfaced at synthesis
-   * and seeded into the optional `confirm_scope_extension` envelope.
+   * (as the "Unanswered" section) and to the user post-turn via the
+   * `dataLineageViz.showDeferredQuestions` button.
    */
   private readonly _deferredQuestions: DeferredQuestion[] = [];
 
@@ -303,9 +304,9 @@ export class NavigationEngine implements IHopStateMachine {
    * Read-only view of the SM deferred-questions bucket.
    *
    * @remarks
-   * Consumed at synthesis (rendered as the "Unanswered" section) and when priming the
-   * post-synthesis `confirm_scope_extension` envelope. Callers cannot mutate the bucket
-   * through this accessor.
+   * Consumed at synthesis (rendered as the "Unanswered" section) and surfaced
+   * post-turn through the `dataLineageViz.showDeferredQuestions` button. Callers
+   * cannot mutate the bucket through this accessor.
    */
   public get deferredQuestions(): ReadonlyArray<DeferredQuestion> {
     return this._deferredQuestions;
@@ -553,48 +554,6 @@ export class NavigationEngine implements IHopStateMachine {
       scopeSize: this.scopeNodeIds.size,
       agendaSize: this.agenda.length,
     };
-  }
-
-  /**
-   * Extends an already-complete exploration with additional nodes, without discarding the
-   * existing archive. Used for same-session follow-ups (e.g. "Detailed explanation" chip,
-   * or a user-typed drill-in like "also analyze sp_foo").
-   *
-   * @remarks
-   * Preserves `detail_slots`, verdict tally, visited set, and `notedNodeIds` so the synthesis
-   * phase can merge old + new slots into one archive. Only net-new nodes enter the agenda;
-   * already-visited nodes are skipped. Reinstates `awaiting_findings` so the participant's
-   * hop loop resumes cleanly.
-   *
-   * @param nodeIds - Node IDs to add to the exploration. Must exist in the graph.
-   * @param question - Optional sub-question recorded against each new agenda entry.
-   * @returns Object with added/skipped counts and the post-extend agenda size.
-   */
-  public extendScope(nodeIds: string[], question?: string): { added: number; skipped: number; agendaSize: number } {
-    if (this._status !== 'complete') {
-      throw new Error(`extendScope requires status='complete' (got '${this._status}')`);
-    }
-    let added = 0;
-    let skipped = 0;
-    const reason = question ?? 'User-requested follow-up';
-    for (const rawId of nodeIds) {
-      const id = rawId.toLowerCase();
-      if (!this.nodeMap.has(id)) { skipped++; continue; }
-      if (this.visited.has(id)) { skipped++; continue; }
-      if (this.agendaIds.has(id)) { skipped++; continue; }
-      this.scopeNodeIds.add(id);
-      this.agenda.push({ nodeId: id, question: reason, priority: 2, depth: 1 });
-      this.agendaIds.add(id);
-      added++;
-    }
-    if (added === 0) {
-      // Nothing to do; status stays 'complete'. Caller can treat as a no-op.
-      return { added, skipped, agendaSize: this.agenda.length };
-    }
-    this._status = 'awaiting_findings';
-    this.currentFocusNodeId = null;
-    this.log('info', `[Extend] added=${added} skipped=${skipped} preserved_slots=${this.memory.slotCount} new_agenda=${this.agenda.length}`);
-    return { added, skipped, agendaSize: this.agenda.length };
   }
 
   /**

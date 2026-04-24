@@ -47,7 +47,10 @@ export class AiSession {
   public stateMachine: IHopStateMachine | null = null;
   /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
-  /** Last present_result description string — surfaced in chat by the "Show full description" chip. */
+  /**
+   * Last `present_result` description string — consumed by `dataLineageViz.aiCreateView`
+   * when re-posting the AI preview to the webview so the narrative survives panel reveal.
+   */
   public lastPresentResultDescription: string | null = null;
   /**
    * Mission-type classification inferred at end of discovery.
