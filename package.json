@@ -912,7 +912,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
-        "modelDescription": "Starts a hop-by-hop exploration across database objects. Use for both broad investigations (Blackboard) and specific column-level tracking.",
+        "modelDescription": "Starts a hop-by-hop exploration across database objects (Blackboard, or Column-Trace when `targetColumns` is set). Scope parameters: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. Honor NL filters: 'ignore UDFs/functions' → `excludeTypes:['function']`; 'ignore views' → `['view']`; 'only tables' → `['view','procedure','function']`. On wide graphs start `depth` shallow (1-2); sliding-memory sessions lock scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session. Compose `mission_brief` (3-6 sentences) capturing user intent, NL filters, name-based exclusions, and chosen scope — delivered verbatim every hop and surviving memory wipes.",
         "tags": [
           "lineage",
           "lineage-engine"
