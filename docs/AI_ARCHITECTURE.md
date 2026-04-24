@@ -60,27 +60,7 @@ flowchart LR
 - **The Router (Semantic)**: Managed by the AI. It analyzes the DDL of the current node to answer a specific **Sub-Question**, updates the **Blackboard**, and requests the next **Route** to relevant neighbors.
 - **Selection-Inference Validation**: Ensures the AI only requests routes to valid, existing columns and nodes.
 
-```mermaid
-flowchart LR
-    subgraph MAP[The Map — NavigationEngine — deterministic]
-        direction TB
-        M1[agenda + visited set]
-        M2[neighbor metadata<br/>cols / FKs / hasDdl]
-        M3[consent gates<br/>action_required]
-        M4[route + column validation]
-    end
-    subgraph ROUTER[The Router — AI — semantic]
-        direction TB
-        R1[read focus DDL]
-        R2[write detail_analysis +<br/>summary to archive]
-        R3[verdict: analyze / pass / prune]
-        R4[route_requests with sub-question]
-    end
-    MAP -->|getHopContext| ROUTER
-    ROUTER -->|submit_findings| MAP
-```
-
-The Map never reasons about content. The Router never mutates state directly. The two boundaries (`getHopContext` downstream, `submit_findings` upstream) are the only coupling.
+The two sides never overlap. **Map** (engine, deterministic): agenda + visited set, neighbor metadata, consent gates, route/column validation. **Router** (AI, semantic): read focus DDL, write `detail_analysis` + summary, emit verdict, issue `route_requests`. Coupling is exactly two calls — `getHopContext` downstream, `submit_findings` upstream.
 
 ## Component map
 
@@ -122,18 +102,16 @@ The analysis engine treats the data-lineage graph as a **bipartite work graph**:
 
 ```mermaid
 graph LR
-    SP([sp<br/>procedure, bodied]):::bodied
-    T[table<br/>passive pipe]:::passive
-    VA([viewA<br/>view, bodied]):::bodied
-    VB([viewB<br/>view, bodied]):::bodied
-    SP -->|route_request<br/>question: 'how are col1/col2 consumed?'| T
-    T -.->|edge contraction<br/>question forwarded verbatim| VA
-    T -.->|edge contraction<br/>question forwarded verbatim| VB
-    classDef bodied fill:#cfe8cf,stroke:#2a7,stroke-width:2px
-    classDef passive fill:#f4f0d8,stroke:#a93,stroke-dasharray:4 3
+    SP([sp — procedure])
+    T[table — passive pipe]
+    VA([viewA — view])
+    VB([viewB — view])
+    SP -->|route_request<br/>question forwarded| T
+    T -.->|edge contraction| VA
+    T -.->|edge contraction| VB
 ```
 
-Table is never a hop focus — its box has a dashed border. Dashed arrows are the contraction path; the AI never sees a "table hop" and never writes invented prose about the table.
+Rounded boxes are bodied (agenda-eligible); the square box is the passive table. Dashed arrows are the contraction path — the AI never sees a "table hop".
 
 1. `sp` analyzes. `route_requests: [{nodeId: table, question: "how are col1/col2 consumed downstream?"}]`.
 2. Engine sees the target is a table. It forwards sp's question verbatim to the table's downstream bodied neighbors: `viewA` and `viewB`.
@@ -179,45 +157,7 @@ As foundational mandates for the AI Assistant:
 
 ## Tools
 
-The participant exposes a phase-scoped tool surface. `src/ai/toolPolicy.ts` is the single source of truth — one table, one filter helper, used at every phase transition.
-
-```mermaid
-graph TB
-    subgraph DISC[Discovery — Auto mode, wide tool palette]
-        D1[get_context]
-        D2[search_objects]
-        D3[search_ddl]
-        D4[get_object_detail]
-        D5[detect_graph_patterns]
-        D6[start_exploration]
-    end
-    subgraph ACT[ACTIVE — Required mode, narrow palette]
-        A1[submit_findings]
-        A2[get_neighbor_columns<br/>SM only]
-    end
-    subgraph SYN[Synthesis — Auto, wide + report]
-        Y1[get_context]
-        Y2[search_objects]
-        Y3[search_ddl]
-        Y4[get_object_detail]
-        Y5[detect_graph_patterns]
-        Y6[present_result]
-    end
-    subgraph COMP[Completed / follow-up — Auto]
-        C1[search_objects]
-        C2[search_ddl]
-        C3[get_object_detail]
-        C4[start_exploration<br/>supplement]
-        C5[present_result]
-    end
-    DISC -->|start_exploration| ACT
-    ACT -->|agenda drained| SYN
-    SYN -->|final_answer| COMP
-    COMP -.->|supplement| ACT
-    COMP -.->|fresh origin| DISC
-```
-
-Narrow ACTIVE palette is what lets `toolMode.Required` stay effective — multi-tool Required downgrades to Auto on some providers. See [SM ACK/WAIT Contract](#vs-code-api-compliance--ai-tooling).
+The participant exposes a phase-scoped tool surface. `src/ai/toolPolicy.ts` is the single source of truth — one table, one filter helper, used at every phase transition. The narrow ACTIVE palette (below) is what lets `toolMode.Required` stay effective — multi-tool Required downgrades to Auto on some providers.
 
 | Tool | Discovery | ACTIVE (inline BB) | ACTIVE (SM BB + SM CT) | Synthesis | Completed (follow-up) | Purpose |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
@@ -280,30 +220,13 @@ SM mode follows an **"Asymmetric Tiering"** memory pattern to manage context eff
 
 ```mermaid
 flowchart LR
-    subgraph DA[Detail Archive — monotonic, never shipped mid-loop]
-        direction LR
-        S1[Slot 1<br/>hop 1 analysis]
-        S2[Slot 2<br/>hop 2 analysis]
-        S3[Slot 3<br/>hop 3 analysis]
-        S4[Slot 4<br/>hop 4 analysis]
-        SN[Slot N<br/>hop N analysis]
-        S1 --> S2 --> S3 --> S4 --> SN
-    end
-    subgraph WM[Working Memory — shipped every hop]
-        direction LR
-        W1[user_question]
-        W2["&lt;short_term_memory&gt;<br/>last 3 summaries"]
-        W3[current_task]
-        W4[checklist]
-    end
-    H1[Hop 1] -.writes.-> S1
-    H2[Hop 2] -.writes.-> S2
-    HN[Hop N] -.writes.-> SN
-    WM -..->|wiped every hop| CUT[✂ sliding-wipe scissor]
-    DA -->|lifted at synthesis<br/>AiMemoryManager.getResult| SYN[Synthesis turn]
+    HOP[Each hop] -->|writes detail_analysis| DA[Detail Archive<br/>monotonic, never shipped mid-loop]
+    HOP -->|reads| WM[Working Memory<br/>user_question + last 3 summaries<br/>current_task + checklist]
+    WM -.wiped every hop.-> WM
+    DA -->|lifted at synthesis only| SYN[Synthesis turn]
 ```
 
-The archive grows monotonically but never ships mid-loop; working memory is wiped after every successful hop. This is why synthesis sees full evidence but hop-N's context stays bounded.
+The archive grows monotonically but never ships mid-loop; working memory is wiped after every successful hop. Synthesis sees full evidence; hop-N's context stays bounded.
 
 1. **Detail Archive** (`AiMemoryManager.detailSlots`) — full technical `analysis` string per node, written in `submit_findings.detail_analysis`. Never compressed. **Not shipped per hop.** Includes the `reason_for_visit` (concatenated intent questions) to maintain "Human Reasoning" traceability. Exposed at synthesis via `AiMemoryManager.getResult()`.
 2. **Per-hop Working Memory** (`AiMemoryManager.getWorkingMemory`) — a strictly isolated snapshot:
@@ -388,6 +311,8 @@ At `start_exploration` time the AI declares its **classification** via the optio
 - **COMPLETED → DISCOVERY (fresh question)** — when the AI calls `start_exploration` with an `origin` (no supplement) from `completed`, the handler logs `[Phase] completed → discover`, calls `sess.resetExploration()`, and proceeds on the normal fresh-SM path so `confirm_sm_start` fires.
 
 ### Prompt Assembly Architecture
+
+> **Canonical builder reference:** [DEVELOPER_GUIDE.md §8.1 Builder Function Hierarchy](DEVELOPER_GUIDE.md#81-builder-function-hierarchy) (full table of builders, firing conditions, concerns) + [DEVELOPER_GUIDE.md §8.2 Condition Matrix](DEVELOPER_GUIDE.md#82-condition-matrix). [AI_PROMPTS.md §1](AI_PROMPTS.md#1-prompt-layers-the-hourglass-model) covers the Hourglass rationale. The pseudocode below is a high-level locality view for architecture readers.
 
 The system prompt is assembled by `buildStageSystemPrompt` ([`src/ai/lineageParticipant.ts:320`](../src/ai/lineageParticipant.ts#L320)) by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
 

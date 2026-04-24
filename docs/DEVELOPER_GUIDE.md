@@ -105,13 +105,8 @@ Each stage has a single responsibility. YAML rules only run against cleansed inp
 
 ```mermaid
 flowchart LR
-    WV[Webview<br/>React app] -->|postMessage| BR[Bridge boundary]
-    BR -->|Zod<br/>bridgeContract.ts| BH[BridgeHost interface<br/>host.ts]
-    BH --> EXT[Extension host<br/>panelProvider.ts]
-    EXT -->|postMessage| BR2[Bridge boundary]
-    BR2 -->|Zod parse| WV
-    style BR fill:#fde,stroke:#c69,stroke-width:2px
-    style BR2 fill:#fde,stroke:#c69,stroke-width:2px
+    WV[Webview<br/>React app] <-->|postMessage<br/>Zod-validated<br/>bridgeContract.ts| BH[BridgeHost interface<br/>host.ts]
+    BH <--> EXT[Extension host<br/>panelProvider.ts]
 ```
 
 Every `postMessage` hits the Zod cage exactly once in each direction. Inner layers consume parsed types; no re-validation. `BridgeHost` decouples communication from VS Code so the extension logic can be unit-tested in Node.js without a webview.
@@ -135,20 +130,10 @@ Every `postMessage` hits the Zod cage exactly once in each direction. Inner laye
 ### 5.1 The "God Store" (`useAppState.ts`)
 - **Architecture**: The extension uses a centralized state hook to manage the lifecycle of a lineage session.
 - **Key States**:
-    - `loadingPhase`: Tracks `load` → `analyze` → `render`.
+    - `loadingPhase`: Tracks `load` → `analyze` → `render`. Transitions: workspace open → `load`; `DatabaseModel` ready → `analyze`; graph built → `render` (remains there for filter / zoom / theme; returns to `load` on new dacpac).
     - `filter`: A complex `Set`-based object for schema, type, and search filtering.
     - `aiPreview`: Transient state for AI-curated views before they are committed to the `projectStore`.
 - **Constraint**: Avoid "prop drilling" by utilizing `VsCodeContext` for global singletons.
-
-```mermaid
-stateDiagram-v2
-    [*] --> load: workspace opened
-    load --> analyze: DatabaseModel ready
-    analyze --> render: graph built
-    render --> render: filter / zoom / theme change
-    render --> load: user opens new dacpac
-    render --> [*]: panel closed
-```
 
 ### 5.2 CSS Variables
 - **Mandate**: Never hardcode hex/rgb colors in components.
@@ -173,27 +158,15 @@ stateDiagram-v2
 
 ## 6. Testing & AI Verification
 
-```mermaid
-flowchart TB
-    subgraph TOP[Eval Suite — slow, LLM-driven]
-        E[npm run test:eval<br/>Role-based scenarios<br/>Real Copilot Chat]
-    end
-    subgraph MID[Integration — medium, VS Code runtime]
-        I1[vscode-test<br/>clean instance]
-        I2[ai-integration.test.ts<br/>vscode.lm.invokeTool<br/>SM logic, no UI]
-    end
-    subgraph BOT[Unit — fast, deterministic]
-        U1[npm test<br/>parser, graph, DMV,<br/>AI tools, SM robustness]
-        U2[npm run test:unit:ai<br/>heavy AI tool tests]
-        U3[npm run test:snapshot<br/>parser baseline vs<br/>aw-baseline.tsv]
-    end
-    BOT --> MID --> TOP
-    style BOT fill:#cfe8cf,stroke:#2a7
-    style MID fill:#fde9b0,stroke:#c93
-    style TOP fill:#fcc,stroke:#c33
-```
+Run bottom-up — fastest first, slowest last:
 
-Run bottom-up. A parser change: `test:snapshot` first (blocks on regression). An engine change: `test:unit:ai`. A multi-tool flow change: integration. A prompt-wording change: eval.
+| Tier | Speed | Command(s) | Covers |
+|---|---|---|---|
+| **Unit** | fast / deterministic | `npm test`, `npm run test:unit:ai`, `npm run test:snapshot` | Parser, graph, DMV, AI tool registration, SM robustness, parser snapshot vs `aw-baseline.tsv` |
+| **Integration** | medium / VS Code runtime | `vscode-test`, `ai-integration.test.ts` | Dacpac loading, command registration, SM logic via `vscode.lm.invokeTool` (no UI) |
+| **Eval** | slow / LLM-driven | `npm run test:eval` | Role-based deep-exploration scenarios through real Copilot Chat |
+
+Parser change → `test:snapshot` first (blocks on regression). Engine change → `test:unit:ai`. Multi-tool flow change → integration. Prompt-wording change → eval.
 
 ### 6.1 Internal AI Integration Suite (The New "Eval Loop")
 - **Architecture**: AI correctness is validated using `vscode-test` calling real Copilot Chat tools.
@@ -329,6 +302,21 @@ Key rules:
 ### 8.7 Completed Phase — Follow-Up Protocol & Supplement Flow
 
 Canonical state-machine specification: [AI_ARCHITECTURE.md → Phase-Boundary Contract for Prompt Authors](AI_ARCHITECTURE.md#phase-boundary-contract-for-prompt-authors) and [The Four Lifecycle Phases](AI_ARCHITECTURE.md#the-four-lifecycle-phases). What remains here is implementation detail for the engineering audience:
+
+```mermaid
+flowchart TB
+    C[COMPLETED phase<br/>archive + engine survive] --> U{User next-turn intent}
+    U -->|text edit / relabel / prune| R1[re-render via present_result<br/>same formatting contract]
+    U -->|add node X / deferred q| R2[start_exploration<br/>supplement: nodeIds]
+    U -->|truly new question| R3[start_exploration<br/>origin]
+    R2 --> S{prior status === complete?}
+    S -->|yes| SU[engine.supplementAgenda<br/>inlineMode=true<br/>awaiting_findings]
+    S -->|no| ERR[supplement_requires_complete_engine]
+    SU --> HL[Hop loop resumes<br/>archive merges]
+    R3 --> RS[sess.resetExploration<br/>back to discover]
+    HL --> RE[re-emit present_result<br/>enlarged scope]
+```
+
 
 **Transition trigger.** `dispatchExit('final_answer')` (when `sess.stateMachine?.status === 'complete'`) calls `sess.enterCompleted()`. Two log lines fire: INFO `[Phase] synthesis → completed — archive slots=N, deferred=M` + DEBUG `[Phase] follow-up ready — …`.
 
