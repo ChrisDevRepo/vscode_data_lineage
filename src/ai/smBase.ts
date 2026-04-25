@@ -55,13 +55,6 @@ export interface AgendaEntry {
   depth: number;
   /** Specific columns of interest for this node (primarily used in Column Trace mode). */
   activeColumns?: string[];
-  /**
-   * Set when the user's starting point is a non-bodied node (table, external).
-   * The funnel lifts the bipartite contraction for the origin push so the starting
-   * point gets its own agenda slot with a reduced-template prompt (`structural_summary`).
-   * Middle tables (priority 2 routed calls) stay contracted and never get this flag.
-   */
-  isStructuralFocus?: boolean;
 }
 
 /**
@@ -80,6 +73,20 @@ export interface NavigationWorkingMemory extends WorkingMemory {
     /** The node ID currently under investigation. */
     current_focus: string;
   };
+  /** Active depth budget at session start (omitted when unbounded). */
+  depth_budget?: number;
+  /** How the depth budget is enforced. */
+  depth_enforcement?: 'strict' | 'soft' | 'silent';
+  /** Effective depth ceiling including mode headroom and any session extensions. */
+  depth_cap?: number | null;
+  /** Per-node scope-expansion records (soft/silent mode only). */
+  budget_expansions?: Array<{ nodeId: string; depth: number; atHop: number }>;
+  /** Border the user approved at session start — present in SM mode only. */
+  approved_border?: ApprovedBorder;
+  /** Count of out-of-scope routes deferred to the post-session review list. */
+  deferred_count?: number;
+  /** Column-trace aspect, present when the session has `targetColumns`. */
+  column_aspect?: ColumnAspect;
 }
 
 /**
@@ -100,9 +107,6 @@ export interface IHopStateMachine {
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
   /** Current focus node id (node the AI must analyse this hop) — null before the first hop. */
   readonly currentFocus: string | null;
-
-  /** `true` when the current focus is the user's non-bodied starting point — the prompt builder swaps in the reduced `structural_summary` template. */
-  readonly isCurrentFocusStructural: boolean;
 
   /**
    * Detects a slot-hijack attempt — when the AI's authored `detail_analysis` opens
@@ -226,8 +230,6 @@ export class NavigationEngine implements IHopStateMachine {
   protected currentFocusNodeId: string | null = null;
   /** Agenda-entry `question` captured at dequeue so it survives the splice and can label the slot. */
   protected currentFocusQuestion: string | null = null;
-  /** Mirror of `AgendaEntry.isStructuralFocus` captured at dequeue so the prompt builder can select the reduced template. */
-  protected currentFocusIsStructural = false;
   /** Total number of hops executed. */
   protected hopCount = 0;
   /** Breadth-first search depth for nodes from the origin. */
@@ -501,11 +503,6 @@ export class NavigationEngine implements IHopStateMachine {
     return this.currentFocusNodeId;
   }
 
-  /** `true` when the current focus is the user's non-bodied starting point — the prompt builder swaps in the `structural_summary` reduced template. */
-  public get isCurrentFocusStructural(): boolean {
-    return this.currentFocusIsStructural;
-  }
-
   /**
    * Detects a slot-hijack attempt where `detail_analysis` opens by naming a **different** scope node than the declared `focus_node_id`.
    *
@@ -582,7 +579,7 @@ export class NavigationEngine implements IHopStateMachine {
       return {
         error: 'origin_not_found',
         hint: 'Verify the origin node id with search_objects or get_context first. Use the exact id returned by those tools (case-insensitive match against the loaded graph).',
-      } as any;
+      };
     }
 
     this.originNodeId = originNode.id;
@@ -712,14 +709,13 @@ export class NavigationEngine implements IHopStateMachine {
       // consistency, but the AI receives the full list.
       this.currentFocusNodeId = batchEntries[0].nodeId;
       this.currentFocusQuestion = batchEntries[0].question ?? null;
-      this.currentFocusIsStructural = batchEntries[0].isStructuralFocus ?? false;
 
       const nodes = batchEntries.map(e => {
         const n = this.nodeMap.get(e.nodeId)!;
         const fn = buildHopFocusNode(n, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
         if (this.depthBudget !== null) {
           const d = this.depthFromOrigin.get(e.nodeId);
-          if (d !== undefined) (fn as any).depth_from_origin = d;
+          if (d !== undefined) fn.depth_from_origin = d;
         }
         return fn;
       });
@@ -769,7 +765,6 @@ export class NavigationEngine implements IHopStateMachine {
     this.hopCount++;
     this.currentFocusNodeId = entry.nodeId;
     this.currentFocusQuestion = entry.question ?? null;
-    this.currentFocusIsStructural = entry.isStructuralFocus ?? false;
 
     // Synchronize the Column Aspect to only show columns relevant to this specific path
     if (this._columnAspect) {
@@ -798,23 +793,22 @@ export class NavigationEngine implements IHopStateMachine {
     };
 
     if (this.depthBudget !== null) {
-      (workingMemory as any).depth_budget = this.depthBudget;
-      (workingMemory as any).depth_enforcement = this.depthEnforcement;
-      (workingMemory as any).depth_cap = this.computeDepthCap();
+      workingMemory.depth_budget = this.depthBudget;
+      workingMemory.depth_enforcement = this.depthEnforcement;
+      workingMemory.depth_cap = this.computeDepthCap();
       if (this.budgetExpansions.length > 0) {
-        (workingMemory as any).budget_expansions = this.budgetExpansions.slice();
+        workingMemory.budget_expansions = this.budgetExpansions.slice();
       }
     }
 
     if (!this._inlineMode) {
-      const border: ApprovedBorder = {
+      workingMemory.approved_border = {
         schemas: Array.from(this.sessionAllowedSchemas).sort(),
         depth_cap: this.computeDepthCap(),
       };
-      (workingMemory as any).approved_border = border;
-      (workingMemory as any).deferred_count = this._deferredQuestions.length;
+      workingMemory.deferred_count = this._deferredQuestions.length;
       if (this._columnAspect) {
-        (workingMemory as any).column_aspect = this._columnAspect;
+        workingMemory.column_aspect = this._columnAspect;
       }
     }
 
@@ -845,7 +839,7 @@ export class NavigationEngine implements IHopStateMachine {
         : this._status === 'error'
           ? 'The engine is in an error state. Call start_exploration to begin a fresh exploration.'
           : `Engine is in status '${this._status}'. Expected 'awaiting_findings'. Wait for a hop context, or restart via start_exploration if the session was wiped.`;
-      return { error: 'invalid_status', current_status: this._status, hint } as any;
+      return { error: 'invalid_status', current_status: this._status, hint };
     }
 
     const findings = Array.isArray(params) ? params : [params];
@@ -1206,13 +1200,13 @@ export class NavigationEngine implements IHopStateMachine {
       return;
     }
 
-    // Origin push for a non-bodied starting point: give it its own slot with
-    // `isStructuralFocus` so the prompt builder swaps in the reduced
-    // `structural_summary` template. Middle tables (priority 2 routed calls)
-    // stay contracted — the AI's routing intent still passes through them to
-    // their bodied neighbours via the block below.
+    // Origin push for a non-bodied starting point: lift the bipartite
+    // contraction so the user's chosen origin gets its own agenda slot.
+    // Middle tables (priority 2 routed calls) stay contracted — the AI's
+    // routing intent still passes through them to their bodied neighbours
+    // via the block below.
     if (priority === 3) {
-      this.agenda.push({ nodeId: targetId, question, priority, depth, activeColumns: columns, isStructuralFocus: true });
+      this.agenda.push({ nodeId: targetId, question, priority, depth, activeColumns: columns });
       this.agendaIds.add(targetId);
       return;
     }

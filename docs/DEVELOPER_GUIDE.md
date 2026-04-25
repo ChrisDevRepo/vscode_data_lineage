@@ -1,6 +1,6 @@
 ﻿# Developer Guide: Processes & Concepts
 
-This document is the definitive technical reference for the Data Lineage Viz extension. It covers every major architectural component, engineering process, and mandatory coding standard.
+This document is the definitive technical reference for the Data Lineage Viz extension. It covers every major architectural component and engineering process. Coding standards, testing protocol, and contribution hygiene live in [`CONTRIBUTING.md`](../CONTRIBUTING.md) and [`TESTING.md`](TESTING.md).
 
 > **Related documents:** [`AI_ARCHITECTURE.md`](AI_ARCHITECTURE.md) — AI engine behavior, phases, state machines. [`AI_PROMPTS.md`](AI_PROMPTS.md) — prompt-builder hierarchy, YAML rules.
 
@@ -11,9 +11,7 @@ This document is the definitive technical reference for the Data Lineage Viz ext
 3. [SQL Parsing: The Regex Pipeline](#3-sql-parsing-the-regex-pipeline)
 4. [The Bridge: IPC & Zod Validation](#4-the-bridge-ipc--zod-validation)
 5. [UI & State Management](#5-ui--state-management)
-6. [Testing & AI Verification](#6-testing--ai-verification)
-7. [Developer Hygiene](#7-developer-hygiene)
-8. [Prompt System Architecture](#8-prompt-system-architecture)
+6. [Prompt System Architecture](#6-prompt-system-architecture)
 
 ---
 
@@ -21,7 +19,6 @@ This document is the definitive technical reference for the Data Lineage Viz ext
 
 **Priority: Stability > Performance > Features.**
 
-### 1.1 Critical Gates
 - **Explicit Approval Required**: Any change to parser logic (`sqlBodyParser.ts`), AI state machines, or prompt surfaces (`extension.ts`, `aiOutputTemplates.yaml`) must be reviewed and approved.
 - **Zero Regression Policy**: Any change to SQL parsing rules must result in an identical output for the baseline stored procedure set in `tests/fixtures/aw-baseline.tsv`.
     - **Baseline Composition**: Currently includes ~40 procedures (10 classic, 21 SDK-style from committed dacpacs). Customer or proprietary dacpacs must **never** be committed to this repository — only AdventureWorks fixtures are allowed under `test/`.
@@ -29,12 +26,6 @@ This document is the definitive technical reference for the Data Lineage Viz ext
     - **Metadata Driven**: SQL parsing is 100% driven by YAML metadata (`assets/defaultParseRules.yaml`).
     - **Profiling Transparency**: The `profilingEngine.ts` must generate standard T-SQL. All generated statistics queries must be logged to the Output Channel so DBAs can verify they are non-destructive and performant.
     - **Action Logging**: Every significant action (SQL execution, file read, AI tool invocation) must be logged with category tags.
-
-### 1.2 Coding Standards
-- **Zod Validation**: Strict boundaries required. IPC bridge validation, tool inputs, and extension host boundaries must strictly use zod for strong type safety, runtime validation, and security.
-- **DRY & OOP**: Emphasize explicit composition, reusability, and delegation. Do not duplicate logic or introduce anti-patterns to bypass structural designs. The NavigationEngine should serve as the single source of truth.
-- **No Chatty Comments**: Omit overly chatty, conversational inline comments inside functions. Focus inline comments on the *why* or complex business rules, not the *what*.
-- **Rigorous JSDoc**: Provide rigorous, professional JSDoc comments for all exported types, functions, classes, and properties.
 
 ---
 
@@ -117,11 +108,7 @@ Every `postMessage` hits the Zod cage exactly once in each direction. Inner laye
 
 ### 4.2 Logging Protocol (`src/utils/log.ts`)
 - **Standard Categories**: `[AI]`, `[Bridge]`, `[Config]`, `[DB]`, `[Dacpac]`, `[Detail]`, `[Parse]`, `[Project]`, `[Stats]`.
-- **Truncation Rules (Human View)**:
-    - AI Prompts/Reasoning: Max 200 chars.
-    - JSON Payloads: Max 300 chars.
-- **AI Truncation Rule (Semantic Integrity)**:
-    - **NEVER** truncate semantic content intended for the AI Brain (DDL, column lists, results).
+- **AI Truncation Rule (Semantic Integrity)**: **NEVER** truncate semantic content intended for the AI Brain (DDL, column lists, results). Human-view truncation thresholds and helpers live in [`.claude/rules/logging.md`](../.claude/rules/logging.md).
 
 ---
 
@@ -143,104 +130,55 @@ Every `postMessage` hits the Zod cage exactly once in each direction. Inner laye
 ### 5.3 Metadata-Driven AI Overlays
 - **Logic**: The presentation of AI findings (sections, badges, descriptions) AND what the AI captures per hop are both driven by `assets/aiOutputTemplates.yaml`.
 - **Customization**: Users override both capture and render behaviour without touching the state-machine code. Override path: VS Code setting `dataLineageViz.ai.outputTemplateFile`. Users read the YAML's `stages:` field on each key to understand where that key's instruction is injected.
-- **Naming convention: phase-pure keys.** `*_capture` keys fire at ACTIVE; `*_subsection` keys fire at SYNTHESIS. No dual-stage preambles, no `CAPTURE (active phase)` / `RENDER (synthesis phase)` labels inside instruction text. The AI reads clean, phase-specific guidance without meta about phases it isn't in.
+- **Naming convention: capture vs synthesis keys.** `*_capture` keys fire at ACTIVE — they govern the per-hop write into `detail_analysis`. Synthesis keys (`summary`, `title`, `intro`, `sections`, `closing`, etc.) govern how the pre-formatted slot bodies are assembled / grouped / framed. There are no synthesis-side mirrors of capture keys — slot bodies arrive at synthesis already formatted and are lifted as written.
 - **Stage routing — authoritative map.** `STAGE_BY_KEY` in `templateRenderer.ts` is the single source of truth for phase routing. The YAML `stages:` field on each key is informational for power users reading the YAML; a user overlay that disagrees with the canonical routing is logged (WARN) and ignored. Fallback on malformed user YAML: loader shows a VS Code notification + reverts to shipped defaults.
 - **Phase assignment** — canonical mapping (source of truth: `STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)):
   - `discover` → `summary`, `description` (chat-only answers without SM — Class D routing)
-  - `active` (per-hop) → `business_capture`, `technical_capture` (capture rules for `detail_analysis`)
-  - `done` (synthesis) → full render set (`title`, `intro`, `sections`, `closing`, `notes`, `highlights`, `loading_pattern`, `description`, `business_subsection`, `technical_subsection`) + code-injected `**Mission type:** <value>` line
-  - post-synthesis follow-up → same template set as `discover` (`summary`, `description`) plus `present_result` for re-render; see `docs/AI_PROMPTS.md Â§ 1.5` for the closing-circle loop
+  - `active` (per-hop) → `business_capture`, `technical_capture` (capture rules for `detail_analysis`; classification-gated)
+  - `synthesis` (and `completed` reuses the same set) → `summary`, `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes` + code-injected `**Mission type:** <value>` line referenced by the `intro` instruction
 - **Engine invariants stay in TS.** `buildPhaseBlock('active')` in `prompts.ts` owns the archive contract (`detail_analysis` is SOLE evidence, ANCHORING rule). `buildModeBlock` in `smPrompts.ts` owns the per-mode verdict + routing rules. LaTeX directive lives in `buildBaseBlock` (core rules) because it is tied to the webview renderer. Do not restate these in YAML.
-- **Onion layers**: `src/ai/templateRenderer.ts` projects graph topology into the description — `renderMetadataBand()` prepends In/Out/Loading-Pattern between `intro` and the first section; `renderSectionObjectTable()` injects a `| Object | In | Out |` table inside any section that groups ≥ 2 nodes. Content stays AI-authored; the renderer only supplies topology. Integrated via `orderAndAssemble()` (`src/ai/tools.ts`) through the `metadataBand` + `sectionTableFor` options.
-- **Classification gate** (`src/ai/classification.ts`): mission-type signal (`business | technical | both`) resolved heuristically from mission brief + user question at the active→synthesis transition. Zod-enum-validated at `AiSession.setClassification()` (boundary). Inline mode streams a one-line banner; SM mode folds the signal into the pre-existing `confirm_sm_start` messaging. `CLASSIFICATION_GATED` in `templateRenderer.ts` maps capture + subsection keys to their allowed classification values — at ACTIVE the gate is open (classification undefined → both angles fire); at SYNTHESIS it filters to the resolved value.
+- **Classification gate** (`src/ai/classification.ts`): mission-type signal (`business | technical | both`) resolved heuristically from mission brief + user question at the active→synthesis transition. Zod-enum-validated at `AiSession.setClassification()` (boundary). Inline mode streams a one-line banner; SM mode folds the signal into the pre-existing `confirm_sm_start` messaging. `CLASSIFICATION_GATED` in `templateRenderer.ts` maps capture keys to their allowed classification values — at ACTIVE the gate is open (classification undefined → both angles fire and the slot body carries both); at SYNTHESIS the cue surfaces only as the `**Mission type:** <value>` line that the `intro` instruction references.
 
 ---
 
-## 6. Testing & AI Verification
+## 6. Prompt System Architecture
 
-Run bottom-up — fastest first, slowest last:
+### 6.1 Builder Function Hierarchy
 
-| Tier | Speed | Command(s) | Covers |
-|---|---|---|---|
-| **Unit** | fast / deterministic | `npm test`, `npm run test:unit:ai`, `npm run test:snapshot` | Parser, graph, DMV, AI tool registration, SM robustness, parser snapshot vs `aw-baseline.tsv` |
-| **Integration** | medium / VS Code runtime | `vscode-test`, `ai-integration.test.ts` | Dacpac loading, command registration, SM logic via `vscode.lm.invokeTool` (no UI) |
-| **Eval** | slow / LLM-driven | `npm run test:eval` | Role-based deep-exploration scenarios through real Copilot Chat |
+`buildStageSystemPrompt` ([`lineageParticipant.ts:309-353`](../src/ai/lineageParticipant.ts#L309-L353)) assembles the system prompt by appending blocks in this fixed order:
 
-Parser change → `test:snapshot` first (blocks on regression). Engine change → `test:unit:ai`. Multi-tool flow change → integration. Prompt-wording change → eval.
-
-### 6.1 Internal AI Integration Suite (The New "Eval Loop")
-- **Architecture**: AI correctness is validated using `vscode-test` calling real Copilot Chat tools.
-- **Tiers**:
-    - **Unit AI** (`npm run test:unit:ai`): Validates tools and navigation engine logic.
-    - **Eval Suite** (`npm run test:eval`): Runs deep explorations and role-based scenarios.
-    - **Snapshot Suite** (`npm run test:snapshot`): Detects parser regressions against `aw-baseline.tsv`.
-- **Quality Gate**: Parser changes MUST be verified via `npm run test:snapshot`. Update the baseline via `npm run test:snapshot:update` only after manual audit of the diff.
-
-### 6.2 External Integration Tests
-- **Tool**: `vscode-test` launches a clean VS Code instance.
-- **Deterministic Core**: Validates dacpac loading, BFS graph traversal, and command registration without LLM dependencies.
-- **AI Tool Mocking**: `src/test/suite/ai-integration.test.ts` contains programmatic tests that invoke tools directly via `vscode.lm.invokeTool` to verify SM logic with zero UI latency.
-
----
-
-## 7. Developer Hygiene
-
-- **File Size**: Decompose functions at >100 lines. Decompose components at >500 lines.
-- **Type Check**: Always run `npx tsc -p tsconfig.extension.json --noEmit` before committing to the `testing` branch.
-- **Versioning**: Follow the `feature/*` → `testing` → `main` branch flow.
-
----
-
-## 8. Prompt System Architecture
-
-### 8.1 Builder Function Hierarchy
-
-All prompt text is assembled by composing pure functions. Each function owns exactly one concern.
-
-```mermaid
-flowchart TB
-    START([buildStageSystemPrompt<br/>phase, isInline, targetCols, classification]) --> BG[buildGeneralSystemPrompt<br/>always fires]
-    BG --> PH{phase?}
-    PH -->|discover| BD[buildDiscoveryPrompt]
-    PH -->|active| BA[buildActivePhasePrompt<br/>isInline]
-    PH -->|synthesis| BS[buildSynthesisPrompt]
-    PH -->|completed| BF[buildFollowUpPrompt]
-    BA --> BTU[buildToolUsageBlock]
-    BTU --> BMB[buildModeBlock<br/>BB vs CT]
-    BMB --> CT{targetCols?}
-    CT -->|yes| BCA[buildColumnAspectPrompt]
-    CT -->|no| RS
-    BCA --> RS[resolveStagePrompt<br/>YAML *_capture / *_subsection<br/>classification-gated]
-    BD --> RS
-    BS --> RS
-    BF --> RS
-    RS --> MB[buildMissionBlock<br/>active + synthesis + completed]
-    MB --> MEM{SM active?}
-    MEM -->|yes| BMEM[buildMemoryBlock<br/>&lt;short_term_memory&gt;]
-    MEM -->|no| END([system prompt ready])
-    BMEM --> END
+```
+1. buildGeneralSystemPrompt          (always — role, platform, schemas, global invariants)
+2. one phase-specific block:
+     discover    → buildDiscoveryPrompt
+     active      → buildActivePhasePrompt
+                   + buildToolUsageBlock
+                   + buildModeBlock(BB|CT)
+                   + buildColumnAspectPrompt        (CT only)
+     synthesis   → buildSynthesisPrompt
+     completed   → buildFollowUpPrompt
+3. resolveStagePrompt                 (always — YAML *_capture / *_subsection, classification-gated)
+4. buildMissionBlock                  (active + synthesis + completed — <mission_brief>, <current_task>)
+5. buildMemoryBlock                   (SM active only — <short_term_memory> + tally)
 ```
 
-The composition order is fixed — builders later in the pipeline see all earlier output. Adding a builder means inserting at the correct position; adding a phase means extending the `{phase?}` decision.
+Adding a builder = insert at the correct step. Adding a phase = extend step 2.
 
+| Function | File | Concern |
+|---|---|---|
+| `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants (validate, no fabrication, LaTeX, output-shape decision) |
+| `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules |
+| `buildActivePhasePrompt(isInline)` | `prompts.ts` | Hop loop discipline, verdict semantics, archive contract |
+| `buildSynthesisPrompt` | `prompts.ts` | One-paragraph cue: archive is closed, lift slot bodies (do not rewrite), assemble per the synthesis output templates above, anchor intro + closing |
+| `buildFollowUpPrompt` | `prompts.ts` | Refinement, not re-exploration. Edits/prunes → `present_result`; deferred adds → `start_exploration({ supplement })`; lookups → `get_object_detail` / `search_ddl` |
+| `buildToolUsageBlock` | `prompts.ts` | `submit_findings` / `get_ddl_batch` usage + routing |
+| `buildModeBlock(isInline, targetColumns?)` | `smPrompts.ts` | BB verdict/analysis/routing; CT = BB + column protocol |
+| `buildColumnAspectPrompt(targetColumns)` | `prompts.ts` | `<column_state>` XML block (CT context) |
+| `resolveStagePrompt(templates, phase, cls)` | `templateRenderer.ts` | YAML `*_capture` (active, classification-gated) + synthesis output templates (synthesis); `completed` reuses `'synthesis'` so re-renders keep the formatting contract |
+| `buildMissionBlock(brief, q, task)` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks |
+| `buildMemoryBlock(stm, tally, hop, n)` | `prompts.ts` | `<short_term_memory>` XML block + tally line |
 
-| Function | File | Fires when | Concern |
-|---|---|---|---|
-| `buildGeneralSystemPrompt(platform, schemas, phase)` | `prompts.ts` | always | Role, platform, schemas, phase label, global invariants (validate, no fabrication, LaTeX, output-shape decision) |
-| `buildDiscoveryPrompt()` | `prompts.ts` | discover only | Discovery-phase protocol: search, mission_brief authoring, `start_exploration` rules |
-| `buildActivePhasePrompt(isInline)` | `prompts.ts` | active only | Active-phase protocol: hop loop discipline, verdict semantics, archive contract |
-| `buildSynthesisPrompt()` | `prompts.ts` | synthesis only | Synthesis-phase protocol: READ → ANSWER → GROUP → WRITE. Forces a one-sentence big-picture intro before per-section work and names variant-sibling grouping (same section + per-variant distinction lines) without compressing per-slot depth |
-| `buildFollowUpPrompt()` | `prompts.ts` | completed only | Follow-up-phase protocol: refinement, not re-exploration. Text edits / prunes → re-render `present_result`; deferred-question adds → `start_exploration({ supplement })`; catalog lookups → `get_object_detail` / `search_ddl` |
-| `buildToolUsageBlock()` | `prompts.ts` | active only | `submit_findings` / `get_ddl_batch` usage + routing |
-| `buildModeBlock(isInline, targetColumns?)` | `smPrompts.ts` | active only | BB verdict/analysis/routing; CT = BB + column protocol |
-| `buildColumnAspectPrompt(targetColumns)` | `prompts.ts` | CT active only | `<column_state>` XML block (column-trace context) |
-| `resolveStagePrompt(templates, phase, cls)` | `templateRenderer.ts` | always | YAML `*_capture` (active) + `*_subsection` (synthesis) rules. `completed` passes `'synthesis'` so re-renders keep the same formatting contract |
-| `buildMissionBlock(brief, q, task)` | `prompts.ts` | active + synthesis + completed | `<mission_brief>` + `<current_task>` XML blocks |
-| `buildMemoryBlock(stm, tally, hop, n)` | `prompts.ts` | SM active only | `<short_term_memory>` XML block + tally line |
-
-Composition lives at [`src/ai/lineageParticipant.ts:309-353`](../src/ai/lineageParticipant.ts#L309-L353) `buildStageSystemPrompt`.
-
-### 8.2 Condition Matrix
+### 6.2 Condition Matrix
 
 Four axes drive what fires: **phase** (discover/active/synthesis/completed), **execution** (SM/inline), **nav mode** (BB/CT), **classification** (undefined/business/technical/both).
 
@@ -259,10 +197,10 @@ Four axes drive what fires: **phase** (discover/active/synthesis/completed), **e
 | `buildMissionBlock` | — | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `buildMemoryBlock` | — | ✅ | ✅ | — | — | — |
 
-`*` active: classification=undefined → both `business_capture` and `technical_capture` fire.  
-`**` synthesis / completed: `business_subsection`/`technical_subsection` gated by resolved classification. `completed` reuses the synthesis YAML so `present_result` re-renders keep the same formatting contract.
+`*` active: classification=undefined → both `business_capture` and `technical_capture` fire so the slot body carries both angles.  
+`**` synthesis / completed: full synthesis output template set fires (no classification gate at synthesis — the classification surfaces only as the `**Mission type:** <value>` line that the `intro` instruction references). `completed` reuses the synthesis YAML so `present_result` re-renders keep the same formatting contract.
 
-### 8.3 Hybrid Markdown + XML Format
+### 6.3 Hybrid Markdown + XML Format
 
 - **Markdown headers** for static structural sections (protocols, numbered rules, verdict tables).
 - **XML tags** only for dynamic per-hop data that rules already reference by name:
@@ -273,7 +211,7 @@ Four axes drive what fires: **phase** (discover/active/synthesis/completed), **e
 
 This matches the Anthropic guidance: XML tags for precise slot identification of dynamic content; Markdown for document structure.
 
-### 8.4 What Moves Out of Tool Result JSON
+### 6.4 What Moves Out of Tool Result JSON
 
 The following fields were previously in the `getHopContext()` JSON return and are being moved to the system prompt:
 
@@ -286,20 +224,20 @@ The following fields were previously in the `getHopContext()` JSON return and ar
 
 Remaining in JSON: `sm_status`, `hop`, `agenda_remaining`, `focus_node` (DDL), `neighbors`, `working_memory.checklist`, `working_memory.approved_border`, `working_memory.topological_map`, `working_memory.recent_rejections`, `working_memory.column_aspect`.
 
-### 8.5 Agenda Composition — Bipartite Rule
+### 6.5 Agenda Composition — Bipartite Rule
 
 Canonical specification lives in [AI_ARCHITECTURE.md → Bipartite Analysis Model](AI_ARCHITECTURE.md#bipartite-analysis-model). Summary for prompt authors: the agenda contains only bodied nodes (view / proc / function); tables are routable + inspectable but never a hop focus; `NavigationEngine.enqueueHop` in [`src/ai/smBase.ts`](../src/ai/smBase.ts) is the single funnel that enforces this. The consequence for `<current_task>` — inherited intent through edge contraction — is why no "table-hop" prompt variant exists.
 
 Test coverage: [`tests/unit/navigation-engine-bipartite.test.ts`](../tests/unit/navigation-engine-bipartite.test.ts).
 
-### 8.6 Adding or Changing Prompts
+### 6.6 Adding or Changing Prompts
 
 Key rules:
 1. Every prompt change must target a specific builder function in [`src/ai/prompts.ts`](../src/ai/prompts.ts) or [`src/ai/smPrompts.ts`](../src/ai/smPrompts.ts). No free-form strings in [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts).
 2. Changes to YAML `*_capture` and `*_subsection` keys must be paired — a capture change without the matching subsection change drifts content from capture to render.
 3. Run `npm test` after every change (see [`TESTING.md`](TESTING.md)).
 
-### 8.7 Completed Phase — Follow-Up Protocol & Supplement Flow
+### 6.7 Completed Phase — Follow-Up Protocol & Supplement Flow
 
 Canonical state-machine specification: [AI_ARCHITECTURE.md → Phase-Boundary Contract for Prompt Authors](AI_ARCHITECTURE.md#phase-boundary-contract-for-prompt-authors) and [The Four Lifecycle Phases](AI_ARCHITECTURE.md#the-four-lifecycle-phases). What remains here is implementation detail for the engineering audience:
 

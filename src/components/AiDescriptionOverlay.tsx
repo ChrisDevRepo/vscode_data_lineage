@@ -100,6 +100,21 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     return <a href={href} {...props}>{children}</a>;
   }
 
+  function H3Component({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+    const arr = React.Children.toArray(children);
+    const first = arr[0];
+    if (typeof first === 'string' && first.startsWith('Objects ')) {
+      return (
+        <h3 {...props}>
+          <span className="ln-ai-objects-label">Objects</span>
+          {first.slice('Objects '.length)}
+          {arr.slice(1)}
+        </h3>
+      );
+    }
+    return <h3 {...props}>{children}</h3>;
+  }
+
   /**
    * Copies the raw markdown description to the system clipboard.
    */
@@ -166,7 +181,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                 <Markdown
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                  components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent }}
+                  components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent, h3: H3Component }}
                 >{description}</Markdown>
               </div>
             )}

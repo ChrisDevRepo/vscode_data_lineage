@@ -502,6 +502,13 @@ body {
 .ln-ai-description-md a {
   color: var(--ln-text-link);
 }
+.ln-ai-description-md .ln-ai-objects-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ln-text-muted);
+  margin-right: 6px;
+  vertical-align: middle;
+}
 
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,
 body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-overlay {

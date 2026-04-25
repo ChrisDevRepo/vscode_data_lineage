@@ -178,33 +178,24 @@ export function buildActivePhasePrompt(isInline: boolean): string {
 
 
 /**
- * Constructs the prompt for the Synthesis (Reporting) phase.
+ * Constructs the synthesis-phase cue.
  *
  * @remarks
- * Expresses the final report as a four-step *process* (READ → ANSWER → GROUP → WRITE) so
- * the model reasons about the big-picture answer and role-based grouping before emitting
- * `present_result`, instead of jumping straight into per-slot enumeration. The anti-preamble
- * line is a direct application of Anthropic's long-context guidance.
+ * One paragraph — the active-phase capture rules already governed how each
+ * slot body was written; the synthesis-stage YAML governs how those bodies
+ * are assembled, grouped, and framed. This cue points the model at the
+ * archive and reminds it the slots are pre-formatted bodies to lift, not
+ * raw evidence to rewrite.
  *
- * @returns A string containing the synthesis-phase protocol.
+ * @returns A string containing the synthesis-phase cue.
  */
 export function buildSynthesisPrompt(): string {
   return [
-    '# Synthesis Protocol',
-    'The archive is closed; routing is no longer available. The original question is above',
-    '(first User message). The archive is in the last tool_result (`result.detail_slots[]`).',
-    'If the tool_result contains `deferred_questions[]`, these are objects found during BFS that were skipped because they fell outside the approved schema/depth border.',
-    '',
-    'Work in this order:',
-    '1. READ the archive. Every slot already has full-depth analysis — do not rewrite it, reuse it.',
-    '2. ANSWER first. State in one or two sentences how the pipeline in the archive answers the',
-    "   user's question. This becomes `intro` in `present_result`. Do not start with \"Based on…\".",
-    '3. GROUP slots by data-flow role. Nodes that serve the same role (same stage, same pattern)',
-    '   share one section; use `suggested_sections` as the starting skeleton. Sibling variants',
-    '   (same SP pattern, differing only in target columns) live in one section with a one-line',
-    '   distinction per variant. Distinct logic always gets its own section.',
-    '4. WRITE `present_result`. Follow the dependency chain in one direction. Lift business rules',
-    '   and SQL expressions verbatim from `slot.analysis`. Keep per-slot depth intact.',
+    'The archive is closed. Each slot in the last `tool_result.detail_slots[]` is a',
+    'pre-formatted body — lift, do not rewrite. Assemble per the synthesis output',
+    'templates above. Anchor the intro to the user\'s question; close with a',
+    'through-line if the analysis spans 5+ sections. Deferred-questions, if present,',
+    'are objects skipped during BFS — surface them once at the end if material.',
   ].join('\n');
 }
 

@@ -1,45 +1,27 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # AI Output Templates — how @lineage captures and formats its analysis.
 #
-# This file drives BOTH what the AI captures per hop AND how the final
-# present_result document is rendered. Edit any `instruction` text below to
-# change the AI's behaviour.
+# Drives BOTH what the AI captures per hop AND how the final present_result
+# document is rendered. Edit `instruction` text to change behaviour.
 #
-# VS Code override: setting `dataLineageViz.ai.outputTemplateFile`. Point it
-# at your own file; your file merges on top of this default — your keys win.
+# VS Code override: `dataLineageViz.ai.outputTemplateFile`. Your overlay
+# merges on top of this default — your keys win.
 #
-# ── Understanding `stages:` ──────────────────────────────────────────────────
-# Every key declares a `stages:` list saying when its instruction is shown to
-# the AI. Three stages:
+# Stages:
+#   discovery  = first chat response, no SM. Trivial questions only.
+#   active     = per-hop analysis. The AI writes one detail_analysis slot
+#                per node into the unbounded archive. *_capture keys fire
+#                here. Loading pattern, distribution hints, SQL evidence and
+#                ⚠️ invariants are captured AT WRITE TIME — synthesis lifts
+#                what the slot already contains.
+#   synthesis  = final document assembly. summary, title, intro, sections,
+#                closing, description, highlights, notes fire here. Slot
+#                bodies arrive pre-formatted — synthesis assembles, groups,
+#                frames; it does not rewrite.
 #
-#   discovery  = first response in a chat turn, before any exploration has
-#                started. Fires only for trivial questions that never engage
-#                the state machine.
-#
-#   active     = per-hop analysis. The AI writes one `detail_analysis` slot
-#                per node into the archive. Keys at this stage shape WHAT
-#                the AI captures. If you don't capture it here, it's gone —
-#                the synthesis phase has no access to the raw DDL.
-#
-#   synthesis  = final document assembly. The AI builds the present_result
-#                payload from the archive it just captured. Keys at this
-#                stage shape HOW the final document reads.
-#
-# Convention for the two content angles:
-#   *_capture    = shown at ACTIVE — controls what the AI archives.
-#   *_subsection = shown at SYNTHESIS — controls how that content renders.
-#
-# Edits to a capture key change what gets written into detail memory per hop.
-# Edits to a subsection key change how that captured content appears in the
-# final document. Both must agree — edit one without the other and content
-# drifts between capture and render.
-#
-# `stages:` itself is informational. The authoritative routing lives in code
-# (`src/ai/templateRenderer.ts` → STAGE_BY_KEY). An overlay that contradicts
-# the canonical routing is logged and ignored.
-#
-# Renderer-tied format (LaTeX for math, markdown tables, code fences) is
-# handled by the TypeScript system prompt — do not restate in YAML.
+# Authoritative routing lives in code (templateRenderer.ts → STAGE_BY_KEY).
+# YAML `stages:` is informational — overlays that contradict are logged
+# and ignored.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Card + top of the document ───────────────────────────────────────────────
@@ -47,9 +29,8 @@
 summary:
   stages: [synthesis]
   instruction: >
-    One-line graph purpose, ~120 chars (max 300). A short teaser, not the
-    analysis. Don't compress analysis depth to fit this line — detailed
-    content belongs in the sections below.
+    One-line graph purpose, ~120 chars (max 300). Short teaser, not the
+    analysis. Detailed content belongs in the sections below.
   example: "Revenue lineage from raw orders through price calculation to FactSalesReport."
 
 title:
@@ -58,95 +39,69 @@ title:
     Optional. ≤80 chars. Names the analysis subject and its key finding:
     "[Subject] — [key computation, pattern, or finding]". Include the final
     output object if space allows. Omit step counts and numbers.
-    BAD: "TotalRevenue" (too vague), "Revenue Lineage Analysis Report" (too long).
     GOOD: "TotalRevenue — Qty × UnitPrice, 6-hop chain to FactSalesReport"
   example: "TotalRevenue — Qty × UnitPrice, 6-hop ETL to FactSalesReport"
 
 intro:
   stages: [synthesis]
   instruction: >
-    Optional. 2–4 sentences of narrative prose as a standalone paragraph before
-    the numbered sections. Answer: what does the analysis reveal, where does
-    data originate, what structural pre-conditions does the reader need. No
-    bullet lists, no headings. Do not repeat section content — context only.
-
+    2–4 sentences of narrative prose as a standalone paragraph before the
+    sections. Open by acknowledging the lens implied by the user's question
+    (the **Mission type:** set above — `business`, `technical`, or `both`)
+    and answer at headline level: what does the analysis reveal, where does
+    data originate, what structural pre-conditions does the reader need.
     Refer to shared state by role ("central scratch-pad table", "terminal
     publication step") rather than by listing its columns. Schema details
-    (column names, data types, nullability) belong in the later sections, not
-    the intro.
-    BAD: "This graph shows how TotalRevenue flows from Source to Target."
-    BAD: "tableT holds ColA, ColB, ColC (… 40 columns)…" — schema dump in intro.
-    GOOD: "TotalRevenue is the product of Qty and UnitPrice — both computed
-    independently before joining at spBuildSalesReport…"
+    (column names, data types, nullability) belong in the later sections.
   example: >
-    TotalRevenue is the product of Qty and UnitPrice — both computed
-    independently before joining at spBuildSalesReport. Qty originates in
-    raw order imports; UnitPrice is derived from supplier margins with a
-    markup formula.
+    Read as a business-driven view: TotalRevenue is the product of Qty
+    and UnitPrice — both computed independently before joining at
+    spBuildSalesReport. Qty originates in raw order imports; UnitPrice is
+    derived from supplier margins with a markup formula.
 
-# ── Section grouping (container shape) ───────────────────────────────────────
+# ── Section grouping (assembly only — slot bodies arrive pre-formatted) ──────
 
 sections:
   stages: [synthesis]
   instruction: >
     Assemble sections[] for the present_result payload. Each section is a
-    (label, node_ids[] 1..N, text 1..1) tuple:
-      label    = unique name for this logical group (also the badge chip on the graph)
-      node_ids = nodes that display this label chip (1..N)
-      text     = markdown body (one per label)
+    (label, node_ids[] 1..N, text 1..1) tuple. Lift each slot's `analysis`
+    text from the archive — it is already a pre-formatted body written at
+    the right angle for the user's question. Synthesis assembles, groups,
+    frames; it does not rewrite.
 
-    Follow the dependency chain in one direction (Source → Transform → Target,
-    or the reverse). Section headers: `## <label>` — do not prepend numbers
-    ("## 1 Label", "## 2 Label"); plain `##` keeps labels stable across
-    reorders and matches VS Code chat's native header styling.
+    Same label on multiple nodes groups them; one section per unique label.
+    Label by role ("Pipeline Seeder", "EV Computation Hub", "Reverse
+    Consolidation") rather than by tech artefact ("Loading Pattern", "SCD
+    Resolution"). Follow the dependency chain in one direction
+    (Source → Transform → Target, or the reverse). Section header:
+    `## <label>` — no leading numbers (system numbers them).
 
-    Grouping guidance:
-      Same label on multiple nodes groups them. One section per unique label.
-      Focused questions (≤10 nodes): 2–4 sections.
-      Broad explorations (10–20 nodes): 4–8 sections.
-      Full pipeline documentation (20+ nodes): up to 10–12 sections.
-      Use `suggested_sections` from the completion result as your starting
-      structure.
+    Density: 2–4 sections for focused (≤10 nodes), 4–8 for broad (10–20),
+    up to 10–12 for full pipeline (20+). Use `suggested_sections` from the
+    completion result as a starting skeleton.
 
-    Consolidation rules (apply to every section):
+    Sibling variants. When 3+ slots share the same shape (same formula
+    pattern, differing only in filters / keys / outputs), emit ONE
+    comparison table whose rows are the variants and columns are the
+    differing fields. Hoist the shared formula / SQL once above the
+    table. Preserve every ⚠️ from every slot — in the variant's row or a
+    per-variant invariants list after the table. Distinct logic always
+    gets its own section.
 
-    1. Pass / Prune slots. For slots with `verdict: pass` or `prune`, render
-       as one-line mentions inside a `### Passthrough / Pruned` subsection —
-       do not expand their `analysis` text. Example: "spWireOnly — passthrough,
-       no transformation."
-    2. Sibling variant grouping. When 3+ sibling slots share the same shape
-       (same formula pattern, differing only in filters / keys / outputs),
-       emit ONE comparison table whose rows are the variants and columns are
-       the differing fields. Hoist the shared formula / SQL once above the
-       table. Do not emit one bullet per variant.
-    3. Invariant preservation. Preserve every ⚠️ invariant from every slot —
-       in the variant's comparison-table row or a per-variant invariants
-       list after the table. A single merged ⚠️ that "mostly covers" multiple
-       variants is information loss.
-    4. Formulas on their own line with a `**Label:**` lead-in. Never inline in
-       narrative prose.
-    5. Column walls. If a section is about a procedure, do not enumerate a
-       neighbour table's full schema inside that section — the table
-       structure belongs in its own section (when the starting point is a
-       table) or in the node's own catalog view, not in a procedure's body.
-
-    BAD order: jumping non-linearly (Target → Source → Transform → Views).
-    BAD text: "Stores project data." / "Reads from Source." (no detail).
-    BAD: one bullet per sibling variant (Alloc1a/1b/1c/1d → 4 similar paragraphs).
-    GOOD order: follow the dependency chain in one direction without skipping.
-    GOOD: one shared formula + 4-row comparison table + per-variant ⚠️ list.
+    Pass / Prune slots. Render as one-line mentions inside a
+    `### Passthrough / Pruned` subsection — do not expand their text.
   example: '{ "label": "Revenue Calculation", "node_ids": ["dbo.spCalcRevenue"], "text": "…" }'
 
 closing:
   stages: [synthesis]
   instruction: >
-    Optional. 1–2 sentences after the sections, separated by a --- divider.
-    Use only for a cross-cutting risk / data-quality issue / design note
-    that applies to the whole graph and doesn't fit any single section.
-    Prefix risks with ⚠️. Omit if nothing material to add.
-    BAD: "Overall this correctly computes TotalRevenue." (summary — never repeat)
-    GOOD: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 —
-    verify price coverage before each INSERT run."
+    Optional, after the sections, separated by a `---` divider. Two uses:
+    (a) when the analysis spans 5+ sections, end with a one-paragraph
+    through-line that names the overall pipeline answer in the lens the
+    user requested; (b) flag a cross-cutting risk / data-quality issue
+    that applies to the whole graph and doesn't fit any single section
+    (prefix with ⚠️). Omit if neither applies.
   example: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 — verify price coverage before each INSERT run."
 
 # ── Fallback body when sections[] is absent ──────────────────────────────────
@@ -161,11 +116,6 @@ description:
     inside code blocks.
     Supported: ## headings, **bold**, `code`, lists, | tables |, math, code blocks.
     Not supported: mermaid, HTML, images, footnotes.
-  bad_example: "Data flows from staging through transformation to consumption."
-  good_example: |
-    ## Revenue Calculation
-    `spCalcRevenue` reads `FactOrders.OrderQty` and `ProductPricing.CostPrice`,
-    then `vw_SalesData` applies the region filter: `WHERE RegionCode = 'WEST'`.
 
 # ── Graph-side decorations ───────────────────────────────────────────────────
 
@@ -184,56 +134,13 @@ notes:
     description. First line visible, rest on hover via \n.
     If the node is a passthrough, say what it passes or filters
     ("Passthrough — WHERE IsValid = 1 filter only").
-    BAD: "Stores project data." / "Reads from Source." (no specifics).
     GOOD: "Computes TotalRevenue = Qty × UnitPrice at INSERT\nAlso computes
     AdjustedRevenue = TotalRevenue - Discount"
   example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"
 
-# ── Metadata band (rendered when origin is an SP) ────────────────────────────
-
-loading_pattern:
-  stages: [synthesis]
-  instruction: >
-    Only emit when the origin is a stored procedure. Classify how the SP
-    loads its target with one coarse value. Suggested values, but write a
-    short phrase in your own words if none fit:
-      reload        — TRUNCATE + INSERT / full refresh
-      append        — INSERT-only, no UPDATE or DELETE
-      upsert        — MERGE or UPDATE + conditional INSERT
-      historization — versioned history / change tracking
-      purge         — DELETE-only / retention cleanup
-      orchestration — EXECs other SPs, no data mutation on the target itself
-    Coarse only — no SCD1 / SCD2 / CDC sub-variants. If ambiguous, omit.
-    Views and UDFs: omit.
-  example: "reload"
-
-# ── Shared guidance (fires once regardless of classification) ─────────────────
-
-general:
-  stages: [active, synthesis]
-  instruction: >
-    Write at full depth — this IS the documentation; there is no follow-up step.
-    Aim 800–2 000 chars per `Columns / logic` section. If a procedure has more
-    logic than fits, split into labelled sub-sections rather than
-    prose-extending a single section — the archive is unbounded, additional
-    sub-sections are preferred to sprawling paragraphs.
-    Format to fit the content:
-    Column renames or mappings → | From | To | Notes | table.
-    Multi-step logic → ordered 1. 2. 3. list.
-    Key SQL expressions → ```sql code fence (snippet only, not the full statement).
-    Column and object names → `backtick`.
-    Risk or data-quality issue → ⚠️ prefix inline inside the section where it occurs — not consolidated in closing.
-    Supported: ## headings, **bold**, `code`, tables, math, code fences.
-    Not supported: mermaid, HTML, images, footnotes.
-
-# ── Business angle ───────────────────────────────────────────────────────────
-# `business_capture` runs at ACTIVE — defines what the AI writes into detail
-# memory per hop for the business angle.
-# `business_subsection` runs at SYNTHESIS — defines how that content renders
-# in the final document.
-# Edits to both keys flow end-to-end. Change one without the other and you
-# risk captured content that never appears in the output, or output that
-# references content the AI never captured.
+# ── Per-hop capture (active phase) ───────────────────────────────────────────
+# These keys govern what the AI writes into detail_analysis per hop. The
+# unbounded archive preserves every character verbatim for synthesis to lift.
 
 business_capture:
   stages: [active]
@@ -243,170 +150,59 @@ business_capture:
     Question shape: if the question asks WHAT the data means or WHY a value is
     computed, lead with business meaning first. If it asks HOW the pipeline runs,
     write the business context after the technical_capture slot.
-    Business Purpose: open with one sentence naming the actual domain role of this
-    node — not "stores data" or "processes records" but the specific function:
-    "computes revenue at INSERT", "allocates budget units to cost centres",
-    "historizes price changes into SCD rows". Specific > generic.
-    Document every business rule visible in the DDL — every CASE condition, every
-    threshold value, every allocation formula, every special-case branch. If the
-    DDL has five CASE conditions, all five belong in the archive. Selective capture
-    produces thin synthesis.
+    Business Purpose: open with one sentence naming the actual domain role of
+    this node — not "stores data" or "processes records" but the specific
+    function: "computes revenue at INSERT", "allocates budget units to cost
+    centres". Specific > generic.
+    Document every business rule visible in the DDL — every CASE condition,
+    every threshold value, every allocation formula, every special-case
+    branch. Selective capture produces thin synthesis.
     Capture per node:
-    - Business meaning: what each column / computation represents, which
-      consumers are affected, what the rule achieves for the business.
-    - Formulas with their variable definitions (write the math directly).
+    - Business meaning per column / computation; consumer impact.
+    - Formulas with variable definitions (math directly).
     - Column renames or mappings as a | From | To | Business meaning | table.
     - Risk or data-quality issue — prefix with ⚠️.
     - How this node answers the user's question.
-    Name every column that the focus procedure's logic reads or writes.
-    Columns that are merely present on a neighbour table belong in the
-    `lineage_get_neighbor_columns` inspection output, not in this
-    `detail_analysis` — do not enumerate a table's full schema inside a
-    procedure's slot. When describing columns used by the procedure, use a
-    | Column | Role | ⚠️ | table rather than a comma-joined paragraph.
+    Always list each column the focus procedure reads or writes by name —
+    quote the predicate or write the formula. Columns that are merely present
+    on a neighbour table belong in `lineage_get_neighbor_columns`, not here.
     Sibling variants: write your individual slot normally. Synthesis will
-    consolidate 3+ sibling slots into a comparison table — do not pre-merge
-    in the active-phase slot.
-    Banned: "various columns", "several fields", "certain conditions" — list
-    the names or quote the predicate.
-    BAD: "COLUMNS: OrderQty (int), UnitPrice (money) — stores order data."
-    BAD: enumerating 40 columns of a neighbour table in a procedure's slot.
+    consolidate 3+ sibling slots into a comparison table — do not pre-merge.
     GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT.
     Qty = units sold (renamed from OrderQty in CTE_Orders). UnitPrice = list
     price after markup (CostPrice × (1 + MarkupPct)). ⚠️ Null MarkupPct
     collapses UnitPrice to CostPrice — verify coverage before each run."
-
-business_subsection:
-  stages: [synthesis]
-  instruction: |
-    Emit as the main body of the section's text. No subheading.
-    Write the WHAT angle: formulas, column renames as | From | To | Business meaning |
-    table, what each value represents, which consumers are affected.
-    Lift every business rule from the archive and present it at full depth — every
-    formula, every rename, every condition. Synthesis with thin sections wastes the
-    archive; expand, do not compress.
-    Risk or data-quality issue: ⚠️ prefix inline inside this section text — closing is
-    for cross-cutting issues only.
-    Name every column explicitly. "Various columns" → list each name.
-    BAD: "spCalcRevenue computes revenue from orders and products."
-    GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT.
-    | From | To | Business meaning |
-    |---|---|---|
-    | OrderQty | Qty | Units sold |
-    | CostPrice × (1 + MarkupPct) | UnitPrice | List price after markup |
-    ⚠️ Null MarkupPct collapses UnitPrice to CostPrice — verify coverage."
-  example: |
-    `spCalcRevenue` computes TotalRevenue at INSERT:
-    $TotalRevenue = Qty \times UnitPrice$
-
-    | From             | To         | Business meaning |
-    |---|---|---|
-    | OrderQty         | Qty        | Units sold |
-    | CostPrice*Markup | UnitPrice  | Price after supplier margin |
-
-    ⚠️ Null MarkupPct collapses UnitPrice to CostPrice — verify coverage.
-
-# ── Technical angle ──────────────────────────────────────────────────────────
-# `technical_capture` runs at ACTIVE — what the AI writes for the technical
-# angle. `technical_subsection` runs at SYNTHESIS — how it renders.
 
 technical_capture:
   stages: [active]
   instruction: >
     Write the HOW angle into detail_analysis — how the pipeline runs, the SQL
     expressions that drive it, performance characteristics.
-    Question shape: if the question asks HOW the pipeline runs, rebuild order, or
-    join strategies, lead with execution first. If it asks WHAT the data means,
-    write the technical context after the business_capture slot.
+    Question shape: if the question asks HOW the pipeline runs, rebuild order,
+    or join strategies, lead with execution first. If it asks WHAT the data
+    means, write the technical context after the business_capture slot.
     Capture per node:
-    - SQL evidence: copy key expressions verbatim — JOIN predicate, CASE WHEN
-      condition, COALESCE fallback, computed column formula. Quote as written in
-      the DDL; do not paraphrase. Snippet only, not the full INSERT/SELECT statement.
+    - SQL evidence: copy key expressions verbatim — JOIN predicate,
+      CASE WHEN condition, COALESCE fallback, computed column formula. Quote
+      as written in the DDL; do not paraphrase. Snippet only, not the full
+      INSERT/SELECT statement.
+    - Loading pattern as a fact: "TRUNCATE + INSERT — full reload, no delta
+      tracking" / "MERGE upsert by ProductId" / "INSERT-only append" / etc.
+      Coarse description; write the words that fit the SP.
     - Every computed column: formula alongside its snippet.
-    - Relationships with role labels: "reads lookup from DimProduct", "writes via
-      MERGE to FactSalesReport", "triggered by spLoadOrders".
+    - Relationships with role labels: "reads lookup from DimProduct",
+      "writes via MERGE to FactSalesReport", "triggered by spLoadOrders".
     - Join types when hinted (HASH / MERGE / LOOP) — ⚠️ warn on Cartesian.
     - Antipatterns: excessive DISTINCT, OR in join predicates, correlated
       subqueries in SELECT.
     - Distribution / indexing hints: partition key, hash-distribution column.
-    - DDL comments, version annotations — carry author intent lost after this hop.
-    Variant siblings: capture the first in full; siblings write "Same skeleton as
-    <first>; deltas: <specific differences in filters, weights, target columns>".
-    Constraints: no Column I/O tables, no nullability or precision prose.
-    Name every column. Banned: "various", "several", "certain".
-    BAD: "The procedure joins product and order tables and applies filter conditions."
+    - DDL comments, version annotations — carry author intent lost after
+      this hop.
+    Variant siblings: capture the first in full; siblings write "Same
+    skeleton as <first>; deltas: <specific differences in filters, weights,
+    target columns>".
     GOOD: "Loading: TRUNCATE + INSERT — full reload, no delta tracking.
     CTE_Orders: base filter WHERE IsActive = 1 (sargable, index on IsActive).
     INNER HASH JOIN DimProduct on ProductId — correct for large-orders × small-products.
     LEFT JOIN vwPriceList on ProductId — ⚠️ unmatched rows produce NULL downstream;
     no ISNULL guard before the final INSERT."
-
-structural_summary:
-  stages: [active]
-  instruction: >
-    Reduced capture template — fires only when the user's starting point is a
-    non-bodied node (a table or any node without a DDL body). Replaces the
-    business_capture / technical_capture templates for this single hop.
-
-    Describe what this node **is**; point to the surrounding procedures for
-    what it **does**. Non-bodied nodes carry structure, not behaviour.
-
-    Required sections (use these headings exactly):
-
-    ## Purpose
-    One sentence naming the role of this node in the pipeline (≤200 chars).
-    Not "stores data" — specific: "central scratch-pad accumulating layered
-    Calc_ columns across periods", "terminal publication fact table reloaded
-    from CadenceWorker", "lookup of currency FX rates".
-
-    ## Columns
-    Render the columns list from `lineage_get_neighbor_columns` (or the node's
-    catalog inspection) as a `| Column | Type | Role / ⚠️ |` table. Role is
-    a short phrase (key / dim / metric / audit / computed). Flag nullability
-    risks with ⚠️ inline. Do not invent per-column commentary beyond what the
-    tool returns — factual metadata only.
-
-    ## Upstream sources
-    Bulleted list of adjacent bodied nodes (procedures / views / functions)
-    that **write to** this node. One line per source: node id + one-sentence
-    role ("spCadenceRule_INIT — full reload from STAGING_CADENCE.CadenceExtract").
-
-    ## Downstream consumers
-    Bulleted list of adjacent bodied nodes that **read from** this node. One
-    line per consumer: node id + one-sentence role.
-
-    ## Grain / keys
-    Primary key + common join keys from foreign keys. One short paragraph.
-
-    Banned in this template: transform formulas, CASE logic, business rules,
-    step-by-step behaviour. Those belong in the procedure slots where the
-    DDL is available and will be analysed in their own hops. Surface them by
-    pointing at the relevant procedures in Upstream sources / Downstream
-    consumers — do not replicate their logic here.
-
-technical_subsection:
-  stages: [synthesis]
-  instruction: |
-    Emit as a `#### Technical` subheading below the business body in the same section text.
-    Write the HOW angle: how the pipeline runs, SQL expression evidence, join strategies,
-    loading patterns, constraint coverage, antipatterns, rebuild order.
-    Quote key SQL expressions exactly as captured — do not paraphrase.
-    Every computed column: SQL snippet + its LaTeX formula side by side.
-    Variant siblings: DISTINCT logic → full block per variant. SIMILAR logic →
-    delta-mode "Same skeleton as spCalcRevenue; deltas: [specific differences in
-    filters, weights, target columns]". Every variant still gets its own #### Technical block.
-    BAD: "The procedure applies several transformations using standard SQL patterns."
-    GOOD: "Loading: TRUNCATE + INSERT — full reload on every run.
-    INNER HASH JOIN FactOrders on ProductId — correct shape for large-orders × small-products.
-    LEFT JOIN vwPriceList on ProductId — unmatched rows yield NULL before INSERT.
-    ⚠️ No ISNULL guard — NULL price propagates silently to downstream aggregations."
-  example: |
-    ```sql
-    UnitPrice    = CostPrice * (1 + MarkupPct)
-    TotalRevenue = Qty * UnitPrice
-    ```
-    $TotalRevenue = Qty \times CostPrice \times (1 + MarkupPct)$
-
-    Performance / antipatterns:
-    - INNER HASH JOIN on ProductId — correct shape for large-orders × small-products.
-    - No DISTINCT, no OR in the join predicate.

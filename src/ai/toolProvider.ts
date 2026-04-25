@@ -22,7 +22,6 @@ import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNod
 import { type SerializedFilterState, type AIViewMetadata } from '../engine/projectStore';
 import { PendingGateSchema } from './sessionPhase';
 import { buildSynthesisReminder } from './smPrompts';
-import { renderMetadataBand } from './templateRenderer';
 import { ClassificationSchema, CLASSIFICATION_LABEL } from './classification';
 
 /**
@@ -315,11 +314,25 @@ class ToolHandler {
 
       const parsed = SubmitFindingsInputSchema.safeParse(input);
       if (!parsed.success) {
-        const issue = parsed.error.issues[0];
-        const field = issue?.path?.join('.') || '(root)';
+        // Surface specific field paths so the model can correct the right field on retry.
+        // The previous root-only "(root): Invalid input" forced guess-work — see 2026-04-25
+        // session, hop 3, where a missing `summary` cost 34s + 5480 input tokens.
+        const seen = new Set<string>();
+        const fieldErrors: string[] = [];
+        for (const issue of parsed.error.issues) {
+          if (issue.path.length === 0) continue;
+          const key = issue.path.join('.');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          fieldErrors.push(`${key}: ${issue.message}`);
+          if (fieldErrors.length >= 3) break;
+        }
+        const hint = fieldErrors.length > 0
+          ? `Invalid submit_findings input — ${fieldErrors.join('; ')}.`
+          : `Invalid submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, detail_analysis, summary, verdict.`;
         return this.logAndReturn('submit_findings', {
           error: 'invalid_input',
-          hint: `Invalid submit_findings input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: focus_node_id, detail_analysis, summary, verdict.`,
+          hint,
         }, input);
       }
 
@@ -354,7 +367,7 @@ class ToolHandler {
         const finalResult = engine.getResult();
         sess.storeBbResult(finalResult);
         if (!sess.classification) sess.setClassification('business');
-        const synthesisReminder = buildSynthesisReminder(sess.memory.getUserQuestion(), sess.classification, sess.outputTemplates.technical_subsection);
+        const synthesisReminder = buildSynthesisReminder();
         return this.logAndReturn('submit_findings', {
           ok: true,
           done: true,
@@ -438,10 +451,8 @@ class ToolHandler {
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       if (input.sections?.length) {
-        const originId = sess.resultGraph?.originNodeId;
         const nodeMap = new Map<string, LineageNode>((model.nodes as LineageNode[]).map(n => [n.id, n]));
-        const metadataBand = originId ? renderMetadataBand(originId, nodeMap, input.loading_pattern) : '';
-        const assembled = orderAndAssemble(input.sections, { title: input.title, intro: input.intro, closing: input.closing, metadataBand, nodeMap });
+        const assembled = orderAndAssemble(input.sections, { title: input.title, intro: input.intro, closing: input.closing, nodeMap });
         assembledBadges = assembled.badges;
         if (!input.description) input.description = assembled.description;
         input.sections = undefined;

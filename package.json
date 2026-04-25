@@ -595,7 +595,7 @@
         "toolReferenceName": "lineage_get_neighbor_columns",
         "displayName": "Get Neighbor Columns",
         "userDescription": "Inspect a neighbor's columns for pruning decisions during active SM exploration.",
-        "modelDescription": "Returns structural metadata (columns, types, nullability, foreign keys) for one or more direct neighbors of the current focus node. Use during active SM exploration to decide whether to prune a neighbor (e.g. when the focus DDL uses 'SELECT *' and you need the neighbor's column list). NEVER returns DDL bodies. Ids must be direct neighbors of the current focus and within the active BFS scope.",
+        "modelDescription": "Returns structural metadata (columns, types, nullability, foreign keys) for one or more direct neighbors of the current focus node. Use during active SM exploration to decide whether to prune a neighbor (e.g. when the focus DDL uses 'SELECT *' and you need the neighbor's column list). NEVER returns DDL bodies. Pass neighbor ids only — do NOT include the focus node id itself; neighbors must also be within the active BFS scope.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -1115,7 +1115,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/sm-robustness.test.ts && tsx tests/unit/templateRenderer.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/session-stale.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts",
+    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/sm-robustness.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/session-stale.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts",
     "test:unit": "npm run test",
     "test:unit:ai": "tsx tests/unit/ai-tools.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts",
     "test:dacpac": "tsx tests/unit/dacpacExtractor.test.ts",

@@ -20,6 +20,7 @@ import { filterLmTools, activeModeOf, getAllowedLmToolNames } from './toolPolicy
 import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
 import { PerformanceCollector } from './diagnostics';
+import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from './messageEnvelope';
 export { classifyGateReply } from './sessionPhase';
 
 /**
@@ -184,7 +185,14 @@ export class LineageParticipant {
     }
 
     sess.touch();
-    this.logger.info(`[${sess.id}] Session start — model=${model.id}, prompt="${trunc(request.prompt, 200)}"`);
+    this.logger.info(
+      `[${sess.id}] Session start — ` +
+      `model=${model.vendor}/${model.family}/${model.version} (id=${model.id}, max=${model.maxInputTokens}t) ` +
+      `cmd=${request.command ?? '(none)'} ` +
+      `refs=${request.references.length} toolRefs=${request.toolReferences.length} ` +
+      `history=${chatContext.history.length} ` +
+      `prompt="${trunc(request.prompt, 200)}"`
+    );
 
     let effectivePrompt = request.prompt;
     if (effectivePrompt === RECOMMEND_FOLLOWUPS_TRIGGER) {
@@ -281,11 +289,10 @@ export class LineageParticipant {
       }
     }
 
-      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; isStructuralFocus: boolean; text: string } | null = null;
+      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; text: string } | null = null;
       const buildStablePart = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
         const engine = sess.stateMachine;
-        const isStructuralFocus = phase === 'active' && !!engine?.isCurrentFocusStructural;
-        if (cachedStablePart && cachedStablePart.phase === phase && cachedStablePart.isStructuralFocus === isStructuralFocus) return cachedStablePart.text;
+        if (cachedStablePart && cachedStablePart.phase === phase) return cachedStablePart.text;
         const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
         const filterSchemas = sess.filter?.schemas || [];
         const totalSchemaCount = sess.model!.schemas.length;
@@ -308,7 +315,7 @@ export class LineageParticipant {
         // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
         // re-renders keep the same formatting contract.
         const templatesPhase = phase === 'completed' ? 'synthesis' : phase;
-        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, isStructuralFocus);
+        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification);
         const parts: string[] = [base, phaseSpecific];
 
         if (phase === 'active' && engine) {
@@ -324,7 +331,7 @@ export class LineageParticipant {
         }
 
         const text = parts.filter(Boolean).join('\n');
-        cachedStablePart = { phase, isStructuralFocus, text };
+        cachedStablePart = { phase, text };
         return text;
       };
 
@@ -406,11 +413,8 @@ export class LineageParticipant {
       }
     }
 
-    const messages: vscode.LanguageModelChatMessage[] = [
-      vscode.LanguageModelChatMessage.User(systemPrompt),
-      ...historyMessages,
-    ];
-    messages.push(vscode.LanguageModelChatMessage.User(effectivePrompt));
+    const envelope = new MessageEnvelope();
+    envelope.seed(systemPrompt, effectivePrompt, historyMessages);
     const toolCallRounds: any[] = [];
     const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
     const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
@@ -425,7 +429,6 @@ export class LineageParticipant {
       // Reset per-turn presentation flag so the button gate reflects THIS turn only.
       sess.presentResultCalledThisTurn = false;
       let actionRequiredPending = false;
-      let synthCorrectiveCount = 0;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
       let lastProgressLine = '';
@@ -444,7 +447,7 @@ export class LineageParticipant {
         const tRoundStart = Date.now();
         let roundInputTokens = 0;
         try {
-          roundInputTokens = await model.countTokens(serializeMessages(messages));
+          roundInputTokens = await model.countTokens(serializeMessages(envelope.toArray() as vscode.LanguageModelChatMessage[]));
           totalRoundInputTokens += roundInputTokens;
           if (roundInputTokens > peakRoundInputTokens) peakRoundInputTokens = roundInputTokens;
         } catch (err) {
@@ -465,13 +468,13 @@ export class LineageParticipant {
          * 
          * Memory Strategy (Pro/Con):
          * We use a custom "Sliding Memory" implementation rather than generic utilities like @vscode/chat-extension-utils.
-         * Pro: Authoritative history wipes (messages.length = 0) keep the context window focused and token-efficient.
+         * Pro: Authoritative wipes via {@link MessageEnvelope.wipeAndSeed} keep the context window focused.
          * Pro: Domain-specific JSON compaction (via historyManager.ts) preserves gate payloads while stripping noise.
          * Con: Requires manual tool-loop orchestration (MAX_ROUNDS).
          */
         const tools: vscode.LanguageModelChatTool[] = lineageTools.map(t => ({
-          name: t.name, 
-          description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'), 
+          name: t.name,
+          description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'),
           inputSchema: t.inputSchema
         }));
 
@@ -480,7 +483,9 @@ export class LineageParticipant {
           ? vscode.LanguageModelChatToolMode.Auto
           : requestedMode;
 
-        const response = await model.sendRequest(messages, { tools, toolMode }, token);
+        // Pre-send invariant: orphan tool_results would otherwise surface as a remote 400.
+        envelope.assertWellFormed();
+        const response = await model.sendRequest(envelope.toArray() as vscode.LanguageModelChatMessage[], { tools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
@@ -520,38 +525,25 @@ export class LineageParticipant {
           if (activePhase === 'active' && engineAwaiting) {
             this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — SM self-terminate blocked; injecting corrective prompt`);
             if (assistantParts.length > 0) {
-              messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
+              envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
             }
-            messages.push(vscode.LanguageModelChatMessage.User(
+            envelope.pushUserText(
               'Free-form responses are outside protocol in SLIDING MEMORY mode. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
-            ));
+            );
             continue;
           }
-          // Synthesis guard: if the AI wrote prose instead of calling present_result, inject a
-          // corrective and retry. Capped at 2 attempts; on the third miss it falls through to
-          // final_answer so the user is not left hanging indefinitely. Trim the conversation to
-          // the minimum required to complete the synthesis call — system prompt, user question,
-          // and the last tool_result carrying the archive — so retry cost does not compound.
-          if (activePhase === 'synthesis' && synthCorrectiveCount < 2) {
-            synthCorrectiveCount++;
-            this.logger.debug(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting corrective prompt (attempt ${synthCorrectiveCount})`);
-            const systemMsg = messages[0];
-            const userQuestionMsg = messages[1];
-            const lastToolResultIdx = (() => {
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].content.some(p => p instanceof vscode.LanguageModelToolResultPart)) return i;
-              }
-              return -1;
-            })();
-            const essentials: vscode.LanguageModelChatMessage[] = [systemMsg];
-            if (userQuestionMsg) essentials.push(userQuestionMsg);
-            if (lastToolResultIdx > 1) essentials.push(messages[lastToolResultIdx]);
-            essentials.push(vscode.LanguageModelChatMessage.User(
-              'Call `lineage_present_result` now with the archive in the last tool_result. Structured tool output is required — do not emit prose.'
-            ));
-            messages.length = 0;
-            messages.push(...essentials);
-            continue;
+          // Synthesis terminal: present_result is the explicit terminator. If the model called it
+          // this turn, exit final_answer. If the model wrote prose without calling it, render the
+          // archive directly to the chat — retrying would just rephrase the same prompt against a
+          // model that already chose prose, and the previous corrective-rebuild path was the
+          // origin of the 2026-04-25 HTTP-400 (orphaned tool_result after Bedrock User-merge).
+          if (activePhase === 'synthesis') {
+            if (sess.presentResultCalledThisTurn) {
+              this.logger.debug(`Round ${roundCount} [SYNTHESIS] — terminated after present_result success`);
+            } else {
+              this.logger.warn(`Round ${roundCount} [SYNTHESIS] — no tool call and present_result not invoked; rendering archive fallback`);
+              this.renderArchiveFallback(sess, writer);
+            }
           }
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
@@ -562,7 +554,7 @@ export class LineageParticipant {
         }
 
         if (actionRequiredPending && responseText.length > 0) actionRequiredPending = false;
-        messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
+        envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
         const resultParts: vscode.LanguageModelToolResultPart[] = [];
 
         let roundHadCacheHit = false;
@@ -607,7 +599,7 @@ export class LineageParticipant {
           }
         }
 
-        messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
+        envelope.pushUserToolResults(resultParts);
         drainPendingUserNotices();
 
         for (const call of toolCalls) {
@@ -626,7 +618,7 @@ export class LineageParticipant {
             };
             this.logger.warn(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
             writer.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
-            messages.push(vscode.LanguageModelChatMessage.User(JSON.stringify(abortPayload)));
+            envelope.pushUserText(JSON.stringify(abortPayload));
             return { kind: 'aborted', reason: `repeat_reject:${f.name}:${lastErrorText}` };
           }
         }
@@ -645,7 +637,7 @@ export class LineageParticipant {
             } catch (e) { this.logger.debug(`[Gate] tool-result not JSON or envelope failed Zod parse: ${sanitizeForLog(String(e))}`); }
           }
         }
-        if (actionRequiredPending) messages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, buildActionRequiredGate(['analyze_and_respond'])));
+        if (actionRequiredPending) envelope.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, buildActionRequiredGate(['analyze_and_respond'])));
         if (consentGate) return { kind: 'gate', gate: consentGate };
 
         toolCallRounds.push({ response: responseText, toolCalls });
@@ -666,7 +658,7 @@ export class LineageParticipant {
           this.logger.info(`[Phase] discover → active — mode=${mode} tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
           invalidateStablePart();
           systemPrompt = buildStageSystemPrompt('active');
-          messages[0] = vscode.LanguageModelChatMessage.User(systemPrompt);
+          envelope.setSystemPrompt(systemPrompt);
         }
 
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
@@ -679,15 +671,16 @@ export class LineageParticipant {
           invalidateStablePart();
           systemPrompt = buildStageSystemPrompt('synthesis');
           if (!sess.stateMachine.inlineMode) {
-            const lastAssistant = messages[messages.length - 2];
-            let lastResult = messages[messages.length - 1];
-
             const archive = sess.memory.getResult();
             const deferred = sess.stateMachine.deferredQuestions;
 
-            // Inject deferred questions into the final tool result so Synthesis AI can see them.
-            if (lastResult.content.some(p => p instanceof vscode.LanguageModelToolResultPart)) {
-              const parts = lastResult.content.map(p => {
+            // Locate the trailing tool-call pair by content shape (structural — survives any
+            // notice/gate insertions between the last submit and this point).
+            const pair = envelope.findLastToolPair();
+            let synthesisPair: ToolPair | undefined = pair;
+            if (pair) {
+              // Inject deferred questions into the final tool_result so synthesis AI sees them.
+              const newResultParts = pair.result.content.map(p => {
                 if (p instanceof vscode.LanguageModelToolResultPart) {
                   const textPart = p.content.find(cp => cp instanceof vscode.LanguageModelTextPart) as vscode.LanguageModelTextPart | undefined;
                   if (textPart) {
@@ -695,23 +688,18 @@ export class LineageParticipant {
                       const val = JSON.parse(textPart.value);
                       val.deferred_questions = deferred;
                       return new vscode.LanguageModelToolResultPart(p.callId, [new vscode.LanguageModelTextPart(JSON.stringify(val))]);
-                    } catch { }
+                    } catch { /* leave non-JSON parts untouched */ }
                   }
                 }
                 return p;
               }) as vscode.LanguageModelToolResultPart[];
-              lastResult = new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, parts);
+              const mutatedResult = new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, newResultParts);
+              synthesisPair = { assistant: pair.assistant, result: mutatedResult };
             }
 
-            const beforeCount = messages.length;
-            messages.length = 0;
-            messages.push(
-              vscode.LanguageModelChatMessage.User(systemPrompt),
-              vscode.LanguageModelChatMessage.User(effectivePrompt),
-              lastAssistant,
-              lastResult
-            );
-            this.logger.info(`[Synthesis] Context cleaned: ${beforeCount} → ${messages.length} messages; envelope preserved (${archive.detail_slots.length} slots, ${deferred.length} deferred)`);
+            const beforeCount = envelope.length;
+            envelope.wipeAndSeed(systemPrompt, effectivePrompt, synthesisPair);
+            this.logger.info(`[Synthesis] Context cleaned: ${beforeCount} → ${envelope.length} messages; envelope preserved (${archive.detail_slots.length} slots, ${deferred.length} deferred)`);
           }
         }
 
@@ -734,16 +722,9 @@ export class LineageParticipant {
           }
           if (!anyError) {
             consecutiveErrorRounds = 0;
-            const lastAssistant = messages[messages.length - 2];
-            const lastResult = messages[messages.length - 1];
             // Rebuild system prompt on every wipe so <current_task> and <short_term_memory> stay current.
             systemPrompt = buildStageSystemPrompt('active');
-            messages.length = 0;
-            messages.push(
-              vscode.LanguageModelChatMessage.User(systemPrompt),
-              vscode.LanguageModelChatMessage.User(effectivePrompt)
-            );
-            messages.push(lastAssistant, lastResult);
+            envelope.wipeAndSeed(systemPrompt, effectivePrompt);
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
           } else {
             consecutiveErrorRounds++;
@@ -751,16 +732,8 @@ export class LineageParticipant {
               // Bounded error-preserve: after 3 consecutive error rounds, force a wipe
               // that keeps only the last error result so the AI still sees what broke
               // but the history does not grow unbounded within MAX_ROUNDS.
-              const lastAssistant = messages[messages.length - 2];
-              const lastResult = messages[messages.length - 1];
               systemPrompt = buildStageSystemPrompt('active');
-              messages.length = 0;
-              messages.push(
-                vscode.LanguageModelChatMessage.User(systemPrompt),
-                vscode.LanguageModelChatMessage.User(effectivePrompt),
-                lastAssistant,
-                lastResult,
-              );
+              envelope.wipeAndSeed(systemPrompt, effectivePrompt);
               this.logger.warn(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
               consecutiveErrorRounds = 0;
             } else {
@@ -812,6 +785,44 @@ export class LineageParticipant {
    * @param roundCount - Total execution rounds completed.
    * @param maxRounds - The configured round budget for the session.
    */
+  /**
+   * Streams the captured per-node archive directly to the chat when synthesis
+   * exits without {@link sess.presentResultCalledThisTurn}.
+   *
+   * @remarks
+   * Replaces the previous synthesis-corrective retry loop. The model already
+   * chose prose; rephrasing the prompt rarely changes that and was the path
+   * that produced the 2026-04-25 HTTP-400 (orphaned tool_result after Bedrock
+   * User-merge in the corrective rebuild). A deterministic fallback render
+   * gives the user the analysis that was actually performed instead of an
+   * error or two redundant retries.
+   */
+  private renderArchiveFallback(sess: AiSession, writer: ChatResponseWriter): void {
+    const archive = sess.memory.getResult();
+    const slots = archive.detail_slots;
+    if (slots.length === 0) {
+      writer.markdown('\n\n_Synthesis fallback: no analysis was captured this session._\n');
+      return;
+    }
+    const userQuestion = sess.memory.getUserQuestion();
+    const lines: string[] = [
+      '',
+      '> Synthesis fallback — the model did not invoke `present_result`. Captured analysis below.',
+      '',
+    ];
+    if (userQuestion) lines.push(`# ${userQuestion}`, '');
+    for (const slot of slots) {
+      const heading = slot.badge_label
+        ? `${slot.schema}.${slot.name} — ${slot.badge_label}`
+        : `${slot.schema}.${slot.name}`;
+      lines.push(`## ${heading}`);
+      const body = (slot.analysis && slot.analysis.length > 0) ? slot.analysis : slot.summary;
+      if (body) lines.push('', body);
+      lines.push('');
+    }
+    writer.markdown(lines.join('\n'));
+  }
+
   private dispatchExit(exit: HopLoopExit, sess: AiSession, writer: ChatResponseWriter, userPrompt: string, roundCount: number, maxRounds: number): void {
     switch (exit.kind) {
       case 'gate': {
@@ -841,7 +852,7 @@ export class LineageParticipant {
           this.logger.info(`[${sess.id}] [Phase] synthesis → completed — archive slots=${sess.memory.slotCount}, deferred=${sess.stateMachine!.deferredQuestions.length}`);
           this.logger.debug(`[${sess.id}] [Phase] follow-up ready — next turn refines via present_result / supplement; no fresh exploration unless the user asks a new trace.`);
           // Only show the graph button when present_result was actually invoked this turn —
-          // prevents a stale/empty button when synthesis exited via the corrective fallback.
+          // prevents a stale/empty button when synthesis exited via the archive fallback.
           if (this.getActivePanel() && sess.presentResultCalledThisTurn) {
             const originalQ = sess.memory.getUserQuestion() || userPrompt;
             writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });

@@ -122,37 +122,14 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
 }
 
 
-import { CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
-
 /**
  * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
  *
  * @remarks
- * Follows Anthropic long-context guidance: instructions at the highest-attention slot
- * improve compliance. The user question itself is NOT restated here — it already sits at
- * msg [1] of the synthesis envelope as the original user prompt, so a duplicate here
- * would add tokens without improving anchoring.
- *
- * @param _question - Kept in the signature for backward-compatible callsites but no
- *   longer emitted in the reminder body.
+ * One-line cue at the highest-attention slot (Anthropic long-context guidance).
+ * The user question, archive, and synthesis output templates are all already in
+ * the envelope — this reminder reasserts only the gestalt rule.
  */
-export function buildSynthesisReminder(
-  _question: string,
-  classification?: ClassificationValue,
-  technicalSubsectionInstruction?: string,
-): string {
-  const lines = [
-    '## Synthesis Reminder',
-    '- Target: High-fidelity `present_result` sections.',
-    '- Requirement: 3+ sentences per badged node with SQL evidence.',
-    '- Fallback: Cite missing nodes in chat prose, do not omit analyzed evidence.',
-  ];
-
-  if ((classification === 'technical' || classification === 'both') && technicalSubsectionInstruction?.trim()) {
-    lines.push(
-      `### Technical Instruction\n${technicalSubsectionInstruction.trim()}`,
-    );
-  }
-
-  return lines.join('\n');
+export function buildSynthesisReminder(): string {
+  return '## Synthesis Reminder — Lift slots, assemble + group, anchor intro + closing.';
 }

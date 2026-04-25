@@ -1,6 +1,6 @@
 # AI Assistant Architecture — "Grounded Router"
 
-> **Related documents:** [`AI_PROMPTS.md`](AI_PROMPTS.md) — prompt-builder hierarchy, YAML capture/render rules. [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) — broader engineering reference (ingestion, parsing, bridge, UI, testing).
+> **Related documents:** [`AI_PROMPTS.md`](AI_PROMPTS.md) — prompt-builder hierarchy, YAML capture/render rules. [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) — broader engineering reference (ingestion, parsing, bridge, UI, prompt system).
 
 ## Read this first by role
 
@@ -123,19 +123,11 @@ This pattern mirrors Petri nets (transitions fire, places are passive), Weiser's
 
 The invariant is enforced by a single funnel — `enqueueHop` in [`src/ai/smBase.ts`](../src/ai/smBase.ts) — which is the only code path that writes to the agenda. By construction, a non-bodied node never becomes a hop target *except at the user's starting point* (see next section).
 
-### Exception — starting-point table summary
+### Exception — starting-point table
 
 When the user points their analysis at a non-bodied node (a table, typically), contracting the origin would leave the question without a dedicated slot for the node the user actually asked about. The final report would then either (a) lose the table-centric dossier entirely, or (b) have it crammed into a neighbouring procedure's slot where it doesn't belong.
 
-So `enqueueHop` lifts the contraction **for the origin push only** (`priority === 3`): the starting point is pushed onto the agenda with `isStructuralFocus: true`. For that single hop the prompt builder swaps the normal `business_capture` / `technical_capture` capture blocks for a reduced `structural_summary` YAML template whose required sections are:
-
-- **Purpose** — one sentence naming the role of this node in the pipeline.
-- **Columns** — `| Column | Type | Role / ⚠️ |` table from `lineage_get_neighbor_columns`.
-- **Upstream sources** — adjacent procedures / views that write to this node.
-- **Downstream consumers** — adjacent procedures / views that read from it.
-- **Grain / keys** — primary key + common join keys from FKs.
-
-Transform formulas, CASE logic, and business rules are banned in this template — tables have no body, so any such prose would be invented. The surrounding procedures are analysed in their own hops with the standard template; the starting-point summary points at them rather than replicating their logic.
+So `enqueueHop` lifts the contraction **for the origin push only** (`priority === 3`): the starting point gets its own agenda slot. The hop runs the standard `business_capture` / `technical_capture` templates — table starting points are handled naturally by the capture rules (purpose, columns, upstream / downstream consumers). The surrounding procedures are analysed in their own hops; cross-references between the starting-point dossier and the procedure dossiers are produced naturally during synthesis lift-and-group.
 
 **Middle tables remain contracted.** The exception applies *only* to the origin push. Route requests pointing at mid-graph tables (priority 2) flow through the standard contraction path unchanged.
 
@@ -312,7 +304,7 @@ At `start_exploration` time the AI declares its **classification** via the optio
 
 ### Prompt Assembly Architecture
 
-> **Canonical builder reference:** [DEVELOPER_GUIDE.md §8.1 Builder Function Hierarchy](DEVELOPER_GUIDE.md#81-builder-function-hierarchy) (full table of builders, firing conditions, concerns) + [DEVELOPER_GUIDE.md §8.2 Condition Matrix](DEVELOPER_GUIDE.md#82-condition-matrix). [AI_PROMPTS.md §1](AI_PROMPTS.md#1-prompt-layers-the-hourglass-model) covers the Hourglass rationale. The pseudocode below is a high-level locality view for architecture readers.
+> **Canonical builder reference:** [DEVELOPER_GUIDE.md §6.1 Builder Function Hierarchy](DEVELOPER_GUIDE.md#61-builder-function-hierarchy) (full table of builders, firing conditions, concerns) + [DEVELOPER_GUIDE.md §6.2 Condition Matrix](DEVELOPER_GUIDE.md#62-condition-matrix). [AI_PROMPTS.md §1](AI_PROMPTS.md#1-prompt-layers-the-hourglass-model) covers the Hourglass rationale. The pseudocode below is a high-level locality view for architecture readers.
 
 The system prompt is assembled by `buildStageSystemPrompt` ([`src/ai/lineageParticipant.ts:320`](../src/ai/lineageParticipant.ts#L320)) by composing builder functions in a fixed order. Each builder owns one concern; no logic is duplicated across phase variants.
 
@@ -698,7 +690,7 @@ To maintain architectural clarity and reliable state transitions, the system fol
 | **SM mode** (Sliding Memory) | Hop-by-hop execution for larger scopes. Memory is wiped each hop; engine owns termination. |
 | **Bodied node** | View / procedure / function — nodes that carry SQL logic. Only these enter the agenda as hop focuses. |
 | **Edge contraction** | When routing lands on a table, the authored question flows through to the table's bodied neighbors. Tables never become hop focuses (except the origin). |
-| **Origin exception** | The starting point is pushed onto the agenda even when not bodied, using a reduced `structural_summary` template. |
+| **Origin exception** | The starting point is pushed onto the agenda even when not bodied, so the user's chosen origin gets its own dedicated dossier hop. Same `business_capture` / `technical_capture` templates as any other hop. |
 | **Blinkers** | Mechanical restrictions on the AI worker: `toolMode.Required`, tool-palette filter, no self-termination in SM. |
 | **`action_required`** | Engine envelope that emits a consent gate to the user. Turn ends; user reply resumes or aborts the loop. |
 | **Deferred question** | In SM mode, an out-of-border route that is collected silently and surfaced at synthesis rather than gated mid-loop. |

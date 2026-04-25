@@ -1083,7 +1083,6 @@ export type PresentResultInput = {
   title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
   intro?: string;       // 2–4 sentence paragraph before the numbered sections
   closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
-  loading_pattern?: string; // SP-only, AI-inferred. Rendered in metadata band above sections.
   description?: string;
   prune_node_ids?: string[];
   add_node_ids?: string[];    // NEW: incremental add
@@ -1132,8 +1131,7 @@ const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'go
  * system-managed numbering scheme.
  *
  * @param sections - AI-authored sections containing labels, node associations, and text.
- * @param opts - Optional wrapper blocks for the final document. `metadataBand`
- * is injected between `intro` and the first section.
+ * @param opts - Optional wrapper blocks for the final document.
  * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
  */
 export function orderAndAssemble(
@@ -1142,7 +1140,6 @@ export function orderAndAssemble(
     title?: string;
     intro?: string;
     closing?: string;
-    metadataBand?: string;
     /** Optional node lookup for injecting clickable H3 object-name headings per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
   },
@@ -1182,7 +1179,7 @@ export function orderAndAssemble(
     .sort((a, b) => a._n - b._n)
     .map(({ node_id, text }) => ({ node_id, text }));
 
-  // Assemble markdown: title → intro → metadata band → ## sections → closing
+  // Assemble markdown: title → intro → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
   // First-occurrence node_ids list per unique label (AI-authored order preserved).
   const labelToNodeIds = new Map<string, string[]>();
@@ -1194,18 +1191,17 @@ export function orderAndAssemble(
   const parts: string[] = [];
   if (opts?.title)        parts.push(`# ${opts.title}`);
   if (opts?.intro)        parts.push(opts.intro);
-  if (opts?.metadataBand) parts.push(opts.metadataBand);
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
     const nodeIds = labelToNodeIds.get(label) ?? [];
     let objectHeadings = '';
     if (opts?.nodeMap && nodeIds.length > 0) {
-      const lines = nodeIds
+      const links = nodeIds
         .map(id => opts.nodeMap!.get(id))
         .filter((node): node is { id: string; name: string } => !!node)
-        .map(node => `### [${node.name}](#focus-node:${node.id})`);
-      if (lines.length > 0) objectHeadings = lines.join('\n') + '\n\n';
+        .map(node => `[${node.name}](#focus-node:${node.id})`);
+      if (links.length > 0) objectHeadings = `### Objects ${links.join(', ')}\n\n`;
     }
     parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);
   }

@@ -69,23 +69,21 @@ Do not duplicate across surfaces. The general system prompt is sent on every tur
 
 ### 1.7 Per-Phase Template Scope — stage routing
 
-`aiOutputTemplates.yaml` has 14 keys. Each declares a `stages:` field listing which phases inject it into the AI system prompt. The authoritative routing lives in code (`STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)) — the YAML `stages:` field is informational for power-user readers; overlays that contradict the canonical routing are logged and ignored.
+`aiOutputTemplates.yaml` has 10 keys. Each declares a `stages:` field listing which phases inject it into the AI system prompt. The authoritative routing lives in code (`STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)) — the YAML `stages:` field is informational for power-user readers; overlays that contradict the canonical routing are logged and ignored.
 
 Routing via the helper `resolveStagePrompt(templates, phase, classification)`:
 
 | Phase | Keys injected | What they shape |
 |---|---|---|
 | **DISCOVERY** | `summary`, `description` | Trivial questions finalized without SM need a chat-description template. Others route to `start_exploration`. |
-| **ACTIVE** (per-hop) | `general`, `business_capture`, `technical_capture` | **Capture rules** — what the AI writes into `detail_analysis` per node. `general` fires once regardless of classification (depth target, shared format rules). `business_capture` / `technical_capture` are classification-gated but both fire at ACTIVE (classification is still `undefined`) — the AI captures both angles per node. |
-| **SYNTHESIS** | `general`, `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes`, `loading_pattern`, `business_subsection`, `technical_subsection` | **Render rules** — how the captured content becomes the final present_result document. `general` fires once (ungated). A `**Mission type:** <value>` line is injected by code (classification is code-resolved). |
+| **ACTIVE** (per-hop) | `business_capture`, `technical_capture` | **Capture rules** — what the AI writes into `detail_analysis` per node, including loading pattern, distribution hints, ⚠️ invariants, formulas, column renames. Classification-gated, but at ACTIVE the classification is still `undefined` so both angles fire and the slot body carries both. |
+| **SYNTHESIS** | `summary`, `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes` | **Assembly rules** — how the pre-formatted slot bodies become the final present_result document. Slots arrive already formatted; synthesis lifts, groups, frames. A `**Mission type:** <value>` line is injected by code; the `intro` instruction references it explicitly. |
 
-**Convention: `*_capture` at ACTIVE, `*_subsection` at SYNTHESIS.** This keeps each YAML key phase-pure — no meta preambles inside the instruction text.
+**Convention: `*_capture` at ACTIVE governs the per-hop write; synthesis keys govern assembly only.** There are no synthesis-side mirrors of capture keys — the slot body is the canonical surface and is lifted as written.
 
-**`general` key** fires at both ACTIVE and SYNTHESIS, ungated — not in `CLASSIFICATION_GATED`. It owns the shared depth target and format rules (tables, lists, code fences, ⚠️ inline placement, supported block types). Avoids duplication when classification is `both` (business and technical both fire; `general` still fires once).
+**Classification gating** (`CLASSIFICATION_GATED` in `templateRenderer.ts`): only the active-phase capture keys are gated (`business_capture` for `business`/`both`, `technical_capture` for `technical`/`both`). Synthesis keys fire unconditionally; the resolved classification surfaces as the `**Mission type:** <value>` cue line.
 
-**Classification gating** (`CLASSIFICATION_GATED` in `templateRenderer.ts`): at SYNTHESIS the gate applies: `business_*` keys fire for `business`/`both`; `technical_*` keys fire for `technical`/`both`.
-
-**Human-readable section titles.** Inside the injected block, each instruction is prefixed by `#### <Human Title>` (not the snake_case YAML key name). The AI reads `#### Business angle`, `#### Technical section block`, etc. — clear communicative labels, no internal identifiers.
+**Flat bullet rendering.** The synthesis block is emitted as `### Output templates (synthesis)` followed by `- <key>: <instruction>` bullets — one heading hierarchy, no per-key `####` wrappers.
 
 **LaTeX, markdown tables, code fences** stay in `buildGeneralSystemPrompt` because they are tied to the webview renderer capability, not user preference. Do not restate in YAML.
 

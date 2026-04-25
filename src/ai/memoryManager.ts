@@ -81,6 +81,22 @@ export interface WorkingMemory {
 
 
 /**
+ * Frozen snapshot of an `AiMemoryManager`. Returned by `toJSON()` and embedded in
+ * `SmState.memory` for the SM-state debug dump and eval extraction.
+ */
+export interface MemoryStateSnapshot {
+  /** The user's original question, captured at session start. */
+  userQuestion: string;
+  /** Every stored `DetailSlot` keyed by node id, in insertion order. */
+  detailSlots: Record<string, DetailSlot>;
+  /** Count of stored detail slots (mirrors `Object.keys(detailSlots).length`). */
+  slotCount: number;
+  /** Per-node sub-questions queued by the AI but not yet visited. */
+  pendingQuestions: Array<{ nodeId: string; question: string }>;
+}
+
+
+/**
  * In-session store for the per-hop working memory and full detail archive.
  *
  * @remarks
@@ -232,7 +248,7 @@ export class AiMemoryManager {
   }
 
   /** JSON snapshot of the manager's current state — used by telemetry and eval extraction. */
-  public toJSON() {
+  public toJSON(): MemoryStateSnapshot {
     const slots: Record<string, DetailSlot> = {};
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
     return {

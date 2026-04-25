@@ -77,5 +77,9 @@ DMV schema qualification: only schema-qualified references are detected. `WHERE 
 
 Documented for honesty — not a commitment.
 
-- `src/ai/diagnostics.ts` (class with state) and `src/ai/prompts.ts` (15 exported builders) have no direct unit tests. A snapshot test per builder would pin prompt output against silent drift.
-- Webview components (`src/components/*`) are covered only indirectly via hook tests.
+- **Prompt builders untested.** `src/ai/prompts.ts` (15 exported builders) and `src/ai/smPrompts.ts` (`buildModeBlock`) are exercised only indirectly through navigation-engine tests; only `buildGeneralSystemPrompt` and `buildModeBlock` are imported anywhere (by the e2e eval proxy). One snapshot test per builder + condition would pin prompt output against silent drift.
+- **Diagnostics module.** `src/ai/diagnostics.ts` (stateful, emits the structured `[AI] [Hop N]` line) has no direct unit test — verified only via grep references inside `sm-robustness.test.ts` and `navigation-engine.test.ts`.
+- **History compaction.** `src/ai/historyManager.ts` has no direct unit test — sliding-wipe semantics rely on integration coverage.
+- **Tool policy filter.** `src/ai/toolPolicy.ts` (per-phase tool exposure) has no direct test; phase-filter regressions would only surface in e2e.
+- **Webview components.** `src/components/*` covered only indirectly via the five hook tests in `tests/unit/hooks/`. No `tests/unit/components/` folder; React Flow node/edge renderers, filter panels, and the AI preview surface have no isolated tests.
+- **Bridge contract round-trip.** `src/engine/shared/bridgeContract.ts` Zod schemas have no test that round-trips every message variant.

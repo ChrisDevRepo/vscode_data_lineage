@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import type { DetailSlot } from './memoryManager';
+import type { DetailSlot, MemoryStateSnapshot } from './memoryManager';
 
 
 /**
@@ -455,7 +455,7 @@ export interface SmState {
   /** ID of the node currently under analysis, if any. */
   currentFocusNodeId: string | null;
   /** Serialized snapshot of the associated memory manager. */
-  memory: any; // Ideally this would be a proper MemoryState interface
+  memory: MemoryStateSnapshot;
 }
 
 /**
