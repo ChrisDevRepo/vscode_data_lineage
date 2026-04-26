@@ -207,12 +207,24 @@ export function registerCommands(
     }),
 
     /**
-     * Internal command invoked by 'Approve' / 'Decline' buttons in a chat gate.
-     * Programmatically sends the response to the chat participant to resume or cancel
-     * the active exploration loop.
+     * Internal command invoked by 'Approve' / 'Cancel' / 'Refine Scope' buttons in a chat gate.
+     *
+     * @remarks
+     * - `'yes'` / `'no'` resolve mechanically — submit the literal token so the participant's
+     *   gate classifier matches and the engine resumes or aborts.
+     * - `'refine'` opens the chat input pre-filled with `@lineage refine: ` so the user types
+     *   their narrowing instruction (free text). The classifier matches the `refine:` prefix
+     *   and routes the message to the AI for structural translation.
      */
-    vscode.commands.registerCommand('dataLineageViz.aiResolveGate', (choice: 'yes' | 'no') => {
+    vscode.commands.registerCommand('dataLineageViz.aiResolveGate', (choice: 'yes' | 'no' | 'refine') => {
       configLogger.info(`AI Gate resolved: choice=${choice}`);
+      if (choice === 'refine') {
+        vscode.commands.executeCommand('workbench.action.chat.open', {
+          query: '@lineage refine: ',
+          isPartialQuery: true,
+        });
+        return;
+      }
       vscode.commands.executeCommand('workbench.action.chat.open', {
         query: `@lineage ${choice}`
       });

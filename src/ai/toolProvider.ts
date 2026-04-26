@@ -25,6 +25,8 @@ import { buildSynthesisReminder } from './smPrompts';
 import { ClassificationSchema, CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
 import type { CapturedSection } from './memoryManager';
 import { getToolInvocationLabel } from './toolLabels';
+import { renderScopeSummaryMd } from './scopeSummaryRenderer';
+export { renderScopeSummaryMd } from './scopeSummaryRenderer';
 
 /**
  * Validates a finding's `sections[]` against the locked session classification.
@@ -224,6 +226,15 @@ class ToolHandler {
 
       const prior = sess.stateMachine as NavigationEngine | null;
       const priorLive = !!prior && prior.status !== 'complete';
+
+      // Refinement-ratchet path — when a `confirm_sm_start` gate is pending, the AI
+      // re-calls start_exploration with updated filters as a full re-spec. Reuse the
+      // existing engine and re-run init with merged params (origin/direction/depth fall
+      // back to the prior init snapshot) instead of rejecting as `already_started`.
+      const isRefining = sess.phase.kind === 'awaiting_gate'
+        && sess.phase.gate.gate === 'confirm_sm_start'
+        && !!prior
+        && prior.status === 'initialized';
       // Fresh exploration from the completed (follow-up) phase: the AI has decided the
       // question is a genuinely new trace, not a refinement. Discard the prior archive
       // so the confirm_sm_start gate can fire and the new run starts clean.
@@ -236,7 +247,7 @@ class ToolHandler {
         sess.pendingUserNotice.add('A previous exploration was still running when you started this one. Its in-memory findings were discarded.');
         sess.resetExploration();
         sess.startExplorationRoundId = sess.currentRoundId;
-      } else if (priorLive && prior!.sessionId === sess.id) {
+      } else if (priorLive && prior!.sessionId === sess.id && !isRefining) {
         return this.logAndReturn('start_exploration', {
           error: 'already_started',
           hint: 'start_exploration is one-shot per turn. Use submit_findings to continue the current agenda. After complete_rejected, the unvisited neighbors are already queued at priority 3 — the next submit_findings will present one of them.',
@@ -264,30 +275,54 @@ class ToolHandler {
         else if (l === 'warn') this.logger.warn(line);
         else this.logger.info(line);
       };
-      const engine = new NavigationEngine(m, g, engineLog, { activeFilter, memory: sess.memory }, sess.columnStore);
-      
+      // Refinement reuses the existing engine — only fresh runs build a new one.
+      const engine: NavigationEngine = isRefining
+        ? prior!
+        : new NavigationEngine(m, g, engineLog, { activeFilter, memory: sess.memory }, sess.columnStore);
+
       engine.sessionId = sess.id;
       sess.stateMachine = engine;
 
-      const excludeTypes: string[] = Array.isArray(data.excludeTypes)
-        ? (data.excludeTypes as unknown[]).filter((t): t is string => typeof t === 'string')
-        : [];
+      const stringArray = (v: unknown): string[] => Array.isArray(v) ? (v as unknown[]).filter((t): t is string => typeof t === 'string') : [];
+      const excludeTypes:   string[] = stringArray(data.excludeTypes);
+      const excludeSchemas: string[] = stringArray(data.excludeSchemas);
+      const excludeNodeIds: string[] = stringArray(data.excludeNodeIds);
+      const passNodeIds:    string[] = stringArray(data.passNodeIds);
+      const forceMode: 'inline' | 'sm' | undefined = data.forceMode;
+
+      // On refine, fall back to the prior init snapshot for fields the AI didn't re-send.
+      const refineOrigin = isRefining ? (data.origin ?? prior!.currentOrigin ?? '') : (data.origin ?? '');
+      const refineDirection = data.direction ?? (isRefining ? prior!.currentDirection : 'bidirectional');
+      const refineDepth = data.depth ?? (isRefining ? (prior!.currentDepth ?? undefined) : undefined);
+      const refineEnforcement = data.depth_enforcement ?? (isRefining ? prior!.currentDepthEnforcement : undefined);
+      const refineQuestion = data.question ?? (isRefining ? prior!.currentQuestion : 'Explore lineage');
+      const refineMissionBrief = typeof data.mission_brief === 'string' ? data.mission_brief : (isRefining ? (prior!.currentMissionBrief ?? undefined) : undefined);
+      const refineTargetColumns = data.targetColumns ?? (isRefining ? (prior!.currentTargetColumns ?? undefined) : undefined);
 
       const initResult = engine.init({
-        question: data.question || 'Explore lineage',
-        origin: data.origin,
-        targetColumns: data.targetColumns,
-        direction: data.direction || 'bidirectional',
-        depth: data.depth,
-        depth_enforcement: data.depth_enforcement,
+        question: refineQuestion || 'Explore lineage',
+        origin: refineOrigin,
+        targetColumns: refineTargetColumns,
+        direction: refineDirection,
+        depth: refineDepth,
+        depth_enforcement: refineEnforcement,
         excludeTypes,
-        mission_brief: typeof data.mission_brief === 'string' ? data.mission_brief : undefined,
+        excludeSchemas,
+        excludeNodeIds,
+        passNodeIds,
+        forceMode,
+        mission_brief: refineMissionBrief,
       });
 
       if ('error' in initResult) return this.logAndReturn('start_exploration', initResult, input);
 
       const scopeDdlChars = engine.estimateScopeDdlChars();
-      const useInline = shouldSmInline(!!engine.columnAspect, scopeDdlChars, initResult.scopeSize);
+      // forceMode (user/AI override) wins over the size+budget heuristic; null -> heuristic decides.
+      const useInline = forceMode === 'inline'
+        ? true
+        : forceMode === 'sm'
+          ? false
+          : shouldSmInline(!!engine.columnAspect, scopeDdlChars, initResult.scopeSize);
 
       if (useInline) {
         engine.setInlineMode(true);
@@ -315,14 +350,21 @@ class ToolHandler {
         const parsed = ClassificationSchema.safeParse(data.classification);
         sess.setClassification(parsed.success ? parsed.data : 'business');
         this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (${useInline ? 'inline' : 'SM'} mode, AI-declared)`);
+      } else if (data.classification) {
+        // Refine round: the AI may re-issue a classification override; honour it.
+        const parsed = ClassificationSchema.safeParse(data.classification);
+        if (parsed.success && parsed.data !== sess.classification) {
+          sess.setClassification(parsed.data);
+          this.logger.info(`[${sess.id}] [Classification] refine-override → ${sess.classification}`);
+        }
       }
 
       // Discovery is content-blind: always gate before any analysis runs, regardless of mode.
       // Inline mode (≤10 nodes) used to fall straight through to the hop loop without consent —
       // that hid wrong NL-filter interpretations (e.g. "ignore SPs A,B" → excludeTypes:['procedure']).
-      if (sess.phase.kind === 'idle') {
+      // Refine path: re-emit the gate with the new tree so the loop continues.
+      if (sess.phase.kind === 'idle' || isRefining) {
         const hopCtx = engine.getHopContext();
-        const direction = data.direction || 'bidirectional';
         const isCt = !!engine.columnAspect;
 
         const classes = ['sliding_memory'];
@@ -335,25 +377,27 @@ class ToolHandler {
           }
         }
 
-        const modeLabel = useInline ? 'inline (one-shot)' : 'sliding-memory (multi-hop)';
-        const excludedTypes = excludeTypes.length > 0 ? excludeTypes.join(', ') : '(none)';
+        const summary = engine.getScopeSummary();
+        const tree = renderScopeSummaryMd(summary);
+        const classLabel = CLASSIFICATION_LABEL[sess.classification!] + (isCt ? ' (Column Trace)' : '');
+        const detail = `${tree}\n\n_Analysis: ${classLabel}_`;
+
+        engine.setInlineMode(useInline);
+
         const gate = PendingGateSchema.parse({
           gate: 'confirm_sm_start',
           classes,
           nodeIds: [],
-          detail: `### Exploration Plan\n` +
-                  `- **Scope:** ${initResult.scopeSize} nodes identified\n` +
-                  `- **Analysis:** ${CLASSIFICATION_LABEL[sess.classification!]}${isCt ? ' (Column Trace)' : ''}\n` +
-                  `- **Schemas:** ${initResult.scopeSchemas?.join(', ') || activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
-                  `- **Configuration:** Depth ${data.depth ?? 'default'} (${data.depth_enforcement ?? 'silent'}), ${direction} direction\n` +
-                  `- **Excluded types:** ${excludedTypes}\n` +
-                  `- **Mode:** ${modeLabel}`,
+          detail,
         });
+        const hint = isRefining
+          ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
+          : 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.';
         return this.logAndReturn('start_exploration', {
           error: 'action_required',
           ...gate,
           hop_context: hopCtx,
-          hint: 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.',
+          hint,
         }, input);
       }
 

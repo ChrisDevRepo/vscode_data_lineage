@@ -352,15 +352,29 @@ export interface DiagnosticsSnapshot {
 
 /**
  * Per-(schema,type) leaf in the scope tree.
+ *
+ * @remarks
+ * `hops` counts bodied nodes (view / procedure / function — agenda candidates);
+ * `scope` is the total node count including non-bodied (table) nodes that BFS
+ * surfaced. Names are capped at the renderer's display limit; `omitted` carries
+ * the overflow count so the caller can render `+K more` without recounting.
  */
 export interface ScopeSummaryLeaf {
   hops: number;
   scope: number;
   nodeNames: string[];
+  omitted: number;
 }
 
 /**
  * Snapshot of the proposed scope, computed once per `confirm_sm_start` gate emission.
+ *
+ * @remarks
+ * Single source of truth for the gate detail markdown and the live "Scope: N nodes"
+ * line — both come from this snapshot so the count and the tree never diverge. The
+ * snapshot reflects the post-filter scope (after `excludeSchemas` / `excludeTypes` /
+ * `excludeNodeIds`) and includes the `passNodeIds` membership so the renderer can
+ * mark pass-through nodes distinctly from analyzed nodes.
  */
 export interface ScopeSummary {
   hopCount: number;
@@ -371,7 +385,8 @@ export interface ScopeSummary {
   inlineMode: boolean;
   columnAspectActive: boolean;
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf>; }>;
-  activeExcludes: { schemas: string[]; types: string[]; nodeIds: string[] };
+  /** Active filter set on the engine — surfaces what the user has narrowed so far. */
+  activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
 }
 
 /**

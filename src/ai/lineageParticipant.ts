@@ -16,6 +16,7 @@ import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
 import { NavigationEngine } from './smBase';
 import { RepeatRejectGuard } from './repeatRejectGuard';
 import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
+import { renderScopeSummaryMd } from './scopeSummaryRenderer';
 import { CLASSIFICATION_BANNER } from './classification';
 import { filterLmTools, activeModeOf, getAllowedLmToolNames } from './toolPolicy';
 import { resolveStagePrompt } from './templateRenderer';
@@ -253,11 +254,51 @@ export class LineageParticipant {
       if (answer === 'no') {
         sess.enterIdle();
         sess.resetExploration();
-        writer.markdown(`\n\n> Exploration paused — scope held to the declared filter. Ask a refined question to restart with a different scope.\n\n`);
-        this.logger.info(`[Gate] ${gate.gate} — user declined`);
+        writer.markdown(`\n\n> Exploration cancelled — ask a fresh question to start over.\n\n`);
+        this.logger.info(`[Gate] ${gate.gate} — user cancelled`);
         return {};
       }
-      if (answer === 'redirect') {
+      // Refine path — only meaningful for the discovery-phase confirm_sm_start gate.
+      // The user typed a free-text narrowing instruction (or pressed the Refine Scope
+      // button which pre-fills `@lineage refine: `). Phase stays awaiting_gate; the AI
+      // is forced to translate the intent into structural exclusions and re-call
+      // start_exploration — the engine then re-emits the gate with the new tree.
+      const isConfirmSm = gate.gate === 'confirm_sm_start';
+      const userIsRefining = isConfirmSm && (answer === 'refine' || answer === 'redirect');
+      if (userIsRefining) {
+        const engine = sess.stateMachine as NavigationEngine | null;
+        const summary = engine?.getScopeSummary();
+        const treeMd = summary ? renderScopeSummaryMd(summary) : '_(scope tree unavailable)_';
+        const filters = summary?.activeFilters ?? { schemas: [], types: [], nodeIds: [], passNodeIds: [] };
+        // Strip the literal `refine:` prefix so the AI sees the user's actual instruction.
+        const verbatim = request.prompt.replace(/^@lineage\s+/i, '').replace(/^refine\s*:?\s*/i, '').trim();
+        effectivePrompt = [
+          'The user is refining the pending exploration scope. Do not start a new exploration.',
+          '',
+          `Current candidate hops (post-filter, ${summary?.scopeCount ?? 0} nodes):`,
+          treeMd,
+          '',
+          'Currently applied filters:',
+          `- excludeTypes: ${filters.types.length ? filters.types.join(', ') : '(none)'}`,
+          `- excludeSchemas: ${filters.schemas.length ? filters.schemas.join(', ') : '(none)'}`,
+          `- excludeNodeIds: ${filters.nodeIds.length ? filters.nodeIds.join(', ') : '(none)'}`,
+          `- passNodeIds: ${filters.passNodeIds.length ? filters.passNodeIds.join(', ') : '(none)'}`,
+          '',
+          `User feedback: "${verbatim}"`,
+          '',
+          'Translate the feedback into a full re-spec — send the complete final filter set',
+          '(not a delta). Call lineage_start_exploration with the same origin / direction /',
+          'depth and your updated excludeTypes / excludeSchemas / excludeNodeIds / passNodeIds /',
+          'forceMode / classification / targetColumns. The engine will recompute the scope and',
+          're-emit the gate so the user can review or refine again.',
+          '',
+          'If the user\'s intent is genuinely ambiguous, ask one short clarifying question and',
+          'call no tool this turn — phase stays awaiting_gate and the user can re-reply.',
+        ].join('\n');
+        this.logger.info(`[Gate] ${gate.gate} — user refining (${answer})`);
+      } else if (answer === 'redirect') {
+        // Non-confirm_sm_start gate (schema/depth expansion) — the original behaviour:
+        // treat as a redirect and reset exploration.
         sess.resetExploration();
         this.logger.info(`[Gate] ${gate.gate} — user redirected`);
       } else {
@@ -891,27 +932,44 @@ export class LineageParticipant {
     writer.markdown(lines.join('\n'));
   }
 
+  /**
+   * Renders the unified three-button row beneath any pending consent gate.
+   *
+   * @remarks
+   * Single emission site so every turn that lands the session in `awaiting_gate`
+   * (initial gate, refine re-render, AI clarifying question) shows the same
+   * affordances. Refine button only appears for the `confirm_sm_start` gate
+   * (other gate sub-types are scope-expansion gates with no scope tree to refine).
+   */
+  private emitGateButtonRow(writer: ChatResponseWriter, gate: PendingGate): void {
+    writer.button({
+      command: 'dataLineageViz.aiResolveGate',
+      title: '$(check) Approve & Proceed',
+      arguments: ['yes'],
+    });
+    if (gate.gate === 'confirm_sm_start') {
+      writer.button({
+        command: 'dataLineageViz.aiResolveGate',
+        title: '$(edit) Refine scope',
+        arguments: ['refine'],
+      });
+    }
+    writer.button({
+      command: 'dataLineageViz.aiResolveGate',
+      title: '$(close) Cancel',
+      arguments: ['no'],
+    });
+  }
+
   private dispatchExit(exit: HopLoopExit, sess: AiSession, writer: ChatResponseWriter, userPrompt: string, roundCount: number, maxRounds: number): void {
     switch (exit.kind) {
       case 'gate': {
         sess.enterGate(exit.gate);
         const title = exit.gate.gate === 'confirm_sm_start' ? 'Confirm exploration' : 'Scope expansion requested';
         writer.markdown(`\n\n---\n**${title}**\n\n${exit.gate.detail}\n\n`);
-        
-        writer.button({
-          command: 'dataLineageViz.aiResolveGate',
-          title: '$(check) Approve & Proceed',
-          arguments: ['yes']
-        });
-        
-        writer.button({
-          command: 'dataLineageViz.aiResolveGate',
-          title: '$(close) Decline',
-          arguments: ['no']
-        });
-
+        // Buttons emitted by the unified finalizer below — single source of truth.
         this.logger.info(`[Gate] ${exit.gate.gate} — classes=[${exit.gate.classes.join(', ')}] nodes=${exit.gate.nodeIds.length}`);
-        return;
+        break;
       }
       case 'final_answer': {
         const smComplete = sess.stateMachine?.status === 'complete';
@@ -925,15 +983,17 @@ export class LineageParticipant {
             const originalQ = sess.memory.getUserQuestion() || userPrompt;
             writer.button({ command: 'dataLineageViz.aiCreateView', title: '$(type-hierarchy-sub) Show in Graph', arguments: [originalQ] });
           }
-        } else {
+        } else if (sess.phase.kind !== 'awaiting_gate') {
+          // Clarifying-question turn during refine: phase stays awaiting_gate, the finalizer
+          // re-emits the button row so the user can answer / refine again / approve.
           sess.enterIdle();
         }
-        return;
+        break;
       }
       case 'cancelled': {
         sess.enterIdle();
         this.logger.info(`[${sess.id}] Exit cancelled — session returned to idle`);
-        return;
+        break;
       }
       case 'hop_cap': {
         const remaining = sess.stateMachine?.getHopDiagnostics().agendaRemaining ?? 0;
@@ -950,7 +1010,7 @@ export class LineageParticipant {
           `- Pick a narrower starting node (e.g. a fact table instead of a mart view)`,
           `- Or raise \`dataLineageViz.ai.maxRounds\` in settings`,
         ].join('\n'));
-        return;
+        break;
       }
       case 'aborted':
       case 'error': {
@@ -958,8 +1018,14 @@ export class LineageParticipant {
         const msg = exit.kind === 'aborted' ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.` : exit.message;
         this.logger.warn(`Exit ${exit.kind}: ${msg}`);
         writer.markdown(`\n\n*Error: ${msg}*`);
-        return;
+        break;
       }
+    }
+
+    // Finalizer — emit the gate button row whenever the session is awaiting_gate at the
+    // end of dispatch. New exit kinds can't forget the buttons.
+    if (sess.phase.kind === 'awaiting_gate') {
+      this.emitGateButtonRow(writer, sess.phase.gate);
     }
   }
 }

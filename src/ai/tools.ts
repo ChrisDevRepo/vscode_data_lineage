@@ -60,6 +60,31 @@ export const StartExplorationInputSchema = z.object({
   depth: z.number().int().positive().optional(),
   depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
   excludeTypes: z.array(z.string()).optional(),
+  /**
+   * Schemas to drop from the BFS scope (case-insensitive). Honored at scope-build time —
+   * any candidate node whose schema matches is excluded. REPLACE semantics: each call
+   * wipes prior filter state on the engine; accumulate across refine rounds by re-sending
+   * every prior exclusion plus the new one.
+   */
+  excludeSchemas: z.array(z.string()).optional(),
+  /**
+   * Specific node ids to drop from the BFS scope (case-insensitive). Cuts the node and
+   * its subtree reachable only through it. Use only when the user explicitly says
+   * remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}.
+   */
+  excludeNodeIds: z.array(z.string()).optional(),
+  /**
+   * Specific node ids the engine keeps in scope but auto-passes (no analysis written,
+   * topology preserved so descendants stay reachable). Default interpretation when the
+   * user says ignore / skip / don't analyze. REPLACE semantics — see {@link excludeSchemas}.
+   */
+  passNodeIds: z.array(z.string()).optional(),
+  /**
+   * Manual override for inline-vs-SM mode at gate emission. Bypasses the size+budget
+   * heuristic. Only meaningful while the gate is pending; after Approve the chosen mode
+   * locks in.
+   */
+  forceMode: z.enum(['inline', 'sm']).optional(),
   mission_brief: z.string().optional(),
   classification: z.enum(['business', 'technical', 'both']).optional(),
   /**

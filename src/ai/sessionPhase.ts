@@ -87,23 +87,31 @@ export type HopLoopExit =
   | { kind: 'error'; message: string };
 
 /**
- * Classifies a user's free-text reply to a consent gate into one of three actions.
+ * Classifies a user's free-text reply to a consent gate into one of four actions.
  *
  * @remarks
- * Three-way classification avoids the ReAct deferral-collapse pattern: anything
- * that is not clearly yes or no is treated as `redirect` (a fresh question), not
- * a "please reply yes or no" loop. Short affirmations map to `yes`, short denials
- * to `no`, everything else to `redirect`.
+ * Four-way mechanical classification — yes / no / refine / redirect. Anchors on the
+ * literal command tokens emitted by the Approve/Cancel/Refine buttons (`@lineage yes`,
+ * `@lineage no`, `@lineage refine: <text>`) so partial-affirm phrases like
+ * "yes but ignore staging" do NOT match `yes` — they fall through to `redirect`,
+ * where the participant treats them as scope-refinement intent (which the AI then
+ * translates into structural exclusions). Add/remove/exclude vocabulary is
+ * deliberately NOT pattern-matched here — that interpretation is the AI's job, per
+ * Anthropic / OpenAI / Google routing-pattern guidance.
  *
  * Lives here (not in the participant) so unit tests can exercise it without pulling
  * in the `vscode` module.
  *
  * @param reply - The user's chat message, verbatim.
- * @returns `'yes'` for affirmations, `'no'` for denials, `'redirect'` for anything else.
+ * @returns `'yes'` for clean affirmations, `'no'` for clean denials, `'refine'` for
+ *   the literal `refine:` prefix from the Refine Scope button, `'redirect'` otherwise.
  */
-export function classifyGateReply(reply: string): 'yes' | 'no' | 'redirect' {
+export function classifyGateReply(reply: string): 'yes' | 'no' | 'refine' | 'redirect' {
   const trimmed = reply.trim().toLowerCase();
-  if (/^(y|yes|ok|okay|allow|approve|sure|proceed|do it|go ahead|continue)\b/.test(trimmed)) return 'yes';
-  if (/^(n|no|nope|deny|skip|stop|cancel|abort|hold|pause)\b/.test(trimmed)) return 'no';
+  // Anchored end-of-line so "yes but..." or "no, do X" do NOT match.
+  if (/^(y|yes|ok|okay|allow|approve|sure|proceed|do it|go ahead|continue)\s*$/.test(trimmed)) return 'yes';
+  if (/^(n|no|nope|deny|skip|stop|cancel|abort|hold|pause)\s*$/.test(trimmed)) return 'no';
+  // Literal token from the Refine Scope button's pre-fill (`@lineage refine: …`).
+  if (/^refine\s*:?/.test(trimmed)) return 'refine';
   return 'redirect';
 }

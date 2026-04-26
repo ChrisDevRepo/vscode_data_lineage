@@ -912,7 +912,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
-        "modelDescription": "Starts a hop-by-hop exploration across database objects (Blackboard, or Column-Trace when `targetColumns` is set). Scope parameters: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. Honor NL filters: 'ignore UDFs/functions' → `excludeTypes:['function']`; 'ignore views' → `['view']`; 'only tables' → `['view','procedure','function']`. On wide graphs start `depth` shallow (1-2); sliding-memory sessions lock scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session. Compose `mission_brief` (3-6 sentences) capturing user intent, NL filters, name-based exclusions, and chosen scope — delivered verbatim every hop and surviving memory wipes. POST-SYNTHESIS SUPPLEMENT: in the follow-up phase, call with only `supplement:{nodeIds:[...]}` (no `origin` required) to extend the existing archive with one-shot inline analysis for those ids. The prior engine, memory, and filter state are reused — new slots merge into the archive; a fresh re-render via `lineage_present_result` follows. Use this path for deferred-question continuations and user-requested 'add node X' refinements.",
+        "modelDescription": "Starts a hop-by-hop exploration across database objects (Blackboard, or Column-Trace when `targetColumns` is set). Scope parameters: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. Honor NL filters: 'ignore UDFs/functions' → `excludeTypes:['function']`; 'ignore views' → `['view']`; 'only tables' → `['view','procedure','function']`. On wide graphs start `depth` shallow (1-2); sliding-memory sessions lock scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session. Compose `mission_brief` (3-6 sentences) capturing user intent, NL filters, name-based exclusions, and chosen scope — delivered verbatim every hop and surviving memory wipes. POST-SYNTHESIS SUPPLEMENT: in the follow-up phase, call with only `supplement:{nodeIds:[...]}` (no `origin` required) to extend the existing archive with one-shot inline analysis for those ids. The prior engine, memory, and filter state are reused — new slots merge into the archive; a fresh re-render via `lineage_present_result` follows. Use this path for deferred-question continuations and user-requested 'add node X' refinements.\n\n## Decision order\n\nWhen the user refines a pending `confirm_sm_start` gate, settle decisions in this order — later axes depend on earlier ones being fixed:\n\n1. **Origin** — locked. Refine cannot change origin; that is a fresh question. If the user names a different starting object, ask them to cancel and re-ask.\n2. **Direction** (`upstream` / `downstream` / `bidirectional`) — refinable. Re-runs BFS.\n3. **Depth** (`depth`, `depth_enforcement`) — refinable. Re-runs BFS.\n4. **Per-node bucket** for each node BFS surfaced — analyze (default) / pass-through / prune.\n5. **Mode + classification + tracing** — `forceMode`, `classification`, `targetColumns`.\n\n## Scope filters\n\n`excludeSchemas`, `excludeTypes`, `excludeNodeIds`, and `passNodeIds` are applied at BFS scope-build time. Each call REPLACES the prior filter set on the engine — accumulate across rounds by sending every prior filter plus the new one in a single call.\n\n## Pass vs prune\n\nA node has two narrowing semantics. Choose deliberately:\n\n- **`passNodeIds`** — node stays in scope; BFS still routes through it (descendants reachable); the engine auto-emits `verdict:'pass'` so no analysis is written for that node. Topology preserved. Default interpretation when the user says 'ignore', 'skip', or 'don't analyze X'.\n- **`excludeNodeIds`** / **`excludeSchemas`** / **`excludeTypes`** — node (and its subtree reachable only through it) is cut at BFS time. Use only when the user explicitly says 'remove', 'drop', 'prune', 'cut', or names a leaf they reject.\n\nIf you propose pruning a node that would orphan in-scope descendants, rewrite the call as `passNodeIds` for those ids unless the user has explicitly approved removing the subtree.\n\n## Discovery-phase refinement loop\n\nWhen a `confirm_sm_start` gate is pending and the user wants to adjust the proposed scope:\n\n1. Read the user's chat message and map their intent to the right axis using the decision order above. Phrasing varies — they may say ignore / drop / remove / without / no / skip — and they may name schemas, object types, or specific objects. Use your judgment; if intent is unclear, ask one short clarifying question and call no tool that turn.\n2. Call `lineage_start_exploration` with the same `origin` from the prior call, plus the updated `direction` / `depth` / `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns` as the user requested.\n3. The engine re-runs BFS, re-evaluates mode (inline / sliding-memory, blackboard / column-trace), and re-emits the gate with the new counts. The user reviews and either approves, refines further, or cancels.\n4. During this loop, only `lineage_start_exploration` is appropriate — `submit_findings` is not yet available, and analysis begins only after the user approves.\n\n<examples>\n<example>\nUser: 'ignore the staging schema'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'] })\n</example>\n\n<example>\nPrior call excluded 'staging'. User: 'also drop procedures.'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'], excludeTypes: ['procedure'] })\n</example>\n\n<example>\nUser: 'ignore usp_PostJournal but I still want to see what it reads from'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, passNodeIds: ['[dbo].[usp_PostJournal]'] })\n</example>\n\n<example>\nUser: 'remove the staging subtree entirely — I don\\'t need anything below it'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'] })\n</example>\n\n<example>\nPrior gate: Mode=Inline, Analysis=business. User: 'do this as sliding memory and trace TotalRevenue'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, forceMode: 'sm', targetColumns: ['TotalRevenue'] })\n</example>\n</examples>",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -981,7 +981,36 @@
                   "external"
                 ]
               },
-              "description": "Optional. Object types to prune from the exploration scope."
+              "description": "Optional. Object types to prune from the exploration scope. REPLACE semantics — each call overrides prior. Cumulative across refine rounds (re-send all prior plus the new)."
+            },
+            "excludeSchemas": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional. Schemas to prune from the exploration scope (case-insensitive). REPLACE semantics. Use when the user says 'remove/drop schema X' or 'ignore X-schema objects'."
+            },
+            "excludeNodeIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional. Specific node ids to prune from the BFS scope (case-insensitive). Cuts the node and any subtree reachable only through it. Use when the user says 'remove/drop/cut object X'. REPLACE semantics."
+            },
+            "passNodeIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional. Node ids to keep in scope but auto-pass — engine emits verdict:'pass' so no analysis is written, topology preserved so descendants stay reachable. Default interpretation when the user says 'ignore/skip/don't analyze X'. REPLACE semantics."
+            },
+            "forceMode": {
+              "type": "string",
+              "enum": [
+                "inline",
+                "sm"
+              ],
+              "description": "Optional. Override the inline-vs-SM mode heuristic. Use only when the user explicitly says 'do this inline' or 'force sliding memory'. After the gate is approved, the chosen mode locks in."
             },
             "classification": {
               "type": "string",
@@ -1131,7 +1160,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/sm-robustness.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/session-stale.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts",
+    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/sm-robustness.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/session-stale.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts",
     "test:unit": "npm run test",
     "test:unit:ai": "tsx tests/unit/ai-tools.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts",
     "test:dacpac": "tsx tests/unit/dacpacExtractor.test.ts",

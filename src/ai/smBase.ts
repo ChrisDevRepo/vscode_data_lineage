@@ -20,7 +20,7 @@ import { edgeApiType } from './aiPresenter';
 import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { trunc } from '../utils/log';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
-import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
+import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -253,6 +253,20 @@ export class NavigationEngine implements IHopStateMachine {
   protected sessionAllowedSchemas: Set<string> = new Set();
   /** Object types the user asked to exclude (e.g. ['view','function']); pruned from scope at init. */
   protected excludedTypes: Set<string> = new Set();
+  /** Schemas (lower-cased) the user asked to exclude; pruned from scope at init. */
+  protected excludedSchemas: Set<string> = new Set();
+  /** Specific node ids (lower-cased) the user asked to exclude; pruned from scope at init. */
+  protected excludedNodeIds: Set<string> = new Set();
+  /**
+   * Specific node ids (lower-cased) the user asked to keep in scope but skip analysis on.
+   * The hop dispatcher detects these on dequeue and auto-emits `verdict:'pass'` — topology
+   * is preserved so descendants stay reachable.
+   */
+  protected passNodeIds: Set<string> = new Set();
+  /** AI/user override for inline-vs-SM mode at gate emission; bypasses the size+budget heuristic. */
+  protected forceMode: 'inline' | 'sm' | null = null;
+  /** Last `init` params kept for refine re-run — origin/direction/depth/etc survive across the gate cycle. */
+  protected initSnapshot: { question: string; origin: string; targetColumns?: string[]; direction: 'upstream' | 'downstream' | 'bidirectional'; depth?: number; depth_enforcement?: 'strict' | 'soft' | 'silent'; mission_brief?: string } | null = null;
   /** Extra depth levels the user has confirmed mid-session beyond the mode-cap. 0 = no extension. */
   protected extendedDepthCap = 0;
   /** Last per-hop snapshot of detail/summary chars, used for diagnostics. */
@@ -455,6 +469,144 @@ export class NavigationEngine implements IHopStateMachine {
     return this._inlineMode;
   }
 
+  /** Gets the AI/user force-mode override (null when the heuristic decides). */
+  public get forceModeOverride(): 'inline' | 'sm' | null {
+    return this.forceMode;
+  }
+
+  /** Origin id captured at the most recent {@link init}. Used by the refine path to re-init without re-asking the AI. */
+  public get currentOrigin(): string | null {
+    return this.initSnapshot?.origin ?? null;
+  }
+
+  /** Direction captured at {@link init}. */
+  public get currentDirection(): 'upstream' | 'downstream' | 'bidirectional' {
+    return this._direction;
+  }
+
+  /** Depth budget captured at {@link init} (null when unbounded). */
+  public get currentDepth(): number | null {
+    return this.depthBudget;
+  }
+
+  /** Depth-enforcement mode captured at {@link init}. */
+  public get currentDepthEnforcement(): 'strict' | 'soft' | 'silent' {
+    return this.depthEnforcement;
+  }
+
+  /** Original user question captured at {@link init}. */
+  public get currentQuestion(): string {
+    return this.initSnapshot?.question ?? '';
+  }
+
+  /** Mission brief captured at {@link init}. */
+  public get currentMissionBrief(): string | null {
+    return this.initSnapshot?.mission_brief ?? null;
+  }
+
+  /** Target columns captured at {@link init} (null when no column-trace aspect). */
+  public get currentTargetColumns(): string[] | null {
+    return this.initSnapshot?.targetColumns ?? null;
+  }
+
+  /**
+   * Builds a one-shot snapshot of the proposed scope for the `confirm_sm_start` gate detail.
+   *
+   * @remarks
+   * Single source of truth — the gate's "Scope: N" line and the rendered tree both come
+   * from this object so the count and the tree never diverge. Cap is honoured per leaf
+   * to keep gate detail under chat-message size limits; overflow surfaced as `omitted`.
+   *
+   * @param namesPerType - Cap on names listed under each (schema,type) pair. Default 8.
+   */
+  public getScopeSummary(namesPerType: number = 8): ScopeSummary {
+    const bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }> = {};
+    let hopCount = 0;
+
+    for (const id of this.scopeNodeIds) {
+      const n = this.nodeMap.get(id);
+      if (!n) continue;
+      const schema = n.schema;
+      const type = n.type ?? 'external';
+      const isBodied = SCRIPT_TYPES.has(n.type);
+      if (isBodied) hopCount++;
+
+      if (!bySchema[schema]) bySchema[schema] = { hops: 0, scope: 0, byType: {} };
+      const sch = bySchema[schema];
+      sch.scope++;
+      if (isBodied) sch.hops++;
+
+      if (!sch.byType[type]) sch.byType[type] = { hops: 0, scope: 0, nodeNames: [], omitted: 0 };
+      const leaf = sch.byType[type];
+      leaf.scope++;
+      if (isBodied) leaf.hops++;
+      if (leaf.nodeNames.length < namesPerType) leaf.nodeNames.push(n.name);
+      else leaf.omitted++;
+    }
+
+    // Sort names alphabetically inside each leaf for stable rendering.
+    for (const sch of Object.values(bySchema)) {
+      for (const leaf of Object.values(sch.byType)) {
+        leaf.nodeNames.sort((a, b) => a.localeCompare(b));
+      }
+    }
+
+    return {
+      hopCount,
+      scopeCount: this.scopeNodeIds.size,
+      origin: this.originNodeId ?? '',
+      depth: this.depthBudget,
+      direction: this._direction,
+      inlineMode: this._inlineMode,
+      columnAspectActive: !!this._columnAspect,
+      bySchema,
+      activeFilters: {
+        schemas: Array.from(this.excludedSchemas).sort(),
+        types: Array.from(this.excludedTypes).sort(),
+        nodeIds: Array.from(this.excludedNodeIds).sort(),
+        passNodeIds: Array.from(this.passNodeIds).sort(),
+      },
+    };
+  }
+
+  /**
+   * Classifies a list of candidate node ids into prunable vs must-pass-through.
+   *
+   * @remarks
+   * A node is **prunable** when removing it from {@link scopeNodeIds} leaves every
+   * other in-scope node still reachable from {@link originNodeId} along the active
+   * direction. Otherwise it is **must-pass** — pruning would orphan in-scope
+   * descendants the user did not ask to remove. The AI consumes this result to
+   * pick between `excludeNodeIds` (prunable) and `passNodeIds` (must-pass).
+   *
+   * @param nodeIds - Candidate ids the AI is considering removing.
+   */
+  public classifyForRefine(nodeIds: string[]): { prunable: string[]; mustPass: string[] } {
+    if (!this.originNodeId) return { prunable: [], mustPass: [] };
+    const prunable: string[] = [];
+    const mustPass: string[] = [];
+
+    for (const raw of nodeIds) {
+      const id = raw.toLowerCase();
+      if (!this.scopeNodeIds.has(id) || id === this.originNodeId.toLowerCase()) {
+        prunable.push(raw);
+        continue;
+      }
+      // Pretend `id` is removed; check whether every other in-scope node is still
+      // reachable from the origin within the current direction.
+      const removed = new Set<string>([id]);
+      const reachable = bfsReachable(this.graph, this.originNodeId, removed, undefined, this.scopeNodeIds);
+      let orphaned = false;
+      for (const sid of this.scopeNodeIds) {
+        if (sid === id) continue;
+        if (!reachable.has(sid)) { orphaned = true; break; }
+      }
+      if (orphaned) mustPass.push(raw); else prunable.push(raw);
+    }
+
+    return { prunable, mustPass };
+  }
+
   /**
    * Validates that the given node ids are legitimate targets for neighbor-column
    * inspection (the `get_neighbor_columns` tool).
@@ -567,6 +719,10 @@ export class NavigationEngine implements IHopStateMachine {
     depth?: number;
     depth_enforcement?: 'strict' | 'soft' | 'silent';
     excludeTypes?: string[];
+    excludeSchemas?: string[];
+    excludeNodeIds?: string[];
+    passNodeIds?: string[];
+    forceMode?: 'inline' | 'sm';
     mission_brief?: string;
   }): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | { error: string; hint?: string } {
     this.visited.clear();
@@ -579,6 +735,10 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Mission] brief=${trunc(params.mission_brief, 200)}`);
     }
     this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
+    this.excludedSchemas = new Set((params.excludeSchemas ?? []).map(s => s.toLowerCase()));
+    this.excludedNodeIds = new Set((params.excludeNodeIds ?? []).map(s => s.toLowerCase()));
+    this.passNodeIds = new Set((params.passNodeIds ?? []).map(s => s.toLowerCase()));
+    this.forceMode = params.forceMode ?? null;
 
     const originNode = this.nodeMap.get(params.origin.toLowerCase());
     if (!originNode) {
@@ -619,6 +779,17 @@ export class NavigationEngine implements IHopStateMachine {
     this.log('debug', `[BFS] origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excluded}]`);
 
     this._direction = params.direction || 'bidirectional';
+    // Snapshot kept so the refine path (gate cycle) can re-run init with new filters
+    // without the AI having to re-send origin / direction / depth / mission_brief.
+    this.initSnapshot = {
+      question: params.question,
+      origin: originNode.id,
+      targetColumns: params.targetColumns,
+      direction: this._direction,
+      depth: params.depth,
+      depth_enforcement: params.depth_enforcement,
+      mission_brief: params.mission_brief,
+    };
     // Bipartite agenda rule: `enqueueHop` is the only code path that writes to the agenda.
     // It pushes bodied nodes directly and contracts body-less nodes through to their bodied
     // neighbors in the current exploration direction. Invariant holds by construction.
@@ -755,10 +926,19 @@ export class NavigationEngine implements IHopStateMachine {
       const candidate = this.agenda.splice(nextIdx, 1)[0];
       this.agendaIds.delete(candidate.nodeId);
 
-      if (!this.visited.has(candidate.nodeId)) {
-        entry = candidate;
-        break;
+      if (this.visited.has(candidate.nodeId)) continue;
+
+      // User-requested auto-pass: keep node in scope, skip the AI hop, contract through to
+      // bodied neighbours so descendants stay reachable. Topology preserved; no analysis.
+      if (this.passNodeIds.has(candidate.nodeId.toLowerCase())) {
+        this.visited.add(candidate.nodeId);
+        this.memory.recordVerdict('pass');
+        this.contractThroughPassNode(candidate);
+        continue;
       }
+
+      entry = candidate;
+      break;
     }
 
     if (!entry) {
@@ -1136,11 +1316,17 @@ export class NavigationEngine implements IHopStateMachine {
       return depth >= maxDepth;
     }, { mode });
 
-    if (this.excludedTypes.size > 0) {
+    // Three orthogonal exclusion axes — origin is never dropped (it anchors the trace).
+    const hasFilters = this.excludedTypes.size > 0 || this.excludedSchemas.size > 0 || this.excludedNodeIds.size > 0;
+    if (hasFilters) {
       for (const id of Array.from(seen)) {
         if (id === startId) continue;
-        const t = this.nodeMap.get(id)?.type?.toLowerCase();
-        if (t && this.excludedTypes.has(t)) seen.delete(id);
+        const node = this.nodeMap.get(id);
+        if (!node) continue;
+        const t = node.type?.toLowerCase();
+        if (t && this.excludedTypes.has(t)) { seen.delete(id); continue; }
+        if (this.excludedSchemas.has(node.schema.toLowerCase())) { seen.delete(id); continue; }
+        if (this.excludedNodeIds.has(id.toLowerCase())) { seen.delete(id); continue; }
       }
     }
 
@@ -1181,6 +1367,27 @@ export class NavigationEngine implements IHopStateMachine {
    * @param columns - Optional columns of interest (column-trace mode).
    * @param visitedRefs - Internal cycle guard for the recursive contraction step.
    */
+  /**
+   * Forwards a pass-tagged node's intent to its in-direction bodied neighbours.
+   *
+   * @remarks
+   * Mirrors `enqueueHop`'s non-bodied contraction branch: when a node is in
+   * {@link passNodeIds} the AI is not asked to analyse it, but we still want its
+   * descendants reachable. Walk in-direction neighbours and re-enqueue each via
+   * `enqueueHop` (which respects scope, visited, and the bipartite rule).
+   */
+  private contractThroughPassNode(entry: AgendaEntry): void {
+    const dir = this._direction;
+    const neighbours = dir === 'upstream'
+      ? (this.graph.inNeighbors(entry.nodeId) as string[])
+      : dir === 'downstream'
+        ? (this.graph.outNeighbors(entry.nodeId) as string[])
+        : (this.graph.neighbors(entry.nodeId) as string[]);
+    for (const nid of neighbours) {
+      this.enqueueHop(nid, entry.question, entry.depth + 1, entry.priority, entry.activeColumns);
+    }
+  }
+
   private enqueueHop(
     targetId: string,
     question: string,
