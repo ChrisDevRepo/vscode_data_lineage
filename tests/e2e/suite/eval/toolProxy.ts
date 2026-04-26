@@ -99,10 +99,10 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         });
       }
 
-      // GET /tools — list registered lineage tools
+      // GET /tools — list registered lineage tools (incl. presentation-tagged)
       if (method === 'GET' && url === '/tools') {
         const tools = vscode.lm.tools
-          .filter(t => t.tags.includes('lineage'))
+          .filter(t => t.tags.includes('lineage') || t.tags.includes('lineage-presentation'))
           .map(t => t.name);
         return respond(res, 200, { tools });
       }
@@ -133,7 +133,8 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         // start_exploration to crash on `params.origin.toLowerCase()`).
         const toolDescs: Record<string, { description: string; inputSchema?: unknown }> = {};
         for (const t of vscode.lm.tools) {
-          if (t.tags.includes('lineage') && t.description) {
+          const isLineage = t.tags.includes('lineage') || t.tags.includes('lineage-presentation');
+          if (isLineage && t.description) {
             toolDescs[t.name] = {
               description: t.description,
               ...(t.inputSchema ? { inputSchema: t.inputSchema } : {}),
@@ -219,12 +220,21 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
       if (method === 'GET' && url.startsWith('/session/') && url.endsWith('/state')) {
         const sess = getSession();
         const sm = sess.stateMachine;
-        // For classic-only tests (no SM), return what we have (empty SM state is OK)
+        const m = sess.model;
+        // Expose project + filter alongside SM so eval reports can render
+        // "Test case" header (source dacpac, schema/type filter) without an
+        // extra round-trip to /health and without re-reading agent.json.
         return respond(res, 200, {
           sm_state: sm ? sm.toJSON() : null,
           hop_log: proxyLog, // proxy-level log has timing + token stats
           session_hop_log: sess.hopLog, // extension's log (no timing)
           result_graph: sess.resultGraph,
+          project: sess.projectName,
+          filter: sess.filter ? {
+            schemas: sess.filter.schemas ?? [],
+            types: sess.filter.types ?? [],
+          } : null,
+          model_summary: m ? { nodes: m.nodes.length, edges: m.edges.length, schemas: m.schemas.length } : null,
         });
       }
 
@@ -276,7 +286,7 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
           return respond(res, 400, {
             error: 'unknown_tool',
             tool,
-            hint: `Valid tools: ${vscode.lm.tools.filter(t => t.tags.includes('lineage')).map(t => t.name).join(', ')}`,
+            hint: `Valid tools: ${vscode.lm.tools.filter(t => t.tags.includes('lineage') || t.tags.includes('lineage-presentation')).map(t => t.name).join(', ')}`,
           });
         }
 

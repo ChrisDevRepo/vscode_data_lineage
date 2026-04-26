@@ -1,5 +1,28 @@
+"""
+Eval report builder — fetches SM state from the live test-electron proxy,
+merges with the agent run metadata, scores against the test-case spec, and
+writes a single self-contained Markdown report.
+
+Layout (one section per spec, every value sourced 1:1 from SM state — no
+harness paraphrasing):
+
+    1. Test case      — question, source dacpac, filter
+    2. KPIs           — duration total / phase 2 / phase 3, token avg, token of summary
+    3. Baseline check — current run vs baseline-v1-2026-04-19 (or the most recent
+                        prior baseline run found under test-results/eval-runs/)
+    4. Expected outcome  — parsed from tests/cases/<id>.md "Expected Outcome" + Required + Forbidden
+    5. Score          — correctness, completeness, efficiency (0–3 each;
+                        correctness + completeness are the critical pair)
+    6. Hops           — one block per visited node: subquestion, status, label,
+                        short memory, long memory
+    7. AI summary chat output    — verbatim from <id>.chat.txt
+    8. AI description output     — verbatim from present_result.input.description
+
+Usage: python extract.py <test-id> <session-id>
+"""
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -8,102 +31,98 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-# Usage: python extract.py <test-id> <session-id>
-# Fetches SM state from http://127.0.0.1:3271/session/<session-id>/state,
-# merges with <run-dir>/<test-id>.agent.json metadata, scores via
-# score_and_build_md, and writes <test-id>.md + snapshots/<test-id>/*.json
-# under the run directory (resolved from $EVAL_RUN_ID or by walking
-# test-results/eval-runs/*/).
-
 PROXY = "http://127.0.0.1:3271"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 RUNS_ROOT = PROJECT_ROOT / "test-results" / "eval-runs"
+CASES_DIR = PROJECT_ROOT / "tests" / "cases"
+BASELINE_RUN_ID = "baseline-v1-2026-04-19"
 
-def parse_case(test_id: str) -> dict:
-    """Infer mode from test ID — recognizes bb/ct anywhere in the id so ad-hoc
-    probes (`adhoc-bb-*`, `adhoc-ct-*`) and plain baseline ids (`bb-*`, `ct-*`)
-    both resolve. Fallbacks look at the session's columnAspect at render time."""
-    parts = test_id.lower().split("-")
-    if "bb" in parts:
-        mode = "BB"
-    elif "ct" in parts:
-        mode = "CT"
-    else:
-        mode = "infer"  # resolved from sm_state.columnAspect in score_and_build_md
-    return {"id": test_id, "mode": mode}
 
-def score_and_build_md(test_id: str, merged: dict, git_head: str, chat_text: str | None = None, host_log_name: str | None = None) -> tuple[str, dict]:
-    """Return (markdown_report, summary_row)."""
-    hl = merged.get("hop_log") or []
-    sm = merged.get("sm_state") or {}
-    rg = merged.get("result_graph") or {}
-    case = parse_case(test_id)
+# ---------------------------------------------------------------------------
+# Test-case file parsing
+# ---------------------------------------------------------------------------
 
-    submits = [h for h in hl if h.get("tool") == "submit_findings"]
-    presents = [h for h in hl if h.get("tool") == "present_result"]
-    present_input = presents[0].get("input", {}) if presents else {}
+def _read_case_file(test_id: str) -> str:
+    """Locate and return raw text of the case file. Falls back through the
+    same search roots as run.py so ad-hoc cases work."""
+    candidates = [CASES_DIR / f"{test_id}.md"]
+    candidates.extend(CASES_DIR.glob(f"*/{test_id}.md"))
+    adhoc_root = PROJECT_ROOT / "test-results" / "cases"
+    if adhoc_root.exists():
+        candidates.extend(adhoc_root.rglob(f"{test_id}.md"))
+    for p in candidates:
+        if p.exists():
+            return p.read_text(encoding="utf-8", errors="replace")
+    return ""
 
-    # Helper — concatenate all section.text bodies for a submit_findings input
-    # (replaces the legacy single `detail_analysis` field per audit 2026-04-26).
-    def _concat_sections(inp):
-        secs = inp.get("sections") or []
-        return "\n\n".join(s.get("text", "") for s in secs if isinstance(s, dict))
 
-    # Per-submit metrics
-    summary_lens = [len(s.get("input", {}).get("summary", "")) for s in submits]
-    det_lens = [len(_concat_sections(s.get("input", {}))) for s in submits]
-    verdicts = Counter(s.get("input", {}).get("verdict") for s in submits)
-    badges = [s.get("input", {}).get("badge_label") for s in submits if s.get("input", {}).get("badge_label")]
-    empty_summary = sum(1 for n in summary_lens if n == 0)
-    sql_keywords = ["INSERT ", "UPDATE ", "SELECT ", "JOIN ", "FROM ", "WHERE "]
-    sql_hops = sum(
-        1
-        for s in submits
-        if any(k in _concat_sections(s.get("input", {})).upper() for k in sql_keywords)
-    )
-    latex_hops = sum(1 for s in submits if "$" in _concat_sections(s.get("input", {})))
-    block5_hops = sum(1 for s in submits if "**Business Purpose:**" in _concat_sections(s.get("input", {})))
-    table_hops = sum(
-        1
-        for s in submits
-        if "|---" in _concat_sections(s.get("input", {}))
-        or "| --- |" in _concat_sections(s.get("input", {}))
-    )
-    # Per-angle counts — surfaces business / technical / both adoption per session.
-    angle_counts = Counter()
-    for s in submits:
-        for sec in s.get("input", {}).get("sections") or []:
-            if isinstance(sec, dict) and sec.get("angle"):
-                angle_counts[sec["angle"]] += 1
+def parse_case_spec(test_id: str) -> dict:
+    """Parse a case .md into a structured dict for scoring + report headers.
 
-    # Result Graph metrics — proxy returns `nodeIds`, legacy dumps used `fullNodes`.
-    # Check both keys so the count is accurate regardless of source.
-    node_count = len(rg.get("nodeIds") or rg.get("fullNodes") or [])
-    edge_count = len(rg.get("edges") or [])
-    origin = rg.get("originNodeId")
+    Extracts: question, classification table, expected-outcome table,
+    required/forbidden node lists. Tolerant of missing sections; returns
+    empty defaults when fields are absent."""
+    text = _read_case_file(test_id)
+    spec = {
+        "question": "",
+        "classification": {},
+        "expected": {},
+        "required_nodes": [],
+        "forbidden_nodes": [],
+    }
+    if not text:
+        return spec
 
-    # Mode inference fallback — if parse_case couldn't decide from the id,
-    # use sm_state.columnAspect: set → CT, null → BB.
-    resolved_mode = case["mode"]
-    if resolved_mode == "infer":
-        resolved_mode = "CT" if sm.get("columnAspect") else "BB"
-    case = {**case, "mode": resolved_mode}
+    # Question — first blockquote under "## Question"
+    m = re.search(r"^##\s+Question\s*\n+>\s*(.+?)(?=\n##|\Z)", text, re.MULTILINE | re.DOTALL)
+    if m:
+        spec["question"] = " ".join(line.strip().lstrip(">").strip() for line in m.group(1).splitlines() if line.strip()).strip()
 
-    # Inline vs sliding-memory execution — SM emits `working_memory` in each
-    # submit output; inline mode does not. Controls how §4 renders post-hop state.
-    inline_mode = bool(sm.get("inlineMode"))
+    # Generic table-section parser — pulls "| Field | Value |" rows under a heading.
+    def _table_under(heading: str) -> dict:
+        m = re.search(rf"^##\s+{re.escape(heading)}\s*\n(.+?)(?=\n##|\Z)", text, re.MULTILINE | re.DOTALL)
+        if not m:
+            return {}
+        out = {}
+        for line in m.group(1).splitlines():
+            if line.startswith("|") and "|" in line[1:]:
+                cells = [c.strip() for c in line.strip("|").split("|")]
+                if len(cells) >= 2 and cells[0] and cells[0] not in ("Field", "-------", "---"):
+                    out[cells[0]] = cells[1]
+        return out
 
-    # User question + target columns — pulled from session working memory (survives every hop)
-    mem = sm.get("memory") or {}
-    user_question = mem.get("userQuestion") or ""
-    if not user_question and submits:
-        wm = (submits[0].get("output") or {}).get("working_memory") or {}
-        user_question = wm.get("user_question", "")
-    column_aspect = sm.get("columnAspect")
+    spec["classification"] = _table_under("Classification")
+    spec["expected"] = _table_under("Expected Outcome")
 
-    # Build a {nodeId → reason_for_visit} map from route_requests across all submits.
-    # The reason_for_visit is the question the AI posed when routing a neighbor;
-    # it's the "per-hop question" the user wants surfaced next to each detail memory.
+    # Bulleted node lists
+    def _bullets_under(heading: str) -> list[str]:
+        m = re.search(rf"^##\s+{re.escape(heading)}\s*\n(.+?)(?=\n##|\Z)", text, re.MULTILINE | re.DOTALL)
+        if not m:
+            return []
+        items = []
+        for line in m.group(1).splitlines():
+            s = line.strip()
+            if s.startswith("- ") and not s.lower().startswith("- _none"):
+                items.append(s[2:].strip())
+        return items
+
+    spec["required_nodes"] = _bullets_under("Required Nodes")
+    spec["forbidden_nodes"] = _bullets_under("Forbidden Nodes")
+    return spec
+
+
+# ---------------------------------------------------------------------------
+# Hop-log analysis helpers
+# ---------------------------------------------------------------------------
+
+def _concat_sections(inp: dict) -> str:
+    secs = inp.get("sections") or []
+    return "\n\n".join(s.get("text", "") for s in secs if isinstance(s, dict))
+
+
+def _build_reasons_map(submits: list[dict]) -> dict[str, str]:
+    """Map nodeId -> the routing question posed by an earlier hop's
+    route_requests. First occurrence wins."""
     reasons: dict[str, str] = {}
     for s in submits:
         for rr in (s.get("input") or {}).get("route_requests") or []:
@@ -111,311 +130,529 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str, chat_text: str
             q = rr.get("question") or ""
             if nid and q and nid not in reasons:
                 reasons[nid] = q
-    # Persisted detail slots — the ground-truth memory at end of session
-    detail_slots = mem.get("detailSlots") or {}
+    return reasons
 
-    lines = []
-    def A(s): lines.append(s)
 
-    A(f"# Eval Report: {test_id}")
-    A(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    A(f"**GIT_HEAD:** `{git_head}`")
-    if host_log_name:
-        A(f"**Host log:** [`{host_log_name}`](./{host_log_name}) (full vscode-tester extension-host trace)")
+# ---------------------------------------------------------------------------
+# Scoring (correctness, completeness, efficiency — 0–3 each)
+# ---------------------------------------------------------------------------
+
+def _normalize_node_id(nid: str) -> str:
+    """Lowercase, strip whitespace; case files use mixed casing for ids."""
+    return (nid or "").strip().lower()
+
+
+def _required_coverage(required: list[str], detail_slot_ids: set[str], rg_node_ids: set[str]) -> tuple[int, int, list[str]]:
+    """Return (covered_count, total, missing_list)."""
+    if not required:
+        return (0, 0, [])
+    covered = 0
+    missing = []
+    pool = detail_slot_ids | rg_node_ids
+    for r in required:
+        if _normalize_node_id(r) in pool:
+            covered += 1
+        else:
+            missing.append(r)
+    return (covered, len(required), missing)
+
+
+def _forbidden_handled(forbidden: list[str], submits: list[dict]) -> tuple[int, int, list[str]]:
+    """Return (pruned_or_absent, total, leaked_list).
+    Forbidden nodes either MUST be pruned (verdict=prune) or never analyzed."""
+    if not forbidden:
+        return (0, 0, [])
+    leaked = []
+    handled = 0
+    for fnode_full in forbidden:
+        # Forbidden lines are often free-text — extract bare object names if any
+        # (e.g. "Forbidden utility nodes (uspLogError, uspPrintError, ErrorLog) ...")
+        names = re.findall(r"\b([a-zA-Z][a-zA-Z0-9_]+)\b", fnode_full)
+        for name in names:
+            if name.lower() in {"forbidden", "utility", "nodes", "in", "scope", "at", "but", "must", "be", "pruned", "via", "verdict", "prune"}:
+                continue
+            for s in submits:
+                fid = _normalize_node_id((s.get("input") or {}).get("focus_node_id"))
+                verdict = (s.get("input") or {}).get("verdict")
+                if name.lower() in fid and verdict == "analyze":
+                    leaked.append(f"{name} (analyzed at hop, expected prune)")
+        handled += 1  # counted handled at the line-item level
+    return (handled - len(leaked), handled, leaked)
+
+
+def score_run(spec: dict, sm: dict, hop_log: list[dict], rg: dict, present_input: dict) -> dict:
+    """Compute correctness, completeness, efficiency scores (0–3 each).
+
+    Correctness + completeness are the critical pair (must each ≥2 for PASS).
+    Efficiency is supplementary: tracks budget adherence (max hops, max runtime).
+    """
+    submits = [h for h in hop_log if h.get("tool") == "submit_findings"]
+    detail_slots = (sm.get("memory") or {}).get("detailSlots") or {}
+    detail_slot_ids = {_normalize_node_id(k) for k in detail_slots.keys()}
+    rg_node_ids = {_normalize_node_id(n) for n in (rg.get("nodeIds") or rg.get("fullNodes") or [])}
+
+    # ---- Correctness (required nodes coverage + verdict alignment) ----
+    cov, tot, missing = _required_coverage(spec.get("required_nodes", []), detail_slot_ids, rg_node_ids)
+    forbidden_kept, forbidden_total, leaked = _forbidden_handled(spec.get("forbidden_nodes", []), submits)
+    has_present = bool(present_input)
+    if tot == 0:
+        # No required nodes specified — score on present_result existence + no leaked forbidden
+        if has_present and not leaked:
+            correctness = 3
+        elif has_present:
+            correctness = 2
+        else:
+            correctness = 1
     else:
-        A("**Host log:** _not captured — set `$EVAL_HOST_LOG` or ensure `%TEMP%/test-eval.log` exists at extract time._")
+        ratio = cov / tot
+        if ratio == 1.0 and not leaked:
+            correctness = 3
+        elif ratio >= 0.8 and len(leaked) <= 1:
+            correctness = 2
+        elif ratio >= 0.5:
+            correctness = 1
+        else:
+            correctness = 0
+
+    # ---- Completeness (scope visited %, agenda drained, present_result quality) ----
+    scope_size = sm.get("scopeSize") or 0
+    hop_count = len(submits)
+    sections = present_input.get("sections") or []
+    has_summary = bool(present_input.get("summary"))
+    has_name = bool(present_input.get("name"))
+    visited_ratio = hop_count / scope_size if scope_size > 0 else 0
+    status = sm.get("status")
+
+    if status == "complete" and has_present and has_name and has_summary and len(sections) >= 1 and visited_ratio >= 0.3:
+        completeness = 3
+    elif has_present and len(sections) >= 1 and visited_ratio >= 0.2:
+        completeness = 2
+    elif has_present:
+        completeness = 1
+    else:
+        completeness = 0
+
+    # ---- Efficiency (hops vs max, runtime vs max, no error churn) ----
+    expected = spec.get("expected") or {}
+    max_hops = expected.get("Max hops") or expected.get("max hops")
+    max_runtime_ms = expected.get("Max total runtime (ms)") or expected.get("Max total runtime")
+    try:
+        max_hops_i = int(re.sub(r"[^\d]", "", str(max_hops))) if max_hops else None
+    except Exception:
+        max_hops_i = None
+    try:
+        max_runtime_i = int(re.sub(r"[^\d]", "", str(max_runtime_ms))) if max_runtime_ms else None
+    except Exception:
+        max_runtime_i = None
+
+    total_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in hop_log)
+    error_count = sum(1 for h in hop_log if (h.get("_meta") or {}).get("isError"))
+
+    eff_factors = []
+    if max_hops_i:
+        eff_factors.append(hop_count <= max_hops_i)
+    if max_runtime_i:
+        eff_factors.append(total_dur <= max_runtime_i)
+    eff_factors.append(error_count == 0)
+    if not eff_factors:
+        efficiency = 2
+    else:
+        passed = sum(1 for x in eff_factors if x)
+        if passed == len(eff_factors):
+            efficiency = 3
+        elif passed >= len(eff_factors) - 1:
+            efficiency = 2
+        elif passed >= 1:
+            efficiency = 1
+        else:
+            efficiency = 0
+
+    return {
+        "correctness": correctness,
+        "completeness": completeness,
+        "efficiency": efficiency,
+        "required_coverage": f"{cov}/{tot}",
+        "missing_required": missing,
+        "forbidden_leaked": leaked,
+        "max_hops_budget": max_hops_i,
+        "actual_hops": hop_count,
+        "max_runtime_budget_ms": max_runtime_i,
+        "actual_runtime_ms": total_dur,
+        "error_count": error_count,
+        "visited_ratio_pct": round(visited_ratio * 100, 1),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Baseline comparison (current vs baseline-v1-2026-04-19)
+# ---------------------------------------------------------------------------
+
+def load_baseline_metrics(test_id: str) -> dict | None:
+    """Return per-case baseline KPIs from the locked baseline run, or None."""
+    baseline_path = RUNS_ROOT / BASELINE_RUN_ID / f"{test_id}.json"
+    if not baseline_path.exists():
+        return None
+    try:
+        d = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    hl = d.get("hop_log") or []
+    sm = d.get("sm_state") or {}
+    submits = [h for h in hl if h.get("tool") == "submit_findings"]
+    presents = [h for h in hl if h.get("tool") == "present_result"]
+    total_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in hl)
+    submit_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in submits)
+    present_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in presents)
+    submit_tokens = [(h.get("_meta") or {}).get("outputTokens", 0) for h in submits]
+    present_tokens = [(h.get("_meta") or {}).get("outputTokens", 0) for h in presents]
+    return {
+        "hops": len(submits),
+        "scope": sm.get("scopeSize") or 0,
+        "total_dur_ms": total_dur,
+        "phase2_dur_ms": submit_dur,
+        "phase3_dur_ms": present_dur,
+        "token_avg_hop": round(sum(submit_tokens) / len(submit_tokens), 1) if submit_tokens else 0,
+        "token_summary": present_tokens[0] if present_tokens else 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Markdown report builder
+# ---------------------------------------------------------------------------
+
+def build_md(test_id: str, merged: dict, git_head: str, chat_text: str | None = None, host_log_name: str | None = None) -> tuple[str, dict]:
+    hl = merged.get("hop_log") or []
+    sm = merged.get("sm_state") or {}
+    rg = merged.get("result_graph") or {}
+    project = merged.get("project") or "(unknown — proxy did not return project)"
+    proxy_filter = merged.get("filter") or {}
+    submits = [h for h in hl if h.get("tool") == "submit_findings"]
+    presents = [h for h in hl if h.get("tool") == "present_result"]
+    present_input = presents[0].get("input", {}) if presents else {}
+
+    spec = parse_case_spec(test_id)
+    scores = score_run(spec, sm, hl, rg, present_input)
+    baseline = load_baseline_metrics(test_id)
+
+    # Per-tool durations / token tallies
+    total_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in hl)
+    phase2_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in submits)
+    phase3_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in presents)
+    submit_tokens = [(h.get("_meta") or {}).get("outputTokens", 0) for h in submits]
+    present_tokens = [(h.get("_meta") or {}).get("outputTokens", 0) for h in presents]
+    total_tokens = sum((h.get("_meta") or {}).get("outputTokens", 0) for h in hl)
+    avg_hop_tokens = round(sum(submit_tokens) / len(submit_tokens), 1) if submit_tokens else 0
+    summary_tokens = present_tokens[0] if present_tokens else 0
+
+    # User question — prefer SM-recorded; fall back to case spec
+    user_question = (sm.get("memory") or {}).get("userQuestion") or spec.get("question") or ""
+
+    # Filter — prefer live proxy filter; fall back to case-file Classification → "Filter" cell
+    filt_schemas = proxy_filter.get("schemas") or []
+    filt_types = proxy_filter.get("types") or []
+    if not filt_schemas and not filt_types:
+        case_filter = (spec.get("classification") or {}).get("Filter")
+        if case_filter and case_filter.lower() != "_none_":
+            # parse "schemas: [a, b]; types: [t]" or just "schemas: [...]"
+            for token in case_filter.split(";"):
+                t = token.strip()
+                if t.lower().startswith("schemas:"):
+                    filt_schemas = [s.strip() for s in t.split(":", 1)[1].strip().strip("[]").split(",") if s.strip()]
+                elif t.lower().startswith("types:"):
+                    filt_types = [s.strip() for s in t.split(":", 1)[1].strip().strip("[]").split(",") if s.strip()]
+
+    # Mode strings
+    mode_label = "CT (column_trace)" if sm.get("columnAspect") else "BB (blackboard)"
+    memory_label = "inline" if sm.get("inlineMode") else "sliding"
+
+    reasons = _build_reasons_map(submits)
+    detail_slots = (sm.get("memory") or {}).get("detailSlots") or {}
+
+    lines: list[str] = []
+    A = lines.append
+
+    A(f"# Eval Report — `{test_id}`")
+    A(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  **GIT_HEAD:** `{git_head}`")
+    if host_log_name:
+        A(f"**Host log:** [`{host_log_name}`](./{host_log_name})")
     A("")
-    A("## 1. User Question")
+
+    # ---- 1. Test case ----
+    A("## 1. Test case")
     A("")
-    A(f"> {user_question or '(not captured)'}")
+    A("| Field | Value |")
+    A("| :--- | :--- |")
+    A(f"| Question | {user_question or '_(not captured)_'} |")
+    A(f"| Source (project) | `{project}` |")
+    A(f"| Mode | {mode_label} / {memory_label} |")
+    A(f"| Filter — schemas | {', '.join(filt_schemas) if filt_schemas else '_(none)_'} |")
+    A(f"| Filter — types | {', '.join(filt_types) if filt_types else '_(none)_'} |")
+    column_aspect = sm.get("columnAspect")
     if column_aspect:
+        cols = column_aspect if isinstance(column_aspect, list) else [str(column_aspect)]
+        A(f"| Target columns (CT) | {', '.join(cols)} |")
+    A("")
+
+    # ---- 2. KPIs ----
+    A("## 2. KPIs")
+    A("")
+    A("| Metric | Value |")
+    A("| :--- | :--- |")
+    A(f"| Duration — total | {total_dur:,} ms |")
+    A(f"| Duration — phase 2 (exploration / submit_findings) | {phase2_dur:,} ms |")
+    A(f"| Duration — phase 3 (synthesis / present_result) | {phase3_dur:,} ms |")
+    A(f"| Tokens — avg per hop (submit_findings) | {avg_hop_tokens:,} |")
+    A(f"| Tokens — final summary (present_result) | {summary_tokens:,} |")
+    A(f"| Tokens — total session (all tool I/O) | {total_tokens:,} |")
+    A(f"| Hops (submit_findings) | {len(submits)} |")
+    A(f"| Scope size | {sm.get('scopeSize', 0)} nodes |")
+    A(f"| Engine status | `{sm.get('status', '?')}` |")
+    A(f"| Errors | {scores['error_count']} |")
+    A("")
+
+    # ---- 3. Baseline check ----
+    A(f"## 3. Baseline check (vs `{BASELINE_RUN_ID}`)")
+    A("")
+    if baseline is None:
+        A(f"_No baseline metrics available for this test-id under `{BASELINE_RUN_ID}/` — skipping comparison._")
         A("")
-        A(f"**Target columns (CT mode):** `{', '.join(column_aspect) if isinstance(column_aspect, list) else column_aspect}`")
+    else:
+        def _delta(cur, base, unit=""):
+            if base == 0:
+                return f"{cur:,}{unit} (baseline: 0)"
+            d = round(cur - base, 1)
+            pct = (d / base * 100) if base else 0
+            sign = "+" if d >= 0 else ""
+            return f"{cur:,}{unit} ({sign}{d:,}{unit}, {sign}{pct:.1f}% vs baseline {base:,}{unit})"
+
+        A("| Metric | Current | Δ vs baseline |")
+        A("| :--- | ---: | :--- |")
+        A(f"| Hops | {len(submits)} | {_delta(len(submits), baseline['hops'])} |")
+        A(f"| Scope | {sm.get('scopeSize', 0)} | {_delta(sm.get('scopeSize', 0), baseline['scope'])} |")
+        A(f"| Duration total (ms) | {total_dur:,} | {_delta(total_dur, baseline['total_dur_ms'], ' ms')} |")
+        A(f"| Phase 2 (ms) | {phase2_dur:,} | {_delta(phase2_dur, baseline['phase2_dur_ms'], ' ms')} |")
+        A(f"| Phase 3 (ms) | {phase3_dur:,} | {_delta(phase3_dur, baseline['phase3_dur_ms'], ' ms')} |")
+        A(f"| Token avg / hop | {avg_hop_tokens:,} | {_delta(avg_hop_tokens, baseline['token_avg_hop'])} |")
+        A(f"| Token summary | {summary_tokens:,} | {_delta(summary_tokens, baseline['token_summary'])} |")
+        A("")
+
+    # ---- 4. Expected outcome ----
+    A("## 4. Expected outcome (from case file)")
+    A("")
+    expected = spec.get("expected") or {}
+    if expected:
+        A("| Field | Value |")
+        A("| :--- | :--- |")
+        for k, v in expected.items():
+            A(f"| {k} | {v} |")
+        A("")
+    else:
+        A("_No `## Expected Outcome` table parsed from case file._")
+        A("")
+
+    if spec.get("required_nodes"):
+        A("**Required nodes:**")
+        # Match the scoring pool so the per-node mark and the score never disagree.
+        pool = {_normalize_node_id(k) for k in detail_slots.keys()} | {_normalize_node_id(n) for n in (rg.get("nodeIds") or rg.get("fullNodes") or [])}
+        for n in spec["required_nodes"]:
+            present = "✅" if _normalize_node_id(n) in pool else "❌"
+            A(f"- {present} `{n}`")
+        A("")
+
+    if spec.get("forbidden_nodes"):
+        A("**Forbidden nodes:**")
+        for n in spec["forbidden_nodes"]:
+            A(f"- `{n}`")
+        A("")
+
+    # ---- 5. Score ----
+    A("## 5. Score")
+    A("")
+    A("> **Correctness and completeness are the critical pair.** Each ≥ 2 → run is acceptable. Efficiency is supplementary (budget adherence).")
+    A("")
+    A("| Dimension | Score (0–3) | Notes |")
+    A("| :--- | :---: | :--- |")
+    cov_str = scores["required_coverage"]
+    miss = scores["missing_required"]
+    leak = scores["forbidden_leaked"]
+    notes_correct = f"required coverage {cov_str}"
+    if miss:
+        notes_correct += f"; missing: {', '.join(f'`{m}`' for m in miss)}"
+    if leak:
+        notes_correct += f"; forbidden leaked: {', '.join(leak)}"
+    A(f"| Correctness | **{scores['correctness']}** | {notes_correct} |")
+    A(f"| Completeness | **{scores['completeness']}** | visited {scores['visited_ratio_pct']}% of scope; status=`{sm.get('status','?')}`; present_result called: {bool(present_input)} |")
+    eff_notes = []
+    if scores["max_hops_budget"]:
+        eff_notes.append(f"hops {scores['actual_hops']}/{scores['max_hops_budget']}")
+    if scores["max_runtime_budget_ms"]:
+        eff_notes.append(f"runtime {scores['actual_runtime_ms']:,}/{scores['max_runtime_budget_ms']:,} ms")
+    eff_notes.append(f"errors {scores['error_count']}")
+    A(f"| Efficiency | **{scores['efficiency']}** | {'; '.join(eff_notes)} |")
+    A("")
+    crit_pass = scores["correctness"] >= 2 and scores["completeness"] >= 2
+    A(f"**Verdict:** {'✅ critical-pair PASS' if crit_pass else '❌ critical-pair FAIL'}  ·  total {scores['correctness']+scores['completeness']+scores['efficiency']}/9")
     A("")
 
-    A("## 2. Summary Metrics")
+    # ---- 6. Hops ----
+    A(f"## 6. Hops ({len(submits)})")
     A("")
-    A("| Metric | Value | Notes |")
-    A("| :--- | :--- | :--- |")
-    A(f"| mode | {case['mode']} | |")
-    A(f"| total_hops | {len(submits)} | |")
-    A(f"| verdict_split | analyze={verdicts.get('analyze', 0)} | pass={verdicts.get('pass', 0)} | prune={verdicts.get('prune', 0)} |")
-    A(f"| avg_detail_len | {sum(det_lens)//len(det_lens) if det_lens else 0} chars | |")
-    A(f"| avg_summary_len | {sum(summary_lens)//len(summary_lens) if summary_lens else 0} chars | |")
-    A(f"| sql_coverage | {sql_hops}/{len(submits)} hops | {int(sql_hops*100/len(submits)) if submits else 0}% |")
-    A(f"| latex_coverage | {latex_hops}/{len(submits)} hops | |")
-    A(f"| table_coverage | {table_hops}/{len(submits)} hops | |")
-    A(f"| detail_slot_count | {len(detail_slots)} | persisted after all hops |")
-    A(f"| final_nodes | {node_count} | |")
-    A(f"| final_edges | {edge_count} | |")
-    A(f"| present_result_called | {bool(presents)} | final description rendered? |")
+    A("> One block per visited node (hop order). All fields sourced 1:1 from `submit_findings.input` for that hop; subquestion comes from the prior hop's `route_requests[]`.")
     A("")
-
-    A("---")
-    A("## Output stage map")
-    A("")
-    A("The agent's work surfaces in FOUR distinguishable stages. Each section below labels which stage it reflects.")
-    A("")
-    stage_c = "✅" if chat_text else "❌ (no `<test-id>.chat.txt` found)"
-    stage_d = "✅" if present_input else "❌ (tool never called)"
-    A("| Stage | Where it lives | Captured here in | Present in this run |")
-    A("| :--- | :--- | :--- | :--- |")
-    A("| **A. SM phase trace** | `proxyLog` on the HTTP bridge (timing, gates, errors per tool call) | §3 | ✅ always |")
-    A("| **B. Per-hop authored memory** | `submit_findings.input.{sections, summary}` → `sm_state.memory.detailSlots` | §4 + §6 | ✅ always |")
-    A(f"| **C. User chat response** | Final text the Haiku agent wrote back after all tool calls | §5 | {stage_c} |")
-    A(f"| **D. React AI-preview payload** | `present_result.input` (name/summary/description/sections) — the webview card | §7 | {stage_d} |")
-    A("")
-
-    A("---")
-    A("## 3. Stage A — SM phase trace (tool-call sequence)")
-    A("")
-    A("_Each row = one POST /tool call. Errors, gates, and durations shown. This is what the state machine recorded._")
-    A("")
-    A("| # | tool | focus / op | duration ms | in/out bytes | error |")
-    A("| :--- | :--- | :--- | ---: | ---: | :--- |")
-    for i, h in enumerate(hl):
-        tool = h.get("tool") or "?"
-        inp = h.get("input") or {}
-        meta = h.get("_meta") or {}
-        # Each tool uses a different primary input key — show whichever is set
-        # so rows for search/ddl/neighborhood aren't blank.
-        focus = (
-            inp.get("focus_node_id")
-            or inp.get("origin")
-            or inp.get("nodeId")
-            or inp.get("query")
-            or inp.get("name")
-            or ""
-        )
-        dur = meta.get("durationMs", "?")
-        ib = meta.get("inputBytes", "?")
-        ob = meta.get("outputBytes", "?")
-        out = h.get("output") or {}
-        err = ""
-        if meta.get("isError"):
-            err = f"`{meta.get('errorType')}`"
-            gate = (out.get("gate") if isinstance(out, dict) else None)
-            if gate:
-                err += f" gate=`{gate}`"
-        A(f"| {i+1} | `{tool}` | `{focus}` | {dur} | {ib} / {ob} | {err or '—'} |")
-    A("")
-
-    A("---")
-    A("## 4. Stage B — Per-hop authored memory (live)")
-    A("")
-    # Build a per-submit node-meta map from the inline `result.fullNodes`
-    # (inline mode) OR the top-level `output.focus_node` (SM mode).
     for i, s in enumerate(submits):
-        inp = s.get("input", {})
+        inp = s.get("input", {}) or {}
         out = s.get("output", {}) or {}
-        wm = out.get("working_memory", {}) or {}
-        fnode = inp.get("focus_node_id") or ""
-        # Node metadata: prefer SM-mode focus_node; fall back to result.fullNodes[0]
-        # or result.detail_slots[0] (inline true-done mode).
+        fnode = inp.get("focus_node_id") or "(no focus_node_id)"
+        # node-meta lookup: SM mode emits focus_node, inline mode uses fullNodes[0]/detail_slots[0]
         node_meta = out.get("focus_node") or {}
         if not node_meta:
             nested = (out.get("result") or {}) if isinstance(out.get("result"), dict) else {}
             fn = nested.get("fullNodes") or []
             if fn:
-                # fullNodes entries use s/n/t keys
                 node_meta = fn[0]
             else:
                 ds = nested.get("detail_slots") or []
                 if ds:
                     ds0 = ds[0]
                     node_meta = {"s": ds0.get("schema"), "n": ds0.get("name"), "t": ds0.get("type")}
-        reason = reasons.get(fnode.lower()) or ""
+        type_str = node_meta.get("t") or node_meta.get("type") or "?"
+        sub_q = reasons.get(_normalize_node_id(fnode)) or "_(initial origin — no routing question)_"
 
-        A(f"### Hop {i+1}: `{fnode}`")
-        if node_meta and (node_meta.get("s") or node_meta.get("n")):
-            A(f"_{node_meta.get('s','?')}.{node_meta.get('n','?')} ({node_meta.get('t','?')})_")
+        A(f"### Hop {i+1} — `{fnode}`  *({type_str})*")
         A("")
-        A(f"**Routed because (question posed at routing):** {reason or '_initial origin — no routing question_'}")
+        A("| Field | Value |")
+        A("| :--- | :--- |")
+        A(f"| Subquestion | {sub_q} |")
+        A(f"| Status (verdict) | `{inp.get('verdict', '?')}` |")
+        A(f"| Label (badge) | `{inp.get('badge_label') or '—'}` |")
+        if inp.get("note_caption"):
+            A(f"| Note | {inp.get('note_caption')} |")
         A("")
-        A(
-            f"**Verdict:** `{inp.get('verdict')}`  |  "
-            f"**Badge:** `{inp.get('badge_label') or '—'}`  |  "
-            f"**Note:** {inp.get('note_caption') or '—'}"
-        )
+        A("**Short memory** (`summary`)")
         A("")
-        A("#### Detail memory (authored `sections[]`)")
+        summary_text = (inp.get("summary") or "").strip()
+        if not summary_text:
+            A("_(empty)_")
+        else:
+            A("```text")
+            A(summary_text)
+            A("```")
+        A("")
+        A("**Long memory** (`sections[]`)")
         A("")
         secs = inp.get("sections") or []
-        if secs:
-            for sec in secs:
-                if isinstance(sec, dict):
-                    angle = sec.get("angle", "?")
-                    text = sec.get("text", "") or "_(empty)_"
-                    A(f"**Section — angle: `{angle}`**")
-                    A("")
-                    A(text)
-                    A("")
-        else:
+        if not secs:
             A("_(no sections submitted)_")
             A("")
-        A("#### Summary memory (authored `summary`)")
-        A(f"> {inp.get('summary') or '_(empty)_'}")
-        A("")
-        if inline_mode:
-            A("#### Post-hop state")
-            A("_Inline mode — no `working_memory` envelope is emitted (checklist / agenda / depth tracking is SM-only)._ ")
-            nested = (out.get("result") or {}) if isinstance(out.get("result"), dict) else {}
-            if nested:
-                A(
-                    f"- result.status = `{nested.get('status','?')}`  "
-                    f"nodes={len(nested.get('fullNodes') or [])}  "
-                    f"edges={len(nested.get('edges') or [])}  "
-                    f"detail_slots={len(nested.get('detail_slots') or [])}"
-                )
-            if out.get("done") is True:
-                A("- `done: true` — agent terminated the inline exploration.")
         else:
-            A("#### Post-hop state (from `working_memory` delivered after this hop)")
-            cl = wm.get("checklist") or {}
-            A(f"- Checklist: hop={cl.get('current_hop','?')}  rounds_used={cl.get('rounds_used','?')}  noted={cl.get('noted','?')}/{cl.get('total','?')}  coverage={cl.get('coveragePct','?')}%  open={cl.get('open','?')}")
-            A(f"- Agenda remaining: {out.get('agenda_remaining','?')}")
-            A(f"- Depth: budget={wm.get('depth_budget','?')} cap={wm.get('depth_cap','?')} enforcement=`{wm.get('depth_enforcement','?')}`")
-            recent_rej = wm.get("recent_rejections") or []
-            if recent_rej:
-                A(f"- Recent rejections: {len(recent_rej)} — {', '.join(str(r) for r in recent_rej[:3])}")
+            for sec in secs:
+                if not isinstance(sec, dict):
+                    continue
+                A(f"**angle: `{sec.get('angle','?')}`**")
+                A("")
+                sec_text = (sec.get("text", "") or "").strip()
+                if not sec_text:
+                    A("_(empty)_")
+                else:
+                    # Fence section text so embedded markdown headers / lists in the AI's
+                    # authored memory don't collide with the report's own outline.
+                    A("```markdown")
+                    A(sec_text)
+                    A("```")
+                A("")
+        A("---")
         A("")
 
-    A("---")
-    A("## 5. Stage C — User chat response (final text streamed back to the user)")
+    # ---- 7. AI summary chat output ----
+    A("## 7. AI summary chat output")
     A("")
     if chat_text:
-        A("_Captured from `<test-id>.chat.txt` — what the Haiku agent wrote after tool calls completed. This is what a real user would see as the chat answer._")
+        A("_Verbatim from `<test-id>.chat.txt` — the final markdown the Haiku agent wrote back to the user after all tool calls._")
         A("")
         A("```text")
         A(chat_text.strip())
         A("```")
     else:
-        A("_No `<test-id>.chat.txt` found in the run folder. The proxy does not observe the Haiku agent's final text response — the orchestrator (this Claude Code session) must save the agent's final reply to `<test-id>.chat.txt` after the agent completes._")
+        A("_No `<test-id>.chat.txt` found in the run directory. Save the agent's final reply to that file before re-running extract.py to populate this section._")
     A("")
 
-    A("---")
-    A("## 6. Stage B (continued) — Persisted Detail Memory archive")
-    A("")
-    A(f"_{len(detail_slots)} slot(s) survived — these are the final archive the AI would dump at synthesis. Each slot is the end-state of one `detailSlots[nodeId]` in the memory store._")
-    A("")
-    # Engine-bug detection — slot is blank but the matching submit input WAS authored.
-    def _slot_concat_sections(slot):
-        secs = slot.get("sections") or []
-        return "\n\n".join(s.get("text", "") for s in secs if isinstance(s, dict))
-    blank_but_authored = []
-    for slot_id, slot in detail_slots.items():
-        if not isinstance(slot, dict):
-            continue
-        if not (slot.get("summary") or "").strip() and not _slot_concat_sections(slot).strip():
-            # find matching submit
-            for s in submits:
-                if (s.get("input", {}).get("focus_node_id", "") or "").lower() == slot_id.lower():
-                    inp = s.get("input", {})
-                    if (inp.get("summary") or "").strip() or _concat_sections(inp).strip():
-                        blank_but_authored.append(slot_id)
-                    break
-    if blank_but_authored:
-        A("> ⚠ **Engine anomaly detected.** The following slot(s) were persisted with empty `summary` AND empty `sections[]` even though the agent's `submit_findings` input contained authored text for both fields. The memory write-back path is dropping the authored text.")
-        A(">")
-        for nid in blank_but_authored:
-            A(f"> - `{nid}`")
-        A("")
-    for slot_id, slot in detail_slots.items():
-        if not isinstance(slot, dict):
-            continue
-        A(f"### `{slot.get('nodeId', slot_id)}` — {slot.get('schema','?')}.{slot.get('name','?')} ({slot.get('type','?')})")
-        A("")
-        if slot.get("reason_for_visit"):
-            A(f"**Reason for visit:** {slot.get('reason_for_visit')}")
-            A("")
-        if slot.get("badge_label"):
-            A(f"**Badge:** `{slot.get('badge_label')}`  **Note:** {slot.get('note_caption') or '—'}")
-            A("")
-        A("**Summary:**")
-        A(f"> {slot.get('summary') or '_(empty)_'}")
-        A("")
-        A("**Analysis:**")
-        A("")
-        A(slot.get("analysis") or "_(empty)_")
-        A("")
-        A("")
-
-    A("---")
-    A("## 7. Stage D — React AI-preview payload (`present_result` → webview card)")
+    # ---- 8. AI description output (present_result.input.description) ----
+    A("## 8. AI description output (sent to React AI-preview)")
     A("")
     if not present_input:
-        A("> _The agent did not call `lineage_present_result` (or `lineage_enrich_view`)._")
-        A("> _Without this tool call, the React webview shows no preview card — the user would see only the chat text from Stage C._")
+        A("> _The agent did not call `lineage_present_result` — webview card would render empty._")
     else:
-        A("_This is the exact JSON the extension handed to the React preview component. The card the user actually sees is rendered from these fields._")
-        A("")
-        A(f"**View name:** `{present_input.get('name', '(unnamed)')}`")
-        A("")
-        summ = present_input.get('summary', '')
-        if summ:
-            A(f"**Summary:** {summ}")
+        if present_input.get("name"):
+            A(f"**View name:** `{present_input.get('name')}`")
+            A("")
+        if present_input.get("summary"):
+            A(f"**Summary:** {present_input.get('summary')}")
             A("")
         if present_input.get("description"):
-            A("**Description (markdown as sent to webview):**")
+            A("**Description (markdown handed to webview):**")
             A("")
             A("```markdown")
             A(present_input.get("description"))
             A("```")
             A("")
-        secs = present_input.get("sections", []) or []
-        A(f"**Sections ({len(secs)}):**")
-        A("")
-        for sec in secs:
-            label = sec.get("label", "Untitled")
-            A(f"#### {label}")
+        secs = present_input.get("sections") or []
+        if secs:
+            A(f"**Sections ({len(secs)}):**")
             A("")
-            A(sec.get("text", "") or "_(empty)_")
-            A("")
+            for sec in secs:
+                A(f"**section label:** `{sec.get('label', 'Untitled')}`")
+                A("")
+                sec_text = (sec.get("text", "") or "").strip()
+                if not sec_text:
+                    A("_(empty)_")
+                else:
+                    A("```markdown")
+                    A(sec_text)
+                    A("```")
+                A("")
     A("")
 
     summary_row = {
         "id": test_id,
-        "mode": case["mode"],
+        "mode": mode_label,
+        "memory": memory_label,
         "hops": len(submits),
-        "nodes": node_count,
-        "edges": edge_count,
-        "analyze": verdicts.get("analyze", 0),
-        "pass": verdicts.get("pass", 0),
-        "prune": verdicts.get("prune", 0),
-        "avg_det": sum(det_lens)//len(det_lens) if det_lens else 0,
-        "sql_pct": int(sql_hops*100/len(submits)) if submits else 0,
-        "present_result_called": bool(presents),
+        "scope": sm.get("scopeSize", 0),
+        "total_dur_ms": total_dur,
+        "phase2_dur_ms": phase2_dur,
+        "phase3_dur_ms": phase3_dur,
+        "token_avg_hop": avg_hop_tokens,
+        "token_summary": summary_tokens,
+        "correctness": scores["correctness"],
+        "completeness": scores["completeness"],
+        "efficiency": scores["efficiency"],
+        "critical_pair_pass": crit_pass,
     }
-
     return "\n".join(lines), summary_row
 
+
+# ---------------------------------------------------------------------------
+# Snapshot / log / chat helpers (carried over from prior version)
+# ---------------------------------------------------------------------------
+
 def _fetch_sm_state(session_id: str, offline_fallback: Path | None = None) -> dict:
-    """Fetch SM state from proxy. If proxy is down and offline_fallback is a
-    saved <test_id>.json dump, re-use its sm_state/hop_log/result_graph blocks
-    (lets us regenerate MD reports from historical runs)."""
     url = f"{PROXY}/session/{session_id}/state"
     try:
         with urlopen(url, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except URLError as e:
         if offline_fallback and offline_fallback.exists():
-            print(
-                f"[extract] proxy unreachable ({e}); using offline dump {offline_fallback.name}",
-                file=sys.stderr,
-            )
+            print(f"[extract] proxy unreachable ({e}); using offline dump {offline_fallback.name}", file=sys.stderr)
             dump = json.loads(offline_fallback.read_text(encoding="utf-8"))
             return {
                 "sm_state": dump.get("sm_state") or {},
                 "hop_log": dump.get("hop_log") or [],
                 "session_hop_log": dump.get("session_hop_log") or [],
                 "result_graph": dump.get("result_graph") or {},
+                "project": dump.get("project"),
+                "filter": dump.get("filter"),
             }
-        print(
-            f"[extract] ERROR: cannot reach proxy at {url}: {e}\n"
-            f"[extract] Hint: start the eval proxy with 'npm run test:eval' and keep it running,\n"
-            f"[extract]       or re-run with a saved <test_id>.json present in the run-dir.",
-            file=sys.stderr,
-        )
+        print(f"[extract] ERROR: cannot reach proxy at {url}: {e}", file=sys.stderr)
         sys.exit(2)
 
 
@@ -438,11 +675,7 @@ def _resolve_run_dir(test_id: str, session_id: str) -> Path:
                 continue
             if meta.get("session_id") == session_id:
                 return run_dir
-    print(
-        f"[extract] ERROR: no run-dir found for test_id={test_id} session_id={session_id}.\n"
-        f"[extract] Set $EVAL_RUN_ID or ensure {test_id}.agent.json exists under {RUNS_ROOT}.",
-        file=sys.stderr,
-    )
+    print(f"[extract] ERROR: no run-dir found for test_id={test_id} session_id={session_id}.", file=sys.stderr)
     sys.exit(3)
 
 
@@ -470,9 +703,7 @@ def _write_snapshots(run_dir: Path, test_id: str, state: dict) -> None:
         "columnAspect": sm.get("columnAspect"),
         "verdictCounts": sm.get("verdictCounts"),
     }
-    (snap_dir / "sm-state-trimmed.json").write_text(
-        json.dumps(trimmed, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    (snap_dir / "sm-state-trimmed.json").write_text(json.dumps(trimmed, indent=2, ensure_ascii=False), encoding="utf-8")
 
     hl = state.get("hop_log") or []
     hop_timing = [
@@ -481,25 +712,17 @@ def _write_snapshots(run_dir: Path, test_id: str, state: dict) -> None:
             "tool": h.get("tool"),
             "focus_node_id": (h.get("input") or {}).get("focus_node_id"),
             "duration_ms": (h.get("_meta") or {}).get("durationMs"),
+            "output_tokens": (h.get("_meta") or {}).get("outputTokens"),
         }
         for i, h in enumerate(hl)
     ]
-    (snap_dir / "hop-timing.json").write_text(
-        json.dumps(hop_timing, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    (snap_dir / "hop-timing.json").write_text(json.dumps(hop_timing, indent=2, ensure_ascii=False), encoding="utf-8")
 
     errors = [
-        {
-            "hop": i + 1,
-            "tool": h.get("tool"),
-            "error": (h.get("result") or {}).get("error"),
-        }
-        for i, h in enumerate(hl)
-        if isinstance(h.get("result"), dict) and h["result"].get("error")
+        {"hop": i + 1, "tool": h.get("tool"), "error": (h.get("_meta") or {}).get("errorType")}
+        for i, h in enumerate(hl) if (h.get("_meta") or {}).get("isError")
     ]
-    (snap_dir / "errors.json").write_text(
-        json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    (snap_dir / "errors.json").write_text(json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8")
 
     presents = [h for h in hl if h.get("tool") == "present_result"]
     enrich_audit = {
@@ -513,24 +736,14 @@ def _write_snapshots(run_dir: Path, test_id: str, state: dict) -> None:
             for i, p in enumerate(presents)
         ],
     }
-    (snap_dir / "enrich-view-audit.json").write_text(
-        json.dumps(enrich_audit, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    (snap_dir / "enrich-view-audit.json").write_text(json.dumps(enrich_audit, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _copy_host_log(run_dir: Path, test_id: str) -> Path | None:
-    """Copy the vscode-tester extension-host log into the run dir so each test
-    retains the full bridge-side trace (startup, tool calls, gates, errors).
-
-    Source precedence:
-      1. $EVAL_HOST_LOG env var (explicit)
-      2. /tmp/test-eval.log (canonical location per .claude/skills/eval-loop/SKILL.md)
-    """
     candidates: list[Path] = []
     env_log = os.environ.get("EVAL_HOST_LOG")
     if env_log:
         candidates.append(Path(env_log))
-    # Unix: /tmp. Windows (bash "/tmp" aliases to %TEMP%): also try tempfile path.
     candidates.append(Path("/tmp/test-eval.log"))
     import tempfile as _tempfile
     candidates.append(Path(_tempfile.gettempdir()) / "test-eval.log")
@@ -546,12 +759,15 @@ def _copy_host_log(run_dir: Path, test_id: str) -> Path | None:
 
 
 def _read_chat_text(run_dir: Path, test_id: str) -> str | None:
-    """Pick up the orchestrator-supplied agent-final-response text if present."""
     path = run_dir / f"{test_id}.chat.txt"
     if path.exists():
         return path.read_text(encoding="utf-8", errors="replace")
     return None
 
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -579,16 +795,16 @@ if __name__ == "__main__":
         "hop_log": state.get("hop_log") or [],
         "session_hop_log": state.get("session_hop_log") or [],
         "result_graph": state.get("result_graph") or {},
+        "project": state.get("project"),
+        "filter": state.get("filter"),
     }
 
-    (run_dir / f"{test_id}.json").write_text(
-        json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    (run_dir / f"{test_id}.json").write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
 
     host_log_path = _copy_host_log(run_dir, test_id)
     chat_text = _read_chat_text(run_dir, test_id)
 
-    report, _ = score_and_build_md(
+    report, summary = build_md(
         test_id, merged, _git_head(),
         chat_text=chat_text,
         host_log_name=host_log_path.name if host_log_path else None,
@@ -598,6 +814,7 @@ if __name__ == "__main__":
     _write_snapshots(run_dir, test_id, state)
 
     print(f"[extract] wrote {test_id}.md + snapshots under {run_dir}")
+    print(f"[extract] score: correctness={summary['correctness']} completeness={summary['completeness']} efficiency={summary['efficiency']} critical_pair_pass={summary['critical_pair_pass']}")
     if host_log_path:
         print(f"[extract] host log copied -> {host_log_path.name}")
     if chat_text:
