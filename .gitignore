@@ -9,6 +9,11 @@ build/
 .cache/
 *.vsix
 
+# Python bytecode (eval harness scripts) — never tracked
+__pycache__/
+*.pyc
+*.pyo
+
 # Testing
 test-results/
 **/test-results/**
