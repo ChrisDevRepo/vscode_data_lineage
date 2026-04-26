@@ -52,7 +52,7 @@ _None._
    - vSalesSummary: verdict=analyze (captures formula TotalRevenue = Qty * UnitPrice).
    - vSalesDetail: verdict=analyze (captures join between Header and Detail).
    - Every view in both chains: verdict=analyze (captures the rename) or verdict=pass (identity chain), with badge_label describing the step ("Qty Rename", "Price Lookup", etc.), note_caption naming the from→to column.
-   - spRefreshPrices + spBuildSalesReport: verdict=analyze, detail_analysis must include the actual SQL of the computation.
+   - spRefreshPrices + spBuildSalesReport: verdict=analyze, sections[].text must include the actual SQL of the computation.
 8. Agenda drains → synthesis prompt.
 9. Call `lineage_present_result` with 2 sections (labels exactly "Quantity" and "Price"), notes[] for every kept node, highlight_groups optional (source/transform/target).
 10. Return chat answer identifying `SalesOrderDetail.OrderQty` and `Product.ListPrice`.

@@ -25,7 +25,7 @@ Before scoring, audit:
 
 | Metric | Threshold |
 |---|---|
-| Avg `detail_analysis` chars per analyzed node | ≥ 400 |
+| Avg captured-section chars (sum of `sections[].text`) per analyzed node | ≥ 400 |
 | Avg `summary` chars per hop | ≥ 40 |
 | Hops with empty `summary` | 0 |
 | `badge_label` present on `analyze` verdicts | 100% |

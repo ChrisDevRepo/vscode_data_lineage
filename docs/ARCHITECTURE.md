@@ -4,51 +4,84 @@ The `@lineage` participant uses a **Map & Router** pattern: the extension host o
 
 ## End-to-end journey
 
-One turn of a `@lineage` question. Termination authority differs per phase — **AI** in Discovery, **AI** in Inline, **Engine** in SM, **AI** in Synthesis.
+One turn of a `@lineage` question. The diagram encodes **ownership** (who terminates each step) by colour, **node role** (decision / gate / activity / terminator) by shape — UML activity-diagram conventions.
 
 ```mermaid
 flowchart LR
-    U[User question] --> D[DISCOVERY<br/>AI searches, classifies<br/>Class D ↔ Class S]
-    D -->|Class D| R1[Direct chat answer]
-    D -->|Class S| M{Scope<br/>≤10 nodes<br/>≤10k tokens?}
-    M -->|Yes| IN[INLINE<br/>One-shot — AI sees full scope<br/>AI ends via complete:true]
-    M -->|No| GG[Gate: confirm_sm_start<br/>User approves scope]
-    GG -->|yes| SM[SM HOP LOOP<br/>AI hops 1 node/turn<br/>Engine drains agenda]
-    GG -->|no| U
-    IN --> SY[SYNTHESIS<br/>AI reads full archive<br/>present_result]
+    U([User question]):::user --> D[Discovery]:::ai
+    D -->|Class D| R1[Direct answer]:::ai
+    R1 --> EX(((End))):::done
+    D -->|Class S| M{Scope ≤10 nodes<br/>and ≤10k tokens?}:::engine
+    M -->|yes| IN[Inline run]:::ai
+    M -->|no| GG[/Gate: confirm_sm_start/]:::engine
+    GG -->|approve| SM[SM hop loop]:::engine
+    GG -->|decline| EX
+    IN --> SY[Synthesis]:::ai
     SM --> SY
-    SY --> C[COMPLETED<br/>Follow-up: edits,<br/>prunes, supplement]
+    SY --> C{{Completed}}:::done
     C -.->|fresh question| U
     C -.->|supplement| SM
+
+    classDef user stroke:#9c27b0,stroke-width:2px
+    classDef ai stroke:#0288d1,stroke-width:2px
+    classDef engine stroke:#ef6c00,stroke-width:2px
+    classDef done stroke:#388e3c,stroke-width:2px,stroke-dasharray:4 2
 ```
+
+Legend (border colour only — interior follows light/dark theme): purple = user-driven · blue = AI-driven · orange = engine-driven · green dashed = terminator. Termination authority is therefore: AI in Discovery / Inline / Synthesis, Engine in SM hop loop and the consent gate.
+
+| Phase | Owner | Behaviour |
+|-------|-------|-----------|
+| **Discovery** | AI | Searches the catalog and classifies the question. **Class D** = single object or graph-wide metadata, answered directly. **Class S** = relationships spanning ≥2 connected objects, hands off to the engine via `start_exploration`. |
+| **Scope check** | Engine | Topological preflight on the BFS scope: ≤ `inlineNodeCap` (10) nodes AND ≤ `inlineTokenBudget` (10k) tokens, no column tracing → Inline. Otherwise → Gate. |
+| **Gate** | Engine | Emits `action_required: confirm_sm_start`. Pauses turn for user consent before any analysis runs. |
+| **Inline run** | AI | One-shot analysis; AI sees the full scope's DDL at once and self-terminates with `complete: true`. |
+| **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
+| **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |
+| **Completed** | User | Holds the result graph. Follow-up edits/prunes re-render in place; `supplement` extends the existing archive via SM; a fresh question wipes everything and returns to Discovery. |
 
 ## Component map
 
-Five modules own the AI participant surface. Each arrow is a typed contract — crossing it means crossing a Zod boundary or a VS Code API.
+C4 Container view. Deployment boundaries as containers; modules inside; arrows are asymmetric calls (a typed contract crosses every arrow — either a Zod schema boundary or a VS Code API).
 
 ```mermaid
-graph TB
-    subgraph VSCode[VS Code runtime]
-        CP[Chat surface<br/>vscode.lm / ChatResponseStream]
-        WV[Webview panel<br/>postMessage]
+flowchart LR
+    subgraph VSC[VS Code Runtime]
+        CP[Chat surface<br/>vscode.lm]
+        WV[Webview<br/>React UI]
     end
-    subgraph Extension[Extension host]
-        LP[lineageParticipant.ts<br/>turn handler, phase dispatch]
-        TP[toolProvider.ts<br/>tool registration + Zod]
-        NE[NavigationEngine<br/>src/ai/smBase.ts<br/>map owner, agenda, gates]
-        MM[AiMemoryManager<br/>detail archive + sliding memory]
-        PP[panelProvider.ts<br/>webview bridge]
+    subgraph EXT[Extension Host]
+        LP[lineageParticipant]
+        TP[toolProvider]
+        NE[NavigationEngine]
+        MM[memoryManager]
+        PP[panelProvider]
     end
-    CP <-->|sendRequest / tool result| LP
-    LP -->|buildStageSystemPrompt| CP
+    CP -->|sendRequest| LP
+    LP -->|stream / response| CP
     LP -->|dispatch by phase| TP
     TP -->|invokeTool| NE
-    NE -->|getHopContext / archiveChars| MM
-    NE -->|emit result graph| PP
-    PP <-->|bridgeContract Zod| WV
+    NE -->|getHopContext / archive| MM
+    MM -->|working memory| NE
+    NE -->|result graph| PP
+    PP -->|postMessage| WV
+    WV -->|user actions| PP
+
+    style VSC stroke:#616161,stroke-width:2px,stroke-dasharray:5 5
+    style EXT stroke:#f57f17,stroke-width:2px
 ```
 
-The webview never talks to the engine directly. **Map** (engine, deterministic) — agenda, visited set, neighbour metadata, consent gates, route / column validation. **Router** (AI, semantic) — read focus DDL, write `detail_analysis` + summary, emit verdict, issue `route_requests`. The two sides couple through exactly two calls: `getHopContext` downstream, `submit_findings` upstream.
+The webview never talks to the engine directly. **Map** (engine, deterministic) — agenda, visited set, neighbour metadata, consent gates, route / column validation. **Router** (AI, semantic) — read focus DDL, write `sections[]` (one entry per fired `*_capture` template — classification-locked: 1 for `business`/`technical`, 2 for `both`) + summary, emit verdict, issue `route_requests`. The two sides couple through exactly two calls: `getHopContext` downstream, `submit_findings` upstream.
+
+| Module | File | Role |
+|--------|------|------|
+| Chat surface | `vscode.lm` / `ChatResponseStream` | VS Code chat API — `sendRequest`, tool results, stream writer |
+| `lineageParticipant` | [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) | Turn handler, phase dispatch, system-prompt assembly |
+| `toolProvider` | [`src/ai/toolProvider.ts`](../src/ai/toolProvider.ts) | Tool registration, Zod boundary, phase-based filtering |
+| `NavigationEngine` | [`src/ai/smBase.ts`](../src/ai/smBase.ts) | Map owner — agenda, visited set, route validation, gates |
+| `memoryManager` | [`src/ai/memoryManager.ts`](../src/ai/memoryManager.ts) | Detail archive + sliding working memory |
+| `panelProvider` | [`src/panelProvider.ts`](../src/panelProvider.ts) | Webview bridge — `bridgeContract` Zod validation |
+| Webview | React UI | Graph rendering, filter UI, user actions |
 
 ## Bipartite analysis model
 
@@ -109,15 +142,27 @@ True Inline runs Blackboard only; any session with a Column Aspect is forced to 
 
 ## Memory model
 
+Two stores with opposite lifecycles. **Working Memory** is volatile — wiped between every hop. **Detail Archive** is monotonic — only grows, never shipped mid-loop, lifted verbatim at synthesis. The diagram encodes lifecycle by border style: solid thick = persistent, dashed = volatile. Cylinder shapes are UML datastore stereotypes.
+
 ```mermaid
 flowchart LR
-    HOP[Each hop] -->|writes detail_analysis| DA[Detail Archive<br/>monotonic, never shipped mid-loop]
-    HOP -->|reads| WM[Working Memory<br/>user_question + last 3 summaries<br/>current_task + checklist]
-    WM -.wiped every hop.-> WM
-    DA -->|lifted at synthesis only| SYN[Synthesis turn]
+    H1[/Hop N/]:::hop -->|reads| WM[(Working Memory)]:::transient
+    H1 -->|writes one section| DA[(Detail Archive)]:::persistent
+    H1 --> WIPE([wipe WM]):::wipe
+    WIPE --> H2[/Hop N+1/]:::hop
+    H2 -.->|same loop| H1
+    DA ==>|lifted verbatim| SYN([Synthesis]):::synthesis
+
+    classDef hop stroke:#0288d1,stroke-width:2px
+    classDef persistent stroke:#388e3c,stroke-width:3px
+    classDef transient stroke:#ef6c00,stroke-width:2px,stroke-dasharray:4 2
+    classDef wipe stroke:#c62828,stroke-width:2px,stroke-dasharray:2 2
+    classDef synthesis stroke:#6a1b9a,stroke-width:2px
 ```
 
-- **Detail Archive** — `AiMemoryManager.detailSlots`. Full technical `analysis` per node, written via `submit_findings.detail_analysis`. Never compressed, never shipped mid-loop. Lifted at synthesis only.
+Border legend: solid thick green = persistent store · dashed orange = volatile store · dashed red = lifecycle event · solid purple = phase transition. The double arrow (`==>`) marks the synthesis lift as a one-time phase event, not a per-hop edge.
+
+- **Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` at synthesis only.
 - **Working memory** — `AiMemoryManager.getWorkingMemory`, per-hop isolated snapshot:
   - `user_question` — echoed verbatim so the root question survives sliding wipes.
   - `column_aspect` — present in CT mode (`target_columns`, `done_columns`, `active_columns`).
@@ -180,46 +225,37 @@ These are observed in production logs; the mitigations are real code paths, not 
 
 ## State diagram — navigation engine
 
+Two zoom levels. The top-level FSM shows phase transitions; the Analysis loop is the only phase with non-trivial internal mechanics, so it gets its own focused view.
+
+**Top-level phases.** Cross-phase transitions only — sub-states are documented in their respective sections above.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Discovery
-    state Discovery {
-        [*] --> ClassifyQuestion
-        ClassifyQuestion --> ClassD: one object OR graph-wide metadata
-        ClassifyQuestion --> ClassS: 2+ connected objects + analysis
-        ClassD --> [*]: chat answer
-        ClassS --> SeedAgenda
-        SeedAgenda --> [*]: start_exploration
-    }
-    Discovery --> Analysis: Class S
     Discovery --> Discovery: Class D direct answer
-    state Analysis {
-        [*] --> EvaluateAgenda
-        EvaluateAgenda --> FetchContext: pop agenda item
-        FetchContext --> AI_Reasoning: provide map + DDL
-        AI_Reasoning --> ValidateSubmission
-        ValidateSubmission --> UpdateMemory: success
-        ValidateSubmission --> AI_Reasoning: failure (fail early)
-        UpdateMemory --> EvaluateAgenda
-        EvaluateAgenda --> [*]: agenda empty
-    }
+    Discovery --> Analysis: Class S — start_exploration
     Analysis --> Synthesis: agenda drained
-    state Synthesis {
-        [*] --> AggregateFindings
-        AggregateFindings --> GenerateReport
-        GenerateReport --> PresentResult
-        PresentResult --> [*]
-    }
     Synthesis --> Completed: present_result
-    state Completed {
-        [*] --> Graph
-        Graph --> ExtendScope: follow-up chip
-        Graph --> RerenderOnly: description / label edit
-    }
-    Completed --> Analysis: ExtendScope — SM re-enters with extended border
-    Completed --> Synthesis: RerenderOnly — re-run present_result
-    Completed --> Discovery: fresh question wipes resultGraph
+    Completed --> Analysis: supplement / extend scope
+    Completed --> Synthesis: re-render only
+    Completed --> Discovery: fresh question
 ```
+
+**Analysis hop loop.** Inside the Analysis phase, every hop runs this cycle until the agenda is empty.
+
+```mermaid
+stateDiagram-v2
+    [*] --> EvaluateAgenda
+    EvaluateAgenda --> FetchContext: pop next
+    FetchContext --> AI_Reasoning: ship map + DDL
+    AI_Reasoning --> ValidateSubmission: submit_findings
+    ValidateSubmission --> UpdateMemory: ok
+    ValidateSubmission --> AI_Reasoning: rejected (fail-early retry)
+    UpdateMemory --> EvaluateAgenda
+    EvaluateAgenda --> [*]: agenda empty → Synthesis
+```
+
+Discovery sub-states (`ClassifyQuestion → ClassD | ClassS → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. The Completed phase branches on the user's follow-up action — see the cross-phase transitions above.
 
 ## Session FSM & typed exit dispatch
 

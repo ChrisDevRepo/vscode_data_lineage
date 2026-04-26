@@ -18,8 +18,7 @@
 - **Mechanical guards** G11 (classification-locked sections contract) and G12 (slash-command phase gate). Both enforce contracts that prompt prose alone cannot reliably hold.
 
 ### Note
-- A subset of public docs (`docs/AI_PROMPTS.md`, `docs/ARCHITECTURE.md`, `docs/FEATURES.md`) still reference the legacy `detail_analysis` field. Doc rewrite is a follow-up task — code and prompts are correct.
-- Eval regression gate against `baseline1` requires the proxy (`npm run test:eval`); deferred to user-led validation pass before merging this branch into `main`.
+- Eval regression gate against `baseline1` is deferred — eval harness migrating to vscode-tester in a separate CR.
 
 ## [0.9.9] - 2026-04-26
 

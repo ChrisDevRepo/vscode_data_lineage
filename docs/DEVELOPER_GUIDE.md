@@ -36,19 +36,29 @@ npx @vscode/vsce package      # produce a .vsix
 
 Both paths produce the same `DatabaseModel` consumed by `graphBuilder.ts`.
 
+Two ingestion lanes converge on a single regex parser. The DFD shows ownership (lane = source) and phase ordering within the live-database lane.
+
 ```mermaid
 flowchart LR
-    DP[.dacpac file] -->|dacpacExtractor.ts<br/>unzip + model.xml| MX[model.xml]
-    MX --> PARSE[Regex parser<br/>sqlBodyParser.ts]
-    SRV[(SQL Server / Azure SQL /<br/>Fabric / Synapse)] -->|dmvExtractor.ts<br/>Phase 1: catalog| CAT[Catalog metadata]
-    SRV -->|dmvExtractor.ts<br/>Phase 2: DDL + columns| DDL[DDL + columns]
-    CAT --> MERGE[Merge + normalize]
-    DDL --> MERGE
+    subgraph DACPAC[DACPAC lane — file-based]
+        DP[.dacpac file] -->|dacpacExtractor.ts<br/>unzip| MX[model.xml]
+    end
+    subgraph LIVE[Live database lane — DMV-based]
+        SRV[(SQL Server*)] -->|Phase 1: catalog| CAT[Catalog metadata]
+        SRV -->|Phase 2: DDL + columns| DDL[DDL + columns]
+        CAT --> MERGE[Merge + normalize]
+        DDL --> MERGE
+    end
+    MX --> PARSE[[Regex parser<br/>sqlBodyParser.ts]]
     MERGE --> PARSE
     PARSE --> DM[DatabaseModel<br/>shared schema]
-    DM --> GB[graphBuilder.ts]
-    GB --> G[Directed graph<br/>graphology]
+    DM --> GB[graphBuilder] --> G[Directed graph<br/>graphology]
+
+    style DACPAC stroke:#0288d1,stroke-width:2px
+    style LIVE stroke:#ef6c00,stroke-width:2px
 ```
+
+*`SQL Server` covers SQL Server, Azure SQL, Fabric, and Synapse — same DMVs, same catalog shape. The cylinder is a UML **datastore** marker; the double-bordered parser is a UML **subroutine / composite activity** (its internals are decomposed in `PARSE_RULES.md`).
 
 The parser has no awareness of the source. Same regex pipeline, same edge-direction inference, same YAML rules.
 

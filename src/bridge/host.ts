@@ -62,7 +62,7 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
       } catch (err) {
         if (err instanceof z.ZodError) {
           bridgeLogger.error(`Outgoing validation failed for ${msg.type}`, summarizeZodError(err));
-          return panel.webview.postMessage(msg);
+          return Promise.resolve(false);
         }
         throw err;
       }

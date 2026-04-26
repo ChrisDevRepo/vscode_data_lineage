@@ -88,7 +88,7 @@ A `both` + CT session has the longest active-phase prompt: both capture instruct
 
 | Key | Purpose | Edit this when |
 |-----|---------|----------------|
-| `business_capture` | What the AI writes into `detail_analysis` for the business angle: business meaning, formulas, column renames, ⚠️ invariants, question-relevance evidence. | Adding a per-hop business-content requirement (e.g. "always list affected consumers"). The archive is unbounded — bias toward signalling depth, not character ceilings. |
+| `business_capture` | The body of the section the AI submits with `angle: 'business'` per hop (one entry in `submit_findings.sections[]`): business meaning, formulas, column renames, ⚠️ invariants, question-relevance evidence. Fires when classification ∈ {business, both}. | Adding a per-hop business-content requirement (e.g. "always list affected consumers"). Each capture template is independent — no cross-references to other capture templates. |
 | `technical_capture` | What the AI writes for the technical angle: verbatim SQL, loading pattern, joins, antipatterns, distribution hints. | Adding a per-hop technical-content requirement (e.g. "always note hash-distribution column"). |
 | `structural_summary` | Reduced active-phase template fired only when the user's starting point is a non-bodied node (a table). Replaces `business_capture` / `technical_capture` for that one hop with a Purpose / Columns / Upstream / Downstream / Grain skeleton. | Changing the table-origin slot shape — e.g. adding an FK / index sub-section. Don't put transform formulas here; those belong in the procedure slots. |
 
@@ -102,7 +102,7 @@ A `both` + CT session has the longest active-phase prompt: both capture instruct
 
 - **Mirror capture and render edits.** When `business_capture` says "list every CASE branch", `business_subsection` should say "render every branch from the archive". If the two drift, captured content fails to surface or output references content that was never captured.
 - **Edit the `instruction:` field, not the examples.** Only `instruction` is injected into the prompt. The example fields exist for the human reader.
-- **Avoid character ceilings on archive fields.** The archive is unbounded; capping `detail_analysis` per slot pushes the model to pre-compress, which starves synthesis for detail. Use floors ("aim 800–2 000 chars per section"), not ceilings.
+- **Avoid character ceilings on archive fields.** The archive is unbounded; capping section text per slot pushes the model to pre-compress, which starves synthesis for detail. Describe quality criteria ("cover every business rule and SQL evidence point"), not character counts. Per the design rule: AI does grouping/order, system does numbers.
 - **Verdict names are locked.** `analyze` / `pass` / `prune` are enforced by a Zod enum on `submit_findings.verdict`. Only the YAML descriptions can change, not the names.
 - **Don't hand-edit the stage routing.** `STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) is the authoritative routing. Adding a new key requires both a YAML entry and a `STAGE_BY_KEY` registration.
 

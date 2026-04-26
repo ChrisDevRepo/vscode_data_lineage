@@ -13,20 +13,26 @@ Stored procedure dependencies are extracted by a multi-pass regex engine driven 
 
 The parser runs five passes before the extraction rules ever see the SQL. The cleansing passes neutralise comments and strings so quoted identifiers cannot be confused with object references.
 
+**Outer pipeline.** Four sequential stages from raw SQL to validated graph edges. Stage 1 is a UML composite activity (double-bordered) — its internals are decomposed in the next diagram.
+
 ```mermaid
-flowchart TD
-    A[Raw SQL Body] --> B[Stage 1 — Preprocessing]
-    subgraph S1 [Stage 1]
-        B1[Pass 0 — Remove nested block comments]
-        B2[Pass 1 — Leftmost regex: brackets, strings, line comments]
-        B3[Pass 1.5 — ANSI comma-join normalisation]
-        B4[Pass 1.6 — CTE alias substitution for UPDATE targets]
-        B1 --> B2 --> B3 --> B4
-    end
-    B4 --> C[Stage 2 — YAML rule extraction]
-    C --> D[Stage 3 — Capture normalisation<br/>strip delimiters, lowercase]
-    D --> E[Stage 4 — Catalog validation<br/>resolve to known objects]
+flowchart LR
+    A[Raw SQL body] --> B[[Stage 1<br/>Preprocessing]]
+    B --> C[Stage 2<br/>YAML rule extraction]
+    C --> D[Stage 3<br/>Capture normalisation]
+    D --> E[Stage 4<br/>Catalog validation]
     E --> F[Validated graph edges]
+
+    style B stroke:#0288d1,stroke-width:2px
+```
+
+**Stage 1 decomposition.** Four preprocessing passes run in fixed order. Pass 1 is a single leftmost-match regex that handles brackets, strings, and line comments simultaneously — making quote/bracket interaction bugs impossible by construction.
+
+```mermaid
+flowchart LR
+    P0[Pass 0<br/>strip block comments] --> P1[Pass 1<br/>brackets / strings / line comments]
+    P1 --> P15[Pass 1.5<br/>ANSI comma-join normalisation]
+    P15 --> P16[Pass 1.6<br/>CTE alias substitution]
 ```
 
 - **Pass 0** — stack-based removal of nested `/* ... */` block comments.
