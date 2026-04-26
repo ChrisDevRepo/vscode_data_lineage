@@ -237,9 +237,14 @@ technical_capture:
       CASE WHEN conditions, COALESCE fallbacks, computed column formulas.
       Quote as written in the DDL; do not paraphrase. Snippet only, not
       the full INSERT/SELECT statement.
-    - Loading pattern as a fact: "TRUNCATE + INSERT — full reload" /
-      "MERGE upsert by ProductId" / "INSERT-only append" / "UPDATE in
-      place" / etc. Coarse description.
+    - Loading pattern (procedure origins only — omit for views, UDFs,
+      tables) as one coarse value: `reload` (TRUNCATE + INSERT / full
+      refresh), `append` (INSERT-only, no UPDATE or DELETE), `upsert`
+      (MERGE or UPDATE + conditional INSERT), `historization` (versioned
+      history / change tracking), `purge` (DELETE-only / retention),
+      `orchestration` (EXECs other SPs, no data mutation on the target).
+      Coarse only — no SCD1 / SCD2 / CDC sub-variants. Write a short
+      phrase in your own words if none fit; omit if ambiguous.
     - Every computed column: formula alongside its snippet.
     - Relationships with role labels: "reads lookup from `DimProduct`",
       "writes via MERGE to `FactSalesReport`", "triggered by `spLoadOrders`".
@@ -311,16 +316,6 @@ structural_summary:
     Banned in this template: transform formulas, CASE logic, business rules,
     step-by-step behaviour. Those belong in the procedure slots.
 
-# ── Shared depth + format floor (active + synthesis) ─────────────────────────
-
-general:
-  # Disabled: an ungated cross-classification rule fired alongside the gated
-  # *_capture / *_subsection templates and re-prescribed SQL/code-fence
-  # formatting on every mission, leaking technical content into business slots.
-  # Domain-specific rules belong inside business_capture / technical_capture.
-  stages: []
-  instruction: ""
-
 # ── Synthesis-side render rules (one peer section per captured angle) ────────
 # When the captured archive contains sections with angle='business' and/or
 # angle='technical', synthesis emits each as its OWN peer entry in
@@ -365,13 +360,3 @@ technical_subsection:
     is a comparison table — hoist the shared SQL skeleton once above; the
     rows are the variants and the columns are the differing fields. Distinct
     logic always gets its own entry.
-
-# ── Metadata band (rendered when origin is an SP) ────────────────────────────
-
-loading_pattern:
-  # Disabled: was always-on at synthesis but only meaningful for procedure
-  # origins. The text said "Views and UDFs: omit" but the AI received it
-  # regardless, polluting view/function/table sessions. Re-enable via
-  # an origin-type gate in templateRenderer.ts when ready.
-  stages: []
-  instruction: ""

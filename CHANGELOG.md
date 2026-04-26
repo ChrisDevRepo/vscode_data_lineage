@@ -2,9 +2,12 @@
 
 ## [Unreleased]
 
+### Removed
+- **`general` and `loading_pattern` YAML templates.** Both deleted from `assets/aiOutputTemplates.yaml`, `AiOutputTemplates` interface, `EMPTY_AI_TEMPLATES`, `STAGE_BY_KEY`, and `REQUIRED_KEYS`. `general` was an ungated cross-classification rule that re-prescribed SQL/code-fence formatting on every mission, leaking technical content (XPath, namespace URIs, datatype tables) into business slots. `loading_pattern` was meaningful only on procedure origins but fired regardless. The loading-pattern vocabulary (`reload` / `append` / `upsert` / `historization` / `purge` / `orchestration`) now lives inside `technical_capture` as a per-hop classification fact, scoped to procedure origins by the instruction text.
+
 ### Fixed
 - **Business-mode regression — restore main-quality output.** Five targeted edits close the cross-domain leak introduced after main:
-  - `STAGE_BY_KEY.general = []` and `loading_pattern = []` in `templateRenderer.ts` — the ungated `general` key was firing alongside the gated `*_capture` templates and re-prescribing SQL/code-fence formatting on every mission, leaking technical content (XPath, namespace URIs, datatype tables) into business slots. Domain-specific rules now live exclusively inside `business_capture` / `technical_capture`. `loading_pattern` will be re-enabled with an origin-type gate (only fires for procedure origins).
+  - Disabled the leak surfaces — see Removed section above (`general` and `loading_pattern` deleted entirely).
   - Reverted the `9a01868` linear-chain few-shot example ("A reads, B reshapes, C aggregates, D publishes" + "preserve distinct steps" reminder) in `buildSynthesisPrompt`, `buildSynthesisReminder`, and the `sections` YAML instruction. The exemplar overrode the gating rule and forced stage-grouping of sibling nodes (b3 enrich-view collapsed from 15 H2 → 7 H2).
   - Restored main's `summary` instruction wording in YAML — dropped the "Short teaser, not the analysis" framing that told the AI to write a chip-teaser instead of a full chat narrative.
   - `stripSynthesisArtifacts` in `lineageParticipant.ts` now drops everything before the first `## ` heading (in addition to the existing `$(icon)` strip), permanently killing the "Now I have all slots. Assembling the final report." planning-prose leak.

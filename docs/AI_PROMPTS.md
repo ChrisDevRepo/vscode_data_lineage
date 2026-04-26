@@ -19,8 +19,8 @@ Two layers, written by two phases:
 
 | Layer | When it's written | What it is | Driven by |
 |-------|-------------------|------------|-----------|
-| **Per-hop capture (one archive slot per visited bodied node)** | Each hop during exploration | Full analysis of *one* view / procedure / function. Every formula, every column, every ⚠️. Stored unbounded in the Detail Archive. Never shipped mid-loop. | `business_capture`, `technical_capture`, `general`, `structural_summary` |
-| **Final document section** | Synthesis turn (after agenda drains) | One `## <label>` block in the report. Synthesis groups archive slots by label — same label = one section, with multiple node IDs cited. | `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes`, `loading_pattern` |
+| **Per-hop capture (one archive slot per visited bodied node)** | Each hop during exploration | Full analysis of *one* view / procedure / function. Every formula, every column, every ⚠️. Stored unbounded in the Detail Archive. Never shipped mid-loop. | `business_capture`, `technical_capture`, `structural_summary` |
+| **Final document section** | Synthesis turn (after agenda drains) | One `## <label>` block in the report. Synthesis groups archive slots by label — same label = one section, with multiple node IDs cited. | `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes` |
 
 Inside one section, the body is split into one or two **subsections** depending on mission type:
 
@@ -58,8 +58,6 @@ The contract is locked mechanically: each `submit_findings` call must carry exac
 
 `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes` are not gated by mission type — they always fire for their stage.
 
-`general` and `loading_pattern` are currently disabled (`stages: []` in `STAGE_BY_KEY`). `general` was a cross-classification rule that re-prescribed SQL/code-fence formatting and leaked technical content into business slots; domain-specific rules now live inside the gated `*_capture` / `*_subsection` templates. `loading_pattern` is meaningful only on procedure origins and will be re-enabled with an origin-type gate.
-
 ### Column-trace overlay (CT)
 
 CT mode is a **purely additive** overlay on top of mission type, activated when `start_exploration` is called with `targetColumns`. It does not change which YAML keys fire and it does not replace the business / technical section contract — when CT is approved, the AI still fills out one section per fired `*_capture` template (1 for `business`/`technical`, 2 peer for `both`) per node. CT only adds an extra technical instruction about *how* the columns are tracked and stored in the sliding-memory archive. It adds:
@@ -86,7 +84,6 @@ A `both` + CT session has the longest active-phase prompt: both capture instruct
 | `notes` | Per-node graph captions — one-line, what the node does specifically in this flow. | Changing caption length or style (e.g. always lead with the formula vs. the role). |
 | `business_subsection` | Section body for the business angle: formulas, `\| From \| To \| Business meaning \|` table, ⚠️ inline rule. Mirrors `business_capture`. | Changing how business rules render at full depth in the final document. Edit alongside `business_capture` so capture and render agree. |
 | `technical_subsection` | `#### Technical` subheading body: SQL snippets + LaTeX formulas side-by-side, join strategy, antipatterns. Mirrors `technical_capture`. | Changing how technical content renders. Edit alongside `technical_capture`. |
-| `loading_pattern` | SP load-type label (`reload` / `append` / `upsert` / `historization` / `purge` / `orchestration`). **Currently disabled** (`stages: []`); pending an origin-type gate so it only fires on procedure origins. | Adding or renaming a load-type vocabulary value (and re-enabling via origin-type gate). |
 
 ### Active — per-hop capture into the unbounded archive
 
@@ -95,12 +92,6 @@ A `both` + CT session has the longest active-phase prompt: both capture instruct
 | `business_capture` | The body of the section the AI submits with `angle: 'business'` per hop (one entry in `submit_findings.sections[]`): business meaning, formulas, column renames, ⚠️ invariants, question-relevance evidence. Fires when classification ∈ {business, both}. | Adding a per-hop business-content requirement (e.g. "always list affected consumers"). Each capture template is independent — no cross-references to other capture templates. |
 | `technical_capture` | What the AI writes for the technical angle: verbatim SQL, loading pattern, joins, antipatterns, distribution hints. | Adding a per-hop technical-content requirement (e.g. "always note hash-distribution column"). |
 | `structural_summary` | Reduced active-phase template fired only when the user's starting point is a non-bodied node (a table). Replaces `business_capture` / `technical_capture` for that one hop with a Purpose / Columns / Upstream / Downstream / Grain skeleton. | Changing the table-origin slot shape — e.g. adding an FK / index sub-section. Don't put transform formulas here; those belong in the procedure slots. |
-
-### Active + synthesis — shared depth + format floor
-
-| Key | Purpose | Edit this when |
-|-----|---------|----------------|
-| `general` | Per-section character floor (800–2 000 chars), `\| From \| To \| Notes \|` table format, ```sql``` code-fence rule, ⚠️ inline rule. Fires at both active capture and synthesis render so the contract is identical end-to-end. | Adjusting the depth target, adding a supported markdown feature, or banning an unsupported one (e.g. mermaid is not allowed in the chat panel). |
 
 ## Maintenance rules
 

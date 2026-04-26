@@ -80,14 +80,10 @@ export interface AiOutputTemplates {
    * synthesis already formatted and is lifted verbatim.
    */
   technical_capture: string;
-  /** Shared depth + format floor (active + synthesis): 800–2000 chars/section, table/code-fence/⚠️ rules. */
-  general: string;
   /** Synthesis render rules for the business angle — how captured content renders in section text. */
   business_subsection: string;
   /** Synthesis render rules for the technical angle — `#### Technical` subheading body. */
   technical_subsection: string;
-  /** SP loading-pattern classification at synthesis (reload / append / upsert / …). */
-  loading_pattern: string;
   /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/Downstream/Grain). */
   structural_summary: string;
 }
@@ -109,10 +105,8 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   notes: '',
   business_capture: '',
   technical_capture: '',
-  general: '',
   business_subsection: '',
   technical_subsection: '',
-  loading_pattern: '',
   structural_summary: '',
 };
 
