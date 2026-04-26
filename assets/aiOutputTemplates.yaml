@@ -101,6 +101,11 @@ sections:
     the variant's row or a per-variant invariants list after the table.
     Distinct logic always gets its own entry.
 
+    Linear chains keep one section per step. When each hop transforms
+    differently — A reads, B reshapes, C aggregates, D publishes — the
+    reader needs the sequence; do not collapse distinct logic into a
+    single entry just because the nodes are adjacent.
+
     Use `suggested_sections` from the completion result as a starting
     skeleton when present.
 

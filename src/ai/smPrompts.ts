@@ -132,5 +132,5 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
  * the envelope — this reminder reasserts only the gestalt rule.
  */
 export function buildSynthesisReminder(): string {
-  return '## Synthesis Reminder — Lift slots, assemble + group, anchor intro + closing.';
+  return '## Synthesis Reminder — Answer the user\'s question; lift slots, group siblings, preserve distinct steps.';
 }

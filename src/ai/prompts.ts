@@ -192,14 +192,15 @@ export function buildActivePhasePrompt(isInline: boolean): string {
  */
 export function buildSynthesisPrompt(): string {
   return [
-    'The archive is closed. Each slot in the last `tool_result.detail_slots[]` carries',
-    '`slot.sections: [{ angle, text }]` — one entry per fired `*_capture` template at',
-    'capture time (1 for business/technical classification, 2 for both). Lift each',
-    'section.text verbatim into a peer entry of `present_result.sections[]`. Group',
-    'similar captured sections across nodes when they share shape (sibling-variant',
-    'comparison tables); distinct logic gets its own entry. Anchor the intro to the',
-    'user\'s question. Deferred-questions, if present, are objects skipped during BFS —',
-    'surface them once at the end if material.',
+    'Answer the user\'s question across the whole graph. The archive is closed —',
+    'each `tool_result.detail_slots[]` slot carries `slot.sections: [{ angle, text }]`,',
+    'one entry per fired `*_capture` template (1 for business/technical, 2 for both).',
+    'Lift each `section.text` verbatim into a peer entry of `present_result.sections[]`;',
+    'the bodies are pre-formatted at the right depth. Group across nodes only when',
+    'captured sections share the same shape (sibling-variant comparison tables).',
+    'A linear chain where each step transforms differently keeps one section per step —',
+    'preserve the narrative. Anchor the intro to the user\'s question; surface',
+    'deferred-questions once at the end if material.',
   ].join('\n');
 }
 
@@ -218,19 +219,24 @@ export function buildSynthesisPrompt(): string {
 export function buildFollowUpPrompt(): string {
   return [
     '# Follow-Up Protocol',
-    'The exploration is complete. The archive is in the prior tool result (above).',
-    'Handle refinement requests without starting a new exploration:',
-    '- Text changes, relabels, section reorders → call `lineage_present_result` again with the',
-    '  modified `sections[]`, `highlights`, or `notes` payload. No new analysis is needed.',
-    '- Prune a node from the visualization → re-render via `lineage_present_result` with the',
-    '  node removed from `nodes[]`. The archive slot is not deleted.',
-    '- Add a node the user just asked about and that is in `deferred_questions` → use',
-    '  `lineage_start_exploration` with the `supplement` flag (see tool description) to run a',
-    '  tiny targeted pass for that node only; the result merges into the archive; then re-render.',
-    '- Catalog lookups for a node already in the archive or elsewhere → `lineage_get_object_detail`',
-    '  or `lineage_search_ddl`.',
-    'If the user asks a genuinely new trace (new origin, new direction, new scope),',
-    'tell them in one sentence to start a fresh question.',
+    'The exploration is complete. The user\'s question, the archive (per-node captured',
+    'sections), and the rendered result graph are all in your context above. You can',
+    'quote from the archive, browse the catalog, or refine the visualization without',
+    'starting over.',
+    '',
+    'Refinement paths:',
+    '- Text changes, relabels, section reorders → re-call `lineage_present_result` with',
+    '  the modified `sections[]`, `highlights`, or `notes`. No new analysis is needed.',
+    '- Prune a node from the visualization → re-render via `lineage_present_result`',
+    '  with the node removed from `nodes[]`. The archive slot is preserved.',
+    '- Add a node from `deferred_questions` → `lineage_start_exploration` with the',
+    '  `supplement` flag (see tool description) for a targeted pass; the result merges',
+    '  into the archive; then re-render.',
+    '- Catalog lookups for any object → `lineage_get_object_detail` or',
+    '  `lineage_search_ddl`; cross-graph search → `lineage_search_objects`.',
+    '',
+    'Genuinely new traces (new origin, new direction, new scope) → tell the user in',
+    'one sentence to start a fresh question.',
   ].join('\n');
 }
 
