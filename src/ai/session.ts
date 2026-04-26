@@ -89,6 +89,12 @@ export class AiSession {
    */
   public synthesisCorrectiveAttempted = false;
   /**
+   * One-shot guard for emitting the "Synthesizing the answer…" progress chip
+   * on the first synthesis-phase round. The synthesis call to the model
+   * typically takes 30–90s; without a progress signal users perceive a hang.
+   */
+  public synthesisProgressEmitted = false;
+  /**
    * Mission-type classification inferred at end of discovery.
    *
    * @remarks

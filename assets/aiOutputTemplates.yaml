@@ -36,8 +36,7 @@
 summary:
   stages: [synthesis]
   instruction: >
-    One-line graph purpose, ~120 chars (max 300). Short teaser, not the
-    analysis. Detailed content belongs in the sections below.
+    One-line graph purpose (~120 chars, max 300). Shown in the info card.
   example: "Revenue lineage from raw orders through price calculation to FactSalesReport."
 
 title:
@@ -100,11 +99,6 @@ sections:
     the variants, columns the differing fields. Preserve every ⚠️ — in
     the variant's row or a per-variant invariants list after the table.
     Distinct logic always gets its own entry.
-
-    Linear chains keep one section per step. When each hop transforms
-    differently — A reads, B reshapes, C aggregates, D publishes — the
-    reader needs the sequence; do not collapse distinct logic into a
-    single entry just because the nodes are adjacent.
 
     Use `suggested_sections` from the completion result as a starting
     skeleton when present.
@@ -178,9 +172,8 @@ notes:
 business_capture:
   stages: [active]
   instruction: >
-    Submit one section: { angle: "business", text: "<body>" }. The body
-    captures what the data means at this node — its domain role, business
-    rules, formulas, consumer impact.
+    Submit one section: { angle: "business", text: "<body>" }. BUSINESS ONLY —
+    what the data means, why it matters, what changes if the rule fires.
 
     Open the body with one sentence naming the node's actual domain role —
     "computes revenue at INSERT", "allocates budget units to cost centres",
@@ -194,9 +187,22 @@ business_capture:
     ⚠️ inline at the point they apply.
 
     Format the body with markdown — `## Purpose` paragraph, formulas in
-    LaTeX math, column renames as `| From | To | Business meaning |` tables,
-    multi-step rules as ordered lists. Use `\`backticks\`` for column and
-    object names. Body is unbounded; depth-first capture beats prose extension.
+    LaTeX math, column renames as `| From | To | Business meaning |` tables
+    (no datatype columns), multi-step rules as ordered lists. Use
+    `\`backticks\`` for column and object names. Body is unbounded;
+    depth-first capture beats prose extension.
+
+    NEVER include in this section: ` ```sql ` fences, JOIN/MERGE syntax,
+    XPath, XML namespaces, datatype tables, index/distribution hints,
+    execution-plan notes — those are the technical angle and belong in
+    `technical_capture`. The classification gate locks this contract:
+    `business`-mission slots that contain technical content are rejected
+    with `classification_lock_violation`.
+
+    `badge_label`: name the domain role ("Pricing Calculation", "Catalog
+    Metadata", "BOM Explosion"). NEVER name an implementation pattern
+    ("XML Shredding", "Recursive CTE", "Window Function"). NEVER use a
+    node-type word ("View", "Table", "Procedure", "Function").
 
     Write each focus node's section fully and independently. Do not detect
     sibling variants here — synthesis sees the whole picture and groups
@@ -213,9 +219,18 @@ business_capture:
 technical_capture:
   stages: [active]
   instruction: >
-    Submit one section: { angle: "technical", text: "<body>" }. The body
-    captures how the pipeline runs at this node — SQL evidence, loading
-    pattern, joins, performance characteristics, antipatterns.
+    Submit one section: { angle: "technical", text: "<body>" }. TECHNICAL
+    ONLY — how the pipeline runs.
+
+    NEVER include in this section: consumer-impact prose, dashboard-outcome
+    framing, plain-English business-rule restatement — those are the
+    business angle and belong in `business_capture`. The classification gate
+    locks this contract: `technical`-mission slots that contain business
+    framing are rejected with `classification_lock_violation`.
+
+    `badge_label`: name the implementation pattern ("XML Shredding",
+    "MERGE Upsert", "Window Aggregate", "Recursive CTE"). NEVER use a
+    node-type word ("View", "Table", "Procedure", "Function").
 
     Capture per node:
     - SQL evidence: copy key expressions verbatim — JOIN predicates,
@@ -299,23 +314,12 @@ structural_summary:
 # ── Shared depth + format floor (active + synthesis) ─────────────────────────
 
 general:
-  stages: [active, synthesis]
-  instruction: >
-    Write at full depth. Cover every business rule, SQL expression, and
-    structural fact present in the DDL — the archive is unbounded; depth-first
-    capture beats prose extension. If a node has more logic than fits one
-    paragraph, split into labelled sub-sections rather than extending a single
-    paragraph.
-
-    Format to fit the content:
-    - Column renames or mappings → `| From | To | Notes |` table.
-    - Multi-step logic → ordered 1. 2. 3. list.
-    - Key SQL expressions → ` ```sql ` code fence (snippet only, not the full statement).
-    - Column and object names → `\`backticks\``.
-    - Risk or data-quality issue → ⚠️ prefix inline at the point it applies.
-
-    Supported: ## headings, **bold**, `code`, tables, math, code fences.
-    Not supported: mermaid, HTML, images, footnotes.
+  # Disabled: an ungated cross-classification rule fired alongside the gated
+  # *_capture / *_subsection templates and re-prescribed SQL/code-fence
+  # formatting on every mission, leaking technical content into business slots.
+  # Domain-specific rules belong inside business_capture / technical_capture.
+  stages: []
+  instruction: ""
 
 # ── Synthesis-side render rules (one peer section per captured angle) ────────
 # When the captured archive contains sections with angle='business' and/or
@@ -365,17 +369,9 @@ technical_subsection:
 # ── Metadata band (rendered when origin is an SP) ────────────────────────────
 
 loading_pattern:
-  stages: [synthesis]
-  instruction: >
-    Only emit when the origin is a stored procedure. Classify how the SP
-    loads its target with one coarse value. Suggested values, but write a
-    short phrase in your own words if none fit:
-      reload        — TRUNCATE + INSERT / full refresh
-      append        — INSERT-only, no UPDATE or DELETE
-      upsert        — MERGE or UPDATE + conditional INSERT
-      historization — versioned history / change tracking
-      purge         — DELETE-only / retention cleanup
-      orchestration — EXECs other SPs, no data mutation on the target itself
-    Coarse only — no SCD1 / SCD2 / CDC sub-variants. If ambiguous, omit.
-    Views and UDFs: omit.
-  example: "reload"
+  # Disabled: was always-on at synthesis but only meaningful for procedure
+  # origins. The text said "Views and UDFs: omit" but the AI received it
+  # regardless, polluting view/function/table sessions. Re-enable via
+  # an origin-type gate in templateRenderer.ts when ready.
+  stages: []
+  instruction: ""

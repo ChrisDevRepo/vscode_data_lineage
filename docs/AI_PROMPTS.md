@@ -48,17 +48,21 @@ The AI declares the mission type at `start_exploration` via the optional `classi
 
 Once set, the mission type drives which capture and subsection keys fire:
 
-| Mission type | Active phase fires | Synthesis fires |
-|--------------|--------------------|-----------------|
-| `business` | `business_capture` + `general` + `structural_summary` (only on table origin) | `business_subsection` + all non-gated synthesis keys |
-| `technical` | `technical_capture` + `general` + `structural_summary` (only on table origin) | `technical_subsection` + all non-gated synthesis keys |
-| `both` | both `*_capture` + `general` + `structural_summary` | both `*_subsection` + all non-gated synthesis keys — **longest prompt** |
+| Mission type | Active phase fires | Synthesis fires | Sections per node (active) | Sections per label (synthesis) |
+|--------------|--------------------|-----------------|---------------------------:|-------------------------------:|
+| `business` | `business_capture` + `structural_summary` (only on table origin) | `business_subsection` + non-gated synthesis keys | **1** (business) | **1** (business) |
+| `technical` | `technical_capture` + `structural_summary` (only on table origin) | `technical_subsection` + non-gated synthesis keys | **1** (technical) | **1** (technical) |
+| `both` | both `*_capture` + `structural_summary` | both `*_subsection` + non-gated synthesis keys — **longest prompt** | **2** peer (business + technical) | **2** peer (business + technical) |
 
-`general`, `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes`, `loading_pattern` are not gated by mission type — they always fire for their stage.
+The contract is locked mechanically: each `submit_findings` call must carry exactly the `sections[]` shape implied by the mission. Mismatches reject with `classification_lock_violation` (e.g., a `business`-mission slot carrying a `technical` angle, or a `both` slot missing one angle). At synthesis, `present_result.sections[]` carries one peer entry per captured angle per node — the two angles never nest as `#### Technical` subheadings; they are independent peer sections.
+
+`sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes` are not gated by mission type — they always fire for their stage.
+
+`general` and `loading_pattern` are currently disabled (`stages: []` in `STAGE_BY_KEY`). `general` was a cross-classification rule that re-prescribed SQL/code-fence formatting and leaked technical content into business slots; domain-specific rules now live inside the gated `*_capture` / `*_subsection` templates. `loading_pattern` is meaningful only on procedure origins and will be re-enabled with an origin-type gate.
 
 ### Column-trace overlay (CT)
 
-CT mode is a separate dimension on top of mission type, activated when `start_exploration` is called with `targetColumns`. It does not change which YAML keys fire. It adds:
+CT mode is a **purely additive** overlay on top of mission type, activated when `start_exploration` is called with `targetColumns`. It does not change which YAML keys fire and it does not replace the business / technical section contract — when CT is approved, the AI still fills out one section per fired `*_capture` template (1 for `business`/`technical`, 2 peer for `both`) per node. CT only adds an extra technical instruction about *how* the columns are tracked and stored in the sliding-memory archive. It adds:
 
 - A `<column_state>` block to the per-hop system prompt listing `target_columns`, `done_columns`, `active_columns`.
 - Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
@@ -82,7 +86,7 @@ A `both` + CT session has the longest active-phase prompt: both capture instruct
 | `notes` | Per-node graph captions — one-line, what the node does specifically in this flow. | Changing caption length or style (e.g. always lead with the formula vs. the role). |
 | `business_subsection` | Section body for the business angle: formulas, `\| From \| To \| Business meaning \|` table, ⚠️ inline rule. Mirrors `business_capture`. | Changing how business rules render at full depth in the final document. Edit alongside `business_capture` so capture and render agree. |
 | `technical_subsection` | `#### Technical` subheading body: SQL snippets + LaTeX formulas side-by-side, join strategy, antipatterns. Mirrors `technical_capture`. | Changing how technical content renders. Edit alongside `technical_capture`. |
-| `loading_pattern` | SP load-type label (`reload` / `append` / `upsert` / `historization` / `purge` / `orchestration`). Emitted only when origin is a stored procedure. | Adding or renaming a load-type vocabulary value. |
+| `loading_pattern` | SP load-type label (`reload` / `append` / `upsert` / `historization` / `purge` / `orchestration`). **Currently disabled** (`stages: []`); pending an origin-type gate so it only fires on procedure origins. | Adding or renaming a load-type vocabulary value (and re-enabling via origin-type gate). |
 
 ### Active — per-hop capture into the unbounded archive
 

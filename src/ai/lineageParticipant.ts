@@ -508,6 +508,7 @@ export class LineageParticipant {
       // Reset per-turn presentation flag so the button gate reflects THIS turn only.
       sess.presentResultCalledThisTurn = false;
       sess.synthesisCorrectiveAttempted = false;
+      sess.synthesisProgressEmitted = false;
       let actionRequiredPending = false;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
@@ -565,6 +566,12 @@ export class LineageParticipant {
 
         // Pre-send invariant: orphan tool_results would otherwise surface as a remote 400.
         envelope.assertWellFormed();
+        // The synthesis call to the model typically takes 30–90s; emit a progress
+        // chip on the first synthesis-phase round so users do not perceive a hang.
+        if (activePhase === 'synthesis' && !sess.synthesisProgressEmitted) {
+          writer.progress('Synthesizing the answer…');
+          sess.synthesisProgressEmitted = true;
+        }
         const response = await model.sendRequest(envelope.toArray() as vscode.LanguageModelChatMessage[], { tools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
@@ -578,8 +585,16 @@ export class LineageParticipant {
         // platform only renders icon codes inside writer.button(...).
         const surfaceProse = activePhase !== 'active';
         const gateProse = activePhase === 'synthesis';
-        const stripSynthesisArtifacts = (s: string): string =>
-          gateProse ? s.replace(/\$\([a-z][a-z0-9-]*\)\s*/gi, '') : s;
+        // Drop everything before the first '## ' heading so planning preambles
+        // ("Now I have all slots. Assembling the final report.") never weld
+        // onto the synthesised chat output.
+        const stripSynthesisArtifacts = (s: string): string => {
+          if (!gateProse) return s;
+          let out = s.replace(/\$\([a-z][a-z0-9-]*\)\s*/gi, '');
+          const hIdx = out.indexOf('## ');
+          if (hIdx > 0) out = out.slice(hIdx);
+          return out;
+        };
         let toolCallSeenInTurn = false;
         for await (const part of response.stream) {
           if (!writer.isOpen()) break;

@@ -46,10 +46,14 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
   notes:                ['synthesis'],
   business_capture:     ['active'],
   technical_capture:    ['active'],
-  general:              ['active', 'synthesis'],
+  // Cross-domain content rules belong inside the gated *_capture / *_subsection
+  // templates — an ungated `general` key fires across every classification and
+  // forces SQL/code-fence formatting into business slots.
+  general:              [],
   business_subsection:  ['synthesis'],
   technical_subsection: ['synthesis'],
-  loading_pattern:      ['synthesis'],
+  // Origin-type-gated; only fires when origin is a procedure (see Edit 7).
+  loading_pattern:      [],
   structural_summary:   ['active'],
 };
 

@@ -194,15 +194,14 @@ export function buildActivePhasePrompt(isInline: boolean): string {
  */
 export function buildSynthesisPrompt(): string {
   return [
-    'Answer the user\'s question across the whole graph. The archive is closed —',
-    'each `tool_result.detail_slots[]` slot carries `slot.sections: [{ angle, text }]`,',
-    'one entry per fired `*_capture` template (1 for business/technical, 2 for both).',
-    'Lift each `section.text` verbatim into a peer entry of `present_result.sections[]`;',
-    'the bodies are pre-formatted at the right depth. Group across nodes only when',
-    'captured sections share the same shape (sibling-variant comparison tables).',
-    'A linear chain where each step transforms differently keeps one section per step —',
-    'preserve the narrative. Anchor the intro to the user\'s question; surface',
-    'deferred-questions once at the end if material.',
+    'The archive is closed. Each slot in the last `tool_result.detail_slots[]` carries',
+    '`slot.sections: [{ angle, text }]` — one entry per fired `*_capture` template at',
+    'capture time (1 for business/technical classification, 2 for both). Lift each',
+    'section.text verbatim into a peer entry of `present_result.sections[]`. Group',
+    'similar captured sections across nodes when they share shape (sibling-variant',
+    'comparison tables); distinct logic gets its own entry. Anchor the intro to the',
+    'user\'s question. Deferred-questions, if present, are objects skipped during BFS —',
+    'surface them once at the end if material.',
   ].join('\n');
 }
 
