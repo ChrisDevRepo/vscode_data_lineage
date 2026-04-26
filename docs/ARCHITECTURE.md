@@ -11,11 +11,12 @@ flowchart LR
     U([User question]):::user --> D[Discovery]:::ai
     D -->|Class D| R1[Direct answer]:::ai
     R1 --> EX(((End))):::done
-    D -->|Class S| M{Scope ≤10 nodes<br/>and ≤10k tokens?}:::engine
-    M -->|yes| IN[Inline run]:::ai
-    M -->|no| GG[/Gate: confirm_sm_start/]:::engine
-    GG -->|approve| SM[SM hop loop]:::engine
-    GG -->|decline| EX
+    D -->|Class S| GG[/Gate: confirm_sm_start<br/>tree + 3 buttons/]:::engine
+    GG -->|approve| MD{Mode at lock-in<br/>≤10 nodes &amp; ≤10k tokens?}:::engine
+    MD -->|yes| IN[Inline run]:::ai
+    MD -->|no| SM[SM hop loop]:::engine
+    GG -->|refine| GG
+    GG -->|cancel| EX
     IN --> SY[Synthesis]:::ai
     SM --> SY
     SY --> C{{Completed}}:::done
@@ -33,8 +34,8 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 | Phase | Owner | Behaviour |
 |-------|-------|-----------|
 | **Discovery** | AI | Searches the catalog and classifies the question. **Class D** = single object or graph-wide metadata, answered directly. **Class S** = relationships spanning ≥2 connected objects, hands off to the engine via `start_exploration`. |
-| **Scope check** | Engine | Topological preflight on the BFS scope: ≤ `inlineNodeCap` (10) nodes AND ≤ `inlineTokenBudget` (10k) tokens, no column tracing → Inline. Otherwise → Gate. |
-| **Gate** | Engine | Emits `action_required: confirm_sm_start`. Pauses turn for user consent before any analysis runs. |
+| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every Class-S exploration. Renders the BFS scope as a hierarchical tree (Schema → Type → Node) with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Mode (Inline / Sliding-Memory) is decided at lock-in based on the post-filter scope size + DDL cost (≤10 nodes ∧ ≤10k tokens → Inline) — refining can flip the mode. |
+| **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. Engine re-runs BFS and re-emits the gate. Loop until Approve or Cancel. |
 | **Inline run** | AI | One-shot analysis; AI sees the full scope's DDL at once and self-terminates with `complete: true`. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |

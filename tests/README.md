@@ -26,6 +26,7 @@ tests/
 │   ├── navigation-engine-supplement.test.ts # Supplement-agenda flow
 │   ├── sm-robustness.test.ts              # SM scope robustness + present_result prune regression
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
+│   ├── refine-loop.test.ts                # Discovery-phase refinement loop: classifier, exclusion axes, getScopeSummary, classifyForRefine, renderScopeSummaryMd
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
 │   └── hooks/                             # React hook unit tests (vitest)
 │
