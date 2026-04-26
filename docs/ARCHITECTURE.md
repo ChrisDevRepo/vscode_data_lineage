@@ -142,34 +142,69 @@ True Inline runs Blackboard only; any session with a Column Aspect is forced to 
 
 ## Memory model
 
-Two stores with opposite lifecycles. **Working Memory** is volatile — wiped between every hop. **Detail Archive** is monotonic — only grows, never shipped mid-loop, lifted verbatim at synthesis. The diagram encodes lifecycle by border style: solid thick = persistent, dashed = volatile. Cylinder shapes are UML datastore stereotypes.
+There is exactly **one** persistent store — the **Detail Archive** (`detailSlots`, append-only across the session). Each hop the prompt builder assembles fresh **Working Memory (WM)** by selectively projecting from the archive plus a few constants — there is no second mutable store and nothing is "wiped". Two diagrams: (1) what WM looks like and where each field comes from; (2) how the archive grows across hops and what the sliding window reads back.
+
+**WM composition (one hop).** Cylinder = persistent datastore (UML); rounded box = projection / derived view; rectangle = constant.
 
 ```mermaid
 flowchart LR
-    H1[/Hop N/]:::hop -->|reads| WM[(Working Memory)]:::transient
-    H1 -->|writes one section| DA[(Detail Archive)]:::persistent
-    H1 --> WIPE([wipe WM]):::wipe
-    WIPE --> H2[/Hop N+1/]:::hop
-    H2 -.->|same loop| H1
-    DA ==>|lifted verbatim| SYN([Synthesis]):::synthesis
+    UQ[user_question<br/>constant]:::const
+    DA[(Detail Archive<br/>append-only)]:::persistent
+    SCOPE[scope size +<br/>route rejections]:::const
 
-    classDef hop stroke:#0288d1,stroke-width:2px
+    UQ --> WM
+    SCOPE --> WM[/Working Memory<br/>WM/]:::wm
+    DA -->|count + ratio| WM
+    DA -->|last 3 summaries| STM[short_term_memory<br/>sliding view of archive]:::wm
+    STM --> WM
+    WM --> PROMPT([System prompt<br/>this hop only]):::prompt
+
+    classDef const stroke:#616161,stroke-width:2px
     classDef persistent stroke:#388e3c,stroke-width:3px
-    classDef transient stroke:#ef6c00,stroke-width:2px,stroke-dasharray:4 2
-    classDef wipe stroke:#c62828,stroke-width:2px,stroke-dasharray:2 2
-    classDef synthesis stroke:#6a1b9a,stroke-width:2px
+    classDef wm stroke:#ef6c00,stroke-width:2px,stroke-dasharray:4 2
+    classDef prompt stroke:#0288d1,stroke-width:2px
 ```
 
-Border legend: solid thick green = persistent store · dashed orange = volatile store · dashed red = lifecycle event · solid purple = phase transition. The double arrow (`==>`) marks the synthesis lift as a one-time phase event, not a per-hop edge.
+The dashed orange WM boxes are not stored anywhere — they are computed on demand by `getWorkingMemory()` and `getShortTermMemory()`, then serialised into the prompt. The next hop rebuilds WM from the *now-larger* archive. This is what makes the loop bounded: WM stays small even as the archive grows.
 
-- **Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` at synthesis only.
-- **Working memory** — `AiMemoryManager.getWorkingMemory`, per-hop isolated snapshot:
-  - `user_question` — echoed verbatim so the root question survives sliding wipes.
-  - `column_aspect` — present in CT mode (`target_columns`, `done_columns`, `active_columns`).
-  - `short_term_memory: Array<{nodeId, summary}>` — sliding window of the last 3 node summaries, rendered as a `<short_term_memory>` XML block inside the system prompt.
-  - `checklist: {current_hop, noted, total, open, coveragePct}` — drain signal.
+**Archive growth across hops.** Each successful `submit_findings` appends one `DetailSlot` to the archive. The sliding window every hop reads is `archive.slice(-3)` — so as the archive grows, the *content* of `short_term_memory` slides forward.
 
-Global state (agenda, visited, pending questions) is intentionally excluded from the payload — that's what keeps each hop's input bounded even on long traces.
+```mermaid
+flowchart LR
+    H1[/Hop 1/]:::hop -->|append slot for node A| A1[(A)]:::slot
+    H2[/Hop 2/]:::hop -->|append slot for node B| A2[(A·B)]:::slot
+    H3[/Hop 3/]:::hop -->|append slot for node C| A3[(A·B·C)]:::slot
+    H4[/Hop 4/]:::hop -->|append slot for node D| A4[(A·B·C·D)]:::slot
+    HN[/Hop N+1/]:::hop -.->|... agenda drains| END([Synthesis lifts<br/>full archive verbatim]):::synth
+
+    A2 -.->|short_term_memory<br/>at hop 3 = A·B| H3
+    A3 -.->|short_term_memory<br/>at hop 4 = A·B·C| H4
+    A4 -.->|at hop 5 = B·C·D<br/>oldest slides off| HN
+
+    A4 ==>|lifted verbatim| END
+
+    classDef hop stroke:#0288d1,stroke-width:2px
+    classDef slot stroke:#388e3c,stroke-width:3px
+    classDef synth stroke:#6a1b9a,stroke-width:2px
+```
+
+The dotted reverse arrows are **reads back from the archive into the next hop's prompt**. The window stays at 3 entries — past hop 3 the oldest summary slides off. Only at synthesis does the *full* archive get lifted (double arrow), regardless of length.
+
+**Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` at synthesis only.
+
+**WM fields.** Three accessors on `AiMemoryManager` produce the inputs the prompt builder needs each hop:
+
+| Field | Source | Purpose |
+|-------|--------|---------|
+| `user_question` | constant (set at session start) | Root question echoed verbatim every hop so it survives the per-hop prompt rebuild. |
+| `checklist` | `getWorkingMemory()` — derived from `detailSlots.size` and scope | `{ current_hop, noted, total, open, coveragePct, rounds_used, scope_growth }` — drain signal so the AI knows agenda progress. |
+| `recent_rejections` | `getWorkingMemory()` | Recent route validation failures — feedback channel without re-injecting full errors. |
+| `active_schemas` | `getWorkingMemory()` | Schema filter still in effect this hop. |
+| `budget_pressure` | `getWorkingMemory()` (optional) | `'tight'` or `'exceeded'` — surfaced when the engine wants the AI to wind down. |
+| `short_term_memory` | `getShortTermMemory()` — `detailSlots.values().slice(-3)` | Sliding window of the last three node summaries, injected as the `<short_term_memory>` XML block in the system prompt. **This is the "iteratively growing" view of the archive.** |
+| `column_aspect` | column tracker (CT mode only) | `{ target_columns, done_columns, active_columns }` — present only when the session is tracing specific columns. |
+
+None of these WM fields are stored — they are computed from the archive (or the constants) every hop. Global engine state (agenda, visited set, pending questions) is intentionally excluded from this payload; that's what keeps each hop's input bounded even on a long trace.
 
 ## The hop payload
 
@@ -300,6 +335,6 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |
 | **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours. |
 | **Detail Archive** | Per-node full `analysis` text, written each hop, shipped only at synthesis. |
-| **Working memory** | Per-hop snapshot — `user_question`, `<short_term_memory>`, `current_task`, `checklist`. |
+| **Working Memory** (WM) | Per-hop snapshot the prompt builder assembles from the archive plus constants — `user_question`, `checklist`, `recent_rejections`, `active_schemas`, optional `budget_pressure`; `short_term_memory` (last 3 summaries) is a sibling sliding view from `getShortTermMemory()`. Not stored — recomputed every hop. |
 | **`action_required`** | Engine envelope that emits a consent gate. Turn ends; user reply resumes or aborts. |
 | **Deferred question** | In SM, an out-of-border route collected silently and surfaced at synthesis. |
