@@ -27,17 +27,17 @@ import type { CapturedSection } from './memoryManager';
 import { getToolInvocationLabel } from './toolLabels';
 
 /**
- * G11 — Classification-locked sections contract.
+ * Validates a finding's `sections[]` against the locked session classification.
  *
  * @remarks
- * The agreement-phase `confirm_sm_start` gate locks `sess.classification`. After the
- * lock, `submit_findings.sections[]` must structurally match: `business` → exactly
- * one section with `angle: 'business'`; `technical` → one with `angle: 'technical'`;
- * `both` → one of each. `verdict: 'prune'` is exempt — pruned nodes may submit no
- * sections. Returns a structured hint when the contract is violated, `null` otherwise.
+ * The agreement-phase `confirm_sm_start` gate locks `sess.classification`. After
+ * the lock, `submit_findings.sections[]` must structurally match: `business` →
+ * exactly one section with `angle: 'business'`; `technical` → one with
+ * `angle: 'technical'`; `both` → one of each. `verdict: 'prune'` is exempt —
+ * pruned nodes may submit no sections. Mechanical contract — does not judge
+ * content quality.
  *
- * Mechanical contract — does not judge content quality. Closes the prompt-vs-data-model
- * mismatch identified in audit 2026-04-26.
+ * @returns A structured hint string when the contract is violated, `null` otherwise.
  */
 function validateSectionsAgainstClassification(
   sections: CapturedSection[] | undefined,
@@ -411,10 +411,8 @@ class ToolHandler {
         }, input);
       }
 
-      // G11 — classification-locked sections contract (audit 2026-04-26).
-      // The agreement-phase gate locks `sess.classification`. Each finding's sections[]
-      // must match the lock: business → 1 business section; technical → 1 technical;
-      // both → 1 business + 1 technical. Verdict=prune may submit length 0.
+      // The agreement-phase gate locks `sess.classification`. Each finding's
+      // sections[] must match the lock; verdict=prune may submit length 0.
       const findings = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
       for (const f of findings) {
         const violation = validateSectionsAgainstClassification(f.sections, f.verdict, sess.classification);

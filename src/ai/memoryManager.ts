@@ -220,8 +220,8 @@ export class AiMemoryManager {
    * @param meta - Optional UI metadata — `badge_label`, `note_caption`, `reason_for_visit`.
    *
    * @remarks
-   * Sections are stored verbatim regardless of inline vs SM mode (audit 2026-04-26 A1
-   * — dropped the inline-mode slot-clear quirk for uniform downstream behaviour).
+   * Sections are stored verbatim regardless of inline vs SM mode — uniform
+   * downstream shape simplifies eval extraction and synthesis lift.
    */
   public storeDetail(
     node: LineageNode,

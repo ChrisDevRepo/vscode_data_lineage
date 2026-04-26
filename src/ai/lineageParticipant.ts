@@ -225,11 +225,9 @@ export class LineageParticipant {
     let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
     let lineageTools = filterLmTools(vscode.lm.tools, { kind: 'discover' });
 
-    // G12 — Slash-command phase gate (audit 2026-04-26 §11 F4 / B5).
-    // `/trace` and `/search` are discovery-only — they inject a discovery-phase
-    // prompt that conflicts with active/synthesis system prompts. Only valid in
-    // `idle` (fresh exploration) or `completed` (post-synthesis follow-up). The
-    // `awaiting_gate` branch below has its own routing; that is handled separately.
+    // /trace and /search inject discovery-phase prompts that conflict with
+    // active/synthesis system prompts. Valid only in idle / completed; the
+    // awaiting_gate branch below has its own routing.
     if ((request.command === 'trace' || request.command === 'search')
         && sess.phase.kind !== 'idle'
         && sess.phase.kind !== 'completed'

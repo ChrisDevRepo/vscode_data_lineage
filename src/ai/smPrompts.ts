@@ -20,13 +20,9 @@ const BLOCK = {
   ].join('\n'),
 
   /**
-   * Section-shape contract — points at the YAML capture templates as the source of truth.
-   *
-   * @remarks
-   * The legacy `writeFindings` block (Purpose / Columns-logic / Data risks structure) was
-   * removed in 2026-04-26 audit (§11 H1) — it competed with the YAML `*_capture` templates
-   * for "what to write into the captured section text". Single source of truth: the YAML capture
-   * templates injected by `templateRenderer.resolveStagePrompt(..., 'active', classification)`.
+   * Section-shape contract — points at the YAML capture templates as the
+   * single source of truth for body content. The capture instructions are
+   * injected separately by `templateRenderer.resolveStagePrompt(..., 'active', classification)`.
    */
   sectionsShape: [
     '## Section Submission',
@@ -112,10 +108,9 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
     BLOCK.routing
   );
 
-  // Inline mode ships full DDL up front and does not expose `lineage_get_neighbor_columns`
-  // (toolPolicy.ts:107-109), so the pruning protocol — which instructs the AI to call that
-  // tool — is dead weight. F1 in audit 2026-04-26: don't tell the AI to call tools that
-  // aren't in its toolset.
+  // Inline ships full DDL up front and does not expose `lineage_get_neighbor_columns`
+  // (per `toolPolicy`), so the pruning protocol — which instructs the AI to call that
+  // tool — is dead weight in inline mode.
   if (!isInline) {
     sections.push('', BLOCK.pruningProtocol);
   }

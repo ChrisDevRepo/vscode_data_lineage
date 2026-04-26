@@ -196,9 +196,9 @@ export interface HopFinding {
    * session classification at the tool handler boundary (G11).
    *
    * @remarks
-   * Replaces the legacy single `detail_analysis` string field. The split lets prompts
-   * and synthesis treat each angle independently — closes the prompt-vs-data-model
-   * mismatch identified in audit 2026-04-26.
+   * Each entry is one fired `*_capture` template's output. The split lets
+   * prompts and synthesis treat each angle independently and lifts verbatim
+   * into a peer entry of `present_result.sections[]` at synthesis.
    */
   sections: CapturedSection[];
   /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
