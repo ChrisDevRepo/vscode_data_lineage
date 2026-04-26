@@ -44,7 +44,7 @@ The exploration engine orchestrates autonomous reasoning using a unified state m
 The AI identifies user intent and maps the initial scope.
 - **Class D (Direct)**: Isolation only. Handles metadata lookups (e.g., "Show me the columns for table X"). Turn ends immediately with a chat answer.
 - **Class S (State Machine)**: Relationship-driven. Handles traces and logic analysis (e.g., "Trace lineage from X to Y"). Triggers the `start_exploration` tool.
-- **Consent Gate**: For large scopes (≥ 10 nodes), the engine pauses and emits a `confirm_sm_start` gate, requiring the user to approve the budget (nodes, schemas, depth) before proceeding.
+- **Consent Gate**: Discovery is content-blind. After scope is built and inline-vs-SM mode is decided, the engine pauses and emits a `confirm_sm_start` gate for **every** exploration — the user reviews scope (nodes, schemas, excluded types, mode) before any analysis runs. Mode is locked at approval; refining the scope returns to discovery and rebuilds from scratch.
 
 ### 3.2 Phase 2: Active Loop (Narrow Context)
 The engine drains the BFS agenda using a Reasoning + Acting (ReAct) cycle. 

@@ -228,13 +228,9 @@ class ToolHandler {
 
       const scopeDdlChars = engine.estimateScopeDdlChars();
       const useInline = shouldSmInline(!!engine.columnAspect, scopeDdlChars, initResult.scopeSize);
+
       if (useInline) {
         engine.setInlineMode(true);
-        if (!sess.classification) {
-          const parsed = ClassificationSchema.safeParse(data.classification);
-          sess.setClassification(parsed.success ? parsed.data : 'business');
-          this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (inline mode, AI-declared)`);
-        }
       } else {
         const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
         const maxRounds = aiCfg.get<number>('maxRounds', 50);
@@ -253,43 +249,52 @@ class ToolHandler {
             next_action: 'retry_with_smaller_depth',
           }, input);
         }
+      }
 
-        if (sess.phase.kind === 'idle') {
-          if (!sess.classification) {
-            const parsed = ClassificationSchema.safeParse(data.classification);
-            sess.setClassification(parsed.success ? parsed.data : 'business');
-          }
-          const hopCtx = engine.getHopContext();
-          const direction = data.direction || 'bidirectional';
-          const isCt = !!engine.columnAspect;
+      if (!sess.classification) {
+        const parsed = ClassificationSchema.safeParse(data.classification);
+        sess.setClassification(parsed.success ? parsed.data : 'business');
+        this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (${useInline ? 'inline' : 'SM'} mode, AI-declared)`);
+      }
 
-          const classes = ['sliding_memory'];
-          if (initResult.scopeSchemas) {
-            const filterSet = new Set((activeFilter.schemas || []).map(s => s.toLowerCase()));
-            for (const s of initResult.scopeSchemas) {
-              if (filterSet.size > 0 && !filterSet.has(s.toLowerCase())) {
-                classes.push(`schema:${s.toLowerCase()}`);
-              }
+      // Discovery is content-blind: always gate before any analysis runs, regardless of mode.
+      // Inline mode (≤10 nodes) used to fall straight through to the hop loop without consent —
+      // that hid wrong NL-filter interpretations (e.g. "ignore SPs A,B" → excludeTypes:['procedure']).
+      if (sess.phase.kind === 'idle') {
+        const hopCtx = engine.getHopContext();
+        const direction = data.direction || 'bidirectional';
+        const isCt = !!engine.columnAspect;
+
+        const classes = ['sliding_memory'];
+        if (initResult.scopeSchemas) {
+          const filterSet = new Set((activeFilter.schemas || []).map(s => s.toLowerCase()));
+          for (const s of initResult.scopeSchemas) {
+            if (filterSet.size > 0 && !filterSet.has(s.toLowerCase())) {
+              classes.push(`schema:${s.toLowerCase()}`);
             }
           }
-
-          const gate = PendingGateSchema.parse({
-            gate: 'confirm_sm_start',
-            classes,
-            nodeIds: [],
-            detail: `### Exploration Plan\n` +
-                    `- **Scope:** ${initResult.scopeSize} nodes identified\n` +
-                    `- **Analysis:** ${CLASSIFICATION_LABEL[sess.classification!]}${isCt ? ' (Column Trace)' : ''}\n` +
-                    `- **Schemas:** ${initResult.scopeSchemas?.join(', ') || activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
-                    `- **Configuration:** Depth ${data.depth ?? 'default'} (${data.depth_enforcement ?? 'silent'}), ${direction} direction`,
-          });
-          return this.logAndReturn('start_exploration', {
-            error: 'action_required',
-            ...gate,
-            hop_context: hopCtx,
-            hint: 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.',
-          }, input);
         }
+
+        const modeLabel = useInline ? 'inline (one-shot)' : 'sliding-memory (multi-hop)';
+        const excludedTypes = excludeTypes.length > 0 ? excludeTypes.join(', ') : '(none)';
+        const gate = PendingGateSchema.parse({
+          gate: 'confirm_sm_start',
+          classes,
+          nodeIds: [],
+          detail: `### Exploration Plan\n` +
+                  `- **Scope:** ${initResult.scopeSize} nodes identified\n` +
+                  `- **Analysis:** ${CLASSIFICATION_LABEL[sess.classification!]}${isCt ? ' (Column Trace)' : ''}\n` +
+                  `- **Schemas:** ${initResult.scopeSchemas?.join(', ') || activeFilter.schemas.join(', ') || '(none filtered)'}\n` +
+                  `- **Configuration:** Depth ${data.depth ?? 'default'} (${data.depth_enforcement ?? 'silent'}), ${direction} direction\n` +
+                  `- **Excluded types:** ${excludedTypes}\n` +
+                  `- **Mode:** ${modeLabel}`,
+        });
+        return this.logAndReturn('start_exploration', {
+          error: 'action_required',
+          ...gate,
+          hop_context: hopCtx,
+          hint: 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.',
+        }, input);
       }
 
       const hopResult = engine.getHopContext();
@@ -312,6 +317,17 @@ class ToolHandler {
         hint: 'No active state machine. Call start_exploration first to begin a hop-by-hop investigation.',
         next_action: 'start_exploration',
       }, input);
+
+      // Mechanical phase guard — symmetric with present_result's resultGraph precondition.
+      // Once the engine seals (agenda drained), submit_findings is meaningless; without this
+      // guard the AI burns minutes iterating shape variations against the unhelpful Zod hint.
+      if (engine.status === 'complete') {
+        return this.logAndReturn('submit_findings', {
+          error: 'exploration_complete',
+          hint: 'Hop loop is closed — every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
+          next_action: 'present_result',
+        }, input);
+      }
 
       const parsed = SubmitFindingsInputSchema.safeParse(input);
       if (!parsed.success) {

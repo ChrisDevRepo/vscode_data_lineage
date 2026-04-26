@@ -114,7 +114,7 @@ export function buildDiscoveryPrompt(): string {
     '',
     'Resolve the starting node ID with `lineage_search_objects` first; if multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
     '',
-    'The engine may raise a `confirm_sm_start` consent gate for large scopes. Present it to the user; that is expected control flow, not an error to retry around.',
+    'The engine emits a `confirm_sm_start` consent gate on every exploration so the user can review scope (nodes, schemas, excluded types, mode) before analysis runs. Present it to the user; that is expected control flow, not an error to retry around.',
     '',
     '### Tiebreaker',
     'When a question could plausibly fit either class, prefer Class S. Shallow multi-object metadata summaries are the primary failure mode on this extension.',
