@@ -23,6 +23,7 @@ import { type SerializedFilterState, type AIViewMetadata } from '../engine/proje
 import { PendingGateSchema } from './sessionPhase';
 import { buildSynthesisReminder } from './smPrompts';
 import { ClassificationSchema, CLASSIFICATION_LABEL } from './classification';
+import { getToolInvocationLabel } from './toolLabels';
 
 /**
  * Private handler for AI tool execution.
@@ -611,62 +612,52 @@ export function registerAiTools(
 
   return [
     vscode.lm.registerTool('lineage_get_context', {
-      prepareInvocation(_options, _token) { return { invocationMessage: 'Loading lineage context…' }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_get_context', options.input) }; },
       invoke(options, _token) { return handler.getContext(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_search_objects', {
-      prepareInvocation(options, _token) { return { invocationMessage: `Searching for "${(options.input as any).query}"…` }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_search_objects', options.input) }; },
       invoke(options, _token) { return handler.searchObjects(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_start_exploration', {
-      prepareInvocation(_options, _token) { return { invocationMessage: 'Starting exploration…' }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_start_exploration', options.input) }; },
       invoke(options, _token) { return handler.startExploration(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_submit_findings', {
-      prepareInvocation(options, _token) {
-        const input = options.input as any;
-        if (Array.isArray(input)) {
-          return { invocationMessage: `Analyzing batch of ${input.length} objects…` };
-        }
-        const name = input.focus_node_id?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
-        return { invocationMessage: `Analyzing ${name}…` };
-      },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_submit_findings', options.input) }; },
       invoke(options, _token) { return handler.submitFindings(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_present_result', {
-      prepareInvocation(_options, _token) { return { invocationMessage: 'Creating AI lineage view…' }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_present_result', options.input) }; },
       invoke(options, _token) { return handler.presentResult(options.input as PresentResultInput); },
     }),
 
     vscode.lm.registerTool('lineage_get_neighborhood', {
-      prepareInvocation(options, _token) { return { invocationMessage: 'Previewing neighborhood…' }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_get_neighborhood', options.input) }; },
       invoke(options, _token) { return handler.runBfsTrace(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_get_object_detail', {
-      prepareInvocation(options, _token) { return { invocationMessage: `Loading detail for ${(options.input as any).id}…` }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_get_object_detail', options.input) }; },
       invoke(options, _token) { return handler.getObjectDetail(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_detect_graph_patterns', {
-      prepareInvocation(options, _token) { return { invocationMessage: `Detecting graph patterns: ${(options.input as any).type}…` }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_detect_graph_patterns', options.input) }; },
       invoke(options, _token) { return handler.runAnalysis(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_search_ddl', {
-      prepareInvocation(options, _token) { return { invocationMessage: `Searching DDL for "${(options.input as any).query}"…` }; },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_search_ddl', options.input) }; },
       invoke(options, _token) { return handler.searchDdl(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_get_neighbor_columns', {
-      prepareInvocation(options, _token) {
-        const n = (options.input as any)?.ids?.length ?? 0;
-        return { invocationMessage: `Inspecting ${n} neighbor${n === 1 ? '' : 's'} for pruning…` };
-      },
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_get_neighbor_columns', options.input) }; },
       invoke(options, _token) { return handler.getNeighborColumns(options.input); },
     }),
   ];

@@ -23,11 +23,12 @@ import type { DeferredQuestion } from './smTypes';
  * 1. Out-of-scope routing is *encouraged* when mission-relevant — the engine defers it.
  * 2. Deferred routes are surfaced post-synthesis as an inline UI affordance.
  * 3. Per-route disposition is reported back via `route_outcomes[]`.
- * 4. In the detail analysis, deferred nodes are mentioned at most once as
- *    "available for follow-up"; their internals are not analyzed.
+ * 4. The detail analysis references only `accepted: true` nodes; deferred nodes are
+ *    surfaced exclusively via the post-synthesis follow-up pill — do not enumerate
+ *    them in the report.
  */
 export const OUT_OF_SCOPE_CONTRACT: string =
-  'Out-of-scope routes (schema or depth beyond the approved border) are encouraged when mission-relevant. The engine defers them and surfaces them to the user post-synthesis as an inline follow-up affordance. Each `submit_findings` tool result reports `route_outcomes[]`; reference only nodes with `accepted: true` in `detail_analysis`, and mention nodes with `deferred: true` at most once as "available for follow-up" (do not analyze their internals).';
+  'Out-of-scope routes (schema or depth beyond the approved border) are encouraged when mission-relevant. The engine defers them and surfaces them to the user post-synthesis via the follow-up pill. Each `submit_findings` tool result reports `route_outcomes[]`; reference only nodes with `accepted: true` in `detail_analysis`. Do not enumerate deferred nodes in the report — the follow-up pill handles that surface.';
 
 
 /**
@@ -246,6 +247,17 @@ export function buildTracePrompt(userInput: string): string {
  * This string is also used as the trigger for internal prompt expansion.
  */
 export const RECOMMEND_FOLLOWUPS_TRIGGER = 'Follow-up: Explore related objects…';
+
+/**
+ * Magic prompt string fired by the "Show full description" follow-up chip.
+ *
+ * @remarks
+ * Detected verbatim by `lineageParticipant.handleChatRequest`, which short-circuits
+ * the LM round-trip and writes `sess.lastPresentResultDescription` directly into
+ * chat. Mirrors the baseline2 mechanism that was lost during the
+ * `enrich_view → present_result` rename.
+ */
+export const SHOW_DESCRIPTION_TRIGGER = 'Show the full description';
 
 /**
  * Builds the chat-input pre-fill used when the user clicks the post-synthesis

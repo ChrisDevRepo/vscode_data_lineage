@@ -232,8 +232,9 @@ export interface RouteRequest {
  * @remarks
  * Reported to the AI so it can distinguish accepted routes (added to agenda)
  * from deferred routes (queued for post-synthesis follow-up offer). The AI
- * should only reference `accepted: true` nodes in its detail_analysis; deferred
- * nodes should be mentioned once as 'available for follow-up' at most.
+ * should only reference `accepted: true` nodes in its detail_analysis;
+ * deferred nodes are surfaced exclusively via the post-synthesis follow-up
+ * pill — the report should not enumerate them.
  */
 export interface RouteOutcome {
   /** Node id of the route request (verbatim from submission, not lowercased). */
@@ -338,7 +339,31 @@ export interface DiagnosticsSnapshot {
 }
 
 
-/** 
+/**
+ * Per-(schema,type) leaf in the scope tree.
+ */
+export interface ScopeSummaryLeaf {
+  hops: number;
+  scope: number;
+  nodeNames: string[];
+}
+
+/**
+ * Snapshot of the proposed scope, computed once per `confirm_sm_start` gate emission.
+ */
+export interface ScopeSummary {
+  hopCount: number;
+  scopeCount: number;
+  origin: string;
+  depth: number | null;
+  direction: 'upstream' | 'downstream' | 'bidirectional';
+  inlineMode: boolean;
+  columnAspectActive: boolean;
+  bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf>; }>;
+  activeExcludes: { schemas: string[]; types: string[]; nodeIds: string[] };
+}
+
+/**
  * Represents a node within the final synthesized result set.
  */
 export interface ResultNode {

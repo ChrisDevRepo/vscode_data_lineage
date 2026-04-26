@@ -6,9 +6,10 @@ import {
   buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
-  buildDeferredQuestionsPrompt, RECOMMEND_FOLLOWUPS_TRIGGER,
+  buildDeferredQuestionsPrompt, RECOMMEND_FOLLOWUPS_TRIGGER, SHOW_DESCRIPTION_TRIGGER,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
+import { getToolInvocationLabel } from './toolLabels';
 import { buildModeBlock } from './smPrompts';
 import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from './historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from './tokenBudget';
@@ -116,14 +117,25 @@ export class LineageParticipant {
     participant.followupProvider = {
       provideFollowups: (result, context, token) => {
         const sess = this.getSession();
+        const followups: vscode.ChatFollowup[] = [];
+
         const hasDeferred = sess.phase.kind === 'completed' && sess.stateMachine && sess.stateMachine.deferredQuestions.length > 0;
         if (hasDeferred) {
-          return [{
+          followups.push({
             prompt: RECOMMEND_FOLLOWUPS_TRIGGER,
             label: vscode.l10n.t('Follow-up: Explore related objects…')
-          }];
+          });
         }
-        return [];
+
+        // Surface the cached AI-preview description as a 1:1 chip — restored from baseline2.
+        if (sess.lastPresentResultDescription) {
+          followups.push({
+            prompt: SHOW_DESCRIPTION_TRIGGER,
+            label: vscode.l10n.t('Show full description')
+          });
+        }
+
+        return followups;
       }
     };
 
@@ -199,6 +211,15 @@ export class LineageParticipant {
       const deferred = sess.stateMachine?.deferredQuestions || [];
       effectivePrompt = buildDeferredQuestionsPrompt(deferred);
       this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
+    } else if (effectivePrompt === SHOW_DESCRIPTION_TRIGGER) {
+      // Short-circuit: emit the cached AI-preview description 1:1 (no LM round-trip).
+      if (sess.lastPresentResultDescription) {
+        writer.markdown(sess.lastPresentResultDescription);
+      } else {
+        writer.markdown('_No AI preview description is currently cached for this session._');
+      }
+      this.logger.info(`[Trigger] Show full description — ${sess.lastPresentResultDescription?.length ?? 0} chars`);
+      return {};
     }
 
     let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
@@ -575,7 +596,7 @@ export class LineageParticipant {
             continue;
           }
 
-          let progressLine = `Invoking ${f.name.replace('lineage_', '')}…`;
+          let progressLine = getToolInvocationLabel(f.name, f.input);
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
             const st = sess.stateMachine.toJSON() as { hopCount?: number; scopeSize?: number; currentFocusNodeId?: string | null };
             const shortName = st.currentFocusNodeId?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
