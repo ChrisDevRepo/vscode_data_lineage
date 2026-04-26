@@ -3,9 +3,7 @@
 This project prioritizes stability, logical accuracy, and high-performance SQL parsing.
 
 ## 1. Engineering Principles
-- **Stability First**: Priority is Stability > Performance > Features.
 - **Metadata Driven**: SQL parsing logic is driven by YAML metadata (`assets/defaultParseRules.yaml`), not hardcoded regexes in TypeScript.
-- **Zero Regressions**: Any change to parser logic must maintain 100% compatibility with the AdventureWorks baseline.
 
 ## 2. Development Setup
 

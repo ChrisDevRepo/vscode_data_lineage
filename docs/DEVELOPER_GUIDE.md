@@ -1,85 +1,145 @@
 # Developer Guide
 
-This document is the technical reference for Data Lineage Viz engineering processes. For high-level architecture, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Starting point for forking and contributing. The deeper engine concepts live in [`ARCHITECTURE.md`](ARCHITECTURE.md); the YAML knobs in [`AI_PROMPTS.md`](AI_PROMPTS.md) and [`PARSE_RULES.md`](PARSE_RULES.md). Coding standards and PR hygiene live in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
-## 1. Engineering Mandates (Stability-First)
+## Repository layout
 
-**Priority: Stability > Performance > Features.**
+| Path | Owns |
+|------|------|
+| [`src/ai/`](../src/ai/) | `@lineage` chat participant, navigation engine (`smBase.ts`), tool provider, memory manager, prompt builders. |
+| [`src/engine/`](../src/engine/) | DACPAC + DMV ingestion, regex SQL parser, profiling engine, connection manager, graph builder. |
+| [`src/components/`](../src/components/) | React webview — graph canvas (React Flow), filters, detail panel, AI view card. |
+| [`src/bridge/`](../src/bridge/) | Zod-validated message bridge between extension host and webview. |
+| [`src/utils/`](../src/utils/) | Logger, sanitizers, theming helpers. |
+| [`assets/`](../assets/) | YAML knobs: `defaultParseRules.yaml`, `dmvQueries.yaml`, `aiOutputTemplates.yaml`, plus the demo `.dacpac`. |
+| [`tests/`](../tests/) | Unit, integration, snapshot, AI-eval suites. |
 
-- **Explicit Approval Required**: Any change to parser logic (`sqlBodyParser.ts`), AI state machines, or prompt surfaces (`extension.ts`, `aiOutputTemplates.yaml`) must be reviewed and approved.
-- **Zero Regression Policy**: Any change to SQL parsing rules must result in an identical output for the baseline stored procedure set in `tests/fixtures/aw-baseline.tsv`.
-- **Auditable Logic**:
-    - **Metadata Driven**: SQL parsing is 100% driven by YAML metadata (`assets/defaultParseRules.yaml`).
-    - **Profiling Transparency**: All generated statistics queries must be logged to the Output Channel so DBAs can verify they are non-destructive and performant.
-    - **Action Logging**: Every significant action (SQL execution, file read, AI tool invocation) must be logged with category tags (`[AI]`, `[Parse]`, `[Stats]`).
+## Build & run
 
-## 2. Ingestion & Persistence
+```bash
+git clone https://github.com/ChrisDevRepo/vscode_data_lineage.git
+cd vscode_data_lineage
+npm install
+```
 
-Both strategies produce the same `DatabaseModel` structure.
+Press <kbd>F5</kbd> to launch the Extension Development Host. The webview React bundle and the extension TypeScript are both built by `npm run watch` (started automatically by the launch config).
+
+For a release-style local build:
+
+```bash
+npx tsc --noEmit              # type-check only
+npm run package               # production webpack bundle
+npx @vscode/vsce package      # produce a .vsix
+```
+
+## Two ingestion paths, one model
+
+Both paths produce the same `DatabaseModel` consumed by `graphBuilder.ts`.
 
 ```mermaid
 flowchart LR
-    DP[.dacpac file] -->|dacpacExtractor.ts| MX[model.xml]
-    SRV[(SQL Server)] -->|dmvExtractor.ts| DDL[DDL + columns]
-    MX --> PARSE[sqlBodyParser.ts]
-    DDL --> PARSE
-    PARSE --> DM[DatabaseModel]
+    DP[.dacpac file] -->|dacpacExtractor.ts<br/>unzip + model.xml| MX[model.xml]
+    MX --> PARSE[Regex parser<br/>sqlBodyParser.ts]
+    SRV[(SQL Server / Azure SQL /<br/>Fabric / Synapse)] -->|dmvExtractor.ts<br/>Phase 1: catalog| CAT[Catalog metadata]
+    SRV -->|dmvExtractor.ts<br/>Phase 2: DDL + columns| DDL[DDL + columns]
+    CAT --> MERGE[Merge + normalize]
+    DDL --> MERGE
+    MERGE --> PARSE
+    PARSE --> DM[DatabaseModel<br/>shared schema]
     DM --> GB[graphBuilder.ts]
-    GB --> G[graphology]
+    GB --> G[Directed graph<br/>graphology]
 ```
 
-### 2.1 Dual Import Strategies
-- **DACPAC Extraction**: Streams XML from unzipped `.dacpac` files. Only AdventureWorks sample dacpacs are allowed in the test fixtures.
-- **DMV Extraction**: Two-phase load (Catalog then Deep-dive) defined in `assets/dmvQueries.yaml`. Always use `escapeRegexLiteral` for schema placeholders in dynamic SQL.
-- **Persistence**: Managed via `projectStore.ts`. Any change to the `Project` or `FilterProfile` types requires a schema migration in `migrateProjectStore()`.
+The parser has no awareness of the source. Same regex pipeline, same edge-direction inference, same YAML rules.
 
-## 3. SQL Parsing Pipeline
-The engine (`src/engine/sqlBodyParser.ts`) is a generic rule-runner that processes procedure bodies through a cleansing-first pipeline.
+- **DACPAC** — [`src/engine/dacpacExtractor.ts`](../src/engine/dacpacExtractor.ts). Streams `model.xml` from the unzipped `.dacpac`. Test fixtures must be AdventureWorks only.
+- **DMV** — [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts) + [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts). Two-phase load defined in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). DBA contract: [`DMV_QUERIES.md`](DMV_QUERIES.md).
+- **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts). Any change to the `Project` or `FilterProfile` types needs a migration in `migrateProjectStore()`.
+
+## SQL parsing pipeline
+
+A multi-pass cleansing engine drives a metadata-driven extractor.
 
 ```mermaid
 flowchart LR
-    IN[Raw SQL] --> C1[Strip Block Comments]
-    C1 --> C2[Strip Line Comments]
-    C2 --> C3[Neutralize Strings]
-    C3 --> C4[Lowercase Identifiers]
-    C4 --> RE[YAML Rule Execution]
-    RE --> SUP[Metadata Suppression]
-    SUP --> CAP[Normalized Captures]
+    IN[Raw SQL body] --> C1[Pass 0 — strip block comments]
+    C1 --> C2[Pass 1 — leftmost regex<br/>brackets / strings / line comments]
+    C2 --> C3[Pass 1.5 — ANSI comma-join normalisation]
+    C3 --> C4[Pass 1.6 — CTE alias substitution]
+    C4 --> RE[Pass 2 — YAML rule extraction]
+    RE --> SUP[Metadata suppression<br/>CLR methods, system schemas]
+    SUP --> CAP[Normalised captures<br/>object refs + edge direction]
 ```
 
-### 3.1 Cleansing Specifics
-- **Comment Removal**: Stack-based counter-scan for nested `/* ... */`.
-- **String Neutralization**: Replaces content with `''''` using leftmost-match to prevent false positive regex hits.
-- **Metadata Suppression**: Captures matching `CLR_TYPE_METHODS` (e.g., `.nodes()`) are rejected unless bracket-quoted, which signifies intent as a catalog object.
+`src/engine/sqlBodyParser.ts` is a generic rule-runner — every rule lives in [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). The full power-user reference is [`PARSE_RULES.md`](PARSE_RULES.md). Metadata suppression centralises CLR-method filtering in `src/engine/sqlMetadata.ts`; bracket-quoted identifiers bypass it (intent signal).
 
-## 4. The Bridge: IPC & Zod Validation
-The Extension Host and Webview communicate via a **Zod-validated boundary**.
+## The bridge — IPC & Zod validation
 
-- **Mandate**: 100% of messages sent via `postMessage` must be validated against a Zod schema in `src/engine/shared/bridgeContract.ts`.
-- **Abstraction**: `BridgeHost` decouples communication from VS Code, allowing extension logic to be unit-tested in Node.js without a browser.
-- **Logging**: Standard categories: `[AI]`, `[Bridge]`, `[Config]`, `[DB]`, `[Dacpac]`, `[Parse]`, `[Project]`, `[Stats]`.
+```mermaid
+flowchart LR
+    WV[Webview React app] <-->|postMessage<br/>Zod-validated| BC[bridgeContract.ts<br/>schemas]
+    BC <--> BH[BridgeHost interface]
+    BH <--> EXT[Extension host<br/>panelProvider.ts +<br/>messageHandlers.ts]
+```
 
-## 5. Prompt System Architecture
+Every `postMessage` hits the Zod cage exactly once in each direction. Inner layers consume parsed types; no re-validation. The `BridgeHost` interface in `src/bridge/host.ts` decouples communication from VS Code so the extension logic can be unit-tested in Node.
 
-### 5.1 Builder Function Hierarchy
-The system prompt is assembled by `buildStageSystemPrompt` in a fixed order. Adding a builder requires inserting it at the correct step in `src/ai/lineageParticipant.ts`.
+Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Config]`, `[DB]`, `[Dacpac]`, `[Detail]`, `[Filter]`, `[Parse]`, `[Project]`, `[Stats]`. Helpers in [`src/utils/log.ts`](../src/utils/log.ts) — never call `outputChannel.*` directly.
 
-1.  **`buildGeneralSystemPrompt`**: Role, platform, schemas, global invariants.
-2.  **Phase Block**: `buildDiscoveryPrompt` | `buildActivePhasePrompt` | `buildSynthesisPrompt` | `buildFollowUpPrompt`.
-3.  **Mode Block**: `buildModeBlock` (BB/CT) + `buildToolUsageBlock`.
-4.  **YAML Injection**: `resolveStagePrompt` (Merge capture/render rules from YAML).
-5.  **Context Tags**: XML slots for `<mission_brief>` and `<short_term_memory>`.
+## AI prompt builder hierarchy
 
-### 5.2 Hybrid Format Rule
-- **Markdown Headers**: Used for static structural sections (protocols, numbered rules).
-- **XML Tags**: Used for dynamic per-hop data (e.g., `<mission_brief>`, `<column_state>`) so the model can locate dynamic slots precisely.
+`buildStageSystemPrompt` ([`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts)) composes the system prompt in a fixed order. Adding a builder = inserting at the correct step. Adding a phase = extending step 2.
 
-## 6. Testing Protocol
+```
+1. buildGeneralSystemPrompt          (always — role, platform, schemas, global invariants)
+2. one phase-specific block:
+     discover    → buildDiscoveryPrompt
+     active      → buildActivePhasePrompt
+                   + buildToolUsageBlock
+                   + buildModeBlock(BB|CT)
+                   + buildColumnAspectPrompt        (CT only)
+     synthesis   → buildSynthesisPrompt
+     completed   → buildFollowUpPrompt
+3. resolveStagePrompt                 (always — YAML *_capture / *_subsection, classification-gated)
+4. buildMissionBlock                  (active + synthesis + completed — <mission_brief>, <current_task>)
+5. buildMemoryBlock                   (SM active only — <short_term_memory> + tally)
+```
+
+| Function | File | Concern |
+|----------|------|---------|
+| `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
+| `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules. |
+| `buildActivePhasePrompt(isInline)` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract. |
+| `buildSynthesisPrompt` | `prompts.ts` | Archive lift + assembly + intro/closing anchoring. |
+| `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
+| `buildToolUsageBlock` | `prompts.ts` | `submit_findings` / pruning usage. |
+| `buildModeBlock(isInline, targetColumns?)` | `smPrompts.ts` | BB verdict + analysis + routing; CT = BB + column protocol. |
+| `buildColumnAspectPrompt` | `prompts.ts` | `<column_state>` XML block (CT context). |
+| `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + render (synthesis) keys, classification-gated. |
+| `buildMissionBlock` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks. |
+| `buildMemoryBlock` | `prompts.ts` | `<short_term_memory>` XML block + tally line. |
+
+**Hybrid format rule.** Markdown headers for static structural sections (protocols, numbered rules); XML tags for dynamic per-hop data so the model can locate them precisely (`<mission_brief>`, `<current_task>`, `<short_term_memory>`, `<column_state>`).
+
+## Testing
 
 | Tier | Command | Scope |
-| :--- | :--- | :--- |
-| **Unit** | `npm run test:unit` | Parsing, graph building, core logic. |
-| **AI** | `npm run test:unit:ai` | State machine and memory management. |
-| **Snapshot**| `npm run test:snapshot` | Parser baseline regression testing. |
-| **Integration**| `npm run test:integration`| Live SQL Server connections (requires `.env`). |
-| **E2E** | `npm run test:e2e` | Headless VS Code extension host tests. |
+|------|---------|-------|
+| **Unit** | `npm test` | Parser, dacpac, graph, AI tool registration, SM robustness. |
+| **AI heavy** | `npm run test:unit:ai` | State machine, memory management, prompt assembly. |
+| **Snapshot** | `npm run test:snapshot` | Parser regression vs `tests/fixtures/aw-baseline.tsv`. Refresh: `npm run test:snapshot:update`. |
+| **Integration** | `npm run test:integration` | Live SQL Server. Requires `.env` with `DB_SERVER`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE_AW`, `DB_DATABASE_AW_DW`. |
+| **AI eval** | `python tests/eval/run.py` | Out-of-process Haiku-driven harness against the production prompt set. See [`tests/eval/README.md`](../tests/eval/README.md). |
+
+`tsc --noEmit` after every structural change; the type system is the first line of defence.
+
+## Where to look first
+
+| Changing… | Read these |
+|-----------|------------|
+| SQL parsing rules | [`PARSE_RULES.md`](PARSE_RULES.md), [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml), [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts). Run `npm run test:snapshot` before merge. |
+| AI behaviour or prompts | [`AI_PROMPTS.md`](AI_PROMPTS.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`src/ai/prompts.ts`](../src/ai/prompts.ts), [`src/ai/smPrompts.ts`](../src/ai/smPrompts.ts), [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). |
+| Tool surface or phase routing | [`src/ai/toolProvider.ts`](../src/ai/toolProvider.ts), [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts), [`src/ai/sessionPhase.ts`](../src/ai/sessionPhase.ts). |
+| Webview (React Flow, filters, themes) | [`src/panelProvider.ts`](../src/panelProvider.ts), [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts), [`src/components/`](../src/components/). |
+| DMV ingestion / DBA contract | [`DMV_QUERIES.md`](DMV_QUERIES.md), [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml), [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts). |
+| Profiling SQL | [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md), [`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts). |

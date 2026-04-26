@@ -1,20 +1,28 @@
 # Documentation Index
 
-Technical specifications and architectural deep-dives for Data Lineage Viz.
+Five audiences. Find the doc that matches yours.
 
-## 🏗️ Architecture & Core Logic
-- [**System Architecture**](ARCHITECTURE.md) — Map & Router, Bipartite model, and memory tiering.
-- [**Developer Guide**](DEVELOPER_GUIDE.md) — Setup, engineering mandates, and ingestion pipelines.
-- [**SQL Parsing Rules**](PARSE_RULES.md) — Regex engine specifics and YAML rule customization.
+## Marketplace visitors
 
-## 🤖 AI & Table Insights
-- [**AI Prompting**](AI_PROMPTS.md) — `@lineage` participant architecture and template rendering.
-- [**Table Profiling**](PROFILING_PATTERNS.md) — SQL patterns for live column statistics.
+- [`../README.md`](../README.md) — start here. Install, quick start, screenshots.
+- [`FEATURES.md`](FEATURES.md) — full feature catalogue and every VS Code setting.
 
-## 🛠️ Data Sources
-- [**DMV Queries**](DMV_QUERIES.md) — Metadata extraction for live SQL Server/Azure connections.
+## DBAs (no black box — every SQL is here)
 
-## 🆘 Support
-- [**Feature Manifest**](FEATURES.md) — Summary of technical capabilities.
-- [**Troubleshooting**](TROUBLESHOOTING.md) — Diagnostic steps and error state resolutions.
-- [**Contributing**](../CONTRIBUTING.md) — How to build, test, and submit changes.
+- [`DMV_QUERIES.md`](DMV_QUERIES.md) — interface contract for live-database ingestion. Per-query column tables, validation, fallback, every `[DB]` log line.
+- [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md) — every SQL pattern the profiling engine generates, with a complete worked example.
+
+## Power users tuning the YAML
+
+- [`PARSE_RULES.md`](PARSE_RULES.md) — power-user guide for [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). Pipeline, rule schema, debug-log workflow.
+- [`AI_PROMPTS.md`](AI_PROMPTS.md) — power-user guide for [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). Capture vs section vs subsection, mission-type matrix, key inventory.
+
+## Developers forking the repo
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — Map & Router engine, bipartite analysis, hop payload, completion contract, state diagram.
+- [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) — repo layout, build / run, ingestion pipelines, IPC bridge, prompt-builder hierarchy, testing tiers.
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — coding standards, PR hygiene.
+
+## Support
+
+- [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — common issues and how the Output channel surfaces them.

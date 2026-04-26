@@ -1,58 +1,81 @@
-# Interface Spec: AI Prompt Engineering
+# AI Output Templates — YAML Tuning Guide
 
-The `@lineage` participant is a stateless-per-turn VS Code chat participant that utilizes an autonomous state machine to navigate database graphs. This document defines the multi-layered prompt architecture used to maintain reasoning quality and context efficiency.
+`@lineage` reads its capture and rendering rules from a single YAML file: [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). This document is your map for editing that file — what each key does, when it fires, and what to maintain alongside what.
 
-## 1. Prompt Layers (The Hourglass Model)
-The system implements an "Hourglass" flow to manage token budgets and prevent reasoning degradation in long contexts.
+The YAML is the only authoritative surface. Everything below describes how the YAML drives behaviour. For the broader engine architecture (Map & Router, hop payload, state machine) see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-1.  **Discovery (Wide)**: Initial turn where the AI identifies intent and maps the starting scope. Full search and graph-wide pattern detection tools are available.
-2.  **Active (Narrow)**: The "Horse with Blinkers" phase. The AI is isolated to a single focus node to prevent global context bloat. Reasoning is limited to DDL analysis and neighbor routing.
-3.  **Synthesis (Wide)**: Unbounded access to the collected "Detail Archive" to generate the final enriched report.
+## How to override
 
-### 1.1 The Routing Contract
-- **Class D (Direct)**: Isolated metadata lookups. **Constraint**: Forbidden from narrating "flow" or "lineage" across multiple objects.
-- **Class S (State Machine)**: Relationship-driven analysis. **Mandate**: Any request for a "lineage graph", "annotated trace", or "join explanation" must trigger `start_exploration`.
-- **Tiebreaker**: Prefer Class S when ambiguous.
+1. Command Palette → **Data Lineage: Create AI Output Templates** — copies the built-in YAML into your workspace.
+2. Set `dataLineageViz.ai.outputTemplateFile` to its path.
+3. Edit the `instruction:` field on any key. Your overlay merges on top of the built-in defaults; your keys win, missing keys fall back to the defaults.
+4. Unknown keys are logged at WARN and ignored. A bad overlay never breaks activation — at worst the affected key reverts to its default.
 
-## 2. Phase-Scoped Prompt Assembly
-System prompts are assembled by `buildStageSystemPrompt` in a fixed order.
+Only the `instruction:` text is injected into the prompt. The `example:`, `good_example:`, and `bad_example:` fields exist for the human reader; the AI never sees them.
 
-| Phase | Responsibility | Key Components |
-| :--- | :--- | :--- |
-| **Discovery** | Intent mapping. | `buildDiscoveryPrompt`, Routing Contract (Class D vs. Class S). |
-| **Active** | Node-by-node analysis. | `buildActivePhasePrompt`, Verdict Semantics, YAML Capture Rules. |
-| **Synthesis** | Holistic reporting. | `buildSynthesisPrompt`, YAML Assembly Rules, Archive Lifting. |
-| **Follow-Up** | Refinement. | `buildFollowUpPrompt`, Supplement-mode rules. |
+## Section vs subsection — the mental model
 
-## 3. Custom Output Templates (YAML Interface)
+Two layers, written by two phases:
 
-The file `assets/aiOutputTemplates.yaml` is the single editable surface for output formatting and per-hop capture. Authoritative phase routing for keys is defined by `STAGE_BY_KEY` in `templateRenderer.ts`; the YAML `stages:` field is informational for human readers.
+| Layer | When it's written | What it is | Driven by |
+|-------|-------------------|------------|-----------|
+| **Per-hop capture (one archive slot per visited bodied node)** | Each hop during exploration | Full analysis of *one* view / procedure / function. Every formula, every column, every ⚠️. Stored unbounded in the Detail Archive. Never shipped mid-loop. | `business_capture`, `technical_capture`, `general`, `structural_summary` |
+| **Final document section** | Synthesis turn (after agenda drains) | One `## <label>` block in the report. Synthesis groups archive slots by label — same label = one section, with multiple node IDs cited. | `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes`, `loading_pattern` |
 
-### 3.1 Override mechanism
+Inside one section, the body is split into one or two **subsections** depending on mission type:
 
-Set `dataLineageViz.ai.outputTemplateFile` to a path of your choosing. Your overlay merges on top of the built-in YAML; your keys win, missing keys fall back to the built-in defaults. Unknown keys are logged at WARN and ignored. Non-string `instruction` fields are skipped at load. A bad overlay never breaks activation — at worst the affected key reverts to the empty default and the related instruction is omitted from the prompt.
+- A `business`-only section emits the `business_subsection` body.
+- A `technical`-only section emits the `technical_subsection` body.
+- A `both` section emits the business body first, followed by `#### Technical` (the `technical_subsection` body).
 
-### 3.2 Classification gating
+So the rendering pipeline reads:
 
-Four of the keys fire only when the session's mission classification (`business | technical | both`) matches. At ACTIVE the classification is typically `undefined` and every gated key fires unconditionally so capture stays broad. At SYNTHESIS the classification is resolved and only the matching subsection body renders. The classification value also surfaces as a `**Mission type:** <value>` cue read by the `intro` instruction.
+```
+hop 1, hop 2, …, hop N         →  N archive slots  (capture keys)
+                                          ↓
+                       group by label, lift per-slot text
+                                          ↓
+                  K final sections (sections key)
+                                          ↓
+        for each section: business / technical / both subsections
+```
 
-| Key | Fires when classification is |
-|---|---|
-| `business_capture` | `business`, `both`, or `undefined` |
-| `technical_capture` | `technical`, `both`, or `undefined` |
-| `business_subsection` | `business`, `both`, or `undefined` |
-| `technical_subsection` | `technical`, `both`, or `undefined` |
+Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
 
-### 3.3 Key inventory — purpose + maintenance
+## Mission type drives what fires
 
-**SYNTHESIS — final document on the chat panel + graph card.**
+The AI declares the mission type at `start_exploration` via the optional `classification` parameter (`business` | `technical` | `both`). If omitted, the engine defaults to `business`. The chosen value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
 
-| Key | Purpose | Maintain when |
-|---|---|---|
+Once set, the mission type drives which capture and subsection keys fire:
+
+| Mission type | Active phase fires | Synthesis fires |
+|--------------|--------------------|-----------------|
+| `business` | `business_capture` + `general` + `structural_summary` (only on table origin) | `business_subsection` + all non-gated synthesis keys |
+| `technical` | `technical_capture` + `general` + `structural_summary` (only on table origin) | `technical_subsection` + all non-gated synthesis keys |
+| `both` | both `*_capture` + `general` + `structural_summary` | both `*_subsection` + all non-gated synthesis keys — **longest prompt** |
+
+`general`, `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes`, `loading_pattern` are not gated by mission type — they always fire for their stage.
+
+### Column-trace overlay (CT)
+
+CT mode is a separate dimension on top of mission type, activated when `start_exploration` is called with `targetColumns`. It does not change which YAML keys fire. It adds:
+
+- A `<column_state>` block to the per-hop system prompt listing `target_columns`, `done_columns`, `active_columns`.
+- Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
+- A `column_flow` requirement in `submit_findings` for column attribution.
+
+A `both` + CT session has the longest active-phase prompt: both capture instructions + the column-state overlay + the standard hop payload.
+
+## Key inventory — purpose & maintenance
+
+### Synthesis — the final document on the chat panel + graph card
+
+| Key | Purpose | Edit this when |
+|-----|---------|----------------|
 | `summary` | One-line graph-card teaser (~120 chars). Shown on the AI view card and at discovery for trivial single-object questions. | Tightening or loosening the card-line tone; changing the max-character target. |
 | `title` | The `# …` document heading (≤ 80 chars) naming the analysis subject and key finding. | Changing how the title balances subject vs. finding; banning step counts. |
 | `intro` | 2–4 sentence narrative opener before the sections. | Changing tone, what the intro is allowed to mention (e.g. ban schema dumps), or how it anchors to the user's question. |
-| `sections` | Section assembly contract — density floor (≥ 11 H2 for 20-node scopes), sibling-variant grouping, label-by-role rule, no leading numbers in headers. | Changing how many sections you want, when sibling procedures collapse into one comparison table vs. each get their own H2, or how sections are labelled. |
+| `sections` | Section assembly contract — density floor, sibling-variant grouping, label-by-role rule, no leading numbers in headers. | Changing how many sections you want, when sibling procedures collapse into one comparison table vs. each get their own H2, or how sections are labelled. |
 | `closing` | Optional `---` divider + cross-cutting through-line / risk. | Changing when a closing fires (e.g. always vs. only on 5+ sections) or what cross-cutting issues warrant it. |
 | `description` | Fallback long-form body, used only when `sections[]` is absent. | Changing the unstructured fallback's shape and depth target. |
 | `highlights` | 2–3 critical-node glows on the graph (Lineage or Diagnostic scheme). | Changing how aggressively to highlight or the colour scheme. |
@@ -61,48 +84,32 @@ Four of the keys fire only when the session's mission classification (`business 
 | `technical_subsection` | `#### Technical` subheading body: SQL snippets + LaTeX formulas side-by-side, join strategy, antipatterns. Mirrors `technical_capture`. | Changing how technical content renders. Edit alongside `technical_capture`. |
 | `loading_pattern` | SP load-type label (`reload` / `append` / `upsert` / `historization` / `purge` / `orchestration`). Emitted only when origin is a stored procedure. | Adding or renaming a load-type vocabulary value. |
 
-**ACTIVE — per-hop capture into the unbounded archive.**
+### Active — per-hop capture into the unbounded archive
 
-| Key | Purpose | Maintain when |
-|---|---|---|
+| Key | Purpose | Edit this when |
+|-----|---------|----------------|
 | `business_capture` | What the AI writes into `detail_analysis` for the business angle: business meaning, formulas, column renames, ⚠️ invariants, question-relevance evidence. | Adding a per-hop business-content requirement (e.g. "always list affected consumers"). The archive is unbounded — bias toward signalling depth, not character ceilings. |
 | `technical_capture` | What the AI writes for the technical angle: verbatim SQL, loading pattern, joins, antipatterns, distribution hints. | Adding a per-hop technical-content requirement (e.g. "always note hash-distribution column"). |
-| `structural_summary` | Reduced active-phase template fired only when the user's starting point is a non-bodied node (table). Replaces `business_capture` / `technical_capture` for that one hop with a Purpose / Columns / Upstream / Downstream / Grain skeleton. | Changing the table-origin slot shape — e.g. adding an FK / index sub-section. Don't put transform formulas here; those belong in the procedure slots. |
+| `structural_summary` | Reduced active-phase template fired only when the user's starting point is a non-bodied node (a table). Replaces `business_capture` / `technical_capture` for that one hop with a Purpose / Columns / Upstream / Downstream / Grain skeleton. | Changing the table-origin slot shape — e.g. adding an FK / index sub-section. Don't put transform formulas here; those belong in the procedure slots. |
 
-**ACTIVE + SYNTHESIS — shared depth + format floor.**
+### Active + synthesis — shared depth + format floor
 
-| Key | Purpose | Maintain when |
-|---|---|---|
-| `general` | Per-section character floor (800–2 000 chars), `\| From \| To \| Notes \|` table format, ```sql``` code-fence rule, ⚠️ inline rule. Fires at both active capture and synthesis render so the contract is identical end-to-end. | Adjusting the depth target, adding a supported markdown feature, or banning an unsupported one (e.g. mermaid is not allowed). |
+| Key | Purpose | Edit this when |
+|-----|---------|----------------|
+| `general` | Per-section character floor (800–2 000 chars), `\| From \| To \| Notes \|` table format, ```sql``` code-fence rule, ⚠️ inline rule. Fires at both active capture and synthesis render so the contract is identical end-to-end. | Adjusting the depth target, adding a supported markdown feature, or banning an unsupported one (e.g. mermaid is not allowed in the chat panel). |
 
-### 3.4 How to maintain — operating guidance
+## Maintenance rules
 
-- **Edit the `instruction:` field, not the `example:` / `bad_example:` / `good_example:` fields.** Only `instruction` is injected into the prompt; the other fields exist for the human reader.
 - **Mirror capture and render edits.** When `business_capture` says "list every CASE branch", `business_subsection` should say "render every branch from the archive". If the two drift, captured content fails to surface or output references content that was never captured.
-- **Test in isolation.** When you change one key, verify the resulting output against an existing baseline (e.g. `tmp/baseline/output_main/`). Use the iteration-review skill to compare H2 count, line count, and label diversity before merging.
-- **Avoid character ceilings on archive fields.** The archive is unbounded; capping `detail_analysis` per slot pushes the model to pre-compress, which starves synthesis for detail. Use floors ("aim 800–2 000 chars per section") not ceilings.
-- **Verdict names are locked.** `analyze` / `pass` / `prune` are enforced by a Zod enum on `submit_findings.verdict`; only the YAML descriptions can change, not the names.
-- **Don't hand-edit the validated stages.** `STAGE_BY_KEY` in `templateRenderer.ts` is the authoritative routing. Adding a new key requires both a YAML entry and a `STAGE_BY_KEY` registration.
+- **Edit the `instruction:` field, not the examples.** Only `instruction` is injected into the prompt. The example fields exist for the human reader.
+- **Avoid character ceilings on archive fields.** The archive is unbounded; capping `detail_analysis` per slot pushes the model to pre-compress, which starves synthesis for detail. Use floors ("aim 800–2 000 chars per section"), not ceilings.
+- **Verdict names are locked.** `analyze` / `pass` / `prune` are enforced by a Zod enum on `submit_findings.verdict`. Only the YAML descriptions can change, not the names.
+- **Don't hand-edit the stage routing.** `STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) is the authoritative routing. Adding a new key requires both a YAML entry and a `STAGE_BY_KEY` registration.
 
-## 4. Per-Hop Memory Snapshot (Active Phase)
-Every hop, the engine delivers a strictly isolated `WorkingMemory` snapshot via the system prompt:
-- **`mission_brief`**: The session intent anchor.
-- **`current_task`**: The sub-question driving the current node visit.
-- **`focus_node`**: DDL, columns, and topological path of the focus object.
-- **`short_term_memory`**: A sliding window of the last 3 node summaries.
+## How to verify a YAML edit
 
-This ensures that any logic not captured in the YAML-defined `detail_analysis` during the hop is lost to the final report, forcing high-quality per-node capture.
-
-## 5. Depth Enforcement Modes
-The `start_exploration` tool accepts a `depth_enforcement` parameter to control scope expansion:
-
-| Mode | Trigger | Behavior on Out-of-Cap Route |
-| :--- | :--- | :--- |
-| **`strict`** | Explicit depth (e.g. `/depth 2`). | Engine pauses; emits `action_required` consent gate. |
-| **`soft`** | Vague signal ("nearby"). | Auto-expand +1; then gate. |
-| **`silent`** | No signal. | Auto-expand +2; then gate. |
-
-## 6. Implementation Reference
-- `src/ai/prompts.ts`: Builder function implementations.
-- `src/ai/templateRenderer.ts`: YAML integration and phase routing.
-- `src/ai/smPrompts.ts`: Mode-specific analysis and verdict blocks.
+1. Reload the VS Code window (Command Palette → **Developer: Reload Window**) so the overlay is reread.
+2. Run an exploration that exercises the key you changed.
+3. Open `View → Output → Data Lineage Viz` and set the channel log level to **Debug** (gear icon → Set Log Level → Debug).
+4. Look for `[AI] [Hop N]` lines emitted for each successful `submit_findings` — they show character counts written into the archive (`detail=…`, `summary=…`). A drop on a hop you just tightened means the AI captured less; a jump means you broadened.
+5. The synthesised document is in the chat panel; the structured view is in the AI view card. Compare against an earlier run if you want a delta.
