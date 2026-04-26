@@ -7,6 +7,10 @@
 # VS Code override: `dataLineageViz.ai.outputTemplateFile`. Your overlay
 # merges on top of this default — your keys win.
 #
+# Full key reference (purpose + maintenance for each key): see
+#   docs/AI_PROMPTS.md  →  §3 Custom Output Templates (YAML Interface)
+# https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md#3-custom-output-templates-yaml-interface
+#
 # Stages:
 #   discovery  = first chat response, no SM. Trivial questions only.
 #   active     = per-hop analysis. The AI writes one detail_analysis slot
