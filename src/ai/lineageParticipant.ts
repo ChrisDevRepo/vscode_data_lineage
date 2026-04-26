@@ -449,6 +449,7 @@ export class LineageParticipant {
     const runHopLoop = async (): Promise<HopLoopExit> => {
       // Reset per-turn presentation flag so the button gate reflects THIS turn only.
       sess.presentResultCalledThisTurn = false;
+      sess.synthesisCorrectiveAttempted = false;
       let actionRequiredPending = false;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
@@ -511,19 +512,33 @@ export class LineageParticipant {
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
 
+        // Synthesis prose-gate: suppress preamble prose ("Now I have all slots…") by only
+        // surfacing prose that arrives AFTER any tool_use part. Pre-tool prose is the model's
+        // planning narration; the rendered chat narrative comes after the present_result call.
+        // Defensive icon-code strip for synthesis prose: the model occasionally self-renders a
+        // Show-in-Graph button as literal markdown ("$(type-hierarchy-sub) Show in Graph"); the
+        // platform only renders icon codes inside writer.button(...).
         const surfaceProse = activePhase !== 'active';
+        const gateProse = activePhase === 'synthesis';
+        const stripSynthesisArtifacts = (s: string): string =>
+          gateProse ? s.replace(/\$\([a-z][a-z0-9-]*\)\s*/gi, '') : s;
+        let toolCallSeenInTurn = false;
         for await (const part of response.stream) {
           if (!writer.isOpen()) break;
           if (part instanceof vscode.ChatResponseMarkdownPart) {
             assistantParts.push(new vscode.LanguageModelTextPart(part.value.value));
             responseText += part.value.value;
-            if (surfaceProse) writer.markdown(part.value.value);
+            if (surfaceProse && (!gateProse || toolCallSeenInTurn)) writer.markdown(stripSynthesisArtifacts(part.value.value));
           } else if (part instanceof vscode.LanguageModelTextPart) {
             assistantParts.push(part);
             responseText += part.value;
-            if (surfaceProse) writer.markdown(part.value);
+            if (surfaceProse && (!gateProse || toolCallSeenInTurn)) writer.markdown(stripSynthesisArtifacts(part.value));
           }
-          else if (part instanceof vscode.LanguageModelToolCallPart) { assistantParts.push(part); toolCalls.push(part); }
+          else if (part instanceof vscode.LanguageModelToolCallPart) {
+            assistantParts.push(part);
+            toolCalls.push(part);
+            toolCallSeenInTurn = true;
+          }
         }
         if (!writer.isOpen()) return { kind: 'cancelled' };
 
@@ -553,16 +568,28 @@ export class LineageParticipant {
             );
             continue;
           }
-          // Synthesis terminal: present_result is the explicit terminator. If the model called it
-          // this turn, exit final_answer. If the model wrote prose without calling it, render the
-          // archive directly to the chat — retrying would just rephrase the same prompt against a
-          // model that already chose prose, and the previous corrective-rebuild path was the
-          // origin of the 2026-04-25 HTTP-400 (orphaned tool_result after Bedrock User-merge).
+          // Synthesis terminal: present_result is the explicit terminator.
+          // - Called this turn → exit final_answer.
+          // - Toolless and not yet retried → one-shot corrective via MessageEnvelope and continue.
+          //   The pairing invariant in MessageEnvelope makes this structurally safe (the previous
+          //   retry-rebuild was the origin of the 2026-04-25 HTTP-400 — orphan tool_result after
+          //   Bedrock User-merge — but envelope.pushAssistant + pushUserText preserves the pair).
+          // - Toolless after one corrective → archive fallback (deterministic markdown render).
           if (activePhase === 'synthesis') {
             if (sess.presentResultCalledThisTurn) {
               this.logger.debug(`Round ${roundCount} [SYNTHESIS] — terminated after present_result success`);
+            } else if (!sess.synthesisCorrectiveAttempted) {
+              sess.synthesisCorrectiveAttempted = true;
+              this.logger.warn(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting one-shot corrective and retrying`);
+              if (assistantParts.length > 0) {
+                envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
+              }
+              envelope.pushUserText(
+                'Call `lineage_present_result` now to assemble the structured view from the archive. The archive is closed; lift each slot\'s analysis text and assemble per the synthesis output templates.'
+              );
+              continue;
             } else {
-              this.logger.warn(`Round ${roundCount} [SYNTHESIS] — no tool call and present_result not invoked; rendering archive fallback`);
+              this.logger.warn(`Round ${roundCount} [SYNTHESIS] — no tool call after corrective; rendering archive fallback`);
               this.renderArchiveFallback(sess, writer);
             }
           }

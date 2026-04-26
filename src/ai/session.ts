@@ -78,6 +78,17 @@ export class AiSession {
    */
   public presentResultCalledThisTurn = false;
   /**
+   * `true` once a synthesis-phase corrective-prompt retry has been attempted in
+   * this `runHopLoop` turn.
+   *
+   * @remarks
+   * Reset to `false` at the start of every `runHopLoop` call. Set to `true` when
+   * the synthesis branch injects a "Call lineage_present_result now" corrective
+   * after a toolless model response. Caps the retry at one attempt; a second
+   * toolless synthesis turn falls through to {@link renderArchiveFallback}.
+   */
+  public synthesisCorrectiveAttempted = false;
+  /**
    * Mission-type classification inferred at end of discovery.
    *
    * @remarks
