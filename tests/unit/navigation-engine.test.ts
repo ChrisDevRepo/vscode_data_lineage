@@ -38,7 +38,7 @@ const graph = makeGraph(nodes, edges);
 
   engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'Root node',
+    sections: [{ angle: 'business' as const, text: 'Root node' }],
     summary: 'analyzed origin',
     verdict: 'analyze',
   });
@@ -51,10 +51,10 @@ const graph = makeGraph(nodes, edges);
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   engine.getHopContext();
-  engine.submitFindings({ focus_node_id: 'origin', detail_analysis: 'Root', summary: 'ok', verdict: 'analyze' });
+  engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'Root' }], summary: 'ok', verdict: 'analyze' });
 
   engine.getHopContext();
-  engine.submitFindings({ focus_node_id: 'child_a', detail_analysis: 'child', summary: 'ok', verdict: 'prune' });
+  engine.submitFindings({ focus_node_id: 'child_a', sections: [{ angle: 'business' as const, text: 'child' }], summary: 'ok', verdict: 'prune' });
 
   const diag = engine.getHopDiagnostics();
   assert(diag.tally.analyze === 1, 'analyze tally 1');
@@ -69,7 +69,7 @@ const graph = makeGraph(nodes, edges);
   const ctx1 = engine.getHopContext();
   assert(ctx1.working_memory.topological_map.navigation_path === 'origin', 'path 1');
 
-  engine.submitFindings({ focus_node_id: 'origin', detail_analysis: 'ok', summary: 'ok', verdict: 'analyze' });
+  engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'analyze' });
 
   const ctx2 = engine.getHopContext();
   assert(ctx2.working_memory.topological_map.navigation_path === 'origin → child_a', 'path 2');

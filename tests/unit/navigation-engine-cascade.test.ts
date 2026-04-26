@@ -58,7 +58,7 @@ const graph = makeGraph(nodes, edges);
   
   engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'Root node',
+    sections: [{ angle: 'business' as const, text: 'Root node' }],
     summary: 'analyzed origin',
     verdict: 'analyze',
     route_requests: [
@@ -83,7 +83,7 @@ const graph = makeGraph(nodes, edges);
     if (nid === 'core_a') {
       engine.submitFindings({
         focus_node_id: nid,
-        detail_analysis: 'core',
+        sections: [{ angle: 'business' as const, text: 'core' }],
         summary: 'ok',
         verdict: 'analyze',
         route_requests: [{ nodeId: 'core_b', question: 'trace' }]
@@ -92,13 +92,13 @@ const graph = makeGraph(nodes, edges);
     } else if (nid === 'core_b') {
       engine.submitFindings({
         focus_node_id: nid,
-        detail_analysis: 'end',
+        sections: [{ angle: 'business' as const, text: 'end' }],
         summary: 'ok',
         verdict: 'analyze'
       });
       core_b_analyzed = true;
     } else if (nid === 'util_log') {
-      const res = engine.submitFindings({ focus_node_id: nid, detail_analysis: 'util', summary: 'ok', verdict: 'prune' });
+      const res = engine.submitFindings({ focus_node_id: nid, sections: [{ angle: 'business' as const, text: 'util' }], summary: 'ok', verdict: 'prune' });
       assert('ok' in res && res.ok === true, 'Prune util_log accepted');
       util_log_pruned = true;
     } else {
@@ -131,7 +131,7 @@ const graph = makeGraph(nodes, edges);
 
   const result = engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'Try to prune origin',
+    sections: [{ angle: 'business' as const, text: 'Try to prune origin' }],
     summary: 'not allowed',
     verdict: 'prune'
   });

@@ -69,7 +69,7 @@ const graph = makeGraph(nodes, edges);
   const SP_QUESTION = 'how are col1/col2 consumed downstream?';
   engine.submitFindings({
     focus_node_id: 'sp',
-    detail_analysis: 'sp writes col1 and col2 to the table',
+    sections: [{ angle: 'business' as const, text: 'sp writes col1 and col2 to the table' }],
     summary: 'sp writes col1, col2',
     verdict: 'analyze',
     route_requests: [{ nodeId: 'table', question: SP_QUESTION }],
@@ -99,7 +99,7 @@ const graph = makeGraph(nodes, edges);
     focusIds.push(ctx.focus_node.id);
     engine.submitFindings({
       focus_node_id: ctx.focus_node.id,
-      detail_analysis: 'noop',
+      sections: [{ angle: 'business' as const, text: 'noop' }],
       summary: 'noop',
       verdict: 'analyze',
     });

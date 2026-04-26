@@ -58,7 +58,7 @@ function drain(engine: NavigationEngine, tag: string): void {
     for (const t of targets) {
       engine.submitFindings({
         focus_node_id: t.id,
-        detail_analysis: `${tag}: analysis for ${t.id}`,
+        sections: [{ angle: 'business' as const, text: `${tag}: analysis for ${t.id}` }],
         summary: `${tag}: ${t.id}`,
         verdict: 'analyze',
       });

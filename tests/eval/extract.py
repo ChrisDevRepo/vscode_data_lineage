@@ -43,9 +43,15 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str, chat_text: str
     presents = [h for h in hl if h.get("tool") == "present_result"]
     present_input = presents[0].get("input", {}) if presents else {}
 
+    # Helper — concatenate all section.text bodies for a submit_findings input
+    # (replaces the legacy single `detail_analysis` field per audit 2026-04-26).
+    def _concat_sections(inp):
+        secs = inp.get("sections") or []
+        return "\n\n".join(s.get("text", "") for s in secs if isinstance(s, dict))
+
     # Per-submit metrics
     summary_lens = [len(s.get("input", {}).get("summary", "")) for s in submits]
-    det_lens = [len(s.get("input", {}).get("detail_analysis", "")) for s in submits]
+    det_lens = [len(_concat_sections(s.get("input", {}))) for s in submits]
     verdicts = Counter(s.get("input", {}).get("verdict") for s in submits)
     badges = [s.get("input", {}).get("badge_label") for s in submits if s.get("input", {}).get("badge_label")]
     empty_summary = sum(1 for n in summary_lens if n == 0)
@@ -53,16 +59,22 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str, chat_text: str
     sql_hops = sum(
         1
         for s in submits
-        if any(k in s.get("input", {}).get("detail_analysis", "").upper() for k in sql_keywords)
+        if any(k in _concat_sections(s.get("input", {})).upper() for k in sql_keywords)
     )
-    latex_hops = sum(1 for s in submits if "$" in s.get("input", {}).get("detail_analysis", ""))
-    block5_hops = sum(1 for s in submits if "**Business Purpose:**" in s.get("input", {}).get("detail_analysis", ""))
+    latex_hops = sum(1 for s in submits if "$" in _concat_sections(s.get("input", {})))
+    block5_hops = sum(1 for s in submits if "**Business Purpose:**" in _concat_sections(s.get("input", {})))
     table_hops = sum(
         1
         for s in submits
-        if "|---" in s.get("input", {}).get("detail_analysis", "")
-        or "| --- |" in s.get("input", {}).get("detail_analysis", "")
+        if "|---" in _concat_sections(s.get("input", {}))
+        or "| --- |" in _concat_sections(s.get("input", {}))
     )
+    # Per-angle counts — surfaces business / technical / both adoption per session.
+    angle_counts = Counter()
+    for s in submits:
+        for sec in s.get("input", {}).get("sections") or []:
+            if isinstance(sec, dict) and sec.get("angle"):
+                angle_counts[sec["angle"]] += 1
 
     # Result Graph metrics — proxy returns `nodeIds`, legacy dumps used `fullNodes`.
     # Check both keys so the count is accurate regardless of source.
@@ -149,7 +161,7 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str, chat_text: str
     A("| Stage | Where it lives | Captured here in | Present in this run |")
     A("| :--- | :--- | :--- | :--- |")
     A("| **A. SM phase trace** | `proxyLog` on the HTTP bridge (timing, gates, errors per tool call) | §3 | ✅ always |")
-    A("| **B. Per-hop authored memory** | `submit_findings.input.{detail_analysis, summary}` → `sm_state.memory.detailSlots` | §4 + §6 | ✅ always |")
+    A("| **B. Per-hop authored memory** | `submit_findings.input.{sections, summary}` → `sm_state.memory.detailSlots` | §4 + §6 | ✅ always |")
     A(f"| **C. User chat response** | Final text the Haiku agent wrote back after all tool calls | §5 | {stage_c} |")
     A(f"| **D. React AI-preview payload** | `present_result.input` (name/summary/description/sections) — the webview card | §7 | {stage_d} |")
     A("")
@@ -226,11 +238,21 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str, chat_text: str
             f"**Note:** {inp.get('note_caption') or '—'}"
         )
         A("")
-        A("#### Detail memory (authored `detail_analysis`)")
+        A("#### Detail memory (authored `sections[]`)")
         A("")
-        detail = inp.get("detail_analysis", "") or "_(empty)_"
-        A(detail)
-        A("")
+        secs = inp.get("sections") or []
+        if secs:
+            for sec in secs:
+                if isinstance(sec, dict):
+                    angle = sec.get("angle", "?")
+                    text = sec.get("text", "") or "_(empty)_"
+                    A(f"**Section — angle: `{angle}`**")
+                    A("")
+                    A(text)
+                    A("")
+        else:
+            A("_(no sections submitted)_")
+            A("")
         A("#### Summary memory (authored `summary`)")
         A(f"> {inp.get('summary') or '_(empty)_'}")
         A("")
@@ -277,20 +299,23 @@ def score_and_build_md(test_id: str, merged: dict, git_head: str, chat_text: str
     A(f"_{len(detail_slots)} slot(s) survived — these are the final archive the AI would dump at synthesis. Each slot is the end-state of one `detailSlots[nodeId]` in the memory store._")
     A("")
     # Engine-bug detection — slot is blank but the matching submit input WAS authored.
+    def _slot_concat_sections(slot):
+        secs = slot.get("sections") or []
+        return "\n\n".join(s.get("text", "") for s in secs if isinstance(s, dict))
     blank_but_authored = []
     for slot_id, slot in detail_slots.items():
         if not isinstance(slot, dict):
             continue
-        if not (slot.get("summary") or "").strip() and not (slot.get("analysis") or "").strip():
+        if not (slot.get("summary") or "").strip() and not _slot_concat_sections(slot).strip():
             # find matching submit
             for s in submits:
                 if (s.get("input", {}).get("focus_node_id", "") or "").lower() == slot_id.lower():
                     inp = s.get("input", {})
-                    if (inp.get("summary") or "").strip() or (inp.get("detail_analysis") or "").strip():
+                    if (inp.get("summary") or "").strip() or _concat_sections(inp).strip():
                         blank_but_authored.append(slot_id)
                     break
     if blank_but_authored:
-        A("> ⚠ **Engine anomaly detected.** The following slot(s) were persisted with empty `summary` AND `analysis` even though the agent's `submit_findings` input contained authored text for both fields. The inline-mode memory write-back path is dropping the authored text.")
+        A("> ⚠ **Engine anomaly detected.** The following slot(s) were persisted with empty `summary` AND empty `sections[]` even though the agent's `submit_findings` input contained authored text for both fields. The memory write-back path is dropping the authored text.")
         A(">")
         for nid in blank_but_authored:
             A(f"> - `{nid}`")

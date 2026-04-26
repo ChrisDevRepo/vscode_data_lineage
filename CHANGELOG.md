@@ -2,23 +2,26 @@
 
 ## [Unreleased]
 
+### BREAKING
+- **`submit_findings.detail_analysis` removed; replaced by `sections: CapturedSection[]`.** The locked `confirm_sm_start` classification (`business | technical | both`) now drives mechanical schema validation: each finding submits exactly one section per fired `*_capture` template (`business` → 1; `technical` → 1; `both` → 2). Mismatches are rejected with `classification_lock_violation`. Closes the prompt-vs-data-model gap that compounded the business-section regression baseline1 → testing — the YAML capture templates can finally promise structure that the data model carries. Hard cutover (no deprecated alias). All consumers updated: `DetailSlot.sections`, `HopFinding.sections`, `lineage_submit_findings` tool schema, eval extract, unit tests.
+- **`/trace` and `/search` slash commands phase-gated.** Both are valid only in `idle` and `completed` phases. Invocation mid-active or mid-synthesis emits a clarifying message and returns without injecting a discovery-phase prompt. Closes a class of phase-prompt collision bugs.
+
 ### Changed
-- **Friendlier chat progress lines.** While `@lineage` works, progress lines now read as plain sentences — "Inspecting 3 neighbours for pruning…", "Hop 5 / 22 — analyzing spCadenceRule_DEPT…", "Loading lineage context…" — instead of raw tool names like "Invoking get_neighbor_columns…". One source of truth covers both the inline chat stream and VS Code's native invocation chrome.
-- **`Objects` row in the AI description overlay.** Each section's objects render as a single comma-separated row of clickable links, prefixed by a small "Objects" caption — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node.
-- **Cleaner synthesis reports.** Out-of-scope objects no longer appear as an enumerated "Deferred objects for follow-up" section inside the report. The report stays anchored on the analyzed nodes; the post-synthesis follow-up chip remains the single place to drill into deferred objects.
-- **`@lineage` is clearer about its current focus.** The hop prompt now states the focus node id in plain text (in `<mission_state>` and in the gate-resume message), so the AI reliably identifies its analysis target on hop 1 — eliminating the first-hop waste where the AI inspected the origin table instead of the seeded procedure.
-- **Starting-point table summaries.** When you ask about a table as your starting point, `@lineage` now produces one clean dossier slot for it — Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys — instead of folding the table into a neighbouring procedure's analysis. Mid-graph tables are unchanged (still contracted through to the procedures around them).
-- **Synthesis rendering rules.** The intro paragraph is now narrative prose only (no column dumps). Sibling procedures sharing the same shape (e.g. multiple EV cases, multiple allocation rules) render as one comparison table with the shared formula hoisted above — not one bullet per variant. Every ⚠️ invariant from every slot is preserved (no merging across variants). Section headers use plain `##` — no auto-numbered prefix.
-- **Authoring hygiene.** Procedure analysis names only columns the procedure reads or writes. Neighbour tables' full schemas belong in catalog inspection output, not in a procedure's slot. Soft authoring aim is 800–2 000 chars per `Columns / logic` section — split into sub-sections rather than prose-extending a single section.
-- **Cheaper synthesis retry.** When the synthesis free-text guard fires, the retry re-sends a minimal prompt (plus the essential system / user / tool-result messages) instead of the full stable prefix — cuts retry cost significantly.
+- **YAML capture templates rewritten as independent specs.** `business_capture` and `technical_capture` no longer cross-reference each other ("after the X slot"). Each describes one self-contained section. Each template includes a GOOD few-shot example. Sibling-variant detection moved entirely to synthesis (where the AI sees the whole picture).
+- **YAML synthesis emits peer sections, not nested subheadings.** When `classification === 'both'`, business and technical content land as PEER entries in `present_result.sections[]` — not as a `#### Technical` subheading inside the business body. The two angles describe different things and stand independently.
+- **Quantitative prescriptions removed from prompts.** `general` template's "800–2,000 chars per Columns / logic section" replaced with quality criteria (cover every business rule, every SQL evidence point). `sections` density "2-4 / 4-8 / 10-12" rule replaced with semantic guidance (group similar slots, one per distinct logic). Per the design rule: AI does grouping/order, system does numbers.
+- **Active-phase prompt streamlined.** Legacy `writeFindings` block removed — superseded by YAML capture templates. `pruningProtocol` now only injects in SM mode (it referenced a tool not exposed in inline). `buildToolUsageBlock` consolidated to point at the YAML as single source.
+- **`prompt-change` skill updated** with audit insights: prompt-vs-data-model integrity rule, capture-vs-synthesis phase split, AI-does-semantic / system-does-quantitative rule, and an 8-point clarity checklist applied to every prompt block before commit.
 
-### Fixed
-- **"Show full description" chip restored.** The chip that replays the full AI description inline after a graph view was lost during an earlier refactor. It now reappears below every successful `@lineage` exploration that produced a view; clicking it prints the cached description verbatim, with no model round-trip.
-- **Slot hijack on first hop.** If the AI's `submit_findings` was rejected with `focus_mismatch`, it could retry by just swapping the `focus_node_id` field while keeping the original (wrong-subject) analysis body. The analysis would then end up stored under an unrelated node. `submit_findings` now rejects with `focus_subject_mismatch` when the authored analysis opens by naming a different scope node than the declared focus — identifier-match contract, not content judgement.
-- **Silent route drops.** Routes that passed acceptance but produced no new hop (table whose contracted forward fell outside scope) no longer silently report `accepted: true`. The route_outcome is downgraded to `{ accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' }` so the AI can tell routed-and-enqueued apart from routed-but-dropped.
-- **Prompt duplication.** The "Grounding rule" sentence was repeated four times across the active-phase prompt; the out-of-scope routing paragraph was repeated three times. Both are now stated once in their canonical surface.
+### Added
+- **Eval cases** `bb-q1-employee-technical.md` and `bb-q1-employee-both.md` exercise the locked-classification paths that were previously untested.
+- **Mechanical guards** G11 (classification-locked sections contract) and G12 (slash-command phase gate). Both enforce contracts that prompt prose alone cannot reliably hold.
 
-## [0.9.9] - 2026-04-23
+### Note
+- A subset of public docs (`docs/AI_PROMPTS.md`, `docs/ARCHITECTURE.md`, `docs/FEATURES.md`) still reference the legacy `detail_analysis` field. Doc rewrite is a follow-up task — code and prompts are correct.
+- Eval regression gate against `baseline1` requires the proxy (`npm run test:eval`); deferred to user-led validation pass before merging this branch into `main`.
+
+## [0.9.9] - 2026-04-26
 
 ### Added
 - **Scope confirmation before long explorations** — `@lineage` shows the planned scope (nodes, schemas, depth) and asks for approval. Reply `yes` to proceed, `no` to pause, or ask a different question to redirect.
@@ -33,6 +36,14 @@
 - **Better compatibility with Copilot Free** — `@lineage` resolves the active chat model dynamically, fixing "Chat provider not registered" errors.
 
 ### Changed
+- **Friendlier chat progress lines.** While `@lineage` works, progress lines now read as plain sentences — "Inspecting 3 neighbours for pruning…", "Hop 5 / 22 — analyzing spCadenceRule_DEPT…", "Loading lineage context…" — instead of raw tool names like "Invoking get_neighbor_columns…". One source of truth covers both the inline chat stream and VS Code's native invocation chrome.
+- **`Objects` row in the AI description overlay.** Each section's objects render as a single comma-separated row of clickable links, prefixed by a small "Objects" caption — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node.
+- **Cleaner synthesis reports.** Out-of-scope objects no longer appear as an enumerated "Deferred objects for follow-up" section inside the report. The report stays anchored on the analyzed nodes; the post-synthesis follow-up chip remains the single place to drill into deferred objects.
+- **`@lineage` is clearer about its current focus.** The hop prompt now states the focus node id in plain text (in `<mission_state>` and in the gate-resume message), so the AI reliably identifies its analysis target on hop 1 — eliminating the first-hop waste where the AI inspected the origin table instead of the seeded procedure.
+- **Starting-point table summaries.** When you ask about a table as your starting point, `@lineage` now produces one clean dossier slot for it — Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys — instead of folding the table into a neighbouring procedure's analysis. Mid-graph tables are unchanged (still contracted through to the procedures around them).
+- **Synthesis rendering rules.** The intro paragraph is now narrative prose only (no column dumps). Sibling procedures sharing the same shape (e.g. multiple EV cases, multiple allocation rules) render as one comparison table with the shared formula hoisted above — not one bullet per variant. Every ⚠️ invariant from every slot is preserved (no merging across variants). Section headers use plain `##` — no auto-numbered prefix.
+- **Authoring hygiene.** Procedure analysis names only columns the procedure reads or writes. Neighbour tables' full schemas belong in catalog inspection output, not in a procedure's slot. Soft authoring aim is 800–2 000 chars per `Columns / logic` section — split into sub-sections rather than prose-extending a single section.
+- **Cheaper synthesis retry.** When the synthesis free-text guard fires, the retry re-sends a minimal prompt (plus the essential system / user / tool-result messages) instead of the full stable prefix — cuts retry cost significantly.
 - **Ask follow-ups after the report** — once `@lineage` finishes, you can keep asking: tweak a label, drop a node from the graph, or add a deferred node. Refinements edit the existing report instead of starting over.
 - **Reports answer the question first** — every `@lineage` report opens with a one-sentence answer to the original question, then groups related objects together before diving into per-object detail.
 - **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
@@ -40,6 +51,10 @@
 - **Cleaner cancellation** — Pressing Stop mid-response no longer produces a red "stream closed" error. The handler exits cleanly.
 
 ### Fixed
+- **"Show full description" chip restored.** The chip that replays the full AI description inline after a graph view was lost during an earlier refactor. It now reappears below every successful `@lineage` exploration that produced a view; clicking it prints the cached description verbatim, with no model round-trip.
+- **Slot hijack on first hop.** If the AI's `submit_findings` was rejected with `focus_mismatch`, it could retry by just swapping the `focus_node_id` field while keeping the original (wrong-subject) analysis body. The analysis would then end up stored under an unrelated node. `submit_findings` now rejects with `focus_subject_mismatch` when the authored analysis opens by naming a different scope node than the declared focus — identifier-match contract, not content judgement.
+- **Silent route drops.** Routes that passed acceptance but produced no new hop (table whose contracted forward fell outside scope) no longer silently report `accepted: true`. The route_outcome is downgraded to `{ accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' }` so the AI can tell routed-and-enqueued apart from routed-but-dropped.
+- **Prompt duplication.** The "Grounding rule" sentence was repeated four times across the active-phase prompt; the out-of-scope routing paragraph was repeated three times. Both are now stated once in their canonical surface.
 - **`/search` and `/trace` returning empty** — Slash commands now reliably invoke their lineage tools instead of fast-failing with zero tokens.
 - **Lost first-node context after consent** — The first node's context is now preserved across the consent boundary, preventing tool hallucinations at the start of an exploration.
 - **Truncated DDL during AI exploration** — `@lineage` can now resolve full DDL on demand during multi-hop traces.

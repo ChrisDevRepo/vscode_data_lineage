@@ -38,7 +38,7 @@ const graph = makeGraph(nodes, edges);
 
   engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'Root node',
+    sections: [{ angle: 'business' as const, text: 'Root node' }],
     summary: 'analyzed origin',
     verdict: 'analyze',
   });
@@ -53,7 +53,7 @@ const graph = makeGraph(nodes, edges);
   engine.getHopContext();
   engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'Root',
+    sections: [{ angle: 'business' as const, text: 'Root' }],
     summary: 'ok',
     verdict: 'analyze',
   });
@@ -61,7 +61,7 @@ const graph = makeGraph(nodes, edges);
   engine.getHopContext();
   engine.submitFindings({
     focus_node_id: 'child_a',
-    detail_analysis: 'child',
+    sections: [{ angle: 'business' as const, text: 'child' }],
     summary: 'ok',
     verdict: 'prune',
   });
@@ -79,7 +79,7 @@ const graph = makeGraph(nodes, edges);
   const ctx1 = engine.getHopContext();
   assert(ctx1.working_memory.topological_map.navigation_path === 'origin', 'path 1');
 
-  engine.submitFindings({ focus_node_id: 'origin', detail_analysis: 'ok', summary: 'ok', verdict: 'analyze' });
+  engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'analyze' });
 
   const ctx2 = engine.getHopContext();
   assert(ctx2.working_memory.topological_map.navigation_path === 'origin → child_a', 'path 2');
@@ -94,7 +94,7 @@ const graph = makeGraph(nodes, edges);
   engine.getHopContext();
   const result = engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'ok',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
     summary: 'ok',
     verdict: 'analyze',
     complete: true,
@@ -113,7 +113,7 @@ const graph = makeGraph(nodes, edges);
   engine.getHopContext();
   const result = engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'ok',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
     summary: 'ok',
     verdict: 'analyze',
     complete: true,
@@ -131,7 +131,7 @@ const graph = makeGraph(nodes, edges);
   engine.getHopContext();
   engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'ok',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
     summary: 'ok',
     verdict: 'analyze',
     route_requests: [{ nodeId: 'NON_EXISTENT', question: '?' }],
@@ -151,7 +151,7 @@ const graph = makeGraph(nodes, edges);
   engine.getHopContext();
   engine.submitFindings({
     focus_node_id: 'origin',
-    detail_analysis: 'a'.repeat(100),
+    sections: [{ angle: 'business' as const, text: 'a'.repeat(100) }],
     summary: 's'.repeat(10),
     verdict: 'analyze',
   });
@@ -163,7 +163,7 @@ const graph = makeGraph(nodes, edges);
   engine.getHopContext();
   engine.submitFindings({
     focus_node_id: 'child_a',
-    detail_analysis: 'b'.repeat(50),
+    sections: [{ angle: 'business' as const, text: 'b'.repeat(50) }],
     summary: 't'.repeat(5),
     verdict: 'analyze',
   });
