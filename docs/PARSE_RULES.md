@@ -1,16 +1,9 @@
-# Custom Parse Rules
+# Interface Spec: Custom Parse Rules
 
-## Overview
-The extension extracts stored procedure dependencies using high-performance regex rules. Tables, views, and functions use dacpac XML dependencies directly — these rules only apply to SP body parsing. This guide explains how to customize and understand the parsing engine.
+The extension extracts stored procedure dependencies using a multi-pass regex engine. Tables, views, and functions use native `.dacpac` XML dependencies; these rules apply only to procedure body parsing.
 
-## Key Concepts
-- **Multi-Pass Cleansing**: Raw SQL is pre-processed to neutralize comments and strings before extraction.
-- **Rule Categories**: Rules are categorized to define edge directions (e.g., `source`, `target`, `exec`, `external_ref`).
-- **Catalog Validation**: Regex matches are validated against known database objects to prevent false positives.
-
-## Architecture/Workflow
-
-### Parsing Pipeline Flow
+## 1. The Parsing Pipeline
+The parser pre-processes raw SQL to neutralize noise (comments/strings) before executing extraction rules.
 
 ```mermaid
 flowchart TD
@@ -26,44 +19,33 @@ flowchart TD
     end
     
     B4 --> C[Stage 2: YAML Rule Extraction]
-    
-    subgraph Stage 2
-        C1[Apply 'source' Rules]
-        C2[Apply 'target' Rules]
-        C3[Apply 'exec' Rules]
-        
-        C1 & C2 & C3
-    end
-    
     C --> D[Stage 3: Capture Normalization]
     D --> E[Stage 4: Catalog Validation]
     E --> F[Validated Graph Edges]
 ```
 
-### The Best Regex Trick
-The `clean_sql` rule uses a single-pass combined regex where brackets, strings, and comments are matched together. The regex engine processes left-to-right — the **leftmost match wins**. This protects quoted identifiers, neutralizes strings to `''`, and replaces comments with spaces, averting complex delimiter interaction bugs.
+### 1.1 Preprocessing (The Cleansing Interface)
+- **Pass 0 (Block Comments)**: Stack-based removal of nested `/* ... */` comments.
+- **Pass 1 (The Best Regex Trick)**: A single leftmost-match pass that neutralizes strings (`'...'`) to `''` and line comments (`--`) to spaces. This protects quoted identifiers from false positive regex hits.
+- **Pass 1.5/1.6**: Normalizes ANSI join patterns and CTE aliases so extraction rules can remain generic.
 
-## Detailed Specs
+## 2. Rule Schema (YAML Interface)
+Extraction is driven by metadata rules in `assets/defaultParseRules.yaml`.
+- **`category`**: Defines the edge direction: `source`, `target`, `exec`, or `external_ref`.
+- **`pattern`**: A valid JavaScript-flavored regex.
+- **`flags`**: Case-sensitivity and global flags (e.g., `gi`).
 
-### Setup Custom Rules
-1. Run **Data Lineage: Create Parse Rules** to copy `defaultParseRules.yaml` to your workspace as `parseRules.yaml`.
-2. Set `dataLineageViz.parseRulesFile` to `parseRules.yaml` in VS Code settings.
-3. Edit the YAML to add or modify rules. Each rule is validated on load (regex compile + empty-match check).
+## 3. Metadata Hand-off
+- **Normalization**: Delimiters (`[` `]` `"`) are stripped and identifiers are lowercased for consistent hashing.
+- **Catalog Validation**: Matches are validated against the known database catalog. Unresolved IDs are flagged as external references.
+- **XML Fallback**: If regex misses a dependency found in `.dacpac` XML, the direction is inferred: `procedure` → `exec`; others → `source`.
 
-### Built-in Rules Summary
-There are 17 built-in rules covering scenarios like:
-- **Sources**: `extract_sources_ansi`, `extract_sources_tsql_apply`, `extract_merge_using`
-- **Targets**: `extract_targets_dml`, `extract_update_alias_target`, `extract_select_into`
-- **Execution**: `extract_sp_calls`
-- **External Refs**: `extract_openrowset`, `extract_bulk_from`
+## 4. Customization
+1. Run **Data Lineage: Create Parse Rules** to copy the built-in rules to your workspace.
+2. Update the `dataLineageViz.parseRulesFile` setting.
+3. Rules are validated on load via regex compilation and empty-match checks.
 
-### XML Fallback Direction
-When regex misses a dependency but XML `BodyDependencies` has it, the extension infers edge direction from the object type:
-- `procedure` -> SP called (EXEC)
-- `function` -> SP reads
-- `table` / `view` -> SP reads (Safest default; writes typically caught by regex DML rules)
-
-## References
-- [Microsoft SQL Server Documentation](https://learn.microsoft.com/en-us/sql/t-sql/language-reference)
-- Implementation: [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts) — regex rule runner + edge-direction XML fallback.
-- Architecture overview: [`TECHNICAL_ARCHITECTURE.md`](TECHNICAL_ARCHITECTURE.md).
+## 5. Implementation Reference
+- `src/engine/sqlBodyParser.ts`: The rule-runner and cleansing engine.
+- `assets/defaultParseRules.yaml`: The default extraction rule set.
+- [Microsoft T-SQL Language Reference](https://learn.microsoft.com/sql/t-sql/language-reference)

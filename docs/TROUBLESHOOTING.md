@@ -1,56 +1,28 @@
 # Troubleshooting
 
-Defaults and thresholds change between versions — check *Settings → Data Lineage* for current values rather than trusting numbers written here.
+This document identifies common error states and their technical mitigations.
 
----
+## 1. Import & Connection
+- **`.dacpac` Load Failure**: Ensure the file is not locked by SSDT, Azure Data Studio, or SSMS. Only SSDT- and SDK-style archives are supported.
+- **Database Connection Failure**: Verify the [mssql extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql) is installed. The connecting account requires `VIEW DEFINITION` and `VIEW SERVER STATE` permissions on the target database.
+- **Missing Cross-Database Refs**: Only schema-qualified names (e.g. `[DB].[Schema].[Object]`) are detected. Unqualified references are intentionally excluded to prevent false positive "external" nodes.
+- **DMV Timeout**: Raise the `dataLineageViz.dmvQueryTimeout` setting if catalog ingestion fails on large databases.
 
-## Import and connection
+## 2. Graph & Visualization
+- **Blank or Frozen Graph**: Use the **Developer: Reload Window** command. Check the **Output** channel (select **Data Lineage Viz**) for error logs.
+- **Node Limit Reached**: Large graphs auto-activate **Schema Overview Mode**. You can adjust the `renderLimit` and `maxNodes` settings in VS Code to increase capacity (React Flow performance may degrade above 2,000 nodes).
+- **Incorrect Theme Colors**: Reload the window after a theme switch to ensure all CSS variables are correctly resolved at mount.
 
-**`.dacpac` won't load.** Close SSDT / Visual Studio / ADS (file lock). Only SSDT- and SDK-style archives are supported; SQL Server, Azure SQL, Fabric DW, and Synapse Dedicated SQL Pool targets only.
+## 3. AI Assistant (`@lineage`)
+- **No Response**: Ensure you are signed into GitHub Copilot. A lineage graph must be loaded before asking `@lineage` questions.
+- **"Scope Exceeds Budget"**: The requested exploration is too large for the current `ai.maxRounds` setting (default 50). Narrow your question or increase the limit.
+- **"Unanswered (out of scope)"**: The engine locks the approved schema/depth border at the start of a session. Deferred questions can be explored in a follow-up turn using the *Show deferred questions* button.
+- **Incomplete Exploration**: If the round cap is hit before the agenda is drained, partial results are discarded to prevent misleading lineage reports.
 
-**Database connection fails.** Install the [mssql extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql); `@lineage` reuses its profile. The account needs `db_owner` on the database plus `GRANT VIEW SERVER STATE`. Local SQL Server: TCP/IP + Mixed Mode auth.
+## 4. Table Profiling
+- **Profiling Unavailable**: Profiling is supported for live database connections only (not `.dacpac`).
+- **External Table Errors**: Profiling for external tables is disabled by default (`excludeExternalTables: true`) as they query remote data sources (e.g. S3, Blob).
+- **Sampling Logic**: On Fabric DW, the profiler falls back to `TOP N` as `TABLESAMPLE` is unsupported.
 
-**Cross-database refs missing.** Only **schema-qualified** names resolve. Unqualified `SELECT * FROM SomeTable` is intentionally dropped — there is no safe fallback.
-
-**DMV query timed out.** Raise `dataLineageViz.dmvQueryTimeout`. Timeout is per DMV, the wizard runs several.
-
-**Custom YAML rejected.** Structure must match `assets/dmvQueries.yaml` / `assets/defaultParseRules.yaml`. See [`DMV_QUERIES.md`](DMV_QUERIES.md) and [`PARSE_RULES.md`](PARSE_RULES.md).
-
----
-
-## Graph and webview
-
-**Blank or stuck graph.** *Developer: Open Webview Developer Tools* → check console. *Developer: Reload Window*.
-
-**"Node limit reached".** Enable Schema Overview Mode (auto-fires above `dataLineageViz.overview.threshold`), narrow the import, or raise `dataLineageViz.maxNodes` / `dataLineageViz.renderLimit`. Past a few thousand nodes React Flow degrades regardless.
-
-**Theme colors wrong after theme switch.** Reload the window — some webview CSS variables are resolved at mount.
-
----
-
-## `@lineage` chat participant
-
-**No response.** Install and sign in to [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) — `@lineage` delegates every LLM call to Copilot's model. Load a lineage graph before asking.
-
-**"Scope exceeds budget".** The exploration would exceed `dataLineageViz.ai.maxRounds`. Narrow the question, accept the `safe_depth_hint`, or raise the setting.
-
-**"Confirm SM start" gate.** Sliding-memory mode asks once before burning hops. For inline one-shot, scope must sit under `dataLineageViz.ai.inlineNodeCap` and `dataLineageViz.ai.inlineTokenBudget`.
-
-**"Unanswered (out of approved scope)".** By design — SM locks the border at confirmation. The *Show deferred questions* button prefills them for a new run.
-
-**"Exploration incomplete — N rounds pending".** Hop cap drained before the agenda. The partial archive is discarded on purpose — incomplete lineage can invert the picture. Narrow or raise `maxRounds`.
-
-**Tool-call noise in chat.** Turn off `dataLineageViz.ai.showToolInvocations`.
-
----
-
-## Export and profiling
-
-- Draw.io export mirrors the current webview layout — re-layout before exporting if positions are messy.
-- Profiling is live-DB only (no dacpac). Fabric DW has no `TABLESAMPLE`; the profiler falls back to `TOP N`. See [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
-
----
-
-## Bug reports
-
-Run *Data Lineage: Copy Debug Info* and paste into the issue along with the relevant section from *Output → Data Lineage*. Do **not** attach customer dacpacs — reproduce with *Data Lineage: Open Demo* if possible.
+## 5. Bug Reports
+Run the **Data Lineage: Copy Debug Info** command and include the output in your issue report along with relevant logs from the **Output → Data Lineage Viz** channel.

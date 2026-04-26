@@ -1,6 +1,6 @@
 # Tests
 
-**Full testing strategy, tier commands, fixture policy, and snapshot-baseline protocol live in [`../docs/TESTING.md`](../docs/TESTING.md).** This README covers only folder-specific notes.
+**Full testing strategy, tier commands, fixture policy, and snapshot-baseline protocol live in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).** This README covers only folder-specific notes.
 
 ## Folder layout
 
@@ -52,6 +52,6 @@ To ensure accuracy without complex external dependencies in the main pipeline:
 
 ## Related
 
-- [`../docs/TESTING.md`](../docs/TESTING.md) — canonical test strategy
-- [`../docs/AI_ARCHITECTURE.md`](../docs/AI_ARCHITECTURE.md) — NavigationEngine spec
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — canonical test strategy
+- [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) — NavigationEngine spec
 - [`../docs/FEATURES.md`](../docs/FEATURES.md) — user-facing feature guide

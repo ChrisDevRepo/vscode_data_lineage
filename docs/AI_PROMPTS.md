@@ -1,127 +1,58 @@
-# AI Prompt Engineering
+# Interface Spec: AI Prompt Engineering
 
-The `@lineage` participant is a VS Code chat participant — stateless-per-turn, uses tools, streams markdown via `ChatResponseStream`. The state machine is a tool the model calls; the model is a domain responder, not a persistent agent. Prompts stay focused on the task (analyze the focus node, write the archive, route neighbors); the engine handles completion, cascade-prune, and memory delivery.
-
----
+The `@lineage` participant is a stateless-per-turn VS Code chat participant that utilizes an autonomous state machine to navigate database graphs. This document defines the multi-layered prompt architecture used to maintain reasoning quality and context efficiency.
 
 ## 1. Prompt Layers (The Hourglass Model)
+The system implements an "Hourglass" flow to manage token budgets and prevent reasoning degradation in long contexts.
 
-The prompt architecture follows an "Hourglass" model to manage context efficiency and prevent hallucinations:
-- **Discovery (Wide):** Full search and routing capabilities to map the initial mission.
-- **Active (Narrow):** Sliding memory loop where the AI is isolated to a single node to prevent global context bloat.
-- **Synthesis (Wide):** Unbounded memory access for reporting, returning to a wide context for final delivery.
+1.  **Discovery (Wide)**: Initial turn where the AI identifies intent and maps the starting scope. Full search and graph-wide pattern detection tools are available.
+2.  **Active (Narrow)**: The "Horse with Blinkers" phase. The AI is isolated to a single focus node to prevent global context bloat. Reasoning is limited to DDL analysis and neighbor routing.
+3.  **Synthesis (Wide)**: Unbounded access to the collected "Detail Archive" to generate the final enriched report.
 
-### 1.1 General System Prompt (session-stable)
-Built by `buildGeneralSystemPrompt()` in `src/ai/prompts.ts`. Injected into every turn. Contains global invariants: platform rules, schema context, and LaTeX guidance.
-
-### 1.2 Discovery Phase Prompt
-Built by `buildDiscoveryPrompt()` in `src/ai/prompts.ts`. Used when the AI is searching for objects or defining the `mission_brief`. Includes the rules for `start_exploration` and the "Budget: 50 rounds" constraint.
-
-**Routing Mandate:**
-- **Class D (Direct)**: Isolation ONLY. Metadata lookups (DDL, columns, existence). **Constraint:** Strictly forbidden from narrating "flow", "lineage", or "join paths", even if the information is present in a single object's DDL.
-- **Class S (State Machine)**: Relationship-driven. Analysis of joins, pipelines, or multi-object paths. **Mandate:** Any request for a "lineage graph", "annotated trace", or "join explanation" must trigger `start_exploration`.
+### 1.1 The Routing Contract
+- **Class D (Direct)**: Isolated metadata lookups. **Constraint**: Forbidden from narrating "flow" or "lineage" across multiple objects.
+- **Class S (State Machine)**: Relationship-driven analysis. **Mandate**: Any request for a "lineage graph", "annotated trace", or "join explanation" must trigger `start_exploration`.
 - **Tiebreaker**: Prefer Class S when ambiguous.
 
-This phase also applies when the AI is idle between explorations. In the follow-up state (`completed`), the prompt transitions to the **Follow-Up Protocol**, which encourages reusing the existing archive for refinements.
+## 2. Phase-Scoped Prompt Assembly
+System prompts are assembled by `buildStageSystemPrompt` in a fixed order.
 
-### 1.3 Active Phase / Navigation Prompt
-Built by `buildActivePhasePrompt(isInline)` (general active rules) and `buildModeBlock(isInline, targetColumns?)` in `src/ai/smPrompts.ts` (mode-specific workflow: BB when no target columns, CT when target columns are set). 
-The engine chooses one of two delivery strategies:
+| Phase | Responsibility | Key Components |
+| :--- | :--- | :--- |
+| **Discovery** | Intent mapping. | `buildDiscoveryPrompt`, Routing Contract (Class D vs. Class S). |
+| **Active** | Node-by-node analysis. | `buildActivePhasePrompt`, Verdict Semantics, YAML Capture Rules. |
+| **Synthesis** | Holistic reporting. | `buildSynthesisPrompt`, YAML Assembly Rules, Archive Lifting. |
+| **Follow-Up** | Refinement. | `buildFollowUpPrompt`, Supplement-mode rules. |
 
-- **True Inline Mode (Blackboard only):**
-  - **Holistic Analysis:** The AI receives the *entire* approved graph scope (DDL and columns) at once.
-  - **Batch Submission:** Instead of hop-by-hop navigation, the AI submits an array of findings for all presented nodes in a single turn.
-  - **History Accumulation:** Chat history is *not* wiped after each turn, allowing the AI to naturally accumulate reasoning across turns (e.g., during consent gates).
+## 3. Custom Output Templates (YAML Interface)
+Authoritative phase routing for YAML keys is defined by `STAGE_BY_KEY` in `templateRenderer.ts`. The YAML `stages:` field is informational for users.
 
-- **Sliding Memory Mode (CT and large BB):**
-  - **Isolated Analysis:** The AI operates like a "horse with blinders." It sees only the current node's DDL and its immediate neighbors.
-  - **Incremental Loading:** Instead of the full history, the AI receives `working_memory.short_term_memory`—a sliding window of the most recent node summaries (last 3).
-  - **Mechanical Enforcement:** Global arrays (`agenda`, `visited_nodes`, `all_summaries`, `pending_questions`) are physically stripped from the JSON payload.
-  - **Memory Wipe:** Chat history is aggressively wiped after each successful hop to keep the context focused on the focus node.
+| Phase | Keys Injected | Responsibility |
+| :--- | :--- | :--- |
+| **Active** | `*_capture` | **Capture Rules**: What the AI writes into `detail_analysis` per hop. |
+| **Synthesis** | `summary`, `title`, `intro`, `sections`, etc. | **Assembly Rules**: How pre-formatted slot bodies are grouped and framed. |
 
-### 1.4 Synthesis Phase Prompt
-Built by `buildSynthesisPrompt()` in `src/ai/prompts.ts`. Hyper-focused on generating the final report.
-- **Long-term Memory Access:** The AI regains access to the full, unbounded Detail Archive generated during the active phase.
-- **No Routing Noise:** Discovery routing instructions are omitted during report generation to maximize reasoning tokens for the final output. Routing capabilities return only when the session transitions back to the Idle state.
+**Classification Gate**: Capture keys are gated by the session's classification (`business | technical | both`). At Active, both angles fire. At Synthesis, the classification surfaces as a `**Mission type:** <value>` cue for the `intro` instruction.
 
-### 1.5 Post-Synthesis Follow-up (closing-circle loop)
-After synthesis completes, `sess.resultGraph` remains attached to the session. Inside the same chat thread it persists for the life of the session; a cross-thread graft window (`RESULT_GRAFT_WINDOW_MS = 5 min` in `src/ai/lineageParticipant.ts`) additionally preserves the graph when VS Code rotates to a fresh empty-history chat thread. Three follow-up branches:
+## 4. Per-Hop Memory Snapshot (Active Phase)
+Every hop, the engine delivers a strictly isolated `WorkingMemory` snapshot via the system prompt:
+- **`mission_brief`**: The session intent anchor.
+- **`current_task`**: The sub-question driving the current node visit.
+- **`focus_node`**: DDL, columns, and topological path of the focus object.
+- **`short_term_memory`**: A sliding window of the last 3 node summaries.
 
-- **Extend scope** — chip-based actions ("add schema X", "extend depth", "include one more hop") re-enter the state machine with an extended border; the archive is preserved and the hop loop picks up where it left off.
-- **Re-render only** — description / label edits run `present_result` again without touching the agenda.
-- **Fresh question** — a clearly unrelated prompt rotates the session and returns to Discovery. Asking a fresh question in the same thread is poor practice but the engine handles it.
+This ensures that any logic not captured in the YAML-defined `detail_analysis` during the hop is lost to the final report, forcing high-quality per-node capture.
 
-Tools visible in this phase mirror the Discovery set plus `present_result`; the 4-phase state diagram in [`AI_ARCHITECTURE.md`](AI_ARCHITECTURE.md) shows the transitions.
+## 5. Depth Enforcement Modes
+The `start_exploration` tool accepts a `depth_enforcement` parameter to control scope expansion:
 
-### 1.6 Stage-Placement Invariants
+| Mode | Trigger | Behavior on Out-of-Cap Route |
+| :--- | :--- | :--- |
+| **`strict`** | Explicit depth (e.g. `/depth 2`). | Engine pauses; emits `action_required` consent gate. |
+| **`soft`** | Vague signal ("nearby"). | Auto-expand +1; then gate. |
+| **`silent`** | No signal. | Auto-expand +2; then gate. |
 
-Every prompt surface has a stage (DISCOVERY / ACTIVE / SYNTHESIS / ALL). Before adding a rule, decide the stage:
-
-| Rule class | Stage | Canonical surface |
-|---|---|---|
-| Global invariant (validate, no fabrication, LaTeX, output-shape decision, archive-is-unbounded) | ALL | `buildGeneralSystemPrompt` |
-| Discovery-phase tool routing | DISCOVERY | Tool `modelDescription` first; system prompt only if cross-tool |
-| Mode-specific per-hop workflow | ACTIVE (one mode) | `smPrompts.ts` BLOCK constant in that mode only |
-| Verdict definitions | ACTIVE + tool | `submit_findings.modelDescription` (tool) + `BLOCK.verdictCategories` (nav) — keep identical |
-| Output format | SYNTHESIS + tool | `aiOutputTemplates.yaml` `instruction` (canonical) + `present_result.modelDescription` (reference) |
-
-Do not duplicate across surfaces. The general system prompt is sent on every turn — anything repeated in nav or tool description is triple-billed. If a rule belongs in a tool description, keep it there; the tool is visible at every call that matters.
-
-### 1.7 Per-Phase Template Scope — stage routing
-
-`aiOutputTemplates.yaml` has 10 keys. Each declares a `stages:` field listing which phases inject it into the AI system prompt. The authoritative routing lives in code (`STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts)) — the YAML `stages:` field is informational for power-user readers; overlays that contradict the canonical routing are logged and ignored.
-
-Routing via the helper `resolveStagePrompt(templates, phase, classification)`:
-
-| Phase | Keys injected | What they shape |
-|---|---|---|
-| **DISCOVERY** | `summary`, `description` | Trivial questions finalized without SM need a chat-description template. Others route to `start_exploration`. |
-| **ACTIVE** (per-hop) | `business_capture`, `technical_capture` | **Capture rules** — what the AI writes into `detail_analysis` per node, including loading pattern, distribution hints, ⚠️ invariants, formulas, column renames. Classification-gated, but at ACTIVE the classification is still `undefined` so both angles fire and the slot body carries both. |
-| **SYNTHESIS** | `summary`, `title`, `intro`, `sections`, `closing`, `description`, `highlights`, `notes` | **Assembly rules** — how the pre-formatted slot bodies become the final present_result document. Slots arrive already formatted; synthesis lifts, groups, frames. A `**Mission type:** <value>` line is injected by code; the `intro` instruction references it explicitly. |
-
-**Convention: `*_capture` at ACTIVE governs the per-hop write; synthesis keys govern assembly only.** There are no synthesis-side mirrors of capture keys — the slot body is the canonical surface and is lifted as written.
-
-**Classification gating** (`CLASSIFICATION_GATED` in `templateRenderer.ts`): only the active-phase capture keys are gated (`business_capture` for `business`/`both`, `technical_capture` for `technical`/`both`). Synthesis keys fire unconditionally; the resolved classification surfaces as the `**Mission type:** <value>` cue line.
-
-**Flat bullet rendering.** The synthesis block is emitted as `### Output templates (synthesis)` followed by `- <key>: <instruction>` bullets — one heading hierarchy, no per-key `####` wrappers.
-
-**LaTeX, markdown tables, code fences** stay in `buildGeneralSystemPrompt` because they are tied to the webview renderer capability, not user preference. Do not restate in YAML.
-
-**User overlay safety.** If the user points `dataLineageViz.ai.outputTemplateFile` at an invalid YAML, the loader logs a WARN + shows a VS Code notification and falls back to the shipped defaults. Per-key: unknown keys log a WARN and are ignored; missing `instruction` fields log an INFO and keep the built-in value for that key; the built-in defaults always succeed so the extension remains functional.
-
----
-
-## 2. Per-Hop Memory (Active Phase)
-
-Every hop the engine delivers a strictly isolated `WorkingMemory` snapshot containing:
-- `user_question` — echoed verbatim.
-- `mission_brief` — the global intent anchor created during discovery.
-- `current_task` — the specific sub-question routing the AI to the current node.
-- `focus_node` — the DDL, depth level, and topological path of the current object.
-- `neighbors` — direct connections for further routing decisions.
-- `short_term_memory` — the last 3 node summaries (sliding window).
-
-This architecture ensures that what is not captured in the YAML-defined `detail_analysis` during the hop cannot be generated later, forcing high-quality per-node capture.
-
----
-
-## 3. Routing & Grounding
-
-- **Metadata-first routing** — for every neighbor, the AI gets `{ id, schema, name, type, edge_direction, edge_type, boundary, cols }` before deciding to visit it. Every `route_requests` entry carries a focused sub-question; blind routing is a reasoning failure.
-- **Sub-question depth** — `route_requests[].question` and `current_task` may be a single yes/no ("Does this procedure apply the rule the parent referenced?") or a multi-part investigation ("Which columns X/Y/Z flow through this proc, how are they transformed, and what conditions filter them?"). Frame the question at the depth the next hop needs — narrow questions constrain the next hop's analysis unnecessarily.
-- **Fail-early validation** — `submit_findings` rejects unknown node IDs and (in `column_trace` mode only) column names that don't appear on the target. The AI self-corrects from the rejection payload.
-- **Column scope** — in `blackboard` mode, `route_requests[].columns` is silently dropped; in `column_trace` mode, names must exist on the target.
-
-### Depth handling — three modes
-
-`start_exploration` accepts `depth` + `depth_enforcement` to express the exploration scope. Three modes reflect three distinct situations:
-
-| Mode | Trigger | Cap | Out-of-cap route behavior |
-|---|---|---|---|
-| `strict` | User set depth via slash command OR unambiguous NL phrase ("direct neighbors", "one level", "immediate", "just the upstream") | `depth` exactly | Returns `action_required` — engine pauses, participant asks user yes/no, yes caches the class for the session |
-| `soft` | Vague NL phrase ("nearby", "surrounding", "next level") | `depth + 1` | Auto-expand within the cap; `action_required` beyond |
-| `silent` (default) | No user depth signal — AI chose a cautious starting scope | `depth + 2` | Auto-expand within the cap; `action_required` beyond |
-
-**Same `action_required` path for schema filter.** A route to a schema outside `session.filter.schemas` triggers the same combined envelope — one gate may list both a schema violation and a depth violation together, and a "yes" caches each class (schema or depth) separately on the session allowlist.
-
-**Picking the mode is the AI's job at `start_exploration` time** — the `depth_enforcement` parameter description in `package.json` is the single source of truth for the mapping. When in doubt about NL phrasing, prefer the stricter option; the consent-gate path handles legitimate expansion cleanly.
+## 6. Implementation Reference
+- `src/ai/prompts.ts`: Builder function implementations.
+- `src/ai/templateRenderer.ts`: YAML integration and phase routing.
+- `src/ai/smPrompts.ts`: Mode-specific analysis and verdict blocks.
