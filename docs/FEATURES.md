@@ -1,6 +1,6 @@
 # Features
 
-Comprehensive guide to every capability in Data Lineage Viz. For installation and quick start, see the [README](../README.md).
+Capabilities of Data Lineage Viz, with the VS Code settings that control them. For installation and quick start, see the [README](../README.md).
 
 ---
 
