@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import type { DetailSlot, MemoryStateSnapshot } from './memoryManager';
+import type { CaptureAngle, CapturedSection, DetailSlot, MemoryStateSnapshot } from './memoryManager';
 
 
 /**
@@ -188,9 +188,20 @@ export interface HopContext {
 export interface HopFinding {
   /** ID of the node that was analyzed. */
   focus_node_id: string;
-  /** High-fidelity technical analysis stored in the detail archive. */
-  detail_analysis: string;
-  /** One-line digest of the findings — echoed in future hops via `short_term_memory`. */
+  /**
+   * Captured sections — one per fired `*_capture` YAML template. Length 1 for
+   * single-angle classification (`business` or `technical`); length 2 for `both`.
+   * Each section is lifted verbatim by synthesis as a peer entry in
+   * `present_result.sections[]`. Mechanically validated against the locked
+   * session classification at the tool handler boundary (G11).
+   *
+   * @remarks
+   * Replaces the legacy single `detail_analysis` string field. The split lets prompts
+   * and synthesis treat each angle independently — closes the prompt-vs-data-model
+   * mismatch identified in audit 2026-04-26.
+   */
+  sections: CapturedSection[];
+  /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
   summary: string;
   /** The relevance verdict for the focus node. */
   verdict: Verdict;
@@ -232,7 +243,7 @@ export interface RouteRequest {
  * @remarks
  * Reported to the AI so it can distinguish accepted routes (added to agenda)
  * from deferred routes (queued for post-synthesis follow-up offer). The AI
- * should only reference `accepted: true` nodes in its detail_analysis;
+ * should only reference `accepted: true` nodes inside captured section text;
  * deferred nodes are surfaced exclusively via the post-synthesis follow-up
  * pill — the report should not enumerate them.
  */

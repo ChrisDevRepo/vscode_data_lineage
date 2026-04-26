@@ -1022,7 +1022,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
         "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
-        "modelDescription": "Submits analysis for the current focus node and requests the next hop's data. Includes routing requests for neighbors and pruning instructions.",
+        "modelDescription": "Submits analysis for the current focus node and requests the next hop's data. The `sections` array carries one captured section per fired *_capture template — `business` classification → 1 business section; `technical` → 1 technical; `both` → 2 sections (one of each). The locked classification is enforced mechanically; mismatches are rejected with a structured hint.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -1034,13 +1034,29 @@
               "type": "string",
               "description": "ID of the current focus node."
             },
-            "detail_analysis": {
-              "type": "string",
-              "description": "Full per-node analysis. Quote SQL verbatim. Use Markdown."
+            "sections": {
+              "type": "array",
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "angle": {
+                    "type": "string",
+                    "enum": ["business", "technical"],
+                    "description": "Which capture template produced this section."
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Pre-formatted section body — written per the angle's *_capture instruction. Lifted verbatim by synthesis."
+                  }
+                },
+                "required": ["angle", "text"]
+              },
+              "description": "One section per fired *_capture template. Length 1 (business OR technical classification) or 2 (both). May be empty for verdict=prune."
             },
             "summary": {
               "type": "string",
-              "description": "One-line digest of findings for this hop."
+              "description": "One-line digest of the whole node (~100-300 chars) — echoed in future hops via short_term_memory."
             },
             "verdict": {
               "type": "string",
@@ -1099,7 +1115,7 @@
           },
           "required": [
             "focus_node_id",
-            "detail_analysis",
+            "sections",
             "summary",
             "verdict"
           ]

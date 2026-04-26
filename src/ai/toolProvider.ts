@@ -22,8 +22,68 @@ import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNod
 import { type SerializedFilterState, type AIViewMetadata } from '../engine/projectStore';
 import { PendingGateSchema } from './sessionPhase';
 import { buildSynthesisReminder } from './smPrompts';
-import { ClassificationSchema, CLASSIFICATION_LABEL } from './classification';
+import { ClassificationSchema, CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
+import type { CapturedSection } from './memoryManager';
 import { getToolInvocationLabel } from './toolLabels';
+
+/**
+ * G11 — Classification-locked sections contract.
+ *
+ * @remarks
+ * The agreement-phase `confirm_sm_start` gate locks `sess.classification`. After the
+ * lock, `submit_findings.sections[]` must structurally match: `business` → exactly
+ * one section with `angle: 'business'`; `technical` → one with `angle: 'technical'`;
+ * `both` → one of each. `verdict: 'prune'` is exempt — pruned nodes may submit no
+ * sections. Returns a structured hint when the contract is violated, `null` otherwise.
+ *
+ * Mechanical contract — does not judge content quality. Closes the prompt-vs-data-model
+ * mismatch identified in audit 2026-04-26.
+ */
+function validateSectionsAgainstClassification(
+  sections: CapturedSection[] | undefined,
+  verdict: 'analyze' | 'pass' | 'prune',
+  classification: ClassificationValue | undefined,
+): string | null {
+  if (verdict === 'prune') return null; // pruned nodes may submit no sections
+  const list = sections ?? [];
+  // When classification has not yet been locked (early hop before gate resolves), accept any non-empty shape.
+  if (!classification) {
+    return list.length === 0 ? 'sections[] must contain at least one section when verdict is analyze or pass.' : null;
+  }
+  const angles = new Set(list.map(s => s.angle));
+  switch (classification) {
+    case 'business':
+      if (list.length === 0 || !angles.has('business')) {
+        return 'classification=business requires exactly one section with angle="business".';
+      }
+      if (angles.has('technical')) {
+        return 'classification=business rejects technical sections — submit only the business angle.';
+      }
+      if (list.length > 1) {
+        return 'classification=business expects one section; got more.';
+      }
+      return null;
+    case 'technical':
+      if (list.length === 0 || !angles.has('technical')) {
+        return 'classification=technical requires exactly one section with angle="technical".';
+      }
+      if (angles.has('business')) {
+        return 'classification=technical rejects business sections — submit only the technical angle.';
+      }
+      if (list.length > 1) {
+        return 'classification=technical expects one section; got more.';
+      }
+      return null;
+    case 'both':
+      if (!angles.has('business') || !angles.has('technical')) {
+        return 'classification=both requires two sections — one with angle="business" and one with angle="technical".';
+      }
+      if (list.length !== 2) {
+        return 'classification=both expects exactly two sections (one per angle).';
+      }
+      return null;
+  }
+}
 
 /**
  * Private handler for AI tool execution.
@@ -332,8 +392,6 @@ class ToolHandler {
       const parsed = SubmitFindingsInputSchema.safeParse(input);
       if (!parsed.success) {
         // Surface specific field paths so the model can correct the right field on retry.
-        // The previous root-only "(root): Invalid input" forced guess-work — see 2026-04-25
-        // session, hop 3, where a missing `summary` cost 34s + 5480 input tokens.
         const seen = new Set<string>();
         const fieldErrors: string[] = [];
         for (const issue of parsed.error.issues) {
@@ -346,20 +404,35 @@ class ToolHandler {
         }
         const hint = fieldErrors.length > 0
           ? `Invalid submit_findings input — ${fieldErrors.join('; ')}.`
-          : `Invalid submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, detail_analysis, summary, verdict.`;
+          : `Invalid submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
         return this.logAndReturn('submit_findings', {
           error: 'invalid_input',
           hint,
         }, input);
       }
 
-      // Identifier-match guard: detect slot-hijack where the AI's detail_analysis opens by naming a different scope node than the declared focus. SM mode only (single-entry) — inline batch arrays skip this check.
+      // G11 — classification-locked sections contract (audit 2026-04-26).
+      // The agreement-phase gate locks `sess.classification`. Each finding's sections[]
+      // must match the lock: business → 1 business section; technical → 1 technical;
+      // both → 1 business + 1 technical. Verdict=prune may submit length 0.
+      const findings = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+      for (const f of findings) {
+        const violation = validateSectionsAgainstClassification(f.sections, f.verdict, sess.classification);
+        if (violation) {
+          return this.logAndReturn('submit_findings', {
+            error: 'classification_lock_violation',
+            hint: violation,
+          }, input);
+        }
+      }
+
+      // Identifier-match guard: detect slot-hijack where any captured section opens by naming a different scope node than the declared focus. SM mode only (single-entry) — inline batch arrays skip this check.
       if (!Array.isArray(parsed.data)) {
-        const hijackedBy = engine.detectFocusSubjectMismatch(parsed.data.focus_node_id, parsed.data.detail_analysis ?? '');
+        const hijackedBy = engine.detectFocusSubjectMismatch(parsed.data.focus_node_id, parsed.data.sections ?? []);
         if (hijackedBy) {
           return this.logAndReturn('submit_findings', {
             error: 'focus_subject_mismatch',
-            hint: `detail_analysis opens by naming \`${hijackedBy}\`, but focus_node_id is ${parsed.data.focus_node_id}. Rewrite the analysis so it describes the focus node.`,
+            hint: `A captured section opens by naming \`${hijackedBy}\`, but focus_node_id is ${parsed.data.focus_node_id}. Rewrite each section so it describes the focus node.`,
           }, input);
         }
       }

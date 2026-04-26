@@ -16,7 +16,7 @@ export type NodeMap = Map<string, LineageNode>;
  *
  * @remarks
  * - `discover`  = inline chat first response (no SM engaged).
- * - `active`    = per-hop `detail_analysis` writing — capture rules.
+ * - `active`    = per-hop `sections[]` writing — capture rules (one entry per fired `*_capture`).
  * - `synthesis` = present_result assembly — render rules. Slot bodies arrive
  *                 pre-formatted from the active-phase capture and are lifted
  *                 as written; synthesis assembles, groups, frames.
@@ -116,7 +116,7 @@ export function resolveStagePrompt(
 
   const headerByPhase: Record<TemplateStage, string> = {
     discover:  '### Output templates (discovery)',
-    active:    '### Capture rules — write these into detail_analysis',
+    active:    '### Capture rules — submit these as `sections[]` in submit_findings',
     synthesis: '### Output templates (synthesis)',
   };
 

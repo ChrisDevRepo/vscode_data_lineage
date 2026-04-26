@@ -79,11 +79,32 @@ export const StartExplorationInputSchema = z.object({
 export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
 
 /**
+ * Zod schema for one captured section within `submit_findings.sections[]`.
+ *
+ * @remarks
+ * Each fired `*_capture` YAML template produces ONE entry. Angle-vs-classification
+ * conformance is enforced at the tool handler boundary (G11) — the schema accepts
+ * any combination here; the handler rejects mismatches against the locked
+ * `sess.classification`.
+ */
+const CapturedSectionSchema = z.object({
+  /** Which YAML capture template produced this section. */
+  angle: z.enum(['business', 'technical']),
+  /** Pre-formatted section body. */
+  text: z.string().min(1),
+});
+
+/**
  * Zod schema for a single finding within `submit_findings`.
  */
 const HopFindingSchema = z.object({
   focus_node_id: z.string(),
-  detail_analysis: z.string(),
+  /**
+   * One section per fired `*_capture` template. Length 1 (`business` / `technical`
+   * classification) or 2 (`both`). Verdict=prune findings may submit length 0
+   * (no analysis to record).
+   */
+  sections: z.array(CapturedSectionSchema).max(2),
   summary: z.string(),
   verdict: z.enum(['analyze', 'pass', 'prune']),
   route_requests: z.array(z.object({

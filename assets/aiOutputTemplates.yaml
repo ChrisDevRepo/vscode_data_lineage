@@ -13,15 +13,18 @@
 #
 # Stages:
 #   discovery  = first chat response, no SM. Trivial questions only.
-#   active     = per-hop analysis. The AI writes one detail_analysis slot
-#                per node into the unbounded archive. *_capture keys fire
-#                here. Loading pattern, distribution hints, SQL evidence and
-#                ⚠️ invariants are captured AT WRITE TIME — synthesis lifts
-#                what the slot already contains.
+#   active     = per-hop analysis. The AI writes one section per fired
+#                *_capture template into `submit_findings.sections[]`.
+#                Each fired *_capture produces ONE section (angle + text).
+#                business classification → 1 section; technical → 1; both → 2.
+#                Templates are independent — no cross-references between
+#                business_capture and technical_capture.
 #   synthesis  = final document assembly. summary, title, intro, sections,
-#                closing, description, highlights, notes fire here. Slot
-#                bodies arrive pre-formatted — synthesis assembles, groups,
-#                frames; it does not rewrite.
+#                closing, description, highlights, notes fire here. Captured
+#                section bodies arrive pre-formatted — synthesis assembles,
+#                groups across nodes (sibling-variant tables), frames; it
+#                does not rewrite. Each captured section becomes a peer
+#                entry in present_result.sections[] (NOT a nested subheading).
 #
 # Authoritative routing lives in code (templateRenderer.ts → STAGE_BY_KEY).
 # YAML `stages:` is informational — overlays that contradict are logged
@@ -69,33 +72,52 @@ sections:
   stages: [synthesis]
   instruction: >
     Assemble sections[] for the present_result payload. Each section is a
-    (label, node_ids[] 1..N, text 1..1) tuple. Lift each slot's `analysis`
-    text from the archive — it is already a pre-formatted body written at
-    the right angle for the user's question. Synthesis assembles, groups,
+    (label, node_ids[] 1..N, text 1..1) tuple. The archive carries one or
+    two captured sections per node (one per fired *_capture template). Lift
+    each captured section verbatim — it is already pre-formatted at the
+    right depth and angle. Synthesis assembles, groups across nodes, and
     frames; it does not rewrite.
 
-    Same label on multiple nodes groups them; one section per unique label.
-    Label by role ("Pipeline Seeder", "EV Computation Hub", "Reverse
-    Consolidation") rather than by tech artefact ("Loading Pattern", "SCD
-    Resolution"). Follow the dependency chain in one direction
-    (Source → Transform → Target, or the reverse). Section header:
-    `## <label>` — no leading numbers (system numbers them).
+    One section per distinct logic. Group similar slots into one section.
+    Label by semantic role ("Pipeline Seeder", "EV Computation Hub",
+    "Reverse Consolidation") rather than by tech artefact ("Loading
+    Pattern", "SCD Resolution"). Follow the dependency chain in one
+    direction (Source → Transform → Target, or the reverse). Section
+    header: `## <label>` — no leading numbers (system numbers them).
 
-    Density: 2–4 sections for focused (≤10 nodes), 4–8 for broad (10–20),
-    up to 10–12 for full pipeline (20+). Use `suggested_sections` from the
-    completion result as a starting skeleton.
+    When `classification === 'both'`, captured sections come in pairs per
+    node (one business, one technical). Each captured angle becomes its
+    OWN peer entry in present_result.sections[] — never nest one inside
+    the other. The two angles describe different things (what the data
+    means vs how the pipeline runs) and stand independently in the
+    document.
 
-    Sibling variants. When 3+ slots share the same shape (same formula
-    pattern, differing only in filters / keys / outputs), emit ONE
-    comparison table whose rows are the variants and columns are the
-    differing fields. Hoist the shared formula / SQL once above the
-    table. Preserve every ⚠️ from every slot — in the variant's row or a
-    per-variant invariants list after the table. Distinct logic always
-    gets its own section.
+    Sibling variants — group across nodes. When 3+ captured sections of
+    the same angle share the same shape (same formula pattern, differing
+    only in filters / keys / outputs), emit ONE present_result entry whose
+    `node_ids[]` lists every variant node and whose `text` is a comparison
+    table. Hoist the shared formula or SQL once above the table; rows are
+    the variants, columns the differing fields. Preserve every ⚠️ — in
+    the variant's row or a per-variant invariants list after the table.
+    Distinct logic always gets its own entry.
 
-    Pass / Prune slots. Render as one-line mentions inside a
+    Use `suggested_sections` from the completion result as a starting
+    skeleton when present.
+
+    Pass / Prune slots: render as one-line mentions inside a
     `### Passthrough / Pruned` subsection — do not expand their text.
-  example: '{ "label": "Revenue Calculation", "node_ids": ["dbo.spCalcRevenue"], "text": "…" }'
+  example: |
+    {
+      "label": "Revenue Calculation",
+      "node_ids": ["dbo.spCalcRevenue"],
+      "text": "`spCalcRevenue` computes `TotalRevenue` = $Qty \\times UnitPrice$ at INSERT into `FactSalesReport`. ⚠️ Null `MarkupPct` collapses `UnitPrice` to `CostPrice` — verify supplier coverage before each run."
+    }
+    Sibling-variant table (3+ similar SPs):
+    {
+      "label": "Aggregation Variants",
+      "node_ids": ["dbo.spAggDaily", "dbo.spAggWeekly", "dbo.spAggMonthly"],
+      "text": "All three follow the same TRUNCATE+INSERT skeleton:\n```sql\nTRUNCATE TABLE Fact_<grain>; INSERT INTO Fact_<grain> SELECT ... FROM Stage WHERE <filter>\n```\n| SP | Grain | Filter | Target |\n| --- | --- | --- | --- |\n| `spAggDaily` | day | `WHERE DateKey = @today` | `FactDaily` |\n| `spAggWeekly` | week | `WHERE WeekKey = @currentWeek` | `FactWeekly` |\n| `spAggMonthly` | month | `WHERE MonthKey = @currentMonth` | `FactMonthly` |\n⚠️ All three TRUNCATE without snapshot — concurrent reads see empty table."
+    }
 
 closing:
   stages: [synthesis]
@@ -143,73 +165,95 @@ notes:
   example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
-# These keys govern what the AI writes into detail_analysis per hop. The
-# unbounded archive preserves every character verbatim for synthesis to lift.
+# Each fired *_capture template produces ONE section into submit_findings.sections[].
+# Submit shape: { angle: 'business' | 'technical', text: '<body>' }.
+# Independent specs — no cross-references between templates. Each section is
+# self-contained; synthesis groups across nodes at the next phase.
 
 business_capture:
   stages: [active]
   instruction: >
-    Write the WHAT angle into detail_analysis — what the data means, which
-    business rules apply, which consumers are affected.
-    Question shape: if the question asks WHAT the data means or WHY a value is
-    computed, lead with business meaning first. If it asks HOW the pipeline runs,
-    write the business context after the technical_capture slot.
-    Business Purpose: open with one sentence naming the actual domain role of
-    this node — not "stores data" or "processes records" but the specific
-    function: "computes revenue at INSERT", "allocates budget units to cost
-    centres". Specific > generic.
-    Document every business rule visible in the DDL — every CASE condition,
-    every threshold value, every allocation formula, every special-case
-    branch. Selective capture produces thin synthesis.
-    Capture per node:
-    - Business meaning per column / computation; consumer impact.
-    - Formulas with variable definitions (math directly).
-    - Column renames or mappings as a | From | To | Business meaning | table.
-    - Risk or data-quality issue — prefix with ⚠️.
-    - How this node answers the user's question.
-    Always list each column the focus procedure reads or writes by name —
-    quote the predicate or write the formula. Columns that are merely present
-    on a neighbour table belong in `lineage_get_neighbor_columns`, not here.
-    Sibling variants: write your individual slot normally. Synthesis will
-    consolidate 3+ sibling slots into a comparison table — do not pre-merge.
-    GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT.
-    Qty = units sold (renamed from OrderQty in CTE_Orders). UnitPrice = list
-    price after markup (CostPrice × (1 + MarkupPct)). ⚠️ Null MarkupPct
-    collapses UnitPrice to CostPrice — verify coverage before each run."
+    Submit one section: { angle: "business", text: "<body>" }. The body
+    captures what the data means at this node — its domain role, business
+    rules, formulas, consumer impact.
+
+    Open the body with one sentence naming the node's actual domain role —
+    "computes revenue at INSERT", "allocates budget units to cost centres",
+    "historizes price changes into SCD-2 rows". Specific over generic; never
+    "stores data" or "processes records".
+
+    Capture every business rule visible in the DDL — every CASE condition,
+    every threshold, every allocation formula, every special-case branch.
+    Name each column the focus procedure reads or writes; quote the
+    predicate or write the formula. Mark risks or data-quality issues with
+    ⚠️ inline at the point they apply.
+
+    Format the body with markdown — `## Purpose` paragraph, formulas in
+    LaTeX math, column renames as `| From | To | Business meaning |` tables,
+    multi-step rules as ordered lists. Use `\`backticks\`` for column and
+    object names. Body is unbounded; depth-first capture beats prose extension.
+
+    Write each focus node's section fully and independently. Do not detect
+    sibling variants here — synthesis sees the whole picture and groups
+    similar slots into comparison tables at assembly time.
+  example: >
+    `spCalcRevenue` computes `TotalRevenue` = $Qty \\times UnitPrice$ at the
+    final INSERT into `FactSalesReport`. `Qty` is units sold (renamed from
+    `OrderQty` in `CTE_Orders`). `UnitPrice` is list price after markup
+    ($CostPrice \\times (1 + MarkupPct)$). ⚠️ Null `MarkupPct` collapses
+    `UnitPrice` to `CostPrice` — verify supplier coverage before each run.
+    Consumer impact: every revenue dashboard reads `TotalRevenue` directly;
+    fix discipline at this node propagates downstream.
 
 technical_capture:
   stages: [active]
   instruction: >
-    Write the HOW angle into detail_analysis — how the pipeline runs, the SQL
-    expressions that drive it, performance characteristics.
-    Question shape: if the question asks HOW the pipeline runs, rebuild order,
-    or join strategies, lead with execution first. If it asks WHAT the data
-    means, write the technical context after the business_capture slot.
+    Submit one section: { angle: "technical", text: "<body>" }. The body
+    captures how the pipeline runs at this node — SQL evidence, loading
+    pattern, joins, performance characteristics, antipatterns.
+
     Capture per node:
-    - SQL evidence: copy key expressions verbatim — JOIN predicate,
-      CASE WHEN condition, COALESCE fallback, computed column formula. Quote
-      as written in the DDL; do not paraphrase. Snippet only, not the full
-      INSERT/SELECT statement.
-    - Loading pattern as a fact: "TRUNCATE + INSERT — full reload, no delta
-      tracking" / "MERGE upsert by ProductId" / "INSERT-only append" / etc.
-      Coarse description; write the words that fit the SP.
+    - SQL evidence: copy key expressions verbatim — JOIN predicates,
+      CASE WHEN conditions, COALESCE fallbacks, computed column formulas.
+      Quote as written in the DDL; do not paraphrase. Snippet only, not
+      the full INSERT/SELECT statement.
+    - Loading pattern as a fact: "TRUNCATE + INSERT — full reload" /
+      "MERGE upsert by ProductId" / "INSERT-only append" / "UPDATE in
+      place" / etc. Coarse description.
     - Every computed column: formula alongside its snippet.
-    - Relationships with role labels: "reads lookup from DimProduct",
-      "writes via MERGE to FactSalesReport", "triggered by spLoadOrders".
+    - Relationships with role labels: "reads lookup from `DimProduct`",
+      "writes via MERGE to `FactSalesReport`", "triggered by `spLoadOrders`".
     - Join types when hinted (HASH / MERGE / LOOP) — ⚠️ warn on Cartesian.
     - Antipatterns: excessive DISTINCT, OR in join predicates, correlated
       subqueries in SELECT.
     - Distribution / indexing hints: partition key, hash-distribution column.
     - DDL comments, version annotations — carry author intent lost after
       this hop.
-    Variant siblings: capture the first in full; siblings write "Same
-    skeleton as <first>; deltas: <specific differences in filters, weights,
-    target columns>".
-    GOOD: "Loading: TRUNCATE + INSERT — full reload, no delta tracking.
-    CTE_Orders: base filter WHERE IsActive = 1 (sargable, index on IsActive).
-    INNER HASH JOIN DimProduct on ProductId — correct for large-orders × small-products.
-    LEFT JOIN vwPriceList on ProductId — ⚠️ unmatched rows produce NULL downstream;
-    no ISNULL guard before the final INSERT."
+
+    Format the body with markdown — `## Purpose` paragraph, SQL in
+    `\`\`\`sql` code fences (snippet only), join steps as ordered lists,
+    risks with ⚠️ inline. Body is unbounded; depth-first capture wins.
+
+    Write each focus node's section fully and independently. Do not write
+    "same skeleton as previous, deltas: X" — synthesis detects sibling
+    variants across nodes and emits a comparison table at assembly time.
+  example: >
+    Loading: TRUNCATE + INSERT — full reload, no delta tracking.
+
+    ```sql
+    INSERT INTO dbo.FactSalesReport (TotalRevenue, ProductId, Qty)
+    SELECT o.OrderQty * p.UnitPrice, o.ProductId, o.OrderQty
+    FROM CTE_Orders o
+    INNER HASH JOIN DimProduct p ON o.ProductId = p.ProductId
+    LEFT JOIN vwPriceList pl ON o.ProductId = pl.ProductId
+    WHERE o.IsActive = 1
+    ```
+
+    Filters: `WHERE IsActive = 1` is sargable (index on `IsActive`).
+    `INNER HASH JOIN` on `ProductId` — correct for large-orders × small-products.
+    `LEFT JOIN vwPriceList` on `ProductId` — ⚠️ unmatched rows produce NULL
+    downstream; no ISNULL guard before the INSERT.
+    Index hint: clustered on `(ProductId, OrderDate)` for downstream aggregation.
 
 # ── Reduced capture for non-bodied starting points ───────────────────────────
 
@@ -252,51 +296,66 @@ structural_summary:
 general:
   stages: [active, synthesis]
   instruction: >
-    Write at full depth — this IS the documentation; there is no follow-up
-    step. Aim 800–2 000 chars per `Columns / logic` section. If a procedure
-    has more logic than fits, split into labelled sub-sections rather than
-    prose-extending a single section — the archive is unbounded, additional
-    sub-sections are preferred to sprawling paragraphs.
+    Write at full depth. Cover every business rule, SQL expression, and
+    structural fact present in the DDL — the archive is unbounded; depth-first
+    capture beats prose extension. If a node has more logic than fits one
+    paragraph, split into labelled sub-sections rather than extending a single
+    paragraph.
 
     Format to fit the content:
-    Column renames or mappings → | From | To | Notes | table.
-    Multi-step logic → ordered 1. 2. 3. list.
-    Key SQL expressions → ```sql code fence (snippet only, not the full statement).
-    Column and object names → `backtick`.
-    Risk or data-quality issue → ⚠️ prefix inline inside the section where it
-    occurs — not consolidated in closing.
+    - Column renames or mappings → `| From | To | Notes |` table.
+    - Multi-step logic → ordered 1. 2. 3. list.
+    - Key SQL expressions → ` ```sql ` code fence (snippet only, not the full statement).
+    - Column and object names → `\`backticks\``.
+    - Risk or data-quality issue → ⚠️ prefix inline at the point it applies.
 
     Supported: ## headings, **bold**, `code`, tables, math, code fences.
     Not supported: mermaid, HTML, images, footnotes.
 
-# ── Synthesis-side render rules (mirror the capture keys) ────────────────────
+# ── Synthesis-side render rules (one peer section per captured angle) ────────
+# When the captured archive contains sections with angle='business' and/or
+# angle='technical', synthesis emits each as its OWN peer entry in
+# present_result.sections[]. NOT nested as #### subheadings inside another
+# section. Synthesis MAY group multiple captured sections of the same angle
+# across sibling nodes into a single present_result entry with a comparison
+# table — that is the assembly-phase decision, not the capture-phase decision.
 
 business_subsection:
   stages: [synthesis]
-  instruction: |
-    Emit as the main body of the section's text. No subheading.
-    Write the WHAT angle: formulas, column renames as | From | To | Business meaning |
-    table, what each value represents, which consumers are affected.
-    Lift every business rule from the archive and present it at full depth — every
-    formula, every rename, every condition. Synthesis with thin sections wastes the
-    archive; expand, do not compress.
-    Risk or data-quality issue: ⚠️ prefix inline inside this section text — closing
-    is for cross-cutting issues only.
-    Name every column explicitly. "Various columns" → list each name.
+  instruction: >
+    For each `slot.sections` entry with `angle="business"` in the archive,
+    emit a peer entry in present_result.sections[]. Lift the captured
+    `section.text` verbatim — the body arrives pre-formatted at the right
+    depth from the active phase.
+
+    Label by semantic role ("Pipeline Seeder", "EV Computation Hub",
+    "Reverse Consolidation"). Never use the angle name as the label.
+
+    Sibling grouping: when 3+ captured business sections share the same
+    shape (same formula pattern, differing only in filters / keys / outputs),
+    emit ONE entry whose `node_ids[]` lists all the variant nodes and whose
+    `text` consolidates them into a comparison table — hoist the shared
+    formula or SQL once above the table. Preserve every ⚠️. Distinct logic
+    always gets its own entry.
 
 technical_subsection:
   stages: [synthesis]
-  instruction: |
-    Emit as a `#### Technical` subheading below the business body in the same
-    section text.
-    Write the HOW angle: how the pipeline runs, SQL expression evidence, join
-    strategies, loading patterns, constraint coverage, antipatterns, rebuild order.
-    Quote key SQL expressions verbatim — preserve the DDL's exact expressions.
-    Every computed column: SQL snippet + its LaTeX formula side by side.
-    Variant siblings: DISTINCT logic → full block per variant. SIMILAR logic →
-    delta-mode "Same skeleton as <first>; deltas: [specific differences in
-    filters, weights, target columns]". Every variant still gets its own
-    #### Technical block.
+  instruction: >
+    For each `slot.sections` entry with `angle="technical"` in the archive,
+    emit a peer entry in present_result.sections[]. Lift the captured
+    `section.text` verbatim — the body arrives pre-formatted (SQL fences,
+    join order, loading pattern) from the active phase.
+
+    Label by semantic role with a technical hint when needed
+    ("EV Computation — Execution", "Audit Trail — MERGE Pattern"). Never
+    use the angle name as the label.
+
+    Sibling grouping: when 3+ captured technical sections share the same
+    shape (e.g. several SPs with TRUNCATE+INSERT differing only in filter),
+    emit ONE entry whose `node_ids[]` lists the variants and whose `text`
+    is a comparison table — hoist the shared SQL skeleton once above; the
+    rows are the variants and the columns are the differing fields. Distinct
+    logic always gets its own entry.
 
 # ── Metadata band (rendered when origin is an SP) ────────────────────────────
 

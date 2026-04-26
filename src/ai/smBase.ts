@@ -18,6 +18,7 @@ import type { SerializedFilterState } from '../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from './tools';
 import { edgeApiType } from './aiPresenter';
 import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
+import { trunc } from '../utils/log';
 import { AiMemoryManager, type WorkingMemory } from './memoryManager';
 import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
@@ -109,14 +110,14 @@ export interface IHopStateMachine {
   readonly currentFocus: string | null;
 
   /**
-   * Detects a slot-hijack attempt — when the AI's authored `detail_analysis` opens
+   * Detects a slot-hijack attempt — when any captured `section.text` opens
    * by naming a different scope node than the declared `focus_node_id`.
    *
    * @param focusNodeId - The declared focus from `submit_findings`.
    * @param detailAnalysis - The authored markdown analysis.
    * @returns The mismatched scope-node id, or `null` when no mismatch is detected.
    */
-  detectFocusSubjectMismatch(focusNodeId: string, detailAnalysis: string): string | null;
+  detectFocusSubjectMismatch(focusNodeId: string, sections: ReadonlyArray<{ text: string }>): string | null;
 
   /**
    * Toggles the inline operating mode.
@@ -504,33 +505,38 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Detects a slot-hijack attempt where `detail_analysis` opens by naming a **different** scope node than the declared `focus_node_id`.
+   * Detects a slot-hijack attempt where any captured section opens by naming a **different**
+   * scope node than the declared `focus_node_id`.
    *
    * @remarks
-   * Mechanical identifier-match contract — does NOT judge content quality. Returns `null` when:
-   * - No backticked identifier appears in the opening (first 200 chars).
-   * - The first identifier matches the focus (normalised).
+   * Mechanical identifier-match contract — does NOT judge content quality. Scans the opening
+   * (first 200 chars) of each section's text. Returns `null` when:
+   * - No section contains a backticked identifier in its opening.
+   * - The first identifier in every section matches the focus (normalised).
    * - The first identifier is not a known scope node (columns, external refs, SQL keywords pass through).
    *
-   * Returns the mismatched scope-node id when the AI authored analysis about a different scope node. Normalisation strips square brackets + schema prefix and lower-cases.
+   * Returns the mismatched scope-node id from the first offending section.
    *
    * @param focusNodeId - The declared focus from `submit_findings.focus_node_id`.
-   * @param detailAnalysis - The authored markdown analysis.
+   * @param sections - The authored capture sections (may be empty for verdict=prune).
    * @returns The mismatched scope node id, or `null` when no mismatch.
    */
-  public detectFocusSubjectMismatch(focusNodeId: string, detailAnalysis: string): string | null {
-    const opening = detailAnalysis.slice(0, 200);
-    const m = opening.match(/`([^`\n]+)`/);
-    if (!m) return null;
+  public detectFocusSubjectMismatch(focusNodeId: string, sections: ReadonlyArray<{ text: string }>): string | null {
     const norm = (s: string): string => {
       const tail = s.replace(/[\[\]]/g, '').split('.').pop();
       return tail ? tail.trim().toLowerCase() : '';
     };
-    const mentioned = norm(m[1]);
-    if (!mentioned) return null;
-    if (mentioned === norm(focusNodeId)) return null;
-    for (const id of this.scopeNodeIds) {
-      if (norm(id) === mentioned) return id;
+    const focusNorm = norm(focusNodeId);
+    for (const section of sections) {
+      const opening = (section.text ?? '').slice(0, 200);
+      const m = opening.match(/`([^`\n]+)`/);
+      if (!m) continue;
+      const mentioned = norm(m[1]);
+      if (!mentioned) continue;
+      if (mentioned === focusNorm) continue;
+      for (const id of this.scopeNodeIds) {
+        if (norm(id) === mentioned) return id;
+      }
     }
     return null;
   }
@@ -570,7 +576,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.memory.setUserQuestion(params.question);
     if (params.mission_brief) {
       this.memory.setMissionBrief(params.mission_brief);
-      this.log('debug', `[Mission] brief=${params.mission_brief.slice(0, 200)}${params.mission_brief.length > 200 ? ` [+${params.mission_brief.length - 200} chars]` : ''}`);
+      this.log('debug', `[Mission] brief=${trunc(params.mission_brief, 200)}`);
     }
     this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
 
@@ -1001,12 +1007,13 @@ export class NavigationEngine implements IHopStateMachine {
       }
 
       if (!isPrune) {
-        this.memory.storeDetail(this.nodeMap.get(focusId)!, finding.detail_analysis, finding.summary, {
+        const sections = finding.sections ?? [];
+        this.memory.storeDetail(this.nodeMap.get(focusId)!, sections, finding.summary, {
           badge_label: finding.badge_label,
           note_caption: finding.note_caption,
           reason_for_visit: this._inlineMode ? 'True Inline Analysis' : (this.currentFocusQuestion || 'Historical path investigation')
-        }, this._inlineMode);
-        this.lastHopDetailChars = finding.detail_analysis?.length ?? 0;
+        });
+        this.lastHopDetailChars = sections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
         this.lastHopSummaryChars = finding.summary?.length ?? 0;
         this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
       }

@@ -224,6 +224,25 @@ export class LineageParticipant {
 
     let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
     let lineageTools = filterLmTools(vscode.lm.tools, { kind: 'discover' });
+
+    // G12 — Slash-command phase gate (audit 2026-04-26 §11 F4 / B5).
+    // `/trace` and `/search` are discovery-only — they inject a discovery-phase
+    // prompt that conflicts with active/synthesis system prompts. Only valid in
+    // `idle` (fresh exploration) or `completed` (post-synthesis follow-up). The
+    // `awaiting_gate` branch below has its own routing; that is handled separately.
+    if ((request.command === 'trace' || request.command === 'search')
+        && sess.phase.kind !== 'idle'
+        && sess.phase.kind !== 'completed'
+        && sess.phase.kind !== 'awaiting_gate') {
+      const cmdName = request.command === 'trace' ? '/trace' : '/search';
+      const phaseLabel = sess.phase.kind === 'exploring'
+        ? 'an active exploration is in progress'
+        : 'synthesis is in progress';
+      writer.markdown(`\n\n> \`${cmdName}\` is available only when no exploration is active. Currently ${phaseLabel}. Wait for synthesis to complete, then start a fresh question.\n\n`);
+      this.logger.info(`[SlashGate] ${cmdName} blocked — phase=${sess.phase.kind}`);
+      return {};
+    }
+
     if (request.command === 'trace') {
       effectivePrompt = buildTracePrompt(request.prompt);
     } else if (request.command === 'search') {
@@ -864,7 +883,10 @@ export class LineageParticipant {
         ? `${slot.schema}.${slot.name} — ${slot.badge_label}`
         : `${slot.schema}.${slot.name}`;
       lines.push(`## ${heading}`);
-      const body = (slot.analysis && slot.analysis.length > 0) ? slot.analysis : slot.summary;
+      const sectionBody = slot.sections.length > 0
+        ? slot.sections.map(s => s.text).join('\n\n')
+        : '';
+      const body = sectionBody.length > 0 ? sectionBody : slot.summary;
       if (body) lines.push('', body);
       lines.push('');
     }

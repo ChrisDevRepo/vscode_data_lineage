@@ -65,19 +65,19 @@ export interface AiOutputTemplates {
   /** Instructions for extracting and formatting node-level notes. */
   notes: string;
   /**
-   * Business-angle capture rules — fired at ACTIVE phase. Governs what the
-   * AI writes into `detail_analysis` per hop for the business angle:
-   * meaning, formulas, column renames, ⚠️ invariants, question-relevance
-   * evidence. The slot body arrives at synthesis already formatted and is
-   * lifted as written.
+   * Business-angle capture rules — fired at ACTIVE phase. Governs the body
+   * of the section the AI submits with `angle: 'business'` per hop: meaning,
+   * formulas, column renames, ⚠️ invariants, question-relevance evidence.
+   * The section body arrives at synthesis already formatted and is lifted
+   * verbatim into a peer entry of `present_result.sections[]`.
    */
   business_capture: string;
   /**
-   * Technical-angle capture rules — fired at ACTIVE phase. Governs what the
-   * AI writes into `detail_analysis` per hop for the technical angle:
+   * Technical-angle capture rules — fired at ACTIVE phase. Governs the body
+   * of the section the AI submits with `angle: 'technical'` per hop:
    * verbatim SQL snippets, loading pattern, join types, antipatterns,
-   * distribution hints, DDL annotations. The slot body arrives at synthesis
-   * already formatted and is lifted as written.
+   * distribution hints, DDL annotations. The section body arrives at
+   * synthesis already formatted and is lifted verbatim.
    */
   technical_capture: string;
   /** Shared depth + format floor (active + synthesis): 800–2000 chars/section, table/code-fence/⚠️ rules. */

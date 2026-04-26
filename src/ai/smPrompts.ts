@@ -19,24 +19,23 @@ const BLOCK = {
     '- prune: Utility node (logging/error) or irrelevant to the mission.',
   ].join('\n'),
 
-  /** Analysis and archive protocol. */
-  writeFindings: [
-    '## Analysis Protocol',
-    '',
-    'For every node with verdict=`analyze`, structure `detail_analysis` with these sections (headings required):',
-    '',
-    '### Purpose',
-    'One sentence naming the node\'s specific role — not "stores data" but "computes revenue at INSERT" or "historizes price changes into SCD rows".',
-    '',
-    '### Columns / logic',
-    '- Column mappings: use a markdown table | from | to | rule | example |',
-    '- Transform logic: numbered 1./2./3. steps, each with the SQL expression that drives it',
-    '- Quote key SQL expressions in ```sql code fences (the expression, not the full statement)',
-    '',
-    '### Data risks / invariants',
-    '1–2 sentences on anything that would surprise a reader — nullability traps, implicit coercions, ordering assumptions, idempotency concerns.',
-    '',
-    '`summary` — one line, ~100–300 chars, plain prose digest of Purpose.',
+  /**
+   * Section-shape contract — points at the YAML capture templates as the source of truth.
+   *
+   * @remarks
+   * The legacy `writeFindings` block (Purpose / Columns-logic / Data risks structure) was
+   * removed in 2026-04-26 audit (§11 H1) — it competed with the YAML `*_capture` templates
+   * for "what to write into the captured section text". Single source of truth: the YAML capture
+   * templates injected by `templateRenderer.resolveStagePrompt(..., 'active', classification)`.
+   */
+  sectionsShape: [
+    '## Section Submission',
+    'Submit `sections[]` with one entry per fired `*_capture` template (see "Capture rules" injected above):',
+    '- `business` classification → 1 entry with `angle: "business"`',
+    '- `technical` classification → 1 entry with `angle: "technical"`',
+    '- `both` classification → 2 entries (one of each angle)',
+    'Each entry: `{ angle, text }`. Body content is governed by the angle\'s capture template above; this block only specifies the submission shape.',
+    '`summary` — one line, ~100–300 chars, plain-prose digest of the whole node (across all captured angles).',
   ].join('\n'),
 
   /** Metadata protocol. */
@@ -106,13 +105,20 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
     '',
     BLOCK.verdictCategories,
     '',
-    BLOCK.writeFindings,
+    BLOCK.sectionsShape,
+    '',
     BLOCK.badgeAndNote,
     '',
-    BLOCK.routing,
-    '',
-    BLOCK.pruningProtocol
+    BLOCK.routing
   );
+
+  // Inline mode ships full DDL up front and does not expose `lineage_get_neighbor_columns`
+  // (toolPolicy.ts:107-109), so the pruning protocol — which instructs the AI to call that
+  // tool — is dead weight. F1 in audit 2026-04-26: don't tell the AI to call tools that
+  // aren't in its toolset.
+  if (!isInline) {
+    sections.push('', BLOCK.pruningProtocol);
+  }
 
   if (isColumnAspectActive) {
     sections.push('', buildColumnAspectPrompt(targetColumns!));

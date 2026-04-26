@@ -13,6 +13,36 @@ import type { LineageNode } from '../engine/types';
 
 
 /**
+ * Angle of a captured section — drives YAML render-rule selection at synthesis.
+ *
+ * @remarks
+ * The locked classification (`business | technical | both`) dictates which angles
+ * fire at capture time:
+ * - `business` → exactly one section with `angle: 'business'`
+ * - `technical` → exactly one section with `angle: 'technical'`
+ * - `both` → two sections, one of each
+ * Mechanically enforced in {@link toolProvider.submitFindings} (G11) per the
+ * agreement-phase classification contract.
+ */
+export type CaptureAngle = 'business' | 'technical';
+
+/**
+ * One captured section within a `DetailSlot` — output of one fired `*_capture` template.
+ *
+ * @remarks
+ * Each `business_capture` / `technical_capture` YAML key produces ONE entry with the
+ * matching angle. Body text arrives pre-formatted from active phase and is lifted
+ * verbatim by synthesis as a peer entry in `present_result.sections[]` (NOT as a
+ * nested subheading inside another section).
+ */
+export interface CapturedSection {
+  /** Which YAML capture template produced this section. */
+  angle: CaptureAngle;
+  /** Pre-formatted section body — written per the angle's `*_capture.instruction`. */
+  text: string;
+}
+
+/**
  * High-fidelity analysis for a single visited node.
  *
  * @remarks
@@ -29,9 +59,19 @@ export interface DetailSlot {
   name: string;
   /** Object type (e.g. 'table', 'view', 'procedure'). */
   type: string;
-  /** Full technical analysis written by the model. */
-  analysis: string;
-  /** One-line digest shared across hops via `short_term_memory`. */
+  /**
+   * Captured sections — one per fired `*_capture` template. Length 1 for
+   * `business`/`technical` classification; length 2 for `both`. Length 0 only
+   * when verdict was `prune` and no sections were submitted.
+   *
+   * @remarks
+   * Synthesis lifts each section verbatim into `present_result.sections[]` as a
+   * peer entry (groupable across nodes for sibling-variant tables). The capture
+   * vs synthesis split is mechanical: the AI writes per-node sections at active
+   * phase; synthesis groups across nodes.
+   */
+  sections: CapturedSection[];
+  /** One-line digest of the whole node (across both angles when both fire), shared across hops via `short_term_memory`. */
   summary: string;
   /** Optional short role tag used for graph badges. */
   badge_label?: string;
@@ -175,25 +215,27 @@ export class AiMemoryManager {
    * Stores the technical findings for a single node in the detail archive.
    *
    * @param node - The node the findings describe.
-   * @param analysis - Full technical analysis written by the model.
-   * @param summary - One-line digest shared across hops via `short_term_memory`.
-   * @param meta - Optional UI metadata — `badge_label` and `note_caption`.
-   * @param inlineMode - When `true`, discards the bulk text and keeps only visual metadata.
+   * @param sections - Captured sections (one per fired `*_capture` template).
+   * @param summary - One-line digest of the whole node, shared across hops via `short_term_memory`.
+   * @param meta - Optional UI metadata — `badge_label`, `note_caption`, `reason_for_visit`.
+   *
+   * @remarks
+   * Sections are stored verbatim regardless of inline vs SM mode (audit 2026-04-26 A1
+   * — dropped the inline-mode slot-clear quirk for uniform downstream behaviour).
    */
   public storeDetail(
     node: LineageNode,
-    analysis: string,
+    sections: CapturedSection[],
     summary: string,
     meta?: { badge_label?: string; note_caption?: string; reason_for_visit?: string },
-    inlineMode = false,
   ): void {
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
       name: node.name,
       type: node.type,
-      analysis: inlineMode ? '' : analysis,
-      summary: inlineMode ? '' : summary,
+      sections,
+      summary,
       badge_label: meta?.badge_label,
       note_caption: meta?.note_caption,
       reason_for_visit: meta?.reason_for_visit,

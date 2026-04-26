@@ -28,7 +28,7 @@ import type { DeferredQuestion } from './smTypes';
  *    them in the report.
  */
 export const OUT_OF_SCOPE_CONTRACT: string =
-  'Out-of-scope routes (schema or depth beyond the approved border) are encouraged when mission-relevant. The engine defers them and surfaces them to the user post-synthesis via the follow-up pill. Each `submit_findings` tool result reports `route_outcomes[]`; reference only nodes with `accepted: true` in `detail_analysis`. Do not enumerate deferred nodes in the report — the follow-up pill handles that surface.';
+  'Out-of-scope routes (schema or depth beyond the approved border) are encouraged when mission-relevant. The engine defers them and surfaces them to the user post-synthesis via the follow-up pill. Each `submit_findings` tool result reports `route_outcomes[]`; reference only nodes with `accepted: true` inside your captured `sections[]`. Do not enumerate deferred nodes in the report — the follow-up pill handles that surface.';
 
 
 /**
@@ -170,9 +170,9 @@ export function buildActivePhasePrompt(isInline: boolean): string {
     '# Active Exploration Protocol',
     `Mode: ${mode}`,
     '',
-    '1. ARCHIVE → DEPTH: Your `detail_analysis` is the sole input to the final report. Write at full depth because there is no follow-up pass.',
-    '2. ANCHORING: Align every verdict with the <mission_brief> and <current_task>.',
-    '3. MATHEMATICS: Use LaTeX math syntax ($formula$ or $$block$$) for transform expressions and calculations.',
+    '1. SECTIONS: Submit `sections[]` with one entry per fired `*_capture` template for the locked classification — `business` → 1 business section; `technical` → 1 technical section; `both` → 2 sections (one of each). Each section\'s body is the sole input to the final report; write at full depth because there is no follow-up pass.',
+    '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
+    '3. MATHEMATICS: Use LaTeX math syntax (`$formula$` or `$$block$$`) for transform expressions and calculations.',
     `4. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');
 }
@@ -192,11 +192,14 @@ export function buildActivePhasePrompt(isInline: boolean): string {
  */
 export function buildSynthesisPrompt(): string {
   return [
-    'The archive is closed. Each slot in the last `tool_result.detail_slots[]` is a',
-    'pre-formatted body — lift, do not rewrite. Assemble per the synthesis output',
-    'templates above. Anchor the intro to the user\'s question; close with a',
-    'through-line if the analysis spans 5+ sections. Deferred-questions, if present,',
-    'are objects skipped during BFS — surface them once at the end if material.',
+    'The archive is closed. Each slot in the last `tool_result.detail_slots[]` carries',
+    '`slot.sections: [{ angle, text }]` — one entry per fired `*_capture` template at',
+    'capture time (1 for business/technical classification, 2 for both). Lift each',
+    'section.text verbatim into a peer entry of `present_result.sections[]`. Group',
+    'similar captured sections across nodes when they share shape (sibling-variant',
+    'comparison tables); distinct logic gets its own entry. Anchor the intro to the',
+    'user\'s question. Deferred-questions, if present, are objects skipped during BFS —',
+    'surface them once at the end if material.',
   ].join('\n');
 }
 
@@ -355,7 +358,7 @@ export function buildToolUsageBlock(): string {
   return [
     '## Tool Constraints',
     '',
-    '1. Use `lineage_submit_findings` to process focus nodes. Write full-depth `detail_analysis` per the required-section template in the stage rules.',
+    '1. Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth.',
     '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
   ].join('\n');
 }
