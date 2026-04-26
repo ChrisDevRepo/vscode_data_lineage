@@ -46,6 +46,11 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
   notes:                ['synthesis'],
   business_capture:     ['active'],
   technical_capture:    ['active'],
+  general:              ['active', 'synthesis'],
+  business_subsection:  ['synthesis'],
+  technical_subsection: ['synthesis'],
+  loading_pattern:      ['synthesis'],
+  structural_summary:   ['active'],
 };
 
 /**
@@ -64,6 +69,8 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
 const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue[]>> = {
   business_capture:     ['business', 'both'],
   technical_capture:    ['technical', 'both'],
+  business_subsection:  ['business', 'both'],
+  technical_subsection: ['technical', 'both'],
 };
 
 /**
