@@ -42,31 +42,45 @@ hop 1, hop 2, …, hop N         →  N archive slots  (capture keys)
 
 Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
 
-## Mission type drives what fires
+## Multi-axis template gate — what fires when
 
-The AI declares the mission type at `start_exploration` via the optional `classification` parameter (`business` | `technical` | `both`). If omitted, the engine defaults to `business`. The chosen value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
+The AI declares the mission classification at `start_exploration` via the **mandatory** `classification` parameter (`business` | `technical` | `both`). The Zod schema is `z.enum([...])` with no `.optional()` and no `.default()` — a missing or invalid value rejects at the boundary. The chosen value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
 
-Once set, the mission type drives which capture and subsection keys fire:
+Active-phase capture templates (`business_capture`, `technical_capture`, `structural_summary`, plus the CT overlay) are gated on **four axes** — `phase × classification × focusType × ctMode` — by `TEMPLATE_GATE` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts). The renderer ships **only** templates whose every axis matches the current session. No body for an un-fired axis tuple ever reaches the model.
 
-| Mission type | Active phase fires | Synthesis fires | Sections per node (active) | Sections per label (synthesis) |
-|--------------|--------------------|-----------------|---------------------------:|-------------------------------:|
-| `business` | `business_capture` + `structural_summary` (only on table origin) | `business_subsection` + non-gated synthesis keys | **1** (business) | **1** (business) |
-| `technical` | `technical_capture` + `structural_summary` (only on table origin) | `technical_subsection` + non-gated synthesis keys | **1** (technical) | **1** (technical) |
-| `both` | both `*_capture` + `structural_summary` | both `*_subsection` + non-gated synthesis keys — **longest prompt** | **2** peer (business + technical) | **2** peer (business + technical) |
+Per-template gates:
 
-The contract is locked mechanically: each `submit_findings` call must carry exactly the `sections[]` shape implied by the mission. Mismatches reject with `classification_lock_violation` (e.g., a `business`-mission slot carrying a `technical` angle, or a `both` slot missing one angle). At synthesis, `present_result.sections[]` carries one peer entry per captured angle per node — the two angles never nest as `#### Technical` subheadings; they are independent peer sections.
+| Template | phase | classification | focusType | ctMode |
+|---|---|---|---|---|
+| `business_capture` | active | business, both | procedure, function, view | off |
+| `technical_capture` | active | technical, both | procedure, function, view | off |
+| `structural_summary` | active | (any) | table, external | off |
+| `column_trace_capture` *(CT overlay)* | active | (any) | (any) | on |
+
+Net effect per active hop:
+
+| Mission | Focus | Templates that ship | Sections per `submit_findings` |
+|---|---|---|---|
+| `business`, no CT | procedure / function / view | `business_capture` only | **1** (business) |
+| `business`, no CT | table / external | `structural_summary` only | **1** (structural) |
+| `technical`, no CT | procedure / function / view | `technical_capture` only | **1** (technical) |
+| `technical`, no CT | table / external | `structural_summary` only | **1** (structural) |
+| `both`, no CT | procedure / function / view | `business_capture` + `technical_capture` | **2** peer |
+| `both`, no CT | table / external | `structural_summary` only | **1** (structural) |
+| `business` / `technical`, CT on | (any) | `column_trace_capture` only | **1** (CT) |
+| `both`, CT on | (any) | both `*_capture` + `column_trace_capture` | **2** peer + CT overlay |
+
+The contract is locked mechanically: each `submit_findings` call must carry exactly the `sections[]` shape implied by the active axis tuple. Mismatches reject with `classification_lock_violation` (e.g., a `business`-mission slot carrying a `technical` angle, or a `both` slot missing one angle). At synthesis, `present_result.sections[]` carries one peer entry per captured angle per node — the two angles never nest as `#### Technical` subheadings; they are independent peer sections.
 
 `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes` are not gated by mission type — they always fire for their stage.
 
 ### Column-trace overlay (CT)
 
-CT mode is a **purely additive** overlay on top of mission type, activated when `start_exploration` is called with `targetColumns`. It does not change which YAML keys fire and it does not replace the business / technical section contract — when CT is approved, the AI still fills out one section per fired `*_capture` template (1 for `business`/`technical`, 2 peer for `both`) per node. CT only adds an extra technical instruction about *how* the columns are tracked and stored in the sliding-memory archive. It adds:
+CT mode is activated when `start_exploration` is called with `targetColumns`. Per the table above it replaces `business_capture` / `technical_capture` for `business` and `technical` missions; for `both`, it ships alongside both `*_capture` bodies (longest active-phase prompt). It also adds:
 
 - A `<column_state>` block to the per-hop system prompt listing `target_columns`, `done_columns`, `active_columns`.
 - Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
 - A `column_flow` requirement in `submit_findings` for column attribution.
-
-A `both` + CT session has the longest active-phase prompt: both capture instructions + the column-state overlay + the standard hop payload.
 
 ## Key inventory — purpose & maintenance
 
@@ -99,7 +113,7 @@ A `both` + CT session has the longest active-phase prompt: both capture instruct
 - **Edit the `instruction:` field, not the examples.** Only `instruction` is injected into the prompt. The example fields exist for the human reader.
 - **Avoid character ceilings on archive fields.** The archive is unbounded; capping section text per slot pushes the model to pre-compress, which starves synthesis for detail. Describe quality criteria ("cover every business rule and SQL evidence point"), not character counts. Per the design rule: AI does grouping/order, system does numbers.
 - **Verdict names are locked.** `analyze` / `pass` / `prune` are enforced by a Zod enum on `submit_findings.verdict`. Only the YAML descriptions can change, not the names.
-- **Don't hand-edit the stage routing.** `STAGE_BY_KEY` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) is the authoritative routing. Adding a new key requires both a YAML entry and a `STAGE_BY_KEY` registration.
+- **Don't hand-edit the stage routing.** `TEMPLATE_GATE` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) is the authoritative multi-axis routing. Adding a new active-phase capture template requires both a YAML entry and a `TEMPLATE_GATE` registration declaring its `(phase, classification?, focusType?, ctMode?)` axes.
 
 ## How to verify a YAML edit
 

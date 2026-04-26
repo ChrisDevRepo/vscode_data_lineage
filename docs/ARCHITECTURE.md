@@ -34,8 +34,8 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 | Phase | Owner | Behaviour |
 |-------|-------|-----------|
 | **Discovery** | AI | Searches the catalog and classifies the question. **Class D** = single object or graph-wide metadata, answered directly. **Class S** = relationships spanning ≥2 connected objects, hands off to the engine via `start_exploration`. |
-| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every Class-S exploration. Renders the BFS scope as a hierarchical tree (Schema → Type → Node) with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Mode (Inline / Sliding-Memory) is decided at lock-in based on the post-filter scope size + DDL cost (≤10 nodes ∧ ≤10k tokens → Inline) — refining can flip the mode. |
-| **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. Engine re-runs BFS and re-emits the gate. Loop until Approve or Cancel. |
+| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every Class-S exploration. Renders the BFS scope rooted at the origin as a hop-distance tree (origin → hop 1 → hop 2…) plus a "How I read your prompt" banner showing the NL extractor's parsed identifiers, with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown comes from `ScopeContract` via `gateDetailRenderer`. Always re-rendered when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. Mode (Inline / Sliding-Memory) is decided at lock-in based on the post-filter scope size + DDL cost (≤10 nodes ∧ ≤10k tokens → Inline) — refining can flip the mode. |
+| **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. **NL-named exclusions must use `excludeNodeIds`, not `excludeTypes`.** The NL extractor surfaces the parsed identifiers in the gate banner so over-generalisation is visible before approval; mismatch (named identifiers + `excludeTypes`) rejects with `nl_filter_overgeneralized`. Engine re-runs BFS, rebuilds the `ScopeContract`, and re-emits the gate. Loop until Approve or Cancel. |
 | **Inline run** | AI | One-shot analysis; AI sees the full scope's DDL at once and self-terminates with `complete: true`. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |
@@ -77,9 +77,13 @@ The webview never talks to the engine directly. **Map** (engine, deterministic) 
 | Module | File | Role |
 |--------|------|------|
 | Chat surface | `vscode.lm` / `ChatResponseStream` | VS Code chat API — `sendRequest`, tool results, stream writer |
-| `lineageParticipant` | [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) | Turn handler, phase dispatch, system-prompt assembly |
-| `toolProvider` | [`src/ai/toolProvider.ts`](../src/ai/toolProvider.ts) | Tool registration, Zod boundary, phase-based filtering |
-| `NavigationEngine` | [`src/ai/smBase.ts`](../src/ai/smBase.ts) | Map owner — agenda, visited set, route validation, gates |
+| `lineageParticipant` | [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) | Turn handler, phase dispatch, hop-envelope assembly, gate finalizer |
+| `toolProvider` | [`src/ai/toolProvider.ts`](../src/ai/toolProvider.ts) | Tool registration, Zod boundary, phase-based filtering, NL extractor + `nl_filter_overgeneralized` rejection |
+| `NavigationEngine` | [`src/ai/smBase.ts`](../src/ai/smBase.ts) | Map owner — agenda, visited set, route validation, gates, `getScopeContract()` |
+| `ScopeContract` | [`src/ai/scopeContract.ts`](../src/ai/scopeContract.ts) | Immutable record of an approved exploration — single source of truth for gate detail, hop envelope, and tool-result `contract_ref` |
+| `HopEnvelope` | [`src/ai/hopEnvelope.ts`](../src/ai/hopEnvelope.ts) | Three-band per-hop prompt builder: ANCHOR (immutable, cacheable) / DOCTRINE (per-axis-tuple, cacheable) / STATE (variable) |
+| `templateRenderer` | [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) | Multi-axis `TEMPLATE_GATE` on `(phase, classification, focusType, ctMode)` — selects exactly the capture template(s) that fire |
+| `gateDetailRenderer` | [`src/ai/gateDetailRenderer.ts`](../src/ai/gateDetailRenderer.ts) | Markdown for `confirm_sm_start` from `ScopeContract`: total-hop header, BFS tree by depth, NL-interpretation banner |
 | `memoryManager` | [`src/ai/memoryManager.ts`](../src/ai/memoryManager.ts) | Detail archive + sliding working memory |
 | `panelProvider` | [`src/panelProvider.ts`](../src/panelProvider.ts) | Webview bridge — `bridgeContract` Zod validation |
 | Webview | React UI | Graph rendering, filter UI, user actions |
@@ -219,10 +223,36 @@ None of these WM fields are stored — they are computed from the archive (or th
 | `focus_node` | `{id, schema, name, type, ddl, columns, fks}` for the current node |
 | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, fks, hasDdl}` |
 | `current_task` | Sub-question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
-| `working_memory.user_question` | Original user question, verbatim every hop |
-| `working_memory.short_term_memory` | Sliding window of the last 3 node summaries |
+| `contract_ref` | Hash pointer to the immutable `ScopeContract` for this session — the AI reads `origin / direction / depth / classification / filters / nlInterpretation` from the contract instead of re-stating them per hop |
+| `working_memory.short_term_memory` | Sliding window of the last 3 node summaries the AI authored |
 | `working_memory.checklist` | Drain progress |
-| `working_memory.topological_map` | `{navigation_path, current_focus}` — deterministic structural grounding |
+| `working_memory.recent_rejections` | Recent route-validation failures |
+
+Fields that used to live in `working_memory` (`user_question`, `active_schemas`, `topological_map`, `depth_budget`, `depth_cap`, `approved_border`) are no longer duplicated in the payload — they are pinned in the `ScopeContract` for the session and re-read by `contract_ref`. This eliminates the markdown↔JSON duplication where the same focus / hop / agenda / scope facts rode along once as `<mission_state>` markdown and again as JSON.
+
+## The hop envelope (system prompt builder)
+
+`buildHopEnvelope({ phase, focusType, contract, lastToolResultPresent })` in [`src/ai/hopEnvelope.ts`](../src/ai/hopEnvelope.ts) returns the system prompt as three explicit bands:
+
+```
+[ ANCHOR ]   role + platform + ScopeContract.brief + tool contract
+             — IMMUTABLE for the session, prefix-stable for prompt-cache hits
+             — mission brief lives HERE (not buried below doctrine)
+
+[ DOCTRINE ] phase-specific rules + verdict protocol +
+             ONE capture template selected by (phase, classification, focusType, ctMode)
+             — STABLE per axis tuple; cacheable
+             — un-fired template body never reaches the model
+
+[ STATE ]    current_task block + last_action_outcome digest
+             — VARIABLE per hop; minimal; NEVER restates contract
+             — <mission_state> markdown SKIPPED when lastResult JSON present
+               (the carried tool result already has focus_node.id, hop, agenda)
+             — short_term_memory stays (per-node summaries the AI authored;
+               not duplicated by lastResult JSON)
+```
+
+Cache key is `(phase, focusType)` — anchor is byte-stable across hops within a session; doctrine is byte-stable within (phase, focusType). One cache miss per (phase, focusType) transition is correct, not a regression — a procedure hop and a table hop carry different doctrine.
 
 ## Completion contract
 
@@ -248,6 +278,11 @@ The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `send
 - **ACTIVE tool palette is narrow** — `submit_findings` only in inline BB; `+ get_neighbor_columns` in SM. Multi-tool would force `Required` to downgrade to `Auto` on some providers.
 - **Repeat-Reject Guard** — [`src/ai/repeatRejectGuard.ts`](../src/ai/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
 - **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here".
+- **Classification mandatory at gate-emit.** `start_exploration` Zod schema requires `classification: z.enum(['business','technical','both'])` (no `.optional()`, no `.default()`). `sess.classification` is non-nullable from gate-approve onward. The legacy "undefined → all gates pass" fallback in the template renderer is removed.
+- **Multi-axis capture-template gate** — `TEMPLATE_GATE` on `(phase, classification, focusType, ctMode)` in [`templateRenderer.ts`](../src/ai/templateRenderer.ts). Each active-phase capture template declares which axes it applies to; the renderer ships exactly the templates whose every axis matches the current session. No body for an un-fired axis tuple ever reaches the model. Replaces the legacy classification-only `CLASSIFICATION_GATED` map.
+- **NL-filter contract** — `start_exploration` rejects `nl_filter_overgeneralized` when the user's prompt names specific identifiers AND the AI passed `excludeTypes`. Forces the named list onto `excludeNodeIds`. Surfaces the parsed identifiers in the gate detail's "How I read your prompt" banner so the user catches over-exclusion before approval.
+- **Gate detail always rendered** — when the session is `awaiting_gate` at finalizer time, `dispatchExit` rebuilds the detail from `engine.getScopeContract()` if no `gate`-exit fired this turn. Refine narration ("I'll remove the views…") with no tool call still shows the current scope tree above the buttons.
+- **Synthesis pre-tool prose is shape-bounded.** `LanguageModelChatToolMode.Required` for `present_result` forces the synthesis turn into the shape "(optional ≤1 paragraph prose) → tool call → structured report". Streamer surfaces pre-tool prose as a chat summary; the legacy `## ` heading-slice that dropped legitimate one-line summaries is gone.
 
 ## Known failure modes
 
