@@ -44,6 +44,44 @@ import { renderScopeSummaryMd } from './scopeSummaryRenderer';
 export { renderScopeSummaryMd } from './scopeSummaryRenderer';
 
 /**
+ * Minimum char-length floor for a captured section's `text`.
+ *
+ * @remarks
+ * Structural floor only — catches near-empty submissions (e.g. one-line stubs
+ * that bypass the YAML capture template's structured slots). Not a quality
+ * threshold; depth/narrative judgments stay in the prompt. The floor is
+ * deliberately well below any genuine business or technical capture — a
+ * rejection here means the model emitted a placeholder, not that the prose
+ * was "too short".
+ */
+const MIN_SECTION_TEXT_CHARS = 120;
+
+/**
+ * Validates per-section `text` length floor for analyze/pass verdicts.
+ *
+ * @remarks
+ * `verdict: 'prune'` is exempt (pruned nodes may submit no sections). Each
+ * section's `text` must be at least {@link MIN_SECTION_TEXT_CHARS} chars when
+ * present — below that the captured slot is structurally a stub.
+ *
+ * @returns A structured hint string when any section is below the floor, `null` otherwise.
+ */
+function validateSectionLengths(
+  sections: CapturedSection[] | undefined,
+  verdict: 'analyze' | 'pass' | 'prune',
+): string | null {
+  if (verdict === 'prune') return null;
+  const list = sections ?? [];
+  for (const s of list) {
+    const len = s.text?.length ?? 0;
+    if (len < MIN_SECTION_TEXT_CHARS) {
+      return `sections[].text must be at least ${MIN_SECTION_TEXT_CHARS} chars (got ${len} for angle="${s.angle}"). Re-emit the section using the fired *_capture template's structured slots — a near-empty body indicates the template was bypassed.`;
+    }
+  }
+  return null;
+}
+
+/**
  * Validates a finding's `sections[]` against the locked session classification.
  *
  * @remarks
@@ -474,6 +512,13 @@ class ToolHandler {
       // sections[] must match the lock; verdict=prune may submit length 0.
       const findings = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
       for (const f of findings) {
+        const lengthViolation = validateSectionLengths(f.sections, f.verdict);
+        if (lengthViolation) {
+          return this.logAndReturn('submit_findings', {
+            error: 'section_too_short',
+            hint: lengthViolation,
+          }, input);
+        }
         const violation = validateSectionsAgainstClassification(f.sections, f.verdict, sess.classification);
         if (violation) {
           return this.logAndReturn('submit_findings', {
