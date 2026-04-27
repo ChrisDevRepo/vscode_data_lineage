@@ -19,7 +19,7 @@ import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFoc
 import { edgeApiType } from './aiPresenter';
 import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { trunc } from '../utils/log';
-import { AiMemoryManager, type WorkingMemory } from './memoryManager';
+import { AiMemoryManager, type DetailSlot, type WorkingMemory } from './memoryManager';
 import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
@@ -163,6 +163,12 @@ export interface IHopStateMachine {
 
   /** Snapshot of per-hop diagnostics (focus, depth, routing counts, tally). */
   getHopDiagnostics(): DiagnosticsSnapshot;
+
+  /** Every captured detail slot in insertion order — diagnostics / telemetry use. */
+  getDetailSlots(): DetailSlot[];
+
+  /** Cumulative detail + summary char count across all hops. */
+  getArchiveChars(): number;
 
   /**
    * Extends a completed exploration with additional nodes for analysis.
@@ -442,6 +448,32 @@ export class NavigationEngine implements IHopStateMachine {
       scopeExpansions: this.budgetExpansions.length,
       allowedSchemaCount: this.sessionAllowedSchemas.size,
     };
+  }
+
+  /**
+   * Returns every captured detail slot in insertion order.
+   *
+   * @remarks
+   * Diagnostics accessor for telemetry / eval extraction. Mirrors
+   * `getResult().detail_slots` but is callable mid-exploration without
+   * forcing the synthesis-phase shape. Slot count equals the number of
+   * nodes that produced at least one `submit_findings.sections[]` entry —
+   * NOT the hop count (a single hop can submit multiple findings in inline batch).
+   */
+  public getDetailSlots(): DetailSlot[] {
+    return this.memory.getResult().detail_slots;
+  }
+
+  /**
+   * Cumulative char-count of detail + summary text written across all hops.
+   *
+   * @remarks
+   * Mirrors {@link DiagnosticsSnapshot.archiveChars} but exposes the value
+   * outside the per-hop diagnostics envelope so callers can audit memory
+   * pressure without parsing a hop snapshot.
+   */
+  public getArchiveChars(): number {
+    return this.archiveChars;
   }
 
   /** Gets the operational status. */
