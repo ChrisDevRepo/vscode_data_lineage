@@ -23,9 +23,10 @@
 import * as vscode from 'vscode';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import type { AiSession } from '../../../../src/ai/session';
-import { buildGeneralSystemPrompt } from '../../../../src/ai/prompts';
-import { buildModeBlock } from '../../../../src/ai/smPrompts';
+import { buildGeneralSystemPrompt, buildSynthesisPrompt } from '../../../../src/ai/prompts';
+import { buildModeBlock, buildSynthesisReminder } from '../../../../src/ai/smPrompts';
 import { PendingGateSchema } from '../../../../src/ai/sessionPhase';
+import { resolveStagePrompt } from '../../../../src/ai/templateRenderer';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -220,10 +221,28 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
           }
         }
 
+        // ROOT-CAUSE FIX (2026-04-27): production lineageParticipant.ts:420-428
+        // injects the active-phase YAML capture template (`business_capture`,
+        // `technical_capture`, `structural_summary`) into the system prompt
+        // every active hop via `resolveStagePrompt`. The eval bridge previously
+        // omitted this — Haiku only saw `system + nav + tools`, never the
+        // capture-template body. The agent-prompt template's reference to
+        // "Capture rules injected above" was a dangling pointer. Restoring
+        // transport parity with the production path; no behavioral coaching.
+        // Classification undefined at this call site (gate hasn't fired) — the
+        // resolver returns ALL classification-gated keys, agent picks the one
+        // matching the locked classification at submit_findings time.
+        const activeCapture = resolveStagePrompt(sess.outputTemplates, 'active', undefined);
+        const synthesisTemplate = resolveStagePrompt(sess.outputTemplates, 'synthesis', undefined, 5);
+        const synthesisCue = `${buildSynthesisPrompt()}\n\n${buildSynthesisReminder()}`;
+
         return respond(res, 200, {
           system,
           ct_mode_columns: buildModeBlock(false, ['SAMPLE_COL']),
           bb_mode: buildModeBlock(false),
+          active_capture_template: activeCapture,
+          synthesis_template: synthesisTemplate,
+          synthesis_cue: synthesisCue,
           tool_descriptions: toolDescs,
         });
       }

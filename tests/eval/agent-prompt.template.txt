@@ -2,6 +2,12 @@
 
 {{NAV_PROMPT}}
 
+{{ACTIVE_CAPTURE_TEMPLATE}}
+
+{{SYNTHESIS_TEMPLATE}}
+
+{{SYNTHESIS_CUE}}
+
 {{TOOL_DESCRIPTIONS}}
 
 [Transport: tools are invoked via POST http://127.0.0.1:3271/tool with body

@@ -281,6 +281,9 @@ def main() -> int:
     # 3) GET /prompts?sessionId=
     prompts = http("GET", f"/prompts?sessionId={session_id}")
     system_prompt = prompts.get("system", "")
+    active_capture = prompts.get("active_capture_template", "")
+    synthesis_template = prompts.get("synthesis_template", "")
+    synthesis_cue = prompts.get("synthesis_cue", "")
     nav_key = "ct_mode_columns" if case["use_columns"] else "bb_mode"
     nav_prompt = prompts.get(nav_key, "")
     tool_descs = prompts.get("tool_descriptions", "")
@@ -310,6 +313,9 @@ def main() -> int:
         {
             "SYSTEM_PROMPT": system_prompt,
             "NAV_PROMPT": nav_prompt,
+            "ACTIVE_CAPTURE_TEMPLATE": active_capture,
+            "SYNTHESIS_TEMPLATE": synthesis_template,
+            "SYNTHESIS_CUE": synthesis_cue,
             "TOOL_DESCRIPTIONS": tool_descs,
             "SESSION_ID": session_id,
             "QUESTION": case["question"],
