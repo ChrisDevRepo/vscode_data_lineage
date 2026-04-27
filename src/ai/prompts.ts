@@ -83,19 +83,14 @@ export function buildGeneralSystemPrompt(
  * Constructs the prompt for the Discovery/Idle phase.
  *
  * @remarks
- * Covers filter-scope rules, not-found response patterns, graph exploration gate
- * (direction, depth, scope preview), column tracing routing, exclusion handling,
- * slash command mapping, and response format constraints.
- * Tool parameter routing is owned by each tool's modelDescription — not repeated here.
+ * Two blocks: Class D vs Class S routing (with tiebreaker + worked examples),
+ * and a one-line response-format constraint. Tool parameter routing and
+ * filter-boundary semantics live in each tool's modelDescription — not here.
  *
  * @returns The assembled discovery-phase prompt string.
  */
 export function buildDiscoveryPrompt(): string {
   return [
-    '## Filter scope',
-    '',
-    'The graph shows objects in the active filter schemas. When a search returns 0 results inside the filter, check the `in_user_filter: false` hint; if the object exists outside the filter, include that schema in your next search and answer directly. The filter is a display preference, not a boundary.',
-    '',
     '## Routing — classify the question first',
     '',
     "Every question lands in exactly one class. Classify first, then use only that class's tools.",
@@ -141,11 +136,6 @@ export function buildDiscoveryPrompt(): string {
     "Action: `lineage_start_exploration(origin:'[dbo].[tableZ]', depth:1, direction:'bidirectional', depth_enforcement:'strict', excludeTypes:['function','view'], excludeSchemas:['staging'], classification:'business', mission_brief:'User wants the business logic of tableZ with its direct neighbours only. Scope: depth 1, bidirectional. NL filter excludes UDFs, views, and the staging schema (excludeTypes + excludeSchemas set structurally).')`.",
     '</example>',
     '',
-    '## Slash commands',
-    '',
-    '`/trace [object]` — Class S shortcut. Resolve the node, infer direction and depth, call `lineage_start_exploration`.',
-    '`/search [term]` — Class D shortcut. Call `lineage_search_objects` scoped to the active filter and present results as a table.',
-    '',
     '## Response format',
     '',
     'Markdown only. Match response length to the question.',
@@ -184,11 +174,15 @@ export function buildActivePhasePrompt(isInline: boolean): string {
  * Constructs the synthesis-phase cue.
  *
  * @remarks
- * One paragraph — the active-phase capture rules already governed how each
- * slot body was written; the synthesis-stage YAML governs how those bodies
- * are assembled, grouped, and framed. This cue points the model at the
- * archive and reminds it the slots are pre-formatted bodies to lift, not
- * raw evidence to rewrite.
+ * Owns the full lift+group+label contract for `present_result.sections[]`.
+ * The active-phase capture rules already wrote each slot body; this cue tells
+ * the model how to assemble, group, label, and frame those bodies — and where
+ * the boundary between AI input and engine output lies.
+ *
+ * Consolidated here (rather than via a YAML template) to avoid drift between
+ * the synthesis cue and the section-assembly rule. The engine-built fields
+ * (description, badge numbering, object link headers) are explicitly named so
+ * the model never tries to write them.
  *
  * @returns A string containing the synthesis-phase cue.
  */
@@ -196,12 +190,31 @@ export function buildSynthesisPrompt(): string {
   return [
     'The archive is closed. Each slot in the last `tool_result.detail_slots[]` carries',
     '`slot.sections: [{ angle, text }]` — one entry per fired `*_capture` template at',
-    'capture time (1 for business/technical classification, 2 for both). Lift each',
-    'section.text verbatim into a peer entry of `present_result.sections[]`. Group',
-    'similar captured sections across nodes when they share shape (sibling-variant',
-    'comparison tables); distinct logic gets its own entry. Anchor the intro to the',
-    'user\'s question. Deferred-questions, if present, are objects skipped during BFS —',
-    'surface them once at the end if material.',
+    'capture time (1 for business/technical classification, 2 for both).',
+    '',
+    'Your job: assemble `present_result` by writing the structured parts. The engine',
+    'builds the rendered document (description, section numbering, badge chips, object',
+    'link headers) deterministically from `title + intro + sections[] + closing` — do',
+    'not write a single markdown blob.',
+    '',
+    'Rules:',
+    '- Lift each `slot.sections[].text` verbatim into a peer entry of `present_result.sections[]`.',
+    '- Label each section by semantic role ("Pipeline Seeder", "EV Computation Hub",',
+    '  "Reverse Consolidation") — never by angle name, template name, or node type',
+    '  ("Business", "Technical_Capture", "View", "Procedure" are all wrong).',
+    '- Group 3+ same-shape sibling slots into one entry: list every variant id in',
+    '  `node_ids[]`, hoist the shared formula or SQL once above a comparison table',
+    '  (rows = variants, columns = differing fields), preserve every ⚠️. Distinct',
+    '  logic always gets its own entry.',
+    '- When `classification === both`, captured sections come in pairs per node',
+    '  (one business, one technical). Each angle becomes its OWN peer entry — never',
+    '  nest one inside the other.',
+    '- Anchor the intro to the user\'s question and the locked Mission type.',
+    '- Use `suggested_sections` from the completion result as a starting skeleton',
+    '  when present. Pass / Prune slots: render as one-line mentions inside a',
+    '  `### Passthrough / Pruned` subsection — do not expand their text.',
+    '- Deferred-questions, if present, are objects skipped during BFS — surface',
+    '  them once at the end if material.',
   ].join('\n');
 }
 

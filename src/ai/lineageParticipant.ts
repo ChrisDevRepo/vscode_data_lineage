@@ -394,7 +394,7 @@ export class LineageParticipant {
         // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
         // re-renders keep the same formatting contract.
         const templatesPhase = phase === 'completed' ? 'synthesis' : phase;
-        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification);
+        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount);
         const parts: string[] = [base, phaseSpecific];
 
         if (phase === 'active' && engine) {
@@ -416,7 +416,11 @@ export class LineageParticipant {
 
       const buildDynamicPart = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
         const engine = sess.stateMachine;
-        if (!engine || phase === 'discover') return '';
+        // Synthesis has no dynamic suffix — no per-hop sub-question, no working
+        // memory, no protocol envelope. The closed archive is the substance; per-hop
+        // state is active-phase only. Without this guard, a stale <current_task>
+        // from the last hop leaks into the synthesis prompt.
+        if (!engine || phase === 'discover' || phase === 'synthesis') return '';
         const dynamic: string[] = [];
         const currentTaskBlock = buildCurrentTaskBlock(engine.getCurrentTask());
         if (currentTaskBlock) dynamic.push(currentTaskBlock);

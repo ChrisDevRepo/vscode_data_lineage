@@ -11,6 +11,26 @@
 #   docs/AI_PROMPTS.md  →  §3 Custom Output Templates (YAML Interface)
 # https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md#3-custom-output-templates-yaml-interface
 #
+# Contract — AI writes parts, engine builds the document:
+#
+#   AI writes structured PARTS:
+#     active phase: business_capture / technical_capture / structural_summary
+#                   → produces sections[].text bodies stored in the archive
+#     synthesis:    summary, title, intro, sections[], closing, notes[],
+#                   highlight_groups[]
+#                   → assembled by the engine into the rendered document
+#
+#   Engine OWNS deterministic outputs (no instruction template — the AI never
+#   writes these):
+#     - The full markdown document shown in AiDescriptionOverlay (built by
+#       orderAndAssemble in src/ai/tools.ts from title + intro + sections[]
+#       + closing).
+#     - Section numbering (## N {label}), badge chips, ### Objects link blocks.
+#
+#   Do NOT add an instruction template for any field the engine builds itself.
+#   The lift+group+label rule for sections[] lives in src/ai/prompts.ts →
+#   buildSynthesisPrompt(), not here, to avoid duplication.
+#
 # Stages:
 #   discovery  = first chat response, no SM. Trivial questions only.
 #   active     = per-hop analysis. The AI writes one section per fired
@@ -19,12 +39,9 @@
 #                business classification → 1 section; technical → 1; both → 2.
 #                Templates are independent — no cross-references between
 #                business_capture and technical_capture.
-#   synthesis  = final document assembly. summary, title, intro, sections,
-#                closing, description, highlights, notes fire here. Captured
-#                section bodies arrive pre-formatted — synthesis assembles,
-#                groups across nodes (sibling-variant tables), frames; it
-#                does not rewrite. Each captured section becomes a peer
-#                entry in present_result.sections[] (NOT a nested subheading).
+#   synthesis  = final document assembly. The engine assembles the rendered
+#                document from the AI's submitted parts; the templates here
+#                describe only the parts the AI writes from scratch.
 #
 # Authoritative routing lives in code (templateRenderer.ts → STAGE_BY_KEY).
 # YAML `stages:` is informational — overlays that contradict are logged
@@ -65,58 +82,9 @@ intro:
     spBuildSalesReport. Qty originates in raw order imports; UnitPrice is
     derived from supplier margins with a markup formula.
 
-# ── Section grouping (assembly only — slot bodies arrive pre-formatted) ──────
-
-sections:
-  stages: [synthesis]
-  instruction: >
-    Assemble sections[] for the present_result payload. Each section is a
-    (label, node_ids[] 1..N, text 1..1) tuple. The archive carries one or
-    two captured sections per node (one per fired *_capture template). Lift
-    each captured section verbatim — it is already pre-formatted at the
-    right depth and angle. Synthesis assembles, groups across nodes, and
-    frames; it does not rewrite.
-
-    One section per distinct logic. Group similar slots into one section.
-    Label by semantic role ("Pipeline Seeder", "EV Computation Hub",
-    "Reverse Consolidation") rather than by tech artefact ("Loading
-    Pattern", "SCD Resolution"). Follow the dependency chain in one
-    direction (Source → Transform → Target, or the reverse). Section
-    header: `## <label>` — no leading numbers (system numbers them).
-
-    When `classification === 'both'`, captured sections come in pairs per
-    node (one business, one technical). Each captured angle becomes its
-    OWN peer entry in present_result.sections[] — never nest one inside
-    the other. The two angles describe different things (what the data
-    means vs how the pipeline runs) and stand independently in the
-    document.
-
-    Sibling variants — group across nodes. When 3+ captured sections of
-    the same angle share the same shape (same formula pattern, differing
-    only in filters / keys / outputs), emit ONE present_result entry whose
-    `node_ids[]` lists every variant node and whose `text` is a comparison
-    table. Hoist the shared formula or SQL once above the table; rows are
-    the variants, columns the differing fields. Preserve every ⚠️ — in
-    the variant's row or a per-variant invariants list after the table.
-    Distinct logic always gets its own entry.
-
-    Use `suggested_sections` from the completion result as a starting
-    skeleton when present.
-
-    Pass / Prune slots: render as one-line mentions inside a
-    `### Passthrough / Pruned` subsection — do not expand their text.
-  example: |
-    {
-      "label": "Revenue Calculation",
-      "node_ids": ["dbo.spCalcRevenue"],
-      "text": "`spCalcRevenue` computes `TotalRevenue` = $Qty \\times UnitPrice$ at INSERT into `FactSalesReport`. ⚠️ Null `MarkupPct` collapses `UnitPrice` to `CostPrice` — verify supplier coverage before each run."
-    }
-    Sibling-variant table (3+ similar SPs):
-    {
-      "label": "Aggregation Variants",
-      "node_ids": ["dbo.spAggDaily", "dbo.spAggWeekly", "dbo.spAggMonthly"],
-      "text": "All three follow the same TRUNCATE+INSERT skeleton:\n```sql\nTRUNCATE TABLE Fact_<grain>; INSERT INTO Fact_<grain> SELECT ... FROM Stage WHERE <filter>\n```\n| SP | Grain | Filter | Target |\n| --- | --- | --- | --- |\n| `spAggDaily` | day | `WHERE DateKey = @today` | `FactDaily` |\n| `spAggWeekly` | week | `WHERE WeekKey = @currentWeek` | `FactWeekly` |\n| `spAggMonthly` | month | `WHERE MonthKey = @currentMonth` | `FactMonthly` |\n⚠️ All three TRUNCATE without snapshot — concurrent reads see empty table."
-    }
+# Section assembly (lift + group + label) is governed by buildSynthesisPrompt()
+# in src/ai/prompts.ts — kept there to avoid duplication with the synthesis cue.
+# This file documents only the parts the AI writes from scratch.
 
 closing:
   stages: [synthesis]
@@ -129,18 +97,9 @@ closing:
     (prefix with ⚠️). Omit if neither applies.
   example: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 — verify price coverage before each INSERT run."
 
-# ── Fallback body when sections[] is absent ──────────────────────────────────
-
-description:
-  stages: [synthesis]
-  instruction: >
-    Used only when sections[] is not provided. Prefer sections[] for
-    structured output. If used: write the full documentation at archive
-    depth — every finding, every expression, every pattern, every issue.
-    Structure with ## headings (one per logical group); quote SQL verbatim
-    inside code blocks.
-    Supported: ## headings, **bold**, `code`, lists, | tables |, math, code blocks.
-    Not supported: mermaid, HTML, images, footnotes.
+# `description` is engine output (built by orderAndAssemble in src/ai/tools.ts
+# from title + intro + sections[] + closing) — NOT an AI-writeable field.
+# No instruction template here, by design.
 
 # ── Graph-side decorations ───────────────────────────────────────────────────
 
@@ -316,47 +275,7 @@ structural_summary:
     Banned in this template: transform formulas, CASE logic, business rules,
     step-by-step behaviour. Those belong in the procedure slots.
 
-# ── Synthesis-side render rules (one peer section per captured angle) ────────
-# When the captured archive contains sections with angle='business' and/or
-# angle='technical', synthesis emits each as its OWN peer entry in
-# present_result.sections[]. NOT nested as #### subheadings inside another
-# section. Synthesis MAY group multiple captured sections of the same angle
-# across sibling nodes into a single present_result entry with a comparison
-# table — that is the assembly-phase decision, not the capture-phase decision.
-
-business_subsection:
-  stages: [synthesis]
-  instruction: >
-    For each `slot.sections` entry with `angle="business"` in the archive,
-    emit a peer entry in present_result.sections[]. Lift the captured
-    `section.text` verbatim — the body arrives pre-formatted at the right
-    depth from the active phase.
-
-    Label by semantic role ("Pipeline Seeder", "EV Computation Hub",
-    "Reverse Consolidation"). Never use the angle name as the label.
-
-    Sibling grouping: when 3+ captured business sections share the same
-    shape (same formula pattern, differing only in filters / keys / outputs),
-    emit ONE entry whose `node_ids[]` lists all the variant nodes and whose
-    `text` consolidates them into a comparison table — hoist the shared
-    formula or SQL once above the table. Preserve every ⚠️. Distinct logic
-    always gets its own entry.
-
-technical_subsection:
-  stages: [synthesis]
-  instruction: >
-    For each `slot.sections` entry with `angle="technical"` in the archive,
-    emit a peer entry in present_result.sections[]. Lift the captured
-    `section.text` verbatim — the body arrives pre-formatted (SQL fences,
-    join order, loading pattern) from the active phase.
-
-    Label by semantic role with a technical hint when needed
-    ("EV Computation — Execution", "Audit Trail — MERGE Pattern"). Never
-    use the angle name as the label.
-
-    Sibling grouping: when 3+ captured technical sections share the same
-    shape (e.g. several SPs with TRUNCATE+INSERT differing only in filter),
-    emit ONE entry whose `node_ids[]` lists the variants and whose `text`
-    is a comparison table — hoist the shared SQL skeleton once above; the
-    rows are the variants and the columns are the differing fields. Distinct
-    logic always gets its own entry.
+# Per-angle section assembly (business / technical / both) is governed by
+# buildSynthesisPrompt() in src/ai/prompts.ts. No separate per-angle templates
+# here — the lift+group+label rule is identical for both angles and lives in
+# the synthesis cue to avoid duplication.

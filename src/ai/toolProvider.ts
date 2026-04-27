@@ -484,7 +484,19 @@ class ToolHandler {
 
       if ('done' in result && result.done && result.result) {
         sess.storeBbResult(result.result);
-        return this.logAndReturn('submit_findings', result, input);
+        // Slim the LM-bound payload: fullNodes[] and edges[] are routing context for
+        // active-phase decisions, not synthesis. The agent writes present_result from
+        // detail_slots[] alone — every nodeId, schema, and relationship the agent
+        // needs is already inside each captured slot.text. The webview/engine still
+        // hold the full graph via storeBbResult above.
+        const lmResult = {
+          status: result.result.status,
+          originNodeId: result.result.originNodeId,
+          scope: { nodes: result.result.fullNodes.length, edges: result.result.edges.length },
+          suggested_sections: result.result.suggested_sections,
+          detail_slots: result.result.detail_slots,
+        };
+        return this.logAndReturn('submit_findings', { ...result, result: lmResult }, input);
       }
 
       const diag = engine.getHopDiagnostics();
@@ -500,10 +512,18 @@ class ToolHandler {
         sess.storeBbResult(finalResult);
         if (!sess.classification) sess.setClassification('business');
         const synthesisReminder = buildSynthesisReminder();
+        // Slim the LM-bound payload for the synthesis transition (see comment above).
+        const lmResult = {
+          status: finalResult.status,
+          originNodeId: finalResult.originNodeId,
+          scope: { nodes: finalResult.fullNodes.length, edges: finalResult.edges.length },
+          suggested_sections: finalResult.suggested_sections,
+          detail_slots: finalResult.detail_slots,
+        };
         return this.logAndReturn('submit_findings', {
           ok: true,
           done: true,
-          result: finalResult,
+          result: lmResult,
           deferred_questions: sess.stateMachine?.deferredQuestions ?? [],
           synthesis_reminder: synthesisReminder,
         }, input);
@@ -582,16 +602,16 @@ class ToolHandler {
       }
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
+      let assembledDescription: string | undefined = undefined;
       if (input.sections?.length) {
         const nodeMap = new Map<string, LineageNode>((model.nodes as LineageNode[]).map(n => [n.id, n]));
         const assembled = orderAndAssemble(input.sections, { title: input.title, intro: input.intro, closing: input.closing, nodeMap });
         assembledBadges = assembled.badges;
-        if (!input.description) input.description = assembled.description;
-        input.sections = undefined;
+        assembledDescription = assembled.description;
       }
 
       const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);
-      const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges);
+      const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges, assembledDescription);
 
       if (!validation.success) return this.logAndReturn('present_result', validation, input);
 

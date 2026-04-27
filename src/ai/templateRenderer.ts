@@ -34,20 +34,26 @@ export type TemplateStage = 'discover' | 'active' | 'synthesis';
  * Capture keys (`business_capture`, `technical_capture`) fire at active phase;
  * render keys fire at synthesis. There are no synthesis-side mirrors of the
  * capture keys — the slot body is the canonical surface.
+ *
+ * `description` is intentionally absent — it is engine output (built by
+ * `orderAndAssemble` in `tools.ts` from title + intro + sections[] + closing),
+ * not an AI-writeable field. Do not add it back without first restoring the
+ * full AI-input plumbing in `tools.ts` and resolving the conflict with engine
+ * assembly.
+ *
+ * `sections`, `business_subsection`, `technical_subsection` are also intentionally
+ * absent — the lift+group+label rule for sections[] lives in
+ * `buildSynthesisPrompt()` to avoid duplication with the synthesis cue.
  */
 export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
-  summary:              ['discover', 'synthesis'],
+  summary:              ['synthesis'],
   title:                ['synthesis'],
   intro:                ['synthesis'],
-  description:          ['discover', 'synthesis'],
-  sections:             ['synthesis'],
   closing:              ['synthesis'],
   highlights:           ['synthesis'],
   notes:                ['synthesis'],
   business_capture:     ['active'],
   technical_capture:    ['active'],
-  business_subsection:  ['synthesis'],
-  technical_subsection: ['synthesis'],
   structural_summary:   ['active'],
 };
 
@@ -67,8 +73,6 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
 const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue[]>> = {
   business_capture:     ['business', 'both'],
   technical_capture:    ['technical', 'both'],
-  business_subsection:  ['business', 'both'],
-  technical_subsection: ['technical', 'both'],
 };
 
 /**
@@ -92,7 +96,11 @@ export function resolveStagePrompt(
   templates: AiOutputTemplates,
   phase: TemplateStage,
   classification: ClassificationValue | undefined,
+  slotCount?: number,
 ): string {
+  // `closing` is only useful when the analysis spans 5+ sections (per the YAML
+  // instruction itself). Skip it on small graphs to save ~140 tokens.
+  const CLOSING_MIN_SLOTS = 5;
   const keys = (Object.keys(STAGE_BY_KEY) as (keyof AiOutputTemplates)[])
     .filter(key => STAGE_BY_KEY[key].includes(phase))
     .filter(key => {
@@ -100,6 +108,11 @@ export function resolveStagePrompt(
       if (!gate) return true;
       if (!classification) return true;
       return gate.includes(classification);
+    })
+    .filter(key => {
+      if (key !== 'closing') return true;
+      if (phase !== 'synthesis') return true;
+      return slotCount === undefined || slotCount >= CLOSING_MIN_SLOTS;
     });
 
   const blocks = keys

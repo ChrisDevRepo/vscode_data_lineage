@@ -1123,16 +1123,29 @@ export function searchDdl(
 
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
+/**
+ * The AI's submission to `lineage_present_result`.
+ *
+ * @remarks
+ * Contract: the AI writes structured PARTS; the engine builds the rendered
+ * document deterministically via {@link orderAndAssemble}. Specifically:
+ *   - AI writes: summary, title, intro, sections[], closing, notes[], highlight_groups[]
+ *   - Engine builds: the assembled markdown blob (returned as `description`
+ *     on PresentResultRequest), section numbering, badge chips, object links.
+ *
+ * There is intentionally NO `description` field on this input — that field is
+ * engine output, not AI input. If a future change wants to re-add it, fix the
+ * template that instructs the AI to write a blob instead.
+ */
 export type PresentResultInput = {
   name: string;
   summary: string;
   title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
   intro?: string;       // 2–4 sentence paragraph before the numbered sections
   closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
-  description?: string;
   prune_node_ids?: string[];
-  add_node_ids?: string[];    // NEW: incremental add
-  is_update?: boolean;        // NEW: incremental update flag
+  add_node_ids?: string[];
+  is_update?: boolean;
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;
@@ -1150,6 +1163,15 @@ export type PresentResultInput = {
   }>;
 };
 
+/**
+ * The validated, engine-assembled result ready for the UI.
+ *
+ * @remarks
+ * `description` here is the full markdown document built by {@link orderAndAssemble}
+ * from the AI's input parts (title + intro + sections[] + closing). It is NOT a
+ * passthrough of any AI-supplied field — the AI does not write the assembled
+ * document.
+ */
 export type PresentResultRequest = {
   success: true;
   name: string;
@@ -1167,14 +1189,19 @@ export type PresentResultError = { success: false; errors: string[]; hint: strin
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
- * Assigns sequential numbers to sections and assembles the final markdown description.
+ * Builds the rendered description markdown from the AI's structured input parts.
  *
  * @remarks
- * This function is the "finisher" for the AI's lineage report. It ensures that the
- * numbered badges displayed on the visual graph (via `badges[]`) perfectly align with the
- * `## Heading` numbers in the sidebar description. It also handles stripping any leading
- * numbers the AI might have accidentally included in labels to maintain a deterministic,
- * system-managed numbering scheme.
+ * This is the SOLE path that produces the description blob shown in
+ * `AiDescriptionOverlay`. The AI never writes the blob directly — it writes the
+ * parts (title, intro, sections[], closing) and the engine assembles them
+ * deterministically here. Section numbering (`## N {label}`), badge chips, and
+ * the `### Objects [name](#focus-node:id)` link header are all engine-owned;
+ * they are not AI-authored fields.
+ *
+ * Numbered badges are emitted in narrative order so chips on the graph align
+ * with `## N` headings in the description. Leading numbers in AI-supplied
+ * labels are stripped to keep numbering deterministic.
  *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
@@ -1278,15 +1305,6 @@ export function autoFixPresentResult(
 ): { input: PresentResultInput; fixes: string[] } {
   const fixes: string[] = [];
   let fixed = { ...input };
-
-  // 0. Normalize escaped newlines in description (LLMs sometimes double-escape)
-  // Protect known LaTeX macros: \text, \times, \theta, \tau, \to, \neq, \nu, \nabla, etc.
-  if (fixed.description && /\\n/.test(fixed.description)) {
-    fixed = { ...fixed, description: fixed.description
-      .replace(/\\n(?!(?:eq|eg|u|ot|abla|otin|i|mid|leq|geq)\b)/g, '\n')
-      .replace(/\\t(?!(?:ext|imes|au|heta|o|op|ilde|frac|herefore|riangle)\b)/g, '\t') };
-    fixes.push('Normalized escaped newlines in description');
-  }
 
   // 1. Auto-truncate name at word boundary if too long
   if (fixed.name && fixed.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) {
@@ -1424,11 +1442,7 @@ export function autoFixPresentResult(
     return { text: out.join('\n'), changed };
   };
 
-  // Apply LaTeX fix to description, section text, and notes
-  if (fixed.description) {
-    const r = fixLatex(fixed.description);
-    if (r.changed) { fixed = { ...fixed, description: r.text }; fixes.push('Converted LaTeX to ```math blocks in description'); }
-  }
+  // Apply LaTeX fix to section text and notes (description is engine-built; no AI input to fix here)
   if (fixed.sections) {
     let sectionFixed = false;
     const newSections = fixed.sections.map(s => {
@@ -1501,7 +1515,7 @@ export function validateMarkdownFormat(md: string): string[] {
   }
   if (insideFence) {
     errors.push(
-      'description has an unclosed fenced block — ensure closing ``` is present',
+      'unclosed fenced block detected — a section body or assembled output is missing a closing ```',
     );
   }
 
@@ -1512,18 +1526,24 @@ export function validateMarkdownFormat(md: string): string[] {
  * Validates the full `present_result` input against mechanical contracts only.
  *
  * @remarks
- * Enforces naming length, summary length, mutual-exclusion between `description`
- * and `sections[]`, required fields, node-id resolution, and markdown-fence closure.
+ * Enforces naming length, summary length, sections[] presence, node-id resolution,
+ * and markdown-fence closure on the engine-assembled description.
+ *
+ * The `description` returned in {@link PresentResultRequest} is the engine-assembled
+ * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
+ * never read from `input`. The AI does not write the assembled document.
  *
  * @param input - The (possibly auto-fixed) AI input.
  * @param resolvedNodeIds - The canonical set of node IDs.
  * @param assembledBadges - Pre-assembled numbered badges for consistency.
+ * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
  * @returns A successful request object or a structured error with correction hints.
  */
 export function validatePresentResult(
   input: PresentResultInput,
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
+  assembledDescription?: string,
 ): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
 
@@ -1546,20 +1566,18 @@ export function validatePresentResult(
   }
 
   const hasSections = !!(input.sections && input.sections.length > 0);
-  const hasDescription = !!(input.description && input.description.trim().length > 0);
+  const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
 
-  if (!hasSections && !hasDescription) {
-    errors.push('provide either sections[] (node groupings with labels) OR description (narrative summary) — at least one is required');
+  // Either AI submitted sections[] (which the engine assembles into a description before
+  // validation) OR an engine-assembled description is supplied. Without one, there's no body.
+  if (!hasSections && !hasAssembled) {
+    errors.push('sections[] is required — at least one section with label and text. Lift each detail_slots[].sections[].text verbatim into sections[].text.');
   }
 
-  // description validation
-  if (hasDescription) {
-    // sections[] and description are mutually exclusive — contract, not content judgment
-    if (hasSections) {
-      errors.push('Provide either sections[] or description — not both. Use sections[] for structured output; description is the fallback for unstructured answers only');
-    }
-    // Markdown format validation (unclosed fences) — mechanical
-    errors.push(...validateMarkdownFormat(input.description!));
+  // Mechanical fence-closure check on the engine-assembled blob (catches cases where
+  // a slot body had an unclosed ``` that survived the autoFix pass).
+  if (hasAssembled) {
+    errors.push(...validateMarkdownFormat(assembledDescription!));
   }
 
   // Sections validation — node_ids (when provided) must be valid; section text must be present.
@@ -1605,10 +1623,7 @@ export function validatePresentResult(
       else if (e.startsWith('title ')) failedFields.add('title');
       else if (e.startsWith('closing ')) failedFields.add('closing');
       else if (e.includes('summary')) failedFields.add('summary');
-      else if (e.includes('description') || e.includes('sections')) {
-        failedFields.add('description');
-        failedFields.add('sections');
-      }
+      else if (e.includes('sections')) failedFields.add('sections');
       else if (e.startsWith('Section ')) failedFields.add('sections');
       else if (e.startsWith('Note for ')) failedFields.add('notes');
       else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
@@ -1626,7 +1641,7 @@ export function validatePresentResult(
     name: input.name.trim(),
     node_ids: resolvedNodeIds,
     summary: input.summary,
-    description: input.description,
+    description: assembledDescription,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
     badges: assembledBadges ?? [],

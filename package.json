@@ -514,7 +514,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name or column.",
-        "modelDescription": "Search database objects by name or column name using substring or regex matching. Returns object IDs and metadata.",
+        "modelDescription": "Search database objects by name or column name using substring or regex matching. Returns object IDs and metadata. Each result carries an `in_user_filter` flag — when an in-filter search returns 0 hits but out-of-filter results exist, include that schema in the next search; the active filter is a display preference, not a boundary.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",

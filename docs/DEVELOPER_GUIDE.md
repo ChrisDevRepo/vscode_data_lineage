@@ -110,10 +110,12 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
                    + buildColumnAspectPrompt        (CT only)
      synthesis   → buildSynthesisPrompt
      completed   → buildFollowUpPrompt
-3. resolveStagePrompt                 (always — YAML *_capture / *_subsection, classification-gated)
-4. buildMissionBlock                  (active + synthesis + completed — <mission_brief>, <current_task>)
+3. resolveStagePrompt                 (always — YAML *_capture (active) + per-field synthesis instructions; classification-gated; closing gated on slotCount ≥ 5)
+4. buildMissionBlock                  (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
 5. buildMemoryBlock                   (SM active only — <short_term_memory> + tally)
 ```
+
+**Synthesis output contract.** The AI submits `present_result` with structured parts: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a captured slot body), `closing`, `notes[]`, `highlight_groups[]`. The engine, via `orderAndAssemble()` ([`tools.ts`](../src/ai/tools.ts)), assembles those parts into the rendered description shown in `AiDescriptionOverlay`: section numbering (`## N {label}`), object link headers (`### Objects [name](#focus-node:id)`), badge chips on the graph. The AI never writes the assembled blob; there is no AI-input `description` field. This is enforced mechanically — `PresentResultInput` omits the field — and documented across the YAML header, `buildSynthesisPrompt()`, and `STAGE_BY_KEY`.
 
 | Function | File | Concern |
 |----------|------|---------|
@@ -125,7 +127,8 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | `buildToolUsageBlock` | `prompts.ts` | `submit_findings` / pruning usage. |
 | `buildModeBlock(isInline, targetColumns?)` | `smPrompts.ts` | BB verdict + analysis + routing; CT = BB + column protocol. |
 | `buildColumnAspectPrompt` | `prompts.ts` | `<column_state>` XML block (CT context). |
-| `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + render (synthesis) keys, classification-gated. |
+| `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + per-field synthesis keys; classification-gated; `closing` size-gated on slotCount ≥ 5. |
+| `orderAndAssemble` | `tools.ts` | Engine-built description blob from AI's title + intro + sections[] + closing — sole assembly path. |
 | `buildMissionBlock` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks. |
 | `buildMemoryBlock` | `prompts.ts` | `<short_term_memory>` XML block + tally line. |
 

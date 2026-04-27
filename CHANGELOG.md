@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+- **Lighter synthesis prompt.** Reduced the per-synthesis-turn prompt by ~7,500 tokens (~18%) and stabilised the prefix so consecutive turns hit the prompt cache. Removed redundant umbrella templates (`sections`, `business_subsection`, `technical_subsection`); the lift+group+label rule now lives in the synthesis cue itself. Stripped the routing-only `fullNodes[]` and `edges[]` lists from the synthesis-transition tool result — the agent works from `detail_slots[]` exclusively.
+- **`closing` only fires on graphs with 5+ sections.** Small explorations now skip the closing template, saving ~140 tokens.
+
+### Fixed
+- **No stale per-hop sub-question at synthesis.** The `<current_task>` block from the last active-phase hop no longer leaks into the synthesis prompt.
+
+### Removed
+- **`description` is no longer an AI-writeable field.** The full description shown in the description overlay is built deterministically by the engine (`orderAndAssemble`) from `title + intro + sections[] + closing`. Removed the AI-input field, the YAML template, the `STAGE_BY_KEY` entry, and the validation passthrough — the AI now writes structured parts only; the engine assembles the document. No user-visible change to the rendered overlay.
+
 ### Added
 - **Pick the analysis lens before exploration.** Choose `business`, `technical`, or `both` when starting a `@lineage` exploration. Business reports describe domain meaning (rules, formulas, consumer impact). Technical reports describe execution (SQL evidence, joins, loading patterns, antipatterns). `both` produces two peer sections per node, one of each.
 - **Approve scope before analysis runs.** Every exploration shows a scope tree (Schema → Type → Node) with the live hop count. Approve to proceed, **Refine scope** to narrow it, or **Cancel**. Refine opens the chat input prefilled — describe the narrowing in plain English ("ignore staging", "drop UDFs", "trace ProductID only") and the assistant re-runs the scope. The loop continues until you approve or cancel.

@@ -13,34 +13,35 @@ The YAML is the only authoritative surface. Everything below describes how the Y
 
 Only the `instruction:` text is injected into the prompt. The `example:`, `good_example:`, and `bad_example:` fields exist for the human reader; the AI never sees them.
 
-## Section vs subsection — the mental model
+## AI writes parts — engine builds the document
 
-Two layers, written by two phases:
+Two responsibilities, two owners:
 
-| Layer | When it's written | What it is | Driven by |
-|-------|-------------------|------------|-----------|
-| **Per-hop capture (one archive slot per visited bodied node)** | Each hop during exploration | Full analysis of *one* view / procedure / function. Every formula, every column, every ⚠️. Stored unbounded in the Detail Archive. Never shipped mid-loop. | `business_capture`, `technical_capture`, `structural_summary` |
-| **Final document section** | Synthesis turn (after agenda drains) | One `## <label>` block in the report. Synthesis groups archive slots by label — same label = one section, with multiple node IDs cited. | `sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes` |
-
-Inside one section, the body is split into one or two **subsections** depending on mission type:
-
-- A `business`-only section emits the `business_subsection` body.
-- A `technical`-only section emits the `technical_subsection` body.
-- A `both` section emits the business body first, followed by `#### Technical` (the `technical_subsection` body).
+| Owner | What they produce | Where it lives |
+|-------|-------------------|----------------|
+| **AI** writes structured PARTS | Per-hop: `business_capture` / `technical_capture` / `structural_summary` produces the section body bodies stored in `detail_slots[].sections[].text`. <br>Synthesis: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a slot), `closing`, `notes[]`, `highlight_groups[]`. | YAML templates in this file describe what the AI writes. |
+| **Engine** builds DETERMINISTIC outputs | The full markdown document shown in `AiDescriptionOverlay` (the description blob), section numbering (`## N {label}`), badge chips on the graph, `### Objects [name](#focus-node:id)` link headers. | `orderAndAssemble()` in [`src/ai/tools.ts`](../src/ai/tools.ts). No YAML template — there is intentionally no `description` instruction; if you find one in an old overlay, it is dead. |
 
 So the rendering pipeline reads:
 
 ```
 hop 1, hop 2, …, hop N         →  N archive slots  (capture keys)
                                           ↓
-                       group by label, lift per-slot text
+                            synthesis turn lifts each
+                          slot.text into present_result
                                           ↓
-                  K final sections (sections key)
+              AI sends parts: title + intro + sections[] + closing
                                           ↓
-        for each section: business / technical / both subsections
+                        engine assembles the document
+                          via orderAndAssemble()
+                                          ↓
+              numbered ## N headings, badges, link headers,
+                            full description blob
 ```
 
-Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
+The lift+group+label rule for `sections[]` lives in `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts), not in the YAML — kept there to avoid duplication with the synthesis cue. Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
+
+When `classification === 'both'`, captured sections come in pairs per node (one business, one technical). Each angle becomes its own peer entry in `present_result.sections[]` — never nested as `#### Technical` subheadings.
 
 ## Multi-axis template gate — what fires when
 
@@ -72,7 +73,7 @@ Net effect per active hop:
 
 The contract is locked mechanically: each `submit_findings` call must carry exactly the `sections[]` shape implied by the active axis tuple. Mismatches reject with `classification_lock_violation` (e.g., a `business`-mission slot carrying a `technical` angle, or a `both` slot missing one angle). At synthesis, `present_result.sections[]` carries one peer entry per captured angle per node — the two angles never nest as `#### Technical` subheadings; they are independent peer sections.
 
-`sections`, `intro`, `closing`, `summary`, `title`, `description`, `highlights`, `notes` are not gated by mission type — they always fire for their stage.
+`intro`, `closing`, `summary`, `title`, `highlights`, `notes` are not gated by mission type — they always fire for their stage. `closing` is additionally gated on archive size (≥ 5 slots) — small graphs skip it to save prompt tokens.
 
 ### Column-trace overlay (CT)
 
@@ -84,20 +85,22 @@ CT mode is activated when `start_exploration` is called with `targetColumns`. Pe
 
 ## Key inventory — purpose & maintenance
 
-### Synthesis — the final document on the chat panel + graph card
+### Synthesis — fields the AI writes from scratch
+
+The AI writes these per-field instructions; the engine builds the rendered document from `title + intro + sections[] + closing` via `orderAndAssemble()`.
 
 | Key | Purpose | Edit this when |
 |-----|---------|----------------|
-| `summary` | One-line graph-card teaser (~120 chars). Shown on the AI view card and at discovery for trivial single-object questions. | Tightening or loosening the card-line tone; changing the max-character target. |
+| `summary` | One-line graph-card teaser (~120 chars). Shown on the AI view card. | Tightening or loosening the card-line tone; changing the max-character target. |
 | `title` | The `# …` document heading (≤ 80 chars) naming the analysis subject and key finding. | Changing how the title balances subject vs. finding; banning step counts. |
 | `intro` | 2–4 sentence narrative opener before the sections. | Changing tone, what the intro is allowed to mention (e.g. ban schema dumps), or how it anchors to the user's question. |
-| `sections` | Section assembly contract — density floor, sibling-variant grouping, label-by-role rule, no leading numbers in headers. | Changing how many sections you want, when sibling procedures collapse into one comparison table vs. each get their own H2, or how sections are labelled. |
-| `closing` | Optional `---` divider + cross-cutting through-line / risk. | Changing when a closing fires (e.g. always vs. only on 5+ sections) or what cross-cutting issues warrant it. |
-| `description` | Fallback long-form body, used only when `sections[]` is absent. | Changing the unstructured fallback's shape and depth target. |
+| `closing` | Optional `---` divider + cross-cutting through-line / risk. Gated on archive size ≥ 5. | Changing the threshold (in `templateRenderer.ts`) or what cross-cutting issues warrant it. |
 | `highlights` | 2–3 critical-node glows on the graph (Lineage or Diagnostic scheme). | Changing how aggressively to highlight or the colour scheme. |
 | `notes` | Per-node graph captions — one-line, what the node does specifically in this flow. | Changing caption length or style (e.g. always lead with the formula vs. the role). |
-| `business_subsection` | Section body for the business angle: formulas, `\| From \| To \| Business meaning \|` table, ⚠️ inline rule. Mirrors `business_capture`. | Changing how business rules render at full depth in the final document. Edit alongside `business_capture` so capture and render agree. |
-| `technical_subsection` | `#### Technical` subheading body: SQL snippets + LaTeX formulas side-by-side, join strategy, antipatterns. Mirrors `technical_capture`. | Changing how technical content renders. Edit alongside `technical_capture`. |
+
+**No template for `sections[]` here.** The lift-verbatim + group-siblings + label-by-role rule is owned by `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts). Editing that function is the single source of truth for how synthesis assembles the per-node captured bodies into the final report.
+
+**No template for `description`.** The description blob shown in the overlay is engine output, built deterministically by `orderAndAssemble()` from `title + intro + sections[] + closing`. There is no AI-writeable `description` field — adding one would conflict with the deterministic assembly.
 
 ### Active — per-hop capture into the unbounded archive
 

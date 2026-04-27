@@ -54,10 +54,6 @@ export interface AiOutputTemplates {
   title: string;
   /** Instructions for the 2-4 sentence intro paragraph before the sections. */
   intro: string;
-  /** Instructions for generating the detailed technical description. */
-  description: string;
-  /** Instructions for grouping nodes into logical sections. */
-  sections: string;
   /** Instructions for the 1-2 sentence closing rendered after the sections. */
   closing: string;
   /** Instructions for identifying critical highlights and takeaways. */
@@ -80,10 +76,6 @@ export interface AiOutputTemplates {
    * synthesis already formatted and is lifted verbatim.
    */
   technical_capture: string;
-  /** Synthesis render rules for the business angle — how captured content renders in section text. */
-  business_subsection: string;
-  /** Synthesis render rules for the technical angle — `#### Technical` subheading body. */
-  technical_subsection: string;
   /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/Downstream/Grain). */
   structural_summary: string;
 }
@@ -98,15 +90,11 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   summary: '',
   title: '',
   intro: '',
-  description: '',
-  sections: '',
   closing: '',
   highlights: '',
   notes: '',
   business_capture: '',
   technical_capture: '',
-  business_subsection: '',
-  technical_subsection: '',
   structural_summary: '',
 };
 
