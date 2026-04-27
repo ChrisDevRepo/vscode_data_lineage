@@ -272,7 +272,7 @@ Append-only narrative: `test-results/iteration-log.md`.
 **Track B** — `tests/e2e/feature/feat-*.py` (8 deterministic tests, no LLM)
 
 **Hard rules**
-- No harness coaching (`tests/eval/validate.py` fails-closed)
+- Bridge is transport-only — production code path runs unchanged in vscode-tester
 - No rubric loosening; mode-gating allowed (T-2)
 - No case-file score-chasing (B-2 fix is a correctness fix, exempt)
 - Sequential only (AiSession is singleton); Haiku-only for Track-A
@@ -321,9 +321,10 @@ first — the STATUS block tells you the iteration + next_action. Then:
      python tests/eval/state.py render-entrypoint
 8. Stop and report — do not chain into the next task without confirmation.
 
-Hard rules: no harness coaching (validate.py fails-closed), no rubric loosening,
-no case-file score chasing, no `src/ai/**` edits beyond the next pending task,
-sequential only, Haiku-only for Track-A, deterministic urllib for Track-B.
+Hard rules: bridge is transport-only (no policy in bridge code), no rubric
+loosening, no case-file score chasing, sequential only, no CR without a
+confirmed-broken-link finding from the Diagnostic Question Set (see
+.claude/skills/eval-loop/SKILL.md HARD RULE 0).
 ```
 """
         _atomic_write(entry_path, template)

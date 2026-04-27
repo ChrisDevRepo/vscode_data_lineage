@@ -1,391 +1,104 @@
+"""Eval orchestrator — bridge architecture.
+
+The bridge (`src/ai/evalLmProvider.ts`) registers a `LanguageModelChatProvider`
+that forwards `messages[]` from the production `@lineage` participant to a
+configurable Haiku endpoint. This script is the thin orchestrator that drives
+one case end-to-end.
+
+Workflow per case:
+  1. Read the case's question + optional pre-flight context from
+     `tests/cases/<case-id>.md`.
+  2. Set env vars EVAL_BRIDGE_HAIKU_URL + EVAL_AUTONOMOUS_QUESTION.
+  3. Invoke `npm run test:eval` — the autonomous mocha test inside the
+     extension host calls `LineageParticipant.handleChatRequest` with a
+     synthetic ChatRequest pointing at the bridge model.
+  4. (Handshake mode only) The orchestrator polls the handshake dir,
+     dispatches a Haiku Task per pending request, writes the response.
+     This part is interactive and must be driven from the Claude Code
+     session that owns this run.
+  5. After the conversation completes, extract.py reads
+     `test-results/eval-bridge/autonomous-snapshot.json` + the bridge JSONL
+     and produces the per-case report.
+
+Run:
+  python tests/eval/run.py <case-id>           # handshake mode, manual orchestration
+  ANTHROPIC_API_KEY=... python tests/eval/run.py <case-id>   # direct mode, fully autonomous
+
+Env override:
+  EVAL_BRIDGE_PORT     — default 4271
+  EVAL_BRIDGE_LOG_PATH — JSONL path for the bridge log
 """
-Structural eval runner — THE ONLY entry point for eval-agent execution.
-
-Enforces .claude/rules/eval-validity.md (the Eval Integrity Hard Rule):
-the agent receives ZERO behavior instructions from the harness. System
-prompt, nav prompt, and tool descriptions come VERBATIM from GET /prompts
-(the same surface VS Code's vscode.lm injects into the language model).
-The only harness-authored text is transport plumbing (POST URL + payload
-shape) and the post-run extraction command.
-
-Workflow per test:
-    1. Parse tests/cases/<test-id>.md  →  question + follow-ups + filter (optional)
-    2. POST /session                    →  sessionId
-    3. POST /filter                     →  if the case has one
-    4. GET /prompts?sessionId=<id>      →  system + bb_mode / ct_mode_columns + tool_descriptions
-    5. Load agent-prompt.template.txt   →  substitute 7 placeholders
-    6. python tests/eval/validate.py    →  fails-closed on any forbidden pattern
-    7. Emit the populated prompt        →  so the orchestrator (human or Claude Code)
-                                            can hand it to an Agent(model="haiku") spawn
-    8. After the agent finishes, the template instructs it to run:
-           python tests/eval/extract.py <test-id> <session-id>
-       which scores + writes the MD report + snapshot bundle.
-
-Usage:
-    python tests/eval/run.py <test-id> [run-id]
-
-If run-id is omitted, uses $EVAL_RUN_ID env var, else a timestamp.
-
-The runner DOES NOT spawn the Agent itself — `Agent(model: "haiku")` lives
-in the Claude Code orchestration layer. This script prepares + validates
-the populated prompt, then prints the prompt to stdout for the orchestrator
-to pick up (and saves it under test-results/eval-runs/<run-id>/<test-id>.prompt.txt
-for audit). A future revision can add a --spawn flag if it gains access to
-the Agent SDK directly.
-"""
-from __future__ import annotations
-
-import hashlib
-import json
 import os
+import re
 import subprocess
 import sys
-from datetime import datetime
+import time
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
-PROXY = "http://127.0.0.1:3271"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CASES_DIR = PROJECT_ROOT / "tests" / "cases"
-EVAL_DIR = PROJECT_ROOT / "tests" / "eval"
-RUNS_ROOT = PROJECT_ROOT / "test-results" / "eval-runs"
-TEMPLATE_PATH = EVAL_DIR / "agent-prompt.template.txt"
-VALIDATE_PY = EVAL_DIR / "validate.py"
+ROOT = Path(__file__).resolve().parent.parent.parent
+CASES_DIR = ROOT / "tests" / "cases"
+EVAL_BRIDGE_PORT = int(os.environ.get("EVAL_BRIDGE_PORT", "4271"))
+EVAL_BRIDGE_HAIKU_URL = f"http://127.0.0.1:{EVAL_BRIDGE_PORT}"
 
 
-# ---------------------------------------------------------------------------
-# Test-case parsing — ONLY the user-question and follow-ups are used.
-# Expected Outcome / Required / Forbidden sections are extract.py's concern.
-# ---------------------------------------------------------------------------
-
-
-def parse_case(test_id: str) -> dict:
-    """Locate <test-id>.md across the baseline + ad-hoc search roots.
-
-    Order:
-      1. tests/cases/<id>.md                       — locked baseline (committed)
-      2. tests/cases/*/<id>.md                     — nested baseline folders
-      3. test-results/cases/**/<id>.md             — ad-hoc probes (gitignored)
-    """
-    path = CASES_DIR / f"{test_id}.md"
+def _load_question(case_id: str) -> str:
+    path = CASES_DIR / f"{case_id}.md"
     if not path.exists():
-        ad_hoc_root = PROJECT_ROOT / "test-results" / "cases"
-        candidates = list(CASES_DIR.glob(f"*/{test_id}.md"))
-        if ad_hoc_root.exists():
-            candidates.extend(ad_hoc_root.rglob(f"{test_id}.md"))
-        if len(candidates) == 1:
-            path = candidates[0]
-        elif len(candidates) > 1:
-            raise FileNotFoundError(
-                f"Ambiguous test-id {test_id}: found in {[str(p) for p in candidates]}"
-            )
-        else:
-            raise FileNotFoundError(f"Test case not found: {path}")
-    text = path.read_text(encoding="utf-8", errors="replace")
-    question = ""
-    followups: list[str] = []
-    filter_schemas: list[str] = []
-    filter_types: list[str] = []
-    use_columns = False
-    saw_main_question = False
-    in_filter = False
-    in_classification = False
-    in_question_section = False  # true while inside `## Question` heading
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            section = stripped[3:].strip().lower()
-            in_filter = "filter" in section
-            in_classification = "classification" in section
-            in_question_section = section == "question"
-            continue
-        if stripped.startswith("> "):
-            body = stripped[2:].strip()
-            if body.lower().startswith("question:"):
-                question = body.split(":", 1)[1].strip()
-                saw_main_question = True
-            elif body.lower().startswith("follow-up"):
-                followups.append(body.split(":", 1)[1].strip() if ":" in body else body)
-            elif not saw_main_question and not question:
-                question = body
-                saw_main_question = True
-            elif in_question_section and saw_main_question:
-                # Multi-turn case: subsequent blockquotes inside `## Question`
-                # (e.g. `### Turn 2`, `### Turn 3`) are follow-ups even without
-                # the explicit `Follow-up:` prefix. Without this branch run.py
-                # silently dropped Turn 2 of follow-* cases.
-                followups.append(body)
-        if in_filter and stripped.startswith("- schemas:"):
-            val = stripped.split(":", 1)[1].strip()
-            filter_schemas = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
-        if in_filter and stripped.startswith("- types:"):
-            val = stripped.split(":", 1)[1].strip()
-            filter_types = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
-        # Classification-table format: `| Filter | schemas: [HumanResources, Sales] |`
-        # (used by current baseline cases; legacy `## Filter` section still supported above)
-        if in_classification and stripped.startswith("| Filter"):
-            cell = stripped.split("|")[2].strip() if stripped.count("|") >= 3 else ""
-            for token in cell.split(";"):
-                token = token.strip()
-                if token.lower().startswith("schemas:"):
-                    val = token.split(":", 1)[1].strip()
-                    filter_schemas = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
-                elif token.lower().startswith("types:"):
-                    val = token.split(":", 1)[1].strip()
-                    filter_types = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
-        if in_classification and "column" in stripped.lower() and "trace" in stripped.lower():
-            use_columns = True
-    if test_id.startswith("ct-"):
-        use_columns = True
-    return {
-        "question": question,
-        "followups": followups,
-        "filter_schemas": filter_schemas,
-        "filter_types": filter_types,
-        "use_columns": use_columns,
-    }
+        raise SystemExit(f"case file not found: {path}")
+    text = path.read_text(encoding="utf-8")
+    # Question is the first blockquote under "## Question".
+    m = re.search(r"^##\s+Question\s*\n+>\s*(.+?)(?=\n##|\Z)", text, flags=re.MULTILINE | re.DOTALL)
+    if not m:
+        raise SystemExit(f"no '## Question' blockquote in {path}")
+    return " ".join(line.strip().lstrip(">").strip() for line in m.group(1).splitlines() if line.strip())
 
 
-# ---------------------------------------------------------------------------
-# Input-signature helpers — sha256 + git SHA for iteration-comparison identity.
-# ---------------------------------------------------------------------------
-
-
-def _sha256(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
-
-
-def _git_sha() -> str | None:
+def _ensure_haiku_server_running() -> None:
+    """Probe :EVAL_BRIDGE_PORT — if not listening, instruct user to start it."""
+    import urllib.request
     try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_ROOT,
-            timeout=5,
-        )
-        if r.returncode == 0:
-            return r.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
+        urllib.request.urlopen(f"{EVAL_BRIDGE_HAIKU_URL}/", timeout=1)
+    except Exception:
+        # Not strictly an error — the server may simply not respond to GET.
+        # Just log a hint; the actual POST in the test will fail clearly if down.
+        print(f"[run] Note: probe of {EVAL_BRIDGE_HAIKU_URL} returned no response.", file=sys.stderr)
+        print(f"[run] If the bridge test fails with ECONNREFUSED, start the haiku-server first:", file=sys.stderr)
+        print(f"[run]   python tests/eval/haiku-server.py {EVAL_BRIDGE_PORT}", file=sys.stderr)
 
 
-# ---------------------------------------------------------------------------
-# Proxy HTTP helpers — urllib, no external deps.
-# ---------------------------------------------------------------------------
-
-
-def http(method: str, path: str, body: dict | None = None, timeout: int = 15) -> dict:
-    url = f"{PROXY}{path}"
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    headers = {"Content-Type": "application/json"} if body is not None else {}
-    req = Request(url, data=data, method=method, headers=headers)
-    with urlopen(req, timeout=timeout) as r:
-        raw = r.read().decode("utf-8", errors="replace")
-        return json.loads(raw) if raw else {}
-
-
-def proxy_up() -> bool:
-    try:
-        http("GET", "/health", timeout=3)
-        return True
-    except (URLError, OSError, ValueError):
-        return False
-
-
-# ---------------------------------------------------------------------------
-# Template substitution + validation
-# ---------------------------------------------------------------------------
-
-
-def build_prompt(template: str, mapping: dict[str, str]) -> str:
-    out = template
-    for key, val in mapping.items():
-        out = out.replace("{{" + key + "}}", val)
-    return out
-
-
-def validate_template() -> None:
-    """Lint agent-prompt.template.txt for harness contamination.
-
-    The validator strips {{PLACEHOLDER}} tokens before scanning, so it sees
-    only the harness-authored text (the 4 transport / extraction / User: /
-    blank lines). Production content injected via /prompts is trusted and
-    is never scanned — it lives inside the placeholders.
-    """
-    result = subprocess.run(
-        [sys.executable, str(VALIDATE_PY), str(TEMPLATE_PATH)],
-        capture_output=True,
-        text=True,
-        cwd=PROJECT_ROOT,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stderr)
-        sys.stderr.write(result.stdout)
-        raise SystemExit(
-            "run.py: validate.py rejected the TEMPLATE. Harness has been "
-            "contaminated with behavior scaffolding. Restore the canonical "
-            "template from .claude/rules/eval-validity.md."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
-def main() -> int:
+def main():
     if len(sys.argv) < 2:
-        print("Usage: python tests/eval/run.py <test-id> [run-id]", file=sys.stderr)
-        return 2
-    test_id = sys.argv[1]
-    run_id = sys.argv[2] if len(sys.argv) > 2 else os.environ.get(
-        "EVAL_RUN_ID", datetime.now().strftime("run-%Y-%m-%dT%H-%M")
-    )
+        raise SystemExit("usage: run.py <case-id>")
+    case_id = sys.argv[1]
+    question = _load_question(case_id)
+    print(f"[run] case: {case_id}")
+    print(f"[run] question: {question}")
+    _ensure_haiku_server_running()
 
-    if not proxy_up():
-        print("run.py: proxy not reachable on http://127.0.0.1:3271", file=sys.stderr)
-        print("Start it with: npm run test:eval (or the EVAL_WAIT incantation in SKILL.md)", file=sys.stderr)
-        return 3
+    env = os.environ.copy()
+    env["EVAL_BRIDGE_HAIKU_URL"] = EVAL_BRIDGE_HAIKU_URL
+    env["EVAL_AUTONOMOUS_QUESTION"] = question
+    if "ANTHROPIC_API_KEY" in env:
+        print("[run] mode: DIRECT (haiku-server.py will call Anthropic API)")
+    else:
+        print("[run] mode: HANDSHAKE (orchestrator must dispatch Haiku Tasks per pending req-*.json)")
+        print(f"[run] watch: {ROOT}/test-results/eval-bridge/handshake/")
 
-    case = parse_case(test_id)
-    if not case["question"]:
-        print(f"run.py: no '> Question:' line in tests/cases/{test_id}.md", file=sys.stderr)
-        return 4
+    start = time.time()
+    try:
+        subprocess.run(["npm", "run", "test:eval"], cwd=str(ROOT), env=env, check=False, shell=True)
+    except KeyboardInterrupt:
+        print("[run] interrupted by user", file=sys.stderr)
 
-    # Create run dir
-    run_dir = RUNS_ROOT / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1) POST /session
-    sess = http("POST", "/session", body={})
-    session_id = sess.get("sessionId")
-    if not session_id:
-        print(f"run.py: POST /session returned no sessionId: {sess}", file=sys.stderr)
-        return 5
-    print(f"[run] {test_id}  session={session_id}  run_id={run_id}")
-
-    # 2) POST /filter (optional)
-    if case["filter_schemas"] or case["filter_types"]:
-        filt = {}
-        if case["filter_schemas"]:
-            filt["schemas"] = case["filter_schemas"]
-        if case["filter_types"]:
-            filt["types"] = case["filter_types"]
-        filt["sessionId"] = session_id
-        http("POST", "/filter", body=filt)
-        print(f"[run] filter applied: {filt}")
-
-    # 3) GET /prompts?sessionId=
-    prompts = http("GET", f"/prompts?sessionId={session_id}")
-    system_prompt = prompts.get("system", "")
-    active_capture = prompts.get("active_capture_template", "")
-    synthesis_template = prompts.get("synthesis_template", "")
-    synthesis_cue = prompts.get("synthesis_cue", "")
-    nav_key = "ct_mode_columns" if case["use_columns"] else "bb_mode"
-    nav_prompt = prompts.get(nav_key, "")
-    tool_descs = prompts.get("tool_descriptions", "")
-    if not system_prompt or not nav_prompt or not tool_descs:
-        print(
-            f"run.py: /prompts missing fields — system={bool(system_prompt)} "
-            f"{nav_key}={bool(nav_prompt)} tool_descriptions={bool(tool_descs)}",
-            file=sys.stderr,
-        )
-        return 6
-
-    # If tool_descriptions is structured (dict/list), serialize it here.
-    # Keep whatever the proxy returns — this is production-identical.
-    if isinstance(tool_descs, (dict, list)):
-        tool_descs = json.dumps(tool_descs, indent=2, ensure_ascii=False)
-
-    # 4) Load template + substitute
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    followups_block = (
-        "\n".join(f"Then the user asks: {q}" for q in case["followups"])
-        if case["followups"]
-        else ""
-    )
-    chat_txt_path = (run_dir / f"{test_id}.chat.txt").relative_to(PROJECT_ROOT).as_posix()
-    populated = build_prompt(
-        template,
-        {
-            "SYSTEM_PROMPT": system_prompt,
-            "NAV_PROMPT": nav_prompt,
-            "ACTIVE_CAPTURE_TEMPLATE": active_capture,
-            "SYNTHESIS_TEMPLATE": synthesis_template,
-            "SYNTHESIS_CUE": synthesis_cue,
-            "TOOL_DESCRIPTIONS": tool_descs,
-            "SESSION_ID": session_id,
-            "QUESTION": case["question"],
-            "FOLLOWUPS": followups_block,
-            "TEST_ID": test_id,
-            "CHAT_TXT_PATH": chat_txt_path,
-        },
-    )
-    prompt_path = run_dir / f"{test_id}.prompt.txt"
-    prompt_path.write_text(populated, encoding="utf-8")
-
-    # 5) Validate the TEMPLATE (the only harness-controlled surface)
-    validate_template()
-    print(f"[run] template validated; populated prompt at {prompt_path.relative_to(PROJECT_ROOT)}")
-
-    # 6) Record session metadata for extract.py
-    meta = {
-        "test_id": test_id,
-        "session_id": session_id,
-        "run_id": run_id,
-        "started_at": datetime.now().isoformat(),
-        "nav_mode": nav_key,
-        "filter_schemas": case["filter_schemas"],
-        "filter_types": case["filter_types"],
-        "question": case["question"],
-        "followup_count": len(case["followups"]),
-    }
-    (run_dir / f"{test_id}.agent.json").write_text(
-        json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-
-    # 6b) Emit <id>.inputs.json — input signature for run-to-run identity.
-    # Hashes let iteration-N vs iteration-(N-1) detect prompt/filter/question drift mechanically.
-    # model_id is filled by extract.py from the host.log [AI] [Session] line; absent at run.py time.
-    inputs = {
-        "test_id": test_id,
-        "session_id": session_id,
-        "run_id": run_id,
-        "git_sha": _git_sha(),
-        "system_prompt_sha256": _sha256(system_prompt),
-        "nav_prompt_sha256": _sha256(nav_prompt),
-        "nav_mode": nav_key,
-        "tool_descriptions_sha256": _sha256(tool_descs),
-        "question_sha256": _sha256(case["question"]),
-        "filter": {
-            "schemas": case["filter_schemas"],
-            "types": case["filter_types"],
-        },
-        "followup_count": len(case["followups"]),
-        "model_id": None,
-    }
-    (run_dir / f"{test_id}.inputs.json").write_text(
-        json.dumps(inputs, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-
-    # 7) The orchestrator (Claude Code or human) reads the saved prompt file
-    # and hands it to Agent(model: "haiku"). Avoid printing the populated
-    # prompt to stdout (Unicode characters break on Windows cp1252 locales
-    # and the full text would flood the terminal anyway).
-    print(f"[run] populated prompt saved ({len(populated)} chars)")
-    print(f"[run] -> read from: {prompt_path.relative_to(PROJECT_ROOT)}")
-    print(f"[run] -> session_id: {session_id}")
-    print(f"[run] -> run_id:     {run_id}")
-    print(f"[run] -> feed to:    Agent(model: 'haiku', subagent_type: 'general-purpose')")
-    print(
-        f"[run] -> after Agent completes, verify report at: "
-        f"{(run_dir / f'{test_id}.md').relative_to(PROJECT_ROOT)}"
-    )
-    return 0
+    duration = time.time() - start
+    snapshot = ROOT / "test-results" / "eval-bridge" / "autonomous-snapshot.json"
+    print(f"[run] duration: {duration:.1f}s")
+    if snapshot.exists():
+        print(f"[run] snapshot: {snapshot}")
+        print(f"[run] next: python tests/eval/extract.py {case_id} <session-id-from-snapshot>")
+    else:
+        print(f"[run] snapshot NOT FOUND — run did not complete")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
