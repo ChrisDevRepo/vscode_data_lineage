@@ -145,16 +145,57 @@ suite('AI Eval — Bridge', function () {
     } as any;
 
     console.log(`[autonomous] driving @lineage with: "${request.prompt}"`);
-    const result = await extensionApi.participant.handleChatRequest(
+    let result = await extensionApi.participant.handleChatRequest(
       request,
       { history: [] } as any,
       stream,
       new vscode.CancellationTokenSource().token,
     );
-    console.log(`[autonomous] handler returned. captured=${captured.length} stream-parts.`);
+    console.log(`[autonomous] turn 1 handler returned. captured=${captured.length} stream-parts.`);
+
+    // ─── Auto-approve hook ─────────────────────────────────────────────────────
+    // TEST-ONLY temporal hook. When EVAL_AUTONOMOUS_AUTO_APPROVE_GATE=1, after
+    // the first handler return we detect whether the participant emitted a
+    // confirm_sm_start gate and auto-resume by re-invoking the handler with
+    // "yes" until the conversation drains (synthesis + present_result reached,
+    // or max-iterations hit). This substitutes the human button-click that
+    // a real user would perform in the chat panel. The hook fires NOTHING
+    // when the env var is absent — manual UAT runs are unaffected.
+    const sess = extensionApi.getSession();
+    const autoApprove = process.env.EVAL_AUTONOMOUS_AUTO_APPROVE_GATE === '1';
+    let continuationTurns = 0;
+    const MAX_CONTINUATION_TURNS = 30;
+    const history: vscode.ChatRequestTurn[] = [
+      new vscode.ChatRequestTurn(request.prompt, undefined, [], 'datahelper-chwagner.data-lineage-viz', [], []),
+    ];
+    while (autoApprove && sess.phase?.kind === 'awaiting_gate' && continuationTurns < MAX_CONTINUATION_TURNS) {
+      continuationTurns++;
+      console.log(`[autonomous][auto-approve] phase=awaiting_gate — sending "yes" (turn ${continuationTurns + 1})`);
+      const followup: vscode.ChatRequest = {
+        prompt: 'yes',
+        command: undefined,
+        references: [],
+        toolReferences: [],
+        toolInvocationToken: undefined as any,
+        model: haiku,
+      } as any;
+      result = await extensionApi.participant.handleChatRequest(
+        followup,
+        { history } as any,
+        stream,
+        new vscode.CancellationTokenSource().token,
+      );
+      console.log(`[autonomous] turn ${continuationTurns + 1} handler returned. phase=${sess.phase?.kind ?? '?'}; captured=${captured.length}`);
+      history.push(new vscode.ChatRequestTurn(followup.prompt, undefined, [], 'datahelper-chwagner.data-lineage-viz', [], []));
+      // If neither phase nor stream-progress changed, abort to avoid infinite loop on a stuck gate.
+      if (sess.phase?.kind === 'awaiting_gate' && continuationTurns > 1 && !result?.metadata) {
+        console.log(`[autonomous] aborting — gate not advancing`);
+        break;
+      }
+    }
+    console.log(`[autonomous] final phase=${sess.phase?.kind ?? '?'} after ${continuationTurns + 1} turns; captured=${captured.length}`);
 
     // Snapshot final SM state for extract.py.
-    const sess = extensionApi.getSession();
     const ext = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!;
     const snapshotPath = path.join(ext.extensionPath, 'test-results', 'eval-bridge', 'autonomous-snapshot.json');
     fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
