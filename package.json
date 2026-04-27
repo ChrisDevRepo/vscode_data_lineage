@@ -59,6 +59,14 @@
   },
   "main": "./out/extension.js",
   "contributes": {
+    "_comment_languageModelChatProviders_SHIP_REMOVE": "INTERNAL TEST ONLY — REMOVE BEFORE PRODUCTION SHIP. The languageModelChatProviders entry below registers an internal test-bridge vendor used by tests/e2e/suite/eval/. Activates only when EVAL_BRIDGE_HAIKU_URL env var is set. Removal procedure: delete this comment + the languageModelChatProviders array. See SHIP-REMOVE markers in src/extension.ts and src/ai/evalLmProvider.ts.",
+    "languageModelChatProviders": [
+      {
+        "vendor": "eval-bridge",
+        "displayName": "Eval Bridge (internal test)",
+        "managementCommand": ""
+      }
+    ],
     "languages": [
       {
         "id": "dacpac-sql",

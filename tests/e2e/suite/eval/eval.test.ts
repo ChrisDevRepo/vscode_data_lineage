@@ -161,6 +161,46 @@ suite('AI Eval Proxy', function () {
     assert.ok(stateData.sm_state.scopeNodeIds.length > 0, 'Scope node IDs should be populated');
   });
 
+  test('Eval-bridge LM provider routes messages end-to-end', async function () {
+    // Activates only when EVAL_BRIDGE_HAIKU_URL env var is set. The provider
+    // forwards messages[] to that URL and replays the response. This test
+    // points the bridge at a mock haiku endpoint (started externally on :4271)
+    // and confirms the round-trip: model selectable, sendRequest reaches the
+    // provider, mock returns canned response, participant-side stream
+    // yields that response.
+    if (!process.env.EVAL_BRIDGE_HAIKU_URL) {
+      console.log('[eval] EVAL_BRIDGE_HAIKU_URL not set — skipping LM-provider mockup test');
+      this.skip();
+      return;
+    }
+    this.timeout(20_000);
+
+    // 1. Provider should expose exactly one model under vendor `eval-bridge`.
+    const models = await vscode.lm.selectChatModels({ vendor: 'eval-bridge' });
+    assert.ok(models.length > 0, `Expected eval-bridge model registered; got 0. Selectable models: ${(await vscode.lm.selectChatModels({})).map(m => m.vendor + '/' + m.id).join(', ')}`);
+    const haiku = models[0];
+    assert.strictEqual(haiku.vendor, 'eval-bridge');
+    assert.strictEqual(haiku.family, 'haiku');
+    console.log(`[eval-bridge-test] selected model: ${haiku.vendor}/${haiku.family}/${haiku.id}`);
+
+    // 2. Send a synthetic conversation through the provider.
+    const messages = [
+      vscode.LanguageModelChatMessage.User('System envelope from synthetic test'),
+      vscode.LanguageModelChatMessage.User('What is the lineage of vEmployee?'),
+    ];
+    const resp = await haiku.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
+
+    // 3. Drain the response stream — should contain the mock-haiku canned text.
+    const collected: string[] = [];
+    for await (const part of resp.stream) {
+      if (part instanceof vscode.LanguageModelTextPart) collected.push(part.value);
+    }
+    const fullText = collected.join('');
+    console.log(`[eval-bridge-test] received: ${fullText}`);
+    assert.ok(fullText.includes('[mock-haiku] received'), `Expected mock-haiku canned response; got: ${fullText}`);
+    assert.ok(fullText.includes('What is the lineage of vEmployee'), `Expected last user text echoed back; got: ${fullText}`);
+  });
+
   test('Proxy server mode — wait for eval-loop agents', async function () {
     // This test keeps the proxy alive for external agents (eval-loop skill).
     // It polls for a signal file that the skill writes when done.

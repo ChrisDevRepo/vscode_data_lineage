@@ -1,26 +1,27 @@
 /**
  * Eval-bridge LM provider — pure message router between the production
- * `@lineage` chat participant and Anthropic Haiku.
+ * `@lineage` chat participant inside the vscode-tester host and an external
+ * Haiku endpoint.
  *
  * @remarks
  * Registers a `vscode.lm.LanguageModelChatProvider` (vendor `eval-bridge`,
  * family `haiku`). When the production participant calls
  * `request.model.sendRequest(messages, options, token)`, VS Code routes to
  * `provideLanguageModelChatResponse` here. This provider:
- *   1. Logs the inbound `messages[]` + `options.tools[]` to a JSONL file
- *      (every message that crosses the bridge — full fidelity).
- *   2. Translates VS Code message format to Anthropic Messages API format.
- *   3. Calls Anthropic with streaming enabled.
- *   4. Translates streamed Anthropic deltas to `LanguageModelResponsePart`s
- *      and forwards them to the participant via the `progress` callback.
- *   5. Logs the outbound response parts.
+ *   1. Logs the inbound `messages[]` + `options.tools[]` to a JSONL file.
+ *   2. POSTs the full payload as-is to the URL set in `EVAL_BRIDGE_HAIKU_URL`.
+ *   3. Reads the Haiku-side response (one or more `LanguageModelResponsePart`-shaped objects).
+ *   4. Forwards each part to the participant via `progress.report(...)`.
+ *   5. Logs every part in both directions.
  *
- * NO message rebuilding. NO bridge-side decision-making. The participant
- * builds messages exactly as production; this provider relays them.
+ * The bridge does NOT call Anthropic / OpenAI / any LLM. The Haiku endpoint
+ * (a tiny external HTTP server the user spins up — not in this file's scope)
+ * owns the actual model invocation. The bridge is transport-only: it routes
+ * `messages[]` from vscode-tester to that endpoint and routes the response
+ * back. NO API keys live in the extension.
  *
- * Activation: only when `EVAL_BRIDGE_ANTHROPIC_KEY` env var is set OR the
- * `dataLineageViz.eval.lmProviderEnabled` setting is true. Off by default —
- * production users never see this provider.
+ * Activation: only when `EVAL_BRIDGE_HAIKU_URL` env var is set. Off by
+ * default — production users never see this provider.
  */
 
 import * as vscode from 'vscode';
@@ -72,110 +73,71 @@ function serialiseContent(content: ReadonlyArray<unknown>): unknown[] {
 }
 
 /**
- * Translate VS Code messages → Anthropic Messages API request body.
+ * Build the JSON payload that the bridge forwards to the Haiku-side endpoint.
  *
  * @remarks
- * VS Code message roles are User / Assistant. Anthropic API uses `user` and
- * `assistant` plus a top-level `system` field. We extract the first User
- * message (the participant's system prompt envelope) into the Anthropic
- * `system` field; subsequent messages flow as a normal alternating
- * conversation.
+ * Pure transport shape. Roles are normalised to the lowercase string the wire
+ * protocol expects; `content[]` is serialised verbatim. The Haiku side owns
+ * the actual model invocation — this payload is the same regardless of which
+ * model it ends up calling.
  */
-function buildAnthropicRequest(
+function buildBridgePayload(
   messages: readonly vscode.LanguageModelChatRequestMessage[],
   tools: readonly vscode.LanguageModelChatTool[] | undefined,
   modelId: string,
-): { url: string; body: any } {
-  // Per `code-quality.md` "User-as-System invariant" the participant emits
-  // msg[0] as a User message containing the system prompt. Anthropic API
-  // wants this hoisted into the top-level `system` field for proper caching.
-  let systemText = '';
-  const conversation: any[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    const parts = serialiseContent(m.content);
-    const role = m.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant';
-    if (i === 0 && role === 'user') {
-      systemText = parts.filter((p: any) => p?.type === 'text').map((p: any) => p.text).join('\n\n');
-      continue;
-    }
-    conversation.push({ role, content: parts });
-  }
-
-  const body: any = {
+  toolMode: vscode.LanguageModelChatToolMode,
+): any {
+  return {
     model: modelId,
-    max_tokens: 8192,
-    stream: true,
-    messages: conversation,
-  };
-  if (systemText) body.system = systemText;
-  if (tools && tools.length > 0) {
-    body.tools = tools.map(t => ({
+    toolMode,
+    messages: messages.map(m => ({
+      role: m.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant',
+      content: serialiseContent(m.content),
+    })),
+    tools: (tools ?? []).map(t => ({
       name: t.name,
       description: t.description,
       input_schema: t.inputSchema ?? { type: 'object', properties: {} },
-    }));
-  }
-  return { url: 'https://api.anthropic.com/v1/messages', body };
+    })),
+  };
 }
 
 /**
- * Stream Anthropic SSE response → VS Code progress callback.
+ * The wire-shape the Haiku side returns. One JSON object per response.
  *
  * @remarks
- * Anthropic streams `event:` lines with JSON `data:` payloads. We translate
- * `content_block_delta` (text + input_json) and `content_block_start`
- * (tool_use start) events into `LanguageModelTextPart` /
- * `LanguageModelToolCallPart` and forward via `progress.report`.
+ * `parts` is an array of either text or tool_use entries; the bridge
+ * forwards each to the participant via `progress.report(...)`. Streaming is
+ * not required — the Haiku side may compose the full response and return it
+ * as one chunk; the bridge will replay each part to the progress callback.
  */
-async function streamAnthropicToProgress(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
+interface BridgeResponse {
+  parts: Array<
+    | { type: 'text'; text: string }
+    | { type: 'tool_use'; id: string; name: string; input: unknown }
+  >;
+}
+
+/**
+ * Replay the Haiku-side response into the participant's progress callback.
+ *
+ * @remarks
+ * Each entry in `parts[]` becomes one `LanguageModelTextPart` or
+ * `LanguageModelToolCallPart`. This is the only translation the bridge does
+ * on the response side — wire JSON → VS Code part objects.
+ */
+function replayResponseToProgress(
+  resp: BridgeResponse,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   logPath: string,
-): Promise<void> {
-  const decoder = new TextDecoder();
-  let buffer = '';
-  // Per-tool-block accumulator (Anthropic streams tool input as JSON deltas).
-  const toolBlocks: Map<number, { id: string; name: string; jsonAccum: string }> = new Map();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      let evt: any;
-      try { evt = JSON.parse(payload); } catch { continue; }
-
-      logEntry(logPath, { ts: new Date().toISOString(), direction: 'haiku->bridge', payload: evt });
-
-      if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
-        toolBlocks.set(evt.index, { id: evt.content_block.id, name: evt.content_block.name, jsonAccum: '' });
-      } else if (evt.type === 'content_block_delta') {
-        const d = evt.delta;
-        if (d?.type === 'text_delta' && d.text) {
-          const part = new vscode.LanguageModelTextPart(d.text);
-          progress.report(part);
-          logEntry(logPath, { ts: new Date().toISOString(), direction: 'bridge->sm', payload: { type: 'text', text: d.text } });
-        } else if (d?.type === 'input_json_delta') {
-          const blk = toolBlocks.get(evt.index);
-          if (blk) blk.jsonAccum += d.partial_json || '';
-        }
-      } else if (evt.type === 'content_block_stop') {
-        const blk = toolBlocks.get(evt.index);
-        if (blk) {
-          let input: any = {};
-          try { input = blk.jsonAccum ? JSON.parse(blk.jsonAccum) : {}; } catch { input = { _raw: blk.jsonAccum }; }
-          const part = new vscode.LanguageModelToolCallPart(blk.id, blk.name, input);
-          progress.report(part);
-          logEntry(logPath, { ts: new Date().toISOString(), direction: 'bridge->sm', payload: { type: 'tool_use', id: blk.id, name: blk.name, input } });
-          toolBlocks.delete(evt.index);
-        }
-      }
+): void {
+  for (const p of resp.parts ?? []) {
+    if (p.type === 'text') {
+      progress.report(new vscode.LanguageModelTextPart(p.text));
+      logEntry(logPath, { ts: new Date().toISOString(), direction: 'bridge->sm', payload: p });
+    } else if (p.type === 'tool_use') {
+      progress.report(new vscode.LanguageModelToolCallPart(p.id, p.name, p.input as object));
+      logEntry(logPath, { ts: new Date().toISOString(), direction: 'bridge->sm', payload: p });
     }
   }
 }
@@ -198,11 +160,17 @@ function resolveLogPath(): string {
 }
 
 /**
- * Provider class — message-only router.
+ * Provider class — pure message router (SSH local-forward analogue).
+ *
+ * @remarks
+ * Receives `messages[]` from the @lineage participant via the
+ * `provideLanguageModelChatResponse` hook, POSTs them as-is to
+ * `EVAL_BRIDGE_HAIKU_URL`, replays the response into the participant's
+ * progress callback. The bridge does not call any LLM — it forwards bytes.
  */
 class HaikuBridgeProvider implements vscode.LanguageModelChatProvider {
   constructor(
-    private readonly apiKey: string,
+    private readonly haikuUrl: string,
     private readonly modelId: string,
     private readonly logPath: string,
     private readonly logger: Logger,
@@ -216,7 +184,7 @@ class HaikuBridgeProvider implements vscode.LanguageModelChatProvider {
       version: this.modelId,
       maxInputTokens: 200_000,
       maxOutputTokens: 8192,
-      tooltip: 'Routes @lineage messages to Anthropic Haiku via the eval bridge. Logs every message that crosses the bridge.',
+      tooltip: 'Internal test mechanism. Forwards messages to the configured Haiku endpoint.',
       detail: 'eval-bridge',
       capabilities: { toolCalling: true, imageInput: false },
     }];
@@ -229,52 +197,37 @@ class HaikuBridgeProvider implements vscode.LanguageModelChatProvider {
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
-    // 1. Log inbound — every SM-→bridge message.
-    logEntry(this.logPath, {
-      ts: new Date().toISOString(),
-      direction: 'sm->bridge',
-      payload: {
-        message_count: messages.length,
-        messages: messages.map(m => ({
-          role: m.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant',
-          content: serialiseContent(m.content),
-        })),
-        tool_count: options.tools?.length ?? 0,
-        tools: (options.tools ?? []).map(t => ({ name: t.name, description: t.description })),
-        toolMode: options.toolMode,
-      },
-    });
+    const payload = buildBridgePayload(messages, options.tools, this.modelId, options.toolMode);
 
-    // 2. Translate to Anthropic shape.
-    const { url, body } = buildAnthropicRequest(messages, options.tools, this.modelId);
-    logEntry(this.logPath, { ts: new Date().toISOString(), direction: 'bridge->haiku', payload: body });
+    // 1. Log SM→bridge: the messages[] the participant emitted.
+    logEntry(this.logPath, { ts: new Date().toISOString(), direction: 'sm->bridge', payload });
 
-    // 3. POST to Anthropic with streaming.
+    // 2. Forward to Haiku endpoint as-is.
     const controller = new AbortController();
     const cancelHandler = token.onCancellationRequested(() => controller.abort());
+    let resp: BridgeResponse;
     try {
-      const res = await fetch(url, {
+      logEntry(this.logPath, { ts: new Date().toISOString(), direction: 'bridge->haiku', payload });
+      const res = await fetch(this.haikuUrl, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': this.apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify(body),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '<no body>');
-        const msg = `Anthropic HTTP ${res.status}: ${text.slice(0, 500)}`;
+        const msg = `Haiku endpoint HTTP ${res.status}: ${text.slice(0, 500)}`;
         logEntry(this.logPath, { ts: new Date().toISOString(), direction: 'haiku->bridge', payload: { error: msg } });
         throw new Error(msg);
       }
-      if (!res.body) throw new Error('Anthropic response had no body');
-      const reader = res.body.getReader();
-      await streamAnthropicToProgress(reader, progress, this.logPath);
+      resp = (await res.json()) as BridgeResponse;
+      logEntry(this.logPath, { ts: new Date().toISOString(), direction: 'haiku->bridge', payload: resp });
     } finally {
       cancelHandler.dispose();
     }
+
+    // 3. Replay response → participant via progress.report.
+    replayResponseToProgress(resp, progress, this.logPath);
   }
 
   async provideTokenCount(
@@ -293,13 +246,16 @@ class HaikuBridgeProvider implements vscode.LanguageModelChatProvider {
  * Register the bridge provider at extension activation — internal test mechanism.
  *
  * @remarks
- * Activates ONLY when env var `EVAL_BRIDGE_ANTHROPIC_KEY` (or `ANTHROPIC_API_KEY`)
- * is set. There is NO public configuration surface — no `package.json`
- * `contributes.configuration` entry, no settings-UI toggle, no command. End
- * users running the production extension never see this provider, never see
- * any reference to it in settings, and cannot enable it accidentally. It
- * exists exclusively for test-host invocations driven via env vars
- * (typically `tests/e2e/...` setup).
+ * Activates ONLY when env var `EVAL_BRIDGE_HAIKU_URL` is set. There is NO
+ * public configuration surface — no `package.json` `contributes.configuration`
+ * entry, no settings-UI toggle, no command. End users running the production
+ * extension never see this provider and cannot enable it accidentally. It
+ * exists exclusively for test-host invocations driven via env vars.
+ *
+ * No API keys live in the extension. The Haiku endpoint at the configured
+ * URL is owned by the test orchestrator (a small external HTTP server that
+ * actually invokes the model — Anthropic API, Claude Code Task, local
+ * Ollama, whatever). The bridge is byte-forwarder.
  *
  * @returns A `Disposable` that unregisters the provider, or `null` when the
  *          env var is absent (production path).
@@ -307,12 +263,12 @@ class HaikuBridgeProvider implements vscode.LanguageModelChatProvider {
 export function registerEvalBridgeLmProvider(
   outputChannel: vscode.LogOutputChannel,
 ): vscode.Disposable | null {
-  const apiKey = process.env.EVAL_BRIDGE_ANTHROPIC_KEY ?? process.env.ANTHROPIC_API_KEY ?? '';
-  if (!apiKey) return null;
+  const haikuUrl = process.env.EVAL_BRIDGE_HAIKU_URL ?? '';
+  if (!haikuUrl) return null;
   const modelId = process.env.EVAL_BRIDGE_MODEL_ID ?? 'claude-haiku-4-5-20251001';
   const logPath = resolveLogPath();
   const logger = Logger.create(outputChannel, 'Bridge');
-  logger.info(`Eval LM provider registered (internal test mechanism) — model=${modelId}  log=${logPath}`);
-  const provider = new HaikuBridgeProvider(apiKey, modelId, logPath, logger);
+  logger.info(`Eval LM provider registered (internal test mechanism) — url=${haikuUrl}  model=${modelId}  log=${logPath}`);
+  const provider = new HaikuBridgeProvider(haikuUrl, modelId, logPath, logger);
   return vscode.lm.registerLanguageModelChatProvider('eval-bridge', provider);
 }
