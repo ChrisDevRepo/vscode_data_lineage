@@ -37,10 +37,37 @@
 - [HumanResources].[vEmployeeDepartment]
 - [HumanResources].[uspUpdateEmployeeHireInfo]
 - [HumanResources].[uspUpdateEmployeeLogin]
-- [HumanResources].[uspUpdateEmployeePersonalStatus]
+- [HumanResources].[uspUpdateEmployeePersonalInfo]
 
 ## Forbidden Nodes
 - Forbidden utility nodes (uspLogError, uspPrintError, ErrorLog) in scope at d≥2 but MUST be pruned via verdict=prune.
+
+## Expected Structural Coverage (DDL-derived)
+
+> The AI can only emit a structural element if the DDL contains the upstream evidence. This table lists what the DDL of each Required Node actually contains and the corresponding output element a complete capture would produce. Missing where DDL has nothing to show is **not a failure**; missing where DDL has the evidence **is**.
+
+| Required node | DDL evidence available | Expected long-memory element |
+|---|---|---|
+| `[HumanResources].[Employee]` (table, 16 cols, no body) | column list only | column-group naming; no formulas/joins to extract |
+| `[HumanResources].[vEmployee]` (view, 1,262 chars, 5 INNER JOINs across address chain) | 4 column-AS renames (`pnt.[Name] AS [PhoneNumberType]`, `sp.[Name] AS [StateProvinceName]`, `cr.[Name] AS [CountryRegionName]`, `e.[JobTitle]`); 5 INNER JOINs through `Person` → `BusinessEntityAddress` → `Address` → `StateProvince` → `CountryRegion` | 1 markdown table mapping the renames; ⚠️ for INNER-JOIN address-chain drop semantics (employee with no address row is dropped) |
+| `[HumanResources].[vEmployeeDepartment]` (view, 613 chars, current-employee filter) | 2 column renames (`d.[Name] AS [Department]`, etc.); `WHERE edh.EndDate IS NULL` business filter; `EmployeeDepartmentHistory` point-in-time semantics | column-rename mini-table; code-fenced `WHERE edh.EndDate IS NULL` quote; ⚠️ for "shows only current departments" behaviour |
+| `[HumanResources].[uspUpdateEmployeeHireInfo]` (procedure, 1,120 chars) | UPDATE Employee (3 cols: JobTitle, HireDate, CurrentFlag) + INSERT EmployeePayHistory (4 cols) inside `BEGIN TRANSACTION + BEGIN TRY/CATCH`; `uspLogError` handler | code-fenced UPDATE statement; code-fenced INSERT statement; loading-pattern label `append` (history table) + `upsert` (Employee row); ⚠️ for transactional-rollback behaviour |
+| `[HumanResources].[uspUpdateEmployeeLogin]` (procedure, 687 chars) | UPDATE Employee (5 cols: OrganizationNode, LoginID, JobTitle, HireDate, CurrentFlag) + BEGIN TRY/CATCH + `uspLogError` handler | code-fenced UPDATE statement; loading-pattern label `upsert`; named writer columns |
+| `[HumanResources].[uspUpdateEmployeePersonalInfo]` (procedure, 628 chars) | UPDATE Employee (4 cols: NationalIDNumber, BirthDate, MaritalStatus, Gender) + BEGIN TRY/CATCH + `uspLogError` handler | code-fenced UPDATE statement; loading-pattern label `upsert`; named PII columns (⚠️ if PII-handling is in scope) |
+
+**Expected coverage where DDL has the evidence (no char floors):**
+
+The rubric does NOT impose lower-bound character counts on long memory or `result_graph.description`. A structurally thin DDL produces a thin section honestly; inventing length to hit a target is a correctness failure. The check is binary per element — *"DDL contains the evidence ⇒ output should reflect it"*:
+
+| DDL evidence in this case | Output element a complete capture should produce |
+|---|---|
+| 2 views with column-AS renames (vEmployee, vEmployeeDepartment) | ≥ 2 markdown column-rename tables across the persisted body |
+| 3 writer SPs with explicit UPDATE statements | ≥ 3 code-fenced SQL evidence blocks (one per writer) |
+| 1 WHERE filter (`edh.EndDate IS NULL` in vEmployeeDepartment) | ≥ 1 code-fenced WHERE-clause quote |
+| 2 INNER-JOIN drop semantics (vEmployee address chain + vEmployeeDepartment current-only) | ≥ 2 ⚠️ callouts |
+| Question demands two sections labelled "Writers" / "Readers" | exactly 2 `present_result.sections[]` with those labels |
+
+Chat narration should be brief — terse wrap-up only; no per-node deep dive (that belongs in `result_graph.description`).
 
 ## Optimal Path
 1. `lineage_get_context` to verify schemas.

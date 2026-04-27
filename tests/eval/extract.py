@@ -123,6 +123,12 @@ def parse_case_spec(test_id: str) -> dict:
 
     spec["required_nodes"] = _bullets_under("Required Nodes")
     spec["forbidden_nodes"] = _bullets_under("Forbidden Nodes")
+
+    # DDL-derived expected structural coverage — entire markdown block under
+    # the heading; rendered verbatim into the report so reviewers see the
+    # per-element pass/fail target alongside the actual structural counts.
+    m = re.search(r"^##\s+Expected Structural Coverage[^\n]*\n(.+?)(?=\n##\s|\Z)", text, re.MULTILINE | re.DOTALL)
+    spec["expected_structural_coverage"] = m.group(1).strip() if m else ""
     return spec
 
 
@@ -671,24 +677,39 @@ def build_md(test_id: str, merged: dict, git_head: str, chat_text: str | None = 
         A("---")
         A("")
 
-    # ---- 6.5 Structural-quality KPIs (success metric for iter-vs-iter comparison) ----
-    # Iter-1 reference for description: bb-q1-employee-technical (12 slots, 819 avg, 6 sections — see _AW_REFERENCE).
-    # b1 (CadenceWorker UAT) reference for description shape: 27,878 chars / 7 numbered sections / 4+ tables / 3+ ⚠️ / multiple code fences.
-    # b1 chat reference: 5,263 chars.
-    A("## 6.5 Structural-quality KPIs (success metric)")
+    # ---- 6.4 DDL-derived expected coverage (from case file) ----
+    esc = spec.get("expected_structural_coverage") or ""
+    if esc:
+        A("## 6.4 Expected structural coverage (DDL-derived, from case file)")
+        A("")
+        A("> Lifted verbatim from `tests/cases/<id>.md` `## Expected Structural Coverage (DDL-derived)`. The rubric counts presence per element — DDL contains the evidence ⇒ output should reflect it. Compare against the actual counts in `## 6.5` below.")
+        A("")
+        A(esc)
+        A("")
+
+    # ---- 6.5 Structural counts (no char floors) ----
+    # Per skill HARD RULE 5/6/7: rubric counts presence of structural elements,
+    # never length. DDL-derived expected coverage lives in the case file's
+    # `## Expected Structural Coverage (DDL-derived)` table. The chat-vs-
+    # description ratio surfaces synthesis-role-split inversion at-a-glance.
+    A("## 6.5 Structural element counts (presence, not length)")
     A("")
-    A("> Mechanical structural counts on the persisted `result_graph.description` and the `chat.txt`. These move iteration-over-iteration; if they don't, the prompt change didn't land.")
+    A("> No char floors anywhere. A thin DDL legitimately yields a short capture; a rich DDL legitimately yields a long one. This block counts the structural elements present in each surface — compare against the case file's `## Expected Structural Coverage (DDL-derived)` table to decide pass/fail per element.")
     A("")
-    A("| Element | Description (`result_graph.description`) | Chat (`<id>.chat.txt`) | b1 reference (description) |")
-    A("| :--- | -: | -: | -: |")
-    A(f"| chars | {description_kpis['chars']:,} | {chat_kpis['chars']:,} | 27,878 |")
-    A(f"| numbered `## N` sections | {description_kpis['numbered_sections']} | {chat_kpis['numbered_sections']} | 7 |")
-    A(f"| markdown tables | {description_kpis['tables']} | {chat_kpis['tables']} | 4+ |")
-    A(f"| ⚠️ callouts | {description_kpis['warnings']} | {chat_kpis['warnings']} | 3+ |")
-    A(f"| LaTeX `$expr$` | {description_kpis['latex_inline']} | {chat_kpis['latex_inline']} | varies |")
-    A(f"| code fences | {description_kpis['code_fences']} | {chat_kpis['code_fences']} | several |")
-    A(f"| total `##` headings | {description_kpis['headings']} | {chat_kpis['headings']} | 7+ |")
+    A("| Element | Description (`result_graph.description`) | Chat (`<id>.chat.txt`) |")
+    A("| :--- | -: | -: |")
+    A(f"| numbered `## N` sections | {description_kpis['numbered_sections']} | {chat_kpis['numbered_sections']} |")
+    A(f"| markdown tables | {description_kpis['tables']} | {chat_kpis['tables']} |")
+    A(f"| ⚠️ callouts | {description_kpis['warnings']} | {chat_kpis['warnings']} |")
+    A(f"| LaTeX `$expr$` | {description_kpis['latex_inline']} | {chat_kpis['latex_inline']} |")
+    A(f"| code fences | {description_kpis['code_fences']} | {chat_kpis['code_fences']} |")
+    A(f"| total `##` headings | {description_kpis['headings']} | {chat_kpis['headings']} |")
+    A(f"| chars (informational only) | {description_kpis['chars']:,} | {chat_kpis['chars']:,} |")
     A("")
+    if chat_kpis['chars'] > description_kpis['chars'] and description_kpis['chars'] > 0:
+        ratio = chat_kpis['chars'] / max(1, description_kpis['chars'])
+        A(f"> ⚠️ **Synthesis role-split inverted** — chat narration ({chat_kpis['chars']:,} chars) is **{ratio:.2f}×** the persisted description ({description_kpis['chars']:,} chars). Expected: description >> chat. The model is dumping content into the wrong surface.")
+        A("")
 
     # detail-memory aggregate KPIs
     detail_section_count = 0

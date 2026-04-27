@@ -44,44 +44,6 @@ import { renderScopeSummaryMd } from './scopeSummaryRenderer';
 export { renderScopeSummaryMd } from './scopeSummaryRenderer';
 
 /**
- * Minimum char-length floor for a captured section's `text`.
- *
- * @remarks
- * Structural floor only — catches near-empty submissions (e.g. one-line stubs
- * that bypass the YAML capture template's structured slots). Not a quality
- * threshold; depth/narrative judgments stay in the prompt. The floor is
- * deliberately well below any genuine business or technical capture — a
- * rejection here means the model emitted a placeholder, not that the prose
- * was "too short".
- */
-const MIN_SECTION_TEXT_CHARS = 120;
-
-/**
- * Validates per-section `text` length floor for analyze/pass verdicts.
- *
- * @remarks
- * `verdict: 'prune'` is exempt (pruned nodes may submit no sections). Each
- * section's `text` must be at least {@link MIN_SECTION_TEXT_CHARS} chars when
- * present — below that the captured slot is structurally a stub.
- *
- * @returns A structured hint string when any section is below the floor, `null` otherwise.
- */
-function validateSectionLengths(
-  sections: CapturedSection[] | undefined,
-  verdict: 'analyze' | 'pass' | 'prune',
-): string | null {
-  if (verdict === 'prune') return null;
-  const list = sections ?? [];
-  for (const s of list) {
-    const len = s.text?.length ?? 0;
-    if (len < MIN_SECTION_TEXT_CHARS) {
-      return `sections[].text must be at least ${MIN_SECTION_TEXT_CHARS} chars (got ${len} for angle="${s.angle}"). Re-emit the section using the fired *_capture template's structured slots — a near-empty body indicates the template was bypassed.`;
-    }
-  }
-  return null;
-}
-
-/**
  * Validates a finding's `sections[]` against the locked session classification.
  *
  * @remarks
@@ -284,10 +246,12 @@ class ToolHandler {
       // re-calls start_exploration with updated filters as a full re-spec. Reuse the
       // existing engine and re-run init with merged params (origin/direction/depth fall
       // back to the prior init snapshot) instead of rejecting as `already_started`.
+      // Status check on `prior` is intentionally not engine-status: getHopContext() at
+      // gate emission flips it to 'awaiting_findings' before the user replies, so a
+      // status==='initialized' check would misclassify a legitimate refine as duplicate.
       const isRefining = sess.phase.kind === 'awaiting_gate'
         && sess.phase.gate.gate === 'confirm_sm_start'
-        && !!prior
-        && prior.status === 'initialized';
+        && priorLive;
       // Fresh exploration from the completed (follow-up) phase: the AI has decided the
       // question is a genuinely new trace, not a refinement. Discard the prior archive
       // so the confirm_sm_start gate can fire and the new run starts clean.
@@ -510,15 +474,14 @@ class ToolHandler {
 
       // The agreement-phase gate locks `sess.classification`. Each finding's
       // sections[] must match the lock; verdict=prune may submit length 0.
+      // Section text non-emptiness is enforced by the Zod schema (`z.string().min(1)`)
+      // in `CapturedSectionSchema`. No upper or lower length floor beyond that —
+      // structurally simple DDL (a SELECT-with-JOIN view, a 4-line UPDATE proc)
+      // cannot produce long captures without inventing content. The capture
+      // template extracts every structural element the DDL contains; the
+      // boundary's job is only to reject hollow submissions.
       const findings = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
       for (const f of findings) {
-        const lengthViolation = validateSectionLengths(f.sections, f.verdict);
-        if (lengthViolation) {
-          return this.logAndReturn('submit_findings', {
-            error: 'section_too_short',
-            hint: lengthViolation,
-          }, input);
-        }
         const violation = validateSectionsAgainstClassification(f.sections, f.verdict, sess.classification);
         if (violation) {
           return this.logAndReturn('submit_findings', {
