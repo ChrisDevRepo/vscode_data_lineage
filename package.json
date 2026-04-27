@@ -424,6 +424,16 @@
             "default": true,
             "description": "Enable the @lineage chat participant and AI lineage tools. Disable for users who do not use VS Code Copilot or want to remove AI features entirely."
           },
+          "dataLineageViz.eval.lmProviderEnabled": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Test-only. Registers a `LanguageModelChatProvider` (vendor `eval-bridge`, family `haiku`) that routes `messages[]` from the `@lineage` participant to Anthropic Haiku and streams the response back. Logs every message in both directions to a JSONL file. Requires `EVAL_BRIDGE_ANTHROPIC_KEY` (or `ANTHROPIC_API_KEY`) env var. Production users should leave this off — it has no effect unless the api key env var is also set."
+          },
+          "dataLineageViz.eval.lmProviderLogPath": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Test-only. Override path for the eval-bridge JSONL message log. Empty = auto path under `test-results/eval-bridge/`. Env var `EVAL_BRIDGE_LOG_PATH` takes precedence."
+          },
           "dataLineageViz.ai.maxRounds": {
             "type": "integer",
             "default": 50,

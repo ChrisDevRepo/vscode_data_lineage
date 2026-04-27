@@ -9,6 +9,7 @@ import { Logger, testLogCapture } from './utils/log';
 import { migrateProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
 import { LineageParticipant } from './ai/lineageParticipant';
+import { registerEvalBridgeLmProvider } from './ai/evalLmProvider';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules, type ParseRulesConfig } from './engine/sqlBodyParser';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -86,6 +87,14 @@ export async function activate(context: vscode.ExtensionContext) {
   // Register the Chat Participant.
   const participant = new LineageParticipant(context, getSession, outputChannel, getActivePanel);
   participant.register();
+
+  // Register the eval-bridge LM provider when EVAL_BRIDGE_ANTHROPIC_KEY env
+  // (or dataLineageViz.eval.lmProviderEnabled setting) is on. Production
+  // users never see this provider — it's a test-only routing layer that
+  // forwards `messages[]` to Anthropic Haiku and streams responses back.
+  // Pure transport — no message rebuilding.
+  const bridgeDisposable = registerEvalBridgeLmProvider(outputChannel);
+  if (bridgeDisposable) context.subscriptions.push(bridgeDisposable);
 
   // Watch for configuration changes and trigger reloads where necessary.
   const configLogger = Logger.create(outputChannel, 'Config');
