@@ -654,6 +654,23 @@ class ToolHandler {
         for (const n of validation.notes) existingNotes.set(n.node_id, { nodeId: n.node_id, summary: n.text });
         sess.resultGraph.notes = Array.from(existingNotes.values());
       }
+      // B-1: persist the synthesized body fields onto resultGraph so `GET /state` carries
+      // the full description, not just topology + suggested_*. Pre-fix these fields were
+      // only sent transiently to the webview; the persisted resultGraph was empty.
+      if (sess.resultGraph) {
+        sess.resultGraph.description = validation.description ?? undefined;
+        sess.resultGraph.summary = validation.summary ?? undefined;
+        sess.resultGraph.title = input.title ?? undefined;
+        sess.resultGraph.intro = input.intro ?? undefined;
+        sess.resultGraph.closing = input.closing ?? undefined;
+        if (Array.isArray(input.sections)) {
+          sess.resultGraph.sections = input.sections.map(s => ({
+            label: s.label,
+            node_ids: s.node_ids,
+            text: s.text,
+          }));
+        }
+      }
       sess.lastPresentResultDescription = validation.description ?? null;
       // Signal the button gate in dispatchExit that a graph was built this turn.
       sess.presentResultCalledThisTurn = true;

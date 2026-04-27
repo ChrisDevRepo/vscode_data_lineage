@@ -297,11 +297,16 @@ export class AiSession {
   public storeSmResult(fullResult: SmResult): void {
     const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
     const verdicts: Record<string, NodeRole> = {};
-    
+
     for (const n of fullResult.fullNodes) {
       verdicts[n.id] = (n.role as NodeRole) || 'noted';
     }
 
+    // B-1: preserve any synthesized body fields written by a prior present_result call.
+    // storeSmResult fires at exploration completion AND on supplement rounds; in the
+    // supplement case the prior description should survive until the new present_result
+    // overwrites it explicitly. Without this guard, follow-up rounds blank the description.
+    const prior = this.resultGraph;
     this.resultGraph = {
       nodeIds: fullResult.fullNodes.map(n => n.id),
       edges: fullResult.edges,
@@ -319,6 +324,12 @@ export class AiSession {
         .filter(s => s.note_caption)
         .map(s => ({ node_id: s.nodeId, text: s.note_caption! })),
       suggested_sections: fullResult.suggested_sections,
+      description: prior?.description,
+      summary: prior?.summary,
+      title: prior?.title,
+      intro: prior?.intro,
+      closing: prior?.closing,
+      sections: prior?.sections,
     };
   }
 

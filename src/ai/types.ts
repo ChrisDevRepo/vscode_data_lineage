@@ -38,6 +38,25 @@ export interface ResultGraph {
   suggested_notes?: Array<{ node_id: string; text: string }>;
   /** AI-suggested grouping of nodes into narrative sections. */
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
+  /**
+   * Engine-assembled markdown body produced by `present_result` (engine output, not AI input).
+   * Populated by the tool handler from `orderAndAssemble()` output so `GET /session/:id/state`
+   * carries the full synthesized description, not just topology + suggested_* fields.
+   */
+  description?: string;
+  /** AI-supplied one-line digest from `present_result.input.summary`. */
+  summary?: string;
+  /** AI-supplied document heading from `present_result.input.title`. */
+  title?: string;
+  /** AI-supplied context paragraph from `present_result.input.intro`. */
+  intro?: string;
+  /** AI-supplied closing note from `present_result.input.closing`. */
+  closing?: string;
+  /**
+   * AI-supplied report sections from `present_result.input.sections[]`. Each carries the
+   * verbatim section body lifted from per-node detail-memory at synthesis.
+   */
+  sections?: Array<{ label: string; node_ids?: string[]; text: string }>;
 }
 
 /** 
