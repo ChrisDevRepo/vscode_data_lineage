@@ -18,7 +18,7 @@
  *
  * Deliberately excluded from every LM phase: `lineage_get_neighborhood` — it
  * overlaps `start_exploration` (BFS + DDL without engine supervision) and
- * drove the 2026-04-24 DISCOVERY-routing regression. The tool remains registered
+ * exposes the AI to an off-policy routing surface. The tool remains registered
  * so panel / webview / engine callers that invoke it directly are unaffected.
  */
 

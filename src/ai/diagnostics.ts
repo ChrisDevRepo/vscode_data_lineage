@@ -40,10 +40,13 @@ export interface PerformanceDiagnostics {
 }
 
 /**
- * PerformanceCollector - OOP Diagnostic Utility
- * 
- * Encapsulates the collection, calculation, and formatting of AI performance metrics.
- * Designed to be injected into the LineageParticipant loop and easily removed later.
+ * Collects per-round and aggregate performance metrics for one chat turn.
+ *
+ * @remarks
+ * Single-instance per turn, owned by the participant loop. Each LM round calls
+ * {@link startRound} on entry and {@link recordRound} on exit; the participant
+ * calls {@link finalize} at end of turn to produce the structured diagnostics
+ * payload returned in `ChatResult.metadata`.
  */
 export class PerformanceCollector {
   private readonly tStart: number = Date.now();
@@ -95,8 +98,7 @@ export class PerformanceCollector {
     const focusHint = focusNode ? ` node=${focusNode}` : '';
     const cacheHint = cacheHit ? ' cache=hit' : ' cache=miss';
     const errHint = error ? ` ERROR=${error}` : '';
-    
-    // Standardized pair naming: [Hop X] Metrics — phase=... latency=...
+
     this.logger.debug(`[Hop ${round}] [${phase.toUpperCase()}] Metrics — latency=${latency}ms tokens=${tokensIn}in/${tokensOut}out tools=[${toolNames}]${focusHint}${cacheHint}${errHint}`);
   }
 
@@ -132,7 +134,6 @@ export class PerformanceCollector {
       }
     };
 
-    // Standardized summary naming
     this.logger.info(`[Hop] Performance Final — total_latency=${totalLatency}ms hops=${this.rounds.length} tokens=${totalIn}in/${totalOut}out utilization=${utilization} evictions=${this.evictionCount}`);
     
     return diag;

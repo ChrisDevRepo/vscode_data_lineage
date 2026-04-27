@@ -128,7 +128,7 @@ export class LineageParticipant {
           });
         }
 
-        // Surface the cached AI-preview description as a 1:1 chip — restored from baseline2.
+        // Surface the cached AI-preview description as a one-click recall chip.
         if (sess.lastPresentResultDescription) {
           followups.push({
             prompt: SHOW_DESCRIPTION_TRIGGER,
@@ -297,8 +297,7 @@ export class LineageParticipant {
         ].join('\n');
         this.logger.info(`[Gate] ${gate.gate} — user refining (${answer})`);
       } else if (answer === 'redirect') {
-        // Non-confirm_sm_start gate (schema/depth expansion) — the original behaviour:
-        // treat as a redirect and reset exploration.
+        // Non-confirm_sm_start gate (schema/depth expansion) — treat as a redirect and reset exploration.
         sess.resetExploration();
         this.logger.info(`[Gate] ${gate.gate} — user redirected`);
       } else {
@@ -545,18 +544,7 @@ export class LineageParticipant {
           this.logger.debug(`[Hop ${roundCount}] engine_status=${st.status} focus=${st.currentFocusNodeId ?? '(null)'}`);
         }
 
-        /**
-         * VS Code API Compliance:
-         * We explicitly map LanguageModelToolInformation to LanguageModelChatTool instances.
-         * Using the raw tool information objects from vscode.lm.tools would cause sendRequest to silently 
-         * drop the tools array. 
-         * 
-         * Memory Strategy (Pro/Con):
-         * We use a custom "Sliding Memory" implementation rather than generic utilities like @vscode/chat-extension-utils.
-         * Pro: Authoritative wipes via {@link MessageEnvelope.wipeAndSeed} keep the context window focused.
-         * Pro: Domain-specific JSON compaction (via historyManager.ts) preserves gate payloads while stripping noise.
-         * Con: Requires manual tool-loop orchestration (MAX_ROUNDS).
-         */
+        // Explicit map to LanguageModelChatTool — passing raw vscode.lm.tools objects causes sendRequest to silently drop the tools array.
         const tools: vscode.LanguageModelChatTool[] = lineageTools.map(t => ({
           name: t.name,
           description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'),
@@ -648,9 +636,8 @@ export class LineageParticipant {
           // Synthesis terminal: present_result is the explicit terminator.
           // - Called this turn → exit final_answer.
           // - Toolless and not yet retried → one-shot corrective via MessageEnvelope and continue.
-          //   The pairing invariant in MessageEnvelope makes this structurally safe (the previous
-          //   retry-rebuild was the origin of the 2026-04-25 HTTP-400 — orphan tool_result after
-          //   Bedrock User-merge — but envelope.pushAssistant + pushUserText preserves the pair).
+          //   `envelope.pushAssistant + pushUserText` preserves the tool_use/tool_result pair so
+          //   Bedrock User-merge cannot orphan a tool_result on the next sendRequest.
           // - Toolless after one corrective → archive fallback (deterministic markdown render).
           if (activePhase === 'synthesis') {
             if (sess.presentResultCalledThisTurn) {
@@ -897,30 +884,15 @@ export class LineageParticipant {
   }
 
   /**
-   * Performs post-execution cleanup based on the hop loop outcome.
-   *
-   * @remarks
-   * Handles the persistence of partial results and UI state transitions for all
-   * `HopLoopExit` variants, including gates, completion, and failure modes.
-   *
-   * @param exit - The terminal outcome of the hop loop.
-   * @param sess - The active AI session.
-   * @param writer - Interface for writing the final response components.
-   * @param userPrompt - The original user input prompt.
-   * @param roundCount - Total execution rounds completed.
-   * @param maxRounds - The configured round budget for the session.
-   */
-  /**
    * Streams the captured per-node archive directly to the chat when synthesis
-   * exits without {@link sess.presentResultCalledThisTurn}.
+   * exits without {@link AiSession.presentResultCalledThisTurn} ever flipping true.
    *
    * @remarks
-   * Replaces the previous synthesis-corrective retry loop. The model already
-   * chose prose; rephrasing the prompt rarely changes that and was the path
-   * that produced the 2026-04-25 HTTP-400 (orphaned tool_result after Bedrock
-   * User-merge in the corrective rebuild). A deterministic fallback render
-   * gives the user the analysis that was actually performed instead of an
-   * error or two redundant retries.
+   * Once the model chooses prose over a tool call, rephrasing the prompt rarely
+   * recovers it — and the corrective-rebuild path was a known source of orphaned
+   * `tool_result` parts after Bedrock User-merge. A deterministic fallback render
+   * gives the user the analysis that was actually performed instead of an error
+   * or another redundant retry.
    */
   private renderArchiveFallback(sess: AiSession, writer: ChatResponseWriter): void {
     const archive = sess.memory.getResult();
@@ -980,6 +952,23 @@ export class LineageParticipant {
     });
   }
 
+  /**
+   * Performs post-execution cleanup based on the hop loop outcome.
+   *
+   * @remarks
+   * Handles partial-result persistence and UI state transitions for every
+   * `HopLoopExit` variant — gates, final answer, completion, hop-cap, abort,
+   * cancel, error. The trailing finalizer also re-emits the gate button row
+   * whenever the session lands in `awaiting_gate`, so a new exit variant cannot
+   * silently swallow the affordances.
+   *
+   * @param exit - The terminal outcome of the hop loop.
+   * @param sess - The active AI session.
+   * @param writer - Interface for writing the final response components.
+   * @param userPrompt - The original user input prompt.
+   * @param roundCount - Total execution rounds completed.
+   * @param maxRounds - The configured round budget for the session.
+   */
   private dispatchExit(exit: HopLoopExit, sess: AiSession, writer: ChatResponseWriter, userPrompt: string, roundCount: number, maxRounds: number): void {
     switch (exit.kind) {
       case 'gate': {

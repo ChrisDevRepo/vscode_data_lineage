@@ -39,6 +39,7 @@ export const OUT_OF_SCOPE_CONTRACT: string =
  * and core grounding rules. LaTeX is intentionally absent — it is only relevant during
  * active exploration where math expressions appear in SQL transform analysis.
  *
+ * @param phase - Current session phase; surfaces as the "Current phase: …" line so the AI knows which protocol applies before the phase-specific block is appended.
  * @param dbPlatform - Human-readable database platform string from the loaded model.
  * @param filterSchemas - Schema names currently active in the user's filter.
  * @param totalSchemaCount - Total number of schemas in the loaded model.
@@ -277,8 +278,7 @@ export const RECOMMEND_FOLLOWUPS_TRIGGER = 'Follow-up: Explore related objects�
  * @remarks
  * Detected verbatim by `lineageParticipant.handleChatRequest`, which short-circuits
  * the LM round-trip and writes `sess.lastPresentResultDescription` directly into
- * chat. Mirrors the baseline2 mechanism that was lost during the
- * `enrich_view → present_result` rename.
+ * chat — replaying the rendered description without re-invoking the model.
  */
 export const SHOW_DESCRIPTION_TRIGGER = 'Show the full description';
 

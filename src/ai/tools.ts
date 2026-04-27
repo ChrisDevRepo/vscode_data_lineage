@@ -108,9 +108,9 @@ export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
  *
  * @remarks
  * Each fired `*_capture` YAML template produces ONE entry. Angle-vs-classification
- * conformance is enforced at the tool handler boundary (G11) — the schema accepts
- * any combination here; the handler rejects mismatches against the locked
- * `sess.classification`.
+ * conformance is enforced at the tool handler boundary
+ * (`toolProvider.validateSectionsAgainstClassification`) — the schema accepts any
+ * combination here; the handler rejects mismatches against the locked `sess.classification`.
  */
 const CapturedSectionSchema = z.object({
   /** Which YAML capture template produced this section. */
@@ -455,7 +455,6 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
-  // Validate query (reject garbage)
   if (mode !== 'regex') {
     const validation = validateQuery(query);
     if (!validation.ok) {
@@ -715,12 +714,14 @@ export function getNeighborColumns(
   return { results, total: results.length };
 }
 
-// Two modes:
-//   Level BFS:  origin + upstream_hops + downstream_hops → explore by depth
-//   Path BFS:   origin + target → all nodes on paths between start and end
-// shouldInline() gates delivery mode: fits → full DDL, exceeds → on_demand hint.
-// types[] and schemas[] are include-only filters (no exclude).
-
+/**
+ * Object types whose body is the source of lineage information — view / procedure / function.
+ *
+ * @remarks
+ * Drives DDL-vs-columns selection in {@link buildHopFocusNode}, search-target filtering in
+ * {@link searchDdl}, and BFS-payload shape in {@link runBfsTrace}. Tables and external
+ * references are intentionally excluded — they expose columns + foreign keys, not bodies.
+ */
 export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
 /** Find all node IDs on any path between start and end (BFS from both sides, intersect). */

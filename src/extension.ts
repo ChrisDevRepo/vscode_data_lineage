@@ -135,9 +135,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
 /**
  * Extension Deactivation Lifecycle.
- * 
- * Cleans up global resources. Panel-specific resources (like database connections) 
- * are handled independently by their respective `onDidDispose` handlers.
+ *
+ * @remarks
+ * No explicit cleanup is required — every disposable from {@link activate}
+ * (output channel, command registrations, tree provider, chat participant,
+ * config-change listener, AI tools) is pushed onto `context.subscriptions`
+ * and torn down by VS Code automatically. Panel-specific resources such as
+ * database connections are released through each panel's own `onDidDispose`
+ * handler, again outside this function's responsibility.
  */
 export function deactivate() {
   // no-op

@@ -19,10 +19,10 @@ import type Graph from 'graphology';
  * Logging callback injected into state machines for operational tracing.
  *
  * @remarks
- * Use 'trace' for the most verbose graph-level operations (e.g., individual BFS steps),
- * 'debug' for round-level state changes, and 'info' for phase transitions.
+ * Per [`logging.md`](../../.claude/rules/logging.md), only `info` / `debug` / `warn` are
+ * permitted; `error` flows through dedicated channels with notification escalation.
  */
-export type LogFn = (level: 'info' | 'debug' | 'warn' | 'trace', msg: string) => void;
+export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
 
 
 /**

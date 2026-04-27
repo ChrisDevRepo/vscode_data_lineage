@@ -108,9 +108,7 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
     BLOCK.routing
   );
 
-  // Inline ships full DDL up front and does not expose `lineage_get_neighbor_columns`
-  // (per `toolPolicy`), so the pruning protocol — which instructs the AI to call that
-  // tool — is dead weight in inline mode.
+  // Inline ships full DDL up front and toolPolicy hides `lineage_get_neighbor_columns`, so the pruning protocol is dead weight there.
   if (!isInline) {
     sections.push('', BLOCK.pruningProtocol);
   }

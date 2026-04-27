@@ -269,9 +269,9 @@ class ToolHandler {
         exclusionPatterns: filter.exclusionPatterns || [],
       };
 
-      const engineLog = (l: 'info' | 'debug' | 'warn' | 'trace', msg: string) => {
+      const engineLog = (l: 'info' | 'debug' | 'warn', msg: string) => {
         const line = `[Engine] ${msg}`;
-        if (l === 'debug' || l === 'trace') this.logger.debug(line);
+        if (l === 'debug') this.logger.debug(line);
         else if (l === 'warn') this.logger.warn(line);
         else this.logger.info(line);
       };

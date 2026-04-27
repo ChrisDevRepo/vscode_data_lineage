@@ -90,6 +90,7 @@ const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue
  * @param templates - The loaded AI output templates (instruction strings).
  * @param phase - The current conversation phase.
  * @param classification - Optional mission-type signal; gates active-phase capture firing.
+ * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below {@link CLOSING_MIN_SLOTS}.
  * @returns A markdown block ready to append to the phase-appropriate system prompt.
  */
 export function resolveStagePrompt(

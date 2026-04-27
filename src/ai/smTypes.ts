@@ -193,7 +193,8 @@ export interface HopFinding {
    * single-angle classification (`business` or `technical`); length 2 for `both`.
    * Each section is lifted verbatim by synthesis as a peer entry in
    * `present_result.sections[]`. Mechanically validated against the locked
-   * session classification at the tool handler boundary (G11).
+   * session classification at the tool handler boundary
+   * (`toolProvider.validateSectionsAgainstClassification`).
    *
    * @remarks
    * Each entry is one fired `*_capture` template's output. The split lets

@@ -44,7 +44,7 @@
 - **Incremental view updates** — Ask `@lineage` to add or remove specific tables in an existing view without restarting the analysis.
 - **Show-full-description chip** — Every `@lineage` response that produced a graph view includes a chip that replays the full AI description inline. No re-analysis, no extra API call.
 - **Loading Pattern line** — Reports for stored procedures now start with a one-line `**Loading Pattern:**` summary (full / incremental / SCD2 / MERGE / etc.). Views and functions skip the line.
-- **Business vs technical reports** — `@lineage` infers whether your question is business-oriented, technical, or both, and shapes the report accordingly. Technical reports add a `#### Technical` subsection per section with SQL snippets, formulas, and performance observations.
+- **Business vs technical reports** — Pick `business`, `technical`, or `both` when starting an exploration. Business reports describe domain meaning (rules, formulas, consumer impact); technical reports describe execution (SQL evidence, joins, loading patterns, antipatterns). `both` produces two peer sections per node, one of each angle.
 - **Customizable AI output templates** — `aiOutputTemplates.yaml` now drives both what `@lineage` captures per node AND how the final report renders. Edit either side; changes flow through.
 - **Better compatibility with Copilot Free** — `@lineage` resolves the active chat model dynamically, fixing "Chat provider not registered" errors.
 

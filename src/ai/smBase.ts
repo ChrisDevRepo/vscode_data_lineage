@@ -1348,26 +1348,6 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Single funnel for all writes to the agenda.
-   *
-   * @remarks
-   * Enforces the **bipartite agenda rule** by construction: only bodied nodes
-   * (view / procedure / function) enter the agenda. Non-bodied nodes (tables,
-   * externals) are *contracted* — the authored question flows through them to
-   * their bodied neighbors in the current exploration direction, preserving the
-   * caller's intent.
-   *
-   * Cycle guard: `visitedRefs` prevents infinite recursion on graphs with
-   * reference-to-reference edges (e.g. a table that references another table).
-   *
-   * @param targetId - Node to enqueue (or contract).
-   * @param question - Authored reason / sub-question for the visit. Preserved verbatim when forwarded.
-   * @param depth - Topological depth relative to origin.
-   * @param priority - Agenda priority (0 = BFS, 2 = routed, 3 = origin).
-   * @param columns - Optional columns of interest (column-trace mode).
-   * @param visitedRefs - Internal cycle guard for the recursive contraction step.
-   */
-  /**
    * Forwards a pass-tagged node's intent to its in-direction bodied neighbours.
    *
    * @remarks
@@ -1388,6 +1368,26 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
+  /**
+   * Single funnel for all writes to the agenda.
+   *
+   * @remarks
+   * Enforces the **bipartite agenda rule** by construction: only bodied nodes
+   * (view / procedure / function) enter the agenda. Non-bodied nodes (tables,
+   * externals) are *contracted* — the authored question flows through them to
+   * their bodied neighbors in the current exploration direction, preserving the
+   * caller's intent.
+   *
+   * Cycle guard: `visitedRefs` prevents infinite recursion on graphs with
+   * reference-to-reference edges (e.g. a table that references another table).
+   *
+   * @param targetId - Node to enqueue (or contract).
+   * @param question - Authored reason / sub-question for the visit. Preserved verbatim when forwarded.
+   * @param depth - Topological depth relative to origin.
+   * @param priority - Agenda priority (0 = BFS, 2 = routed, 3 = origin).
+   * @param columns - Optional columns of interest (column-trace mode).
+   * @param visitedRefs - Internal cycle guard for the recursive contraction step.
+   */
   private enqueueHop(
     targetId: string,
     question: string,

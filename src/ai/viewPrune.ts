@@ -9,10 +9,10 @@
  * Removes nodes listed in `pruneIds` and drops every edge touching a pruned node.
  *
  * @remarks
- * Intentionally does NOT reconnect edges across pruned nodes. A prior passthrough
- * rewrite fabricated phantom edges between unrelated siblings of a shared hub
- * (pruning a staging table produced `upstream_source → downstream_sink` edges that
- * never existed). Simple filtering matches the 0.9.8 behavior callers rely on.
+ * Intentionally does NOT reconnect edges across pruned nodes. Reconnecting would
+ * fabricate phantom edges between unrelated siblings of a shared hub — pruning a
+ * staging table would produce `upstream_source → downstream_sink` edges that never
+ * existed in the source model.
  */
 export function prunePreserveOnly(
   nodeIds: ReadonlyArray<string>,

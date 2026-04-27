@@ -21,8 +21,8 @@ import type { LineageNode } from '../engine/types';
  * - `business` → exactly one section with `angle: 'business'`
  * - `technical` → exactly one section with `angle: 'technical'`
  * - `both` → two sections, one of each
- * Mechanically enforced in {@link toolProvider.submitFindings} (G11) per the
- * agreement-phase classification contract.
+ * Mechanically enforced in `toolProvider.validateSectionsAgainstClassification`
+ * per the agreement-phase classification contract.
  */
 export type CaptureAngle = 'business' | 'technical';
 
@@ -86,9 +86,9 @@ export interface DetailSlot {
  * Snapshot of the memory state delivered to the model at every navigation hop.
  *
  * @remarks
- * Shape matches the 0.9.8 contract: the user question is echoed verbatim and a 
- * sliding window of prior findings is exposed through `short_term_memory`. 
- * The model receives the immediate investigation context each hop.
+ * The user question is echoed verbatim and a sliding window of prior findings is
+ * exposed through `short_term_memory`. The model receives the immediate
+ * investigation context each hop.
  */
 export interface WorkingMemory {
   /** The user's original question, echoed verbatim every hop. */
@@ -105,7 +105,7 @@ export interface WorkingMemory {
     open: number;
     /** Coverage percentage across `total`. */
     coveragePct: number;
-    /** Monotonic hop counter exposed as the AI-visible budget signal. Counter (not countdown) to avoid anchoring — see plan §A.1 (s1 budget-anchoring). */
+    /** Monotonic hop counter exposed as the AI-visible budget signal — a counter (not countdown) to avoid the model anchoring on remaining budget. */
     rounds_used: number;
     /** Cumulative count of soft/silent-mode scope expansions. */
     scope_growth: number;
@@ -140,9 +140,8 @@ export interface MemoryStateSnapshot {
  * In-session store for the per-hop working memory and full detail archive.
  *
  * @remarks
- * Behavior mirrors the 0.9.8 design: storage + delivery + execution only — no
- * ranking, no truncation, no content decisions. The model reads the snapshot and
- * decides relevance on its own.
+ * Storage + delivery + execution only — no ranking, no truncation, no content
+ * decisions. The model reads the snapshot and decides relevance on its own.
  */
 export class AiMemoryManager {
   private detailSlots = new Map<string, DetailSlot>();

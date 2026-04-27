@@ -9,7 +9,7 @@ Starting point for forking and contributing. The deeper engine concepts live in 
 | [`src/ai/`](../src/ai/) | `@lineage` chat participant, navigation engine (`smBase.ts`), tool provider, memory manager, prompt builders. |
 | [`src/engine/`](../src/engine/) | DACPAC + DMV ingestion, regex SQL parser, profiling engine, connection manager, graph builder. |
 | [`src/components/`](../src/components/) | React webview — graph canvas (React Flow), filters, detail panel, AI view card. |
-| [`src/bridge/`](../src/bridge/) | Zod-validated message bridge between extension host and webview. |
+| [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) | Zod-validated message contract between extension host and webview. |
 | [`src/utils/`](../src/utils/) | Logger, sanitizers, theming helpers. |
 | [`assets/`](../assets/) | YAML knobs: `defaultParseRules.yaml`, `dmvQueries.yaml`, `aiOutputTemplates.yaml`, plus the demo `.dacpac`. |
 | [`tests/`](../tests/) | Unit, integration, snapshot, AI-eval suites. |
@@ -88,11 +88,10 @@ flowchart LR
 ```mermaid
 flowchart LR
     WV[Webview React app] <-->|postMessage<br/>Zod-validated| BC[bridgeContract.ts<br/>schemas]
-    BC <--> BH[BridgeHost interface]
-    BH <--> EXT[Extension host<br/>panelProvider.ts +<br/>messageHandlers.ts]
+    BC <--> EXT[Extension host<br/>panelProvider.ts]
 ```
 
-Every `postMessage` hits the Zod cage exactly once in each direction. Inner layers consume parsed types; no re-validation. The `BridgeHost` interface in `src/bridge/host.ts` decouples communication from VS Code so the extension logic can be unit-tested in Node.
+Every `postMessage` hits the Zod cage in [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) exactly once in each direction. Inner layers consume parsed types; no re-validation. Routing and handlers live in [`src/panelProvider.ts`](../src/panelProvider.ts).
 
 Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Config]`, `[DB]`, `[Dacpac]`, `[Detail]`, `[Filter]`, `[Parse]`, `[Project]`, `[Stats]`. Helpers in [`src/utils/log.ts`](../src/utils/log.ts) — never call `outputChannel.*` directly.
 
@@ -111,7 +110,7 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
      synthesis   → buildSynthesisPrompt
      completed   → buildFollowUpPrompt
 3. resolveStagePrompt                 (always — YAML *_capture (active) + per-field synthesis instructions; classification-gated; closing gated on slotCount ≥ 5)
-4. buildMissionBlock                  (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
+4. buildMissionBriefBlock                  (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
 5. buildMemoryBlock                   (SM active only — <short_term_memory> + tally)
 ```
 
@@ -129,7 +128,7 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | `buildColumnAspectPrompt` | `prompts.ts` | `<column_state>` XML block (CT context). |
 | `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + per-field synthesis keys; classification-gated; `closing` size-gated on slotCount ≥ 5. |
 | `orderAndAssemble` | `tools.ts` | Engine-built description blob from AI's title + intro + sections[] + closing — sole assembly path. |
-| `buildMissionBlock` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks. |
+| `buildMissionBriefBlock` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks. |
 | `buildMemoryBlock` | `prompts.ts` | `<short_term_memory>` XML block + tally line. |
 
 **Hybrid format rule.** Markdown headers for static structural sections (protocols, numbered rules); XML tags for dynamic per-hop data so the model can locate them precisely (`<mission_brief>`, `<current_task>`, `<short_term_memory>`, `<column_state>`).
