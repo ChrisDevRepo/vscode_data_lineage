@@ -33,10 +33,19 @@ export class AiSession {
   public filter: SerializedFilterState | null = null;
   /** List of saved filter profiles (views) for the current project. */
   public views: FilterProfile[] = [];
-  /** Unified GUI state snapshot for debugging. */
-  public uiState: any = null;
-  /** Snapshot of the trace mode and interactive state. */
-  public traceState: any = null;
+  /**
+   * Unified GUI state snapshot — passthrough buffer from the webview's
+   * `filter-changed` message (declared as `z.any()` in
+   * [`bridgeContract.ts`](../engine/shared/bridgeContract.ts)).
+   * Treated as opaque inside the extension host; consumed only by the debug-dump renderer.
+   */
+  public uiState: unknown = null;
+  /**
+   * Trace-mode snapshot lifted from `uiState.trace` — passthrough buffer with
+   * no extension-host consumer beyond debug dumps. Shape-validation is the
+   * webview's responsibility before it posts.
+   */
+  public traceState: unknown = null;
   /** Current graph rendering mode: 'full' or 'overview'. */
   public graphMode: 'full' | 'overview' = 'full';
   /** Total count of nodes after all active filters are applied (from webview). */
@@ -274,16 +283,18 @@ export class AiSession {
     this.lastActivity = this.startTime;
   }
 
-  /** 
-   * Transmutes State Machine findings into the visual ResultGraph format.
-   * 
+  /**
+   * Transmutes state-machine findings into the visual `ResultGraph` format.
+   *
    * @remarks
-   * Maps navigation engine output (nodes, edges, detail slots) to the
-   * standard contract consumed by the `present_result` tool handler and the React webview.
-   * 
-   * @param fullResult - The raw completion result from the State Machine.
+   * Maps navigation-engine output (nodes, edges, detail slots) to the standard
+   * contract consumed by the `present_result` tool handler and the React webview.
+   * Handles both Blackboard and Column-Trace results — `source` is set from the
+   * engine's `columnAspect` flag at the time of the call.
+   *
+   * @param fullResult - The raw completion result from the state machine.
    */
-  public storeBbResult(fullResult: SmResult): void {
+  public storeSmResult(fullResult: SmResult): void {
     const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
     const verdicts: Record<string, NodeRole> = {};
     

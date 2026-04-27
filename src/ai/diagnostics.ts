@@ -7,14 +7,23 @@ import type { SmState } from './smTypes';
  * Telemetry data for a single agentic loop iteration (hop).
  */
 export interface RoundTelemetry {
+  /** 1-based round index within the turn. */
   round: number;
+  /** Session phase active at the time the round ran (`discover` / `active` / `synthesis` / `completed`). */
   phase: string;
+  /** Wall-clock latency of the LM round in milliseconds. */
   latencyMs: number;
+  /** Input tokens reported by `model.countTokens` for the assembled envelope. */
   tokensIn: number;
+  /** Output tokens reported by `model.countTokens` for the assistant response. */
   tokensOut: number;
+  /** Tool names invoked during this round (without the `lineage_` prefix). */
   tools: string[];
+  /** Focus node id, when the round drove an SM hop (`submit_findings`). */
   focusNode?: string;
+  /** True when at least one tool result was served from the per-turn dedup cache. */
   cacheHit: boolean;
+  /** Short error code captured from the round, when something rejected. */
   error?: string;
 }
 
@@ -22,19 +31,32 @@ export interface RoundTelemetry {
  * Aggregated performance diagnostics for the entire chat turn.
  */
 export interface PerformanceDiagnostics {
+  /** Whole-turn rollups computed at finalize time. */
   summary: {
+    /** Friendly model name from `request.model.name` or its id. */
     model: string;
+    /** Engine mode at finalize (`column_trace` / `blackboard` / `idle`). */
     mode: string;
+    /** Number of LM rounds executed this turn. */
     totalRounds: number;
+    /** Cumulative wall-clock latency across all rounds. */
     totalLatencyMs: number;
+    /** Sum of input tokens across all rounds. */
     totalTokensIn: number;
+    /** Sum of output tokens across all rounds. */
     totalTokensOut: number;
+    /** Peak round-input tokens as a percentage of `model.maxInputTokens`. */
     peakBudgetUtilization: string;
   };
+  /** Per-round entries in chronological order. */
   rounds: RoundTelemetry[];
+  /** Session-level counters captured at finalize. */
   system: {
+    /** Count of context-pressure eviction triggers fired this turn. */
     evictionEvents: number;
+    /** Detail-archive slot count at finalize (one per analyzed node). */
     detailArchiveSlots: number;
+    /** Engine agenda length at finalize (typically 0 when SM completed cleanly). */
     finalAgendaSize: number;
   };
 }

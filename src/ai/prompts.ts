@@ -442,17 +442,15 @@ export function buildCurrentTaskBlock(currentTask: string): string {
 
 
 /**
- * Renders the `<short_term_memory>` XML block and the tally line for SM active hops.
+ * Renders the `<short_term_memory>` XML block and the per-hop progress line for SM active hops.
  *
  * @param stm - Sliding window of the last 3 node summaries.
- * @param tally - Running verdict counts for the session.
  * @param hop - Current 1-based hop index.
  * @param total - Total nodes in scope.
- * @returns A string containing the memory block and tally line.
+ * @returns A string containing the working-memory block.
  */
 export function buildMemoryBlock(
   stm: Array<{ nodeId: string; summary: string }>,
-  _tally: { analyze: number; pass: number; prune: number },
   hop: number,
   total: number,
 ): string {

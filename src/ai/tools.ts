@@ -1122,6 +1122,16 @@ export function searchDdl(
 }
 
 
+/**
+ * Semantic role tag for one of the (≤5) `highlight_groups` the AI may attach
+ * to a `present_result` view. Drives the colour swatch on the graph chip.
+ *
+ * @remarks
+ * Two consistent palettes — `source` / `transform` / `target` (lineage) or
+ * `good` / `warn` / `fail` (diagnostic). The synthesis prompt instructs the
+ * AI to pick one palette per result and not mix them. Validated by
+ * `AI_HIGHLIGHT_ROLES` in `validatePresentResult`.
+ */
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
 /**
@@ -1654,9 +1664,14 @@ export function validatePresentResult(
  * Structural summary of the final presentation result.
  */
 export interface PresentResultResult {
+  /** True when the request passed validation and was posted to the webview. */
   success: boolean;
+  /** Display name of the rendered AI view (≤200 chars after auto-fix). */
   name: string;
+  /** One-line graph-card summary (≤300 chars) shown beside the view. */
   summary: string;
+  /** Engine-assembled markdown blob from `orderAndAssemble`; absent when the AI submitted no `sections[]`. */
   description?: string;
+  /** Count of nodes included in the rendered view after add/prune resolution. */
   node_count: number;
 }

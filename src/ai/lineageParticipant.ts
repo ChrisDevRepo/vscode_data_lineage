@@ -1,3 +1,21 @@
+/**
+ * `@lineage` chat-participant turn handler.
+ *
+ * @remarks
+ * Implements the agent loop end-to-end:
+ * - Resolves history, applies context-pressure eviction, and seeds the
+ *   {@link MessageEnvelope} for the LM round.
+ * - Composes the per-phase system prompt via `buildStageSystemPrompt`
+ *   (stable prefix + dynamic suffix), driving the discover → active →
+ *   synthesis → completed FSM in [`sessionPhase.ts`](./sessionPhase.ts).
+ * - Runs the multi-round tool loop with `RepeatRejectGuard`, `toolPolicy`
+ *   filtering, and a single `dispatchExit` finalizer that owns post-loop
+ *   cleanup (gate re-emit, partial result handling, hop-cap rerun message).
+ *
+ * The hop-loop body and finalizer here are the only places that touch
+ * `vscode.lm.sendRequest` and `ChatResponseStream` for the participant —
+ * keep stream writes funneled through {@link ChatResponseWriter}.
+ */
 import * as vscode from 'vscode';
 import { AiSession } from './session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
@@ -425,8 +443,7 @@ export class LineageParticipant {
         if (currentTaskBlock) dynamic.push(currentTaskBlock);
         if (phase === 'active' && !engine.inlineMode) {
           const stm = sess.memory.getShortTermMemory();
-          const tally = sess.memory.getVerdictCounts();
-          dynamic.push(buildMemoryBlock(stm, tally, engine.currentHop, engine.scopeSize));
+          dynamic.push(buildMemoryBlock(stm, engine.currentHop, engine.scopeSize));
           // Protocol envelope (ACK/WAIT contract) — ships on every SM active hop so the AI
           // sees the legal-reply shape and session-termination rule in structured form.
           const mode = activeModeOf(false, engine.columnAspect !== null);
@@ -575,34 +592,24 @@ export class LineageParticipant {
         // Defensive icon-code strip for synthesis prose: the model occasionally self-renders a
         // Show-in-Graph button as literal markdown ("$(type-hierarchy-sub) Show in Graph"); the
         // platform only renders icon codes inside writer.button(...).
-        const surfaceProse = activePhase !== 'active';
-        const gateProse = activePhase === 'synthesis';
-        // Drop everything before the first '## ' heading so planning preambles
-        // ("Now I have all slots. Assembling the final report.") never weld
-        // onto the synthesised chat output.
-        const stripSynthesisArtifacts = (s: string): string => {
-          if (!gateProse) return s;
-          let out = s.replace(/\$\([a-z][a-z0-9-]*\)\s*/gi, '');
-          const hIdx = out.indexOf('## ');
-          if (hIdx > 0) out = out.slice(hIdx);
-          return out;
-        };
-        let toolCallSeenInTurn = false;
+        const proseGate = this.synthesisProseGate(activePhase);
         for await (const part of response.stream) {
           if (!writer.isOpen()) break;
           if (part instanceof vscode.ChatResponseMarkdownPart) {
             assistantParts.push(new vscode.LanguageModelTextPart(part.value.value));
             responseText += part.value.value;
-            if (surfaceProse && (!gateProse || toolCallSeenInTurn)) writer.markdown(stripSynthesisArtifacts(part.value.value));
+            const surface = proseGate.surface(part.value.value);
+            if (surface !== null) writer.markdown(surface);
           } else if (part instanceof vscode.LanguageModelTextPart) {
             assistantParts.push(part);
             responseText += part.value;
-            if (surfaceProse && (!gateProse || toolCallSeenInTurn)) writer.markdown(stripSynthesisArtifacts(part.value));
+            const surface = proseGate.surface(part.value);
+            if (surface !== null) writer.markdown(surface);
           }
           else if (part instanceof vscode.LanguageModelToolCallPart) {
             assistantParts.push(part);
             toolCalls.push(part);
-            toolCallSeenInTurn = true;
+            proseGate.observeToolCall();
           }
         }
         if (!writer.isOpen()) return { kind: 'cancelled' };
@@ -879,6 +886,53 @@ export class LineageParticipant {
         toolCallsMetadata: { toolCallRounds, toolCallResults: accumulatedToolResults },
         lastTools: toolCallRounds.length > 0 ? toolCallRounds[toolCallRounds.length - 1].toolCalls.map((tc: any) => tc.name) : [],
         performanceDiagnostics: collector.finalize(sess, peakRoundInputTokens)
+      },
+    };
+  }
+
+  /**
+   * Builds the per-round prose gate that decides whether each LM text part
+   * reaches the user via {@link ChatResponseWriter.markdown}.
+   *
+   * @remarks
+   * Two phase-specific rules are folded in:
+   * - **Active phase suppresses prose entirely** — `submit_findings` is the
+   *   only legal output, so any text part is planning narration the user
+   *   should never see.
+   * - **Synthesis phase suppresses prose until the first `tool_use`** — the
+   *   rendered chat narrative arrives as the model's commentary AFTER the
+   *   `present_result` call, so pre-tool prose is the model's planning preamble.
+   *   On synthesis prose, an extra defensive pass strips icon-code markup
+   *   (`$(name)` literals the platform only renders inside `writer.button`)
+   *   and slices off the leading planning preamble before the first `## `
+   *   heading, so the chat narrative never has phrases like "Now I have all
+   *   slots. Assembling the final report." welded onto its first heading.
+   *
+   * `surface(text)` returns the string to write, or `null` to suppress.
+   * `observeToolCall()` records that the first tool_use has been seen this round.
+   */
+  private synthesisProseGate(phase: 'discover' | 'active' | 'synthesis' | 'completed'): {
+    surface(text: string): string | null;
+    observeToolCall(): void;
+  } {
+    const surfaceAllowed = phase !== 'active';
+    const isSynthesis = phase === 'synthesis';
+    let toolCallSeen = false;
+    const stripSynthesisArtifacts = (s: string): string => {
+      if (!isSynthesis) return s;
+      let out = s.replace(/\$\([a-z][a-z0-9-]*\)\s*/gi, '');
+      const hIdx = out.indexOf('## ');
+      if (hIdx > 0) out = out.slice(hIdx);
+      return out;
+    };
+    return {
+      surface(text: string): string | null {
+        if (!surfaceAllowed) return null;
+        if (isSynthesis && !toolCallSeen) return null;
+        return stripSynthesisArtifacts(text);
+      },
+      observeToolCall(): void {
+        toolCallSeen = true;
       },
     };
   }

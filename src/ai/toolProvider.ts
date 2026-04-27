@@ -1,3 +1,18 @@
+/**
+ * VS Code Language-Model tool registrations for the `@lineage` chat participant.
+ *
+ * @remarks
+ * Owns the `vscode.lm.registerTool` bindings and acts as the Zod boundary
+ * between untrusted LM-supplied tool input and the engine + retrieval layer:
+ * - Discovery / synthesis tools delegate to the pure functions in
+ *   [`tools.ts`](./tools.ts) — no `vscode` imports leak past this file.
+ * - State-machine tools (`start_exploration`, `submit_findings`,
+ *   `present_result`, `get_neighbor_columns`) drive `NavigationEngine`
+ *   ([`smBase.ts`](./smBase.ts)) and read / write `AiSession` state.
+ * - Section-shape conformance against the locked `sess.classification` is
+ *   enforced here in `validateSectionsAgainstClassification` — content quality
+ *   stays in the prompt; this layer rejects only on mechanical contract.
+ */
 import * as vscode from 'vscode';
 import type Graph from 'graphology';
 import { NavigationEngine } from './smBase';
@@ -483,12 +498,12 @@ class ToolHandler {
       if ('error' in result) return this.logAndReturn('submit_findings', result, input);
 
       if ('done' in result && result.done && result.result) {
-        sess.storeBbResult(result.result);
+        sess.storeSmResult(result.result);
         // Slim the LM-bound payload: fullNodes[] and edges[] are routing context for
         // active-phase decisions, not synthesis. The agent writes present_result from
         // detail_slots[] alone — every nodeId, schema, and relationship the agent
         // needs is already inside each captured slot.text. The webview/engine still
-        // hold the full graph via storeBbResult above.
+        // hold the full graph via storeSmResult above.
         const lmResult = {
           status: result.result.status,
           originNodeId: result.result.originNodeId,
@@ -509,7 +524,7 @@ class ToolHandler {
       const nextHop = engine.getHopContext();
       if (nextHop.done) {
         const finalResult = engine.getResult();
-        sess.storeBbResult(finalResult);
+        sess.storeSmResult(finalResult);
         if (!sess.classification) sess.setClassification('business');
         const synthesisReminder = buildSynthesisReminder();
         // Slim the LM-bound payload for the synthesis transition (see comment above).

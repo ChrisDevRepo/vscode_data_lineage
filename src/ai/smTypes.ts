@@ -361,9 +361,13 @@ export interface DiagnosticsSnapshot {
  * the overflow count so the caller can render `+K more` without recounting.
  */
 export interface ScopeSummaryLeaf {
+  /** Bodied-node count (view / procedure / function) at this leaf — agenda candidates. */
   hops: number;
+  /** Total node count at this leaf, including non-bodied (table / external) entries. */
   scope: number;
+  /** Display-capped list of object names at this leaf, alphabetised by the renderer. */
   nodeNames: string[];
+  /** Names beyond the display cap — `nodeNames.length + omitted === scope` for the leaf. */
   omitted: number;
 }
 
@@ -378,13 +382,21 @@ export interface ScopeSummaryLeaf {
  * mark pass-through nodes distinctly from analyzed nodes.
  */
 export interface ScopeSummary {
+  /** Total bodied-node count across the scope — drives the "N hops" header in the gate. */
   hopCount: number;
+  /** Total node count across the scope (bodied + non-bodied) — drives the "N nodes" header. */
   scopeCount: number;
+  /** Origin node id captured at `start_exploration` — anchors the BFS root. */
   origin: string;
+  /** Depth budget set at `start_exploration`; `null` when unbounded. */
   depth: number | null;
+  /** Exploration direction set at `start_exploration`. */
   direction: 'upstream' | 'downstream' | 'bidirectional';
+  /** True when the gate proposes inline (one-shot) mode; false for sliding-memory. */
   inlineMode: boolean;
+  /** True when the session has `targetColumns` (column-trace aspect). */
   columnAspectActive: boolean;
+  /** Schema → type → leaf rollup used by `renderScopeSummaryMd` to build the tree. */
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf>; }>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
   activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
