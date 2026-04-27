@@ -116,7 +116,7 @@ suite('Extension Functional Integration Suite', () => {
 		const wsFolder = vscode.workspace.workspaceFolders?.[0];
 		assert.ok(wsFolder, 'Workspace folder should be open');
 		
-		const dumpsDir = path.join(wsFolder.uri.fsPath, 'ai', 'sm-dumps');
+		const dumpsDir = path.join(wsFolder.uri.fsPath, 'test-results', 'sm-dumps');
 		
 		let foundFile: string | null = null;
 		for (let i = 0; i < 15; i++) {
