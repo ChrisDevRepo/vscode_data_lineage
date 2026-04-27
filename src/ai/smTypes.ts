@@ -301,6 +301,13 @@ export type SubmitResult =
       current_status?: SmStatus;
       /** Next-action hint for the AI. */
       hint?: string;
+      /**
+       * Subset of `route_requests[].nodeId` values that did not resolve to a
+       * real graph node. Surfaced separately on `route_validation_failed` so
+       * the AI gets a clean handle on which ids to re-resolve via
+       * `lineage_search_objects` / `lineage_get_neighbor_columns`.
+       */
+      unresolved_route_target_ids?: string[];
     };
 
 /**

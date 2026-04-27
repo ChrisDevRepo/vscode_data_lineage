@@ -136,6 +136,19 @@ const HopFindingSchema = z.object({
   sections: z.array(CapturedSectionSchema).max(2),
   summary: z.string(),
   verdict: z.enum(['analyze', 'pass', 'prune']),
+  /**
+   * Optional list of neighbors to queue for the next hops. Each entry's
+   * `nodeId` must already be a real id you have seen — either in the prior
+   * tool result's `next_hop` / `neighbors[]` data, in a
+   * `lineage_get_neighbor_columns` lookup, or in a `lineage_search_objects`
+   * result. Inventing an id (e.g. guessing `[s].[procFoo]` when the real
+   * name is `[s].[ProcFooDetailed]`) causes the engine to reject the
+   * submission with `route_validation_failed` — the rejected ids do not
+   * enter the agenda, so the next hop will re-present the same focus and
+   * the exploration cannot advance.
+   * `question` is the sub-question driving analysis at that hop (multi-part
+   * is fine); `columns` is optional column-trace targets for CT mode.
+   */
   route_requests: z.array(z.object({
     nodeId: z.string(),
     question: z.string(),

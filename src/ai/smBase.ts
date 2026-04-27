@@ -1312,7 +1312,25 @@ export class NavigationEngine implements IHopStateMachine {
     if (allInvalidRoutes.length > 0) {
       this.lastRoutedRejected = allInvalidRoutes.length;
       for (const r of allInvalidRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-      return { error: 'route_validation_failed', detail: allInvalidRoutes };
+      // Partition reasons so the AI gets a corrective signal naming the
+      // right next-action tool, mirroring the `unknown_node_ids` envelope on
+      // start_exploration. Unknown-id rejections are the most common and
+      // most actionable failure mode — without a structured hint here the AI
+      // typically loops on the same focus and the exploration stalls
+      // (observed in bb-q1-employee bridge JSONL 2026-04-27).
+      const unknownIds = allInvalidRoutes
+        .filter(r => /not found/i.test(r.reason))
+        .map(r => r.id);
+      const otherReasons = allInvalidRoutes.filter(r => !/not found/i.test(r.reason));
+      const hint = unknownIds.length > 0
+        ? `Some route_requests[].nodeId values do not exist in the loaded model: ${unknownIds.map(id => `\`${id}\``).join(', ')}. Resolve each name via \`lineage_search_objects\` (the schema-qualified id often differs from a guessed one), or pick a real neighbor id from the prior tool result's \`next_hop\` / \`neighbors[]\` data, then re-call submit_findings with the corrected list.`
+        : 'One or more route_requests / column references failed validation. Inspect `detail` for the per-id reason and re-submit with corrections.';
+      return {
+        error: 'route_validation_failed',
+        hint,
+        unresolved_route_target_ids: unknownIds,
+        detail: otherReasons.length > 0 ? otherReasons : allInvalidRoutes,
+      };
     }
 
     if (gateNodeIds.length > 0) {
