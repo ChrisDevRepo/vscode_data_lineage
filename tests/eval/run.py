@@ -35,6 +35,7 @@ the Agent SDK directly.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -90,12 +91,14 @@ def parse_case(test_id: str) -> dict:
     saw_main_question = False
     in_filter = False
     in_classification = False
+    in_question_section = False  # true while inside `## Question` heading
     for line in text.split("\n"):
         stripped = line.strip()
         if stripped.startswith("## "):
             section = stripped[3:].strip().lower()
             in_filter = "filter" in section
             in_classification = "classification" in section
+            in_question_section = section == "question"
             continue
         if stripped.startswith("> "):
             body = stripped[2:].strip()
@@ -107,6 +110,12 @@ def parse_case(test_id: str) -> dict:
             elif not saw_main_question and not question:
                 question = body
                 saw_main_question = True
+            elif in_question_section and saw_main_question:
+                # Multi-turn case: subsequent blockquotes inside `## Question`
+                # (e.g. `### Turn 2`, `### Turn 3`) are follow-ups even without
+                # the explicit `Follow-up:` prefix. Without this branch run.py
+                # silently dropped Turn 2 of follow-* cases.
+                followups.append(body)
         if in_filter and stripped.startswith("- schemas:"):
             val = stripped.split(":", 1)[1].strip()
             filter_schemas = [s.strip() for s in val.strip("[]").split(",") if s.strip()]
@@ -136,6 +145,31 @@ def parse_case(test_id: str) -> dict:
         "filter_types": filter_types,
         "use_columns": use_columns,
     }
+
+
+# ---------------------------------------------------------------------------
+# Input-signature helpers — sha256 + git SHA for iteration-comparison identity.
+# ---------------------------------------------------------------------------
+
+
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def _git_sha() -> str | None:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+            timeout=5,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +304,7 @@ def main() -> int:
         if case["followups"]
         else ""
     )
+    chat_txt_path = (run_dir / f"{test_id}.chat.txt").relative_to(PROJECT_ROOT).as_posix()
     populated = build_prompt(
         template,
         {
@@ -280,6 +315,7 @@ def main() -> int:
             "QUESTION": case["question"],
             "FOLLOWUPS": followups_block,
             "TEST_ID": test_id,
+            "CHAT_TXT_PATH": chat_txt_path,
         },
     )
     prompt_path = run_dir / f"{test_id}.prompt.txt"
@@ -303,6 +339,30 @@ def main() -> int:
     }
     (run_dir / f"{test_id}.agent.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # 6b) Emit <id>.inputs.json — input signature for run-to-run identity.
+    # Hashes let iteration-N vs iteration-(N-1) detect prompt/filter/question drift mechanically.
+    # model_id is filled by extract.py from the host.log [AI] [Session] line; absent at run.py time.
+    inputs = {
+        "test_id": test_id,
+        "session_id": session_id,
+        "run_id": run_id,
+        "git_sha": _git_sha(),
+        "system_prompt_sha256": _sha256(system_prompt),
+        "nav_prompt_sha256": _sha256(nav_prompt),
+        "nav_mode": nav_key,
+        "tool_descriptions_sha256": _sha256(tool_descs),
+        "question_sha256": _sha256(case["question"]),
+        "filter": {
+            "schemas": case["filter_schemas"],
+            "types": case["filter_types"],
+        },
+        "followup_count": len(case["followups"]),
+        "model_id": None,
+    }
+    (run_dir / f"{test_id}.inputs.json").write_text(
+        json.dumps(inputs, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
     # 7) The orchestrator (Claude Code or human) reads the saved prompt file

@@ -16,5 +16,6 @@ User: {{QUESTION}}
 
 {{FOLLOWUPS}}
 
-[After you finish responding to the user, run:
+[After you finish responding, write your final reply text to the file
+{{CHAT_TXT_PATH}} — then run:
 python tests/eval/extract.py {{TEST_ID}} {{SESSION_ID}}]

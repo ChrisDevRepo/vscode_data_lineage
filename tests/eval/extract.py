@@ -20,11 +20,13 @@ harness paraphrasing):
 
 Usage: python extract.py <test-id> <session-id>
 """
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 from collections import Counter
 from pathlib import Path
@@ -36,6 +38,19 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 RUNS_ROOT = PROJECT_ROOT / "test-results" / "eval-runs"
 CASES_DIR = PROJECT_ROOT / "tests" / "cases"
 BASELINE_RUN_ID = "baseline-v1-2026-04-19"
+
+
+def _truncate(value, limit: int) -> object:
+    """Stringify and clip for snapshot artifacts; preserves dict/list at top level."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        s = json.dumps(value, ensure_ascii=False)
+    else:
+        s = str(value)
+    if len(s) <= limit:
+        return s
+    return s[:limit] + f"… [+{len(s) - limit} chars]"
 
 
 # ---------------------------------------------------------------------------
@@ -223,14 +238,42 @@ def score_run(spec: dict, sm: dict, hop_log: list[dict], rg: dict, present_input
     visited_ratio = hop_count / scope_size if scope_size > 0 else 0
     status = sm.get("status")
 
-    if status == "complete" and has_present and has_name and has_summary and len(sections) >= 1 and visited_ratio >= 0.3:
-        completeness = 3
-    elif has_present and len(sections) >= 1 and visited_ratio >= 0.2:
-        completeness = 2
-    elif has_present:
-        completeness = 1
+    # T-2 — rubric mode-aware. The SM-shape rubric (status==complete + present_result
+    # called + visited_ratio thresholds) only applies when the case expects SM delivery.
+    # Discovery / explanation / guard-test cases never call start_exploration → no SM
+    # state → completeness=0 even when the answer was correct. Gate on case spec.
+    expected_for_completeness = spec.get("expected") or {}
+    delivery_field = (
+        expected_for_completeness.get("Delivery")
+        or expected_for_completeness.get("delivery")
+        or expected_for_completeness.get("SM Type")
+        or ""
+    )
+    is_sm_case = "sm" in str(delivery_field).lower()
+    started_exploration = any(h.get("tool") == "start_exploration" for h in hop_log)
+    rubric_mode = "sm" if (is_sm_case and started_exploration) else "non_sm"
+
+    if rubric_mode == "non_sm":
+        # Non-SM modes: discovery / explanation / guard-test. Completeness scored on
+        # whether the agent produced a non-empty answer (chat or tool output) without
+        # erroring out on every hop.
+        any_tool_succeeded = any(not (h.get("_meta") or {}).get("isError", False) for h in hop_log)
+        any_tool_called = len(hop_log) > 0
+        if any_tool_called and any_tool_succeeded:
+            completeness = 3
+        elif any_tool_called:
+            completeness = 1
+        else:
+            completeness = 0
     else:
-        completeness = 0
+        if status == "complete" and has_present and has_name and has_summary and len(sections) >= 1 and visited_ratio >= 0.3:
+            completeness = 3
+        elif has_present and len(sections) >= 1 and visited_ratio >= 0.2:
+            completeness = 2
+        elif has_present:
+            completeness = 1
+        else:
+            completeness = 0
 
     # ---- Efficiency (hops vs max, runtime vs max, no error churn) ----
     expected = spec.get("expected") or {}
@@ -271,6 +314,7 @@ def score_run(spec: dict, sm: dict, hop_log: list[dict], rg: dict, present_input
         "correctness": correctness,
         "completeness": completeness,
         "efficiency": efficiency,
+        "rubric_mode": rubric_mode,
         "required_coverage": f"{cov}/{tot}",
         "missing_required": missing,
         "forbidden_leaked": leaked,
@@ -690,6 +734,372 @@ def _git_head() -> str:
         return "HEAD"
 
 
+# ---------------------------------------------------------------------------
+# Phase A2 — decision-trace.json: parse [AI] structured lines from host.log.
+# Per .claude/rules/logging.md, every decision boundary emits a structured
+# line. We extract the full set; prefixes with zero hits surface as
+# `missing_log_emitters` — the empty list IS the evidence that a product-side
+# emitter is missing (deferred to iter-2 product-code work).
+# ---------------------------------------------------------------------------
+
+# Prefix patterns we expect per logging.md §"[AI] sub-categories"
+_DECISION_PREFIXES = [
+    "[AI] [NL]",
+    "[AI] [Contract]",
+    "[AI] [Engine] [BFS]",
+    "[AI] [Engine] [BFS-refine]",
+    "[AI] [Gate]",
+    "[AI] [Refine]",
+    "[AI] [PromptBudget]",
+]
+
+# `[AI] [Hop N]` is per-hop; we treat it separately to capture N.
+_HOP_RE = re.compile(r"\[AI\]\s*\[Hop\s+(\d+)\]\s*(.*)$")
+# Optional leading timestamp `[2026-04-27T05:08:57Z]` or `2026-04-27 05:08:57`.
+_TS_RE = re.compile(r"^\s*\[?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\.?\d*Z?)\]?\s+")
+
+
+def _parse_decision_trace(host_log_text: str) -> dict:
+    if not host_log_text:
+        return {"events": [], "missing_log_emitters": _DECISION_PREFIXES + ["[AI] [Hop N]"], "host_log_present": False}
+
+    seen_prefixes: set[str] = set()
+    events: list[dict] = []
+
+    for raw in host_log_text.splitlines():
+        line = raw.rstrip()
+        ts_m = _TS_RE.match(line)
+        ts = ts_m.group(1) if ts_m else None
+        body_after_ts = line[ts_m.end():] if ts_m else line
+
+        hop_m = _HOP_RE.search(body_after_ts)
+        if hop_m:
+            seen_prefixes.add("[AI] [Hop N]")
+            events.append({
+                "ts": ts,
+                "prefix": "[AI] [Hop N]",
+                "hop": int(hop_m.group(1)),
+                "body": hop_m.group(2).strip(),
+            })
+            continue
+
+        for pref in _DECISION_PREFIXES:
+            idx = body_after_ts.find(pref)
+            if idx != -1:
+                seen_prefixes.add(pref)
+                events.append({
+                    "ts": ts,
+                    "prefix": pref,
+                    "hop": None,
+                    "body": body_after_ts[idx + len(pref):].strip(),
+                })
+                break
+
+    expected = set(_DECISION_PREFIXES + ["[AI] [Hop N]"])
+    missing = sorted(expected - seen_prefixes)
+
+    return {
+        "events": events,
+        "missing_log_emitters": missing,
+        "host_log_present": True,
+        "event_count": len(events),
+    }
+
+
+def _extract_model_id(host_log_text: str) -> str | None:
+    """Best-effort scan for the LM model id from the host log."""
+    if not host_log_text:
+        return None
+    # Common patterns: `[AI] [Session] modelName=...`, `model=claude-haiku-4.5`, etc.
+    for pat in (
+        r"\[AI\][^\n]*?modelName=([\w\-\.]+)",
+        r"\[AI\][^\n]*?model=([\w\-\.]+)",
+        r"\bmodel[_\s]?id[=:]\s*([\w\-\.]+)",
+    ):
+        m = re.search(pat, host_log_text, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Phase A6 — perf.json fetch
+# ---------------------------------------------------------------------------
+
+def _fetch_perf(session_id: str) -> dict | None:
+    """GET /session/:id/perf — proxy may not implement; tolerate 404."""
+    try:
+        with urlopen(f"{PROXY}/session/{session_id}/perf", timeout=5) as r:
+            raw = r.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw else None
+    except (URLError, OSError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Phase A5 — gate.md from session state (or /session/:id/gates if exposed)
+# ---------------------------------------------------------------------------
+
+def _fetch_gates(session_id: str, state: dict) -> list[dict]:
+    """Try the dedicated endpoint first; fall back to a `gates` field on /state."""
+    try:
+        with urlopen(f"{PROXY}/session/{session_id}/gates", timeout=5) as r:
+            raw = r.read().decode("utf-8", errors="replace")
+            data = json.loads(raw) if raw else {}
+            if isinstance(data, dict) and isinstance(data.get("gates"), list):
+                return data["gates"]
+            if isinstance(data, list):
+                return data
+    except (URLError, OSError, ValueError):
+        pass
+    gates = state.get("gates")
+    return gates if isinstance(gates, list) else []
+
+
+# ---------------------------------------------------------------------------
+# Phase A8 — atomic chat-capture: poll for chat.txt before declaring missing.
+# ---------------------------------------------------------------------------
+
+def _poll_chat_text(run_dir: Path, test_id: str, timeout_s: int = 10) -> str | None:
+    path = run_dir / f"{test_id}.chat.txt"
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if path.exists():
+            try:
+                return path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        time.sleep(0.5)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Phase A7 — eval-runs-index.json append (cross-run trend index)
+# ---------------------------------------------------------------------------
+
+def _append_runs_index(
+    run_id: str,
+    test_id: str,
+    git_sha: str,
+    summary: dict,
+    sm_state: dict,
+    hop_log: list,
+    artifacts: list[str],
+    frame_errors: int,
+    track: str = "track_a",
+) -> None:
+    idx_path = RUNS_ROOT / "eval-runs-index.json"
+    rows: list[dict] = []
+    if idx_path.exists():
+        try:
+            rows = json.loads(idx_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            rows = []
+    submits = [h for h in hop_log if h.get("tool") == "submit_findings"]
+    submit_tokens = [(h.get("_meta") or {}).get("outputTokens", 0) for h in submits]
+    total_dur = sum((h.get("_meta") or {}).get("durationMs", 0) for h in hop_log)
+    err_count = sum(1 for h in hop_log if (h.get("_meta") or {}).get("isError"))
+    row = {
+        "run_id": run_id,
+        "test_id": test_id,
+        "track": track,
+        "git_sha": git_sha,
+        "ts": datetime.now().isoformat(),
+        "status": sm_state.get("status"),
+        "phase": sm_state.get("phase"),
+        "scope_size": sm_state.get("scopeSize"),
+        "hops": len(submits),
+        "duration_ms": total_dur,
+        "token_avg_hop": round(sum(submit_tokens) / len(submit_tokens), 1) if submit_tokens else 0,
+        "errors": err_count,
+        "frame_errors": frame_errors,
+        "correctness": summary.get("correctness"),
+        "completeness": summary.get("completeness"),
+        "efficiency": summary.get("efficiency"),
+        "critical_pair_pass": summary.get("critical_pair_pass"),
+        "captured_artifacts": artifacts,
+    }
+    # Replace any existing row for the same (run_id, test_id) — re-runs supersede
+    rows = [r for r in rows if not (r.get("run_id") == run_id and r.get("test_id") == test_id and r.get("track", "track_a") == track)]
+    rows.append(row)
+    idx_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Phase A7b — --compare flag: diff iteration N vs N-1 from the index.
+# ---------------------------------------------------------------------------
+
+def _compare_runs(current_run_id: str, baseline_run_id: str) -> str:
+    idx_path = RUNS_ROOT / "eval-runs-index.json"
+    if not idx_path.exists():
+        return "_(eval-runs-index.json missing — run --compare after at least one full run)_"
+    rows = json.loads(idx_path.read_text(encoding="utf-8"))
+
+    def by_run(rid: str) -> dict[str, dict]:
+        return {r["test_id"]: r for r in rows if r.get("run_id") == rid}
+
+    cur = by_run(current_run_id)
+    base = by_run(baseline_run_id)
+    if not cur:
+        return f"_(no rows for run_id={current_run_id})_"
+    if not base:
+        return f"_(no rows for baseline run_id={baseline_run_id})_"
+
+    cases = sorted(set(cur.keys()) | set(base.keys()))
+    out: list[str] = []
+    out.append(f"# Eval-runs Diff — `{baseline_run_id}` → `{current_run_id}`")
+    out.append("")
+    out.append("| Case | Δ correctness | Δ completeness | Δ efficiency | Δ hops | Δ errors | Δ token_avg_hop | Note |")
+    out.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |")
+
+    def fmt_delta(c, b, key):
+        cv, bv = c.get(key), b.get(key)
+        if cv is None or bv is None:
+            return "—"
+        delta = cv - bv
+        sign = "+" if delta > 0 else ""
+        return f"{sign}{delta}"
+
+    for tid in cases:
+        c = cur.get(tid, {})
+        b = base.get(tid, {})
+        if not c:
+            out.append(f"| `{tid}` | — | — | — | — | — | — | _missing in current_ |")
+            continue
+        if not b:
+            out.append(f"| `{tid}` | — | — | — | — | — | — | _new in current_ |")
+            continue
+        note = ""
+        if c.get("critical_pair_pass") and not b.get("critical_pair_pass"):
+            note = "regressed→passed"
+        elif b.get("critical_pair_pass") and not c.get("critical_pair_pass"):
+            note = "REGRESSION"
+        out.append(
+            f"| `{tid}` | {fmt_delta(c, b, 'correctness')} | {fmt_delta(c, b, 'completeness')} | "
+            f"{fmt_delta(c, b, 'efficiency')} | {fmt_delta(c, b, 'hops')} | "
+            f"{fmt_delta(c, b, 'errors')} | {fmt_delta(c, b, 'token_avg_hop')} | {note} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Phase A1 augmentation — fill model_id in inputs.json post-run
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# T-1 — length-vs-reference.json: per-case content-depth telemetry.
+#
+# Records char/line counts for chat.txt, persisted result_graph.description,
+# and the present_result.input body fields, alongside an AdventureWorks-only
+# internal-benchmark reference (the iter-1 best-performing AW case). DOES NOT
+# reference CadenceWorker / tmp/baseline/{b1,b2,b3,output_main} — those are
+# customer-data, reserved for UAT, never tuning targets.
+# ---------------------------------------------------------------------------
+
+# AdventureWorks domain internal floor (iter-1 best-performing AW case).
+# Update when a new AW case beats this; never replace with customer-data refs.
+_AW_REFERENCE = {
+    "case_id": "bb-q1-employee-technical",
+    "iter": "iteration-1-baseline-2026-04-27",
+    "detail_slots": 12,
+    "avg_section_chars": 819,
+    "present_result_sections": 6,
+    "critical_pair_pass": True,
+    "note": "iter-1 best AW-domain case (technical classification). bb-q1-employee (default-business) regressed to 1/1/2; this is the depth floor it should reach.",
+}
+
+
+def _line_count(s: str) -> int:
+    return s.count("\n") + (1 if s and not s.endswith("\n") else 0)
+
+
+def _build_length_vs_reference(
+    test_id: str,
+    chat_text: str | None,
+    state: dict,
+    hop_log: list,
+) -> dict:
+    sm = state.get("sm_state") or {}
+    rg = state.get("result_graph") or {}
+    presents = [h for h in hop_log if h.get("tool") == "present_result"]
+    pr_input = (presents[0].get("input") or {}) if presents else {}
+
+    chat_chars = len(chat_text or "")
+    chat_lines = _line_count(chat_text or "")
+    persisted_desc = rg.get("description") or ""
+    pr_sections = pr_input.get("sections") or []
+    section_chars = [len((s.get("text") or "")) for s in pr_sections]
+
+    # Per-slot avg from sm_state.memory.detailSlots — what active-phase capture wrote.
+    detail_slots = (sm.get("memory") or {}).get("detailSlots") or {}
+    slot_section_chars: list[int] = []
+    for slot in detail_slots.values():
+        for sec in (slot.get("sections") or []):
+            slot_section_chars.append(len(sec.get("text") or ""))
+
+    return {
+        "test_id": test_id,
+        "ts": datetime.now().isoformat(),
+        "chat_txt": {
+            "chars": chat_chars,
+            "lines": chat_lines,
+        },
+        "result_graph_persisted": {
+            "description_chars": len(persisted_desc),
+            "summary_chars": len(rg.get("summary") or ""),
+            "intro_chars": len(rg.get("intro") or ""),
+            "closing_chars": len(rg.get("closing") or ""),
+            "title_chars": len(rg.get("title") or ""),
+            "sections_count": len(rg.get("sections") or []),
+        },
+        "present_result_input": {
+            "name_chars": len(pr_input.get("name") or ""),
+            "summary_chars": len(pr_input.get("summary") or ""),
+            "intro_chars": len(pr_input.get("intro") or ""),
+            "closing_chars": len(pr_input.get("closing") or ""),
+            "sections_count": len(pr_sections),
+            "avg_section_chars": round(sum(section_chars) / len(section_chars)) if section_chars else 0,
+            "max_section_chars": max(section_chars) if section_chars else 0,
+            "min_section_chars": min(section_chars) if section_chars else 0,
+        },
+        "detail_memory": {
+            "slot_count": len(detail_slots),
+            "total_section_count": len(slot_section_chars),
+            "avg_section_chars": round(sum(slot_section_chars) / len(slot_section_chars)) if slot_section_chars else 0,
+            "min_section_chars": min(slot_section_chars) if slot_section_chars else 0,
+            "max_section_chars": max(slot_section_chars) if slot_section_chars else 0,
+        },
+        "aw_reference": _AW_REFERENCE,
+        "deltas_vs_aw_reference": {
+            "detail_slot_count_delta": len(detail_slots) - _AW_REFERENCE["detail_slots"],
+            "avg_section_delta": (
+                round(sum(slot_section_chars) / len(slot_section_chars)) if slot_section_chars else 0
+            ) - _AW_REFERENCE["avg_section_chars"],
+            "present_result_section_delta": len(pr_sections) - _AW_REFERENCE["present_result_sections"],
+        },
+        "notes": [
+            "AW-only reference — CadenceWorker (tmp/baseline/) is reserved for UAT, not tuning.",
+            "If detail_memory.avg_section_chars is below 400, the active-phase capture template is the upstream gap (CR-6).",
+            "If present_result_input.sections is rich but result_graph_persisted.description_chars == 0, that's B-1 (persistence) — should be fixed in iter-2 round 1a.",
+        ],
+    }
+
+
+def _augment_inputs_json(run_dir: Path, test_id: str, host_log_text: str) -> None:
+    p = run_dir / f"{test_id}.inputs.json"
+    if not p.exists():
+        return
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    if not d.get("model_id"):
+        mid = _extract_model_id(host_log_text)
+        if mid:
+            d["model_id"] = mid
+            p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def _write_snapshots(run_dir: Path, test_id: str, state: dict) -> None:
     snap_dir = run_dir / "snapshots" / test_id
     snap_dir.mkdir(parents=True, exist_ok=True)
@@ -723,6 +1133,51 @@ def _write_snapshots(run_dir: Path, test_id: str, state: dict) -> None:
         for i, h in enumerate(hl) if (h.get("_meta") or {}).get("isError")
     ]
     (snap_dir / "errors.json").write_text(json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Phase A4 — errors-detailed: preserve the full error message body that
+    # toolProxy.ts now records under _meta.errorMessage (in addition to errorType).
+    # If errorMessage is absent (older proxy), this is still useful: it captures
+    # the response output verbatim so we can post-mortem the failure.
+    errors_detailed = []
+    for i, h in enumerate(hl):
+        meta = h.get("_meta") or {}
+        if not meta.get("isError"):
+            continue
+        errors_detailed.append({
+            "hop": i + 1,
+            "tool": h.get("tool"),
+            "error_type": meta.get("errorType"),
+            "error_message": meta.get("errorMessage"),
+            "input_truncated": _truncate(h.get("input"), 300),
+            "output_truncated": _truncate(h.get("output"), 600),
+            "duration_ms": meta.get("durationMs"),
+        })
+    (run_dir / f"{test_id}.errors-detailed.json").write_text(
+        json.dumps(errors_detailed, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # Phase A3 — tool-io.json: full per-call I/O dump (authoritative source).
+    # Snapshot files above are lossy summaries; this is the raw record.
+    tool_io = []
+    for i, h in enumerate(hl):
+        meta = h.get("_meta") or {}
+        tool_io.append({
+            "hop": i + 1,
+            "tool": h.get("tool"),
+            "input": h.get("input"),
+            "output": h.get("output"),
+            "duration_ms": meta.get("durationMs"),
+            "input_bytes": meta.get("inputBytes"),
+            "output_bytes": meta.get("outputBytes"),
+            "input_tokens": meta.get("inputTokens"),
+            "output_tokens": meta.get("outputTokens"),
+            "is_error": bool(meta.get("isError")),
+            "error_type": meta.get("errorType"),
+            "error_message": meta.get("errorMessage"),
+        })
+    (run_dir / f"{test_id}.tool-io.json").write_text(
+        json.dumps(tool_io, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     presents = [h for h in hl if h.get("tool") == "present_result"]
     enrich_audit = {
@@ -770,8 +1225,27 @@ def _read_chat_text(run_dir: Path, test_id: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # --compare <baseline-run-id> [--current <current-run-id>]: cross-run diff
+    if len(sys.argv) >= 3 and sys.argv[1] == "--compare":
+        baseline_rid = sys.argv[2]
+        current_rid = os.environ.get("EVAL_RUN_ID")
+        if "--current" in sys.argv:
+            i = sys.argv.index("--current")
+            if i + 1 < len(sys.argv):
+                current_rid = sys.argv[i + 1]
+        if not current_rid:
+            print("[extract] --compare requires EVAL_RUN_ID env var or --current <run-id>", file=sys.stderr)
+            sys.exit(2)
+        diff_md = _compare_runs(current_rid, baseline_rid)
+        out_path = RUNS_ROOT / current_rid / f"_compare-vs-{baseline_rid}.md"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(diff_md, encoding="utf-8")
+        print(f"[extract] diff written -> {out_path.relative_to(PROJECT_ROOT)}")
+        sys.exit(0)
+
     if len(sys.argv) < 3:
         print("Usage: python extract.py <test-id> <session-id>", file=sys.stderr)
+        print("       python extract.py --compare <baseline-run-id> [--current <run-id>]", file=sys.stderr)
         sys.exit(1)
 
     test_id = sys.argv[1]
@@ -802,7 +1276,40 @@ if __name__ == "__main__":
     (run_dir / f"{test_id}.json").write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
 
     host_log_path = _copy_host_log(run_dir, test_id)
-    chat_text = _read_chat_text(run_dir, test_id)
+    # Phase A8 — atomic chat-capture: poll up to 10s for chat.txt before declaring missing.
+    chat_text = _poll_chat_text(run_dir, test_id, timeout_s=10)
+
+    # Phase A2 — decision-trace.json (best-effort host.log scan)
+    host_log_text = ""
+    if host_log_path and host_log_path.exists():
+        host_log_text = host_log_path.read_text(encoding="utf-8", errors="replace")
+    decision_trace = _parse_decision_trace(host_log_text)
+    (run_dir / f"{test_id}.decision-trace.json").write_text(
+        json.dumps(decision_trace, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # Phase A1 augmentation — fill model_id in inputs.json from host.log
+    _augment_inputs_json(run_dir, test_id, host_log_text)
+
+    # Phase A6 — perf.json (best-effort; proxy may not implement endpoint yet)
+    perf = _fetch_perf(session_id)
+    if perf is not None:
+        (run_dir / f"{test_id}.perf.json").write_text(
+            json.dumps(perf, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    # Phase A5 — gate.md (best-effort; falls back to no-file if proxy lacks the endpoint)
+    gates = _fetch_gates(session_id, state)
+    if gates:
+        gate_lines = [f"# Gate Detail — `{test_id}`", ""]
+        for g in gates:
+            gtype = g.get("type") or g.get("gate") or "(unknown)"
+            gate_lines.append(f"## {gtype}")
+            gate_lines.append("")
+            detail = g.get("detail") or g.get("markdown") or ""
+            gate_lines.append(detail if isinstance(detail, str) else json.dumps(detail, indent=2, ensure_ascii=False))
+            gate_lines.append("")
+        (run_dir / f"{test_id}.gate.md").write_text("\n".join(gate_lines), encoding="utf-8")
 
     report, summary = build_md(
         test_id, merged, _git_head(),
@@ -813,9 +1320,38 @@ if __name__ == "__main__":
 
     _write_snapshots(run_dir, test_id, state)
 
+    # T-1 — length-vs-reference artifact (AW-only internal benchmark)
+    lvr = _build_length_vs_reference(test_id, chat_text, state, merged.get("hop_log") or [])
+    (run_dir / f"{test_id}.length-vs-reference.json").write_text(
+        json.dumps(lvr, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # Phase A7 — append/update eval-runs-index.json (cross-run trend index)
+    artifacts = []
+    for ext in (".md", ".inputs.json", ".decision-trace.json", ".tool-io.json",
+                ".errors-detailed.json", ".perf.json", ".gate.md", ".chat.txt", ".host.log"):
+        if (run_dir / f"{test_id}{ext}").exists():
+            artifacts.append(f"{test_id}{ext}")
+    run_id = run_dir.name
+    _append_runs_index(
+        run_id=run_id,
+        test_id=test_id,
+        git_sha=_git_head(),
+        summary=summary,
+        sm_state=state.get("sm_state") or {},
+        hop_log=merged.get("hop_log") or [],
+        artifacts=artifacts,
+        frame_errors=0,
+        track="track_a",
+    )
+
     print(f"[extract] wrote {test_id}.md + snapshots under {run_dir}")
     print(f"[extract] score: correctness={summary['correctness']} completeness={summary['completeness']} efficiency={summary['efficiency']} critical_pair_pass={summary['critical_pair_pass']}")
+    if decision_trace.get("missing_log_emitters"):
+        print(f"[extract] decision-trace: missing log emitters = {decision_trace['missing_log_emitters']}")
     if host_log_path:
         print(f"[extract] host log copied -> {host_log_path.name}")
     if chat_text:
         print(f"[extract] chat text captured ({len(chat_text)} chars)")
+    else:
+        print("[extract] WARNING: chat text not captured after 10s poll — §7 will flag explicitly")

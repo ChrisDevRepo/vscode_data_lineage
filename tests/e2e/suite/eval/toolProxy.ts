@@ -75,8 +75,14 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
       outputTokens: number;
       isError: boolean;
       errorType: string | null;
+      errorMessage: string | null;
     };
   }> = [];
+
+  // Phase A5 — gate audit: every gate envelope emitted by start_exploration is
+  // captured here so extract.py can write `<test-id>.gate.md`. Cleared on
+  // POST /session (handled below).
+  let gateLog: Array<{ ts: string; type: string; detail: unknown; emit: string | null }> = [];
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const method = req.method ?? 'GET';
@@ -156,6 +162,7 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         sess.resetExploration();
         sess.hopLog = [];
         proxyLog.length = 0; // reset proxy-level timing log
+        gateLog = []; // Phase A5 — gate audit log resets per session
         sess.regenerateSessionId();
         return respond(res, 201, { sessionId: sess.id });
       }
@@ -216,6 +223,45 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         return respond(res, 200, { ok: true, phase: sess.phase.kind });
       }
 
+      // Phase A5 — GET /session/:id/gates — gate audit log for the session.
+      // extract.py renders these into <test-id>.gate.md.
+      if (method === 'GET' && url.startsWith('/session/') && url.endsWith('/gates')) {
+        return respond(res, 200, { gates: gateLog });
+      }
+
+      // Phase A6 — GET /session/:id/perf — proxy-level performance summary
+      // synthesized from proxyLog. Mirrors src/ai/diagnostics.PerformanceDiagnostics
+      // shape without needing to call PerformanceCollector.finalize() (which is
+      // destructive: it logs the summary line). Read-only view for extract.py.
+      if (method === 'GET' && url.startsWith('/session/') && url.endsWith('/perf')) {
+        const sess = getSession();
+        const totalRounds = proxyLog.length;
+        const totalLatency = proxyLog.reduce((s, e) => s + e._meta.durationMs, 0);
+        const totalIn = proxyLog.reduce((s, e) => s + e._meta.inputTokens, 0);
+        const totalOut = proxyLog.reduce((s, e) => s + e._meta.outputTokens, 0);
+        const errorCount = proxyLog.filter(e => e._meta.isError).length;
+        return respond(res, 200, {
+          summary: {
+            model: sess.modelName || 'unknown',
+            mode: sess.stateMachine ? (sess.stateMachine.columnAspect ? 'column_trace' : 'blackboard') : 'idle',
+            totalRounds,
+            totalLatencyMs: totalLatency,
+            totalTokensIn: totalIn,
+            totalTokensOut: totalOut,
+            errorCount,
+          },
+          rounds: proxyLog.map((e, i) => ({
+            round: i + 1,
+            tool: e.tool,
+            tokensIn: e._meta.inputTokens,
+            tokensOut: e._meta.outputTokens,
+            latencyMs: e._meta.durationMs,
+            isError: e._meta.isError,
+            errorType: e._meta.errorType,
+          })),
+        });
+      }
+
       // GET /session/:id/state — full SM state dump (100% data from RAM)
       if (method === 'GET' && url.startsWith('/session/') && url.endsWith('/state')) {
         const sess = getSession();
@@ -235,6 +281,10 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
             types: sess.filter.types ?? [],
           } : null,
           model_summary: m ? { nodes: m.nodes.length, edges: m.edges.length, schemas: m.schemas.length } : null,
+          gates: gateLog, // Phase A5 — fallback for clients not using /gates
+          session_phase: sess.phase.kind, // Phase A5b — sess.phase.kind is the canonical phase string;
+                                            // sm.toJSON() omits it (returns SM internals only).
+                                            // Without this, eval clients had to infer phase from `gates` array.
         });
       }
 
@@ -318,6 +368,22 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         const isError = typeof resultObj === 'object' && resultObj !== null &&
           ('error' in resultObj || ((resultObj as any).success === false));
         const errorType = isError ? ((resultObj as any).error || 'tool_error_other') : null;
+        // Phase A4 — preserve the full error message body. Prior code kept only
+        // the enum tag (errorType); the human-readable detail (e.g. validation
+        // hint, failing field, suggested fix) was discarded. Now both flow
+        // through to extract.py's errors-detailed.json artifact.
+        let errorMessage: string | null = null;
+        if (isError) {
+          if (typeof resultObj === 'object' && resultObj !== null) {
+            const ro = resultObj as any;
+            errorMessage = ro.message ?? ro.hint ?? ro.detail ?? ro.reason ?? null;
+            if (!errorMessage) {
+              try { errorMessage = JSON.stringify(resultObj); } catch { errorMessage = String(resultObj); }
+            }
+          } else if (typeof resultObj === 'string') {
+            errorMessage = resultObj;
+          }
+        }
 
         // Phase transition for action_required envelopes. Production `lineageParticipant.ts`
         // calls `sess.enterGate()` after the hop-loop surfaces a `gate` exit; the eval proxy
@@ -329,13 +395,21 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
           if (parsed.success) {
             getSession().enterGate(parsed.data);
             console.log(`[proxy:tool] ${tool} emitted gate=${parsed.data.gate} → phase=awaiting_gate`);
+            // Phase A5 — capture the gate envelope for the audit log so
+            // extract.py can render it into <test-id>.gate.md.
+            gateLog.push({
+              ts: new Date().toISOString(),
+              type: parsed.data.gate,
+              detail: (parsed.data as any).detail ?? (resultObj as any).detail ?? null,
+              emit: (parsed.data as any).emit ?? (resultObj as any).emit ?? null,
+            });
           }
         }
 
         console.log(`[proxy:tool] ${tool} → ${durationMs}ms, in=${inputBytes}b/~${inputTokens}t, out=${outputBytes}b/~${outputTokens}t${isError ? ` ERROR=${errorType}` : ''}`);
 
         // Push to proxy-level log for state endpoint
-        const meta = { durationMs, inputBytes, outputBytes, inputTokens, outputTokens, isError, errorType };
+        const meta = { durationMs, inputBytes, outputBytes, inputTokens, outputTokens, isError, errorType, errorMessage };
         const toolShortName = tool.replace(/^lineage_/, '');
         proxyLog.push({
           tool: toolShortName,
