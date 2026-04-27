@@ -1111,7 +1111,7 @@
                 "properties": {
                   "nodeId": {
                     "type": "string",
-                    "description": "Exact neighbor ID to visit."
+                    "description": "Exact, schema-qualified neighbor ID to visit (e.g. `[schema].[name]`). Must come VERBATIM from a prior tool result's `next_hop` / `neighbors[]` data, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Inventing or guessing an id (even a small typo) causes a `route_validation_failed` rejection — the rejection envelope returns up to 3 fuzzy candidates per unresolved id; reuse the matching candidate verbatim, or call `lineage_search_objects` with the un-bracketed name to find the real id."
                   },
                   "question": {
                     "type": "string",
@@ -1130,7 +1130,7 @@
                   "question"
                 ]
               },
-              "description": "Routing requests for next hops."
+              "description": "Routing requests for next hops. Every `nodeId` must already exist in the loaded model (verified against a prior tool result or via `lineage_search_objects`); unresolved ids are rejected and do not enter the agenda."
             },
             "prune_neighbors": {
               "type": "array",

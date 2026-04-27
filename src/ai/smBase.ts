@@ -29,6 +29,41 @@ const SILENT_DEPTH_HEADROOM = 2;
 /** Ring-buffer size for `recent_rejections` surfaced in working memory. */
 const RECENT_REJECTION_CAP = 5;
 
+/** Levenshtein distance between two short strings — used to suggest fuzzy candidates for unresolved route_requests ids. */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const v0 = new Array(b.length + 1);
+  const v1 = new Array(b.length + 1);
+  for (let i = 0; i <= b.length; i++) v0[i] = i;
+  for (let i = 0; i < a.length; i++) {
+    v1[0] = i + 1;
+    for (let j = 0; j < b.length; j++) {
+      const cost = a.charCodeAt(i) === b.charCodeAt(j) ? 0 : 1;
+      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) v0[j] = v1[j];
+  }
+  return v1[b.length];
+}
+
+/**
+ * Returns up to `topN` closest in-scope node ids ranked by edit distance to `target`.
+ * Distance threshold = max(3, floor(target.length * 0.4)) to allow medium typos
+ * (e.g. `[ai].[vwpricelist]` vs `[ai].[vw_price_list]`) but reject unrelated matches.
+ */
+function fuzzyMatchNodeIds(target: string, pool: string[], topN: number): string[] {
+  const threshold = Math.max(3, Math.floor(target.length * 0.4));
+  const scored: Array<{ id: string; d: number }> = [];
+  for (const candidate of pool) {
+    const d = levenshtein(target, candidate);
+    if (d <= threshold) scored.push({ id: candidate, d });
+  }
+  scored.sort((a, b) => a.d - b.d);
+  return scored.slice(0, topN).map(s => s.id);
+}
+
 export type { SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
 export type { BoundaryFlag } from './smTypes';
 
@@ -1322,13 +1357,25 @@ export class NavigationEngine implements IHopStateMachine {
         .filter(r => /not found/i.test(r.reason))
         .map(r => r.id);
       const otherReasons = allInvalidRoutes.filter(r => !/not found/i.test(r.reason));
+      const candidates: Record<string, string[]> = {};
+      if (unknownIds.length > 0) {
+        const scopePool = Array.from(this.scopeNodeIds);
+        for (const u of unknownIds) {
+          const matches = fuzzyMatchNodeIds(u.toLowerCase(), scopePool, 3);
+          if (matches.length > 0) candidates[u] = matches;
+        }
+      }
+      const candidatePreview = Object.entries(candidates)
+        .map(([u, ms]) => `\`${u}\` ~ [${ms.map(m => `\`${m}\``).join(', ')}]`)
+        .join('; ');
       const hint = unknownIds.length > 0
-        ? `Some route_requests[].nodeId values do not exist in the loaded model: ${unknownIds.map(id => `\`${id}\``).join(', ')}. Resolve each name via \`lineage_search_objects\` (the schema-qualified id often differs from a guessed one), or pick a real neighbor id from the prior tool result's \`next_hop\` / \`neighbors[]\` data, then re-call submit_findings with the corrected list.`
+        ? `Some route_requests[].nodeId values do not exist in the loaded model: ${unknownIds.map(id => `\`${id}\``).join(', ')}.${candidatePreview ? ` Closest in-scope matches: ${candidatePreview}. If one of those is the intended target, reuse the verbatim id; otherwise call \`lineage_search_objects\` to find the right schema-qualified id.` : ` Resolve each name via \`lineage_search_objects\` (the schema-qualified id often differs from a guessed one), or pick a real neighbor id from the prior tool result's \`next_hop\` / \`neighbors[]\` data.`} Then re-call submit_findings with the corrected list.`
         : 'One or more route_requests / column references failed validation. Inspect `detail` for the per-id reason and re-submit with corrections.';
       return {
         error: 'route_validation_failed',
         hint,
         unresolved_route_target_ids: unknownIds,
+        route_target_candidates: candidates,
         detail: otherReasons.length > 0 ? otherReasons : allInvalidRoutes,
       };
     }

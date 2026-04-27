@@ -308,6 +308,14 @@ export type SubmitResult =
        * `lineage_search_objects` / `lineage_get_neighbor_columns`.
        */
       unresolved_route_target_ids?: string[];
+      /**
+       * For each unresolved route target, up to 3 closest in-scope candidate
+       * node ids (lower-cased, schema-qualified) ranked by fuzzy similarity.
+       * Empty array when no candidate scored above the noise floor. Populated
+       * on `route_validation_failed` so the AI can pick a real id without an
+       * extra `lineage_search_objects` round-trip when the typo is small.
+       */
+      route_target_candidates?: Record<string, string[]>;
     };
 
 /**

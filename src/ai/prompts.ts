@@ -166,7 +166,8 @@ export function buildActivePhasePrompt(isInline: boolean): string {
     '1. SECTIONS: Submit `sections[]` with one entry per fired `*_capture` template for the locked classification — `business` → 1 business section; `technical` → 1 technical section; `both` → 2 sections (one of each). Each section\'s body is the sole input to the final report; write at full depth because there is no follow-up pass.',
     '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
     '3. MATHEMATICS: Use LaTeX math syntax (`$formula$` or `$$block$$`) for transform expressions and calculations.',
-    `4. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
+    '4. ROUTE_REQUESTS: Every `nodeId` MUST come verbatim from a prior tool result\'s `next_hop` / `neighbors[]` data, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Do NOT guess or reconstruct ids from the question text. On `route_validation_failed`, the rejection envelope returns `route_target_candidates` (up to 3 fuzzy matches per unresolved id) — pick a candidate verbatim or call `lineage_search_objects` to find the right id, then re-submit. Never re-submit the same invented id.',
+    `5. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');
 }
 
