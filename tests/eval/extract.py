@@ -412,6 +412,39 @@ def build_md(test_id: str, merged: dict, git_head: str, chat_text: str | None = 
     reasons = _build_reasons_map(submits)
     detail_slots = (sm.get("memory") or {}).get("detailSlots") or {}
 
+    # Look up node type/schema/name by id — detail_slots are the authoritative
+    # per-node record (one slot per visited node). Avoids the off-by-one trap of
+    # reading `submit.output.focus_node`, which is the NEXT hop's focus (engine
+    # advances after submit, not before).
+    def _node_meta_for(node_id: str) -> dict:
+        nid_norm = _normalize_node_id(node_id)
+        for k, v in detail_slots.items():
+            if _normalize_node_id(k) == nid_norm and isinstance(v, dict):
+                return {"s": v.get("schema"), "n": v.get("name"), "t": v.get("type")}
+        # Fallback: scan scope
+        for n in (sm.get("scopeNodeIds") or []):
+            if _normalize_node_id(n) == nid_norm:
+                return {"s": "?", "n": n.split(".")[-1].strip("[]"), "t": "?"}
+        return {}
+
+    # Structural-quality KPIs — measure b1-shape coverage of the persisted description.
+    def _structural_kpis(text: str) -> dict:
+        if not text:
+            return {"chars": 0, "tables": 0, "warnings": 0, "latex_inline": 0, "code_fences": 0, "numbered_sections": 0, "headings": 0}
+        return {
+            "chars": len(text),
+            "tables": len(re.findall(r"^\|[^\n]*\|\s*\n\|[\s:|-]+\|\s*\n", text, re.MULTILINE)),
+            "warnings": text.count("⚠️") + text.count("⚠"),
+            "latex_inline": len(re.findall(r"\$[^$\n]{2,}?\$", text)),
+            "code_fences": len(re.findall(r"^```", text, re.MULTILINE)) // 2,
+            "numbered_sections": len(re.findall(r"^##\s+\d+[.\s]", text, re.MULTILINE)),
+            "headings": len(re.findall(r"^##\s", text, re.MULTILINE)),
+        }
+
+    persisted_description = (rg.get("description") or "")
+    description_kpis = _structural_kpis(persisted_description)
+    chat_kpis = _structural_kpis(chat_text or "")
+
     lines: list[str] = []
     A = lines.append
 
@@ -541,38 +574,49 @@ def build_md(test_id: str, merged: dict, git_head: str, chat_text: str | None = 
     # ---- 6. Hops ----
     A(f"## 6. Hops ({len(submits)})")
     A("")
-    A("> One block per visited node (hop order). All fields sourced 1:1 from `submit_findings.input` for that hop; subquestion comes from the prior hop's `route_requests[]`.")
+    A("> One block per visited node (hop order). Short/long memory sourced 1:1 from `submit_findings.input` for that hop. `Routed-out` = `route_requests[]` from the same hop; `Pruned-out` = `prune_neighbors[]`. Subquestion = the prior hop's `route_requests[].question` for this node id.")
     A("")
+
+    # Per-hop summary table — one row per hop, mechanical KPIs for delta-vs-baseline reading.
+    A("### Hop summary table")
+    A("")
+    A("| # | Focus | Type | Verdict | Badge | Sections | Long-mem chars | Routed-out | Pruned-out | Duration (ms) | Tokens (out) |")
+    A("| -: | :--- | :--- | :--- | :--- | -: | -: | -: | -: | -: | -: |")
     for i, s in enumerate(submits):
         inp = s.get("input", {}) or {}
-        out = s.get("output", {}) or {}
+        meta = s.get("_meta") or {}
         fnode = inp.get("focus_node_id") or "(no focus_node_id)"
-        # node-meta lookup: SM mode emits focus_node, inline mode uses fullNodes[0]/detail_slots[0]
-        node_meta = out.get("focus_node") or {}
-        if not node_meta:
-            nested = (out.get("result") or {}) if isinstance(out.get("result"), dict) else {}
-            fn = nested.get("fullNodes") or []
-            if fn:
-                node_meta = fn[0]
-            else:
-                ds = nested.get("detail_slots") or []
-                if ds:
-                    ds0 = ds[0]
-                    node_meta = {"s": ds0.get("schema"), "n": ds0.get("name"), "t": ds0.get("type")}
-        type_str = node_meta.get("t") or node_meta.get("type") or "?"
+        node_meta = _node_meta_for(fnode)
+        type_str = node_meta.get("t") or "?"
+        secs = inp.get("sections") or []
+        long_chars = sum(len((sec.get("text") or "")) for sec in secs if isinstance(sec, dict))
+        routed_out = inp.get("route_requests") or []
+        pruned_out = inp.get("prune_neighbors") or []
+        A(f"| {i+1} | `{fnode}` | {type_str} | `{inp.get('verdict','?')}` | {inp.get('badge_label') or '—'} | {len(secs)} | {long_chars:,} | {len(routed_out)} | {len(pruned_out)} | {meta.get('durationMs', 0):,} | {meta.get('outputTokens', 0):,} |")
+    A("")
+
+    # Per-hop expanded blocks
+    for i, s in enumerate(submits):
+        inp = s.get("input", {}) or {}
+        meta = s.get("_meta") or {}
+        fnode = inp.get("focus_node_id") or "(no focus_node_id)"
+        node_meta = _node_meta_for(fnode)
+        type_str = node_meta.get("t") or "?"
         sub_q = reasons.get(_normalize_node_id(fnode)) or "_(initial origin — no routing question)_"
 
         A(f"### Hop {i+1} — `{fnode}`  *({type_str})*")
         A("")
         A("| Field | Value |")
         A("| :--- | :--- |")
-        A(f"| Subquestion | {sub_q} |")
-        A(f"| Status (verdict) | `{inp.get('verdict', '?')}` |")
-        A(f"| Label (badge) | `{inp.get('badge_label') or '—'}` |")
+        A(f"| Subquestion (why visited) | {sub_q} |")
+        A(f"| Verdict | `{inp.get('verdict', '?')}` |")
+        A(f"| Badge | `{inp.get('badge_label') or '—'}` |")
         if inp.get("note_caption"):
             A(f"| Note | {inp.get('note_caption')} |")
+        A(f"| Hop duration | {meta.get('durationMs', 0):,} ms |")
+        A(f"| Hop output tokens | {meta.get('outputTokens', 0):,} |")
         A("")
-        A("**Short memory** (`summary`)")
+        A("**Short memory** (`summary` — one-line digest carried into next hop's `<short_term_memory>`)")
         A("")
         summary_text = (inp.get("summary") or "").strip()
         if not summary_text:
@@ -582,7 +626,7 @@ def build_md(test_id: str, merged: dict, git_head: str, chat_text: str | None = 
             A(summary_text)
             A("```")
         A("")
-        A("**Long memory** (`sections[]`)")
+        A("**Long memory** (`sections[]` — full per-angle capture stored in detail-archive)")
         A("")
         secs = inp.get("sections") or []
         if not secs:
@@ -592,20 +636,115 @@ def build_md(test_id: str, merged: dict, git_head: str, chat_text: str | None = 
             for sec in secs:
                 if not isinstance(sec, dict):
                     continue
-                A(f"**angle: `{sec.get('angle','?')}`**")
-                A("")
                 sec_text = (sec.get("text", "") or "").strip()
+                A(f"**angle: `{sec.get('angle','?')}`**  ·  {len(sec_text):,} chars")
+                A("")
                 if not sec_text:
                     A("_(empty)_")
                 else:
-                    # Fence section text so embedded markdown headers / lists in the AI's
-                    # authored memory don't collide with the report's own outline.
                     A("```markdown")
                     A(sec_text)
                     A("```")
                 A("")
+
+        # Routing decisions emitted from this hop
+        routed_out = inp.get("route_requests") or []
+        pruned_out = inp.get("prune_neighbors") or []
+        if routed_out:
+            A(f"**Routed-out** (`route_requests` — {len(routed_out)} new neighbors queued)")
+            A("")
+            for rr in routed_out:
+                if not isinstance(rr, dict):
+                    continue
+                rr_id = rr.get("nodeId") or "?"
+                rr_q = (rr.get("question") or "").strip() or "_(no question)_"
+                rr_cols = rr.get("columns") or []
+                col_str = f"  cols=[{', '.join(rr_cols)}]" if rr_cols else ""
+                A(f"- `{rr_id}` — {rr_q}{col_str}")
+            A("")
+        if pruned_out:
+            A(f"**Pruned-out** (`prune_neighbors` — {len(pruned_out)} neighbors discarded)")
+            A("")
+            for n in pruned_out:
+                A(f"- `{n}`")
+            A("")
         A("---")
         A("")
+
+    # ---- 6.5 Structural-quality KPIs (success metric for iter-vs-iter comparison) ----
+    # Iter-1 reference for description: bb-q1-employee-technical (12 slots, 819 avg, 6 sections — see _AW_REFERENCE).
+    # b1 (CadenceWorker UAT) reference for description shape: 27,878 chars / 7 numbered sections / 4+ tables / 3+ ⚠️ / multiple code fences.
+    # b1 chat reference: 5,263 chars.
+    A("## 6.5 Structural-quality KPIs (success metric)")
+    A("")
+    A("> Mechanical structural counts on the persisted `result_graph.description` and the `chat.txt`. These move iteration-over-iteration; if they don't, the prompt change didn't land.")
+    A("")
+    A("| Element | Description (`result_graph.description`) | Chat (`<id>.chat.txt`) | b1 reference (description) |")
+    A("| :--- | -: | -: | -: |")
+    A(f"| chars | {description_kpis['chars']:,} | {chat_kpis['chars']:,} | 27,878 |")
+    A(f"| numbered `## N` sections | {description_kpis['numbered_sections']} | {chat_kpis['numbered_sections']} | 7 |")
+    A(f"| markdown tables | {description_kpis['tables']} | {chat_kpis['tables']} | 4+ |")
+    A(f"| ⚠️ callouts | {description_kpis['warnings']} | {chat_kpis['warnings']} | 3+ |")
+    A(f"| LaTeX `$expr$` | {description_kpis['latex_inline']} | {chat_kpis['latex_inline']} | varies |")
+    A(f"| code fences | {description_kpis['code_fences']} | {chat_kpis['code_fences']} | several |")
+    A(f"| total `##` headings | {description_kpis['headings']} | {chat_kpis['headings']} | 7+ |")
+    A("")
+
+    # detail-memory aggregate KPIs
+    detail_section_count = 0
+    detail_total_chars = 0
+    detail_business_chars = 0
+    detail_technical_chars = 0
+    for slot in detail_slots.values():
+        if not isinstance(slot, dict):
+            continue
+        for sec in (slot.get("sections") or []):
+            if not isinstance(sec, dict):
+                continue
+            txt = sec.get("text") or ""
+            detail_section_count += 1
+            detail_total_chars += len(txt)
+            if sec.get("angle") == "business":
+                detail_business_chars += len(txt)
+            elif sec.get("angle") == "technical":
+                detail_technical_chars += len(txt)
+    avg_detail_section = round(detail_total_chars / detail_section_count, 1) if detail_section_count else 0
+
+    A("### Detail-memory totals (across all hops)")
+    A("")
+    A("| Metric | Value |")
+    A("| :--- | -: |")
+    A(f"| detail_slots count | {len(detail_slots)} |")
+    A(f"| section count | {detail_section_count} |")
+    A(f"| total long-memory chars | {detail_total_chars:,} |")
+    A(f"| avg chars / section | {avg_detail_section:,} |")
+    A(f"| business-angle chars | {detail_business_chars:,} |")
+    A(f"| technical-angle chars | {detail_technical_chars:,} |")
+    A(f"| AW reference (bb-q1-employee-technical) avg | 819 |")
+    A("")
+
+    # Routing precision — compare routed neighbors vs slots actually produced
+    all_routed = set()
+    all_pruned = set()
+    for s in submits:
+        for rr in (s.get("input") or {}).get("route_requests") or []:
+            nid = _normalize_node_id(rr.get("nodeId") or "")
+            if nid:
+                all_routed.add(nid)
+        for n in (s.get("input") or {}).get("prune_neighbors") or []:
+            nid = _normalize_node_id(n)
+            if nid:
+                all_pruned.add(nid)
+    visited = {_normalize_node_id(k) for k in detail_slots.keys()}
+    routed_visited = all_routed & visited
+    A("### Routing precision (auto-add / auto-prune)")
+    A("")
+    A("| Metric | Value |")
+    A("| :--- | -: |")
+    A(f"| nodes routed via `route_requests` | {len(all_routed)} |")
+    A(f"| nodes pruned via `prune_neighbors` | {len(all_pruned)} |")
+    A(f"| routed → visited (produced a slot) | {len(routed_visited)} / {len(all_routed)} |")
+    A("")
 
     # ---- 7. AI summary chat output ----
     A("## 7. AI summary chat output")

@@ -41,11 +41,83 @@ export interface ToolProxyHandle {
 
 // ─── HTTP utilities ─────────────────────────────────────────────────────────
 
-function readBody(req: IncomingMessage): Promise<string> {
+/**
+ * Map of stray cp1252 / Windows-1252 punctuation bytes to their UTF-8 equivalents.
+ *
+ * @remarks
+ * On Windows, when an agent posts a body containing non-ASCII characters via
+ * cmd.exe / PowerShell, multi-byte UTF-8 sequences (em-dash, smart quotes,
+ * arrows, ⚠️) can be transcoded to single cp1252 bytes before reaching curl.
+ * Those bytes are then invalid UTF-8 starters and Node's `Buffer.toString('utf8')`
+ * replaces them with U+FFFD, destroying the original character.
+ *
+ * Pre-processing the raw bytes here converts the common cp1252 punctuation
+ * range (0x80–0x9F) to its proper UTF-8 sequence before JSON parse — pure
+ * transport fidelity, no behavioral or content semantics introduced.
+ */
+const CP1252_PUNCT_MAP: Record<number, string> = {
+  0x80: '€',  0x82: '‚',  0x83: 'ƒ',  0x84: '„',
+  0x85: '…',  0x86: '†',  0x87: '‡',  0x88: 'ˆ',
+  0x89: '‰',  0x8A: 'Š',  0x8B: '‹',  0x8C: 'Œ',
+  0x8E: 'Ž',  0x91: '‘',  0x92: '’',  0x93: '“',
+  0x94: '”',  0x95: '•',  0x96: '–',  0x97: '—',
+  0x98: '˜',  0x99: '™',  0x9A: 'š',  0x9B: '›',
+  0x9C: 'œ',  0x9E: 'ž',  0x9F: 'Ÿ',
+};
+
+/**
+ * Decode an HTTP request body that may have suffered cp1252 transit corruption.
+ *
+ * @remarks
+ * Strategy: attempt strict UTF-8 first. If decoding produces no replacement
+ * characters, return as-is (the common case). Otherwise rewrite stray cp1252
+ * punctuation bytes (0x80–0x9F that aren't part of a valid UTF-8 multi-byte
+ * sequence) into their UTF-8 equivalents, then re-decode. This salvages the
+ * agent's intent without touching the production toolProvider path.
+ */
+function decodeBodyTolerant(buf: Buffer): { text: string; repaired: boolean } {
+  const strict = buf.toString('utf8');
+  if (!strict.includes('�')) {
+    return { text: strict, repaired: false };
+  }
+  const out: number[] = [];
+  let i = 0;
+  while (i < buf.length) {
+    const b = buf[i];
+    if (b < 0x80) { out.push(b); i++; continue; }
+    // Probe for a valid UTF-8 multi-byte sequence starting at i.
+    let seqLen = 0;
+    if ((b & 0xE0) === 0xC0) seqLen = 2;
+    else if ((b & 0xF0) === 0xE0) seqLen = 3;
+    else if ((b & 0xF8) === 0xF0) seqLen = 4;
+    let validUtf8 = seqLen > 0 && i + seqLen <= buf.length;
+    if (validUtf8) {
+      for (let k = 1; k < seqLen; k++) {
+        if ((buf[i + k] & 0xC0) !== 0x80) { validUtf8 = false; break; }
+      }
+    }
+    if (validUtf8) {
+      for (let k = 0; k < seqLen; k++) out.push(buf[i + k]);
+      i += seqLen;
+    } else if (CP1252_PUNCT_MAP[b]) {
+      const utf8 = Buffer.from(CP1252_PUNCT_MAP[b], 'utf8');
+      for (const x of utf8) out.push(x);
+      i++;
+    } else {
+      // Unknown high byte — preserve as Latin-1 fallback.
+      const utf8 = Buffer.from(String.fromCharCode(b), 'utf8');
+      for (const x of utf8) out.push(x);
+      i++;
+    }
+  }
+  return { text: Buffer.from(out).toString('utf8'), repaired: true };
+}
+
+function readBody(req: IncomingMessage): Promise<{ text: string; repaired: boolean }> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
+    req.on('end', () => resolve(decodeBodyTolerant(Buffer.concat(chunks))));
     req.on('error', reject);
   });
 }
@@ -169,7 +241,7 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
 
       // POST /filter — set schema/type filter
       if (method === 'POST' && url === '/filter') {
-        const body = await readBody(req);
+        const { text: body } = await readBody(req);
         const { schemas, types } = JSON.parse(body) as {
           schemas?: string[]; types?: string[];
         };
@@ -195,7 +267,7 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
       // production "paused" branch); the agent can still redirect via a new
       // question which would reset the session.
       if (method === 'POST' && url === '/gate') {
-        const body = await readBody(req);
+        const { text: body } = await readBody(req);
         let parsed: { sessionId?: string; approved?: boolean };
         try {
           parsed = JSON.parse(body);
@@ -316,7 +388,10 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
 
       // POST /tool — THE CORE: pass-through to vscode.lm.invokeTool()
       if (method === 'POST' && url === '/tool') {
-        const body = await readBody(req);
+        const { text: body, repaired: bodyUtf8Repaired } = await readBody(req);
+        if (bodyUtf8Repaired) {
+          console.log('[proxy:utf8] cp1252→utf8 transit repair applied to incoming /tool body');
+        }
         const inputBytes = Buffer.byteLength(body, 'utf8');
         let parsed: { tool?: string; input?: Record<string, unknown>; sessionId?: string };
         try {
@@ -409,7 +484,7 @@ export function startToolProxy(config: ToolProxyConfig): Promise<ToolProxyHandle
         console.log(`[proxy:tool] ${tool} → ${durationMs}ms, in=${inputBytes}b/~${inputTokens}t, out=${outputBytes}b/~${outputTokens}t${isError ? ` ERROR=${errorType}` : ''}`);
 
         // Push to proxy-level log for state endpoint
-        const meta = { durationMs, inputBytes, outputBytes, inputTokens, outputTokens, isError, errorType, errorMessage };
+        const meta = { durationMs, inputBytes, outputBytes, inputTokens, outputTokens, isError, errorType, errorMessage, utf8Repaired: bodyUtf8Repaired };
         const toolShortName = tool.replace(/^lineage_/, '');
         proxyLog.push({
           tool: toolShortName,
