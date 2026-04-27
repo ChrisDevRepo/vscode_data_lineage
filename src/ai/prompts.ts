@@ -108,7 +108,7 @@ export function buildDiscoveryPrompt(): string {
     '',
     '**Rule:** If the user asks for a "lineage graph", "annotated trace", or to "explain the joins/pipeline" of an object, you MUST use Class S. Do not short-circuit to Class D prose just because you found the neighbors in a detail lookup.',
     '',
-    'Resolve the starting node ID with `lineage_search_objects` first; if multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
+    'Resolve every user-named identifier — both the origin and any names the user said to ignore / exclude / drop / skip — with `lineage_search_objects` BEFORE calling `lineage_start_exploration`. The model has many schemas; user-shorthand names ("RECON", "EXCP2") often live in a non-default schema. Inventing an id like `[dbo].[recon]` causes `lineage_start_exploration` to reject with `unknown_node_ids`. If multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
     '',
     'The engine emits a `confirm_sm_start` consent gate on every exploration so the user can review scope (nodes, schemas, excluded types, mode) before analysis runs. Present it to the user; that is expected control flow, not an error to retry around.',
     '',

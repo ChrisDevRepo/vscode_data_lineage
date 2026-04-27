@@ -10,7 +10,7 @@ These instructions are foundational mandates for the AI assistant operating in t
 - **Memory Model**: Follow the **"Asymmetric Tiering"** memory pattern. Strictly separate the short-term `short_term_memory` (used ONLY in Sliding Memory hops) from the full-fidelity 'Detail Archive' (used EXCLUSIVELY in Synthesis).
 
 ## Performance & Latency Optimization
-- **Pipelined Model Architecture**: Maintain maximum quality by assigning all core reasoning and node analysis to the "Smart" model. Offload repetitive structural tasks—such as JSON packaging, UI progress formatting, and `present_result` assembly—to a high-speed "Fast" model tier.
+- **Pipelined Model Architecture (Roadmap)**: Maintain maximum quality by assigning all core reasoning and node analysis to the "Smart" model. Offload repetitive structural tasks—such as JSON packaging, UI progress formatting, and `present_result` assembly—to a high-speed "Fast" model tier. (Currently utilizing single model handle protocol).
 - **UX Transparency**: Keep `surfaceProse = false` during the active phase to prevent noisy chat output. Real-time feedback for analysis must be delivered via the `ChatResponseWriter.progress` channel (e.g., "Hop N: Analyzing [Object]..." or "Analyzing full graph...").
 - **Batch Submission**: Support and prefer batch submissions (`submit_findings` with finding array) in True Inline mode to reduce turns and latency.
 - **Interactive Gates**: Use `stream.button` for all "Human-in-the-loop" decisions (Approve/Decline). Do not rely on natural language classification for deterministic state machine transitions.
@@ -31,7 +31,7 @@ These instructions are foundational mandates for the AI assistant operating in t
 
 ## Documentation & Engineering Integrity
 - **Code-First Truth Model**: The codebase is the single source of truth. Documentation MUST be reconciled against real code behavior. Never assume existing docs are accurate.
-- **Internal vs. External Segregation**: Maintain strict segregation between user-facing guides and internal developer-facing docs (e.g., docs-internal/).
+- **Internal vs. External Segregation**: Maintain strict segregation between user-facing guides and internal developer-facing docs/rules (e.g., `.claude/rules/`).
 - **Stability-First Policy**: Prioritize Stability > Performance > Features. Changes to critical paths (parsers, state machines) require zero-regression validation against baselines.
 
 ## Supply Chain & Security Integrity

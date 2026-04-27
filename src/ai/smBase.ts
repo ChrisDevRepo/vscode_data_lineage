@@ -756,7 +756,7 @@ export class NavigationEngine implements IHopStateMachine {
     passNodeIds?: string[];
     forceMode?: 'inline' | 'sm';
     mission_brief?: string;
-  }): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | { error: string; hint?: string } {
+  }): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | { error: string; hint?: string; unresolved_excludeNodeIds?: string[]; unresolved_passNodeIds?: string[] } {
     this.visited.clear();
     this.agenda = [];
     this.agendaIds.clear();
@@ -766,10 +766,41 @@ export class NavigationEngine implements IHopStateMachine {
       this.memory.setMissionBrief(params.mission_brief);
       this.log('debug', `[Mission] brief=${trunc(params.mission_brief, 200)}`);
     }
+    // Validate user-named identifier filters resolve to real graph nodes before storing.
+    // Unknown ids would silently no-op at scope-build time (excludedNodeIds.has(id) returns
+    // false for ids never present in the seen set), masking the AI inventing wrong-schema ids.
+    const resolveId = (raw: string): string | null =>
+      this.nodeMap.has(raw) ? raw
+      : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase()
+      : null;
+    const partition = (raws: string[]): { resolved: string[]; unresolved: string[] } => {
+      const resolved: string[] = [];
+      const unresolved: string[] = [];
+      for (const raw of raws) {
+        const id = resolveId(raw);
+        if (id) resolved.push(id); else unresolved.push(raw);
+      }
+      return { resolved, unresolved };
+    };
+    const excludeIds = partition(params.excludeNodeIds ?? []);
+    const passIds = partition(params.passNodeIds ?? []);
+    if (excludeIds.unresolved.length > 0 || passIds.unresolved.length > 0) {
+      this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
+      return {
+        error: 'unknown_node_ids',
+        hint: "These ids don't exist in the loaded model. Call lineage_search_objects with each user-named identifier (e.g. 'RECON', 'EXCP2') to resolve the real schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
+        unresolved_excludeNodeIds: excludeIds.unresolved,
+        unresolved_passNodeIds: passIds.unresolved,
+      };
+    }
+    if (excludeIds.resolved.length + passIds.resolved.length > 0) {
+      this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}]`);
+    }
+
     this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
     this.excludedSchemas = new Set((params.excludeSchemas ?? []).map(s => s.toLowerCase()));
-    this.excludedNodeIds = new Set((params.excludeNodeIds ?? []).map(s => s.toLowerCase()));
-    this.passNodeIds = new Set((params.passNodeIds ?? []).map(s => s.toLowerCase()));
+    this.excludedNodeIds = new Set(excludeIds.resolved.map(s => s.toLowerCase()));
+    this.passNodeIds = new Set(passIds.resolved.map(s => s.toLowerCase()));
     this.forceMode = params.forceMode ?? null;
 
     const originNode = this.nodeMap.get(params.origin.toLowerCase());

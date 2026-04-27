@@ -180,7 +180,10 @@ export function normalizeName(name: string): string {
 }
 
 /**
- * Checks if a name contains a schema qualifier.
+ * Checks if a name contains a schema qualifier (e.g., 'dbo.Table' vs 'Table').
+ * 
+ * @param name - The SQL identifier to check.
+ * @returns `true` if the name is schema-qualified.
  */
 function isSchemaQualified(name: string): boolean {
   return stripBrackets(name).includes('.');
@@ -188,6 +191,9 @@ function isSchemaQualified(name: string): boolean {
 
 /**
  * Checks if a reference points to a known system schema (e.g., sys, INFORMATION_SCHEMA).
+ * 
+ * @param name - The SQL identifier to check.
+ * @returns `true` if it belongs to a system schema.
  */
 function isSystemRef(name: string): boolean {
   const schema = stripBrackets(name).split('.')[0].toLowerCase();
@@ -196,6 +202,15 @@ function isSystemRef(name: string): boolean {
 
 /**
  * Heuristically determines if a script writes to a specific object.
+ * 
+ * @remarks
+ * Uses a regex to look for INSERT/UPDATE/DELETE/MERGE/TRUNCATE keywords 
+ * preceding the object name. Used to infer flow direction for SPs.
+ * 
+ * @param body - The SQL script body.
+ * @param schema - Object schema.
+ * @param name - Object name.
+ * @returns 'write' if a write operation is detected, otherwise 'read'.
  */
 function inferBodyDirection(body: string, schema: string, name: string): 'write' | 'read' {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -209,6 +224,12 @@ function inferBodyDirection(body: string, schema: string, name: string): 'write'
 
 /**
  * Internal utility to add a directional edge to the lineage graph.
+ * 
+ * @param edges - The collection of edges to add to.
+ * @param edgeKeys - A set used to deduplicate edges by their source→target key.
+ * @param source - Source node ID.
+ * @param target - Target node ID.
+ * @param type - The edge type (body-read, write, or exec).
  */
 function addEdge(
   edges: LineageEdge[],
@@ -226,6 +247,9 @@ function addEdge(
 
 /**
  * Computes architectural schema metrics from the resolved node list.
+ * 
+ * @param nodes - All discovered lineage nodes.
+ * @returns An array of schema info objects, sorted by node count.
  */
 export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
   const map = new Map<string, SchemaInfo>();
@@ -245,6 +269,9 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
 
 /**
  * Builds the primary list of LineageNodes from extracted object metadata.
+ * 
+ * @param objects - Metadata for objects discovered in the active scope.
+ * @returns The assembled nodes and their unique IDs.
  */
 function buildNodeList(objects: ExtractedObject[]): { nodes: LineageNode[]; nodeIds: Set<string> } {
   const nodes: LineageNode[] = [];
@@ -271,6 +298,9 @@ function buildNodeList(objects: ExtractedObject[]): { nodes: LineageNode[]; node
 
 /**
  * Builds the full cross-schema catalog for Phase 2 dependency resolution.
+ * 
+ * @param allObjects - The full database catalog (optional).
+ * @returns Metadata for all objects available for neighbor resolution.
  */
 function buildFullCatalog(allObjects?: ExtractedObject[]): {
   allNodeIds: Set<string>;
@@ -293,15 +323,25 @@ function buildFullCatalog(allObjects?: ExtractedObject[]): {
  * Classification structure for dependencies found during extraction.
  */
 interface GroupedDeps {
+  /** Resolved local dependencies. */
   depsPerSource: Map<string, string[]>;
+  /** Dependencies that exist in the catalog but are outside the active schema filter. */
   crossSchemaDepsForNode: Map<string, string[]>;
+  /** Dependencies that were schema-qualified but not found in any catalog. */
   unresolvableDepsForNode: Map<string, string[]>;
+  /** Pairs where the neighbor depends on an in-scope node. */
   inboundNeighborPairs: Array<{ source: string; target: string }>;
+  /** Dependencies that appear to target another database (3-part names). */
   crossDbMetaDeps: Map<string, string[]>;
 }
 
 /**
  * Categorizes dependencies based on their visibility and resolution status in the current catalog.
+ * 
+ * @param deps - Raw extracted dependencies.
+ * @param nodeIds - Nodes in the active filtered scope.
+ * @param allNodeIds - All nodes in the database catalog.
+ * @returns A grouped collection of dependencies ready for graph processing.
  */
 function groupDependencies(
   deps: ExtractedDependency[],
@@ -358,20 +398,41 @@ function groupDependencies(
  * Shared context for processing dependency edges per-node.
  */
 interface EdgeContext {
+  /** IDs of all nodes in the current filtered scope. */
   nodeIds: Set<string>;
+  /** IDs of all nodes in the database catalog. */
   allNodeIds: Set<string>;
+  /** Metadata lookup for nodes in the full catalog. */
   allObjectMeta: Map<string, { schema: string; name: string; type: ObjectType }>;
+  /** Lookup map for nodes in the current filtered scope. */
   nodeMap: Map<string, LineageNode>;
+  /** The collection of graph edges being built. */
   edges: LineageEdge[];
+  /** Set used to deduplicate edges. */
   edgeKeys: Set<string>;
+  /** Performance and diagnostic statistics. */
   stats: ParseStats;
+  /** Pairs to be added to the O(1) neighbor index. */
   neighborPairs: Array<{ source: string; target: string }>;
+  /** The categorized extraction results. */
   grouped: GroupedDeps;
+  /** Tracked cross-DB references discovered during regex analysis. */
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>;
 }
 
 /**
  * Resolves regex-parsed references into graph edges or neighbor index pairs.
+ * 
+ * @param refs - Raw SQL names found in script body.
+ * @param sourceId - ID of the node being parsed.
+ * @param spLabel - Human-readable name for logging.
+ * @param direction - Edge directionality (inward vs outward).
+ * @param edgeType - The semantic type of connection (body vs exec).
+ * @param ctx - Shared edge creation context.
+ * @param outRefs - Collection for successful resolutions.
+ * @param skipped - Collection for system/unqualified skips.
+ * @param unrelated - Collection for unresolvable drops.
+ * @returns The number of successfully resolved edges.
  */
 function processRegexRefs(
   refs: string[],
@@ -420,6 +481,10 @@ function processRegexRefs(
 
 /**
  * Orchestrates edge creation for non-procedural nodes (tables, views, functions).
+ * 
+ * @param node - The node to process.
+ * @param xmlDeps - Dependencies declared in the XML model (DACPAC only).
+ * @param ctx - Shared edge context.
  */
 function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
@@ -488,6 +553,10 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
 
 /**
  * Orchestrates edge creation for stored procedures using regex-based script analysis.
+ * 
+ * @param node - The node to process.
+ * @param xmlDeps - XML-declared dependencies.
+ * @param ctx - Shared edge context.
  */
 function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
@@ -564,6 +633,14 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
 
 /**
  * Primary internal builder for the node and edge lists.
+ * 
+ * @param objects - Objects discoverd in scope.
+ * @param deps - Extracted object-level dependencies.
+ * @param allObjects - Full database catalog.
+ * @param currentDatabase - Active database name.
+ * @param externalRefsEnabled - Whether to create virtual nodes for external systems.
+ * @param maxNodes - Budget for total nodes.
+ * @returns Assembled nodes, edges, statistics, and neighbor index pairs.
  */
 function buildNodesAndEdges(
   objects: ExtractedObject[],
@@ -602,7 +679,12 @@ function buildNodesAndEdges(
   return { nodes, edges, stats, neighborPairs };
 }
 
-/** Deterministic hash of a URL string → 8-char hex for stable virtual node IDs. */
+/** 
+ * Deterministic hash of a URL string → 8-char hex for stable virtual node IDs. 
+ * 
+ * @param url - The URL to hash.
+ * @returns An 8-character hex string.
+ */
 function hashUrl(url: string): string {
   let hash = 0;
   for (let i = 0; i < url.length; i++) {
@@ -612,7 +694,13 @@ function hashUrl(url: string): string {
   return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
 }
 
-/** Extract last path segment from a URL, max length 40. */
+/** 
+ * Extract last path segment from a URL, max length 40. 
+ * 
+ * @param url - The URL to parse.
+ * @param maxLen - Maximum character length.
+ * @returns The last segment of the path.
+ */
 function lastUrlSegment(url: string, maxLen = 40): string {
   const cleaned = url.replace(/[?#].*$/, '');
   const segments = cleaned.split('/');
@@ -622,6 +710,15 @@ function lastUrlSegment(url: string, maxLen = 40): string {
 
 /**
  * Creates virtual nodes for external systems like cloud files or remote databases.
+ * 
+ * @param nodes - Node collection to add to.
+ * @param nodeIds - ID set to add to.
+ * @param edges - Edge collection.
+ * @param edgeKeys - Edge deduplication set.
+ * @param crossDbRegexRefs - Discovered 3-part references from regex.
+ * @param crossDbMetaDeps - Discovered 3-part references from model metadata.
+ * @param currentDatabase - Active database name.
+ * @param maxNodes - Total node budget.
  */
 function createVirtualNodes(
   nodes: LineageNode[],

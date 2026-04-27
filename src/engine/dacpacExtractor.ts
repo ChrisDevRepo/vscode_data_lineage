@@ -132,6 +132,9 @@ export function extractDacpacFiltered(
 
 /**
  * Internal logic to compute schema-level statistics from parsed XML elements.
+ * 
+ * @param elements - The full array of parsed elements from model.xml.
+ * @returns A summary object containing schema info and total object count.
  */
 function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview {
   const schemaMap = new Map<string, SchemaInfo>();
@@ -218,6 +221,9 @@ export function filterBySchemas(
 
 /**
  * Extracts a lightweight catalog of all tracked objects from XML elements.
+ * 
+ * @param elements - The source XML elements.
+ * @returns A collection of extracted objects without body or column detail.
  */
 function extractObjectsLightweight(elements: XmlElement[]): ExtractedObject[] {
   const seen = new Set<string>();
@@ -236,6 +242,9 @@ function extractObjectsLightweight(elements: XmlElement[]): ExtractedObject[] {
 
 /**
  * Loads the dacpac buffer into JSZip and retrieves the `model.xml` content.
+ * 
+ * @param buffer - Raw file buffer.
+ * @returns The XML content as a string.
  */
 async function extractModelXml(buffer: ArrayBuffer): Promise<string> {
   let zip: JSZip;
@@ -256,6 +265,9 @@ async function extractModelXml(buffer: ArrayBuffer): Promise<string> {
 
 /**
  * Parses the raw XML string into a structured object using `fast-xml-parser`.
+ * 
+ * @param xml - The XML string to parse.
+ * @returns An object containing the elements array and the DSP name.
  */
 function parseElements(xml: string): { elements: XmlElement[]; dspName: string } {
   const parser = new XMLParser({
@@ -309,6 +321,10 @@ export function parseDspPlatform(dsp: string): string {
 
 /**
  * Extracts deep metadata (DDL, columns, constraints) for tracked objects.
+ * 
+ * @param elements - The elements to process.
+ * @param constraintElements - Optional elements collection for cross-referencing constraints.
+ * @returns The collection of detailed object metadata.
  */
 function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[]): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
@@ -356,6 +372,9 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
 
 /**
  * Extracts object-level dependencies between XML elements.
+ * 
+ * @param elements - The source XML elements.
+ * @returns The collection of discovered dependencies.
  */
 function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   const deps: ExtractedDependency[] = [];
@@ -376,6 +395,9 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
 
 /**
  * Extracts column definitions for tables, views, and functions from the XML model.
+ * 
+ * @param el - The source element.
+ * @returns An array of column definitions.
  */
 function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
   const cols: ColumnDef[] = [];
@@ -428,6 +450,10 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
 
 /**
  * Utility to extract `@_Name` values from a specific Relationship.
+ * 
+ * @param el - The source element.
+ * @param relName - The relationship name to lookup.
+ * @returns An array of referenced names.
  */
 function getRelRefs(el: XmlElement, relName: string): string[] {
   const rel = asArray(el.Relationship).find(r => r['@_Name'] === relName);
@@ -444,6 +470,9 @@ const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NUL
 
 /**
  * Extracts comprehensive constraint metadata (UQ, CK, FK, PK) for the entire model.
+ * 
+ * @param elements - The source XML elements.
+ * @returns Maps of unique, check, foreign key, and primary key constraints.
  */
 function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
   const uqColMap      = new Map<string, string>();
@@ -532,6 +561,9 @@ const DEPENDENCY_RELATIONSHIPS = new Set([
 
 /**
  * Extracts dependencies from an element's script or body.
+ * 
+ * @param el - The source element.
+ * @returns A collection of dependency names.
  */
 function extractBodyDependencies(el: XmlElement): string[] {
   const deps: string[] = [];
@@ -541,6 +573,9 @@ function extractBodyDependencies(el: XmlElement): string[] {
 
 /**
  * Recursively collects object-level dependency references from XML relationships.
+ * 
+ * @param el - The current element.
+ * @param deps - Dependency names accumulated so far.
  */
 function collectDeps(el: XmlElement, deps: string[]): void {
   const rels = asArray(el.Relationship);
@@ -569,6 +604,12 @@ function collectDeps(el: XmlElement, deps: string[]): void {
 
 /**
  * Retrieves the full SQL body script for an element, synthesizing a header if necessary.
+ * 
+ * @param el - The source element.
+ * @param type - Dacpac element type.
+ * @param schema - Object schema.
+ * @param objectName - Object name.
+ * @returns The full SQL body or `undefined`.
  */
 function getBodyScript(el: XmlElement, type: string, schema: string, objectName: string): string | undefined {
   const annotations = asArray(el.Annotation);
@@ -599,6 +640,9 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
 
 /**
  * Maps a dacpac element type to its SQL keyword equivalent.
+ * 
+ * @param type - The dacpac element type.
+ * @returns The keyword (e.g. 'PROCEDURE', 'VIEW') or `undefined`.
  */
 function getSqlKeyword(type: string): string | undefined {
   if (type === 'SqlProcedure') return 'PROCEDURE';
@@ -609,6 +653,10 @@ function getSqlKeyword(type: string): string | undefined {
 
 /**
  * Extracts the raw script content from dacpac properties or function body elements.
+ * 
+ * @param el - The source element.
+ * @param type - Element type.
+ * @returns The raw script string or `undefined`.
  */
 function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
   const props = asArray(el.Property);
@@ -644,6 +692,9 @@ function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
 
 /**
  * Extracts and decodes a property value, handling XML character references.
+ * 
+ * @param prop - The XML property object.
+ * @returns The decoded string value.
  */
 function extractPropertyValue(prop: XmlProperty): string | undefined {
   let val: string | undefined;
@@ -667,6 +718,9 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
 
 /**
  * Checks if a reference is object-level (schema.object) rather than column-level.
+ * 
+ * @param name - The reference string.
+ * @returns `true` if it looks like an object-level reference.
  */
 function isObjectLevelRef(name: string): boolean {
   const parts = stripBrackets(name).split('.');
@@ -675,6 +729,9 @@ function isObjectLevelRef(name: string): boolean {
 
 /**
  * Ensures the provided value is treated as an array.
+ * 
+ * @param val - A single value or an array.
+ * @returns An array.
  */
 function asArray<T>(val: T | T[] | undefined | null): T[] {
   if (val == null) return [];

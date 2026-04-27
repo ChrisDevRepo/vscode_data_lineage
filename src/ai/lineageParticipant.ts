@@ -216,6 +216,12 @@ export class LineageParticipant {
     }
 
     sess.touch();
+    // Reset the parallel-call guard at every turn entry. `currentRoundId` is per-turn
+    // (set to roundCount in the hop loop, which restarts at 0 each turn); without this
+    // reset, a successful start_exploration in turn N parks `startExplorationRoundId`
+    // at value V, and turn N+1's first round (which gets the same V) trips
+    // parallel_call_forbidden — blocking legitimate refine rounds across turns.
+    sess.startExplorationRoundId = null;
     this.logger.info(
       `[${sess.id}] Session start — ` +
       `model=${model.vendor}/${model.family}/${model.version} (id=${model.id}, max=${model.maxInputTokens}t) ` +

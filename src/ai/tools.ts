@@ -71,12 +71,16 @@ export const StartExplorationInputSchema = z.object({
    * Specific node ids to drop from the BFS scope (case-insensitive). Cuts the node and
    * its subtree reachable only through it. Use only when the user explicitly says
    * remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}.
+   * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
+   * the call to reject with `unknown_node_ids`.
    */
   excludeNodeIds: z.array(z.string()).optional(),
   /**
    * Specific node ids the engine keeps in scope but auto-passes (no analysis written,
    * topology preserved so descendants stay reachable). Default interpretation when the
    * user says ignore / skip / don't analyze. REPLACE semantics — see {@link excludeSchemas}.
+   * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
+   * the call to reject with `unknown_node_ids`.
    */
   passNodeIds: z.array(z.string()).optional(),
   /**
