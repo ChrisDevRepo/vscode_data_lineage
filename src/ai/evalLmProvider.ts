@@ -183,15 +183,15 @@ async function streamAnthropicToProgress(
 /**
  * Resolve the bridge log path.
  *
- * Precedence: env `EVAL_BRIDGE_LOG_PATH` → workspace setting → fallback under
+ * @remarks
+ * Env-var only — no public configuration surface. Internal test-harness
+ * mechanism that must NOT be discoverable to end users via settings UI.
+ * Precedence: env `EVAL_BRIDGE_LOG_PATH` → fallback under
  * `test-results/eval-bridge/<timestamp>.jsonl`.
  */
 function resolveLogPath(): string {
   const fromEnv = process.env.EVAL_BRIDGE_LOG_PATH;
   if (fromEnv) return fromEnv;
-  const cfg = vscode.workspace.getConfiguration('dataLineageViz.eval');
-  const fromCfg = cfg.get<string>('lmProviderLogPath');
-  if (fromCfg) return fromCfg;
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   return path.join(root, 'test-results', 'eval-bridge', `bridge-${ts}.jsonl`);
@@ -290,26 +290,29 @@ class HaikuBridgeProvider implements vscode.LanguageModelChatProvider {
 }
 
 /**
- * Register the bridge provider at extension activation.
+ * Register the bridge provider at extension activation — internal test mechanism.
  *
- * @returns A `Disposable` that unregisters the provider, or `null` if the
- *          bridge is not enabled (env var absent + setting off — production users).
+ * @remarks
+ * Activates ONLY when env var `EVAL_BRIDGE_ANTHROPIC_KEY` (or `ANTHROPIC_API_KEY`)
+ * is set. There is NO public configuration surface — no `package.json`
+ * `contributes.configuration` entry, no settings-UI toggle, no command. End
+ * users running the production extension never see this provider, never see
+ * any reference to it in settings, and cannot enable it accidentally. It
+ * exists exclusively for test-host invocations driven via env vars
+ * (typically `tests/e2e/...` setup).
+ *
+ * @returns A `Disposable` that unregisters the provider, or `null` when the
+ *          env var is absent (production path).
  */
 export function registerEvalBridgeLmProvider(
   outputChannel: vscode.LogOutputChannel,
 ): vscode.Disposable | null {
   const apiKey = process.env.EVAL_BRIDGE_ANTHROPIC_KEY ?? process.env.ANTHROPIC_API_KEY ?? '';
-  const cfg = vscode.workspace.getConfiguration('dataLineageViz.eval');
-  const enabled = !!apiKey || cfg.get<boolean>('lmProviderEnabled') === true;
-  if (!enabled) return null;
-  if (!apiKey) {
-    Logger.create(outputChannel, 'Bridge').warn('eval LM provider enabled but no ANTHROPIC API key found in env (EVAL_BRIDGE_ANTHROPIC_KEY / ANTHROPIC_API_KEY). Skipping registration.');
-    return null;
-  }
+  if (!apiKey) return null;
   const modelId = process.env.EVAL_BRIDGE_MODEL_ID ?? 'claude-haiku-4-5-20251001';
   const logPath = resolveLogPath();
   const logger = Logger.create(outputChannel, 'Bridge');
-  logger.info(`Eval LM provider registered — model=${modelId}  log=${logPath}`);
+  logger.info(`Eval LM provider registered (internal test mechanism) — model=${modelId}  log=${logPath}`);
   const provider = new HaikuBridgeProvider(apiKey, modelId, logPath, logger);
   return vscode.lm.registerLanguageModelChatProvider('eval-bridge', provider);
 }
