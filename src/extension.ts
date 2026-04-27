@@ -9,7 +9,9 @@ import { Logger, testLogCapture } from './utils/log';
 import { migrateProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
 import { LineageParticipant } from './ai/lineageParticipant';
+// SHIP-REMOVE-START: eval-bridge — internal test-only LM provider
 import { registerEvalBridgeLmProvider } from './ai/evalLmProvider';
+// SHIP-REMOVE-END
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules, type ParseRulesConfig } from './engine/sqlBodyParser';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -88,13 +90,15 @@ export async function activate(context: vscode.ExtensionContext) {
   const participant = new LineageParticipant(context, getSession, outputChannel, getActivePanel);
   participant.register();
 
-  // Register the eval-bridge LM provider when EVAL_BRIDGE_ANTHROPIC_KEY env
-  // (or dataLineageViz.eval.lmProviderEnabled setting) is on. Production
-  // users never see this provider — it's a test-only routing layer that
-  // forwards `messages[]` to Anthropic Haiku and streams responses back.
-  // Pure transport — no message rebuilding.
+  // SHIP-REMOVE-START: eval-bridge LM provider activation
+  // Internal test-only — activates only when EVAL_BRIDGE_ANTHROPIC_KEY env var
+  // is set. Production users never see this provider. To remove for shipping:
+  //   1. Delete the SHIP-REMOVE-START..END blocks in this file (3 total: import, activation here)
+  //   2. Delete src/ai/evalLmProvider.ts
+  //   3. Search the repo for SHIP-REMOVE markers to confirm clean removal.
   const bridgeDisposable = registerEvalBridgeLmProvider(outputChannel);
   if (bridgeDisposable) context.subscriptions.push(bridgeDisposable);
+  // SHIP-REMOVE-END
 
   // Watch for configuration changes and trigger reloads where necessary.
   const configLogger = Logger.create(outputChannel, 'Config');
