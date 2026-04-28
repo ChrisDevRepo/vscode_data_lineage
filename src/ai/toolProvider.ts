@@ -592,9 +592,10 @@ class ToolHandler {
 
       const diag = engine.getHopDiagnostics();
       this.logger.debug(
-        `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} ` +
-        `detail=${diag.detailChars} summary=${diag.summaryChars} authored=${diag.archiveChars} ` +
-        `routed=${diag.routedNew}/${diag.routedRejected} agenda=${diag.agendaRemaining}`
+        `[AI] [Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} verdict=${diag.verdict ?? 'none'} ` +
+        `detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
+        `routed=${diag.routedNew}/${diag.routedRejected} agenda=${diag.agendaRemaining} ` +
+        `tally=R${diag.tally.analyze}/P${diag.tally.pass}/I${diag.tally.prune} expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}`
       );
 
       const nextHop = engine.getHopContext();
