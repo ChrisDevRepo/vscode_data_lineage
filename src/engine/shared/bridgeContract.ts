@@ -299,7 +299,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('db-connect') }),
   z.object({ type: z.literal('check-mssql') }),
   z.object({ type: z.literal('save-view'), projectId: z.string(), profile: z.any() }),
-  z.object({ type: z.literal('save-wizard-view'), view: z.string() }),
+  z.object({ type: z.literal('save-wizard-view'), view: z.enum(['main', 'projects']) }),
   z.object({ type: z.literal('delete-view'), projectId: z.string(), profileId: z.string() }),
   z.object({ type: z.literal('rebuild') }),
   z.object({ type: z.literal('reload') }),

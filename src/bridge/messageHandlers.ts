@@ -308,17 +308,19 @@ export function createMessageHandlers(
             throw err;
           }
         }
-      } else {
+      } else if (project.connection.type === 'database') {
+        // Capture narrowed connection — TS loses union narrowing across async closures.
+        const dbConn = project.connection;
         await withDbProgressHost(host, 'Loading project', outputChannel, async () => {
-          const result = await connectDirect(project.connection.connectionInfo as IConnectionInfo, outputChannel);
+          const result = await connectDirect(dbConn.connectionInfo as IConnectionInfo, outputChannel);
           return result ?? await promptForConnection(outputChannel);
         }, async (dbResult, progress, token) => {
           lastConnectionInfo = dbResult.connectionInfo;
-          const schemas = project.connection.schemas;
+          const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
             await runDbPhase1Host(host, dbResult.connectionUri, dbResult.connectionInfo, outputChannel, (r) => { allObjectsCache = r; });
           } else {
-            await runDbPhase2Host(host, dbResult.connectionUri, schemas, progress, token, outputChannel, getSession, allObjectsCache, dbResult.connectionInfo.database, project.connection.sourceName, platformInfoCache, (m) => {
+            await runDbPhase2Host(host, dbResult.connectionUri, schemas, progress, token, outputChannel, getSession, allObjectsCache, dbResult.connectionInfo.database, dbConn.sourceName, platformInfoCache, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
             });
             const refreshed = { ...project, updatedAt: new Date().toISOString() };
