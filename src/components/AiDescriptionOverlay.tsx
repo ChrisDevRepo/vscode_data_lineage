@@ -24,10 +24,10 @@ function MathBlock({ math }: { math: string }) {
   return <div className="math-display" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/** 
+/**
  * Custom code component for `react-markdown`.
  * Intercepts ```math fences for KaTeX rendering, while passing other code blocks through.
- * 
+ *
  * @param props - Standard markdown component props.
  * @returns Either a MathBlock or a standard code element.
  */
@@ -36,6 +36,24 @@ function CodeComponent({ className, children, ...props }: React.ClassAttributes<
     return <MathBlock math={String(children).trim()} />;
   }
   return <code className={className} {...props}>{children}</code>;
+}
+
+/**
+ * Normalize block-math fences so `remark-math` can detect them.
+ *
+ * @remarks
+ * `remark-math` recognizes block math only when `$$` opens and closes on lines of
+ * their own. AI-emitted formulas often place content directly after the opener
+ * (`$$\text{X} = \begin{cases}` …) — the parser then leaves the orphan body as
+ * paragraph text. Splitting the delimiters onto their own lines restores the block.
+ * Single-line `$$expr$$` (no embedded newline) passes through unchanged.
+ */
+function normalizeBlockMath(src: string): string {
+  return src.replace(/\$\$([\s\S]+?)\$\$/g, (match, body: string) => {
+    if (!body.includes('\n')) return match;
+    const trimmed = body.replace(/^\n+/, '').replace(/\n+$/, '');
+    return `$$\n${trimmed}\n$$`;
+  });
 }
 
 /** 
@@ -190,7 +208,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                   components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent, h3: H3Component }}
-                >{description}</Markdown>
+                >{normalizeBlockMath(description)}</Markdown>
               </div>
             )}
           </div>
