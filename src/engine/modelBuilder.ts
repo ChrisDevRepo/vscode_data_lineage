@@ -66,8 +66,17 @@ export function buildModel(
   const schemas = computeSchemas(nodes);
   const catalog = buildCatalog(allObjects ?? objects, schemaCanonical);
 
+  const uniqueNodes: LineageNode[] = [];
+  const seenIds = new Set<string>();
   for (const node of nodes) {
-    if (node.externalType === 'file' || node.externalType === 'db') {
+    if (!seenIds.has(node.id)) {
+      seenIds.add(node.id);
+      uniqueNodes.push(node);
+    }
+  }
+
+  for (const node of uniqueNodes) {
+    if (node.type === 'external' || node.externalType === 'file' || node.externalType === 'db') {
       catalog[node.id] = { schema: '', name: node.name, type: 'external', externalType: node.externalType };
     }
   }
@@ -77,12 +86,12 @@ export function buildModel(
   const warnings: string[] = [];
   if (objects.length === 0) {
     warnings.push('No objects found in data source.');
-  } else if (nodes.length === 0) {
+  } else if (uniqueNodes.length === 0) {
     warnings.push('No tables, views, or stored procedures found.');
   }
 
   return {
-    nodes, edges, schemas, catalog, neighborIndex,
+    nodes: uniqueNodes, edges, schemas, catalog, neighborIndex,
     parseStats: stats,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
