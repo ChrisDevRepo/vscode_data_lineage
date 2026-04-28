@@ -174,10 +174,14 @@ export function normalizeName(name: string): string {
   if (parts.length < 2) {
     return `[${parts[0] ?? ''}]`.toLowerCase();
   }
-  if (parts.length >= 4) {
-    return `[__external__].[${parts[parts.length - 1]}]`;
+  if (parts.length === 2) {
+    return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
   }
-  return `[${parts[parts.length - 2]}].[${parts[parts.length - 1]}]`.toLowerCase();
+  if (parts.length >= 4) {
+    return `[__external__].[${parts[parts.length - 1]}]`.toLowerCase();
+  }
+  // 3-part name: [db].[schema].[obj]
+  return `[${parts[0]}].[${parts[1]}].[${parts[2]}]`.toLowerCase();
 }
 
 /**
@@ -792,8 +796,10 @@ function createVirtualNodes(
   }
 
   const isLocalRef = (db: string, localId: string): boolean => {
-    if (currentDatabase && db.toLowerCase() === currentDatabase.toLowerCase()) return true;
-    if (!currentDatabase && nodeIds.has(localId)) return true;
+    const normDb = stripBrackets(db).toLowerCase();
+    const normLocal = normalizeName(localId);
+    if (currentDatabase && normDb === stripBrackets(currentDatabase).toLowerCase()) return true;
+    if (!currentDatabase && nodeIds.has(normLocal)) return true;
     return false;
   };
 
@@ -816,7 +822,7 @@ function createVirtualNodes(
       if (parts.length !== 3) continue;
       const [db, schema, object] = parts;
       const localId = `[${schema}].[${object}]`;
-      const crossDbId = `[${db}].[${schema}].[${object}]`;
+      const crossDbId = normalizeName(`${db}.${schema}.${object}`);
       if (isLocalRef(db, localId)) continue;
       if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
       addEdge(edges, edgeKeys, crossDbId, nodeId, 'body');
@@ -826,7 +832,7 @@ function createVirtualNodes(
       if (parts.length !== 3) continue;
       const [db, schema, object] = parts;
       const localId = `[${schema}].[${object}]`;
-      const crossDbId = `[${db}].[${schema}].[${object}]`;
+      const crossDbId = normalizeName(`${db}.${schema}.${object}`);
       if (isLocalRef(db, localId)) continue;
       if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
       addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
@@ -847,14 +853,15 @@ function createVirtualNodes(
       const pertinentParts = parts.length >= 4 ? parts.slice(-3) : parts;
       const [db, schema, object] = pertinentParts;
       if (CLR_TYPE_METHODS.has(object.toLowerCase())) continue;
-      const localId = `[${schema}].[${object}]`.toLowerCase();
-      const crossDbId = `[${db}].[${schema}].[${object}]`.toLowerCase();
+      const localId = `[${schema}].[${object}]`;
+      const crossDbId = normalizeName(`${db}.${schema}.${object}`);
       const isWrite = sourceNode?.type === 'procedure' && !!sourceNode.bodyScript
         && inferBodyDirection(sourceNode.bodyScript, schema, object) === 'write';
       if (isLocalRef(db, localId)) {
-        if (nodeIds.has(localId)) {
-          if (isWrite) addEdge(edges, edgeKeys, sourceId, localId, 'body');
-          else         addEdge(edges, edgeKeys, localId, sourceId, 'body');
+        const normLocal = normalizeName(localId);
+        if (nodeIds.has(normLocal)) {
+          if (isWrite) addEdge(edges, edgeKeys, sourceId, normLocal, 'body');
+          else         addEdge(edges, edgeKeys, normLocal, sourceId, 'body');
         }
         continue;
       }

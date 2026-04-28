@@ -200,7 +200,7 @@ export function filterBySchemas(
     if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
   }
   const virtualNodes = model.nodes.filter((n) =>
-    n.type === 'external' && connectedVirtualIds.has(n.id)
+    n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
   );
   const filtered = [...schemaNodes, ...virtualNodes];
   const limited = filtered.slice(0, maxNodes);
