@@ -45,7 +45,7 @@ When `classification === 'both'`, captured sections come in pairs per node (one 
 
 ## Template gate — what fires when
 
-The AI declares the mission classification at `start_exploration` via the optional `classification` parameter (`business` | `technical` | `both`). The Zod schema in [`src/ai/tools.ts`](../src/ai/tools.ts) is `z.enum([...]).optional()`; when omitted the engine defaults to `business` at gate-emit. The locked value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
+The AI declares the mission classification at `start_exploration` via the **required** `classification` parameter (`business` | `technical` | `both`). The Zod schema in [`src/ai/tools.ts`](../src/ai/tools.ts) is `z.enum([...])` — missing or invalid values are hard-rejected at the boundary; there is no engine fallback. The tool-param description in [`package.json`](../package.json) biases the AI toward `business` when user intent is ambiguous (lineage / origin / impact / column-trace are `business` even when a column is named); `technical` is only for explicit performance / index / tuning asks; `both` is only for explicit "both angles" asks. The locked value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
 
 Active-phase and synthesis-phase templates are routed by two stacked maps in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts):
 

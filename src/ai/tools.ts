@@ -90,7 +90,7 @@ export const StartExplorationInputSchema = z.object({
    */
   forceMode: z.enum(['inline', 'sm']).optional(),
   mission_brief: z.string().optional(),
-  classification: z.enum(['business', 'technical', 'both']).optional(),
+  classification: z.enum(['business', 'technical', 'both']),
   /**
    * Post-synthesis supplement: extend the existing archive with analysis for these
    * additional node ids. Runs the engine in inline one-shot mode; slots merge into

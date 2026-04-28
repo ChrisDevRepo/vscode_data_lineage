@@ -38,7 +38,7 @@ import { type SerializedFilterState, type AIViewMetadata } from '../engine/proje
 import { PendingGateSchema } from './sessionPhase';
 import { buildSynthesisReminder } from './smPrompts';
 import { getAllowedLmToolNames, activeModeOf, type LmStage } from './toolPolicy';
-import { ClassificationSchema, CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
+import { CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
 import type { CapturedSection } from './memoryManager';
 import { getToolInvocationLabel } from './toolLabels';
 import { renderScopeSummaryMd } from './scopeSummaryRenderer';
@@ -432,16 +432,14 @@ class ToolHandler {
       }
 
       if (!sess.classification) {
-        const parsed = ClassificationSchema.safeParse(data.classification);
-        sess.setClassification(parsed.success ? parsed.data : 'both');
+        // Zod hard-required `classification` at the schema boundary; data.classification is
+        // already a valid enum value here. No fallback path — invalid input was rejected earlier.
+        sess.setClassification(data.classification);
         this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (${useInline ? 'inline' : 'SM'} mode, AI-declared)`);
-      } else if (data.classification) {
+      } else if (data.classification && data.classification !== sess.classification) {
         // Refine round: the AI may re-issue a classification override; honour it.
-        const parsed = ClassificationSchema.safeParse(data.classification);
-        if (parsed.success && parsed.data !== sess.classification) {
-          sess.setClassification(parsed.data);
-          this.logger.info(`[${sess.id}] [Classification] refine-override → ${sess.classification}`);
-        }
+        sess.setClassification(data.classification);
+        this.logger.info(`[${sess.id}] [Classification] refine-override → ${sess.classification}`);
       }
 
       // Discovery is content-blind: always gate before any analysis runs, regardless of mode.

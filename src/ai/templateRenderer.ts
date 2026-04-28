@@ -96,38 +96,59 @@ const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue
  * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below {@link CLOSING_MIN_SLOTS}.
  * @returns A markdown block ready to append to the phase-appropriate system prompt.
  */
+export interface StagePromptResult {
+  /** Final markdown block ready to splice into the system prompt. Empty if no keys ship. */
+  prompt: string;
+  /** YAML keys that survived stage + classification + slot-count gating and have non-empty instructions. */
+  shippedKeys: string[];
+  /** Keys filtered out, with the reason they were dropped — for diagnostic logging. */
+  gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' }>;
+}
+
 export function resolveStagePrompt(
   templates: AiOutputTemplates,
   phase: TemplateStage,
   classification: ClassificationValue | undefined,
   slotCount?: number,
-): string {
+): StagePromptResult {
   // `closing` is only useful when the analysis spans 5+ sections (per the YAML
   // instruction itself). Skip it on small graphs to save ~140 tokens.
   const CLOSING_MIN_SLOTS = 5;
-  const keys = (Object.keys(STAGE_BY_KEY) as (keyof AiOutputTemplates)[])
-    .filter(key => STAGE_BY_KEY[key].includes(phase))
-    .filter(key => {
-      const gate = CLASSIFICATION_GATED[key];
-      if (!gate) return true;
-      if (!classification) return true;
-      return gate.includes(classification);
-    })
-    .filter(key => {
-      if (key !== 'closing') return true;
-      if (phase !== 'synthesis') return true;
-      return slotCount === undefined || slotCount >= CLOSING_MIN_SLOTS;
-    });
 
-  const blocks = keys
-    .filter(key => (templates[key] ?? '').trim().length > 0)
-    .map(key => `- ${key}: ${templates[key].trim()}`);
+  const allKeys = Object.keys(STAGE_BY_KEY) as (keyof AiOutputTemplates)[];
+  const gatedOut: StagePromptResult['gatedOut'] = [];
+  const passing: (keyof AiOutputTemplates)[] = [];
+
+  for (const key of allKeys) {
+    if (!STAGE_BY_KEY[key].includes(phase)) {
+      gatedOut.push({ key, reason: 'stage' });
+      continue;
+    }
+    const gate = CLASSIFICATION_GATED[key];
+    if (gate && classification && !gate.includes(classification)) {
+      gatedOut.push({ key, reason: 'classification' });
+      continue;
+    }
+    if (key === 'closing' && phase === 'synthesis' && slotCount !== undefined && slotCount < CLOSING_MIN_SLOTS) {
+      gatedOut.push({ key, reason: 'slot_count' });
+      continue;
+    }
+    if (!(templates[key] ?? '').trim()) {
+      gatedOut.push({ key, reason: 'empty_template' });
+      continue;
+    }
+    passing.push(key);
+  }
+
+  const blocks = passing.map(key => `- ${key}: ${templates[key].trim()}`);
 
   const missionLine = phase === 'synthesis' && classification
     ? `**Mission type:** ${classification}`
     : undefined;
 
-  if (blocks.length === 0 && !missionLine) return '';
+  if (blocks.length === 0 && !missionLine) {
+    return { prompt: '', shippedKeys: passing, gatedOut };
+  }
 
   const headerByPhase: Record<TemplateStage, string> = {
     discover:  '### Output templates (discovery)',
@@ -139,5 +160,5 @@ export function resolveStagePrompt(
   if (missionLine) parts.push(missionLine);
   parts.push(headerByPhase[phase]);
   parts.push(...blocks);
-  return parts.join('\n\n');
+  return { prompt: parts.join('\n\n'), shippedKeys: passing, gatedOut };
 }

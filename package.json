@@ -1019,7 +1019,7 @@
                 "technical",
                 "both"
               ],
-              "description": "Declare the analysis angle. Default `both` when intent is ambiguous (general lineage / origin / impact / 'where does X come from' / 'what reads from Y' — including column traces) — engine captures one business + one technical section per node, giving the full picture. Pick `business` only when the user explicitly wants only business rules. Pick `technical` only when the user explicitly asks about performance, execution plans, indexes, query tuning, statistics, or data-quality / null-handling semantics."
+              "description": "REQUIRED. Declare the analysis angle: `business`, `technical`, or `both`. Pick `technical` only when the user explicitly asks about performance, execution plans, indexes, query tuning, statistics, or data-quality / null-handling semantics. Pick `both` only when the user explicitly asks for both angles in one ask. For everything else — lineage / origin / impact / 'where does X come from' / 'what reads from Y' / column traces — pick `business`. When the user's intent is ambiguous, weight toward `business` over `technical`. The engine rejects missing or invalid values; there is no fallback default."
             },
             "supplement": {
               "type": "object",
@@ -1041,7 +1041,8 @@
             }
           },
           "required": [
-            "question"
+            "question",
+            "classification"
           ]
         }
       },

@@ -8,11 +8,11 @@
  * as the technical write-up; `both` appends the subsection.
  *
  * The AI declares the classification in the `start_exploration` tool call
- * via the optional `classification` enum parameter. If omitted the engine
- * defaults to `both` — captures one business + one technical section per
- * node so the full picture is preserved when intent is ambiguous. The AI
- * picks `business` or `technical` only when the user explicitly scopes
- * the angle.
+ * via the REQUIRED `classification` enum parameter. Zod hard-rejects missing
+ * or invalid values — there is no engine-side fallback. The AI is instructed
+ * (via the tool param description) to weight toward `business` over
+ * `technical` when the user's intent is ambiguous; `both` is reserved for
+ * explicit "both angles" asks.
  */
 
 import { z } from 'zod';

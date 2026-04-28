@@ -271,6 +271,9 @@ export class LineageParticipant {
 
     let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
     let lineageTools = filterLmTools(vscode.lm.tools, { kind: 'discover' });
+    // Tracks whether this turn started as a refine round (user clicked Refine on the
+    // confirm_sm_start gate). Read by dispatchExit to emit `[AI] [Refine]` outcome.
+    let isRefineRound = false;
 
     // /trace and /search inject discovery-phase prompts that conflict with
     // active/synthesis system prompts. Valid only in idle / completed; the
@@ -312,6 +315,7 @@ export class LineageParticipant {
       const isConfirmSm = gate.gate === 'confirm_sm_start';
       const userIsRefining = isConfirmSm && (answer === 'refine' || answer === 'redirect');
       if (userIsRefining) {
+        isRefineRound = true;
         const engine = sess.stateMachine as NavigationEngine | null;
         const summary = engine?.getScopeSummary();
         const treeMd = summary ? renderScopeSummaryMd(summary) : '_(scope tree unavailable)_';
@@ -440,7 +444,17 @@ export class LineageParticipant {
         // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
         // re-renders keep the same formatting contract.
         const templatesPhase = phase === 'completed' ? 'synthesis' : phase;
-        const stageBlock = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount);
+        const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount);
+        const stageBlock = stageResolved.prompt;
+        const gatedSummary = stageResolved.gatedOut
+          .filter(g => g.reason !== 'stage')  // stage-gated is the dominant reason; keep the line short
+          .map(g => `${g.key}(${g.reason})`)
+          .join(', ');
+        this.logger.debug(
+          `[AI] [Template] phase=${templatesPhase} classification=${sess.classification ?? 'unset'} slot_count=${sess.memory.slotCount} ` +
+          `shipped_keys=[${stageResolved.shippedKeys.join(', ')}]` +
+          (gatedSummary ? ` gated_out=[${gatedSummary}]` : '')
+        );
         const parts: string[] = [base, phaseSpecific];
 
         if (phase === 'active' && engine) {
@@ -880,7 +894,9 @@ export class LineageParticipant {
             // freezing on the gate-approval text ("hop 1 is X") for the rest of the session.
             effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
             envelope.wipeAndSeed(systemPrompt, effectivePrompt);
+            const hopCount = sess.stateMachine?.getHopDiagnostics().hop ?? 0;
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
+            this.logger.debug(`[AI] [PromptBudget] hop=${hopCount} system=${systemPrompt.length} dynamic=${effectivePrompt.length} envelope_msgs=${envelope.length}`);
           } else {
             consecutiveErrorRounds++;
             if (consecutiveErrorRounds >= 3) {
@@ -916,7 +932,7 @@ export class LineageParticipant {
     const smStatus = sess.stateMachine ? (sess.stateMachine.columnAspect ? 'Column' : 'BB') : '—';
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
     this.logger.info(`Summary — model: ${sess.modelName}, SM: ${smStatus}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
-    this.dispatchExit(exit, sess, writer, request.prompt, roundCount, MAX_ROUNDS);
+    this.dispatchExit(exit, sess, writer, request.prompt, roundCount, MAX_ROUNDS, isRefineRound);
 
     return {
       metadata: {
@@ -1060,7 +1076,7 @@ export class LineageParticipant {
    * @param roundCount - Total execution rounds completed.
    * @param maxRounds - The configured round budget for the session.
    */
-  private dispatchExit(exit: HopLoopExit, sess: AiSession, writer: ChatResponseWriter, userPrompt: string, roundCount: number, maxRounds: number): void {
+  private dispatchExit(exit: HopLoopExit, sess: AiSession, writer: ChatResponseWriter, userPrompt: string, roundCount: number, maxRounds: number, isRefineRound: boolean): void {
     switch (exit.kind) {
       case 'gate': {
         sess.enterGate(exit.gate);
@@ -1131,6 +1147,16 @@ export class LineageParticipant {
     // end of dispatch. New exit kinds can't forget the buttons.
     if (sess.phase.kind === 'awaiting_gate') {
       this.emitGateButtonRow(writer, sess.phase.gate);
+    }
+
+    // [AI] [Refine] — emit only when this turn started as a refine round. `tool_called`
+    // means the AI re-called start_exploration (a new gate exit fired this turn);
+    // `narration_only` means the AI replied with prose without invoking the tool.
+    if (isRefineRound) {
+      const newScope = sess.stateMachine?.scopeSize ?? 0;
+      const agendaSize = sess.stateMachine?.getHopDiagnostics().agendaRemaining ?? 0;
+      const outcome = exit.kind === 'gate' ? 'tool_called' : 'narration_only';
+      this.logger.debug(`[AI] [Refine] outcome=${outcome} new_scope=${newScope} agenda=${agendaSize}`);
     }
   }
 }
