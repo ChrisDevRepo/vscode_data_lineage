@@ -41,7 +41,7 @@ import uuid
 import urllib.error
 import urllib.request
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("EVAL_HAIKU_ANTHROPIC_KEY", "")
@@ -230,7 +230,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 4271
-    server = HTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     mode = "DIRECT (Anthropic API)" if ANTHROPIC_API_KEY else "HANDSHAKE (orchestrator dispatches Haiku Task per turn)"
     print(f"[haiku-server] mode={mode}", flush=True)
     print(f"[haiku-server] listening on http://127.0.0.1:{port} — log {LOG_PATH}", flush=True)
