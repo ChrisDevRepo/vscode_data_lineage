@@ -433,7 +433,7 @@ class ToolHandler {
 
       if (!sess.classification) {
         const parsed = ClassificationSchema.safeParse(data.classification);
-        sess.setClassification(parsed.success ? parsed.data : 'business');
+        sess.setClassification(parsed.success ? parsed.data : 'both');
         this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (${useInline ? 'inline' : 'SM'} mode, AI-declared)`);
       } else if (data.classification) {
         // Refine round: the AI may re-issue a classification override; honour it.
@@ -748,6 +748,7 @@ class ToolHandler {
         }
       }
       sess.lastPresentResultDescription = validation.description ?? null;
+      sess.lastPresentResultSummary = validation.summary ?? null;
       // Signal the button gate in dispatchExit that a graph was built this turn.
       sess.presentResultCalledThisTurn = true;
 

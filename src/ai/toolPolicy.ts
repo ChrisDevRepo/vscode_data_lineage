@@ -52,11 +52,6 @@ const DISCOVERY_TOOLS: readonly string[] = [
 
 /** Tools visible when authoring the final report. */
 const SYNTHESIS_TOOLS: readonly string[] = [
-  'lineage_get_context',
-  'lineage_search_objects',
-  'lineage_search_ddl',
-  'lineage_get_object_detail',
-  'lineage_detect_graph_patterns',
   'lineage_present_result',
 ];
 
