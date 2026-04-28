@@ -663,14 +663,23 @@ function buildNodesAndEdges(
 
   const ctx: EdgeContext = { nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs };
 
+  console.debug(`[ModelBuilder] Starting processing of ${nodes.length} nodes...`);
+  let scriptedCount = 0;
+
   for (const node of nodes) {
     const xmlDeps = grouped.depsPerSource.get(node.id) ?? [];
     if (node.bodyScript && node.type === 'procedure') {
+      scriptedCount++;
       processSpEdges(node, xmlDeps, ctx);
     } else {
+      if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
+        scriptedCount++;
+      }
       processNonSpEdges(node, xmlDeps, ctx);
     }
   }
+
+  console.debug(`[ModelBuilder] Finished processing. Scripted objects found: ${scriptedCount}`);
 
   if (externalRefsEnabled) {
     createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, maxNodes);

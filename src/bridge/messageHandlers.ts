@@ -565,6 +565,8 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   }, timeoutMs);
   const dmvResults: DmvResults = { nodes: resultMap.get('nodes')!, columns: resultMap.get('columns')!, dependencies: resultMap.get('dependencies')!, allObjects, platformInfo };
   const config = await readExtensionConfig(host);
+  const logger = Logger.create(outputChannel, 'Parse');
+  logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
   const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes);
   onModelBuilt?.(model);
   if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
@@ -666,7 +668,7 @@ async function handleTableStatsRequestHost(
  * Logs a summary of the SQL parsing results and stores it in the session.
  */
 function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, objectCount?: number, edgeCount?: number, schemaCount?: number) {
-  const logger = Logger.create(outputChannel, 'Parse');
+  const logger = Logger.create(outputChannel, 'ParseStats');
   const sess = getSession();
   sess.parseStats = {
     resolvedEdges: stats.resolvedEdges,
@@ -675,9 +677,11 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   };
   const spCount = stats.spDetails?.length ?? 0;
   if (objectCount !== undefined) {
-    logger.info(`Phase 1 Complete: ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas`);
-    logger.info(`Phase 2 Resolution: ${spCount} objects parsed, ${stats.parsedRefs} refs discovered`);
-    logger.info(`Phase 2 Result: ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} dropped as unrelated`);
+    logger.info(`Phase 2 Result: Construction Complete — ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas`);
+    logger.info(`Phase 2 Result: Parsing Complete — ${spCount} objects scripted, ${stats.parsedRefs} refs found, ${stats.resolvedEdges} refs resolved`);
+    if (stats.droppedRefs.length > 0) {
+      logger.info(`Phase 2 Result: Dropped — ${stats.droppedRefs.length} refs unrelated (aliases/built-ins)`);
+    }
   }
 
   // Detailed debug logs for each scripted object
