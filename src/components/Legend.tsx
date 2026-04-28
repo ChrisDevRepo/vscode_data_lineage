@@ -1,5 +1,5 @@
 import React, { memo, useState, useEffect } from 'react';
-import { getSchemaColor } from '../utils/schemaColors';
+import { getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 
 /**
  * Props for the {@link Legend} component.
