@@ -45,19 +45,17 @@ export function renderScopeSummaryMd(s: ScopeSummary): string {
   const passSet = new Set(s.activeFilters.passNodeIds.map(n => n.toLowerCase()));
 
   const schemaEntries = Object.entries(s.bySchema).sort((a, b) => {
-    const dh = b[1].hops - a[1].hops;
-    if (dh !== 0) return dh;
     const ds = b[1].scope - a[1].scope;
     if (ds !== 0) return ds;
     return a[0].localeCompare(b[0]);
   });
 
   for (const [schema, schEntry] of schemaEntries) {
-    lines.push(`- **${schema}** — ${plural(schEntry.hops, 'hop')} / ${plural(schEntry.scope, 'node')}`);
-    const typeEntries = Object.entries(schEntry.byType).sort((a, b) => b[1].hops - a[1].hops || b[1].scope - a[1].scope || a[0].localeCompare(b[0]));
+    lines.push(`- **${schema}** — ${plural(schEntry.scope, 'node')}`);
+    const typeEntries = Object.entries(schEntry.byType).sort((a, b) => b[1].scope - a[1].scope || a[0].localeCompare(b[0]));
     for (const [type, leaf] of typeEntries) {
       const label = typeLabel(type, leaf.scope);
-      const countLabel = leaf.hops === 0 ? `routed: ${leaf.scope}` : plural(leaf.hops, 'hop');
+      const countLabel = plural(leaf.scope, 'node');
       const annotated = leaf.nodeNames.map(name => {
         const fq = `[${schema.toLowerCase()}].[${name.toLowerCase()}]`;
         return passSet.has(fq) ? `${name} _(pass)_` : name;
