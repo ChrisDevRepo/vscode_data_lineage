@@ -609,46 +609,25 @@ function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionCon
     if (consumed.has(fwd)) continue;
 
     if (graph.hasEdge(edge.target, edge.source) && !consumed.has(rev)) {
-      const srcType = graph.getNodeAttributes(edge.source).type;
-      const tgtType = graph.getNodeAttributes(edge.target).type;
-      const hasTransformer = srcType === 'procedure' || tgtType === 'procedure' || srcType === 'function' || tgtType === 'function';
-
-      if (hasTransformer) {
-        const [canonSource, canonTarget] = canonicalDirection(graph, edge.source, edge.target);
-        consumed.add(fwd);
-        consumed.add(rev);
-        result.push({
-          id: `${canonSource}↔${canonTarget}`,
-          source: canonSource,
-          target: canonTarget,
-          type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
-          label: '⇄',
-          labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
-          labelBgStyle: { fill: 'transparent' },
-          labelBgPadding: LABEL_BG_PAD,
-          style: {
-            stroke: 'var(--ln-edge-color)',
-            strokeWidth: 1.2,
-          },
-          markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
-          markerStart: { type: 'arrow' as const, width: 16, height: 16, color: 'var(--ln-edge-color)' },
-        });
-      } else {
-        // Fallback: don't collapse if no transformer is involved.
-        // This ensures Table <-> View or Table <-> Table bugs don't show ⇄.
-        consumed.add(fwd);
-        result.push({
-          id: fwd,
-          source: edge.source,
-          target: edge.target,
-          type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
-          style: {
-            stroke: 'var(--ln-edge-color)',
-            strokeWidth: 1.2,
-          },
-          markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
-        });
-      }
+      const [canonSource, canonTarget] = canonicalDirection(graph, edge.source, edge.target);
+      consumed.add(fwd);
+      consumed.add(rev);
+      result.push({
+        id: `${canonSource}↔${canonTarget}`,
+        source: canonSource,
+        target: canonTarget,
+        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+        label: '⇄',
+        labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
+        labelBgStyle: { fill: 'transparent' },
+        labelBgPadding: LABEL_BG_PAD,
+        style: {
+          stroke: 'var(--ln-edge-color)',
+          strokeWidth: 1.2,
+        },
+        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
+        markerStart: { type: 'arrow' as const, width: 16, height: 16, color: 'var(--ln-edge-color)' },
+      });
     } else {
       consumed.add(fwd);
       result.push({

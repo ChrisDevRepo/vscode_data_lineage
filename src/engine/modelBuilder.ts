@@ -836,15 +836,19 @@ function createVirtualNodes(
       if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
       addEdge(edges, edgeKeys, crossDbId, nodeId, 'body');
     }
-    for (const ref of targets) {
-      const parts = ref.split('.');
-      if (parts.length !== 3) continue;
-      const [db, schema, object] = parts;
-      const localId = `[${schema}].[${object}]`;
-      const crossDbId = normalizeName(`${db}.${schema}.${object}`);
-      if (isLocalRef(db, localId)) continue;
-      if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
-      addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
+    const node = nodeMap.get(nodeId);
+    const canWrite = node?.type === 'procedure';
+    if (canWrite) {
+      for (const ref of targets) {
+        const parts = ref.split('.');
+        if (parts.length !== 3) continue;
+        const [db, schema, object] = parts;
+        const localId = `[${schema}].[${object}]`;
+        const crossDbId = normalizeName(`${db}.${schema}.${object}`);
+        if (isLocalRef(db, localId)) continue;
+        if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
+        addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
+      }
     }
   }
 
