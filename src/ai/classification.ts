@@ -9,7 +9,10 @@
  *
  * The AI declares the classification in the `start_exploration` tool call
  * via the optional `classification` enum parameter. If omitted the engine
- * defaults to `business` (asymmetric conservative default).
+ * defaults to `both` — captures one business + one technical section per
+ * node so the full picture is preserved when intent is ambiguous. The AI
+ * picks `business` or `technical` only when the user explicitly scopes
+ * the angle.
  */
 
 import { z } from 'zod';

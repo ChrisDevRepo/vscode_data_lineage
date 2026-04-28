@@ -341,6 +341,8 @@ export interface DiagnosticsSnapshot {
   depthEnforcement: 'strict' | 'soft' | 'silent';
   /** Was the focus in the active schema allowlist? */
   inSchema: boolean;
+  /** Verdict the AI emitted for this hop (`null` before any submit_findings). */
+  verdict: 'analyze' | 'pass' | 'prune' | null;
   /** Detail-archive chars added this hop. */
   detailChars: number;
   /** Summary chars added this hop. */

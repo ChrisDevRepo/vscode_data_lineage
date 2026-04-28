@@ -316,6 +316,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected lastHopDetailChars = 0;
   /** Last per-hop summary-char count. */
   protected lastHopSummaryChars = 0;
+  /** Last per-hop verdict — surfaced in `[AI] [Hop N]` log line. */
+  protected lastHopVerdict: 'analyze' | 'pass' | 'prune' | null = null;
   /** Cumulative archive chars across the whole session. */
   protected archiveChars = 0;
   /** Route requests accepted during the most recent submit, for diagnostics. */
@@ -482,6 +484,7 @@ export class NavigationEngine implements IHopStateMachine {
       depthBudget: this.depthBudget,
       depthEnforcement: this.depthEnforcement,
       inSchema: focus ? this.sessionAllowedSchemas.size === 0 || this.sessionAllowedSchemas.has(focus.schema.toLowerCase()) : true,
+      verdict: this.lastHopVerdict,
       detailChars: this.lastHopDetailChars,
       summaryChars: this.lastHopSummaryChars,
       archiveChars: this.archiveChars,
@@ -1348,6 +1351,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
 
       this.memory.recordVerdict(finding.verdict);
+      this.lastHopVerdict = finding.verdict;
 
       if (prunable || (finding.prune_neighbors && finding.prune_neighbors.length > 0)) {
         if (prunable) this.removedSet.add(focusId);
