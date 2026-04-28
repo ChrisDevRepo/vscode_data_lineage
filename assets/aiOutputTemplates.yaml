@@ -124,15 +124,18 @@ highlights:
 notes:
   stages: [synthesis]
   instruction: >
-    Per-node captions (node_id, text). One-line caption under each node —
-    what it does specifically in this flow, not a generic description.
-    Glancing at graph + notes should tell the story without opening the
-    description. First line visible, rest on hover via \n.
-    If the node is a passthrough, say what it passes or filters
-    ("Passthrough — WHERE IsValid = 1 filter only").
-    GOOD: "Computes TotalRevenue = Qty × UnitPrice at INSERT\nAlso computes
-    AdjustedRevenue = TotalRevenue - Discount"
-  example: "Aggregates monthly invoices\nSELECT SUM(Amount) GROUP BY Month FROM Invoices"
+    Per-node captions (node_id, text). ONE short sentence under each node —
+    what it does specifically in this flow, not a generic description. Keep
+    it terse; ~120 chars typical. No SQL snippets, no formulas, no multi-line
+    captions. Detail belongs in the section body, not in the graph caption.
+    Glancing at graph + notes should tell the story; deeper logic lives in
+    the description.
+    If the node is a passthrough, name what it passes or filters in one
+    short clause ("Passthrough — IsValid filter").
+    GOOD: "Computes TotalRevenue at INSERT"
+    BAD : "Computes TotalRevenue = Qty × UnitPrice at INSERT\nAlso computes
+    AdjustedRevenue" (multi-line + formula belongs in the section body).
+  example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
 # Each fired *_capture template produces ONE section into submit_findings.sections[].
@@ -352,7 +355,11 @@ general:
     reads consistently end-to-end:
 
     - **Formulas**: write as LaTeX `$expr$` whenever the captured body has a
-      computation (e.g. `$Revenue = Qty \times Price$`).
+      computation (e.g. `$Revenue = Qty \times Price$`). For block math
+      (`$$…$$`) — multi-line CASE expressions, matrices, multi-step
+      derivations — put the opening `$$` and the closing `$$` on lines of
+      their own, with the body on the lines between. Inline content on the
+      opener line breaks the renderer.
     - **Column renames**: render as a `| From | To | Business meaning |`
       table whenever 3+ sibling columns share the rename shape. For 1–2
       renames, prose with backticks is enough.
