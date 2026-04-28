@@ -96,12 +96,13 @@ export function buildModelFromDmv(
   results: DmvResults,
   currentDatabase?: string,
   externalRefsEnabled = true,
-  maxNodes = DEFAULT_CONFIG.maxNodes
+  maxNodes = DEFAULT_CONFIG.maxNodes,
+  onDebugLog?: (msg: string) => void,
 ): DatabaseModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
   const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
-  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes);
+  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes, onDebugLog);
   const dbPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : undefined;
 
   const warnings: string[] = [];

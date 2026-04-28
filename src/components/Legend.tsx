@@ -79,15 +79,6 @@ export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendPro
                     </div>
                   );
                 })}
-              
-              {/* External Category */}
-              <div className="flex items-center gap-2 mt-2 pt-2 border-t border-[var(--ln-border)] opacity-80">
-                <div
-                  className="w-4 h-4 rounded flex-shrink-0"
-                  style={{ backgroundColor: getExternalNodeColor() }}
-                />
-                <span className="text-[11px] ln-text">External References</span>
-              </div>
 
               {schemas.length > SCHEMA_DISPLAY_LIMIT && (
                 <button

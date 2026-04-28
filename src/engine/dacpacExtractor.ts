@@ -48,7 +48,7 @@ import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql'
  * @returns A Promise resolving to the extracted DatabaseModel.
  * @throws {Error} If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
  */
-export async function extractDacpac(buffer: ArrayBuffer): Promise<DatabaseModel> {
+export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: string) => void): Promise<DatabaseModel> {
   const xml = await extractModelXml(buffer);
   const { elements, dspName } = parseElements(xml);
   const dbPlatform = parseDspPlatform(dspName);
@@ -56,7 +56,7 @@ export async function extractDacpac(buffer: ArrayBuffer): Promise<DatabaseModel>
   const objects = extractObjects(elements);
   const allObjects = extractObjectsLightweight(elements);
   const deps = extractDependencies(elements);
-  const model = buildModel(objects, deps, allObjects);
+  const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
 
   const warnings: string[] = [];
   if (elements.length === 0) {
@@ -98,12 +98,14 @@ export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
  * @param elements - The array of pre-parsed XML elements from Phase 1.
  * @param selectedSchemas - A Set of schema names to include (case-insensitive).
  * @param dspName - Optional Data Schema Provider (DSP) name.
+ * @param onDebugLog - Optional debug logging callback.
  * @returns The resulting DatabaseModel containing only the filtered objects.
  */
 export function extractDacpacFiltered(
   elements: XmlElement[],
   selectedSchemas: Set<string>,
   dspName?: string,
+  onDebugLog?: (msg: string) => void,
 ): DatabaseModel {
   const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
   const filtered = elements.filter(el => {
@@ -116,7 +118,7 @@ export function extractDacpacFiltered(
   const allObjects = extractObjectsLightweight(elements);
   const objects = extractObjects(filtered, elements);
   const deps = extractDependencies(filtered);
-  const model = buildModel(objects, deps, allObjects);
+  const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
   const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
 
   const warnings: string[] = [];
@@ -198,7 +200,7 @@ export function filterBySchemas(
     if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
   }
   const virtualNodes = model.nodes.filter((n) =>
-    (n.externalType === 'file' || n.externalType === 'db') && connectedVirtualIds.has(n.id)
+    n.type === 'external' && connectedVirtualIds.has(n.id)
   );
   const filtered = [...schemaNodes, ...virtualNodes];
   const limited = filtered.slice(0, maxNodes);

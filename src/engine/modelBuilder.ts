@@ -48,8 +48,9 @@ export function buildModel(
   currentDatabase?: string,
   externalRefsEnabled = true,
   maxNodes = DEFAULT_CONFIG.maxNodes,
+  onDebugLog?: (msg: string) => void,
 ): DatabaseModel {
-  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes, onDebugLog);
 
   // Unify schema display names to the first-seen casing to ensure consistency in the UI
   // across case-insensitive but distinct schema references (e.g., 'DBO' vs 'dbo').
@@ -498,6 +499,16 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
 
   if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
     const parsed = parseSqlBody(node.bodyScript);
+    const spLabel = `${node.schema}.${node.name}`;
+    const spInRefs: string[] = [];
+    const spUnrelated: string[] = [];
+    const spSkipped: string[] = [];
+
+    // Track cross-DB sources as "In" references for views/functions
+    for (const r of parsed.crossDbSources) {
+      spInRefs.push(r);
+    }
+
     if (parsed.crossDbSources.length > 0 || parsed.crossDbTargets.length > 0) {
       const existing = ctx.crossDbRegexRefs.get(sourceId);
       if (existing) {
@@ -508,11 +519,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
       }
     }
     const xmlDepIds = new Set(xmlDeps);
-    const spLabel = `${node.schema}.${node.name}`;
-    const spParserAdded: string[] = [];
-    const spUnrelated: string[] = [];
-    const spSkipped: string[] = [];
-
+    
     for (const dep of parsed.sources) {
       if (!isSchemaQualified(dep)) { spSkipped.push(dep); continue; }
       if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
@@ -523,7 +530,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
         addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
         ctx.stats.resolvedEdges++;
         const n = ctx.nodeMap.get(depId);
-        spParserAdded.push(n ? `${n.schema}.${n.name}` : dep);
+        spInRefs.push(n ? `${n.schema}.${n.name}` : dep);
       } else if (ctx.allNodeIds.size > 0 && ctx.allNodeIds.has(depId)) {
         ctx.neighborPairs.push({ source: depId, target: sourceId });
       } else {
@@ -540,10 +547,10 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
       ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
     }
 
-    if (spParserAdded.length > 0 || spUnrelated.length > 0 || spSkipped.length > 0) {
+    if (spInRefs.length > 0 || spUnrelated.length > 0 || spSkipped.length > 0) {
       ctx.stats.spDetails.push({
-        name: spLabel, inCount: spParserAdded.length, outCount: 0,
-        ...(spParserAdded.length > 0 && { inRefs: spParserAdded }),
+        name: spLabel, inCount: spInRefs.length, outCount: 0,
+        ...(spInRefs.length > 0 && { inRefs: spInRefs }),
         unrelated: spUnrelated,
         ...(spSkipped.length > 0 && { skippedRefs: spSkipped }),
       });
@@ -617,10 +624,14 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
     ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
   }
 
-  const spIn = processRegexRefs(parsed.sources, sourceId, spLabel, 'in', 'body', ctx, spInRefs, spSkipped, spUnrelated);
+  const spIn = processRegexRefs(parsed.sources, sourceId, spLabel, 'in', 'body', ctx, spInRefs, spSkipped, spUnrelated) + parsed.crossDbSources.length;
   const spOut =
     processRegexRefs(parsed.targets, sourceId, spLabel, 'out', 'body', ctx, spOutRefs, spSkipped, spUnrelated) +
-    processRegexRefs(parsed.execCalls, sourceId, spLabel, 'out', 'exec', ctx, spOutRefs, spSkipped, spUnrelated);
+    processRegexRefs(parsed.execCalls, sourceId, spLabel, 'out', 'exec', ctx, spOutRefs, spSkipped, spUnrelated) +
+    parsed.crossDbTargets.length;
+
+  for (const r of parsed.crossDbSources) spInRefs.push(r);
+  for (const r of parsed.crossDbTargets) spOutRefs.push(r);
 
   ctx.stats.spDetails.push({
     name: spLabel, inCount: spIn, outCount: spOut,
@@ -649,6 +660,7 @@ function buildNodesAndEdges(
   currentDatabase?: string,
   externalRefsEnabled = true,
   maxNodes = DEFAULT_CONFIG.maxNodes,
+  onDebugLog?: (msg: string) => void,
 ): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
   const { nodes, nodeIds } = buildNodeList(objects);
   const { allNodeIds, allObjectMeta } = buildFullCatalog(allObjects);
@@ -663,7 +675,7 @@ function buildNodesAndEdges(
 
   const ctx: EdgeContext = { nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs };
 
-  console.debug(`[ModelBuilder] Starting processing of ${nodes.length} nodes...`);
+  if (onDebugLog) onDebugLog(`Starting processing of ${nodes.length} nodes...`);
   let scriptedCount = 0;
 
   for (const node of nodes) {
@@ -679,7 +691,7 @@ function buildNodesAndEdges(
     }
   }
 
-  console.debug(`[ModelBuilder] Finished processing. Scripted objects found: ${scriptedCount}`);
+  if (onDebugLog) onDebugLog(`Finished processing. Scripted objects found: ${scriptedCount}`);
 
   if (externalRefsEnabled) {
     createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, maxNodes);

@@ -290,7 +290,8 @@ export function createMessageHandlers(
           if (schemas && schemas.length > 0) {
             host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName);
+            const logger = Logger.create(outputChannel, 'Parse');
+            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg));
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
             host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
@@ -364,7 +365,8 @@ export function createMessageHandlers(
         return;
       }
       const config = await readExtensionConfig(host);
-      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName);
+      const logger = Logger.create(outputChannel, 'Parse');
+      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg));
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
       setCurrentModel(model, false, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
@@ -530,7 +532,8 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     host.log('info', 'Dacpac', `Loading demo dacpac from: ${demoUri.fsPath}`);
     const data = await host.readFile(demoUri);
     if (isDacpacTooLarge(data.byteLength, host)) return;
-    const model = await extractDacpac(data.buffer as ArrayBuffer);
+    const logger = Logger.create(outputChannel, 'Parse');
+    const model = await extractDacpac(data.buffer as ArrayBuffer, (msg) => logger.debug(msg));
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
     host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
@@ -567,7 +570,11 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const config = await readExtensionConfig(host);
   const logger = Logger.create(outputChannel, 'Parse');
   logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
-  const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes);
+  
+  const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes, (msg) => {
+    logger.debug(msg);
+  });
+  
   onModelBuilt?.(model);
   if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
   host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
