@@ -455,16 +455,13 @@ export function buildCurrentTaskBlock(currentTask: string): string {
  */
 export function buildMemoryBlock(
   stm: Array<{ nodeId: string; summary: string }>,
-  hop: number,
-  total: number,
+  _hop: number,
+  _total: number,
 ): string {
   const stmText = stm.length > 0
     ? stm.map(s => `- ${s.nodeId}: ${s.summary}`).join('\n')
     : 'No nodes visited yet.';
   return [
-    '## Working Memory',
-    `Hop ${hop} of ${total} scope nodes.`,
-    '',
     '<short_term_memory>',
     stmText,
     '</short_term_memory>',
@@ -473,24 +470,20 @@ export function buildMemoryBlock(
 
 
 /**
- * Renders the `<mission_state>` protocol envelope — ACK/WAIT contract between SM
- * (server) and the AI (client).
+ * Renders the `<mission_state>` band — focus + progress informational fields.
  *
  * @remarks
- * Defense-in-depth narrative companion to the mechanical `toolMode.Required`
- * enforcement. Spells out to the AI, on every hop, which tool-call shapes are
- * legal and that free-form text is outside protocol. The numeric `hop` and
- * `agendaRemaining` values are informational; the authoritative session-end
- * signal is always from the engine (`sm_status === 'complete'`), not from a
- * model-side interpretation of the envelope.
+ * Engine-orchestration fields (`engine_status`, `expected_reply`, `legal_replies`,
+ * `session_ends_when`, `free_text`) were removed: they are mechanically enforced
+ * via `LanguageModelChatToolMode.Required` and `toolPolicy`, so restating them in
+ * prose is dead weight (per CLAUDE.md *"Per-hop prompts are rendered, not configured"*).
  *
- * Included only in SM active hops (inline-BB is one-shot and does not need the
- * ACK framing; DISCOVERY and SYNTHESIS use their own protocols).
+ * Included only in SM active hops (inline-BB is one-shot; DISCOVERY and SYNTHESIS
+ * use their own protocols).
  *
  * @param hop - Current 1-based hop index.
  * @param total - Total nodes in the BFS scope.
  * @param agendaRemaining - Nodes still awaiting analysis.
- * @param legalTools - Names of tools the AI may call this turn (without the `lineage_` prefix).
  * @param focusNodeId - The node the AI must analyse this hop — surfaced in prose so the AI can match tool-result JSON, especially on hop 1 when no prior tool_result exists.
  * @returns A string containing the `<mission_state>` block.
  */
@@ -498,7 +491,6 @@ export function buildMissionStateBlock(
   hop: number,
   total: number,
   agendaRemaining: number,
-  legalTools: readonly string[],
   focusNodeId: string | null,
 ): string {
   const lines = ['<mission_state>'];
@@ -506,11 +498,6 @@ export function buildMissionStateBlock(
   lines.push(
     `  hop: ${hop} / ${total}`,
     `  agenda_remaining: ${agendaRemaining}`,
-    `  engine_status: awaiting_findings`,
-    `  expected_reply: submit_findings`,
-    `  legal_replies: [${legalTools.join(', ')}]`,
-    `  session_ends_when: the engine reports sm_status == "complete"`,
-    `  free_text: outside protocol — session continues until the engine terminates it`,
     '</mission_state>',
   );
   return lines.join('\n');

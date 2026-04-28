@@ -23,34 +23,44 @@ const BLOCK = {
    * Section-shape contract — points at the YAML capture templates as the
    * single source of truth for body content. The capture instructions are
    * injected separately by `templateRenderer.resolveStagePrompt(..., 'active', classification)`.
+   *
+   * Renders only the submission shape for the locked classification — no menu
+   * of inactive branches. See {@link buildSectionsShape}.
    */
-  sectionsShape: [
-    '## Section Submission',
-    'Submit `sections[]` with one entry per fired `*_capture` template (see "Capture rules" injected above):',
-    '- `business` classification → 1 entry with `angle: "business"`',
-    '- `technical` classification → 1 entry with `angle: "technical"`',
-    '- `both` classification → 2 entries (one of each angle)',
-    'Each entry: `{ angle, text }`. Body content is governed by the angle\'s capture template above; this block only specifies the submission shape.',
-    '`summary` — one line, ~100–300 chars, plain-prose digest of the whole node (across all captured angles).',
-  ].join('\n'),
+  buildSectionsShape: (classification: 'business' | 'technical' | 'both'): string => {
+    const submitLine = classification === 'both'
+      ? 'Submit `sections[]` with two entries: one `{ angle: "business", text: "<body>" }` and one `{ angle: "technical", text: "<body>" }`.'
+      : `Submit \`sections[]\` with one entry: \`{ angle: "${classification}", text: "<body>" }\`.`;
+    return [
+      '## Section Submission',
+      submitLine,
+      'Body content is governed by the capture template above; this block specifies only the submission shape.',
+      '`summary` — one short sentence digest of the whole node.',
+    ].join('\n');
+  },
 
   /** Metadata protocol — badge_label drives final-document section labels. */
   badgeAndNote: [
     '## Metadata Protocol',
-    '1. BADGE: `badge_label` is a 2-4 word semantic ROLE label (≤30 chars). Examples: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "AC Reallocation", "EV Calculation", "Pipeline Seeder", "Reference Remap". The label captures the node\'s ROLE in the pipeline.',
+    '1. BADGE: `badge_label` is a 2-4 word semantic ROLE label (≤30 chars). Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "AC Reallocation", "EV Calculation", "Reference Remap".',
     '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
-    '   - GROUPING: Nodes that serve the SAME role take the SAME label. Five EV Case procedures all use `badge_label: "EV Calculation"`; three regional loaders all use `"Regional Upsert"`. Synthesis groups same-label nodes into one section, so a label that is shared across siblings produces a clean grouped section, while a unique-per-node verbose label produces a fragmented section-per-node output. Prefer the shared role over the per-node detail — the differing detail belongs in the section body.',
-    '   - Use ROLE words ("Reallocation", "Calculation", "Upsert", "Source"); the body of the section carries implementation detail (window function, recursive CTE, etc.) and the engine adds the node-type icon — those do not need to be in the label.',
-    '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` already captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
+    '   - SHARED ROLE: Nodes serving the same role take the same label. Five EV Case procedures all use `"EV Calculation"`; three regional loaders all use `"Regional Upsert"`. The differing detail belongs in the section body, not the label.',
+    '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
   ].join('\n'),
 
-  /** Strategic routing protocol. */
-  routing: [
+  /** Strategic routing protocol — full text for inline mode (AI drives the agenda one-shot). */
+  routingInline: [
     '## Routing Strategy',
     '1. AUTO-ADD: Route neighbors only if critical to the <mission_brief>. Respect user depth and schema boundaries.',
     '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant table/view/function branches (logging, demographics) found in DDL. See Pruning Protocol below for procedures.',
     '3. ANCHORING: Relevance is judged against the mission, not the sub-question.',
     '4. OUT-OF-SCOPE ROUTES: See ROUTE OUTCOMES in the Active Exploration Protocol above.',
+  ].join('\n'),
+
+  /** Trimmed routing line for SM — engine drives the agenda; AI only adds neighbors a tool result reveals are missing. */
+  routingSm: [
+    '## Routing',
+    'Engine drives the agenda. If a tool result surfaces a topologically-valid neighbor not yet on the agenda, add it via `route_requests` (source the id verbatim from the tool result). Otherwise emit `route_requests: []`.',
   ].join('\n'),
 
   /**
@@ -87,9 +97,14 @@ const BLOCK = {
  *
  * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @param targetColumns - Optional columns being tracked (activates Column Aspect).
+ * @param classification - Locked classification from gate-approval; renders the section-submission shape per locked angle.
  * @returns A formatted string containing classification rules, per-hop workflow, and routing guidance.
  */
-export function buildModeBlock(isInline: boolean = false, targetColumns?: string[]): string {
+export function buildModeBlock(
+  isInline: boolean = false,
+  targetColumns?: string[],
+  classification: 'business' | 'technical' | 'both' = 'business',
+): string {
   const isColumnAspectActive = !!(targetColumns && targetColumns.length > 0);
   const sections: string[] = [];
 
@@ -104,15 +119,15 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
     '',
     BLOCK.verdictCategories,
     '',
-    BLOCK.sectionsShape,
+    BLOCK.buildSectionsShape(classification),
     '',
     BLOCK.badgeAndNote,
     '',
-    BLOCK.routing
+    isInline ? BLOCK.routingInline : BLOCK.routingSm
   );
 
-  // Inline ships full DDL up front and toolPolicy hides `lineage_get_neighbor_columns`, so the pruning protocol is dead weight there.
-  if (!isInline) {
+  // Inline ships full DDL up front so the AI drives pruning decisions; in SM the engine prunes via the agenda.
+  if (isInline) {
     sections.push('', BLOCK.pruningProtocol);
   }
 

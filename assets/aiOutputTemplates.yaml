@@ -89,13 +89,25 @@ intro:
 closing:
   stages: [synthesis]
   instruction: >
-    Optional, after the sections, separated by a `---` divider. Two uses:
-    (a) when the analysis spans 5+ sections, end with a one-paragraph
-    through-line that names the overall pipeline answer in the lens the
-    user requested; (b) flag a cross-cutting risk / data-quality issue
-    that applies to the whole graph and doesn't fit any single section
-    (prefix with ⚠️). Omit if neither applies.
-  example: "⚠️ If vwPriceList returns NULL for any SKU, TotalRevenue = Qty × 0 — verify price coverage before each INSERT run."
+    Required when this template is rendered (analysis spans 5+ sections).
+    After the sections, separated by a `---` divider, write a brief
+    closing block:
+    (1) one-paragraph through-line that names the overall pipeline answer
+    in the lens the user requested, and
+    (2) a top-risks markdown table — the cross-cutting data-quality / scope
+    risks that span sections (each row prefixed with ⚠️). Two columns:
+    `| Risk | Scope |`. Lift verbatim from ⚠️ markers in the captured
+    sections; do not invent new risks.
+  example: |
+    The CadenceWorker pipeline reloads from staging each run, applies a
+    nine-stage rule cascade (init → OOS gate → AC reallocation → integrity
+    correction → EV computation → exception overrides → reconciliation →
+    publish), and lands USD-converted facts in FactCadenceDetails.
+
+    | Risk | Scope |
+    |---|---|
+    | ⚠️ Missing `vDataFilters` config NULLs `PctEVDirect` | All EV cases |
+    | ⚠️ Missing `LkpCurrencyRate` rows produce NULL KPIs | Final fact load |
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools.ts
 # from title + intro + sections[] + closing) — NOT an AI-writeable field.
@@ -132,8 +144,9 @@ business_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Capture this node's BUSINESS MEANING — what the data means, why it
-    matters, what changes when the rule fires.
+    Capture this node's BUSINESS MEANING — what each record represents,
+    what changes when a rule fires, which decisions or values flow
+    downstream, why each rule matters to the domain.
     </purpose>
 
     Submit one section: `{ angle: "business", text: "<body>" }`. The
@@ -141,15 +154,24 @@ business_capture:
     write as deeply as the node's business role warrants. Brevity here
     becomes brevity in the final report.
 
+    Cover every business-relevant concept the DDL exposes:
+    - Filter / qualification conditions — which records the rule applies to (eligibility, special-case overrides)
+    - Calculations — formulas, allocations, weights, proportions (express in LaTeX)
+    - Rules / decisions — CASE branches, thresholds, fallback values, null-safe defaults
+    - Process — sequence of state changes, ordering of updates
+    - Dependencies — which records feed which, matching criteria, upstream/downstream relationships
+    - Status transitions — lifecycle of each record class (numbered transitions)
+    - Data-quality risks — mark with ⚠️ inline at the point they apply
+
     <body_recipe>
     1. Open with one sentence naming the domain role ("computes revenue
        at INSERT", "allocates budget units across cost centres",
-       "historizes price changes into SCD-2 rows").
+       "applies tier-discount when order qualifies").
     2. Walk through every business rule the DDL exposes — each CASE
-       branch, threshold, allocation formula, special-case predicate,
+       branch, threshold, allocation formula, special-case condition,
        audit-trail update, status transition.
-    3. Quote short SQL evidence inline as proof of the rule (predicates,
-       formulas, JOIN keys, COALESCE fallbacks).
+    3. Quote short SQL evidence inline as proof of the rule (the WHEN
+       conditions, the formula, the matching criteria, the fallback values).
     4. Express formulas in LaTeX (`$expr$` inline, `$$expr$$` block).
     5. Tabulate column renames as `| From | To | Business meaning |` when
        3+ sibling columns share the rename shape; 1–2 renames as prose
@@ -159,10 +181,6 @@ business_capture:
     7. Mark data-quality risks with ⚠️ inline at the point they apply.
     8. Wrap column and object names in `\`backticks\``.
     </body_recipe>
-
-    Datatype lists, distribution/indexing hints, and execution-plan notes
-    belong in the technical angle. Each capture is independent — synthesis
-    groups sibling variants at assembly time.
   example: |
     `spCalcRevenue` computes `TotalRevenue = $Qty \times UnitPrice$` at the
     final INSERT into `FactSalesReport`, only for rows with
@@ -217,7 +235,12 @@ technical_capture:
        correlated subqueries in SELECT, scalar UDFs in WHERE.
     7. Distribution / indexing hints — partition key, hash-distribution
        column, clustered-index column order.
-    8. DDL comments and version annotations — author intent that would be
+    8. Datatype declarations — call out non-default precisions
+       (`DECIMAL(19,4)` vs `DECIMAL(18,2)`), nullability surprises, and
+       casts that change semantics (`CAST AS DATE` truncating time).
+    9. Execution-plan affordances and traps — sargability of WHERE
+       predicates, parameter-sniffing risks, statistics dependencies.
+    10. DDL comments and version annotations — author intent that would be
        lost after this hop.
     </body_recipe>
 
@@ -259,7 +282,7 @@ structural_summary:
     Required sections (use these headings exactly):
 
     ## Purpose
-    One sentence naming the role of this node in the pipeline (≤200 chars).
+    One short sentence naming the role of this node in the pipeline.
 
     ## Columns
     Render the columns list as a `| Column | Type | Role / ⚠️ |` table. Role

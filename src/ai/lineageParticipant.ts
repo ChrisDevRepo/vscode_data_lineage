@@ -84,6 +84,21 @@ export function extractToolErrorCode(result: vscode.LanguageModelToolResult | un
 }
 
 /**
+ * Render the per-hop User-message directive from current engine state.
+ *
+ * @remarks
+ * Called at every sliding-memory wipe so the trailing User msg reflects the engine's
+ * advanced focus + hop number, not the gate-approval text frozen at session start.
+ */
+function renderHopDirective(engine: NavigationEngine | null): string {
+  const focusId = engine?.currentFocus;
+  const hopNumber = (engine?.currentHop ?? 0) + 1;
+  return focusId
+    ? `Continue. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
+    : 'Continue the hop-by-hop analysis — call submit_findings for the current focus node.';
+}
+
+/**
  * Orchestrates the interaction between VS Code Chat and the lineage engine.
  *
  * @remarks
@@ -334,8 +349,9 @@ export class LineageParticipant {
           }
           sess.enterExploring();
           const focusId = engine?.currentFocus;
+          const hopNumber = (engine?.currentHop ?? 0) + 1;
           effectivePrompt = focusId
-            ? `User approved. Current focus for hop 1 is ${focusId}. Call submit_findings for this node.`
+            ? `User approved. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
             : 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
           const engine = sess.stateMachine as NavigationEngine | null;
@@ -422,7 +438,7 @@ export class LineageParticipant {
 
         if (phase === 'active' && engine) {
           parts.push(buildToolUsageBlock());
-          parts.push(buildModeBlock(engine.inlineMode, engine.columnAspect?.target_columns));
+          parts.push(buildModeBlock(engine.inlineMode, engine.columnAspect?.target_columns, sess.classification));
         }
 
         parts.push(stageBlock);
@@ -450,13 +466,10 @@ export class LineageParticipant {
         if (phase === 'active' && !engine.inlineMode) {
           const stm = sess.memory.getShortTermMemory();
           dynamic.push(buildMemoryBlock(stm, engine.currentHop, engine.scopeSize));
-          // Protocol envelope (ACK/WAIT contract) — ships on every SM active hop so the AI
-          // sees the legal-reply shape and session-termination rule in structured form.
-          const mode = activeModeOf(false, engine.columnAspect !== null);
-          const legalTools = [...getAllowedLmToolNames({ kind: 'active', mode })]
-            .map(n => n.replace(/^lineage_/, ''));
+          // Mission state — focus + progress only. Engine-orchestration fields removed
+          // (mechanically enforced via toolMode.Required + toolPolicy).
           const agendaRemaining = Math.max(0, engine.scopeSize - engine.currentHop);
-          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.scopeSize, agendaRemaining, legalTools, engine.currentFocus));
+          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.scopeSize, agendaRemaining, engine.currentFocus));
         }
         return dynamic.filter(Boolean).join('\n');
       };
@@ -849,6 +862,9 @@ export class LineageParticipant {
             consecutiveErrorRounds = 0;
             // Rebuild system prompt on every wipe so <current_task> and <short_term_memory> stay current.
             systemPrompt = buildStageSystemPrompt('active');
+            // Refresh per-hop directive to match the engine's advanced state — avoids the User-msg slot
+            // freezing on the gate-approval text ("hop 1 is X") for the rest of the session.
+            effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
             envelope.wipeAndSeed(systemPrompt, effectivePrompt);
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
           } else {
@@ -858,6 +874,7 @@ export class LineageParticipant {
               // that keeps only the last error result so the AI still sees what broke
               // but the history does not grow unbounded within MAX_ROUNDS.
               systemPrompt = buildStageSystemPrompt('active');
+              effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
               envelope.wipeAndSeed(systemPrompt, effectivePrompt);
               this.logger.warn(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
               consecutiveErrorRounds = 0;

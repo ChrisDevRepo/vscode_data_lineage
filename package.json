@@ -981,7 +981,7 @@
                   "external"
                 ]
               },
-              "description": "Optional. Object types to prune from the exploration scope. REPLACE semantics — each call overrides prior. Cumulative across refine rounds (re-send all prior plus the new)."
+              "description": "Optional. Object types to prune from the exploration scope. Use whenever the user names a type-level filter in NL — e.g. 'no views' / 'exclude all views' / 'tables only' / 'skip UDFs' map to ['view'] / ['view'] / ['view','procedure','function'] / ['function'] respectively. REPLACE semantics — each call overrides prior. Cumulative across refine rounds (re-send all prior plus the new)."
             },
             "excludeSchemas": {
               "type": "array",
@@ -1091,7 +1091,7 @@
             },
             "summary": {
               "type": "string",
-              "description": "One-line digest of the whole node (~100-300 chars) — echoed in future hops via short_term_memory."
+              "description": "One short sentence digest of the whole node — echoed in future hops via short_term_memory."
             },
             "verdict": {
               "type": "string",
