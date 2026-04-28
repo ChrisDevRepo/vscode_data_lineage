@@ -153,11 +153,18 @@ export class LineageParticipant {
         const sess = this.getSession();
         const followups: vscode.ChatFollowup[] = [];
 
-        const hasDeferred = sess.phase.kind === 'completed' && sess.stateMachine && sess.stateMachine.deferredQuestions.length > 0;
-        if (hasDeferred) {
+        // Always emit after completed synthesis; same trigger handles both labels.
+        const completedWithResult =
+          sess.phase.kind === 'completed' &&
+          sess.stateMachine !== undefined &&
+          sess.lastPresentResultDescription !== undefined;
+        if (completedWithResult) {
+          const deferredCount = sess.stateMachine!.deferredQuestions.length;
           followups.push({
             prompt: RECOMMEND_FOLLOWUPS_TRIGGER,
-            label: vscode.l10n.t('Follow-up: Explore related objects…')
+            label: deferredCount > 0
+              ? vscode.l10n.t('Follow-up: Explore related objects…')
+              : vscode.l10n.t('Ask a follow-up question')
           });
         }
 
@@ -668,6 +675,11 @@ export class LineageParticipant {
           if (activePhase === 'synthesis') {
             if (sess.presentResultCalledThisTurn) {
               this.logger.debug(`Round ${roundCount} [SYNTHESIS] — terminated after present_result success`);
+              // Stream `intro` to chat — panel overlay holds the full description.
+              const intro = sess.resultGraph?.intro?.trim();
+              if (intro && intro.length > 0 && responseText.indexOf(intro) === -1) {
+                writer.markdown(intro + '\n\n');
+              }
             } else if (!sess.synthesisCorrectiveAttempted) {
               sess.synthesisCorrectiveAttempted = true;
               this.logger.warn(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting one-shot corrective and retrying`);
@@ -715,10 +727,12 @@ export class LineageParticipant {
 
           let progressLine = getToolInvocationLabel(f.name, f.input);
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
-            const st = sess.stateMachine.toJSON() as { hopCount?: number; scopeSize?: number; currentFocusNodeId?: string | null };
+            const st = sess.stateMachine.toJSON() as { hopCount?: number; agendaSize?: number; currentFocusNodeId?: string | null };
             const shortName = st.currentFocusNodeId?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
-            const denom = st.scopeSize ?? '?';
-            progressLine = `Hop ${st.hopCount ?? 1} / ${denom} — analyzing ${shortName}…`;
+            // Denominator tracks dynamic total: visited (hopCount) + remaining agenda. Updates after prune/route.
+            const hopCount = st.hopCount ?? 1;
+            const denom = hopCount + (st.agendaSize ?? 0);
+            progressLine = `Hop ${hopCount} / ${denom} — analyzing ${shortName}…`;
           }
           if (progressLine !== lastProgressLine) {
             writer.progress(progressLine);
@@ -1062,6 +1076,12 @@ export class LineageParticipant {
           sess.enterCompleted();
           this.logger.info(`[${sess.id}] [Phase] synthesis → completed — archive slots=${sess.memory.slotCount}, deferred=${sess.stateMachine!.deferredQuestions.length}`);
           this.logger.debug(`[${sess.id}] [Phase] follow-up ready — next turn refines via present_result / supplement; no fresh exploration unless the user asks a new trace.`);
+          // Surface the synthesized headline as the chat-surface answer to the user's
+          // original question. The full description renders in the webview overlay; chat
+          // gets the one-line digest so users see an answer without opening the panel.
+          if (sess.presentResultCalledThisTurn && sess.lastPresentResultSummary) {
+            writer.markdown(`\n${sess.lastPresentResultSummary}\n`);
+          }
           // Only show the graph button when present_result was actually invoked this turn —
           // prevents a stale/empty button when synthesis exited via the archive fallback.
           if (this.getActivePanel() && sess.presentResultCalledThisTurn) {

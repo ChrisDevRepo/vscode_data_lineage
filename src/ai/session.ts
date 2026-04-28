@@ -78,6 +78,11 @@ export class AiSession {
    */
   public lastPresentResultDescription: string | null = null;
   /**
+   * Last `present_result` headline summary — emitted to chat after synthesis so the user
+   * sees an answer to their original question without opening the description overlay.
+   */
+  public lastPresentResultSummary: string | null = null;
+  /**
    * `true` when `present_result` was successfully invoked in the current `runHopLoop` turn.
    *
    * @remarks
@@ -213,6 +218,7 @@ export class AiSession {
     this.stateMachine = null;
     this.resultGraph = null;
     this.lastPresentResultDescription = null;
+    this.lastPresentResultSummary = null;
     this.hopCount = 0;
     this.hopLog = [];
     this.pendingUserNotice.clear();
