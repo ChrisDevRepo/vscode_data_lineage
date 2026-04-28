@@ -197,8 +197,9 @@ export async function promptForConnection(
   }
 
   logger.info(`Connecting to ${connectionInfo.server}/${connectionInfo.database}`);
+  const connectStart = Date.now();
   const connectionUri = await api.connect(connectionInfo, false);
-  logger.info('Connected');
+  logger.info(`Connected (${Date.now() - connectStart}ms)`);
 
   return { connectionUri, connectionInfo };
 }
@@ -232,9 +233,10 @@ export async function connectDirect(
   const api = await getMssqlApi(outputChannel);
 
   logger.debug(`>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
+  const reconnectStart = Date.now();
   try {
     const connectionUri = await api.connect(connectionInfo, false);
-    logger.debug('Reconnected');
+    logger.debug(`Reconnected (${Date.now() - reconnectStart}ms)`);
     return { connectionUri, connectionInfo };
   } catch (err) {
     logger.warn(`Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
@@ -387,8 +389,13 @@ export async function executeSimpleQuery(
   sql: string,
   outputChannel: vscode.LogOutputChannel,
 ): Promise<SimpleExecuteResult> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
-  return sharing.executeSimpleQuery(connectionUri, sql);
+  logger.debug(`Executing simple query — SQL: ${trunc(sanitizeForLog(sql), 300)}`);
+  const start = Date.now();
+  const result = await sharing.executeSimpleQuery(connectionUri, sql);
+  logger.debug(`Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`);
+  return result;
 }
 
 /**

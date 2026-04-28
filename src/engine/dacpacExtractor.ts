@@ -39,6 +39,18 @@ import {
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql';
+import { trunc } from '../utils/log';
+
+/**
+ * Counts extracted objects by canonical type. Used for one-line log breakdowns.
+ */
+function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 'procedure' | 'function', number> {
+  const c = { table: 0, view: 0, procedure: 0, function: 0 };
+  for (const o of objs) {
+    if (o.type === 'table' || o.type === 'view' || o.type === 'procedure' || o.type === 'function') c[o.type]++;
+  }
+  return c;
+}
 
 /**
  * Extracts a complete DatabaseModel from a .dacpac file buffer.
@@ -50,12 +62,21 @@ import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql'
  */
 export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: string) => void): Promise<DatabaseModel> {
   const xml = await extractModelXml(buffer);
+  if (onDebugLog) onDebugLog(`Dacpac: ZIP loaded — model.xml=${xml.length} chars`);
+
   const { elements, dspName } = parseElements(xml);
+  if (onDebugLog) onDebugLog(`Dacpac: model.xml parsed — ${elements.length} elements (dsp=${dspName || 'unspecified'})`);
+
   const dbPlatform = parseDspPlatform(dspName);
 
   const objects = extractObjects(elements);
   const allObjects = extractObjectsLightweight(elements);
   const deps = extractDependencies(elements);
+  if (onDebugLog) {
+    const c = countObjectsByType(objects);
+    onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
+  }
+
   const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
 
   const warnings: string[] = [];
@@ -107,6 +128,8 @@ export function extractDacpacFiltered(
   dspName?: string,
   onDebugLog?: (msg: string) => void,
 ): DatabaseModel {
+  if (onDebugLog) onDebugLog(`Dacpac: Filtering by schemas=[${trunc(Array.from(selectedSchemas), 20)}]`);
+
   const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
   const filtered = elements.filter(el => {
     const name = el['@_Name'];
@@ -114,10 +137,16 @@ export function extractDacpacFiltered(
     const { schema } = parseName(name);
     return lowerSchemas.has(schema.toLowerCase());
   });
+  if (onDebugLog) onDebugLog(`Dacpac: Filter — ${elements.length} → ${filtered.length} tracked elements after schema filter`);
 
   const allObjects = extractObjectsLightweight(elements);
   const objects = extractObjects(filtered, elements);
   const deps = extractDependencies(filtered);
+  if (onDebugLog) {
+    const c = countObjectsByType(objects);
+    onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
+  }
+
   const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
   const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
 

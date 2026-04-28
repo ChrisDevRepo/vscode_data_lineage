@@ -675,7 +675,7 @@ async function handleTableStatsRequestHost(
  * Logs a summary of the SQL parsing results and stores it in the session.
  */
 function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, objectCount?: number, edgeCount?: number, schemaCount?: number) {
-  const logger = Logger.create(outputChannel, 'ParseStats');
+  const logger = Logger.create(outputChannel, 'Parse');
   const sess = getSession();
   sess.parseStats = {
     resolvedEdges: stats.resolvedEdges,

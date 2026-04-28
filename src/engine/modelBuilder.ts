@@ -27,8 +27,36 @@ import {
 } from './types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
 import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
+import { trunc, sanitizeForLog } from '../utils/log';
 import { ColumnStore } from './columnStore';
 import { SYSTEM_SCHEMAS, XML_METHODS, CLR_TYPE_METHODS } from './shared/sqlMetadata';
+
+/** Number of scripted bodies to per-rule trace before falling back to aggregate stats only. */
+const PARSE_TRACE_BUDGET = 5;
+
+/**
+ * Builds a per-rule trace callback for the next sampled body and decrements `ctx.parseTrace.budget`.
+ * Returns `undefined` when no body remains in the sampling budget. The callback emits one log line
+ * per matching rule via `ctx.parseTrace.emit`, prefixed with the node label and a single SQL preview.
+ *
+ * @remarks
+ * Emits a header line `Trace [schema.name] sql=<preview>` once per traced body, then a per-rule
+ * line for each rule that contributed at least one new ref. Routed by the caller to the `[Parse]`
+ * category so DBAs can verify YAML rule firing without instrumenting code.
+ */
+function makeParseTraceCallback(
+  node: LineageNode,
+  ctx: EdgeContext,
+): ((ruleName: string, category: string, added: number) => void) | undefined {
+  if (!ctx.parseTrace || ctx.parseTrace.budget <= 0) return undefined;
+  ctx.parseTrace.budget--;
+  const label = `${node.schema}.${node.name}`;
+  const sqlPreview = trunc(sanitizeForLog((node.bodyScript ?? '').trim()), 200);
+  ctx.parseTrace.emit(`Trace [${label}] sql=${sqlPreview}`);
+  return (ruleName, category, added) => {
+    ctx.parseTrace!.emit(`Trace [${label}]   rule=${ruleName} cat=${category} +${added} refs`);
+  };
+}
 
 /**
  * Builds a complete DatabaseModel from extracted objects and dependencies.
@@ -432,6 +460,20 @@ interface EdgeContext {
   grouped: GroupedDeps;
   /** Tracked cross-DB references discovered during regex analysis. */
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>;
+  /** Optional sample-mode parse-rule trace; bounded by `budget` to avoid log flood. */
+  parseTrace?: ParseTraceCtx;
+}
+
+/**
+ * Sample-mode parse-rule trace state. The first `budget` scripted bodies that go through
+ * `parseSqlBody` will have each firing rule logged via `emit`. Set `budget` based on a
+ * representative-sample size (e.g. 5).
+ */
+interface ParseTraceCtx {
+  /** Remaining bodies to trace before tracing stops. */
+  budget: number;
+  /** Receiver for the formatted log line. Routed by the caller to `Logger.create(ch, 'Parse').debug`. */
+  emit: (msg: string) => void;
 }
 
 /**
@@ -511,7 +553,8 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 
   if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
-    const parsed = parseSqlBody(node.bodyScript);
+    const onRuleFire = makeParseTraceCallback(node, ctx);
+    const parsed = parseSqlBody(node.bodyScript, onRuleFire);
     const spLabel = `${node.schema}.${node.name}`;
     const spInRefs: string[] = [];
     const spUnrelated: string[] = [];
@@ -580,7 +623,8 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
  */
 function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
-  const parsed = parseSqlBody(node.bodyScript!);
+  const onRuleFire = makeParseTraceCallback(node, ctx);
+  const parsed = parseSqlBody(node.bodyScript!, onRuleFire);
   const spLabel = `${node.schema}.${node.name}`;
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
@@ -686,7 +730,14 @@ function buildNodesAndEdges(
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const crossDbRegexRefs = new Map<string, { sources: string[]; targets: string[] }>();
 
-  const ctx: EdgeContext = { nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs };
+  // Sample-mode parse trace: log per-rule firing for the first PARSE_TRACE_BUDGET scripted bodies.
+  // The aggregate is already logged by handleParseStats; this helps DBAs verify YAML rules fire.
+  const parseTrace: ParseTraceCtx | undefined = onDebugLog
+    ? { budget: PARSE_TRACE_BUDGET, emit: onDebugLog }
+    : undefined;
+  const traceStartBudget = parseTrace?.budget ?? 0;
+
+  const ctx: EdgeContext = { nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs, parseTrace };
 
   if (onDebugLog) onDebugLog(`Starting processing of ${nodes.length} nodes...`);
   let scriptedCount = 0;
@@ -705,6 +756,9 @@ function buildNodesAndEdges(
   }
 
   if (onDebugLog) onDebugLog(`Finished processing. Scripted objects found: ${scriptedCount}`);
+  if (parseTrace && traceStartBudget > 0 && parseTrace.budget === 0) {
+    onDebugLog!(`Parse trace sample limit reached (${traceStartBudget} bodies) — see [Parse] aggregate stats for full counts`);
+  }
 
   if (externalRefsEnabled) {
     createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, maxNodes);
@@ -777,6 +831,7 @@ function createVirtualNodes(
   maxNodes = DEFAULT_CONFIG.maxNodes,
 ): void {
   let budget = Math.max(0, maxNodes - nodes.length);
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
   const fileNodeMap = new Map<string, string>();
   const nodeSnapshot = [...nodes];

@@ -412,9 +412,13 @@ function removeBlockComments(sql: string): string {
  * 5.  **Extraction**: Rule-based matching against the cleaned SQL.
  *
  * @param sql - The raw SQL statement or script body to parse.
+ * @param onRuleFire - Optional per-rule firing callback. Invoked with `(ruleName, category, addedCount)` for every extraction rule that contributed at least one new ref. Used for sample-mode parser diagnostics.
  * @returns A categorization of all discovered dependencies.
  */
-export function parseSqlBody(sql: string): ParsedDependencies {
+export function parseSqlBody(
+  sql: string,
+  onRuleFire?: (ruleName: string, category: string, added: number) => void,
+): ParsedDependencies {
   // Pass 0: Remove block comments (including nested) before the regex sees the SQL.
   let clean = removeBlockComments(sql);
 
@@ -459,7 +463,9 @@ export function parseSqlBody(sql: string): ParsedDependencies {
       rule.category === 'target' ? targets :
       execCalls;
 
+    const before = dest.size;
     collectMatches(clean, regex, dest);
+    const added = dest.size - before;
 
     // Also collect 3-part+ names (cross-DB refs)
     if (rule.category === 'source' || rule.name === 'extract_udf_calls') {
@@ -467,6 +473,8 @@ export function parseSqlBody(sql: string): ParsedDependencies {
     } else if (rule.category === 'target') {
       collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbTargets);
     }
+
+    if (onRuleFire && added > 0) onRuleFire(rule.name, rule.category, added);
   }
 
   // Add UDF sources that aren't already targets
