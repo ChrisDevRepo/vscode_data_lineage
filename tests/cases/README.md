@@ -1,6 +1,11 @@
-# Test Cases — Baseline-v1
+# Test Cases — Baseline + Feature catalogue
 
-Four cases drive the current baseline. See `EVAL-RUBRIC.md` for scoring.
+Two catalogues drive the eval suite:
+
+- **Baseline cases** (this dir, `*.md`) — happy-path BB / CT × inline / SM × business / technical / both. Drive iteration scoring.
+- **Feature cases** (`features/*.md` + `features/README.md`) — flow-path catalogue covering refine rounds, gate cancel, follow-up text edits / prunes / supplements / chips, NL-named exclusions, engine guards, synthesis-classification locks. Use these to test conversational paths and mechanical guards beyond the happy path.
+
+See `EVAL-RUBRIC.md` for scoring.
 
 ## Baseline suite
 
