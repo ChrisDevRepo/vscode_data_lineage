@@ -981,14 +981,14 @@
                   "external"
                 ]
               },
-              "description": "Optional. Object types to prune from the exploration scope. Use whenever the user names a type-level filter in NL — e.g. 'no views' / 'exclude all views' / 'tables only' / 'skip UDFs' map to ['view'] / ['view'] / ['view','procedure','function'] / ['function'] respectively. REPLACE semantics — each call overrides prior. Cumulative across refine rounds (re-send all prior plus the new)."
+              "description": "Optional. Object types to prune from the exploration scope. Use whenever the user names a type-level filter in NL — e.g. 'no views' / 'exclude all views' / 'tables only' / 'skip UDFs' map to ['view'] / ['view'] / ['view','procedure','function'] / ['function'] respectively. ALSO honor the GUI filter as the user's default: when `filter_context.active_types` from a prior search result lists e.g. ['table','procedure'], the user has already hidden ['view','function'] in the GUI — include those in `excludeTypes` unless the user's chat explicitly asks to broaden ('include views', 'also look at UDFs'). The gate shows the resulting scope; if the user wants to widen, they'll say so on refine. REPLACE semantics — each call overrides prior. Cumulative across refine rounds (re-send all prior plus the new)."
             },
             "excludeSchemas": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Optional. Schemas to prune from the exploration scope (case-insensitive). REPLACE semantics. Use when the user says 'remove/drop schema X' or 'ignore X-schema objects'."
+              "description": "Optional. Schemas to prune from the exploration scope (case-insensitive). REPLACE semantics. Use when the user says 'remove/drop schema X' or 'ignore X-schema objects'. ALSO honor `filter_context.active_schemas` from a prior search result as the user's GUI default: any schema present in the loaded model but missing from `active_schemas` is currently hidden — include it here unless the user's chat explicitly asks to broaden ('also look at STAGING')."
             },
             "excludeNodeIds": {
               "type": "array",
@@ -1019,7 +1019,7 @@
                 "technical",
                 "both"
               ],
-              "description": "Declare the analysis angle (business rules, technical performance, or both). Defaults to business."
+              "description": "Declare the analysis angle. Default `both` when intent is ambiguous (general lineage / origin / impact / 'where does X come from' / 'what reads from Y' — including column traces) — engine captures one business + one technical section per node, giving the full picture. Pick `business` only when the user explicitly wants only business rules. Pick `technical` only when the user explicitly asks about performance, execution plans, indexes, query tuning, statistics, or data-quality / null-handling semantics."
             },
             "supplement": {
               "type": "object",

@@ -298,6 +298,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected excludedSchemas: Set<string> = new Set();
   /** Specific node ids (lower-cased) the user asked to exclude; pruned from scope at init. */
   protected excludedNodeIds: Set<string> = new Set();
+  /** Object types hidden by the GUI filter at session start. Advisory only — diagnostic logs flag whether the AI honored them via `excludeTypes`. */
+  protected guiHiddenTypes: Set<string> = new Set();
   /**
    * Specific node ids (lower-cased) the user asked to keep in scope but skip analysis on.
    * The hop dispatcher detects these on dequeue and auto-emits `verdict:'pass'` — topology
@@ -363,6 +365,15 @@ export class NavigationEngine implements IHopStateMachine {
     const schemas = config.activeFilter?.schemas?.map(s => s.toLowerCase()) ?? [];
     this.userSchemas = new Set(schemas);
     this.sessionAllowedSchemas = new Set(schemas);
+
+    // GUI-hidden types captured for diagnostics. The BFS log shows whether the AI
+    // honored or ignored them. Schemas already flow through `sessionAllowedSchemas`
+    // (route deferral surface) so no parallel structure is needed for them.
+    const ALL_OBJECT_TYPES = ['table', 'view', 'procedure', 'function', 'external'] as const;
+    const guiActiveTypes = config.activeFilter?.types?.map(t => t.toLowerCase()) ?? [];
+    if (guiActiveTypes.length > 0) {
+      this.guiHiddenTypes = new Set(ALL_OBJECT_TYPES.filter(t => !guiActiveTypes.includes(t)));
+    }
   }
 
   /**
@@ -792,6 +803,9 @@ export class NavigationEngine implements IHopStateMachine {
     forceMode?: 'inline' | 'sm';
     mission_brief?: string;
   }): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | { error: string; hint?: string; unresolved_excludeNodeIds?: string[]; unresolved_passNodeIds?: string[] } {
+    // Refine detection: initSnapshot is null on first init, populated thereafter — survives status transitions.
+    const wasRefine = this.initSnapshot !== null;
+    const prevScopeSize = this.scopeNodeIds.size;
     this.visited.clear();
     this.agenda = [];
     this.agendaIds.clear();
@@ -820,7 +834,7 @@ export class NavigationEngine implements IHopStateMachine {
     const excludeIds = partition(params.excludeNodeIds ?? []);
     const passIds = partition(params.passNodeIds ?? []);
     if (excludeIds.unresolved.length > 0 || passIds.unresolved.length > 0) {
-      this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
+      this.log('debug', `[AI] [NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
       return {
         error: 'unknown_node_ids',
         hint: "These ids don't exist in the loaded model. Call lineage_search_objects with each user-named identifier (e.g. 'RECON', 'EXCP2') to resolve the real schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
@@ -829,7 +843,7 @@ export class NavigationEngine implements IHopStateMachine {
       };
     }
     if (excludeIds.resolved.length + passIds.resolved.length > 0) {
-      this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}]`);
+      this.log('debug', `[AI] [NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}]`);
     }
 
     this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
@@ -873,8 +887,45 @@ export class NavigationEngine implements IHopStateMachine {
         breakdown[t] = (breakdown[t] ?? 0) + 1;
       }
     }
-    const excluded = Array.from(this.excludedTypes).join(',') || 'none';
-    this.log('debug', `[BFS] origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excluded}]`);
+    const annotateProvenance = (items: Set<string>, gui: Set<string>, nl: string[]): string => {
+      if (items.size === 0) return 'none';
+      const nlSet = new Set(nl.map(t => t.toLowerCase()));
+      return Array.from(items).map(t => {
+        const g = gui.has(t);
+        const n = nlSet.has(t);
+        const tag = g && n ? 'gui+nl' : g ? 'gui' : 'nl';
+        return `${t} (${tag})`;
+      }).join(', ');
+    };
+    const excludedTypesAnnotated = annotateProvenance(this.excludedTypes, this.guiHiddenTypes, params.excludeTypes ?? []);
+    const guiHiddenIgnored = Array.from(this.guiHiddenTypes).filter(t => !this.excludedTypes.has(t));
+    const guiHiddenLine = guiHiddenIgnored.length > 0 ? ` gui_hidden_in_scope=[${guiHiddenIgnored.join(',')}]` : '';
+    const excludeNodeIdsLine = excludeIds.resolved.length > 0 ? ` excludeNodeIds=[${trunc(excludeIds.resolved, 10)}]` : '';
+    if (wasRefine) {
+      this.log('debug', `[AI] [Engine] [BFS-refine] cause=user_refine origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'}${excludeNodeIdsLine} → scope=Δ (was=${prevScopeSize} now=${this.scopeNodeIds.size}) (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excludedTypesAnnotated}]${guiHiddenLine}`);
+    } else {
+      this.log('debug', `[AI] [Engine] [BFS] origin=${originNode.id} dir=${params.direction || 'bidirectional'} depth=${params.depth ?? 'default'} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excludedTypesAnnotated}]${excludeNodeIdsLine}${guiHiddenLine}`);
+    }
+
+    // [AI] [Contract] — emit a stable hash of the resolved scope contract so downstream hop logs
+    // can be cross-referenced against the originating filter snapshot. Replaces the spec's
+    // `getScopeContract().hash` since we don't model that as a separate object.
+    const contractParts = [
+      originNode.id,
+      params.direction || 'bidirectional',
+      String(params.depth ?? 'default'),
+      Array.from(this.scopeNodeIds).sort().join(','),
+      Array.from(this.excludedTypes).sort().join(','),
+      Array.from(this.excludedSchemas).sort().join(','),
+      Array.from(this.excludedNodeIds).sort().join(','),
+      Array.from(this.passNodeIds).sort().join(','),
+    ].join('|');
+    let h = 5381;
+    for (let i = 0; i < contractParts.length; i++) h = ((h << 5) + h + contractParts.charCodeAt(i)) | 0;
+    const contractHash = Math.abs(h).toString(16).padStart(8, '0').slice(0, 8);
+    const filtersDigest = `excludeTypes=${this.excludedTypes.size},excludeSchemas=${this.excludedSchemas.size},excludeNodeIds=${this.excludedNodeIds.size},passNodeIds=${this.passNodeIds.size}`;
+    const nlInterp = (params.excludeNodeIds?.length ?? 0) + (params.passNodeIds?.length ?? 0) > 0 ? 'identifiers→nodeIds' : 'none';
+    this.log('debug', `[AI] [Contract] hash=${contractHash} origin=${originNode.id} scope=${this.scopeNodeIds.size} filters=${filtersDigest} nl_interp=${nlInterp}`);
 
     this._direction = params.direction || 'bidirectional';
     // Snapshot kept so the refine path (gate cycle) can re-run init with new filters
