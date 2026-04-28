@@ -31,12 +31,26 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
 
     // Global error handlers — surface silent failures in Debug Console + outputChannel
     window.addEventListener('unhandledrejection', (event) => {
-      const msg = event.reason instanceof Error ? event.reason.message : String(event.reason);
-      window.vscode?.postMessage({ type: 'error', error: `Unhandled rejection: ${msg}` });
+      const isErr = event.reason instanceof Error;
+      const msg = isErr ? event.reason.message : String(event.reason);
+      const stack = isErr ? event.reason.stack : undefined;
+      window.vscode?.postMessage({
+        type: 'error',
+        source: 'unhandled-rejection',
+        error: msg,
+        stack,
+        timestamp: Date.now(),
+      });
     });
 
     window.addEventListener('error', (event) => {
-      window.vscode?.postMessage({ type: 'error', error: `Uncaught error: ${event.message}` });
+      window.vscode?.postMessage({
+        type: 'error',
+        source: 'window-error',
+        error: event.message,
+        stack: event.error instanceof Error ? event.error.stack : undefined,
+        timestamp: Date.now(),
+      });
     });
 
     createRoot(root).render(

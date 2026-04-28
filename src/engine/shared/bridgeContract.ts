@@ -264,9 +264,15 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.string() }),
   z.object({ type: z.literal('table-stats-error'), message: z.string() }),
   z.object({ type: z.literal('auto-visualize-start') }),
-  z.object({ type: z.literal('error'), error: z.string() }),
+  z.object({
+    type: z.literal('error'),
+    error: z.string(),
+    stack: z.string().optional(),
+    componentStack: z.string().optional(),
+    source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
+    timestamp: z.number().optional(),
+  }),
   z.object({ type: z.literal('toggle-overview') }),
-  z.object({ type: z.literal('ai-view-activate'), profileId: z.string() }),
 ]);
 
 /**
@@ -313,7 +319,14 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
     enteredFocusFromOverview: z.boolean().optional(),
   }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'error', 'debug']).optional(), text: z.string() }),
-  z.object({ type: z.literal('error'), error: z.string() }),
+  z.object({
+    type: z.literal('error'),
+    error: z.string(),
+    stack: z.string().optional(),
+    componentStack: z.string().optional(),
+    source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
+    timestamp: z.number().optional(),
+  }),
   z.object({ type: z.literal('show-warning'), text: z.string() }),
 ]);
 

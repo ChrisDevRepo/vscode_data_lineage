@@ -13,9 +13,6 @@ tmp_*
 # like `out/test.stale.1777052232/` don't leak into the VSIX.
 out/test*/**
 
-# Stray AI tool-invocation captures / debug JSON at repo root
-enrich_payload.json
-
 # Config files
 .gitignore
 tsconfig.json
@@ -35,12 +32,7 @@ node_modules/**
 docs/**
 CONTRIBUTING.md
 
-# Integration test infrastructure (internal only — never in VSIX)
-scripts/**
-
 # Internal test and documentation infrastructure (must not leak into VSIX)
-test-internal/**
-docs-internal/**
 **/*internal*/**
 
 # Environment files (must never be packaged)
@@ -49,12 +41,6 @@ docs-internal/**
 
 # Claude Code session temp files (created by Claude CLI — must not leak into VSIX)
 tmpclaude-*
-
-# Stray root-level scripts/files (not part of extension)
-manual-trace.ts
-*batch_alloc*
-bb_result.json
-*ct_hop*.json
 
 # Unreferenced screenshot (superseded by viz-search/viz-ai variants).
 # NOTE: logo.png IS used at runtime by src/panelProvider.ts — keep it.

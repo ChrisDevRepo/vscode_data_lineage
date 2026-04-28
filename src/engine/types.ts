@@ -90,8 +90,6 @@ export interface SpParseDetail {
   outRefs?: string[];
   /** References that were schema-qualified but not found in the active catalog. */
   unrelated: string[];
-  /** Unqualified references that were skipped before catalog resolution. */
-  skippedRefs?: string[];
   /** References that were explicitly removed by user-defined exclusion patterns. */
   excluded?: string[];
 }
@@ -652,6 +650,4 @@ export type ExtensionMessage =
   | { type: 'db-cancelled' }
   | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
   | { type: 'table-stats-error'; message: string }
-  | { type: 'toggle-overview' }
-  /** Sent by extension after AI creates and persists an advanced bookmark. Webview applies it. */
-  | { type: 'ai-view-activate'; profileId: string };
+  | { type: 'toggle-overview' };

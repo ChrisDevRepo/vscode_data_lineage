@@ -497,7 +497,16 @@ export function createMessageHandlers(
       }
     },
     'error': (msg) => {
-      host.log('error', 'Bridge', 'Webview error', new Error(msg.error));
+      const source = msg.source ?? 'unknown';
+      // Reconstruct an Error carrying the webview's original stack so downstream
+      // consumers see the real throw site, not the rethrow point in the extension.
+      const err = new Error(msg.error);
+      if (msg.stack) err.stack = msg.stack;
+      host.log('error', 'Bridge', `Webview ${source}`, err);
+      const componentLine = msg.componentStack
+        ? trunc(sanitizeForLog(msg.componentStack), 300)
+        : '(no React tree)';
+      host.log('debug', 'Bridge', `Component path: ${componentLine}`);
       host.showErrorMessage(`Data Lineage Error: ${msg.error}`);
     },
     'show-warning': (msg) => {

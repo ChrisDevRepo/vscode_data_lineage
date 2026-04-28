@@ -498,13 +498,12 @@ function processRegexRefs(
   edgeType: 'body' | 'exec',
   ctx: EdgeContext,
   outRefs: string[],
-  skipped: string[],
   unrelated: string[],
 ): number {
   let count = 0;
   for (const dep of refs) {
-    if (!isSchemaQualified(dep)) { skipped.push(dep); continue; }
-    if (isSystemRef(dep)) { skipped.push(dep); continue; }
+    if (!isSchemaQualified(dep)) continue;
+    if (isSystemRef(dep)) continue;
     const depId = normalizeName(dep);
     ctx.stats.parsedRefs++;
     if (depId !== sourceId) {
@@ -558,7 +557,6 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
     const spLabel = `${node.schema}.${node.name}`;
     const spInRefs: string[] = [];
     const spUnrelated: string[] = [];
-    const spSkipped: string[] = [];
 
     // Track cross-DB sources as "In" references for views/functions
     for (const r of parsed.crossDbSources) {
@@ -577,8 +575,8 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
     const xmlDepIds = new Set(xmlDeps);
     
     for (const dep of parsed.sources) {
-      if (!isSchemaQualified(dep)) { spSkipped.push(dep); continue; }
-      if (isSystemRef(dep)) { spSkipped.push(dep); continue; }
+      if (!isSchemaQualified(dep)) continue;
+      if (isSystemRef(dep)) continue;
       const depId = normalizeName(dep);
       if (depId === sourceId || xmlDepIds.has(depId)) continue;
       ctx.stats.parsedRefs++;
@@ -592,7 +590,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
       } else {
         const parts = splitSqlName(dep);
         const objPart = stripBrackets(parts[parts.length - 1]).toLowerCase();
-        if (XML_METHODS.has(objPart)) { spSkipped.push(dep); continue; }
+        if (XML_METHODS.has(objPart)) continue;
         spUnrelated.push(dep);
         ctx.stats.droppedRefs.push(`${spLabel} → ${dep}`);
       }
@@ -603,12 +601,11 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
       ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
     }
 
-    if (spInRefs.length > 0 || spUnrelated.length > 0 || spSkipped.length > 0) {
+    if (spInRefs.length > 0 || spUnrelated.length > 0) {
       ctx.stats.spDetails.push({
         name: spLabel, inCount: spInRefs.length, outCount: 0,
         ...(spInRefs.length > 0 && { inRefs: spInRefs }),
         unrelated: spUnrelated,
-        ...(spSkipped.length > 0 && { skippedRefs: spSkipped }),
       });
     }
   }
@@ -629,7 +626,6 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
   const spUnrelated: string[] = [];
-  const spSkipped: string[] = [];
 
   if (parsed.crossDbSources.length > 0 || parsed.crossDbTargets.length > 0) {
     ctx.crossDbRegexRefs.set(sourceId, { sources: parsed.crossDbSources, targets: parsed.crossDbTargets });
@@ -681,10 +677,10 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
     ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
   }
 
-  const spIn = processRegexRefs(parsed.sources, sourceId, spLabel, 'in', 'body', ctx, spInRefs, spSkipped, spUnrelated) + parsed.crossDbSources.length;
+  const spIn = processRegexRefs(parsed.sources, sourceId, spLabel, 'in', 'body', ctx, spInRefs, spUnrelated) + parsed.crossDbSources.length;
   const spOut =
-    processRegexRefs(parsed.targets, sourceId, spLabel, 'out', 'body', ctx, spOutRefs, spSkipped, spUnrelated) +
-    processRegexRefs(parsed.execCalls, sourceId, spLabel, 'out', 'exec', ctx, spOutRefs, spSkipped, spUnrelated) +
+    processRegexRefs(parsed.targets, sourceId, spLabel, 'out', 'body', ctx, spOutRefs, spUnrelated) +
+    processRegexRefs(parsed.execCalls, sourceId, spLabel, 'out', 'exec', ctx, spOutRefs, spUnrelated) +
     parsed.crossDbTargets.length;
 
   for (const r of parsed.crossDbSources) spInRefs.push(r);
@@ -695,7 +691,6 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
     ...(spInRefs.length > 0 && { inRefs: spInRefs }),
     ...(spOutRefs.length > 0 && { outRefs: spOutRefs }),
     unrelated: spUnrelated,
-    ...(spSkipped.length > 0 && { skippedRefs: spSkipped }),
   });
 }
 

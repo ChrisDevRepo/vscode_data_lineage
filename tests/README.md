@@ -18,8 +18,12 @@ tests/
 │   ├── dmvExtractor.test.ts               # DMV → model building
 │   ├── projectStore.test.ts               # Migration, serialization
 │   ├── snapshot-aw-baseline.ts            # Parser regression baseline (TSV)
-│   ├── ai-tools.test.ts                   # AI tool pure-function tests
-│   ├── ai-tool-registration.test.ts       # manifest ↔ registration guard
+│   ├── ai-tool-registration.test.ts       # manifest ↔ registration guard (bi-directional)
+│   ├── repeat-reject-guard.test.ts        # Idempotency counter — abort on 3 identical failures
+│   ├── classification.test.ts             # Classification axis lock + sections[] validation
+│   ├── session-stale.test.ts              # Stale-session detection
+│   ├── start-exploration-schema.test.ts   # Zod boundary for start_exploration
+│   ├── messageEnvelope.test.ts            # Sliding-wipe envelope contract
 │   ├── navigation-engine.test.ts          # NavigationEngine lifecycle + memory
 │   ├── navigation-engine-cascade.test.ts  # Cascade-prune guard logic
 │   ├── navigation-engine-bipartite.test.ts # Bipartite agenda rule

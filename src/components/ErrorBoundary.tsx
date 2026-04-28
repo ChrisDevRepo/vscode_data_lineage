@@ -60,9 +60,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (vscodeApi && typeof vscodeApi.postMessage === 'function') {
       vscodeApi.postMessage({
         type: 'error',
+        source: 'error-boundary',
         error: error.message,
         stack: error.stack,
-        componentStack: errorInfo.componentStack,
+        componentStack: errorInfo.componentStack ?? undefined,
         timestamp: Date.now()
       });
     }
