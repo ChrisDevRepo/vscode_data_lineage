@@ -150,15 +150,12 @@ async function loadBuiltInDmvQueries(
  * @throws If the MSSQL extension is not installed.
  */
 async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExtension> {
-  const logger = Logger.create(outputChannel, 'DB');
   const ext = vscode.extensions.getExtension<IExtension>(MSSQL_EXTENSION_ID);
   if (!ext) {
     throw new Error(`MSSQL extension (${MSSQL_EXTENSION_ID}) is not installed.`);
   }
 
   const api = ext.isActive ? ext.exports : await ext.activate();
-  logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext.packageJSON?.version ?? '?'} found`);
-
   return api;
 }
 
@@ -189,6 +186,8 @@ export async function promptForConnection(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
   const logger = Logger.create(outputChannel, 'DB');
+  const ext = vscode.extensions.getExtension(MSSQL_EXTENSION_ID);
+  logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext?.packageJSON?.version ?? '?'} found`);
   const api = await getMssqlApi(outputChannel);
 
   const connectionInfo = await api.promptForConnection(true);
@@ -228,6 +227,8 @@ export async function connectDirect(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
   const logger = Logger.create(outputChannel, 'DB');
+  const ext = vscode.extensions.getExtension(MSSQL_EXTENSION_ID);
+  logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext?.packageJSON?.version ?? '?'} found`);
   const api = await getMssqlApi(outputChannel);
 
   logger.debug(`>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);

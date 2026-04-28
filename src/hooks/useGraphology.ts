@@ -89,12 +89,12 @@ export function useGraphology(): UseGraphologyReturn {
     const count = allowlistFiltered.nodes.length;
     setFilteredCount(count);
 
-    // Derive visible schemas from filtered nodes — externals are a separate visual category and
-    // never contribute to the schema legend (virtual externals carry schema='', and catalog ETs
-    // share the fixed external color, so listing them would be misleading).
+    // Derive visible schemas from filtered nodes — schemas containing only external objects
+    // are included here to keep them selectable in the filter, but will be filtered out
+    // in the visual Legend component in GraphCanvas.
     const schemas = [...new Set(
-      allowlistFiltered.nodes.filter(n => n.type !== 'external').map(n => n.schema)
-    )].filter(Boolean).sort();
+      allowlistFiltered.nodes.map(n => n.schema)
+    )].filter(s => !!s && s.trim().length > 0).sort();
     setRenderedSchemas(schemas);
 
     // Guard 1: hard render limit — skip everything

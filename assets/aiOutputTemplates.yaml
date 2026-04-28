@@ -154,30 +154,61 @@ business_capture:
     write as deeply as the node's business role warrants. Brevity here
     becomes brevity in the final report.
 
-    Cover every business-relevant concept the DDL exposes:
-    - Filter / qualification conditions — which records the rule applies to (eligibility, special-case overrides)
-    - Calculations — formulas, allocations, weights, proportions (express in LaTeX)
-    - Rules / decisions — CASE branches, thresholds, fallback values, null-safe defaults
-    - Process — sequence of state changes, ordering of updates
-    - Dependencies — which records feed which, matching criteria, upstream/downstream relationships
-    - Status transitions — lifecycle of each record class (numbered transitions)
-    - Data-quality risks — mark with ⚠️ inline at the point they apply
+    <emphasis>
+    Highest-value content, in order:
+    1. **Formulas in LaTeX** (`$expr$` inline, `$$expr$$` block). Every
+       weight, threshold, allocation, proportion, ratio, CASE branch,
+       fallback value MUST appear as math, not prose. A formula written
+       in prose is a formula that did not reach the final document.
+    2. **Eligibility predicates** — which records qualify (status,
+       country, flag, threshold). Quote the predicate values verbatim.
+    3. **Allocation / decision rules** — what value each rule produces
+       and from which inputs.
+    4. **Status-lifecycle transitions** — numbered transitions per
+       record class.
+    5. **Audit-trail meaning** — what business event each entry records.
+       Capture the event semantics, not the JSON envelope shape.
+    6. **Data-quality risks** — ⚠️ inline at the point they apply.
+    </emphasis>
+
+    <belongs_in_technical_capture_not_here>
+    The following are technical implementation artifacts. Capture them
+    in `technical_capture` when classification is `both`; OMIT entirely
+    when classification is `business`:
+    - Transaction boundaries (`BEGIN TRANSACTION`, `COMMIT`, rollback)
+    - Temp / staging table names (`#DistributionBase`, `#tmp*`)
+    - Audit-blob JSON envelope shape (capture the audit MEANING in
+      business_capture; the JSON KEYS belong in technical_capture)
+    - UDF / helper function call patterns (`[dbo].[udfDivideAsDec]`,
+      `LogMessage`, `ErrorHandler`)
+    - Error-logging plumbing (`THROW`, `RAISERROR`, `TRY/CATCH` blocks)
+    - SQL execution mechanics (HASH/MERGE/LOOP join hints, distribution
+      keys, statistics)
+    These belong elsewhere because a business reader does not need them
+    to understand what the rule means or what the record represents.
+    </belongs_in_technical_capture_not_here>
 
     <body_recipe>
     1. Open with one sentence naming the domain role ("computes revenue
        at INSERT", "allocates budget units across cost centres",
        "applies tier-discount when order qualifies").
-    2. Walk through every business rule the DDL exposes — each CASE
-       branch, threshold, allocation formula, special-case condition,
-       audit-trail update, status transition.
-    3. Quote short SQL evidence inline as proof of the rule (the WHEN
-       conditions, the formula, the matching criteria, the fallback values).
-    4. Express formulas in LaTeX (`$expr$` inline, `$$expr$$` block).
+    2. Walk through every business rule the DDL exposes — eligibility
+       predicates, allocation formulas, threshold decisions, fallback
+       values, status transitions, audit-trail business events. Name
+       what changes for the business when the rule fires; do not
+       describe how SQL implements it.
+    3. Express every numeric or conditional rule as LaTeX FIRST
+       (`$expr$` inline, `$$expr$$` block). After the formula renders,
+       do not paraphrase it — the math IS the rule.
+    4. Quote short SQL predicate VALUES inline as proof (the literal
+       `'PENDING'`, `'Global'`, `> 0`, the column names being compared)
+       — not the surrounding INSERT/UPDATE/transaction scaffolding.
     5. Tabulate column renames as `| From | To | Business meaning |` when
        3+ sibling columns share the rename shape; 1–2 renames as prose
        with backticks.
     6. Express status-enum lifecycles as numbered transitions
-       ("1. New → 2. Approved → 3. Shipped").
+       ("1. New → 2. Approved → 3. Shipped"). Capture the business
+       state change, not the SQL UPDATE that effects it.
     7. Mark data-quality risks with ⚠️ inline at the point they apply.
     8. Wrap column and object names in `\`backticks\``.
     </body_recipe>

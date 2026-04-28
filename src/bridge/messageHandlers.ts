@@ -675,7 +675,23 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   };
   const spCount = stats.spDetails?.length ?? 0;
   if (objectCount !== undefined) {
-    logger.info(`${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas — ${spCount} objects parsed, ${stats.resolvedEdges} refs resolved`);
+    logger.info(`Phase 1 Complete: ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas`);
+    logger.info(`Phase 2 Resolution: ${spCount} objects parsed, ${stats.parsedRefs} refs discovered`);
+    logger.info(`Phase 2 Result: ${stats.resolvedEdges} refs resolved, ${stats.droppedRefs.length} dropped as unrelated`);
+  }
+
+  // Detailed debug logs for each scripted object
+  if (spCount === 0) {
+    logger.debug('No scripted objects (procedures/views) with valid definitions found for parsing.');
+  }
+
+  for (const sp of stats.spDetails) {
+    const inRefs = sp.inRefs?.length ? ` In:[${sp.inRefs.join(', ')}]` : '';
+    const outRefs = sp.outRefs?.length ? ` Out:[${sp.outRefs.join(', ')}]` : '';
+    logger.debug(`Parsed ${sp.name} — ${sp.inCount + sp.outCount} refs${inRefs}${outRefs}`);
+    if (sp.unrelated && sp.unrelated.length > 0) {
+      logger.debug(`  Unrelated: ${sp.unrelated.join(', ')}`);
+    }
   }
 }
 
