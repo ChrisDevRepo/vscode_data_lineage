@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
-import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
+import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
 import type { ObjectType } from '../engine/types';
 
@@ -68,10 +68,11 @@ export type CustomNodeData = {
  */
 function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
+  const isExternal = data.objectType === 'external';
   const isVirtual = data.externalType === 'file' || data.externalType === 'db';
   // ⬢ filled = ET (real catalog object); ⬡ hollow = file/db virtual (no metadata)
   const displayIcon = isVirtual ? '⬡' : data.externalType === 'et' ? '⬢' : style.icon;
-  const schemaColor = isVirtual ? getVirtualExtColor() : getSchemaColor(data.schema);
+  const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColor(data.schema);
   const dimmed = data.dimmed === true;
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
   const isYellowHighlight = data.highlighted === 'yellow';

@@ -30,7 +30,10 @@ export async function migrateFromWorkspaceState(
   const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
   if (!sourceType) return;
 
-  let connection: any;
+  type LegacyConnection =
+    | { type: 'dacpac'; path: string; displayName: string; schemas: string[] }
+    | { type: 'database'; connectionInfo: ReturnType<typeof stripSensitiveFields>; sourceName: string; schemas: string[] };
+  let connection: LegacyConnection | undefined;
 
   if (sourceType === 'dacpac') {
     const dacpacPath = context.workspaceState.get<string>('lastDacpacPath');
@@ -42,7 +45,7 @@ export async function migrateFromWorkspaceState(
     const sourceName = context.workspaceState.get<string>('lastDbSourceName');
     const connectionInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
     if (sourceName && connectionInfo) {
-      connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };    
+      connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
     }
   }
 

@@ -35,11 +35,8 @@ tests/
 │   ├── graph-baseline-aw.json             # Frozen ground-truth
 │   └── aw-baseline.tsv                    # Parser snapshot baseline
 │
-├── integration/                           # Live SQL Server tests (.env required)
-│   └── integration-db.test.ts             # DB pipeline tests
-│
-└── e2e/                                   # Runs inside VS Code extension host
-    └── suite/                             # Integration smoke tests
+└── integration/                           # Live SQL Server tests (.env required)
+    └── integration-db.test.ts             # DB pipeline tests
 ```
 
 ## Snapshot baseline pattern

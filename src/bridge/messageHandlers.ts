@@ -21,7 +21,8 @@ import { type DmvResults } from '../engine/dmvExtractor';
 import {
   createProject, updateProject, deleteProject, isValidProject,
   addFilterProfile, deleteFilterProfile,
-  type FilterProfile
+  type FilterProfile,
+  type ProjectStore,
 } from '../engine/projectStore';
 import { buildBareGraph } from '../ai/graphUtils';
 import { populateColumnStore } from '../engine/modelBuilder';
@@ -66,8 +67,8 @@ export function createMessageHandlers(
   context: vscode.ExtensionContext,
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
-  loadProjectStore: (context: vscode.ExtensionContext) => any,
-  saveProjectStore: (context: vscode.ExtensionContext, store: any) => Promise<void>,
+  loadProjectStore: (context: vscode.ExtensionContext) => ProjectStore,
+  saveProjectStore: (context: vscode.ExtensionContext, store: ProjectStore) => Promise<void>,
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
   loadDemoFlag: boolean,
   setDetailPanel: (panel: vscode.WebviewPanel | undefined) => void
@@ -77,7 +78,7 @@ export function createMessageHandlers(
   let cachedDspName = '';
   let lastConnectionInfo: IConnectionInfo | undefined;
   let detailPanel: vscode.WebviewPanel | undefined;
-  let lastDetailNode: any = null;
+  let lastDetailNode: LineageNode | null = null;
 
   const statsConnState: { uri: string | undefined } = { uri: undefined };
   let allObjectsCache: SimpleExecuteResult | undefined;
@@ -105,14 +106,14 @@ export function createMessageHandlers(
       const store = loadProjectStore(context);
       const p = store.projects.find((p: any) => p.id === project.id);
       if (isDb) {
-        if (p?.connection?.connectionInfo) {
+        if (p?.connection?.type === 'database') {
           const ci = p.connection.connectionInfo;
           sess.sourceLabel = `database (${ci.server} / ${ci.database})`;
         } else {
           sess.sourceLabel = 'database';
         }
       } else {
-        if (p?.connection?.path) {
+        if (p?.connection?.type === 'dacpac') {
           sess.sourceLabel = `dacpac (${path.basename(p.connection.path)})`;
         } else {
           sess.sourceLabel = 'dacpac';

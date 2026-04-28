@@ -89,19 +89,20 @@ export function getSchemaColor(schema: string, forceLight?: boolean): string {
   return colors[idx];
 }
 
-/** Fixed color for virtual external nodes in light theme (e.g., files, cross-DB refs). */
-export const VIRTUAL_EXT_COLOR_LIGHT = '#6B7A8D';
-/** Fixed color for virtual external nodes in dark theme (e.g., files, cross-DB refs). */
-export const VIRTUAL_EXT_COLOR_DARK  = '#94A3B8';
+/** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
+export const EXTERNAL_NODE_COLOR_LIGHT = '#6B7A8D';
+/** Fixed color for external nodes in dark theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
+export const EXTERNAL_NODE_COLOR_DARK  = '#94A3B8';
 
-/** 
- * Returns the theme-aware fixed color for virtual external nodes.
- * Virtual nodes use a distinct steel-gray palette to differentiate them from verified schemas.
- * 
+/**
+ * Returns the theme-aware fixed color for external nodes.
+ * All externals (catalog `et`, virtual `file`, virtual `db`) share this steel-gray to keep the
+ * "external system" category visually distinct from real schemas in both light and dark themes.
+ *
  * @returns A CSS hex color string.
  */
-export function getVirtualExtColor(): string {
-  return isDarkTheme() ? VIRTUAL_EXT_COLOR_DARK : VIRTUAL_EXT_COLOR_LIGHT;
+export function getExternalNodeColor(): string {
+  return isDarkTheme() ? EXTERNAL_NODE_COLOR_DARK : EXTERNAL_NODE_COLOR_LIGHT;
 }
 
 /**

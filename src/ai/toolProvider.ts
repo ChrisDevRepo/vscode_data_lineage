@@ -37,6 +37,7 @@ import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNod
 import { type SerializedFilterState, type AIViewMetadata } from '../engine/projectStore';
 import { PendingGateSchema } from './sessionPhase';
 import { buildSynthesisReminder } from './smPrompts';
+import { getAllowedLmToolNames, activeModeOf, type LmStage } from './toolPolicy';
 import { ClassificationSchema, CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
 import type { CapturedSection } from './memoryManager';
 import { getToolInvocationLabel } from './toolLabels';
@@ -161,13 +162,78 @@ class ToolHandler {
     return this.toolResult({ error: 'internal_error', tool: toolName, message: msg });
   }
 
-  private disabled() { 
-    return this.toolResult({ error: 'disabled', hint: 'Enable via dataLineageViz.ai.enabled setting.' }); 
+  private disabled() {
+    return this.toolResult({ error: 'disabled', hint: 'Enable via dataLineageViz.ai.enabled setting.' });
+  }
+
+  /**
+   * Mechanical phase guard — enforces the per-phase tool policy at the handler
+   * boundary, not just at the LM `tools[]` parameter.
+   *
+   * @remarks
+   * The Copilot host treats the `tools` parameter on `request.model.sendRequest`
+   * as advisory: tools registered globally via `vscode.lm.registerTool` remain
+   * callable from the model regardless of what we passed. Eval evidence: a
+   * `search_objects` invocation surfaced mid-active-SM despite our filter
+   * excluding it. The fix is server-side — derive the active stage from
+   * `sess.phase` + engine flags, then refuse to execute tools outside the
+   * allowed set with an error directing the model to the right surface.
+   *
+   * @returns A `LanguageModelToolResult` carrying an `off_policy` error when the
+   *   tool is not allowed in the current phase, or `null` when execution is
+   *   permitted.
+   */
+  private offPolicyOrNull(toolName: string): vscode.LanguageModelToolResult | null {
+    const sess = this.getSession();
+    const stage = this.deriveLmStage(sess);
+    const allowed = getAllowedLmToolNames(stage);
+    if (allowed.has(toolName)) return null;
+    const stageLabel = stage.kind === 'active' ? `active(${stage.mode})` : stage.kind;
+    return this.toolResult({
+      error: 'off_policy',
+      hint: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}. Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${this.offPolicyHint(toolName, stage)}`,
+    });
+  }
+
+  /**
+   * Derives the {@link LmStage} from the session's current phase + engine state.
+   */
+  private deriveLmStage(sess: AiSession): LmStage {
+    const phase = sess.phase.kind;
+    const engine = sess.stateMachine;
+    if (phase === 'exploring' && engine) {
+      const mode = activeModeOf(engine.inlineMode === true, engine.columnAspect !== null);
+      return { kind: 'active', mode };
+    }
+    if (phase === 'synthesis') return { kind: 'synthesis' };
+    if (phase === 'completed') return { kind: 'completed' };
+    return { kind: 'discover' };
+  }
+
+  /** Tool-specific routing hint for the off-policy response. */
+  private offPolicyHint(toolName: string, stage: LmStage): string {
+    if (stage.kind !== 'active') return 'Wait for the appropriate phase or call a different tool.';
+    switch (toolName) {
+      case 'lineage_search_objects':
+      case 'lineage_search_ddl':
+      case 'lineage_get_object_detail':
+      case 'lineage_get_context':
+      case 'lineage_detect_graph_patterns':
+        return 'Use route_requests with nodeIds taken verbatim from the prior submit_findings result\'s neighbors[] / next_hop. The agenda is delivered explicitly — searching mid-hop is unnecessary.';
+      case 'lineage_start_exploration':
+        return 'Exploration is already in progress. Continue the agenda via submit_findings.';
+      case 'lineage_present_result':
+        return 'present_result is the synthesis-phase tool. Drain the agenda first; the engine emits the synthesis trigger when ready.';
+      default:
+        return 'Continue with submit_findings on the current focus node.';
+    }
   }
 
   public getContext(input: any) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
+      const offPolicy = this.offPolicyOrNull('lineage_get_context');
+      if (offPolicy) return offPolicy;
       const sess = this.getSession();
       const ctx = getContext(this.requireModel(), sess.filter, sess.projectName, sess.views, sess.columnStore);
       return this.logAndReturn('get_context', ctx, input);
@@ -177,6 +243,8 @@ class ToolHandler {
   public searchObjects(input: any) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
+      const offPolicy = this.offPolicyOrNull('lineage_search_objects');
+      if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { query: 'string' });
       if (inputErr) return this.toolResult(inputErr);
       const { query, types, schemas, mode } = input;
@@ -534,7 +602,7 @@ class ToolHandler {
         const finalResult = engine.getResult();
         sess.storeSmResult(finalResult);
         if (!sess.classification) sess.setClassification('business');
-        const synthesisReminder = buildSynthesisReminder();
+        const synthesisReminder = buildSynthesisReminder(sess.memory.getUserQuestion());
         // Slim the LM-bound payload for the synthesis transition (see comment above).
         const lmResult = {
           status: finalResult.status,
@@ -700,6 +768,8 @@ class ToolHandler {
   public getObjectDetail(input: any) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
+      const offPolicy = this.offPolicyOrNull('lineage_get_object_detail');
+      if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { id: 'string' });
       if (inputErr) return this.toolResult(inputErr);
       const { id } = input;
@@ -710,6 +780,8 @@ class ToolHandler {
   public runAnalysis(input: any) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
+      const offPolicy = this.offPolicyOrNull('lineage_detect_graph_patterns');
+      if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { type: 'string' });
       if (inputErr) return this.toolResult(inputErr);
       const { type, min_degree, max_size } = input;
@@ -724,6 +796,8 @@ class ToolHandler {
   public searchDdl(input: any) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
+      const offPolicy = this.offPolicyOrNull('lineage_search_ddl');
+      if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { query: 'string' });
       if (inputErr) return this.toolResult(inputErr);
       const { query, types } = input;

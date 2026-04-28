@@ -130,100 +130,102 @@ notes:
 
 business_capture:
   stages: [active]
-  instruction: >
-    Submit one section: { angle: "business", text: "<body>" }. BUSINESS ONLY —
-    what the data means, why it matters, what changes if the rule fires.
+  instruction: |
+    <purpose>
+    Capture this node's BUSINESS MEANING — what the data means, why it
+    matters, what changes when the rule fires.
+    </purpose>
 
-    Open the body with one sentence naming the node's actual domain role —
-    "computes revenue at INSERT", "allocates budget units to cost centres",
-    "historizes price changes into SCD-2 rows". Specific over generic; never
-    "stores data" or "processes records".
+    Submit one section: `{ angle: "business", text: "<body>" }`. The
+    archive has no length cap and synthesis lifts your text verbatim —
+    write as deeply as the node's business role warrants. Brevity here
+    becomes brevity in the final report.
 
-    Capture every business rule visible in the DDL — every CASE condition,
-    every threshold, every allocation formula, every special-case branch.
-    Name each column the focus procedure reads or writes; quote the
-    predicate or write the formula. Mark risks or data-quality issues with
-    ⚠️ inline at the point they apply.
+    <body_recipe>
+    1. Open with one sentence naming the domain role ("computes revenue
+       at INSERT", "allocates budget units across cost centres",
+       "historizes price changes into SCD-2 rows").
+    2. Walk through every business rule the DDL exposes — each CASE
+       branch, threshold, allocation formula, special-case predicate,
+       audit-trail update, status transition.
+    3. Quote short SQL evidence inline as proof of the rule (predicates,
+       formulas, JOIN keys, COALESCE fallbacks).
+    4. Express formulas in LaTeX (`$expr$` inline, `$$expr$$` block).
+    5. Tabulate column renames as `| From | To | Business meaning |` when
+       3+ sibling columns share the rename shape; 1–2 renames as prose
+       with backticks.
+    6. Express status-enum lifecycles as numbered transitions
+       ("1. New → 2. Approved → 3. Shipped").
+    7. Mark data-quality risks with ⚠️ inline at the point they apply.
+    8. Wrap column and object names in `\`backticks\``.
+    </body_recipe>
 
-    Format the body with markdown — `## Purpose` paragraph, formulas in
-    LaTeX math `$expr$`, column renames as `| From | To | Business meaning |`
-    tables when 3+ sibling columns share the rename shape (no datatype
-    columns — type info belongs in the technical angle), 1–2 renames as
-    prose with backticks, status-enum lifecycles as numbered transitions
-    ("1. New → 2. Approved → 3. Shipped"), multi-step rules as ordered lists.
-    Use `\`backticks\`` for column and object names. Body is unbounded;
-    depth-first capture beats prose extension.
+    Datatype lists, distribution/indexing hints, and execution-plan notes
+    belong in the technical angle. Each capture is independent — synthesis
+    groups sibling variants at assembly time.
+  example: |
+    `spCalcRevenue` computes `TotalRevenue = $Qty \times UnitPrice$` at the
+    final INSERT into `FactSalesReport`, only for rows with
+    `Status = 'CONFIRMED'`.
 
-    NEVER include in this section: ` ```sql ` fences, JOIN/MERGE syntax,
-    XPath, XML namespaces, datatype tables, index/distribution hints,
-    execution-plan notes — those are the technical angle and belong in
-    `technical_capture`. The classification gate locks this contract:
-    `business`-mission slots that contain technical content are rejected
-    with `classification_lock_violation`.
+    1. `Qty` is line-item quantity sold, renamed from `OrderQty` in
+       `CTE_Orders`.
+    2. `UnitPrice` is list price after markup:
+       $UnitPrice = CostPrice \times (1 + MarkupPct)$.
+    3. The fact row is INSERTed with `TotalRevenue` populated.
 
-    `badge_label`: name the domain role ("Pricing Calculation", "Catalog
-    Metadata", "BOM Explosion"). NEVER name an implementation pattern
-    ("XML Shredding", "Recursive CTE", "Window Function"). NEVER use a
-    node-type word ("View", "Table", "Procedure", "Function").
+    | From | To | Business meaning |
+    |------|----|------------------|
+    | OrderQty | Qty | line-item quantity sold |
+    | ListPrice | UnitPrice (pre-markup) | sticker price |
+    | MarkupPct | UnitPrice (component) | supplier-specific uplift |
 
-    Write each focus node's section fully and independently. Do not detect
-    sibling variants here — synthesis sees the whole picture and groups
-    similar slots into comparison tables at assembly time.
-  example: >
-    `spCalcRevenue` computes `TotalRevenue` = $Qty \\times UnitPrice$ at the
-    final INSERT into `FactSalesReport`. `Qty` is units sold (renamed from
-    `OrderQty` in `CTE_Orders`). `UnitPrice` is list price after markup
-    ($CostPrice \\times (1 + MarkupPct)$). ⚠️ Null `MarkupPct` collapses
-    `UnitPrice` to `CostPrice` — verify supplier coverage before each run.
-    Consumer impact: every revenue dashboard reads `TotalRevenue` directly;
-    fix discipline at this node propagates downstream.
+    ⚠️ Null `MarkupPct` collapses `UnitPrice` to `CostPrice` — verify
+    supplier coverage before each run. Consumer impact: every revenue
+    dashboard reads `TotalRevenue` directly; this rule defines the
+    dashboard's accuracy.
 
 technical_capture:
   stages: [active]
-  instruction: >
-    Submit one section: { angle: "technical", text: "<body>" }. TECHNICAL
-    ONLY — how the pipeline runs.
+  instruction: |
+    <purpose>
+    Capture HOW this node runs — execution mechanics, query shape, loading
+    pattern, performance affordances and traps.
+    </purpose>
 
-    NEVER include in this section: consumer-impact prose, dashboard-outcome
-    framing, plain-English business-rule restatement — those are the
-    business angle and belong in `business_capture`. The classification gate
-    locks this contract: `technical`-mission slots that contain business
-    framing are rejected with `classification_lock_violation`.
+    Submit one section: `{ angle: "technical", text: "<body>" }`. The
+    archive has no length cap; synthesis lifts your text verbatim. Write
+    as deeply as the node's implementation warrants.
 
-    `badge_label`: name the implementation pattern ("XML Shredding",
-    "MERGE Upsert", "Window Aggregate", "Recursive CTE"). NEVER use a
-    node-type word ("View", "Table", "Procedure", "Function").
+    <body_recipe>
+    1. SQL evidence — quote the key expressions verbatim: JOIN predicates,
+       CASE conditions, COALESCE fallbacks, computed-column formulas, the
+       window-function partition clause. Snippet only, not the full
+       INSERT/SELECT statement.
+    2. Loading pattern (procedures only) — one coarse value: `reload`
+       (TRUNCATE + INSERT), `append` (INSERT-only), `upsert` (MERGE or
+       UPDATE + conditional INSERT), `historization` (versioned history),
+       `purge` (DELETE-only), `orchestration` (EXECs other SPs, no data
+       mutation). Coarse only — sub-variants (SCD1/SCD2/CDC) belong in
+       prose if relevant. Omit when the focus is a view, UDF, or table.
+    3. Computed columns — formula alongside its snippet.
+    4. Relationship role labels — "reads lookup from `DimProduct`",
+       "writes via MERGE to `FactSalesReport`", "triggered by `spLoadOrders`".
+    5. Join types when hinted (HASH / MERGE / LOOP); flag Cartesian risk
+       with ⚠️.
+    6. Antipatterns — excessive DISTINCT, OR in join predicates,
+       correlated subqueries in SELECT, scalar UDFs in WHERE.
+    7. Distribution / indexing hints — partition key, hash-distribution
+       column, clustered-index column order.
+    8. DDL comments and version annotations — author intent that would be
+       lost after this hop.
+    </body_recipe>
 
-    Capture per node:
-    - SQL evidence: copy key expressions verbatim — JOIN predicates,
-      CASE WHEN conditions, COALESCE fallbacks, computed column formulas.
-      Quote as written in the DDL; do not paraphrase. Snippet only, not
-      the full INSERT/SELECT statement.
-    - Loading pattern (procedure origins only — omit for views, UDFs,
-      tables) as one coarse value: `reload` (TRUNCATE + INSERT / full
-      refresh), `append` (INSERT-only, no UPDATE or DELETE), `upsert`
-      (MERGE or UPDATE + conditional INSERT), `historization` (versioned
-      history / change tracking), `purge` (DELETE-only / retention),
-      `orchestration` (EXECs other SPs, no data mutation on the target).
-      Coarse only — no SCD1 / SCD2 / CDC sub-variants. Write a short
-      phrase in your own words if none fit; omit if ambiguous.
-    - Every computed column: formula alongside its snippet.
-    - Relationships with role labels: "reads lookup from `DimProduct`",
-      "writes via MERGE to `FactSalesReport`", "triggered by `spLoadOrders`".
-    - Join types when hinted (HASH / MERGE / LOOP) — ⚠️ warn on Cartesian.
-    - Antipatterns: excessive DISTINCT, OR in join predicates, correlated
-      subqueries in SELECT.
-    - Distribution / indexing hints: partition key, hash-distribution column.
-    - DDL comments, version annotations — carry author intent lost after
-      this hop.
+    Format with markdown — `## Purpose` opener, SQL in ```sql fences
+    (snippet only), join steps as ordered lists, ⚠️ inline at risks.
 
-    Format the body with markdown — `## Purpose` paragraph, SQL in
-    `\`\`\`sql` code fences (snippet only), join steps as ordered lists,
-    risks with ⚠️ inline. Body is unbounded; depth-first capture wins.
-
-    Write each focus node's section fully and independently. Do not write
-    "same skeleton as previous, deltas: X" — synthesis detects sibling
-    variants across nodes and emits a comparison table at assembly time.
+    Each capture is independent — synthesis detects sibling variants
+    across nodes and emits comparison tables at assembly time.
   example: >
     Loading: TRUNCATE + INSERT — full reload, no delta tracking.
 

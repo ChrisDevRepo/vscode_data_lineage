@@ -174,40 +174,79 @@ export interface SchemaPreview {
 }
 
 
+/**
+ * Represents a generic XML element in a DACPAC model file.
+ * Used during Phase 1 (preview) and Phase 2 (full extraction) to traverse the SQL model hierarchy.
+ */
 export interface XmlElement {
+  /** The internal SQL object type (e.g., 'SqlTable'). */
   '@_Type': string;
+  /** The name of the object. */
   '@_Name'?: string;
+  /** Reference to an external source for cross-database or external table objects. */
   '@_ExternalSource'?: string;
+  /** Optional metadata properties associated with the element. */
   Property?: XmlProperty | XmlProperty[];
+  /** Structural relationships (e.g., 'Columns', 'PrimaryKeys') to other elements. */
   Relationship?: XmlRelationship | XmlRelationship[];
+  /** Nested child elements for composite objects. */
   Element?: XmlElement | XmlElement[];
+  /** Metadata annotations (e.g., 'SqlColumn.Type') providing additional type or constraint info. */
   Annotation?: XmlAnnotation | XmlAnnotation[];
 }
 
+/**
+ * Metadata annotation attached to an XML element.
+ * Often contains property values that define technical specifics like data types.
+ */
 export interface XmlAnnotation {
+  /** The type of annotation (e.g., 'SqlColumn.Type'). */
   '@_Type': string;
+  /** Optional name for identifying specific annotations. */
   '@_Name'?: string;
+  /** Properties contained within the annotation. */
   Property?: XmlProperty | XmlProperty[];
 }
 
+/**
+ * A key-value pair representing a property on an XML element or annotation.
+ */
 export interface XmlProperty {
+  /** The unique name of the property. */
   '@_Name': string;
+  /** The value of the property, if provided as an attribute. */
   '@_Value'?: string;
+  /** The value of the property, if provided as an element text node. */
   Value?: string | { '#text': string };
 }
 
+/**
+ * Defines a structural relationship between elements in the DACPAC XML.
+ */
 export interface XmlRelationship {
+  /** The name of the relationship (e.g., 'Columns', 'QueryDependencies'). */
   '@_Name': string;
+  /** The target entries participating in this relationship. */
   Entry?: XmlEntry | XmlEntry[];
 }
 
+/**
+ * A single entry within a {@link XmlRelationship}.
+ */
 export interface XmlEntry {
+  /** References to other top-level elements. */
   References?: XmlReference | XmlReference[];
+  /** Inline child elements defined specifically for this entry. */
   Element?: XmlElement | XmlElement[];
 }
 
+/**
+ * A reference pointer to another element in the SQL model.
+ */
 export interface XmlReference {
+  /** The name of the referenced object. */
   '@_Name': string;
+  /** The external source of the reference, if applicable. */
   '@_ExternalSource'?: string;
 }
 
@@ -226,24 +265,41 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
 
 
+/**
+ * Technical definition of a database column.
+ * Used for rendering the "Column Mode" detail view and schema exploration.
+ */
 export interface ColumnDef {
+  /** The display name of the column. */
   name: string;
+  /** The formatted SQL data type (e.g., 'nvarchar(50)'). */
   type: string;
+  /** Whether the column allows nulls ('NULL' or 'NOT NULL'). */
   nullable: string;
+  /** Additional flags like 'IDENTITY' or 'COMPUTED'. */
   extra: string;
-  unique?: string;     // UQ constraint name when column participates; display shows "UQ" flag
-  check?: string;      // CK constraint name for column-level check; display shows "CK" flag
-  pkOrdinal?: number;  // PK ordinal (1-based); set for every column in the primary key
+  /** Name of the unique constraint if the column participates in one. */
+  unique?: string;
+  /** Name of the check constraint if the column has one. */
+  check?: string;
+  /** Primary key ordinal (1-based) if the column is part of the PK. */
+  pkOrdinal?: number;
 }
 
 /** Foreign key constraint metadata — attached to table ExtractedObject (dacpac + DMV paths). */
 export interface ForeignKeyInfo {
-  name: string;          // constraint name (display casing)
-  columns: string[];     // parent column names (multi-col FK in column_ordinal order)
-  refSchema: string;     // referenced schema
-  refTable: string;      // referenced table
-  refColumns: string[];  // referenced column names (same order as columns[])
-  onDelete: string;      // referential action: NO ACTION | CASCADE | SET NULL | SET DEFAULT
+  /** The name of the foreign key constraint. */
+  name: string;
+  /** The list of column names in the child table. */
+  columns: string[];
+  /** The schema of the referenced (parent) table. */
+  refSchema: string;
+  /** The name of the referenced (parent) table. */
+  refTable: string;
+  /** The list of column names in the parent table. */
+  refColumns: string[];
+  /** The referential action (e.g., 'CASCADE', 'SET NULL') on deletion. */
+  onDelete: string;
 }
 
 
@@ -340,23 +396,40 @@ export function createEmptySchemaInfo(name: string): SchemaInfo {
   return { name, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
 }
 
+/**
+ * Represents a database object extracted during Phase 2.
+ * Includes structural metadata like columns and foreign keys.
+ */
 export interface ExtractedObject {
-  fullName: string;       // "[Schema].[Name]"
+  /** Full schema-qualified name (e.g., "[dbo].[Table]"). */
+  fullName: string;
+  /** The specific type of the database object. */
   type: ObjectType;
+  /** The raw SQL DDL or body script of the object. */
   bodyScript?: string;
-  columns?: ColumnDef[];          // table column metadata (for table design view)
-  fks?: ForeignKeyInfo[];         // FK constraints (dacpac + DMV paths; undefined only when not extracted)
-  externalType?: 'et' | 'file' | 'db'; // set when type === 'external'
+  /** List of column definitions belonging to the object. */
+  columns?: ColumnDef[];
+  /** Foreign key constraints for tables and external tables. */
+  fks?: ForeignKeyInfo[];
+  /** Sub-classification for external references. */
+  externalType?: 'et' | 'file' | 'db';
 }
 
+/**
+ * Represents a raw dependency discovered during parsing.
+ */
 export interface ExtractedDependency {
-  sourceName: string;     // "[Schema].[Name]" of referencing object
-  targetName: string;     // "[Schema].[Name]" of referenced object — 3-part "[DB].[Schema].[Name]" for cross-DB
+  /** Normalized name of the referencing object. */
+  sourceName: string;
+  /** Normalized name of the referenced object. */
+  targetName: string;
 }
 
 /** External file/URL reference detected by pre-cleansing regex pass. */
 export interface ExternalRef {
+  /** The full URL or file path. */
   url: string;
+  /** The classification of the reference (e.g., 'datalake', 'blob'). */
   kind: string;
 }
 
@@ -371,45 +444,83 @@ export const DMV_TYPE_MAP: Record<string, ObjectType> = {
   'ET': 'external',  // External Table (PolyBase / data virtualization)
 };
 
-
+/**
+ * Configuration for graph layout algorithms (dagre).
+ */
 export interface LayoutConfig {
+  /** The flow direction of the graph: Top-to-Bottom (TB) or Left-to-Right (LR). */
   direction: 'TB' | 'LR';
+  /** Spacing between hierarchical ranks. */
   rankSeparation: number;
+  /** Spacing between nodes within the same rank. */
   nodeSeparation: number;
+  /** Whether to animate edge transitions. */
   edgeAnimation: boolean;
+  /** Whether to animate node highlights. */
   highlightAnimation: boolean;
+  /** Whether the minimap is enabled in the UI. */
   minimapEnabled: boolean;
+  /** The visual style of edges (e.g., smooth curves or orthogonal steps). */
   edgeStyle: EdgeStyle;
 }
 
 export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
 
+/**
+ * Configuration for interactive lineage tracing.
+ */
 export interface TraceConfig {
+  /** Default number of upstream levels to explore. */
   defaultUpstreamLevels: number;
+  /** Default number of downstream levels to explore. */
   defaultDownstreamLevels: number;
 }
 
+/**
+ * Configuration for graph analysis tools (hubs, islands, cycles).
+ */
 export interface AnalysisConfig {
+  /** Minimum degree (in+out) for a node to be classified as a hub. */
   hubMinDegree: number;
+  /** Maximum node count for a connected component to be classified as an island. */
   islandMaxSize: number;
+  /** Minimum node count for a path to be classified as a "long path". */
   longestPathMinNodes: number;
 }
 
+/**
+ * Configuration for the table profiling/statistics engine.
+ */
 export interface TableStatsConfig {
+  /** Whether profiling is enabled. */
   enabled: boolean;
+  /** Whether standard profiling (row counts, nullability) is active. */
   standardModeEnabled: boolean;
+  /** Whether to skip profiling for external tables. */
   excludeExternalTables: boolean;
+  /** Maximum number of columns to profile per table. */
   maxColumns: number;
+  /** Threshold above which sampling is used instead of a full scan. */
   sampleThreshold: number;
+  /** The number of rows to sample if the threshold is exceeded. */
   sampleSize: number;
+  /** Whether to use APPROX_COUNT_DISTINCT for performance on compatible platforms. */
   useApproxDistinct: boolean;
+  /** Maximum duration (in seconds) allowed for a single profiling query. */
   queryTimeout: number;
 }
 
+/**
+ * Configuration for external reference detection and display.
+ */
 export interface ExternalRefsConfig {
+  /** Whether to detect and display cross-database and file-based references. */
   enabled: boolean;
 }
 
+/**
+ * Configuration for the schema-level overview mode.
+ */
 export interface OverviewConfig {
   /** When false, schema overview mode is completely disabled — graph always shows full object view. */
   enabled: boolean;
@@ -418,16 +529,30 @@ export interface OverviewConfig {
   threshold: number;
 }
 
+/**
+ * The unified extension configuration object.
+ * Maps directly to the `dataLineageViz.*` settings in package.json.
+ */
 export interface ExtensionConfig {
+  /** Optional custom regex rules for SQL parsing. */
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
+  /** Glob patterns for objects or schemas to exclude from the model. */
   excludePatterns: string[];
+  /** Maximum number of objects allowed in a single model extraction. */
   maxNodes: number;
+  /** Maximum duration (in seconds) for DMV metadata queries. */
   dmvQueryTimeout: number;
+  /** Visual layout settings. */
   layout: LayoutConfig;
+  /** Lineage tracing settings. */
   trace: TraceConfig;
+  /** Graph analysis settings. */
   analysis: AnalysisConfig;
+  /** Profiling and statistics settings. */
   tableStatistics: TableStatsConfig;
+  /** External reference settings. */
   externalRefs: ExternalRefsConfig;
+  /** Overview mode settings. */
   overview: OverviewConfig;
   /** Max rendered nodes before showing a limit-reached warning instead of the graph. */
   renderLimit: number;

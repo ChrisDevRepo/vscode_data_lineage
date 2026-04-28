@@ -89,8 +89,12 @@ export function useGraphology(): UseGraphologyReturn {
     const count = allowlistFiltered.nodes.length;
     setFilteredCount(count);
 
-    // Derive visible schemas from filtered nodes
-    const schemas = [...new Set(allowlistFiltered.nodes.map(n => n.schema))].sort();
+    // Derive visible schemas from filtered nodes — externals are a separate visual category and
+    // never contribute to the schema legend (virtual externals carry schema='', and catalog ETs
+    // share the fixed external color, so listing them would be misleading).
+    const schemas = [...new Set(
+      allowlistFiltered.nodes.filter(n => n.type !== 'external').map(n => n.schema)
+    )].filter(Boolean).sort();
     setRenderedSchemas(schemas);
 
     // Guard 1: hard render limit — skip everything

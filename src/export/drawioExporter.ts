@@ -1,7 +1,7 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TYPE_COLORS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
+import { TYPE_COLORS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
 /**
@@ -218,8 +218,8 @@ export function exportToDrawio(
     const nodeId = String(nextId++);
     idMap.set(node.id, nodeId);
 
-    const isVirtual = d.externalType === 'file' || d.externalType === 'db';
-    const schemaColor = isVirtual ? getVirtualExtColor() : getSchemaColor(d.schema, true);
+    const isExternal = d.objectType === 'external';
+    const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColor(d.schema, true);
 
     nodeObjects.push({
       '@_id': nodeId,

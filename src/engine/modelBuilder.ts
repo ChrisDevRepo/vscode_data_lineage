@@ -676,7 +676,19 @@ function buildNodesAndEdges(
     createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, maxNodes);
   }
 
-  return { nodes, edges, stats, neighborPairs };
+  // Structural invariant: views and functions are read-only consumers and cannot DML any object.
+  // Drop any view/function → external edge that may have leaked through (defense in depth against
+  // future regressions in parse rules, metadata loops, or cross-DB resolution).
+  const typeById = new Map(nodes.map(n => [n.id, n.type]));
+  const sanitized: LineageEdge[] = [];
+  for (const e of edges) {
+    const src = typeById.get(e.source);
+    const tgt = typeById.get(e.target);
+    if ((src === 'view' || src === 'function') && tgt === 'external') continue;
+    sanitized.push(e);
+  }
+
+  return { nodes, edges: sanitized, stats, neighborPairs };
 }
 
 /** 
@@ -800,7 +812,14 @@ function createVirtualNodes(
     }
   }
 
+  // XML metadata carries no direction info. Mirror the local-XML convention:
+  //   non-SP source → read direction (target → source)
+  //   SP source     → infer from body (matches processSpEdges at line 587-595)
+  // Without this, every cross-DB metaDep would emit a write edge — colliding with the
+  // direction-aware regex pass above and producing spurious bidirectional ⇄ glyphs.
+  const metaDepsNodeMap = new Map(nodes.map(n => [n.id, n]));
   for (const [sourceId, rawTargets] of crossDbMetaDeps) {
+    const sourceNode = metaDepsNodeMap.get(sourceId);
     for (const rawTarget of rawTargets) {
       const parts = splitSqlName(rawTarget).map(p => stripBrackets(p));
       if (parts.length < 3) continue;
@@ -809,14 +828,18 @@ function createVirtualNodes(
       if (CLR_TYPE_METHODS.has(object.toLowerCase())) continue;
       const localId = `[${schema}].[${object}]`.toLowerCase();
       const crossDbId = `[${db}].[${schema}].[${object}]`.toLowerCase();
+      const isWrite = sourceNode?.type === 'procedure' && !!sourceNode.bodyScript
+        && inferBodyDirection(sourceNode.bodyScript, schema, object) === 'write';
       if (isLocalRef(db, localId)) {
         if (nodeIds.has(localId)) {
-          addEdge(edges, edgeKeys, sourceId, localId, 'body');
+          if (isWrite) addEdge(edges, edgeKeys, sourceId, localId, 'body');
+          else         addEdge(edges, edgeKeys, localId, sourceId, 'body');
         }
         continue;
       }
       if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
-      addEdge(edges, edgeKeys, sourceId, crossDbId, 'body');
+      if (isWrite) addEdge(edges, edgeKeys, sourceId, crossDbId, 'body');
+      else         addEdge(edges, edgeKeys, crossDbId, sourceId, 'body');
     }
   }
 }

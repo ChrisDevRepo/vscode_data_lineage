@@ -34,11 +34,14 @@ const BLOCK = {
     '`summary` — one line, ~100–300 chars, plain-prose digest of the whole node (across all captured angles).',
   ].join('\n'),
 
-  /** Metadata protocol. */
+  /** Metadata protocol — badge_label drives final-document section labels. */
   badgeAndNote: [
     '## Metadata Protocol',
-    '1. BADGE: Assign `badge_label` (2-4 words) for functional roles (Source, Transform, Staging).',
-    '2. NOTE: Write `note_caption` (≤200 chars) for cross-hop delta/reasoning.',
+    '1. BADGE: `badge_label` is a 2-4 word semantic ROLE label (≤30 chars). Examples: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "AC Reallocation", "EV Calculation", "Pipeline Seeder", "Reference Remap". The label captures the node\'s ROLE in the pipeline.',
+    '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
+    '   - GROUPING: Nodes that serve the SAME role take the SAME label. Five EV Case procedures all use `badge_label: "EV Calculation"`; three regional loaders all use `"Regional Upsert"`. Synthesis groups same-label nodes into one section, so a label that is shared across siblings produces a clean grouped section, while a unique-per-node verbose label produces a fragmented section-per-node output. Prefer the shared role over the per-node detail — the differing detail belongs in the section body.',
+    '   - Use ROLE words ("Reallocation", "Calculation", "Upsert", "Source"); the body of the section carries implementation detail (window function, recursive CTE, etc.) and the engine adds the node-type icon — those do not need to be in the label.',
+    '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` already captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
   ].join('\n'),
 
   /** Strategic routing protocol. */
@@ -125,17 +128,21 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
  * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
  *
  * @remarks
- * One-line cue at the highest-attention slot (Anthropic long-context guidance).
- * The user question, archive, and synthesis output templates are all already in
- * the envelope — this reminder reasserts only the gestalt rule.
+ * Anchored on the user question at the highest-attention slot (Anthropic long-context
+ * guidance). Re-asserts depth, math syntax, and per-node SQL-evidence requirements that
+ * the model otherwise drops under pressure. Restored from baseline1's proven shape.
+ *
+ * @param question - The user's original question, re-injected to anchor synthesis on intent.
  */
-export function buildSynthesisReminder(): string {
+export function buildSynthesisReminder(question: string): string {
   return [
-    '## Synthesis Reminder',
-    '- Lift each captured slot section verbatim — copy the body text exactly as captured.',
-    '- For every badged node: name its business meaning AND the SQL evidence that backs the meaning. A label without evidence is incomplete.',
-    '- Carry every ⚠️ callout from capture into the assembled section verbatim — risks belong in the rendered document at the point they apply.',
-    '- Apply the consistent rendering set across every assembled section (see "general" template above): LaTeX `$expr$` for formulas, `| From | To | Business meaning |` tables for shared column-rename groups, ` ```sql ` fences for verbatim WHERE / JOIN / MERGE predicates, numbered transitions for status-enum lifecycles.',
-    '- Self-check before finalizing: each section stays inside the locked Mission type; intro + closing answer the user\'s question.',
+    '## Synthesis Reminder — re-read before calling `lineage_present_result`',
+    `- User question: "${question}"`,
+    '- `sections[]` is REQUIRED — the captured per-node bodies belong here, not in `intro`. Lift each `detail_slots[i].sections[j].text` verbatim into a peer entry.',
+    '- GROUP along two orthogonal axes: (1) keep each captured slot\'s `angle` separate — a business section and a technical section remain individual entries; under `classification = both` this yields two parallel streams. (2) Within a single angle, nodes that share `badge_label` become one section (badge → `label`, every grouped node id → `node_ids[]`).',
+    '- Every badged node deserves business meaning AND SQL evidence (predicate, formula, join key); a label without evidence is incomplete.',
+    '- Carry every formula in LaTeX math syntax (`$expr$` inline, `$$expr$$` block) and every ⚠️ risk callout from capture into the assembled section. Math captured as LaTeX renders as math; math turned into prose stays prose.',
+    '- Write at the depth the captures already provide. Compression here drops information the user paid hops for.',
+    '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
   ].join('\n');
 }

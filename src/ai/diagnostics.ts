@@ -156,7 +156,7 @@ export class PerformanceCollector {
       }
     };
 
-    this.logger.info(`[Hop] Performance Final — total_latency=${totalLatency}ms hops=${this.rounds.length} tokens=${totalIn}in/${totalOut}out utilization=${utilization} evictions=${this.evictionCount}`);
+    this.logger.info(`[AI] [Hop] Performance Final — total_latency=${totalLatency}ms hops=${this.rounds.length} tokens=${totalIn}in/${totalOut}out utilization=${utilization} evictions=${this.evictionCount}`);
     
     return diag;
   }

@@ -38,7 +38,7 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
-import { getSchemaColor, getVirtualExtColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
+import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 import { notifyUser } from '../utils/notify';
 
@@ -402,8 +402,7 @@ export function GraphCanvas({
       // Schema nodes (overview mode) carry SchemaNodeData with a pre-computed color
       if (node.type === 'schemaNode') return (node.data as SchemaNodeData).color;
       const d = node.data as CustomNodeData;
-      const ext = d.externalType;
-      if (ext === 'file' || ext === 'db') return getVirtualExtColor();
+      if (d.objectType === 'external') return getExternalNodeColor();
       return getSchemaColor(String(d.schema));
     },
     []
@@ -706,7 +705,12 @@ export function GraphCanvas({
     const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
       || trace.mode === 'filtered' || trace.mode === 'analysis';
     if (!isTraceActive) return renderedSchemas || [];
-    return [...new Set(localNodes.map(n => (n.data as CustomNodeData).schema))].filter(Boolean).sort();
+    return [...new Set(
+      localNodes
+        .map(n => n.data as CustomNodeData)
+        .filter(d => d.objectType !== 'external')
+        .map(d => d.schema)
+    )].filter(Boolean).sort();
   }, [trace.mode, localNodes, renderedSchemas]);
 
   return (

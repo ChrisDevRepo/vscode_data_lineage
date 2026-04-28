@@ -46,34 +46,30 @@ export function compactNoiseResult(toolName: string, resultJson: string): string
 
 /** Tool names whose results should be compacted once the owning SM is complete. */
 const BB_HOP_TOOLS = new Set(['lineage_submit_findings', 'lineage_start_exploration']);
-const CT_HOP_TOOLS = new Set(['lineage_submit_hop_analysis', 'lineage_start_column_trace']);
 
 /**
- * Compacts high-volume hop analysis results once a state machine execution is complete.
+ * Compacts high-volume hop analysis results once the SM execution is complete.
  *
  * @remarks
- * During active exploration (Blackboard or Column Trace), full DDL and analysis results are
- * preserved to allow the model to reason across hops. Once the process completes, these
- * detailed results become "stale" as their essential findings are already captured in the
- * final synthesis. Compacting them significantly reduces the token footprint for subsequent turns.
+ * During active exploration, full DDL and analysis results are preserved to allow
+ * the model to reason across hops. Once the SM completes, these detailed results
+ * become "stale" — their essential findings are already captured in the final synthesis.
+ * Compacting them significantly reduces the token footprint for subsequent turns.
+ * Column-trace mode reuses the same BB_HOP_TOOLS (start_exploration / submit_findings),
+ * so a single completion flag covers both modes.
  *
  * @param toolName - The name of the tool that generated the result.
  * @param resultJson - The raw JSON string returned by the tool.
- * @param bbComplete - Whether the Blackboard (exploration) state machine has finished.
- * @param ctComplete - Whether the Column Trace state machine has finished.
+ * @param smComplete - Whether the owning state machine has finished.
  * @returns A compacted JSON string representing the hop metadata, or `null` if the hop is still active or the tool is not a hop tool.
  */
 export function compactStaleHopResult(
   toolName: string,
   resultJson: string,
-  bbComplete: boolean,
-  ctComplete: boolean,
+  smComplete: boolean,
 ): string | null {
-  const isBbTool = BB_HOP_TOOLS.has(toolName);
-  const isCtTool = CT_HOP_TOOLS.has(toolName);
-  if (!isBbTool && !isCtTool) return null;
-  if (isBbTool && !bbComplete) return null;
-  if (isCtTool && !ctComplete) return null;
+  if (!BB_HOP_TOOLS.has(toolName)) return null;
+  if (!smComplete) return null;
 
   const shortName = toolName.replace('lineage_', '');
   try {

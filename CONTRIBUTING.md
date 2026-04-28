@@ -26,7 +26,6 @@ All changes must pass the full test suite before submission.
 | **AI** | `npm run test:unit:ai` | State machine, memory management, and tool registration. |
 | **Snapshot** | `npm run test:snapshot` | Validates parsing against the AdventureWorks baseline. |
 | **Integration** | `npm run test:integration` | Live SQL Server connection tests (requires `.env` setup). |
-| **E2E** | `npm run test:e2e` | End-to-end flow in a headless VS Code instance. |
 
 ### Parser Snapshots
 If you modify `assets/defaultParseRules.yaml`, you must update the baseline:

@@ -20,6 +20,7 @@ function MathBlock({ math }: { math: string }) {
     throwOnError: false,   // render error message, don't crash
     errorColor: 'var(--vscode-errorForeground, #f44747)',
   });
+  // SAFE: katex.renderToString with throwOnError:false returns constrained HTML; input is markdown math, not user HTML.
   return <div className="math-display" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

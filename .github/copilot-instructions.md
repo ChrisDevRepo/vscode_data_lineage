@@ -41,7 +41,6 @@ A VS Code extension for visualizing SQL dependencies. Key technologies:
   - `npm run test:unit`: Core logic.
   - `npm run test:unit:ai`: AI state machine and memory management.
   - `npm run test:integration`: Live DB connections (requires `.env`).
-  - `npm run test:e2e`: Headless VS Code extension host flow.
 
 ## Guidelines for AI Generation
 - **Logic**: Use explicit composition and delegation over complex inheritance.

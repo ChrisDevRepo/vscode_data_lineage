@@ -374,10 +374,10 @@ export class LineageParticipant {
               const f = extractToolCallFields(tc);
               const r = meta.toolCallResults[f.callId];
               if (r) {
+                // VS Code chat-message tool-result content is platform-internal and untyped.
                 let contentStr = (r.content as any[]).map(c => typeof c.value === 'string' ? c.value : JSON.stringify(c)).join('');
                 const complete = sess.stateMachine?.status === 'complete';
-                const isColumnAspectActive = !!sess.stateMachine?.columnAspect;
-                const stale = compactStaleHopResult(f.name, contentStr, complete && !isColumnAspectActive, complete && isColumnAspectActive);
+                const stale = compactStaleHopResult(f.name, contentStr, complete);
                 const compact = stale ?? compactNoiseResult(f.name, contentStr);
                 resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(compact || contentStr)]));
               }

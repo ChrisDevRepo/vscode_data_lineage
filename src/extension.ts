@@ -6,12 +6,9 @@ import { registerAiTools } from './ai/toolProvider';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { Logger, testLogCapture } from './utils/log';
-import { migrateProjectStore } from './engine/projectStore';
+import { migrateProjectStore, type ProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
 import { LineageParticipant } from './ai/lineageParticipant';
-// SHIP-REMOVE-START: eval-bridge — internal test-only LM provider
-import { registerEvalBridgeLmProvider } from './ai/evalLmProvider';
-// SHIP-REMOVE-END
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules, type ParseRulesConfig } from './engine/sqlBodyParser';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -59,8 +56,8 @@ export async function activate(context: vscode.ExtensionContext) {
     logger.error('load parse rules at activation', err);
   });
 
-  const loadStore = (c: vscode.ExtensionContext) => migrateProjectStore(c.globalState.get(PROJECT_STORE_KEY));
-  const saveStore = async (c: vscode.ExtensionContext, s: any) => { await c.globalState.update(PROJECT_STORE_KEY, s); };
+  const loadStore = (c: vscode.ExtensionContext): ProjectStore => migrateProjectStore(c.globalState.get(PROJECT_STORE_KEY));
+  const saveStore = async (c: vscode.ExtensionContext, s: ProjectStore) => { await c.globalState.update(PROJECT_STORE_KEY, s); };
 
   // Register all user-facing commands.
   context.subscriptions.push(...registerCommands(
@@ -89,16 +86,6 @@ export async function activate(context: vscode.ExtensionContext) {
   // Register the Chat Participant.
   const participant = new LineageParticipant(context, getSession, outputChannel, getActivePanel);
   participant.register();
-
-  // SHIP-REMOVE-START: eval-bridge LM provider activation
-  // Internal test-only — activates only when EVAL_BRIDGE_ANTHROPIC_KEY env var
-  // is set. Production users never see this provider. To remove for shipping:
-  //   1. Delete the SHIP-REMOVE-START..END blocks in this file (3 total: import, activation here)
-  //   2. Delete src/ai/evalLmProvider.ts
-  //   3. Search the repo for SHIP-REMOVE markers to confirm clean removal.
-  const bridgeDisposable = registerEvalBridgeLmProvider(outputChannel);
-  if (bridgeDisposable) context.subscriptions.push(bridgeDisposable);
-  // SHIP-REMOVE-END
 
   // Watch for configuration changes and trigger reloads where necessary.
   const configLogger = Logger.create(outputChannel, 'Config');

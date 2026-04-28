@@ -12,7 +12,7 @@ Starting point for forking and contributing. The deeper engine concepts live in 
 | [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) | Zod-validated message contract between extension host and webview. |
 | [`src/utils/`](../src/utils/) | Logger, sanitizers, theming helpers. |
 | [`assets/`](../assets/) | YAML knobs: `defaultParseRules.yaml`, `dmvQueries.yaml`, `aiOutputTemplates.yaml`, plus the demo `.dacpac`. |
-| [`tests/`](../tests/) | Unit, integration, snapshot, AI-eval suites. |
+| [`tests/`](../tests/) | Unit, integration, and snapshot suites. |
 
 ## Build & run
 
@@ -141,7 +141,6 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | **AI heavy** | `npm run test:unit:ai` | State machine, memory management, prompt assembly. |
 | **Snapshot** | `npm run test:snapshot` | Parser regression vs `tests/fixtures/aw-baseline.tsv`. Refresh: `npm run test:snapshot:update`. |
 | **Integration** | `npm run test:integration` | Live SQL Server. Requires `.env` with `DB_SERVER`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE_AW`, `DB_DATABASE_AW_DW`. |
-| **AI eval** | `python tests/eval/run.py` | Out-of-process Haiku-driven harness against the production prompt set. See [`tests/eval/README.md`](../tests/eval/README.md). |
 
 `tsc --noEmit` after every structural change; the type system is the first line of defence.
 
