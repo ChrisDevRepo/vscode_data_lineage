@@ -130,5 +130,12 @@ export function buildModeBlock(isInline: boolean = false, targetColumns?: string
  * the envelope — this reminder reasserts only the gestalt rule.
  */
 export function buildSynthesisReminder(): string {
-  return '## Synthesis Reminder — Lift slots, assemble + group, anchor intro + closing.';
+  return [
+    '## Synthesis Reminder',
+    '- Lift each captured slot section verbatim — copy the body text exactly as captured.',
+    '- For every badged node: name its business meaning AND the SQL evidence that backs the meaning. A label without evidence is incomplete.',
+    '- Carry every ⚠️ callout from capture into the assembled section verbatim — risks belong in the rendered document at the point they apply.',
+    '- Apply the consistent rendering set across every assembled section (see "general" template above): LaTeX `$expr$` for formulas, `| From | To | Business meaning |` tables for shared column-rename groups, ` ```sql ` fences for verbatim WHERE / JOIN / MERGE predicates, numbered transitions for status-enum lifecycles.',
+    '- Self-check before finalizing: each section stays inside the locked Mission type; intro + closing answer the user\'s question.',
+  ].join('\n');
 }

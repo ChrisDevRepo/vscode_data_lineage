@@ -146,9 +146,12 @@ business_capture:
     ⚠️ inline at the point they apply.
 
     Format the body with markdown — `## Purpose` paragraph, formulas in
-    LaTeX math, column renames as `| From | To | Business meaning |` tables
-    (no datatype columns), multi-step rules as ordered lists. Use
-    `\`backticks\`` for column and object names. Body is unbounded;
+    LaTeX math `$expr$`, column renames as `| From | To | Business meaning |`
+    tables when 3+ sibling columns share the rename shape (no datatype
+    columns — type info belongs in the technical angle), 1–2 renames as
+    prose with backticks, status-enum lifecycles as numbered transitions
+    ("1. New → 2. Approved → 3. Shipped"), multi-step rules as ordered lists.
+    Use `\`backticks\`` for column and object names. Body is unbounded;
     depth-first capture beats prose extension.
 
     NEVER include in this section: ` ```sql ` fences, JOIN/MERGE syntax,
@@ -279,3 +282,74 @@ structural_summary:
 # buildSynthesisPrompt() in src/ai/prompts.ts. No separate per-angle templates
 # here — the lift+group+label rule is identical for both angles and lives in
 # the synthesis cue to avoid duplication.
+
+# ── Cross-section rendering at synthesis ─────────────────────────────────────
+# Always-on at synthesis. Describes HOW captured content renders consistently
+# across every section in the assembled document. Conditional triggers — each
+# rule fires only when the captured slot bodies contain the underlying
+# material; the AI does NOT invent tables / formulas / fences without source.
+
+general:
+  stages: [synthesis]
+  instruction: >
+    Apply this rendering set across every assembled section so the document
+    reads consistently end-to-end:
+
+    - **Formulas**: write as LaTeX `$expr$` whenever the captured body has a
+      computation (e.g. `$Revenue = Qty \times Price$`).
+    - **Column renames**: render as a `| From | To | Business meaning |`
+      table whenever 3+ sibling columns share the rename shape. For 1–2
+      renames, prose with backticks is enough.
+    - **Source guards** (WHERE / JOIN / MERGE predicates that filter or key
+      the data): quote the SQL verbatim inside ```sql code fences. Snippet
+      only — never the full INSERT/SELECT statement.
+    - **Status-enum lifecycles**: express as numbered transitions
+      ("1. New → 2. Approved → 3. Shipped").
+    - **Risks / data-quality flags**: every ⚠️ from capture appears in the
+      assembled section at the point it applies — verbatim, in place.
+
+    These rules apply only when the captured body has the underlying material.
+    Do not invent tables, formulas, or fences without source.
+  example: >
+    Formula: $TotalRevenue = Qty \times UnitPrice \times (1 - Discount)$
+
+    | From | To | Business meaning |
+    | --- | --- | --- |
+    | OrderQty | Qty | Units sold per order line |
+    | ListPrice | UnitPrice | Price after supplier markup |
+
+    ```sql
+    WHERE o.IsActive = 1 AND o.OrderDate >= DATEADD(YEAR, -2, GETDATE())
+    ```
+
+    Status flow: 1. New → 2. Reviewed → 3. Approved → 4. Shipped → 5. Closed.
+
+    ⚠️ Null `Discount` collapses TotalRevenue to Qty × UnitPrice — verify input.
+
+# ── Big-picture ETL closing — TECHNICAL angle only ───────────────────────────
+# Classification-gated to ['technical', 'both'] in templateRenderer.ts.
+# Skips entirely on business-only missions because business framing names
+# domain consequences, not load shapes.
+
+loading_pattern:
+  stages: [synthesis]
+  instruction: >
+    Technical-angle closing addition. When all bodied procedures in scope
+    share a single load shape, name it once in the closing note as the
+    big-picture ETL pattern. Recognized shapes (coarse — no SCD1/SCD2/CDC
+    sub-variants):
+
+    - `reload`        TRUNCATE + INSERT / full refresh
+    - `append`        INSERT-only, no UPDATE or DELETE
+    - `upsert`        MERGE or UPDATE + conditional INSERT
+    - `historization` versioned history / change tracking
+    - `purge`         DELETE-only / retention
+    - `orchestration` EXECs other SPs, no data mutation on the target
+
+    Skip when shapes differ across procedures, when the analysis spans
+    non-bodied origins only, or when classification is `business`.
+  example: >
+    Loading pattern: every bodied procedure in this chain uses TRUNCATE +
+    INSERT — each run rebuilds `FactSalesReport` from scratch with no
+    delta tracking. Downstream consumers must tolerate full-replace
+    semantics; there is no incremental-load fallback.

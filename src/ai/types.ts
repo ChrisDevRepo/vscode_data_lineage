@@ -97,6 +97,20 @@ export interface AiOutputTemplates {
   technical_capture: string;
   /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/Downstream/Grain). */
   structural_summary: string;
+  /**
+   * Cross-section depth floor at SYNTHESIS. Conditional rendering directives
+   * (column-rename tables, LaTeX formulas, code-fenced source guards, numbered
+   * state transitions) lifted across every section when the underlying capture
+   * material supports them. Always-on at synthesis; conditional-by-content.
+   */
+  general: string;
+  /**
+   * Big-picture ETL closing pattern at SYNTHESIS — TECHNICAL angle only.
+   * When all bodied procedures share a load shape (TRUNCATE+INSERT, append,
+   * upsert, historization, purge, orchestration), name it once in the closing
+   * note. Classification-gated to `technical` and `both`.
+   */
+  loading_pattern: string;
 }
 
 /**
@@ -115,6 +129,8 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   business_capture: '',
   technical_capture: '',
   structural_summary: '',
+  general: '',
+  loading_pattern: '',
 };
 
 /** 
