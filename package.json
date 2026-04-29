@@ -871,7 +871,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Specific questions only (user question contains bracketed identifiers like [Column] or [Schema].[Table]): write a focused answer using archive evidence — formulas, table names, SQL predicates; pipeline nodes get one sentence. Broad questions: omit this field — the engine injects full archive content."
+                    "description": "Specific questions only (user question contains bracketed identifiers like [Column] or [Schema].[Table]): write rich detail from the archive focused on what answers the question — include formulas, column transformations, SQL predicates, data flows; omit audit logging, concurrency, version history, and unrelated rules. Depth stays high; focus shifts to the question. Broad questions: omit this field — the engine injects full archive content."
                   }
                 },
                 "required": [
