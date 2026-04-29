@@ -5,19 +5,13 @@
 ### Added
 - **Pick the analysis lens before exploration** — Choose `business`, `technical`, or `both` when starting a `@lineage` exploration. Business reports describe domain meaning (rules, formulas, consumer impact). Technical reports describe execution (SQL evidence, joins, loading patterns, anti-patterns). `both` produces two peer sections per node, one of each angle.
 - **Approve scope before analysis starts** — Every exploration shows a scope tree (Schema → Type → Node) with the live hop count. Approve to proceed, **Refine scope** to narrow it, or **Cancel**. Describe the narrowing in plain English ("ignore staging", "drop UDFs", "trace ProductID only") and the assistant re-runs. The loop continues until you approve or cancel.
-- **Follow-up chips after the report** — Once a graph is rendered, follow-up actions appear as chips: replay the full description, explore deferred objects, or ask refinements ("rename a label", "drop a node from the graph", "add this related object"). Refinements edit the existing report instead of restarting.
-- **Smart grouping at synthesis** — When several procedures share the same shape (e.g. 3+ SPs with the same TRUNCATE+INSERT skeleton differing only in filter, or sibling EV cases / allocation rules), `@lineage` labels them once and summarises them as a single comparison table. Distinct logic still gets its own section.
-- **Big-picture closing** — When the analysis spans 5+ sections, the report ends with a one-paragraph through-line naming the overall pipeline answer in the chosen lens, plus a `⚠️` risk table for cross-cutting issues that don't fit a single section.
-- **Show-full-description chip** — Every `@lineage` response that produced a graph view includes a chip that replays the full AI description inline. No re-analysis, no extra API call.
-- **Better Copilot Free compatibility** — `@lineage` resolves the active chat model dynamically, fixing "Chat provider not registered" errors.
+
 
 ### Changed
-- **Reports answer the question first** — Every `@lineage` report opens with a one-sentence answer to the original question, then groups related objects before per-object detail.
-- **Friendlier progress lines** — Progress reads as plain sentences ("Inspecting 3 neighbours for pruning…", "Loading lineage context…") instead of raw tool names. A `Synthesizing the answer…` chip appears during the final assembly step.
-- **Loading pattern always visible** — Stored procedures open with a one-line `**Loading Pattern:**` summary (full / incremental / SCD2 / MERGE / etc.) in the report header. Previously captured only in AI memory.
+- **Lighter per-hop AI context** — active-phase prompt is ~700 tokens leaner per hop (≈12 K over an 18-hop session) through classification-locked template routing and removal of engine-state prose already enforced mechanically by `LanguageModelChatToolMode.Required` and `toolPolicy`.
+- **Stricter tool input validation** — all AI tool handler boundaries now use `unknown` instead of `any`; every input is parsed through its Zod schema before reaching engine logic, so malformed calls reject cleanly at the boundary instead of propagating into the state machine.
 - **Starting-point table summaries** — When you ask about a table as your starting point, `@lineage` produces a clean dossier (Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys) instead of folding it into a neighbouring procedure's analysis.
-- **Objects listed inline** — Each section's objects render as a single comma-separated row of clickable links — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node.
-- **Out-of-scope objects moved to follow-up chips** — Deferred objects no longer appear as an enumerated section inside the report body.
+- **Objects listed inline** — Each section's objects render as a single comma-separated row of clickable links — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node..
 - **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both what `@lineage` captures per node and how the final report renders. Previously it only controlled report rendering.
 - **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
 - **30-minute session timeout** — Idle exploration sessions expire automatically. Starting a new exploration discards any old in-progress one with a brief in-chat notice — no blocking dialog.
