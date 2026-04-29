@@ -1334,6 +1334,12 @@ export function autoFixPresentResult(
   const fixes: string[] = [];
   let fixed = { ...input };
 
+  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args)
+  const unescapeNewlines = (s: string): string => s.replace(/\\n/g, '\n');
+  if (fixed.intro)   fixed = { ...fixed, intro:   unescapeNewlines(fixed.intro) };
+  if (fixed.closing) fixed = { ...fixed, closing: unescapeNewlines(fixed.closing) };
+  if (fixed.summary) fixed = { ...fixed, summary: unescapeNewlines(fixed.summary) };
+
   // 1. Auto-truncate name at word boundary if too long
   if (fixed.name && fixed.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) {
     const truncated = fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();

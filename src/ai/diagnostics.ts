@@ -118,7 +118,7 @@ export class PerformanceCollector {
 
     const toolNames = tools.join(',');
     const focusHint = focusNode ? ` node=${focusNode}` : '';
-    const cacheHint = cacheHit ? ' cache=hit' : ' cache=miss';
+    const cacheHint = cacheHit ? ' dedup=hit' : '';
     const errHint = error ? ` ERROR=${error}` : '';
 
     this.logger.debug(`[Hop ${round}] [${phase.toUpperCase()}] Metrics — latency=${latency}ms tokens=${tokensIn}in/${tokensOut}out tools=[${toolNames}]${focusHint}${cacheHint}${errHint}`);

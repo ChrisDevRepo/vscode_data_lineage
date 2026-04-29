@@ -1339,7 +1339,10 @@ export class NavigationEngine implements IHopStateMachine {
       }
 
       if (!isPrune) {
-        const sections = finding.sections ?? [];
+        const sections = (finding.sections ?? []).map(s => ({
+          ...s,
+          text: s.text.replace(/\\n/g, '\n'),
+        }));
         this.memory.storeDetail(this.nodeMap.get(focusId)!, sections, finding.summary, {
           badge_label: finding.badge_label,
           note_caption: finding.note_caption,
