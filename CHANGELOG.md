@@ -8,11 +8,10 @@
 
 
 ### Changed
-- **Lighter per-hop AI context** — active-phase prompt is ~700 tokens leaner per hop (≈12 K over an 18-hop session) through classification-locked template routing and removal of engine-state prose already enforced mechanically by `LanguageModelChatToolMode.Required` and `toolPolicy`.
-- **Stricter tool input validation** — all AI tool handler boundaries now use `unknown` instead of `any`; every input is parsed through its Zod schema before reaching engine logic, so malformed calls reject cleanly at the boundary instead of propagating into the state machine.
+- **Lighter per-hop AI context** — active-phase prompt is ~700 tokens leaner per hop (≈12 K over an 18-hop session) through classification-locked template routing and removal of engine-state prose enforced mechanically by `LanguageModelChatToolMode.Required` and `toolPolicy`.
 - **Starting-point table summaries** — When you ask about a table as your starting point, `@lineage` produces a clean dossier (Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys) instead of folding it into a neighbouring procedure's analysis.
 - **Objects listed inline** — Each section's objects render as a single comma-separated row of clickable links — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node..
-- **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both what `@lineage` captures per node and how the final report renders. Previously it only controlled report rendering.
+- **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both per-hop capture instructions (`business_capture`, `technical_capture`, `structural_summary`) and final report rendering (`title`, `intro`, `closing`, `notes`, `highlights`). Previously it only controlled report rendering; per-hop analysis content required source edits.
 - **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
 - **30-minute session timeout** — Idle exploration sessions expire automatically. Starting a new exploration discards any old in-progress one with a brief in-chat notice — no blocking dialog.
 - **Cleaner cancellation** — Pressing Stop mid-response exits cleanly — no "stream closed" error.
