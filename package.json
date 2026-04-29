@@ -850,7 +850,7 @@
             },
             "sections": {
               "type": "array",
-              "description": "Report sections grouping nodes by badge label and angle. Provide label, angle, and node_ids — omit text (the engine injects verbatim archive content).",
+              "description": "Report sections grouping nodes by badge label and angle. Provide label, angle, and node_ids. Write text for specific questions (user named a bracketed identifier); omit text for broad questions — the engine injects full archive content.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -871,7 +871,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Markdown analysis for this group. Omit at synthesis — the engine injects verbatim text from the archive. Provide only for follow-up text edits where the user requested modified wording."
+                    "description": "Specific questions only (user question contains bracketed identifiers like [Column] or [Schema].[Table]): write a focused answer using archive evidence — formulas, table names, SQL predicates; pipeline nodes get one sentence. Broad questions: omit this field — the engine injects full archive content."
                   }
                 },
                 "required": [

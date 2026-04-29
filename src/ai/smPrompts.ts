@@ -154,11 +154,11 @@ export function buildSynthesisReminder(question: string): string {
   return [
     '## Synthesis Reminder — re-read before calling `lineage_present_result`',
     `- User question: "${question}"`,
-    '- `sections[]` is REQUIRED — select from `detail_slots[]` only the nodes that directly answer the user question. Lift selected bodies verbatim; omit nodes whose role is orthogonal to the question even if captured.',
+    '- `sections[]` is REQUIRED — select nodes that directly answer the user question; omit nodes orthogonal to it. Read the user question above: if it contains bracketed identifiers like `[ColumnName]` or `[Schema].[Table]` (a specific column, table, or computed value is named), write focused `text` for each section — mine the archive for the exact formula, table name, or SQL predicate that answers it; pipeline nodes that merely pass data through get one sentence (column name, transformation, next hop). If the question names no specific identifier (broad exploration, overview, architecture question), omit `text` — the engine injects full archive depth, which is correct for this case.',
     '- GROUP along two orthogonal axes: (1) keep each captured slot\'s `angle` separate — a business section and a technical section remain individual entries; under `classification = both` this yields two parallel streams. (2) Within a single angle, nodes that share `badge_label` become one section (badge → `label`, every grouped node id → `node_ids[]`).',
     '- Every badged node deserves business meaning AND SQL evidence (predicate, formula, join key); a label without evidence is incomplete.',
     '- Carry every formula in LaTeX math syntax (`$expr$` inline, `$$expr$$` block) and every ⚠️ risk callout from capture into the assembled section. Math captured as LaTeX renders as math; math turned into prose stays prose.',
-    '- Write at the depth the captures already provide. Compression here drops information the user paid hops for.',
+    '- For broad questions where you omit `text`: the engine injects full archive depth — correct behavior, no action needed. For specific questions where you write `text`: answer the question directly; depth follows from the question, not the archive.',
     '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
   ].join('\n');
 }
