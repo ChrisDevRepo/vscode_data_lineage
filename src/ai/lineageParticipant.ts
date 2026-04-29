@@ -270,7 +270,9 @@ export class LineageParticipant {
     let effectivePrompt = request.prompt;
     if (effectivePrompt === RECOMMEND_FOLLOWUPS_TRIGGER) {
       const deferred = sess.stateMachine?.deferredQuestions || [];
-      effectivePrompt = buildDeferredQuestionsPrompt(deferred);
+      effectivePrompt = deferred.length > 0
+        ? buildDeferredQuestionsPrompt(deferred)
+        : buildFollowUpPrompt();
       this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
     } else if (effectivePrompt === SHOW_DESCRIPTION_TRIGGER) {
       // Short-circuit: emit the cached AI-preview description 1:1 (no LM round-trip).
