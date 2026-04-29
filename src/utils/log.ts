@@ -210,6 +210,6 @@ export function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err
   logToTest(cat, msg);
   ch.error(`[${cat}] ${msg}`);
   if (err instanceof Error && err.stack) {
-    ch.debug(`[${cat}] Stack: ${err.stack}`);
+    ch.error(`[${cat}] Stack: ${err.stack}`);
   }
 }

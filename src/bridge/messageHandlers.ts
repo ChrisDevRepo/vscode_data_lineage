@@ -87,7 +87,7 @@ export function createMessageHandlers(
   async function cleanupStatsConnection(): Promise<void> {
     if (statsConnState.uri) {
       await disconnectDatabase(statsConnState.uri, outputChannel).catch(err =>
-        host.log('debug', 'DB', `Stats disconnect failed: ${err instanceof Error ? err.message : String(err)}`)
+        host.log('warn', 'DB', `Stats disconnect failed: ${err instanceof Error ? err.message : String(err)}`)
       );
       statsConnState.uri = undefined;
     }
@@ -248,13 +248,14 @@ export function createMessageHandlers(
         const config = await readExtensionConfig(host);
         const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
         cachedElements = elements; cachedDspName = dspName;
-        host.postMessage({ 
-          type: 'dacpac-schema-preview', 
-          preview, 
+        host.postMessage({
+          type: 'dacpac-schema-preview',
+          preview,
           config,
           sourceName: path.basename(uris[0].fsPath, '.dacpac'),
-          filePath: uris[0].fsPath 
+          filePath: uris[0].fsPath
         });
+        host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
       } else {
         host.log('info', 'Bridge', 'Dacpac picker cancelled');
         host.postMessage({ type: 'db-cancelled' });
@@ -292,6 +293,7 @@ export function createMessageHandlers(
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             const logger = Logger.create(outputChannel, 'Parse');
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg));
+            logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
             host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
@@ -300,6 +302,7 @@ export function createMessageHandlers(
             const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             cachedElements = elements; cachedDspName = dspName;
             host.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
+            host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
           }
         } catch (err) {
           if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
@@ -367,6 +370,7 @@ export function createMessageHandlers(
       const config = await readExtensionConfig(host);
       const logger = Logger.create(outputChannel, 'Parse');
       const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg));
+      logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
       setCurrentModel(model, false, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
@@ -417,6 +421,7 @@ export function createMessageHandlers(
         sess.graphMode = msg.uiState.graphMode;
         sess.filteredCount = msg.uiState.filteredCount;
         sess.renderLimitHit = msg.uiState.renderLimitHit;
+        host.log('debug', 'Filter', `State sync — ${msg.uiState.filteredCount ?? '?'} nodes, renderLimitHit=${msg.uiState.renderLimitHit ?? 0}`);
       }
     },
     'db-connect': () => {
@@ -511,7 +516,7 @@ export function createMessageHandlers(
     },
     'show-warning': (msg) => {
       const text = typeof msg.text === 'string' ? msg.text : '';
-      host.log('debug', 'Bridge', `show-warning: ${text}`);
+      host.log('warn', 'Bridge', `show-warning: ${text}`);
       vscode.window.showWarningMessage(`Data Lineage: ${text}`);
     },
     'overview-mode-changed': (msg) => {
@@ -566,6 +571,7 @@ async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connecti
   const preview = buildSchemaPreview(result);
   const config = await readExtensionConfig(host);
   host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${connectionInfo.server} / ${connectionInfo.database}` });
+  host.log('info', 'DB', `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
 }
 
 async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas: string[], progress: vscode.Progress<any>, token: vscode.CancellationToken, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, allObjects?: SimpleExecuteResult, currentDatabase?: string, sourceName?: string, platformInfo?: SimpleExecuteResult, onModelBuilt?: (model: DatabaseModel) => void) {
@@ -583,7 +589,8 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes, (msg) => {
     logger.debug(msg);
   });
-  
+  logger.info(`Extraction Complete — ${model.nodes.length} nodes, ${model.edges.length} deps`);
+
   onModelBuilt?.(model);
   if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
   host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
@@ -627,6 +634,7 @@ async function handleTableStatsRequestHost(
   const timeoutMs = timeoutSec * 1000;
   const t0 = Date.now();
 
+  logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
   try {
     if (!statsConnState.uri) {
       const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
@@ -672,7 +680,7 @@ async function handleTableStatsRequestHost(
     const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
     const samplePercent = needsSampling ? computeSamplePercent(engineEdition, sampleSize, rowCount) : undefined;
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
-    logger.info(`Table statistics ready (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
+    logger.info(`Table statistics ready — ${schema}.${objectName} rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
     panel.webview.postMessage({ type: 'table-stats-result', stats, mode });
   } catch (err) {
     host.log('error', 'Stats', 'Profiling', err);

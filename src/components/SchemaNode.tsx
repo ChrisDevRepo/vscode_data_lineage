@@ -24,7 +24,7 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
   const d = data as SchemaNodeData;
   
   /** Filters out types with zero counts to keep the display clean. */
-  const breakdownEntries = Object.entries(d.typeBreakdown).filter(([, count]) => count && count > 0);
+  const breakdownEntries = Object.entries(d.typeBreakdown ?? {}).filter(([, count]) => count && count > 0);
   
   /** Generates a compact string representation of the object type breakdown. */
   const breakdown = breakdownEntries

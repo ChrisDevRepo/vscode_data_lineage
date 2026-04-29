@@ -118,6 +118,7 @@ export function useGraphology(): UseGraphologyReturn {
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
+      log(`[Filter] Overview mode — ${count} nodes (layout skipped)`, 'info');
       return count;
     }
 
@@ -128,6 +129,7 @@ export function useGraphology(): UseGraphologyReturn {
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
     setMetrics(getGraphMetrics(result.graph));
+    log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
     return count;
   }, []);
 

@@ -236,7 +236,7 @@ export async function connectDirect(
   const reconnectStart = Date.now();
   try {
     const connectionUri = await api.connect(connectionInfo, false);
-    logger.debug(`Reconnected (${Date.now() - reconnectStart}ms)`);
+    logger.info(`Reconnected (${Date.now() - reconnectStart}ms)`);
     return { connectionUri, connectionInfo };
   } catch (err) {
     logger.warn(`Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);

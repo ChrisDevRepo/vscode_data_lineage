@@ -734,7 +734,7 @@ export class LineageParticipant {
               }
             } else if (!sess.synthesisCorrectiveAttempted) {
               sess.synthesisCorrectiveAttempted = true;
-              this.logger.warn(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting one-shot corrective and retrying`);
+              this.logger.debug(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting one-shot corrective and retrying`);
               if (assistantParts.length > 0) {
                 envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
               }
@@ -743,7 +743,7 @@ export class LineageParticipant {
               );
               continue;
             } else {
-              this.logger.warn(`Round ${roundCount} [SYNTHESIS] — no tool call after corrective; rendering archive fallback`);
+              this.logger.debug(`Round ${roundCount} [SYNTHESIS] — no tool call after corrective; rendering archive fallback`);
               this.renderArchiveFallback(sess, writer);
             }
           }
@@ -820,7 +820,7 @@ export class LineageParticipant {
               repeat_count: obs.count,
               hint: `The same ${f.name.replace('lineage_', '')} call with the same arguments was rejected ${obs.count} times. The parameters cannot succeed as given. Stop retrying; if you have partial findings, produce a final answer explaining what you found and what was blocked. If no findings, tell the user the request needs different input.`,
             };
-            this.logger.warn(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
+            this.logger.debug(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
             writer.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
             envelope.pushUserText(JSON.stringify(abortPayload));
             return { kind: 'aborted', reason: `repeat_reject:${f.name}:${lastErrorText}` };
@@ -944,7 +944,7 @@ export class LineageParticipant {
               systemPrompt = buildStageSystemPrompt('active');
               effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
               envelope.wipeAndSeed(systemPrompt, effectivePrompt);
-              this.logger.warn(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
+              this.logger.debug(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
               consecutiveErrorRounds = 0;
             } else {
               this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction (${consecutiveErrorRounds}/3)`);
@@ -1158,7 +1158,7 @@ export class LineageParticipant {
         const remaining = sess.stateMachine?.getHopDiagnostics().agendaRemaining ?? 0;
         sess.memory.reset();
         sess.enterIdle();
-        this.logger.warn(`Exit hop_cap: hit ${maxRounds}-round cap with ${remaining} agenda items pending — archive discarded`);
+        this.logger.debug(`Exit hop_cap: hit ${maxRounds}-round cap with ${remaining} agenda items pending — archive discarded`);
         writer.markdown([
           ``,
           `⚠ **Exploration incomplete.** Hit the ${maxRounds}-round safety cap with ${remaining} node(s) still pending.`,
@@ -1175,7 +1175,7 @@ export class LineageParticipant {
       case 'error': {
         sess.enterIdle();
         const msg = exit.kind === 'aborted' ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.` : exit.message;
-        this.logger.warn(`Exit ${exit.kind}: ${msg}`);
+        this.logger.debug(`Exit ${exit.kind}: ${msg}`);
         writer.markdown(`\n\n*Error: ${msg}*`);
         break;
       }

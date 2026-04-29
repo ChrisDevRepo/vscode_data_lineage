@@ -105,6 +105,7 @@ export interface GraphResult {
 export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   for (const node of model.nodes) {
+    if (!node.id) continue;
     graph.addNode(node.id, { ...node });
   }
   for (const edge of model.edges) {

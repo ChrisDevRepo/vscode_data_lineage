@@ -746,16 +746,20 @@ class ToolHandler {
         });
       }
 
+      this.logger.debug(`presentResult archive inject — section[0] preview: ${trunc(input.sections?.[0]?.text ?? '(empty)', 200)}`);
+
+      // Fix LaTeX before assembly so fixLatex()'s $$→```math conversion reaches the description.
+      const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);
+
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       let assembledDescription: string | undefined = undefined;
-      if (input.sections?.length) {
+      if (fixedInput.sections?.length) {
         const nodeMap = new Map<string, LineageNode>((model.nodes as LineageNode[]).map(n => [n.id, n]));
-        const assembled = orderAndAssemble(input.sections, { title: input.title, intro: input.intro, closing: input.closing, nodeMap });
+        const assembled = orderAndAssemble(fixedInput.sections, { title: fixedInput.title, intro: fixedInput.intro, closing: fixedInput.closing, nodeMap });
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
       }
 
-      const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);
       const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges, assembledDescription);
 
       if (!validation.success) return this.logAndReturn('present_result', validation, input);
