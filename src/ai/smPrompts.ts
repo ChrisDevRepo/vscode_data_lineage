@@ -17,6 +17,7 @@ const BLOCK = {
     '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
     '- pass: Node is pure wire (SELECT *, synonym). No transformation. (Use analyze if ANY logic exists.)',
     '- prune: Utility node (logging/error), or downstream consumer that is topologically adjacent but does not contribute to the stated question.',
+    '- prune_neighbors: When the DDL of the current focus node reveals adjacent tables that are filter-only (used in a JOIN ON or IN subquery, with no columns selected from them that contribute to the mission), add those table ids to `prune_neighbors` in the same submit_findings. Example: a calendar table joined only to filter by fiscal year; a region lookup joined only to restrict which rows are imported.',
   ].join('\n'),
 
   /**
