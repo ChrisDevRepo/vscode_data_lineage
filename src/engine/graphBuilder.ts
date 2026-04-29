@@ -105,7 +105,14 @@ export interface GraphResult {
 export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   for (const node of model.nodes) {
-    if (!node.id) continue;
+    if (!node.id) {
+      window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}` });
+      continue;
+    }
+    if (graph.hasNode(node.id)) {
+      window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Duplicate node ID skipped: ${node.id}` });
+      continue;
+    }
     graph.addNode(node.id, { ...node });
   }
   for (const edge of model.edges) {
@@ -544,7 +551,14 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
   for (const id of nodeIds) g.setNode(id, { width: NODE_WIDTH, height: NODE_HEIGHT });
   for (const { source, target } of edges) g.setEdge(source, target);
 
-  dagre.layout(g);
+  try {
+    dagre.layout(g);
+  } catch (e) {
+    // Dagre coordinate assignment crashes on disconnected graphs with longest-path ranker.
+    // Return empty positions; toFlowResult falls back to {x:0,y:0} per-node.
+    window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}` });
+    return new Map();
+  }
 
   const positions = new Map<string, { x: number; y: number }>();
   for (const id of g.nodes()) {
@@ -757,7 +771,13 @@ export function buildSchemaGraph(
   for (const { source, target } of edgesForLayout) {
     if (g.hasNode(source) && g.hasNode(target)) g.setEdge(source, target);
   }
-  dagre.layout(g);
+  try {
+    dagre.layout(g);
+  } catch (e) {
+    // Disconnected schema singletons can trigger the same longest-path crash as regular nodes.
+    // Fall through: g.node() returns undefined per node → positions fallback to {x:0,y:0}.
+    window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}` });
+  }
 
   const nodes: FlowNode<SchemaNodeData>[] = schemaIds.map((schema) => {
     const pos = g.node(schema);
@@ -813,6 +833,12 @@ export function buildSchemaGraph(
 
 /**
  * Computes spatial layout for the object graph.
+ *
+ * @remarks
+ * Nodes with no edges (disconnected singletons — e.g. cross-DB virtual nodes
+ * whose only counterpart is outside the current schema filter) are positioned
+ * in a row below the main Dagre layout instead of being passed to Dagre.
+ * Dagre's longest-path ranker crashes on fully disconnected components.
  */
 function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): Map<string, { x: number; y: number }> {
   const seen = new Set<string>();
@@ -828,5 +854,25 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
     }
   });
 
-  return dagreLayout({ nodeIds: graph.nodes(), edges, config, ranker: 'longest-path' });
+  // Separate nodes that participate in at least one edge from disconnected singletons.
+  const connectedIds = new Set<string>();
+  for (const { source, target } of edges) { connectedIds.add(source); connectedIds.add(target); }
+  const allIds = graph.nodes();
+  const isolatedIds = allIds.filter(id => !connectedIds.has(id));
+  const layoutIds  = allIds.filter(id =>  connectedIds.has(id));
+
+  const positions = dagreLayout({ nodeIds: layoutIds, edges, config, ranker: 'longest-path' });
+
+  // Place isolated nodes in a row below the main layout.
+  if (isolatedIds.length > 0) {
+    let maxY = 0;
+    for (const pos of positions.values()) {
+      if (pos.y + NODE_HEIGHT > maxY) maxY = pos.y + NODE_HEIGHT;
+    }
+    const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
+    const cellW = NODE_WIDTH + GRID_CELL_PADDING;
+    isolatedIds.forEach((id, i) => positions.set(id, { x: i * cellW, y: rowY }));
+  }
+
+  return positions;
 }

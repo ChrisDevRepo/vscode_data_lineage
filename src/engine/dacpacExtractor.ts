@@ -60,7 +60,7 @@ function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 
  * @returns A Promise resolving to the extracted DatabaseModel.
  * @throws {Error} If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
  */
-export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: string) => void): Promise<DatabaseModel> {
+export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: string) => void, onInfoLog?: (msg: string) => void): Promise<DatabaseModel> {
   const xml = await extractModelXml(buffer);
   if (onDebugLog) onDebugLog(`Dacpac: ZIP loaded — model.xml=${xml.length} chars`);
 
@@ -72,10 +72,9 @@ export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: stri
   const objects = extractObjects(elements);
   const allObjects = extractObjectsLightweight(elements);
   const deps = extractDependencies(elements);
-  if (onDebugLog) {
-    const c = countObjectsByType(objects);
-    onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
-  }
+  const c = countObjectsByType(objects);
+  if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
+  if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
 
   const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
 
@@ -127,6 +126,7 @@ export function extractDacpacFiltered(
   selectedSchemas: Set<string>,
   dspName?: string,
   onDebugLog?: (msg: string) => void,
+  onInfoLog?: (msg: string) => void,
 ): DatabaseModel {
   if (onDebugLog) onDebugLog(`Dacpac: Filtering by schemas=[${trunc(Array.from(selectedSchemas), 20)}]`);
 
@@ -142,10 +142,9 @@ export function extractDacpacFiltered(
   const allObjects = extractObjectsLightweight(elements);
   const objects = extractObjects(filtered, elements);
   const deps = extractDependencies(filtered);
-  if (onDebugLog) {
-    const c = countObjectsByType(objects);
-    onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
-  }
+  const c = countObjectsByType(objects);
+  if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
+  if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
 
   const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
   const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;

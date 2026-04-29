@@ -532,7 +532,7 @@ export class LineageParticipant {
       activePhase = 'completed';
       lineageTools = filterLmTools(vscode.lm.tools, { kind: 'completed' });
       this.logger.info(`[Phase] completed → follow-up — archive slots=${sess.memory.slotCount}, tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
-      this.logger.debug(`[Phase] follow-up entry — mission="${trunc(sess.memory.getMissionBrief() || sess.memory.getUserQuestion(), 200)}", classification=${sess.classification ?? '(none)'}`);
+      this.logger.info(`[Phase] follow-up entry — mission="${trunc(sess.memory.getMissionBrief() || sess.memory.getUserQuestion(), 200)}", classification=${sess.classification ?? '(none)'}`);
     }
     let systemPrompt = buildStageSystemPrompt(activePhase);
 
@@ -1158,7 +1158,7 @@ export class LineageParticipant {
         const remaining = sess.stateMachine?.getHopDiagnostics().agendaRemaining ?? 0;
         sess.memory.reset();
         sess.enterIdle();
-        this.logger.debug(`Exit hop_cap: hit ${maxRounds}-round cap with ${remaining} agenda items pending — archive discarded`);
+        this.logger.info(`Exit hop_cap: hit ${maxRounds}-round cap with ${remaining} agenda items pending — archive discarded`);
         writer.markdown([
           ``,
           `⚠ **Exploration incomplete.** Hit the ${maxRounds}-round safety cap with ${remaining} node(s) still pending.`,
@@ -1175,7 +1175,7 @@ export class LineageParticipant {
       case 'error': {
         sess.enterIdle();
         const msg = exit.kind === 'aborted' ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.` : exit.message;
-        this.logger.debug(`Exit ${exit.kind}: ${msg}`);
+        this.logger.info(`Exit ${exit.kind}: ${msg}`);
         writer.markdown(`\n\n*Error: ${msg}*`);
         break;
       }
@@ -1194,7 +1194,7 @@ export class LineageParticipant {
       const newScope = sess.stateMachine?.scopeSize ?? 0;
       const agendaSize = sess.stateMachine?.getHopDiagnostics().agendaRemaining ?? 0;
       const outcome = exit.kind === 'gate' ? 'tool_called' : 'narration_only';
-      this.logger.debug(`[AI] [Refine] outcome=${outcome} new_scope=${newScope} agenda=${agendaSize}`);
+      this.logger.info(`[AI] [Refine] outcome=${outcome} new_scope=${newScope} agenda=${agendaSize}`);
     }
   }
 }

@@ -122,14 +122,33 @@ export function useGraphology(): UseGraphologyReturn {
       return count;
     }
 
-    // Full mode — dagre runs.
+    // Full mode — dagre runs; fall back to unpositioned graph on any layout failure.
     const t0 = performance.now();
-    const result = buildGraph(allowlistFiltered, config);
+    let result: ReturnType<typeof buildGraph>;
+    let layoutFailed = false;
+    try {
+      result = buildGraph(allowlistFiltered, config);
+    } catch (e) {
+      layoutFailed = true;
+      log(`[Filter] Layout failed (${e instanceof Error ? e.message : String(e)}) — rendering without positions`, 'info');
+      try {
+        result = buildGraphNoLayout(allowlistFiltered, config);
+      } catch (e2) {
+        log(`[Filter] Graph build completely failed — ${e2 instanceof Error ? e2.message : String(e2)}`, 'info');
+        setFlowNodes([]);
+        setFlowEdges([]);
+        setGraph(null);
+        setMetrics(null);
+        return count;
+      }
+    }
     setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
     setMetrics(getGraphMetrics(result.graph));
-    log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
+    if (!layoutFailed) {
+      log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
+    }
     return count;
   }, []);
 

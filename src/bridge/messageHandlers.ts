@@ -173,7 +173,7 @@ export function createMessageHandlers(
       }
     },
     'show-detail': async (msg) => {
-      host.log('debug', 'Bridge', `show-detail: ${msg.node?.id || '(no node)'}`);
+      host.log('info', 'Bridge', `Node detail opened — ${msg.node?.id || '(no node)'}`);
       if (msg.node) lastDetailNode = msg.node;
 
       if (!detailPanel) {
@@ -193,20 +193,24 @@ export function createMessageHandlers(
             host.log('warn', 'Bridge', `Rejected malformed detail-panel message (type=${rawM?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
             return;
           }
-          const m = parsed.data;
-          if (m.type === 'detail-ready') {
-            if (lastDetailNode) {
-              detailPanel?.webview.postMessage({
-                type: 'detail-update',
-                node: enrichNodeForDetail(lastDetailNode),
-                findQuery: m.findQuery || msg.findQuery,
-                config: await getDetailConfig()
-              });
+          try {
+            const m = parsed.data;
+            if (m.type === 'detail-ready') {
+              if (lastDetailNode) {
+                detailPanel?.webview.postMessage({
+                  type: 'detail-update',
+                  node: enrichNodeForDetail(lastDetailNode),
+                  findQuery: m.findQuery || msg.findQuery,
+                  config: await getDetailConfig()
+                });
+              }
+            } else if (m.type === 'table-stats-request') {
+              await handleTableStatsRequestHost(host, lastConnectionInfo, statsConnState, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
+            } else if (m.type === 'close-detail') {
+              detailPanel?.dispose();
             }
-          } else if (m.type === 'table-stats-request') {
-            await handleTableStatsRequestHost(host, lastConnectionInfo, statsConnState, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
-          } else if (m.type === 'close-detail') {
-            detailPanel?.dispose();
+          } catch (err) {
+            host.log('error', 'Bridge', 'Detail panel handler threw unexpectedly', err instanceof Error ? err : new Error(String(err)));
           }
         });
       } else {
@@ -292,7 +296,7 @@ export function createMessageHandlers(
             host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             const logger = Logger.create(outputChannel, 'Parse');
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg));
+            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg));
             logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
@@ -369,7 +373,7 @@ export function createMessageHandlers(
       }
       const config = await readExtensionConfig(host);
       const logger = Logger.create(outputChannel, 'Parse');
-      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg));
+      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg));
       logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
@@ -547,7 +551,7 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     const data = await host.readFile(demoUri);
     if (isDacpacTooLarge(data.byteLength, host)) return;
     const logger = Logger.create(outputChannel, 'Parse');
-    const model = await extractDacpac(data.buffer as ArrayBuffer, (msg) => logger.debug(msg));
+    const model = await extractDacpac(data.buffer as ArrayBuffer, (msg) => logger.debug(msg), (msg) => logger.info(msg));
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
     host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
@@ -710,7 +714,7 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
 
   // Detailed debug logs for each scripted object
   if (spCount === 0) {
-    logger.debug('No scripted objects (procedures/views) with valid definitions found for parsing.');
+    logger.info('No scripted objects (procedures/views) with valid definitions found for parsing.');
   }
 
   for (const sp of stats.spDetails) {

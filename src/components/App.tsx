@@ -4,6 +4,7 @@ import { StartScreen } from './StartScreen';
 import { CreateFlow } from './CreateFlow';
 import { VisualizingScreen, type LoadingPhase } from './VisualizingScreen';
 import { GraphCanvas } from './GraphCanvas';
+import { ErrorBoundary } from './ErrorBoundary';
 import { NodeContextMenu } from './NodeContextMenu';
 import { useGraphology } from '../hooks/useGraphology';
 import { useOverviewMode } from '../hooks/useOverviewMode';
@@ -1286,6 +1287,13 @@ export function App() {
   const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : flowEdges);
 
   return (
+    <ErrorBoundary
+      fallback={
+        <div className="px-4 py-6 text-xs ln-text-muted">
+          Graph rendering failed. Sidebar and AI features remain available.
+        </div>
+      }
+    >
     <ReactFlowProvider>
       <GraphCanvas
         flowNodes={renderNodes}
@@ -1390,5 +1398,6 @@ export function App() {
         />
       )}
     </ReactFlowProvider>
+    </ErrorBoundary>
   );
 }

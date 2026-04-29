@@ -114,7 +114,11 @@ export function openPanel(
     }
     const msg = parsed.data;
     const handler = handlers[msg.type] as (m: MainPanelToExtensionMsg) => Promise<void> | void;
-    await handler(msg);
+    try {
+      await handler(msg);
+    } catch (err) {
+      bridgeLogger.error(`Handler '${msg.type}' threw unexpectedly`, err);
+    }
   }, undefined, context.subscriptions);
 }
 

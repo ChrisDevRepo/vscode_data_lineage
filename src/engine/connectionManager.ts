@@ -300,7 +300,7 @@ export async function executeDmvQueries(
       : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.info(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -354,7 +354,7 @@ export async function executeDmvQueriesFiltered(
       : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.info(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -394,7 +394,7 @@ export async function executeSimpleQuery(
   logger.debug(`Executing simple query — SQL: ${trunc(sanitizeForLog(sql), 300)}`);
   const start = Date.now();
   const result = await sharing.executeSimpleQuery(connectionUri, sql);
-  logger.debug(`Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`);
+  logger.info(`Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`);
   return result;
 }
 

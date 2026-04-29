@@ -6,16 +6,44 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import { visit } from 'unist-util-visit';
 import { Tooltip } from './ui/Tooltip';
 
-/** 
+/**
+ * Sanitizes a KaTeX math string so KaTeX v0.16 can parse it without errors.
+ *
+ * @remarks
+ * KaTeX v0.16 treats bare `_` as a subscript operator and `#` as a parameter
+ * marker even inside `\text{...}`, causing parse errors for SQL column names
+ * like `\text{Col_Name}` or temp-table refs like `\text{#Base}`.
+ * Escapes `_` → `\_` inside every `\text{...}` argument, and moves `#` outside
+ * `\text{...}` as `\#`.
+ */
+function sanitizeKaTeX(math: string): string {
+  return math.replace(/\\text\{([^{}]*)\}/g, (_, inner: string) => {
+    const escaped = inner.replace(/(^|[^\\])_/g, '$1\\_');
+    if (!escaped.includes('#')) return `\\text{${escaped}}`;
+    return escaped.split('#').map((part: string) => (part ? `\\text{${part}}` : '')).join('\\#');
+  });
+}
+
+/** Remark plugin — sanitizes math/inlineMath node values before rehype-katex renders them. */
+function remarkSanitizeKaTeX() {
+  return (tree: import('mdast').Root) => {
+    visit(tree, ['math', 'inlineMath'], (node: any) => {
+      node.value = sanitizeKaTeX(node.value as string);
+    });
+  };
+}
+
+/**
  * Renders a ```math code fence as a KaTeX display block.
- * 
+ *
  * @param props - Component props containing the raw math string.
  * @returns A div containing the rendered KaTeX HTML.
  */
 function MathBlock({ math }: { math: string }) {
-  const html = katex.renderToString(math, {
+  const html = katex.renderToString(sanitizeKaTeX(math), {
     displayMode: true,
     throwOnError: false,   // render error message, don't crash
     errorColor: 'var(--vscode-errorForeground, #f44747)',
@@ -206,7 +234,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             ) : (
               <div className="ln-ai-description-md">
                 <Markdown
-                  remarkPlugins={[remarkGfm, remarkMath]}
+                  remarkPlugins={[remarkGfm, remarkMath, remarkSanitizeKaTeX]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                   components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent, h3: H3Component }}
                 >{normalizeBlockMath(description)}</Markdown>

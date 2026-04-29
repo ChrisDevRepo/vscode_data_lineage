@@ -760,6 +760,10 @@ class ToolHandler {
         assembledDescription = assembled.description;
       }
 
+      this.logger.info(
+        `[Synthesis] Output assembled — title="${trunc(fixedInput.title ?? '(none)', 60)}" sections=${fixedInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount}`
+      );
+
       const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges, assembledDescription);
 
       if (!validation.success) return this.logAndReturn('present_result', validation, input);
@@ -810,7 +814,7 @@ class ToolHandler {
       // Signal the button gate in dispatchExit that a graph was built this turn.
       sess.presentResultCalledThisTurn = true;
 
-      this.logger.info(`AI view "${validation.name}" displayed (${validation.node_ids.length} objects)`);
+      this.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${fixedInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'}`);
       return this.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, input);
     } catch (err) { return this.toolError('present_result', err); }
   }
