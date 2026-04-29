@@ -80,9 +80,12 @@ export function openPanel(
     activePanel = undefined;
     detailPanel?.dispose();
     
-    // Clean up the global AI session and reset extension context flags.
     const sess = getSession();
-    sess.resetExploration();
+    // Only discard exploration state when there is no active SM.
+    // A panel closed mid-exploration preserves the archive for the next panel open.
+    if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed') {
+      sess.resetExploration();
+    }
     sess.model = null;
     sess.graph = null;
     sess.columnStore.clear();

@@ -160,10 +160,9 @@ business_capture:
 
     <emphasis>
     Highest-value content, in order:
-    1. **Formulas in LaTeX** (`$expr$` inline, `$$expr$$` block). Every
-       weight, threshold, allocation, proportion, ratio, CASE branch,
-       fallback value MUST appear as math, not prose. A formula written
-       in prose is a formula that did not reach the final document.
+    1. **Formulas in LaTeX** — computed expressions (weights, thresholds,
+       allocations, proportions, ratios, CASE branches, fallback values)
+       are clearest as math (`$expr$` inline, `$$expr$$` block).
     2. **Eligibility predicates** — which records qualify (status,
        country, flag, threshold). Quote the predicate values verbatim.
     3. **Allocation / decision rules** — what value each rule produces
@@ -184,9 +183,8 @@ business_capture:
        values, status transitions, audit-trail business events. Name
        what changes for the business when the rule fires; do not
        describe how SQL implements it.
-    3. Express every numeric or conditional rule as LaTeX FIRST
-       (`$expr$` inline, `$$expr$$` block). After the formula renders,
-       do not paraphrase it — the math IS the rule.
+    3. Express formulas in LaTeX (`$expr$` inline, `$$expr$$` block) —
+       the math is the rule, no need to paraphrase it.
     4. Quote short SQL predicate VALUES inline as proof (the literal
        `'PENDING'`, `'Global'`, `> 0`, the column names being compared)
        — not the surrounding INSERT/UPDATE/transaction scaffolding.

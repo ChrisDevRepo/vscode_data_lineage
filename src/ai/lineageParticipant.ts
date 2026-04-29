@@ -503,8 +503,8 @@ export class LineageParticipant {
         if (phase === 'active' && !engine.inlineMode) {
           // Mission state first — anchors focus_node_id before the model reads STM content.
           // (mechanically enforced via toolMode.Required + toolPolicy).
-          const agendaRemaining = Math.max(0, engine.scopeSize - engine.currentHop);
-          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.scopeSize, agendaRemaining, engine.currentFocus));
+          const agendaRemaining = Math.max(0, engine.bodiedScopeSize - engine.currentHop);
+          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.bodiedScopeSize, agendaRemaining, engine.currentFocus));
           const stm = sess.memory.getShortTermMemory();
           dynamic.push(buildMemoryBlock(stm, engine.currentHop, engine.scopeSize));
         }

@@ -29,40 +29,6 @@ const SILENT_DEPTH_HEADROOM = 2;
 /** Ring-buffer size for `recent_rejections` surfaced in working memory. */
 const RECENT_REJECTION_CAP = 5;
 
-/** Levenshtein distance between two short strings — used to suggest fuzzy candidates for unresolved route_requests ids. */
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  const v0 = new Array(b.length + 1);
-  const v1 = new Array(b.length + 1);
-  for (let i = 0; i <= b.length; i++) v0[i] = i;
-  for (let i = 0; i < a.length; i++) {
-    v1[0] = i + 1;
-    for (let j = 0; j < b.length; j++) {
-      const cost = a.charCodeAt(i) === b.charCodeAt(j) ? 0 : 1;
-      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
-    }
-    for (let j = 0; j <= b.length; j++) v0[j] = v1[j];
-  }
-  return v1[b.length];
-}
-
-/**
- * Returns up to `topN` closest in-scope node ids ranked by edit distance to `target`.
- * Distance threshold = max(3, floor(target.length * 0.4)) to allow medium typos
- * (e.g. `[ai].[vwpricelist]` vs `[ai].[vw_price_list]`) but reject unrelated matches.
- */
-function fuzzyMatchNodeIds(target: string, pool: string[], topN: number): string[] {
-  const threshold = Math.max(3, Math.floor(target.length * 0.4));
-  const scored: Array<{ id: string; d: number }> = [];
-  for (const candidate of pool) {
-    const d = levenshtein(target, candidate);
-    if (d <= threshold) scored.push({ id: candidate, d });
-  }
-  scored.sort((a, b) => a.d - b.d);
-  return scored.slice(0, topN).map(s => s.id);
-}
 
 export type { SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from './smTypes';
 export type { BoundaryFlag } from './smTypes';
@@ -133,6 +99,8 @@ export interface IHopStateMachine {
   readonly status: SmStatus;
   /** The size of the current exploration scope. */
   readonly scopeSize: number;
+  /** Count of bodied (view/proc/function) nodes in scope — the true hop denominator. */
+  readonly bodiedScopeSize: number;
   /** The percentage of nodes in scope that have been covered. */
   readonly coveragePct: number;
   /** Indicates whether the state machine is operating in inline mode. */
@@ -274,6 +242,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected currentFocusQuestion: string | null = null;
   /** Total number of hops executed. */
   protected hopCount = 0;
+  /** Count of bodied (view/proc/function) nodes in scope — maintained incrementally. */
+  private _bodiedScopeSize = 0;
   /** Breadth-first search depth for nodes from the origin. */
   protected depthFromOrigin = new Map<string, number>();
   /** The configurable depth budget. */
@@ -538,6 +508,15 @@ export class NavigationEngine implements IHopStateMachine {
   /** Gets the size of the active exploration scope. */
   public get scopeSize(): number {
     return this.scopeNodeIds.size;
+  }
+
+  /** Gets the count of bodied (view/proc/function) nodes in scope — the true hop denominator. */
+  public get bodiedScopeSize(): number {
+    return this._bodiedScopeSize;
+  }
+
+  private set bodiedScopeSize(v: number) {
+    this._bodiedScopeSize = v;
   }
 
   /** Gets the percentage of scope nodes covered. */
@@ -890,6 +869,7 @@ export class NavigationEngine implements IHopStateMachine {
         breakdown[t] = (breakdown[t] ?? 0) + 1;
       }
     }
+    this.bodiedScopeSize = (breakdown.view ?? 0) + (breakdown.procedure ?? 0) + (breakdown.function ?? 0);
     const annotateProvenance = (items: Set<string>, gui: Set<string>, nl: string[]): string => {
       if (items.size === 0) return 'none';
       const nlSet = new Set(nl.map(t => t.toLowerCase()));
@@ -989,7 +969,11 @@ export class NavigationEngine implements IHopStateMachine {
     for (const raw of nodeIds) {
       const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
       if (!id) { skipped++; continue; }
-      if (!this.scopeNodeIds.has(id)) this.scopeNodeIds.add(id);
+      if (!this.scopeNodeIds.has(id)) {
+        this.scopeNodeIds.add(id);
+        const node = this.nodeMap.get(id);
+        if (node && SCRIPT_TYPES.has(node.type)) this.bodiedScopeSize++;
+      }
       // Reset visited guard so the supplemented id can be analyzed even if it was
       // passed-through during the parent exploration.
       if (this.visited.has(id)) this.visited.delete(id);
@@ -1049,7 +1033,7 @@ export class NavigationEngine implements IHopStateMachine {
         return fn;
       });
 
-      const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size, {
+      const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.bodiedScopeSize, {
         rounds_used: this.hopCount,
         scope_growth: this.budgetExpansions.length,
         active_schemas: Array.from(this.sessionAllowedSchemas),
@@ -1189,7 +1173,7 @@ export class NavigationEngine implements IHopStateMachine {
     let totalCascadedCount = 0;
     let forceComplete = false;
 
-    const allInvalidRoutes: Array<{ id: string; reason: string }> = [];
+    const allInvalidRoutes: Array<{ id: string; reason: string; available_columns?: string[] }> = [];
     const gateNodeIds: string[] = [];
     const gateClasses = new Set<string>();
     const gateDetails: string[] = [];
@@ -1211,7 +1195,7 @@ export class NavigationEngine implements IHopStateMachine {
         const depthCap = this.computeDepthCap();
 
         for (const req of finding.route_requests) {
-          const nid = req.nodeId?.toLowerCase();
+          const nid = req.nodeId?.trim().toLowerCase();
           const nNode = nid ? this.nodeMap.get(nid) : null;
           if (!nNode || !nid) {
             allInvalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
@@ -1287,7 +1271,12 @@ export class NavigationEngine implements IHopStateMachine {
             const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
             const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
             if (invalidCols.length > 0) {
-              allInvalidRoutes.push({ id: req.nodeId, reason: `Columns not found: ${invalidCols.join(', ')}` });
+              const available = Array.from(validCols).sort();
+              allInvalidRoutes.push({
+                id: req.nodeId,
+                reason: `Columns not found: ${invalidCols.join(', ')}`,
+                available_columns: available.length > 0 ? available : undefined,
+              });
             }
           }
         }
@@ -1415,25 +1404,13 @@ export class NavigationEngine implements IHopStateMachine {
         .filter(r => /not found/i.test(r.reason))
         .map(r => r.id);
       const otherReasons = allInvalidRoutes.filter(r => !/not found/i.test(r.reason));
-      const candidates: Record<string, string[]> = {};
-      if (unknownIds.length > 0) {
-        const scopePool = Array.from(this.scopeNodeIds);
-        for (const u of unknownIds) {
-          const matches = fuzzyMatchNodeIds(u.toLowerCase(), scopePool, 3);
-          if (matches.length > 0) candidates[u] = matches;
-        }
-      }
-      const candidatePreview = Object.entries(candidates)
-        .map(([u, ms]) => `\`${u}\` ~ [${ms.map(m => `\`${m}\``).join(', ')}]`)
-        .join('; ');
       const hint = unknownIds.length > 0
-        ? `Some route_requests[].nodeId values do not exist in the loaded model: ${unknownIds.map(id => `\`${id}\``).join(', ')}.${candidatePreview ? ` Closest in-scope matches: ${candidatePreview}. If one of those is the intended target, reuse the verbatim id; otherwise call \`lineage_search_objects\` to find the right schema-qualified id.` : ` Resolve each name via \`lineage_search_objects\` (the schema-qualified id often differs from a guessed one), or pick a real neighbor id from the prior tool result's \`next_hop\` / \`neighbors[]\` data.`} Then re-call submit_findings with the corrected list.`
+        ? `Unknown nodeId(s): ${unknownIds.map(id => `\`${id}\``).join(', ')}. Use exact IDs from neighbors[] in the current focus_node, or call search_objects. Then re-call submit_findings with the corrected list.`
         : 'One or more route_requests / column references failed validation. Inspect `detail` for the per-id reason and re-submit with corrections.';
       return {
         error: 'route_validation_failed',
         hint,
         unresolved_route_target_ids: unknownIds,
-        route_target_candidates: candidates,
         detail: otherReasons.length > 0 ? otherReasons : allInvalidRoutes,
       };
     }
