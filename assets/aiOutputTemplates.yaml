@@ -175,23 +175,6 @@ business_capture:
     6. **Data-quality risks** — ⚠️ inline at the point they apply.
     </emphasis>
 
-    <belongs_in_technical_capture_not_here>
-    The following are technical implementation artifacts. Capture them
-    in `technical_capture` when classification is `both`; OMIT entirely
-    when classification is `business`:
-    - Transaction boundaries (`BEGIN TRANSACTION`, `COMMIT`, rollback)
-    - Temp / staging table names (`#DistributionBase`, `#tmp*`)
-    - Audit-blob JSON envelope shape (capture the audit MEANING in
-      business_capture; the JSON KEYS belong in technical_capture)
-    - UDF / helper function call patterns (`[dbo].[udfDivideAsDec]`,
-      `LogMessage`, `ErrorHandler`)
-    - Error-logging plumbing (`THROW`, `RAISERROR`, `TRY/CATCH` blocks)
-    - SQL execution mechanics (HASH/MERGE/LOOP join hints, distribution
-      keys, statistics)
-    These belong elsewhere because a business reader does not need them
-    to understand what the rule means or what the record represents.
-    </belongs_in_technical_capture_not_here>
-
     <body_recipe>
     1. Open with one sentence naming the domain role ("computes revenue
        at INSERT", "allocates budget units across cost centres",
