@@ -1101,7 +1101,7 @@
                 "pass",
                 "prune"
               ],
-              "description": "Action for focus node: 'analyze' (store findings), 'pass' (mark visited), or 'prune' (block branch)."
+              "description": "Action for focus node: 'analyze' (store findings), 'pass' (mark visited, wire-only), or 'prune' (block branch — for utility/logging nodes or any node outside the mission scope)."
             },
             "route_requests": {
               "type": "array",

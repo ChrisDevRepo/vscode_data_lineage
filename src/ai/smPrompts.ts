@@ -57,10 +57,10 @@ const BLOCK = {
     '4. OUT-OF-SCOPE ROUTES: See ROUTE OUTCOMES in the Active Exploration Protocol above.',
   ].join('\n'),
 
-  /** Trimmed routing line for SM — engine drives the agenda; AI only adds neighbors a tool result reveals are missing. */
+  /** Trimmed routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */
   routingSm: [
     '## Routing',
-    'Engine drives the agenda. If a tool result surfaces a topologically-valid neighbor not yet on the agenda, add it via `route_requests` (source the id verbatim from the tool result). Otherwise emit `route_requests: []`.',
+    'Engine selects the next focus node from the agenda. For each focus node: if its function falls outside the `<mission_brief>` — not only logging/error utilities, but any node that does not contribute to the user\'s stated question — emit `verdict: "prune"`. If a tool result surfaces a topologically-valid neighbor not yet on the agenda, add it via `route_requests` (source the id verbatim from the tool result). Otherwise emit `route_requests: []`.',
   ].join('\n'),
 
   /**
@@ -126,7 +126,7 @@ export function buildModeBlock(
     isInline ? BLOCK.routingInline : BLOCK.routingSm
   );
 
-  // Inline ships full DDL up front so the AI drives pruning decisions; in SM the engine prunes via the agenda.
+  // Inline ships full DDL up front so the AI drives pruning decisions via the pruningProtocol block.
   if (isInline) {
     sections.push('', BLOCK.pruningProtocol);
   }
